@@ -11,7 +11,7 @@ docker network create nexus
 # Start gateway + etcd
 cd deploy/docker-compose
 
-docker-compose -f gateway.yml up -d
+docker compose -f gateway.yml up -d
 ```
 
 ## containerd (nerdctl)
@@ -25,6 +25,23 @@ cd deploy/containerd
 
 nerdctl compose -f gateway.yml up -d
 ```
+
+## Setup and Deployment Scripts
+
+Make sure helper scripts are executable before first use:
+
+```bash
+chmod +x ../quickstart.sh ./scripts/*.sh
+```
+
+Script entrypoints:
+
+- `../quickstart.sh`: interactive local bootstrap (preflight + `.env` + startup)
+- `./scripts/preflight-check.sh`: host validation for required tools/files/permissions
+- `./scripts/deploy.sh <dev|prod> <branch>`: deploy current repo on a host
+- `./scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: deploy over SSH
+- `./scripts/register-service.sh <name> <base-url> <etcd-url>`: register backend in etcd
+- `./scripts/list-services.sh <etcd-url>`: inspect registered services
 
 ## Notes
 

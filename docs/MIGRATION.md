@@ -15,7 +15,7 @@ Nexus replaces the `ai-infra` macOS/Linux host-based deployment with a unified D
 | **Installation** | Manual host setup | Container images |
 | **Networking** | Host ports + SSH | Docker networks |
 | **Data** | `/var/lib/*/` | Docker volumes |
-| **Updates** | Manual scripts | `docker-compose pull` |
+| **Updates** | Manual scripts | `docker compose pull` |
 | **Configuration** | Scattered env files | Centralized `.env` |
 | **Service Discovery** | Static config | Dynamic via `/v1/metadata` |
 
@@ -85,7 +85,7 @@ Install Docker Compose:
 
 ```bash
 # Linux
-sudo apt-get install docker-compose-plugin
+sudo apt-get install docker compose-plugin
 
 # macOS (included with Docker Desktop)
 ```
@@ -142,7 +142,7 @@ GATEWAY_BEARER_TOKEN=your-token-here
 Start services:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Step 5: Restore Data
@@ -154,10 +154,10 @@ docker-compose up -d
 docker cp ~/gateway-backup.tar.gz nexus-gateway:/tmp/
 
 # Extract in container
-docker-compose exec gateway tar xzf /tmp/gateway-backup.tar.gz -C /data
+docker compose exec gateway tar xzf /tmp/gateway-backup.tar.gz -C /data
 
 # Verify
-docker-compose exec gateway ls -la /data
+docker compose exec gateway ls -la /data
 ```
 
 #### Restore Ollama Models
@@ -167,7 +167,7 @@ Option A: Pull models again (recommended):
 ```bash
 # Read model list from backup
 while read model; do
-  docker-compose exec ollama ollama pull "$model"
+  docker compose exec ollama ollama pull "$model"
 done < ~/ollama-models.txt
 ```
 
@@ -178,8 +178,8 @@ Option B: Restore model files:
 docker cp ~/ollama-backup.tar.gz nexus-ollama:/tmp/
 
 # Extract (warning: may be incompatible across versions)
-docker-compose exec ollama tar xzf /tmp/ollama-backup.tar.gz -C /root/.ollama
-docker-compose restart ollama
+docker compose exec ollama tar xzf /tmp/ollama-backup.tar.gz -C /root/.ollama
+docker compose restart ollama
 ```
 
 ### Step 6: Migrate Custom Configuration
@@ -193,7 +193,7 @@ If you had custom model aliases in `model_aliases.json`:
 # Edit to update backend URLs (host:port → service:port)
 # Copy to gateway container
 docker cp ~/model_aliases.json.backup nexus-gateway:/data/model_aliases.json
-docker-compose restart gateway
+docker compose restart gateway
 ```
 
 #### Tool Registry
@@ -203,7 +203,7 @@ If you had custom tools in `tools_registry.json`:
 ```bash
 # Copy to gateway container
 docker cp ~/tools_registry.json.backup nexus-gateway:/data/tools_registry.json
-docker-compose restart gateway
+docker compose restart gateway
 ```
 
 #### Agent Specs
@@ -212,7 +212,7 @@ If you had custom agent specs:
 
 ```bash
 docker cp ~/agent_specs.json nexus-gateway:/data/agent_specs.json
-docker-compose restart gateway
+docker compose restart gateway
 ```
 
 ### Step 7: Verify Migration
@@ -240,9 +240,9 @@ curl -X POST http://localhost:8800/v1/chat/completions \
 Check service health:
 
 ```bash
-docker-compose ps
-docker-compose logs gateway | tail -50
-docker-compose logs ollama | tail -50
+docker compose ps
+docker compose logs gateway | tail -50
+docker compose logs ollama | tail -50
 ```
 
 ### Step 8: Update Client Applications
@@ -292,7 +292,7 @@ sudo launchctl bootout system/com.ollama.service
 tail -f /var/log/gateway/gateway.out.log
 
 # View logs (new)
-docker-compose logs -f gateway
+docker compose logs -f gateway
 ```
 
 ### Ollama Service
@@ -307,7 +307,7 @@ docker-compose logs -f gateway
 ollama pull llama3.1:8b
 
 # Pull model (new)
-docker-compose exec ollama ollama pull llama3.1:8b
+docker compose exec ollama ollama pull llama3.1:8b
 ```
 
 ### Image Generation (InvokeAI)
@@ -370,7 +370,7 @@ If migration fails, roll back to ai-infra:
 ```bash
 # Stop Nexus
 cd ~/nexus
-docker-compose down
+docker compose down
 
 # Restart ai-infra services
 cd ~/ai-infra
@@ -407,7 +407,7 @@ Set up monitoring for new deployment:
 
 ```bash
 # Add Prometheus + Grafana
-docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 ```
 
 ### Automation
@@ -419,8 +419,8 @@ Create maintenance scripts:
 cat > update-nexus.sh <<'EOF'
 #!/bin/bash
 cd ~/nexus
-docker-compose pull
-docker-compose up -d
+docker compose pull
+docker compose up -d
 docker image prune -f
 EOF
 
@@ -433,27 +433,27 @@ chmod +x update-nexus.sh
 
 ```bash
 # Re-pull models
-docker-compose exec ollama ollama list
-docker-compose exec ollama ollama pull llama3.1:8b
+docker compose exec ollama ollama list
+docker compose exec ollama ollama pull llama3.1:8b
 ```
 
 ### Permission Issues
 
 ```bash
 # Fix volume permissions
-docker-compose exec gateway chown -R 1000:1000 /data
+docker compose exec gateway chown -R 1000:1000 /data
 ```
 
 ### Network Issues
 
 ```bash
 # Test connectivity
-docker-compose exec gateway curl http://ollama:11434/api/tags
+docker compose exec gateway curl http://ollama:11434/api/tags
 
 # Recreate network
-docker-compose down
+docker compose down
 docker network rm nexus_nexus
-docker-compose up -d
+docker compose up -d
 ```
 
 ### GPU Not Detected
@@ -475,7 +475,7 @@ Run all services on one powerful host:
 
 ```bash
 # docker-compose.yml already configured for this
-docker-compose --profile full up -d
+docker compose --profile full up -d
 ```
 
 ### Option 2: Separate Docker Hosts
@@ -485,10 +485,10 @@ Keep services on separate hosts, use Docker contexts:
 ```bash
 # On each host, run specific services
 # Host 1 (gateway + ollama)
-docker-compose up -d gateway ollama
+docker compose up -d gateway ollama
 
 # Host 2 (images)
-docker-compose up -d images
+docker compose up -d images
 
 # Update gateway to point to remote services
 IMAGES_HTTP_BASE_URL=http://host2:7860
@@ -521,7 +521,7 @@ For migration assistance:
 
 Migration is successful when:
 
-- [ ] All services healthy (`docker-compose ps`)
+- [ ] All services healthy (`docker compose ps`)
 - [ ] Gateway responds to health checks
 - [ ] Can list models via API
 - [ ] Chat completions work

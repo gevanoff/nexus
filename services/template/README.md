@@ -134,7 +134,7 @@ environment:
 
 ```bash
 # Build and start
-docker-compose up -d my-service
+docker compose up -d my-service
 
 # Test health
 curl http://localhost:9000/health

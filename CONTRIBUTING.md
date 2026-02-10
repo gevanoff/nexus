@@ -60,9 +60,16 @@ git checkout -b fix/your-bug-fix
 3. **Set up development environment**
 
 ```bash
+chmod +x quickstart.sh deploy/scripts/*.sh
+./quickstart.sh
+```
+
+Or manually:
+
+```bash
 cp .env.example .env
 # Edit .env with development settings
-docker-compose up -d
+docker compose up -d
 ```
 
 #### Making Changes
@@ -206,13 +213,13 @@ cd nexus
 2. **Start services**
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 3. **View logs**
 
 ```bash
-docker-compose logs -f
+docker compose logs -f
 ```
 
 4. **Make changes**
@@ -222,7 +229,7 @@ Edit files in `services/gateway/app/` or other service directories.
 5. **Restart services**
 
 ```bash
-docker-compose restart gateway
+docker compose restart gateway
 ```
 
 6. **Test changes**
@@ -232,20 +239,20 @@ docker-compose restart gateway
 curl http://localhost:8800/health
 
 # Run tests
-docker-compose exec gateway pytest
+docker compose exec gateway pytest
 ```
 
 ### Running Tests
 
 ```bash
 # Run all tests
-docker-compose exec gateway pytest
+docker compose exec gateway pytest
 
 # Run specific test
-docker-compose exec gateway pytest tests/test_health.py
+docker compose exec gateway pytest tests/test_health.py
 
 # Run with coverage
-docker-compose exec gateway pytest --cov=app --cov-report=html
+docker compose exec gateway pytest --cov=app --cov-report=html
 ```
 
 ### Code Style

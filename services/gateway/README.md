@@ -92,7 +92,7 @@ docker run -p 8800:8800 -p 8801:8801 \
 The gateway is included in the main `docker-compose.yml`. Start with:
 
 ```bash
-docker-compose up gateway
+docker compose up gateway
 ```
 
 ### Local Development
@@ -236,27 +236,27 @@ Structured logging to stdout with:
 
 ```bash
 # Check logs
-docker-compose logs gateway
+docker compose logs gateway
 
 # Verify configuration
-docker-compose exec gateway env | grep GATEWAY
+docker compose exec gateway env | grep GATEWAY
 ```
 
 ### Can't connect to Ollama
 
 ```bash
 # Check if Ollama is running
-docker-compose ps ollama
+docker compose ps ollama
 
 # Test connectivity from gateway
-docker-compose exec gateway curl http://ollama:11434/api/tags
+docker compose exec gateway curl http://ollama:11434/api/tags
 ```
 
 ### Authentication errors
 
 ```bash
 # Verify token is set
-docker-compose exec gateway env | grep GATEWAY_BEARER_TOKEN
+docker compose exec gateway env | grep GATEWAY_BEARER_TOKEN
 
 # Test with correct token
 curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8800/v1/models

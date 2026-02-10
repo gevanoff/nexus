@@ -181,7 +181,7 @@ gateway:
 
 ```bash
 # Start service
-docker-compose up -d my-service
+docker compose up -d my-service
 
 # Test health
 curl http://localhost:9000/health
@@ -237,7 +237,7 @@ Services communicate over the internal Docker network:
 - **Client-to-Gateway**: HTTPS with authentication
 - **Gateway-to-Services**: HTTP (internal network, no auth needed)
 
-Service DNS names match their docker-compose service names:
+Service DNS names match their docker compose service names:
 - `http://ollama:11434`
 - `http://images:7860`
 - `http://tts:9940`
@@ -257,7 +257,7 @@ Specify resource requirements in metadata:
 }
 ```
 
-Configure in docker-compose:
+Configure in docker compose:
 
 ```yaml
 deploy:
@@ -387,19 +387,19 @@ Example metadata:
 
 ### Development
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Production
 ```bash
 # Build images
-docker-compose build
+docker compose build
 
 # Start services
-docker-compose up -d
+docker compose up -d
 
 # Scale specific service
-docker-compose up -d --scale ollama=3
+docker compose up -d --scale ollama=3
 ```
 
 ### Kubernetes
@@ -410,10 +410,10 @@ See `k8s/` directory for Kubernetes manifests.
 ### Service won't start
 ```bash
 # Check logs
-docker-compose logs my-service
+docker compose logs my-service
 
 # Check configuration
-docker-compose config
+docker compose config
 
 # Check health
 curl http://localhost:9000/health
@@ -422,10 +422,10 @@ curl http://localhost:9000/health
 ### Can't connect to service
 ```bash
 # Verify service is running
-docker-compose ps
+docker compose ps
 
 # Test from gateway
-docker-compose exec gateway curl http://my-service:9000/health
+docker compose exec gateway curl http://my-service:9000/health
 
 # Check network
 docker network inspect nexus_nexus
@@ -437,7 +437,7 @@ docker network inspect nexus_nexus
 docker stats
 
 # Check logs for errors
-docker-compose logs --tail=100 my-service
+docker compose logs --tail=100 my-service
 
 # Check metrics
 curl http://localhost:9000/metrics

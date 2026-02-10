@@ -135,7 +135,7 @@ Host A (macOS)        Host B (Ubuntu)      Host C (Ubuntu)
 
 1. **Simplified Deployment**
    - Before: Multiple hosts, SSH, manual scripts
-   - After: Single `docker-compose up` command
+   - After: Single `docker compose up` command
 
 2. **Portability**
    - Before: macOS/Linux specific (launchd/systemd)
@@ -151,7 +151,7 @@ Host A (macOS)        Host B (Ubuntu)      Host C (Ubuntu)
 
 5. **Updates**
    - Before: Manual update scripts per service
-   - After: `docker-compose pull && docker-compose up -d`
+   - After: `docker compose pull && docker compose up -d`
 
 ## File Structure
 

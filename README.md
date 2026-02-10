@@ -30,24 +30,47 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- (Optional) NVIDIA Docker runtime for GPU services
+- Docker Engine with the `docker compose` plugin
+- Bash, curl, openssl (used by setup scripts)
+- (Optional) NVIDIA Container Toolkit for GPU services
+
+### Recommended: Guided Setup Script
+
+Use the interactive installer to run preflight checks, create `.env`, and bring the stack up safely:
+
+```bash
+chmod +x quickstart.sh deploy/scripts/*.sh
+./quickstart.sh
+```
+
+The quickstart flow automatically runs `deploy/scripts/preflight-check.sh` and validates key prerequisites before starting containers.
 
 ### Start the Stack
 
 ```bash
-# Start all services
-docker-compose up -d
+# Start core services (gateway + ollama + etcd)
+docker compose up -d
 
 # Check service health
-docker-compose ps
+docker compose ps
 
 # View gateway logs
-docker-compose logs -f gateway
+docker compose logs -f gateway
 
-# Stop all services
-docker-compose down
+# Stop services
+docker compose down
 ```
+
+### Setup/Install Scripts Reference
+
+These scripts are the current supported setup/install and deployment entrypoints:
+
+- `quickstart.sh`: interactive local bootstrap (recommended for first run)
+- `deploy/scripts/preflight-check.sh`: dependency + permission checks
+- `deploy/scripts/deploy.sh <dev|prod> <branch>`: host-local deployment
+- `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register service metadata in etcd
+- `deploy/scripts/list-services.sh <etcd-url>`: list registered services in etcd
 
 ### Access the Gateway
 
@@ -189,23 +212,23 @@ nexus/
 
 ```bash
 # Test gateway
-docker-compose exec gateway pytest
+docker compose exec gateway pytest
 
 # Test all services
-docker-compose exec gateway python tools/verify_gateway.py
+docker compose exec gateway python tools/verify_gateway.py
 ```
 
 ### Development Mode
 
 ```bash
 # Start with hot reload
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # View logs for specific service
-docker-compose logs -f ollama
+docker compose logs -f ollama
 
 # Restart a service
-docker-compose restart gateway
+docker compose restart gateway
 ```
 
 ### CI/CD and Dev Branch Deployments
@@ -220,10 +243,10 @@ See [docs/REPLICATION_PLAN.md](docs/REPLICATION_PLAN.md) for a detailed checklis
 ## Deployment
 
 ### Local Development
-Use `docker-compose up` for single-host development.
+Use `docker compose up` for single-host development.
 
 ### Production
-- Use `docker-compose` for simple production deployments
+- Use `docker compose` for simple production deployments
 - Use Kubernetes manifests (in `k8s/`) for orchestrated production deployments
 - Configure resource limits, health checks, and monitoring
 - Use TLS/HTTPS termination at load balancer or ingress
@@ -260,13 +283,13 @@ curl http://localhost:8800/metrics
 Structured JSON logging with correlation IDs:
 ```bash
 # View all logs
-docker-compose logs -f
+docker compose logs -f
 
 # View gateway logs
-docker-compose logs -f gateway
+docker compose logs -f gateway
 
 # View logs for specific request
-docker-compose logs gateway | grep req_abc123
+docker compose logs gateway | grep req_abc123
 ```
 
 ## Migration from ai-infra
@@ -279,7 +302,7 @@ Nexus replaces the host-based `ai-infra` deployment with containers:
 | Manual host setup | Dockerfile per service | Reproducible environments |
 | Host networking | Docker networks | Isolated networking |
 | `/var/lib/gateway` | Docker volumes | Persistent data |
-| SSH + manual deploys | `docker-compose up` | One command deploys |
+| SSH + manual deploys | `docker compose up` | One command deploys |
 
 See [docs/MIGRATION.md](docs/MIGRATION.md) for detailed migration guide.
 
@@ -288,7 +311,7 @@ See [docs/MIGRATION.md](docs/MIGRATION.md) for detailed migration guide.
 ### Service won't start
 ```bash
 # Check logs
-docker-compose logs <service-name>
+docker compose logs <service-name>
 
 # Check health
 curl http://localhost:8800/health
@@ -297,10 +320,10 @@ curl http://localhost:8800/health
 ### Can't connect to backend
 ```bash
 # Verify service is running
-docker-compose ps
+docker compose ps
 
 # Check network connectivity
-docker-compose exec gateway curl http://ollama:11434/health
+docker compose exec gateway curl http://ollama:11434/health
 ```
 
 ### GPU not detected

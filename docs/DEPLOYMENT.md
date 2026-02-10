@@ -6,11 +6,20 @@ This guide covers deploying Nexus in different environments.
 
 ### Prerequisites
 
-- Docker 20.10+
-- Docker Compose 2.0+
-- (Optional) NVIDIA Docker runtime for GPU support
+- Docker Engine 20.10+ with `docker compose` plugin
+- Bash, curl, openssl, python3 (used by setup/install scripts)
+- (Optional) NVIDIA Container Toolkit for GPU support
 
 ### Basic Deployment
+
+### Guided bootstrap (recommended)
+
+```bash
+chmod +x quickstart.sh deploy/scripts/*.sh
+./quickstart.sh
+```
+
+This path runs preflight checks, creates a secured `.env`, and verifies gateway readiness.
 
 1. **Clone the repository**
 
@@ -31,17 +40,17 @@ nano .env
 
 ```bash
 # Start all services
-docker-compose up -d
+docker compose up -d
 
 # Or start specific profile
-docker-compose --profile full up -d
+docker compose --profile full up -d
 ```
 
 4. **Verify deployment**
 
 ```bash
 # Check services are running
-docker-compose ps
+docker compose ps
 
 # Test gateway health
 curl http://localhost:8800/health
@@ -51,6 +60,15 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
   http://localhost:8800/v1/models
 ```
 
+## Deployment Scripts
+
+- `quickstart.sh`: interactive setup/install flow for local environments
+- `deploy/scripts/preflight-check.sh`: validates dependencies, files, and script permissions
+- `deploy/scripts/deploy.sh <dev|prod> <branch>`: environment-aware local deployment
+- `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd
+- `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd
+
 ## Service Profiles
 
 Nexus uses Docker Compose profiles to control which services run:
@@ -58,25 +76,25 @@ Nexus uses Docker Compose profiles to control which services run:
 ### Default Profile
 Only gateway and Ollama (minimal deployment):
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Full Profile
 All services (gateway, Ollama, images, TTS):
 ```bash
-docker-compose --profile full up -d
+docker compose --profile full up -d
 ```
 
 ### Specific Services
 ```bash
 # Images only
-docker-compose --profile images up -d
+docker compose --profile images up -d
 
 # Audio only
-docker-compose --profile audio up -d
+docker compose --profile audio up -d
 
 # Multiple profiles
-docker-compose --profile images --profile audio up -d
+docker compose --profile images --profile audio up -d
 ```
 
 ## Production Deployment
@@ -400,7 +418,7 @@ Scale specific services:
 
 ```bash
 # Scale Ollama to 3 instances
-docker-compose up -d --scale ollama=3
+docker compose up -d --scale ollama=3
 
 # Gateway load balances automatically
 ```
@@ -425,10 +443,10 @@ services:
 
 ```bash
 # Pull latest images
-docker-compose pull
+docker compose pull
 
 # Restart services with new images
-docker-compose up -d
+docker compose up -d
 
 # Remove old images
 docker image prune -f
@@ -440,10 +458,10 @@ Update services one at a time:
 
 ```bash
 # Update gateway
-docker-compose up -d --no-deps --force-recreate gateway
+docker compose up -d --no-deps --force-recreate gateway
 
 # Update Ollama
-docker-compose up -d --no-deps --force-recreate ollama
+docker compose up -d --no-deps --force-recreate ollama
 ```
 
 ### Downtime-Free Updates
@@ -459,10 +477,10 @@ docker-compose up -d --no-deps --force-recreate ollama
 
 ```bash
 # Check logs
-docker-compose logs
+docker compose logs
 
 # Check specific service
-docker-compose logs gateway
+docker compose logs gateway
 
 # Check resources
 docker stats
@@ -479,28 +497,28 @@ docker system df
 docker stats
 
 # Check GPU usage
-docker-compose exec ollama nvidia-smi
+docker compose exec ollama nvidia-smi
 
 # Check network
 docker network inspect nexus_nexus
 
 # Check logs for errors
-docker-compose logs | grep -i error
+docker compose logs | grep -i error
 ```
 
 ### Network Issues
 
 ```bash
 # Test connectivity between services
-docker-compose exec gateway curl http://ollama:11434/api/tags
+docker compose exec gateway curl http://ollama:11434/api/tags
 
 # Check network
 docker network ls
 docker network inspect nexus_nexus
 
 # Recreate network
-docker-compose down
-docker-compose up -d
+docker compose down
+docker compose up -d
 ```
 
 ## Environment-Specific Guides
@@ -539,7 +557,7 @@ docker-compose up -d
 ## Support
 
 For deployment issues:
-- Check logs: `docker-compose logs`
+- Check logs: `docker compose logs`
 - Review troubleshooting section
 - Open GitHub issue
 - Join community discussions
