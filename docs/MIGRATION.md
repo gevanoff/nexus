@@ -85,7 +85,7 @@ Install Docker Compose:
 
 ```bash
 # Linux
-sudo apt-get install docker compose-plugin
+sudo apt-get install docker-compose-plugin
 
 # macOS (included with Docker Desktop)
 ```
