@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  tts:
+    build:
+      context: ../../services/tts
+      dockerfile: Dockerfile
+    container_name: nexus-tts
+    ports:
+      - "${TTS_PORT:-9940}:9940"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=9940
+    volumes:
+      - tts_data:/data
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    external: true
+    name: nexus
+
+volumes:
+  tts_data:
+    driver: local

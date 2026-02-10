@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  gateway:
+    build:
+      context: ../../services/gateway
+      dockerfile: Dockerfile
+    container_name: nexus-gateway
+    ports:
+      - "${GATEWAY_PORT:-8800}:8800"
+      - "${OBSERVABILITY_PORT:-8801}:8801"
+    environment:
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=8800
+      - GATEWAY_BEARER_TOKEN=${GATEWAY_BEARER_TOKEN:-change-me-in-production}
+      - ETCD_ENABLED=${ETCD_ENABLED:-true}
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - ETCD_PREFIX=${ETCD_PREFIX:-/nexus/services/}
+      - ETCD_POLL_INTERVAL=${ETCD_POLL_INTERVAL:-15}
+      - ETCD_SEED_FROM_ENV=${ETCD_SEED_FROM_ENV:-true}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - IMAGES_HTTP_BASE_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}
+      - AUDIO_BACKEND_URL=${AUDIO_BACKEND_URL:-http://tts:9940}
+      - DEFAULT_BACKEND=${DEFAULT_BACKEND:-ollama}
+      - MAX_REQUEST_BYTES=${MAX_REQUEST_BYTES:-10485760}
+    volumes:
+      - gateway_data:/data
+      - ../../services/gateway/app:/app
+    networks:
+      - nexus
+    restart: unless-stopped
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.11
+    container_name: nexus-etcd
+    command:
+      - /usr/local/bin/etcd
+      - --name
+      - nexus-etcd
+      - --data-dir
+      - /etcd-data
+      - --listen-client-urls
+      - http://0.0.0.0:2379
+      - --advertise-client-urls
+      - http://etcd:2379
+      - --listen-peer-urls
+      - http://0.0.0.0:2380
+      - --initial-advertise-peer-urls
+      - http://etcd:2380
+      - --initial-cluster
+      - nexus-etcd=http://etcd:2380
+      - --initial-cluster-state
+      - new
+      - --enable-v2
+    volumes:
+      - etcd_data:/etcd-data
+    networks:
+      - nexus
+    ports:
+      - "${ETCD_PORT:-2379}:2379"
+    restart: unless-stopped
+
+networks:
+  nexus:
+    external: true
+    name: nexus
+
+volumes:
+  gateway_data:
+    driver: local
+  etcd_data:
+    driver: local

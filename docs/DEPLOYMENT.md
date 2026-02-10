@@ -250,6 +250,7 @@ sudo ufw allow 80/tcp   # HTTP (for Let's Encrypt)
 # Deny direct access to service ports
 sudo ufw deny 8800/tcp
 sudo ufw deny 11434/tcp
+sudo ufw deny 2379/tcp
 
 sudo ufw enable
 ```
@@ -542,3 +543,59 @@ For deployment issues:
 - Review troubleshooting section
 - Open GitHub issue
 - Join community discussions
+
+## CI/CD and Dev Branch Deployments
+
+See [CI_CD.md](CI_CD.md) for details on automated build/deploy flows, secrets handling, and dev vs. prod configuration.
+See [INITIAL_ROLLOUT.md](INITIAL_ROLLOUT.md) for the first-run sequence and implicit requirement checklist.
+
+## Security Hardening Addendum
+
+Use this checklist after initial bring-up, especially for multi-host deployments:
+
+- Enforce **mTLS** for gateway → backend traffic on shared networks.
+- Restrict backend ports to **private networks** and trusted host IPs.
+- Store secrets in a **secrets manager** (not in `.env` on disk).
+- Enable **rate limiting** and request size limits at the gateway.
+- Rotate access tokens regularly and audit access logs.
+
+## Multi-Host Deployments
+
+Nexus can run services on multiple hosts. Keep the gateway as the primary ingress and route to remote services over a private network or VPN. Avoid hardcoding host assignments in git; prefer runtime configuration.
+
+### Recommended Bootstrapping Path
+
+1. **Single-host validation**: bring up gateway + one backend locally.
+2. **Health and metadata checks**: validate `/health`, `/readyz`, and `/v1/metadata` for the backend.
+3. **Gateway routing**: confirm OpenAI-compatible requests through the gateway.
+4. **Move one backend remote**: set its base URL in runtime configuration.
+5. **Secure the traffic**: add mTLS or private network controls.
+
+### Remote Backend Configuration (Gateway)
+
+Use environment overrides (or a config file) to point the gateway at remote hosts. Example pattern:
+
+```bash
+# Example: route images service to a remote host
+IMAGES_HTTP_BASE_URL=http://ada2:7860
+```
+
+### Etcd Service Discovery
+
+Nexus uses etcd as the default service registry. Services (or an operator) should register records under `/nexus/services/<name>` with `base_url` and `metadata_url` values. The gateway polls etcd on startup and at intervals, and will fall back to environment defaults if etcd is unavailable.
+
+### Network Options
+
+- **WireGuard/Tailscale**: simple, secure overlay network with stable hostnames.
+- **VPC/VLAN**: use cloud or on-prem private networking for host-to-host traffic.
+- **Firewall rules**: allow backend ports only from trusted hosts.
+
+### Security Notes
+
+- Prefer **mTLS** for gateway → backend traffic on shared networks.
+- Keep backend ports closed to the public internet; expose only the gateway.
+- Rotate credentials and tokens; store secrets in a manager rather than in git.
+
+### Per-Service Manifests
+
+See [../deploy/README.md](../deploy/README.md) for per-service Docker Compose and containerd manifests that are useful for multi-host rollouts.

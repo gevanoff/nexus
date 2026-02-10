@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  images:
+    build:
+      context: ../../services/images
+      dockerfile: Dockerfile
+    container_name: nexus-images
+    ports:
+      - "${IMAGES_PORT:-7860}:7860"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=7860
+      - INVOKEAI_ROOT=/data
+    volumes:
+      - images_data:/data
+      - images_models:/data/models
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    external: true
+    name: nexus
+
+volumes:
+  images_data:
+    driver: local
+  images_models:
+    driver: local

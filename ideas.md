@@ -1,27 +1,53 @@
-I'm creating a new repository for the "nexus" project. This will take material and learnings from the "ai-infra" and "gateway" repositories and apply them to a new infrastructure which will be based around containers with limited access to the root filesystems/bare metal hosts. The ownership models will be simplified-- only the "ai" user will run the containers. The containers will have descrete functions, and interact with one another via APIs. The APIs will be standardized and all services will have a special endpoint to document the available functions and formats, the expected outputs. The UI for these services will be based in large part on the aforementioned special endpoint. This API interface layer will need the most thought, care, and work. It needs to be implemented in a way which makes it easy to use a template and a set of documented requirements in order to create a new service container which functions with minimal user configuration. It registers with the central nexus (via etcd? consul?), has centralized logging, metrics, monitoring, and management. 
-The AI would be given full agentic access within certain containers, permissions to create new containers and container manifests, and broad visibility into every aspect of the AI infrastructure. The AI should have the ability to spawn multiple agents. The AI should have a productively critical partner named "Adversary" to assist in longer reasoning tasks, research, coding, etc. The AI should also have a partner named "Supplicant" who represents the interests of human users in areas requiring care and consideration in terms of simplicity, ease of use, functional control and power, aesthetics, and ethics. The Supplicant will have a "seat at the table", but ultimately will only request, inform, question and never override.
-New code updates will be run in a manner that allows for quick and automatic recovery from a catastrophic failure.
+# Nexus Ideas & Open Questions
 
-To establish a robust foundation for the "nexus" project, I'll outline a high-level architecture and provide guidance on key components.
+This document captures early-stage ideas, open questions, and decisions to validate. As items are resolved, they should be consolidated into the main documentation and removed from here.
 
-1. **Containerization**: Utilize Docker or Podman for containerization, with a focus on limited access to root filesystems and bare metal hosts.
-2. **API Interface Layer**: Design a standardized API framework using OpenAPI (Swagger) or API Blueprint, enabling easy service discovery, documentation, and client generation. Implement a template-based approach for creating new service containers with minimal user configuration.
-3. **Service Registry**: Choose between etcd, Consul, or Apache ZooKeeper for service registration, centralized logging, metrics, monitoring, and management.
-4. **AI Infrastructure**: Grant the AI full agentic access within designated containers, permissions to create new containers and manifests, and broad visibility into the infrastructure.
-5. **Agent Management**: Develop a framework for spawning multiple agents, including the Adversary and Supplicant partners, with clear roles and responsibilities.
+## Consolidated Into Documentation
 
-To bootstrap my ability to expand and improve functionality, I'll require:
+- **Container-first architecture, standardized APIs, and metadata-driven discovery** are documented in `ARCHITECTURE.md` and `SERVICE_API_SPECIFICATION.md`.
+- **Deployment, migration, and operational guidance** are documented in `docs/DEPLOYMENT.md` and `docs/MIGRATION.md`.
 
-1. **Access to code repositories**: Provide read-write access to the nexus repository and other relevant codebases.
-2. **Container creation and management**: Allow me to create new containers, manage container manifests, and orchestrate services using tools like Docker Compose or Kubernetes.
-3. **API documentation and client generation**: Enable me to generate API documentation and clients for various programming languages, facilitating seamless interaction with services.
-4. **Logging, monitoring, and metrics**: Grant access to centralized logging, monitoring, and metrics tools, such as ELK Stack, Prometheus, or Grafana, to ensure informed decision-making.
-5. **Adversary and Supplicant integration**: Develop a framework for integrating the Adversary and Supplicant partners, enabling productive collaboration and critical evaluation of my actions.
+## Desired Feature Set (High Level)
 
-To approach the point of bootstrapping my ability to continually code new innovations, I recommend:
+- **Gateway-centric API surface** with OpenAI-compatible endpoints and standardized service discovery.
+- **Template-driven service creation**: new services should be easy to scaffold and integrate via `/v1/metadata`.
+- **Observability-first**: consistent health checks, metrics, and structured logs.
+- **Agentic runtime**: multiple agents, including Adversary and Supplicant roles, with strict governance.
+- **Fast recovery**: automated rollback or restart if a service fails.
 
-1. **Codex integration**: Utilize OpenAI's Codex to generate high-quality code snippets, functions, or even entire services, leveraging its capabilities to accelerate development.
-2. **Automated testing and validation**: Implement automated testing frameworks, such as Pytest or Unittest, to ensure the correctness and reliability of generated code.
-3. **Continuous integration and deployment (CI/CD)**: Establish a CI/CD pipeline using tools like Jenkins, GitLab CI/CD, or CircleCI, enabling seamless deployment of new services and updates.
+## Shortest Bootstrapping Path
 
-By following this outline, we can establish a robust foundation for the nexus project, empowering me to expand and improve my functionality, and ultimately, continually code new innovations.
+1. **Single-host baseline**: run gateway + one inference backend locally using Docker Compose.
+2. **Metadata contract**: ensure `/v1/metadata`, `/health`, and `/readyz` are correct for the first backend.
+3. **Gateway routing**: confirm OpenAI-compatible chat requests succeed through the gateway.
+4. **Minimal observability**: enable metrics and basic logs; verify health checks.
+5. **Scale out**: move one service to a second host and update gateway configuration.
+
+## Distributed Containers: Open Questions
+
+- **Service discovery evolution**: etcd is the default registry; decide if Consul or another system is preferred long-term.
+- **Network overlay**: WireGuard/Tailscale vs. cloud VPC for multi-host traffic?
+- **Trust boundary**: do we require mTLS between gateway and backends, or is a private network enough?
+- **Routing policy**: should the gateway support per-host routing rules (GPU type, capacity, location)?
+- **Service metadata ownership**: which fields are required for scheduler/routing (e.g., GPU memory)?
+
+## Likely Stumbling Blocks
+
+- **Cross-host networking**: DNS, firewalling, and latency for multi-host services.
+- **GPU scheduling**: mapping workloads to the right GPU without hardcoding host identities.
+- **Credential distribution**: secrets for registry, TLS, or mTLS across hosts.
+- **Cold start times**: large model downloads on new hosts.
+- **Logging at scale**: correlating requests across multiple hosts.
+
+## Next Questions to Answer
+
+- Which registry/coordination system should Nexus use (if any) for cross-host discovery?
+- What is the minimal mTLS story for internal APIs?
+- What is the preferred config format for mapping remote service endpoints (env vs. registry)?
+- What is the first "real" service to build after gateway + Ollama?
+
+## Action Items
+
+- Document multi-host networking patterns and recommended bootstrapping flow.
+- Define the minimal gateway configuration for remote backends.
+- Outline a security hardening checklist (mTLS, firewall rules, secrets storage).

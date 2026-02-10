@@ -11,6 +11,7 @@ Nexus transforms the monolithic AI infrastructure into a containerized microserv
 - **Discoverable**: Services self-advertise capabilities via `/v1/metadata` endpoints
 - **Extensible**: Add new services without modifying gateway code
 - **OpenAI-compatible**: Follow industry-standard API conventions
+- **Service discovery**: Etcd-backed registry for multi-host routing
 
 ## Architecture
 
@@ -98,6 +99,11 @@ GATEWAY_PORT=8800
 ENABLE_OLLAMA=true
 ENABLE_IMAGES=true
 ENABLE_AUDIO=true
+
+# Service discovery
+ETCD_ENABLED=true
+ETCD_URL=http://etcd:2379
+ETCD_PREFIX=/nexus/services/
 ```
 
 See `.env.example` for all available options.
@@ -139,6 +145,11 @@ Nexus includes the following services:
 - Multiple voice options
 - Streaming audio output
 - **Port**: 9940
+
+### Etcd (`etcd`)
+- Service discovery registry for multi-host deployments
+- Gateway polls for service base URLs
+- **Port**: 2379
 
 See `services/README.md` for complete service documentation.
 
@@ -197,6 +208,15 @@ docker-compose logs -f ollama
 docker-compose restart gateway
 ```
 
+### CI/CD and Dev Branch Deployments
+
+See [docs/CI_CD.md](docs/CI_CD.md) for automated build/deploy guidance, secrets handling, and dev branch workflows.
+See [docs/INITIAL_ROLLOUT.md](docs/INITIAL_ROLLOUT.md) for first-time rollout order and implicit requirements.
+
+## Replication Plan
+
+See [docs/REPLICATION_PLAN.md](docs/REPLICATION_PLAN.md) for a detailed checklist of what remains to reach gateway/ai-infra parity with the new architecture.
+
 ## Deployment
 
 ### Local Development
@@ -209,6 +229,19 @@ Use `docker-compose up` for single-host development.
 - Use TLS/HTTPS termination at load balancer or ingress
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment guides.
+See [deploy/README.md](deploy/README.md) for per-service Docker Compose and containerd manifests.
+See [docs/CI_CD.md](docs/CI_CD.md) for CI/CD workflows and convenience scripts.
+See [docs/DYNAMIC_BACKEND_UI.md](docs/DYNAMIC_BACKEND_UI.md) for descriptor-driven backend UI composition.
+
+## Bootstrapping Path (Recommended)
+
+1. Start with a **single-host** deployment (gateway + one backend).
+2. Validate `/health`, `/readyz`, and `/v1/metadata` for the backend.
+3. Confirm **OpenAI-compatible** requests via the gateway.
+4. Move one backend to a **remote host**, update its base URL at runtime.
+5. Add **network security** (VPN/private network, mTLS, firewall rules).
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for multi-host guidance.
 
 ## Monitoring
 

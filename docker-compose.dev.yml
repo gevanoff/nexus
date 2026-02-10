@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  gateway:
+    container_name: nexus-gateway-dev
+    ports:
+      - "${DEV_GATEWAY_PORT:-18800}:8800"
+      - "${DEV_OBSERVABILITY_PORT:-18801}:8801"
+    environment:
+      - GATEWAY_BEARER_TOKEN=${DEV_GATEWAY_BEARER_TOKEN:-dev-change-me}
+    volumes:
+      - gateway_data_dev:/data
+
+  ollama:
+    container_name: nexus-ollama-dev
+    ports:
+      - "${DEV_OLLAMA_PORT:-11435}:11434"
+    volumes:
+      - ollama_data_dev:/root/.ollama
+
+  images:
+    container_name: nexus-images-dev
+    ports:
+      - "${DEV_IMAGES_PORT:-17860}:7860"
+    volumes:
+      - images_data_dev:/data
+      - images_models_dev:/data/models
+
+  tts:
+    container_name: nexus-tts-dev
+    ports:
+      - "${DEV_TTS_PORT:-19940}:9940"
+    volumes:
+      - tts_data_dev:/data
+
+  etcd:
+    container_name: nexus-etcd-dev
+    ports:
+      - "${DEV_ETCD_PORT:-12379}:2379"
+    volumes:
+      - etcd_data_dev:/etcd-data
+
+networks:
+  nexus:
+    name: nexus-dev
+
+volumes:
+  gateway_data_dev:
+    driver: local
+  ollama_data_dev:
+    driver: local
+  images_data_dev:
+    driver: local
+  images_models_dev:
+    driver: local
+  tts_data_dev:
+    driver: local
+  etcd_data_dev:
+    driver: local
