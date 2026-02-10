@@ -34,6 +34,12 @@ Update the workflows to build/push additional service images (ollama, images, tt
 
 ## Convenience Scripts
 
+Ensure script execute permissions:
+
+```bash
+chmod +x deploy/scripts/*.sh quickstart.sh
+```
+
 - `deploy/scripts/register-service.sh`: register a service in etcd.
 - `deploy/scripts/list-services.sh`: list registered services from etcd.
 
@@ -65,6 +71,6 @@ Update the workflows to build/push additional service images (ollama, images, tt
 
 ## Notes
 
-- The deploy scripts assume the host has docker-compose installed.
-- Use an external registry and `docker-compose pull` if you want to avoid building on hosts.
+- The deploy scripts assume the host has docker compose installed.
+- Use an external registry and `docker compose pull` if you want to avoid building on hosts.
 - Gate production deploys behind manual approval and/or a protected branch policy.

@@ -68,3 +68,9 @@ Yes. Despite the architecture being containerized, there are still practical hos
 - `deploy/scripts/preflight-check.sh`: validates implicit dependencies and common misconfigurations.
 
 These scripts reduce deployment variance and make failures easier to troubleshoot.
+
+Before running them on fresh hosts, set execute permissions explicitly:
+
+```bash
+chmod +x quickstart.sh deploy/scripts/*.sh
+```

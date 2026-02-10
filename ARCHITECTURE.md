@@ -214,7 +214,7 @@ Key considerations:
 
 ### Local Development
 ```bash
-docker-compose up
+docker compose up
 ```
 Single-command startup of full stack for development.
 

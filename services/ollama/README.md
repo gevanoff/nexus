@@ -42,13 +42,13 @@ ollama:
 
 ```bash
 # Via docker exec
-docker-compose exec ollama ollama pull llama3.1:8b
+docker compose exec ollama ollama pull llama3.1:8b
 
 # List downloaded models
-docker-compose exec ollama ollama list
+docker compose exec ollama ollama list
 
 # Remove a model
-docker-compose exec ollama ollama rm llama3.1:8b
+docker compose exec ollama ollama rm llama3.1:8b
 ```
 
 ### API Usage
@@ -136,7 +136,7 @@ curl -X POST http://localhost:8800/v1/chat/completions \
 
 Pull models with:
 ```bash
-docker-compose exec ollama ollama pull <model-name>
+docker compose exec ollama ollama pull <model-name>
 ```
 
 ## GPU Support
@@ -151,10 +151,10 @@ docker-compose exec ollama ollama pull <model-name>
 
 ```bash
 # Check GPU is visible in container
-docker-compose exec ollama nvidia-smi
+docker compose exec ollama nvidia-smi
 
 # Check Ollama is using GPU
-docker-compose logs ollama | grep -i gpu
+docker compose logs ollama | grep -i gpu
 ```
 
 ### Disable GPU (CPU Only)
@@ -241,7 +241,7 @@ Should return list of models if healthy.
 ### Via Docker
 
 ```bash
-docker-compose ps ollama
+docker compose ps ollama
 ```
 
 Should show "healthy" status.
@@ -252,13 +252,13 @@ Should show "healthy" status.
 
 ```bash
 # Check logs
-docker-compose logs ollama
+docker compose logs ollama
 
 # Check if port is in use
 lsof -i :11434
 
 # Restart service
-docker-compose restart ollama
+docker compose restart ollama
 ```
 
 ### GPU not detected
@@ -270,7 +270,7 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 # Check GPU is available
 nvidia-smi
 
-# Update docker-compose to use GPU
+# Update docker compose to use GPU
 ```
 
 ### Out of memory
@@ -280,7 +280,7 @@ nvidia-smi
 nvidia-smi
 
 # Use smaller model
-docker-compose exec ollama ollama pull llama3.1:3b
+docker compose exec ollama ollama pull llama3.1:3b
 
 # Reduce context window
 # Set OLLAMA_NUM_CTX to lower value (e.g., 2048)
@@ -296,7 +296,7 @@ curl -I https://ollama.com
 docker system df
 
 # Retry pull
-docker-compose exec ollama ollama pull llama3.1:8b
+docker compose exec ollama ollama pull llama3.1:8b
 ```
 
 ## Integration with Gateway
@@ -320,16 +320,16 @@ Create `manage-models.sh`:
 
 case "$1" in
   pull)
-    docker-compose exec ollama ollama pull "$2"
+    docker compose exec ollama ollama pull "$2"
     ;;
   list)
-    docker-compose exec ollama ollama list
+    docker compose exec ollama ollama list
     ;;
   remove)
-    docker-compose exec ollama ollama rm "$2"
+    docker compose exec ollama ollama rm "$2"
     ;;
   info)
-    docker-compose exec ollama ollama show "$2"
+    docker compose exec ollama ollama show "$2"
     ;;
   *)
     echo "Usage: $0 {pull|list|remove|info} [model-name]"
