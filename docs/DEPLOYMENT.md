@@ -6,68 +6,42 @@ This guide covers deploying Nexus in different environments.
 
 ### Prerequisites
 
-- Docker Engine 20.10+ with `docker compose` plugin
-- Bash, curl, openssl, python3 (used by setup/install scripts)
-- (Optional) NVIDIA Container Toolkit for GPU support
+Use scripted setup/install flows instead of manual installation steps:
 
-### Basic Deployment
+```bash
+chmod +x quickstart.sh deploy/scripts/*.sh
+./deploy/scripts/install-host-deps.sh
+./deploy/scripts/preflight-check.sh
+```
+
+- `install-host-deps.sh` is interactive and prompts before any privileged package/runtime installation.
+- `preflight-check.sh` validates host tools/files/permissions.
 
 ### Guided bootstrap (recommended)
 
 ```bash
-chmod +x quickstart.sh deploy/scripts/*.sh
 ./quickstart.sh
 ```
 
-This path runs preflight checks, creates a secured `.env`, and verifies gateway readiness.
+This path runs preflight checks, creates a secured `.env`, starts the selected service profile, and verifies gateway readiness.
 
-1. **Clone the repository**
-
-```bash
-git clone https://github.com/gevanoff/nexus.git
-cd nexus
-```
-
-2. **Configure environment**
+### Alternative deployment wrappers
 
 ```bash
-cp .env.example .env
-# Edit .env and set GATEWAY_BEARER_TOKEN to a secure value
-nano .env
-```
-
-3. **Start services**
-
-```bash
-# Start all services
-docker compose up -d
-
-# Or start specific profile
-docker compose --profile full up -d
-```
-
-4. **Verify deployment**
-
-```bash
-# Check services are running
-docker compose ps
-
-# Test gateway health
-curl http://localhost:8800/health
-
-# Test with authentication
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:8800/v1/models
+./deploy/scripts/deploy.sh dev dev
+./deploy/scripts/remote-deploy.sh dev dev user@dev-host
 ```
 
 ## Deployment Scripts
 
+- `deploy/scripts/install-host-deps.sh`: interactive host dependency installer for Docker/Compose (+ optional NVIDIA runtime)
 - `quickstart.sh`: interactive setup/install flow for local environments
 - `deploy/scripts/preflight-check.sh`: validates dependencies, files, and script permissions
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: environment-aware local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd
+- `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from legacy ai-infra deployments
 
 ## Service Profiles
 

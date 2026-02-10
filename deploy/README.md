@@ -4,27 +4,21 @@ This directory provides per-service manifests for Docker Compose and containerd 
 
 ## Docker Compose
 
+Use the deployment wrappers instead of manual compose command sequences:
+
 ```bash
-# Create the shared network
-docker network create nexus
+./scripts/deploy.sh dev dev
+```
 
-# Start gateway + etcd
-cd deploy/docker-compose
+For remote hosts:
 
-docker compose -f gateway.yml up -d
+```bash
+./scripts/remote-deploy.sh dev dev user@dev-host
 ```
 
 ## containerd (nerdctl)
 
-```bash
-# Create the shared network
-nerdctl network create nexus
-
-# Start gateway + etcd
-cd deploy/containerd
-
-nerdctl compose -f gateway.yml up -d
-```
+Containerd manifests remain available in `deploy/containerd/`, but operational install/deploy guidance is script-first via `deploy/scripts/*.sh`.
 
 ## Setup and Deployment Scripts
 

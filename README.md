@@ -34,23 +34,22 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 - Bash, curl, openssl (used by setup scripts)
 - (Optional) NVIDIA Container Toolkit for GPU services
 
-### Recommended: Guided Setup Script
+### Recommended: Scripted Setup
 
-Use the interactive installer to run preflight checks, create `.env`, and bring the stack up safely:
+Use script entrypoints for install/bootstrap instead of manual setup sequences:
 
 ```bash
 chmod +x quickstart.sh deploy/scripts/*.sh
+./deploy/scripts/install-host-deps.sh
 ./quickstart.sh
 ```
 
-The quickstart flow automatically runs `deploy/scripts/preflight-check.sh` and validates key prerequisites before starting containers.
+- `install-host-deps.sh` is interactive and installs Docker/Docker Compose (+ optional NVIDIA runtime).
+- `quickstart.sh` runs preflight checks, creates `.env`, starts services, and verifies readiness.
 
-### Start the Stack
+### Day-2 Service Control
 
 ```bash
-# Start core services (gateway + ollama + etcd)
-docker compose up -d
-
 # Check service health
 docker compose ps
 
@@ -304,7 +303,7 @@ Nexus replaces the host-based `ai-infra` deployment with containers:
 | `/var/lib/gateway` | Docker volumes | Persistent data |
 | SSH + manual deploys | `docker compose up` | One command deploys |
 
-See [docs/MIGRATION.md](docs/MIGRATION.md) for detailed migration guide.
+See [docs/MIGRATION.md](docs/MIGRATION.md) for the scripted migration workflow (`deploy/scripts/migrate-from-ai-infra.sh`).
 
 ## Troubleshooting
 

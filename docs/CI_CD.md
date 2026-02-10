@@ -40,8 +40,10 @@ Ensure script execute permissions:
 chmod +x deploy/scripts/*.sh quickstart.sh
 ```
 
+- `deploy/scripts/install-host-deps.sh`: interactive host dependency installer for Docker/Compose (+ optional NVIDIA runtime).
 - `deploy/scripts/register-service.sh`: register a service in etcd.
 - `deploy/scripts/list-services.sh`: list registered services from etcd.
+- `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from ai-infra to Nexus.
 
 ## Dev Branch Deployment
 
