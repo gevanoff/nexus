@@ -4,7 +4,7 @@ The Nexus Gateway is the central API gateway that provides:
 - OpenAI-compatible endpoints for AI services
 - Authentication and authorization
 - Request routing to backend services
-- Service discovery via `/v1/metadata`
+- Service discovery via `/v1/metadata` and `/v1/descriptor`
 - Health monitoring and metrics
 
 ## Features
@@ -23,11 +23,18 @@ The Nexus Gateway is the central API gateway that provides:
 - `GET /health` - Liveness check
 - `GET /readyz` - Readiness check with backend validation
 - `GET /v1/metadata` - Service capabilities and endpoint discovery
+- `GET /v1/descriptor` - Enhanced descriptor (response types + UI placement hints)
 
 ### OpenAI-Compatible Endpoints
 
 - `GET /v1/models` - List available models
 - `POST /v1/chat/completions` - Create chat completion (streaming supported)
+
+### Dynamic Backend Catalog/UI Endpoints
+
+- `GET /v1/registry` - List service records from the gateway registry
+- `GET /v1/backends/catalog` - Return backend descriptors and endpoint/capability contracts
+- `GET /v1/ui/layout` - Return gateway-generated UI layout (Chat primary + specialized backend panels)
 
 ## Configuration
 
@@ -48,6 +55,13 @@ OBSERVABILITY_PORT=8801
 # Backend services
 OLLAMA_BASE_URL=http://ollama:11434
 DEFAULT_BACKEND=ollama
+
+# Service discovery (etcd)
+ETCD_ENABLED=true
+ETCD_URL=http://etcd:2379
+ETCD_PREFIX=/nexus/services/
+ETCD_POLL_INTERVAL=15
+ETCD_SEED_FROM_ENV=true
 
 # Features
 MEMORY_V2_ENABLED=true
@@ -137,6 +151,20 @@ curl -X POST http://localhost:8800/v1/chat/completions \
 
 ```bash
 curl http://localhost:8800/v1/metadata
+```
+
+### Backend Catalog
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  http://localhost:8800/v1/backends/catalog
+```
+
+### Dynamic UI Layout
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  http://localhost:8800/v1/ui/layout
 ```
 
 ## Extension Points

@@ -33,6 +33,7 @@ Nexus is an extensible AI-orchestration infrastructure built on containerized mi
   - Resource requirements and limits
 - Gateway and clients can dynamically discover and integrate new services
 - No hardcoded service configurations required
+- Backends may additionally expose `/v1/descriptor` for enhanced contract metadata (response types, UI placement hints, and endpoint affordances)
 
 ## Core Components
 
@@ -44,6 +45,10 @@ Central API gateway that:
 - Provides request logging and metrics
 - Implements policy-based routing
 - Manages tool bus for agent operations
+- Builds backend catalogs/UI layout hints by reading backend descriptors
+
+### UI Layer
+The UI should be deployed as its own container in production to keep the gateway focused on API routing, simplify scaling, and reduce the blast radius of UI-related vulnerabilities. For local development, a lightweight UI can be served by the gateway if needed, but multi-host deployments should keep UI and gateway separate.
 
 ### LLM Services
 Containerized language model inference engines:
@@ -101,6 +106,28 @@ Domain-specific capabilities:
 │• MLX    │ │• Comfy │ │• ASR   │ │• Video Gen │
 └─────────┘ └────────┘ └────────┘ └────────────┘
 ```
+
+### Multi-Host Deployment Model
+
+Nexus is designed to run in a multi-host environment where containers are distributed across multiple machines. The gateway remains the primary ingress point, while backend services may live on separate hosts. In this model:
+
+- **Gateway routing targets remote backends** via hostnames/IPs on a private network or VPN.
+- **Service discovery** can start as static configuration (env or config file) and later evolve to a registry (Consul/etcd).
+- **Trust boundaries** should be explicit: prefer mTLS for internal service calls if networks are shared.
+- **Latency-aware routing** may be required to keep inference close to data or to prioritize specific GPU hosts.
+
+Example topology (illustrative, not prescriptive):
+
+```
+Client → Gateway (ai2) → Ollama (ai1) → Images (ada2)
+```
+
+Key considerations:
+
+- **Network overlay**: WireGuard/Tailscale or a VPC/VLAN to allow stable service addressing across hosts.
+- **Firewalling**: restrict backend ports to trusted hosts only; expose the gateway publicly.
+- **Configuration**: keep host assignments outside the repo (e.g., via runtime config or environment overrides).
+- **Observability**: centralize logs/metrics with correlation IDs across hosts.
 
 ### Service Communication Pattern
 1. **Client → Gateway**: HTTPS with bearer token authentication
@@ -160,6 +187,7 @@ Domain-specific capabilities:
 - Gateway discovers services by querying metadata endpoints
 - Dynamic service addition without gateway restarts
 - Capability-based routing (e.g., only route image requests to services advertising `domains: ["image"]`)
+- **Etcd-backed discovery**: services register their base URLs in etcd (`/nexus/services/<name>`), and the gateway polls etcd for updates
 
 ## Observability
 

@@ -194,8 +194,15 @@ nexus/
 ### Completed ✅
 - [x] Core architecture design
 - [x] Docker Compose infrastructure
+- [x] Per-service Docker Compose and containerd manifests
+- [x] Dev/prod deployment script scaffolding and environment templates
+- [x] CI/CD workflow scaffolding and remote deploy script
+- [x] Registry convenience scripts for etcd
+- [x] Preflight checker for implicit host/runtime requirements
+- [x] Dynamic backend descriptor catalog and UI layout endpoints
 - [x] Gateway service (minimal implementation)
 - [x] Service discovery specification
+- [x] Etcd-backed service discovery (gateway polling + registry seeding)
 - [x] API standardization
 - [x] Ollama integration
 - [x] Health check system
@@ -215,6 +222,30 @@ nexus/
 - [ ] Integration tests
 - [ ] Performance benchmarks
 
+## Distributed Deployment Notes
+
+- Nexus expects the gateway to be the primary ingress, with backends optionally running on separate hosts.
+- Remote backends should be configured via runtime configuration (env/config file), not hardcoded in git.
+- Use a private network or VPN for host-to-host traffic; prefer mTLS for internal service calls.
+
+## Next Session Priorities (Handoff)
+
+### Review First
+- `ideas.md` for open questions and unresolved decisions.
+- `docs/DEPLOYMENT.md` for multi-host bootstrapping guidance.
+- `ARCHITECTURE.md` for network and service-discovery assumptions.
+
+### Top Priorities
+1. **Define a minimal service registry strategy** (static config vs. Consul/etcd).
+2. **Specify gateway configuration format** for remote backends (env or config file schema).
+3. **Decide on the internal security posture** (mTLS required vs. private network only).
+4. **Pick the first “real” backend** to implement after gateway + Ollama.
+
+### Open Questions
+- What is the preferred overlay network (WireGuard/Tailscale/VPC)?
+- Which metadata fields are mandatory for scheduling/routing (GPU memory, concurrency, region)?
+- How should host capacity be reported and enforced?
+
 ## Next Steps
 
 ### For Developers
@@ -232,6 +263,9 @@ nexus/
    - Use `services/template/` as starting point
    - Follow `SERVICE_API_SPECIFICATION.md`
    - Add to `docker-compose.yml`
+
+4. **Review replication plan**
+   - Use `docs/REPLICATION_PLAN.md` to map remaining gateway/ai-infra parity gaps.
 
 ### For Users
 

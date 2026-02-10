@@ -9,6 +9,7 @@ Each service is:
 - **Discoverable**: Exposes `/v1/metadata` for capability advertisement
 - **Observable**: Provides `/health` and `/readyz` endpoints
 - **Standardized**: Follows OpenAI API conventions where applicable
+- **Registrable**: Base URLs are published to etcd for multi-host discovery
 
 ## Available Services
 
@@ -68,6 +69,8 @@ Each service is:
 │   LLM    │ │ Gen  │ │ Audio  │
 └──────────┘ └──────┘ └────────┘
 ```
+
+For multi-host rollouts, use the per-service manifests in `deploy/` to run individual services on separate hosts.
 
 ## Required Endpoints
 

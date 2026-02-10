@@ -1,5 +1,7 @@
 # Environment configuration
 .env
+deploy/env/.env.dev
+deploy/env/.env.prod
 
 # Python
 __pycache__/

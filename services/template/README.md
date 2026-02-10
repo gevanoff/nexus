@@ -112,6 +112,17 @@ my-service:
 
 The gateway will auto-discover your service via `/v1/metadata` if configured properly.
 
+For multi-host deployments, register the service in etcd:
+
+```bash
+curl -X POST http://etcd:2379/v3/kv/put \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "L25leHVzL3NlcnZpY2VzL215LXNlcnZpY2U=",
+    "value": "eyJuYW1lIjoibXktc2VydmljZSIsImJhc2VfdXJsIjoiaHR0cDovL215LXNlcnZpY2U6OTAwMCIsIm1ldGFkYXRhX3VybCI6Imh0dHA6Ly9teS1zZXJ2aWNlOjkwMDAvdjEvbWV0YWRhdGEifQ=="
+  }'
+```
+
 Add backend URL to gateway environment:
 
 ```yaml

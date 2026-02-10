@@ -9,6 +9,18 @@ All services in the Nexus infrastructure must expose a common set of endpoints f
 - **Service discovery**: Capability advertisement via metadata endpoint
 - **Operational APIs**: Domain-specific functionality following AI industry standards
 
+Nexus also supports an **etcd service registry** for multi-host deployments. Services should register their base URLs under `/nexus/services/<service-name>` so the gateway can discover remote backends.
+
+Example registry payload (stored as JSON value in etcd):
+
+```json
+{
+  "name": "ollama",
+  "base_url": "http://ollama:11434",
+  "metadata_url": "http://ollama:11434/v1/metadata"
+}
+```
+
 ## Required Endpoints
 
 ### 1. Health Check (`/health`)
@@ -131,6 +143,41 @@ curl http://service:8080/readyz
     "memory": "string (optional, e.g., '4Gi')",
     "gpu": "string (optional, e.g., 'nvidia-gpu')",
     "gpu_memory": "string (optional, e.g., '16Gi')"
+  }
+}
+```
+
+### 4. Enhanced Descriptor Endpoint (`/v1/descriptor`) (recommended)
+
+**Purpose**: Advertise endpoint contracts, response types, and UI placement hints for dynamic gateway-driven UI generation.
+
+**Method**: `GET`
+
+**Response**: `200 OK` with JSON descriptor
+
+**Descriptor Extensions**:
+
+- `response_types`: media types by mode (e.g., JSON, SSE)
+- `ui_navigation`: placement hints for where this backend appears in the unified UI
+
+**Example**:
+
+```json
+{
+  "schema_version": "v1",
+  "service": {"name": "ollama", "version": "0.1.25"},
+  "capabilities": {"domains": ["chat"], "streaming": true},
+  "endpoints": [{"path": "/v1/chat/completions", "method": "POST", "operation_id": "chat.completions.create"}],
+  "response_types": {
+    "default": "application/json",
+    "streaming": "text/event-stream"
+  },
+  "ui_navigation": {
+    "placement": "side-panel",
+    "group": "tools"
+  },
+  "ui": {
+    "options": []
   }
 }
 ```
