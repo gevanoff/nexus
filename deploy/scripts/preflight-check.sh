@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+
+# If someone runs this via `sh` (or another non-bash shell), fail fast with a clear message.
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "[FAIL] This script must be run with bash (not sh/PowerShell)."
+  echo "[INFO] On Windows, run it from WSL: ./deploy/scripts/preflight-check.sh"
+  exit 2
+fi
+
 set -euo pipefail
 umask 077
 

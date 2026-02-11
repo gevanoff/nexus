@@ -6,12 +6,14 @@ This guide helps you migrate from the host-based `ai-infra` deployment to the co
 
 Nexus replaces the `ai-infra` macOS/Linux host-based deployment with a unified Docker container approach.
 
+Operator environment: **macOS/Linux**. If you develop on Windows, run Nexus scripts from **WSL** and use SSH from WSL when targeting Linux hosts.
+
 ### Key Differences
 
 | Aspect | ai-infra | Nexus |
 |--------|----------|-------|
 | **Deployment** | launchd/systemd scripts | Docker Compose |
-| **Platform** | macOS/Linux specific | Any Docker platform |
+| **Platform** | macOS/Linux specific | Any Docker platform (operated on macOS/Linux) |
 | **Installation** | Manual host setup | Container images |
 | **Networking** | Host ports + SSH | Docker networks |
 | **Data** | `/var/lib/*/` | Host bind mounts under `./.runtime/` |

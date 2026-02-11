@@ -30,7 +30,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ### Prerequisites
 
-- Docker Engine with the `docker compose` plugin (Docker Desktop on Windows/macOS)
+- Operator environment: **macOS/Linux hosts** with Docker Engine and the `docker compose` plugin
+- Development on Windows: use **WSL2 (Ubuntu)** + Docker Desktop WSL integration; run Nexus scripts from within WSL
 - Bash + curl + openssl (used by setup scripts)
 - (Optional) NVIDIA Container Toolkit for GPU services
 

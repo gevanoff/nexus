@@ -405,7 +405,7 @@ ns_install_docker_windows() {
   if ns_have_cmd powershell.exe; then
     if powershell.exe -NoProfile -Command "Get-Command winget -ErrorAction SilentlyContinue | Out-Null"; then
       powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements"
-      ns_print_warn "Docker Desktop install may require reboot/sign-out. Start Docker Desktop before continuing."
+      ns_print_warn "Windows dev note: Docker Desktop install may require reboot/sign-out. Start Docker Desktop before continuing."
       return 0
     fi
     ns_print_error "winget not found. Install Docker Desktop: https://docs.docker.com/desktop/"
@@ -454,13 +454,14 @@ ns_ensure_prereqs() {
       ns_confirm "Attempt to install missing tools via Homebrew?" && ns_install_prereqs_macos "$need_docker" "$need_curl" "$need_openssl" "$need_git" "$need_python" || true
       ;;
     windows)
+      ns_print_warn "Windows support here is development-only. For deployment/operations, use macOS/Linux hosts."
       if [[ "$need_docker" == "true" ]] && ! ns_have_cmd docker; then
-        ns_confirm "Install Docker Desktop via winget?" && ns_install_docker_windows || true
+        ns_confirm "Install Docker Desktop via winget? (Windows dev only)" && ns_install_docker_windows || true
       fi
       ;;
     wsl)
       if [[ "$need_docker" == "true" ]] && ! ns_have_cmd docker; then
-        ns_print_error "Docker not found. In WSL, install Docker Desktop on Windows and enable WSL integration: https://docs.docker.com/desktop/wsl/"
+        ns_print_error "Docker not found. In WSL (Windows dev), install Docker Desktop on Windows and enable WSL integration: https://docs.docker.com/desktop/wsl/"
       fi
       ;;
     *)

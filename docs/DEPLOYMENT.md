@@ -4,6 +4,8 @@ This guide covers deploying Nexus in different environments.
 
 ## Quick Start (Development)
 
+Nexus is operated and deployed on **macOS/Linux** hosts. If you develop on Windows, use **WSL2 (Ubuntu)** and run these scripts inside WSL (you can SSH to Linux hosts from WSL for remote deploys).
+
 ### Prerequisites
 
 Use scripted setup/install flows instead of manual installation steps:

@@ -80,5 +80,6 @@ Create `deploy/env/.env.prod` by copying from `./.env.example` (see `deploy/env/
 ## Notes
 
 - The deploy scripts assume the host has docker compose installed.
+- Nexus is operated on macOS/Linux hosts. If you develop on Windows, run deploy scripts and SSH from within WSL.
 - Use an external registry and `docker compose pull` if you want to avoid building on hosts.
 - Gate production deploys behind manual approval and/or a protected branch policy.
