@@ -21,6 +21,15 @@ need_cmd() {
   command -v "$cmd" >/dev/null 2>&1
 }
 
+require_cmd() {
+  local cmd="$1"
+  if ! need_cmd "$cmd"; then
+    red "Required command missing: $cmd"
+    red "Please install $cmd before running this script."
+    exit 1
+  fi
+}
+
 install_linux_docker() {
   if need_cmd docker; then
     green "Docker already installed: $(docker --version 2>/dev/null || true)"
@@ -144,6 +153,10 @@ install_nvidia_runtime() {
 main() {
   echo "Nexus host dependency installer"
   echo "This script is interactive and may run privileged package installation commands."
+
+  # Validate required commands
+  require_cmd curl
+  require_cmd mktemp
 
   if [[ "${OSTYPE:-}" == linux* ]]; then
     install_linux_docker

@@ -39,8 +39,8 @@ This path runs preflight checks, creates a secured `.env`, starts the selected s
 - `deploy/scripts/preflight-check.sh`: validates dependencies, files, and script permissions
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: environment-aware local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
-- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd
-- `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd
+- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd (requires `python3`)
+- `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd (requires `python3`)
 - `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from legacy ai-infra deployments
 
 ## Service Profiles
