@@ -78,6 +78,13 @@ if docker compose version >/dev/null 2>&1; then
   ok "Docker Compose available"
 else
   fail "Docker Compose unavailable"
+  if [[ "$platform" == "macos" ]]; then
+    if ns_have_cmd docker-compose; then
+      warn "macOS: 'docker-compose' exists but 'docker compose' plugin not found. If installed via Homebrew, link the plugin into ~/.docker/cli-plugins (or set cliPluginsExtraDirs)."
+    else
+      warn "macOS: install the Compose v2 plugin (Homebrew: 'brew install docker-compose'), then ensure docker can find it (e.g. ~/.docker/cli-plugins/docker-compose)."
+    fi
+  fi
 fi
 
 for path in services/gateway/Dockerfile docker-compose.yml; do

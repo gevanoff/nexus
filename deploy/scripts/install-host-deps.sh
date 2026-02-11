@@ -109,6 +109,25 @@ install_macos_docker() {
   if confirm "Install Colima (headless) + docker CLI + docker compose plugin via Homebrew?"; then
     brew install colima docker docker-compose
     green "Colima + docker CLI installed."
+
+    # Homebrew's docker-compose formula installs the Compose v2 plugin under:
+    #   $HOMEBREW_PREFIX/lib/docker/cli-plugins/docker-compose
+    # Docker looks in ~/.docker/cli-plugins by default, so we symlink it there.
+    local brew_prefix plugin_src plugin_dst
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+    if [[ -n "${brew_prefix:-}" ]]; then
+      plugin_src="${brew_prefix}/lib/docker/cli-plugins/docker-compose"
+      plugin_dst="${HOME}/.docker/cli-plugins/docker-compose"
+      if [[ -x "$plugin_src" ]]; then
+        mkdir -p "${HOME}/.docker/cli-plugins"
+        ln -sf "$plugin_src" "$plugin_dst" 2>/dev/null || true
+        green "Docker Compose plugin linked: $plugin_dst"
+      else
+        yellow "Docker Compose plugin not found at: $plugin_src"
+        yellow "If 'docker compose' is missing later, see: https://formulae.brew.sh/formula/docker-compose"
+      fi
+    fi
+
     if confirm "Start Colima now (recommended)?"; then
       colima start
       green "Colima started. 'docker info' should work now."
