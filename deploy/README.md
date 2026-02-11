@@ -37,10 +37,28 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 
+## Recommended Sequence
+
+Local (single host):
+
+1. `../quickstart.sh` (recommended)
+
+Manual local alternative:
+
+1. `./scripts/preflight-check.sh`
+2. `cp ../.env.example ../.env` (edit as needed)
+3. `docker compose up -d`
+
+Remote host deploy:
+
+1. Clone this repo to `/opt/nexus` on the remote host
+2. Run `./scripts/remote-deploy.sh <dev|prod> <branch> <user@host>` from your local machine
+
 ## Notes
 
 - These manifests assume a shared `nexus` network for multi-host deployments.
 - Update base URLs (e.g., `OLLAMA_BASE_URL`) to point to remote services when running across hosts.
+- Persistence uses host bind mounts under `../.runtime/` (including gateway RO config at `../.runtime/gateway/config`).
 - The UI is intentionally separated from the gateway for production deployments; keep it as a standalone container when it is implemented.
 - For branch-based deploys, see `./deploy/scripts/deploy.sh` and `./deploy/scripts/remote-deploy.sh` (invoked from repo root).
 - For etcd convenience, use `./deploy/scripts/register-service.sh` and `./deploy/scripts/list-services.sh` (invoked from repo root).

@@ -220,7 +220,7 @@ Single-command startup of full stack for development.
 
 ### Production Deployment
 - Docker Compose for simpler deployments
-- Kubernetes manifests for orchestrated environments
+- For multi-host rollouts, use the per-service manifests under `deploy/` (Docker Compose or nerdctl/containerd)
 - Service-specific resource requirements in metadata
 - Horizontal scaling for stateless services
 

@@ -4,8 +4,8 @@ services:
   # Gateway Service - Central API gateway
   gateway:
     build:
-      context: ./services/gateway
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: nexus/services/gateway/Dockerfile
     container_name: nexus-gateway
     ports:
       - "${GATEWAY_PORT:-8800}:8800"
@@ -40,19 +40,25 @@ services:
       - MAX_REQUEST_BYTES=10485760
       
       # Data persistence paths (inside container)
-      - MEMORY_DB_PATH=/data/memory.sqlite
-      - USER_DB_PATH=/data/users.sqlite
-      - UI_IMAGE_DIR=/data/ui_images
+      - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
+      - USER_DB_PATH=/var/lib/gateway/data/users.sqlite
+      - UI_IMAGE_DIR=/var/lib/gateway/data/ui_images
+      - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+      - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
       
       # Tool bus configuration
       - TOOLS_LOG_MODE=ndjson
-      - TOOLS_LOG_PATH=/data/tools/invocations.jsonl
+      - TOOLS_LOG_PATH=/var/lib/gateway/data/tools/invocations.jsonl
+      - TOOLS_LOG_DIR=/var/lib/gateway/data/tools
+      - TOOLS_SHELL_CWD=/var/lib/gateway/data/tools_work
+      - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
       
       # Memory v2
       - MEMORY_V2_ENABLED=true
     volumes:
-      - gateway_data:/data
-      - ./services/gateway/app:/app
+      - ./.runtime/gateway/data:/var/lib/gateway/data
+      - ./.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ./.env:/var/lib/gateway/app/.env:ro
     depends_on:
       - ollama
       - etcd
@@ -76,7 +82,7 @@ services:
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_MODELS=/root/.ollama/models
     volumes:
-      - ollama_data:/root/.ollama
+      - ./.runtime/ollama:/root/.ollama
     networks:
       - nexus
     restart: unless-stopped
@@ -103,22 +109,18 @@ services:
     ports:
       - "${IMAGES_PORT:-7860}:7860"
     environment:
-      - HOST=0.0.0.0
-      - PORT=7860
-      - INVOKEAI_ROOT=/data
+      # OpenAI Images API shim (InvokeAI-compatible)
+      - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
+      - SHIM_PORT=7860
+      # Optional: only used when SHIM_MODE=invokeai_queue
+      - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
     volumes:
-      - images_data:/data
-      - images_models:/data/models
+      - ./.runtime/images/data:/data
+      - ./.runtime/images/models:/data/models
     networks:
       - nexus
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # Note: GPU is only required if/when you run a real image backend.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
       interval: 30s
@@ -138,10 +140,15 @@ services:
     ports:
       - "${TTS_PORT:-9940}:9940"
     environment:
-      - HOST=0.0.0.0
-      - PORT=9940
+      - POCKET_TTS_HOST=0.0.0.0
+      - POCKET_TTS_PORT=9940
+      - POCKET_TTS_BACKEND=${POCKET_TTS_BACKEND:-auto}
+      - POCKET_TTS_MODEL_NAME=${POCKET_TTS_MODEL_NAME:-pocket-tts}
+      - POCKET_TTS_MODEL_PATH=${POCKET_TTS_MODEL_PATH:-}
+      - POCKET_TTS_VOICE=${POCKET_TTS_VOICE:-alba}
+      - POCKET_TTS_COMMAND=${POCKET_TTS_COMMAND:-pocket-tts}
     volumes:
-      - tts_data:/data
+      - ./.runtime/tts/data:/data
     networks:
       - nexus
     restart: unless-stopped
@@ -179,7 +186,7 @@ services:
       - new
       - --enable-v2
     volumes:
-      - etcd_data:/etcd-data
+      - ./.runtime/etcd/data:/etcd-data
     networks:
       - nexus
     ports:
@@ -193,16 +200,4 @@ networks:
       config:
         - subnet: 172.28.0.0/16
 
-volumes:
-  gateway_data:
-    driver: local
-  ollama_data:
-    driver: local
-  images_data:
-    driver: local
-  images_models:
-    driver: local
-  tts_data:
-    driver: local
-  etcd_data:
-    driver: local
+volumes: {}

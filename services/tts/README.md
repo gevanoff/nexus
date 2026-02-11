@@ -1,167 +1,64 @@
-# Text-to-Speech Service
+# TTS Service
 
-Text-to-speech synthesis service providing OpenAI-compatible audio generation API.
+OpenAI-compatible text-to-speech backend.
 
 ## Overview
 
-This service provides text-to-speech synthesis capabilities. It exposes an OpenAI-compatible `/v1/audio/speech` endpoint.
+This service is implemented by porting the **Pocket TTS FastAPI shim** from `ai-infra/services/pocket-tts`.
+
+It exposes an OpenAI-compatible `POST /v1/audio/speech` endpoint that the gateway can proxy.
 
 ## Status
 
-🚧 **Planned** - This service is planned but not yet implemented.
+✅ Implemented (Pocket TTS shim)
 
-## Planned Features
+## Endpoints
 
-- **Multiple Voices**: Various voice options and languages
-- **OpenAI Compatible**: Drop-in replacement for OpenAI TTS API
-- **Streaming**: Real-time audio streaming
-- **Multiple Formats**: MP3, WAV, OGG, FLAC support
-- **Voice Cloning**: Optional voice cloning capabilities
-- **Speed Control**: Adjustable speech rate
+- `GET /health`
+- `GET /readyz`
+- `GET /v1/models`
+- `POST /v1/audio/speech`
+- `GET /v1/metadata`
 
-## Planned Configuration
+## Configuration
+
+- Env template: `env/pocket-tts.env.example`
+- Primary knobs:
+  - `POCKET_TTS_BACKEND=auto|python|command`
+  - `POCKET_TTS_COMMAND=pocket-tts`
+  - `POCKET_TTS_MODEL_PATH=`
+  - `POCKET_TTS_VOICE=alba`
+
+## Quick test
+
+```bash
+curl -sS http://localhost:9940/health
+curl -sS http://localhost:9940/v1/models
+
+curl -sS -X POST http://localhost:9940/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"input":"hello","voice":"alba","response_format":"wav"}' \
+  --output out.wav
+```
+
+## Docker Compose (current)
+
+Nexus persists TTS state on the host under `nexus/.runtime/tts/` and bind-mounts it into the container.
 
 ```yaml
 tts:
   build:
     context: ./services/tts
+    dockerfile: Dockerfile
   ports:
     - "9940:9940"
   environment:
-    - BACKEND=piper
-    - VOICES_PATH=/data/voices
-    - OUTPUT_PATH=/data/outputs
+    - POCKET_TTS_HOST=0.0.0.0
+    - POCKET_TTS_PORT=9940
+    - POCKET_TTS_BACKEND=${POCKET_TTS_BACKEND:-auto}
   volumes:
-    - tts_data:/data
+    - ./.runtime/tts/data:/data
 ```
-
-## Planned API
-
-### Generate Speech
-
-```bash
-curl -X POST http://localhost:8800/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "input": "Hello, this is a test of the text to speech system.",
-    "voice": "nova",
-    "model": "tts-1",
-    "response_format": "mp3",
-    "speed": 1.0
-  }' \
-  --output speech.mp3
-```
-
-Response: Audio file (binary)
-
-## Planned Backends
-
-### Piper
-- **Pros**: Fast, lightweight, good quality
-- **Cons**: Limited voice selection
-- **Resource Usage**: Low (CPU-only)
-
-### Coqui TTS
-- **Pros**: High quality, voice cloning
-- **Cons**: Heavier resource usage
-- **Resource Usage**: Medium (GPU optional)
-
-### Bark
-- **Pros**: Very natural, emotion control
-- **Cons**: Slower generation
-- **Resource Usage**: High (GPU recommended)
-
-## Planned Voices
-
-### Standard Voices
-- `alloy` - Neutral, balanced
-- `echo` - Male, clear
-- `fable` - Female, expressive
-- `onyx` - Male, deep
-- `nova` - Female, warm
-- `shimmer` - Female, soft
-
-### Languages
-- English (US, UK, Australian)
-- Spanish
-- French
-- German
-- Chinese
-- Japanese
-- And more...
-
-## Planned Features
-
-### Voice Parameters
-```json
-{
-  "voice": "nova",
-  "speed": 1.0,        // 0.25 to 4.0
-  "pitch": 0,          // -10 to 10
-  "volume": 1.0,       // 0.0 to 1.0
-  "language": "en-US"
-}
-```
-
-### Streaming Response
-```bash
-curl -X POST http://localhost:8800/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "input": "Long text that should be streamed...",
-    "voice": "nova",
-    "stream": true
-  }' \
-  --no-buffer --output -
-```
-
-## Implementation TODO
-
-- [ ] Create Dockerfile
-- [ ] Implement FastAPI wrapper
-- [ ] Add TTS backend integration (Piper, Coqui, or Bark)
-- [ ] Add health and metadata endpoints
-- [ ] Add voice management
-- [ ] Add audio format conversion
-- [ ] Add streaming support
-- [ ] Add voice cloning (optional)
-- [ ] Add SSML support (optional)
-- [ ] Add usage metrics
-
-## Requirements
-
-When implemented, this service will require:
-
-- CPU: 2+ cores
-- RAM: 4GB+ (8GB+ for voice cloning)
-- Disk: 10GB+ for voice models
-- Optional: GPU for faster generation
-
-## Audio Formats
-
-### Supported Formats
-- **MP3**: Default, widely compatible
-- **WAV**: Uncompressed, highest quality
-- **OGG**: Good compression, open format
-- **FLAC**: Lossless compression
-- **AAC**: Modern, efficient
-
-### Sample Rates
-- 16kHz - Phone quality
-- 22kHz - Standard quality
-- 44.1kHz - CD quality
-- 48kHz - Professional quality
-
-## Use Cases
-
-- **Audiobook Generation**: Convert books to audio
-- **Accessibility**: Screen readers, assistive technology
-- **Voice Assistants**: Conversational interfaces
-- **Content Creation**: Narration for videos
-- **Announcements**: Public announcements, notifications
-- **Language Learning**: Pronunciation examples
 
 ## Contributing
 

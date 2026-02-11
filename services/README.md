@@ -35,14 +35,14 @@ Each service is:
 - **Purpose**: Text-to-image generation
 - **Port**: 7860
 - **Capabilities**: Image generation (SDXL, DALL-E style)
-- **Status**: 📋 Planned
+- **Status**: ✅ Implemented (shim; stub-by-default)
 - **Documentation**: [images/README.md](images/README.md)
 
 #### TTS (`tts/`)
 - **Purpose**: Text-to-speech synthesis
 - **Port**: 9940
 - **Capabilities**: Audio generation from text
-- **Status**: 📋 Planned
+- **Status**: ✅ Implemented (Pocket TTS shim)
 - **Documentation**: [tts/README.md](tts/README.md)
 
 ### Development
@@ -402,8 +402,8 @@ docker compose up -d
 docker compose up -d --scale ollama=3
 ```
 
-### Kubernetes
-See `k8s/` directory for Kubernetes manifests.
+### Multi-host / Alternative Runtimes
+See `deploy/` for per-service Docker Compose and containerd (nerdctl) manifests.
 
 ## Troubleshooting
 

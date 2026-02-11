@@ -9,10 +9,11 @@ services:
     ports:
       - "${TTS_PORT:-9940}:9940"
     environment:
-      - HOST=0.0.0.0
-      - PORT=9940
+      - POCKET_TTS_HOST=0.0.0.0
+      - POCKET_TTS_PORT=9940
+      - POCKET_TTS_BACKEND=${POCKET_TTS_BACKEND:-auto}
     volumes:
-      - tts_data:/data
+      - ../../.runtime/tts/data:/data
     networks:
       - nexus
     restart: unless-stopped
@@ -23,5 +24,4 @@ networks:
     name: nexus
 
 volumes:
-  tts_data:
-    driver: local
+  {}

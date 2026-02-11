@@ -8,52 +8,53 @@ services:
       - "${DEV_OBSERVABILITY_PORT:-18801}:8801"
     environment:
       - GATEWAY_BEARER_TOKEN=${DEV_GATEWAY_BEARER_TOKEN:-dev-change-me}
+      - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+      - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+      - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
     volumes:
-      - gateway_data_dev:/data
+      - ./.runtime/gateway-dev/data:/var/lib/gateway/data
+      - ./.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ../gateway/app:/var/lib/gateway/app
+      - ../gateway/tools:/var/lib/gateway/tools
 
   ollama:
     container_name: nexus-ollama-dev
     ports:
       - "${DEV_OLLAMA_PORT:-11435}:11434"
     volumes:
-      - ollama_data_dev:/root/.ollama
+      - ./.runtime/ollama-dev:/root/.ollama
 
   images:
     container_name: nexus-images-dev
     ports:
       - "${DEV_IMAGES_PORT:-17860}:7860"
+    environment:
+      - SHIM_MODE=${DEV_IMAGES_SHIM_MODE:-stub}
+      - SHIM_PORT=7860
     volumes:
-      - images_data_dev:/data
-      - images_models_dev:/data/models
+      - ./.runtime/images-dev/data:/data
+      - ./.runtime/images-dev/models:/data/models
 
   tts:
     container_name: nexus-tts-dev
     ports:
       - "${DEV_TTS_PORT:-19940}:9940"
+    environment:
+      - POCKET_TTS_HOST=0.0.0.0
+      - POCKET_TTS_PORT=9940
+      - POCKET_TTS_BACKEND=${DEV_POCKET_TTS_BACKEND:-auto}
     volumes:
-      - tts_data_dev:/data
+      - ./.runtime/tts-dev/data:/data
 
   etcd:
     container_name: nexus-etcd-dev
     ports:
       - "${DEV_ETCD_PORT:-12379}:2379"
     volumes:
-      - etcd_data_dev:/etcd-data
+      - ./.runtime/etcd-dev/data:/etcd-data
 
 networks:
   nexus:
     name: nexus-dev
 
-volumes:
-  gateway_data_dev:
-    driver: local
-  ollama_data_dev:
-    driver: local
-  images_data_dev:
-    driver: local
-  images_models_dev:
-    driver: local
-  tts_data_dev:
-    driver: local
-  etcd_data_dev:
-    driver: local
+volumes: {}

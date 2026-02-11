@@ -9,12 +9,12 @@ services:
     ports:
       - "${IMAGES_PORT:-7860}:7860"
     environment:
-      - HOST=0.0.0.0
-      - PORT=7860
-      - INVOKEAI_ROOT=/data
+      - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
+      - SHIM_PORT=7860
+      - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
     volumes:
-      - images_data:/data
-      - images_models:/data/models
+      - ../../.runtime/images/data:/data
+      - ../../.runtime/images/models:/data/models
     networks:
       - nexus
     restart: unless-stopped
@@ -25,7 +25,4 @@ networks:
     name: nexus
 
 volumes:
-  images_data:
-    driver: local
-  images_models:
-    driver: local
+  {}
