@@ -55,6 +55,7 @@ check_cmd_optional() {
 }
 
 echo "Nexus preflight checks"
+platform="$(ns_detect_platform)"
 check_cmd docker "Docker"
 check_cmd curl "curl"
 check_cmd_optional openssl "openssl"
@@ -64,6 +65,13 @@ if docker info >/dev/null 2>&1; then
   ok "Docker daemon reachable"
 else
   fail "Docker daemon not reachable"
+  if [[ "$platform" == "macos" ]]; then
+    if ns_have_cmd colima; then
+      warn "macOS: if using Colima, start it with: colima start"
+    else
+      warn "macOS: start your Docker backend (Colima or Docker Desktop)"
+    fi
+  fi
 fi
 
 if docker compose version >/dev/null 2>&1; then

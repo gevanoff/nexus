@@ -101,13 +101,30 @@ install_macos_docker() {
     exit 1
   fi
 
-  if ! confirm "Install Docker Desktop with Homebrew cask?"; then
-    yellow "Skipping Docker Desktop installation."
+  echo
+  yellow "macOS note: containers require a Linux VM on macOS."
+  yellow "For headless hosts, we recommend Colima (CLI-managed)."
+  echo
+
+  if confirm "Install Colima (headless) + docker CLI + docker compose plugin via Homebrew?"; then
+    brew install colima docker docker-compose
+    green "Colima + docker CLI installed."
+    if confirm "Start Colima now (recommended)?"; then
+      colima start
+      green "Colima started. 'docker info' should work now."
+    else
+      yellow "Start Colima later with: colima start"
+    fi
     return
   fi
 
-  brew install --cask docker
-  green "Docker Desktop installed. Start Docker Desktop manually before continuing."
+  if confirm "Install Docker Desktop with Homebrew cask instead?"; then
+    brew install --cask docker
+    green "Docker Desktop installed. Start Docker Desktop manually before continuing."
+    return
+  fi
+
+  yellow "Skipping Docker installation on macOS."
 }
 
 install_nvidia_runtime() {

@@ -159,7 +159,11 @@ sudo sh get-docker.sh
 sudo usermod -aG docker $USER
 
 # macOS
-# Install Docker Desktop from docker.com
+# Headless option (recommended on servers): Colima
+#   brew install colima docker docker-compose
+#   colima start
+# Alternative: Docker Desktop
+#   https://docs.docker.com/desktop/
 
 # Log out and back in for group changes to take effect
 ```

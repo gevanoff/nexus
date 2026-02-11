@@ -390,15 +390,22 @@ ns_install_prereqs_macos() {
     return 1
   fi
 
-  [[ "$need_docker" == "true" ]] && (brew install --cask docker || true)
+  if [[ "$need_docker" == "true" ]]; then
+    # macOS runs Linux containers inside a VM.
+    # Default to Colima for headless hosts; set NS_MACOS_DOCKER_PROVIDER=desktop to use Docker Desktop.
+    local provider="${NS_MACOS_DOCKER_PROVIDER:-colima}"
+    if [[ "$provider" == "desktop" ]]; then
+      (brew install --cask docker || true)
+      ns_print_warn "If Docker Desktop was just installed, launch it once before using docker."
+    else
+      (brew install colima docker docker-compose || true)
+      ns_print_warn "Headless macOS note: start the Docker VM with 'colima start' before using docker."
+    fi
+  fi
   [[ "$need_curl" == "true" ]] && (brew install curl || true)
   [[ "$need_openssl" == "true" ]] && (brew install openssl || true)
   [[ "$need_git" == "true" ]] && (brew install git || true)
   [[ "$need_python" == "true" ]] && (brew install python || true)
-
-  if [[ "$need_docker" == "true" ]]; then
-    ns_print_warn "If Docker Desktop was just installed, launch it once before using docker."
-  fi
 }
 
 ns_install_docker_windows() {
