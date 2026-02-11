@@ -80,8 +80,16 @@ backup_ai_infra() {
 
   if [[ -d /var/lib/gateway/data ]]; then
     echo "Backing up gateway data from /var/lib/gateway/data"
-    if need_cmd sudo; then
-      sudo tar czf "$BACKUP_DIR/gateway-backup.tar.gz" -C /var/lib/gateway/data .
+    
+    # Check if directory is readable without sudo
+    if [[ ! -r /var/lib/gateway/data ]]; then
+      if need_cmd sudo; then
+        sudo tar czf "$BACKUP_DIR/gateway-backup.tar.gz" -C /var/lib/gateway/data .
+      else
+        echo "Error: /var/lib/gateway/data requires elevated permissions but 'sudo' is not available." >&2
+        echo "Please run this script with elevated permissions or install sudo." >&2
+        exit 1
+      fi
     else
       tar czf "$BACKUP_DIR/gateway-backup.tar.gz" -C /var/lib/gateway/data .
     fi
@@ -100,8 +108,15 @@ backup_ai_infra() {
 
   if [[ -d /var/lib/ollama ]]; then
     if confirm "Create full /var/lib/ollama archive? (can be large)"; then
-      if need_cmd sudo; then
-        sudo tar czf "$BACKUP_DIR/ollama-backup.tar.gz" -C /var/lib/ollama .
+      # Check if directory is readable without sudo
+      if [[ ! -r /var/lib/ollama ]]; then
+        if need_cmd sudo; then
+          sudo tar czf "$BACKUP_DIR/ollama-backup.tar.gz" -C /var/lib/ollama .
+        else
+          echo "Error: /var/lib/ollama requires elevated permissions but 'sudo' is not available." >&2
+          echo "Skipping Ollama data backup. Install sudo or run this script with elevated permissions." >&2
+          return
+        fi
       else
         tar czf "$BACKUP_DIR/ollama-backup.tar.gz" -C /var/lib/ollama .
       fi
@@ -134,10 +149,15 @@ prepare_nexus() {
   local token
   if grep -q '^GATEWAY_BEARER_TOKEN=' .env; then
     token="$(grep '^GATEWAY_BEARER_TOKEN=' .env | cut -d= -f2-)"
-    if [[ -z "$token" ]]; then
+    # Treat empty or placeholder tokens as insecure
+    if [[ -z "$token" || "$token" == "change-me-in-production" || "$token" == "your-secret-token-here" ]]; then
       token="$(openssl rand -hex 32)"
-      sed -i "s/^GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$token/" .env
-      echo "Generated secure GATEWAY_BEARER_TOKEN in .env"
+      if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "s/^GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$token/" .env
+      else
+        sed -i "s/^GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$token/" .env
+      fi
+      echo "Generated secure GATEWAY_BEARER_TOKEN in .env (replaced placeholder)"
     fi
   else
     token="$(openssl rand -hex 32)"
@@ -200,13 +220,24 @@ restore_into_nexus() {
 verify_migration() {
   cd "$NEXUS_DIR"
   docker compose ps
-  curl -fsS http://localhost:8800/health >/dev/null
+
+  local gateway_port
+  gateway_port=8800
+  if [[ -f .env ]]; then
+    local env_gateway_port
+    env_gateway_port="$(grep '^GATEWAY_PORT=' .env | cut -d= -f2- || true)"
+    if [[ -n "${env_gateway_port:-}" ]]; then
+      gateway_port="$env_gateway_port"
+    fi
+  fi
+
+  curl -fsS "http://localhost:${gateway_port}/health" >/dev/null
   echo "Migration verification: gateway /health is reachable"
 
   local token
-  token="$(grep '^GATEWAY_BEARER_TOKEN=' .env | cut -d= -f2-)"
+  token="$(grep '^GATEWAY_BEARER_TOKEN=' .env | cut -d= -f2- || true)"
   if [[ -n "$token" ]]; then
-    curl -fsS -H "Authorization: Bearer $token" http://localhost:8800/v1/models >/dev/null || true
+    curl -fsS -H "Authorization: Bearer $token" "http://localhost:${gateway_port}/v1/models" >/dev/null || true
   fi
 }
 
@@ -250,12 +281,49 @@ fi
 require_cmd docker
 require_cmd curl
 require_cmd openssl
+
+# Verify Docker daemon is reachable
+if ! docker info >/dev/null 2>&1; then
+  echo "Error: Unable to connect to the Docker daemon. Please ensure Docker is installed and running." >&2
+  exit 1
+fi
+
+# Verify Docker Compose is available
+if ! docker compose version >/dev/null 2>&1; then
+  echo "Error: 'docker compose' is not available. Please install Docker Compose (or a Docker version that includes it)." >&2
+  exit 1
+fi
+
 require_dir "$AI_INFRA_DIR" "ai-infra"
 require_dir "$NEXUS_DIR" "nexus"
 
-AI_INFRA_DIR="$(realpath "$AI_INFRA_DIR")"
-NEXUS_DIR="$(realpath "$NEXUS_DIR")"
-BACKUP_DIR="$(realpath -m "$BACKUP_DIR")"
+# Portable path normalization
+normalize_path() {
+  local path="$1"
+  if need_cmd realpath; then
+    # Use realpath if available, but avoid GNU-specific -m flag
+    if [[ -e "$path" ]]; then
+      realpath "$path"
+    else
+      # Path doesn't exist yet; create parent and normalize
+      local parent
+      parent="$(dirname "$path")"
+      mkdir -p "$parent"
+      echo "$(realpath "$parent")/$(basename "$path")"
+    fi
+  elif need_cmd python3; then
+    # Fallback to python3 for path normalization
+    python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$path"
+  else
+    # Last resort: just use absolute path
+    echo "$(cd "$(dirname "$path")" 2>/dev/null && pwd)/$(basename "$path")"
+  fi
+}
+
+AI_INFRA_DIR="$(normalize_path "$AI_INFRA_DIR")"
+NEXUS_DIR="$(normalize_path "$NEXUS_DIR")"
+mkdir -p "$BACKUP_DIR"
+BACKUP_DIR="$(normalize_path "$BACKUP_DIR")"
 
 echo "Nexus migration helper (interactive)"
 echo "ai-infra: $AI_INFRA_DIR"
@@ -265,12 +333,17 @@ echo "backups: $BACKUP_DIR"
 backup_ai_infra
 prepare_nexus
 
-if [[ "$SKIP_RESTORE" -eq 0 ]]; then
-  restore_into_nexus
-fi
+if [[ "$SKIP_DEPLOY" -eq 1 ]]; then
+  echo "--skip-deploy specified: skipping restore and migration verification because containers are not running."
+  echo "To restore data manually, run: docker compose up -d && ./deploy/scripts/migrate-from-ai-infra.sh --skip-backup --ai-infra-dir '$AI_INFRA_DIR' --backup-dir '$BACKUP_DIR'"
+else
+  if [[ "$SKIP_RESTORE" -eq 0 ]]; then
+    restore_into_nexus
+  fi
 
-verify_migration
-stop_legacy_services
+  verify_migration
+  stop_legacy_services
+fi
 
 echo "Migration script completed."
 echo "Review logs with: docker compose logs --tail=100 gateway ollama"
