@@ -136,7 +136,11 @@ prepare_nexus() {
     token="$(grep '^GATEWAY_BEARER_TOKEN=' .env | cut -d= -f2-)"
     if [[ -z "$token" ]]; then
       token="$(openssl rand -hex 32)"
-      sed -i "s/^GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$token/" .env
+      if [[ "$(uname)" == "Darwin" ]]; then
+        sed -i '' "s/^GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$token/" .env
+      else
+        sed -i "s/^GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$token/" .env
+      fi
       echo "Generated secure GATEWAY_BEARER_TOKEN in .env"
     fi
   else
