@@ -3,8 +3,8 @@ version: '3.8'
 services:
   gateway:
     build:
-      context: ../../services/gateway
-      dockerfile: Dockerfile
+      context: ../../..
+      dockerfile: nexus/services/gateway/Dockerfile
     container_name: nexus-gateway
     ports:
       - "${GATEWAY_PORT:-8800}:8800"
@@ -23,9 +23,15 @@ services:
       - AUDIO_BACKEND_URL=${AUDIO_BACKEND_URL:-http://tts:9940}
       - DEFAULT_BACKEND=${DEFAULT_BACKEND:-ollama}
       - MAX_REQUEST_BYTES=${MAX_REQUEST_BYTES:-10485760}
+      - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
+      - USER_DB_PATH=/var/lib/gateway/data/users.sqlite
+      - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+      - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+      - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
     volumes:
-      - gateway_data:/data
-      - ../../services/gateway/app:/app
+      - ../../.runtime/gateway/data:/var/lib/gateway/data
+      - ../../.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ../../.env:/var/lib/gateway/app/.env:ro
     networks:
       - nexus
     restart: unless-stopped
@@ -53,7 +59,7 @@ services:
       - new
       - --enable-v2
     volumes:
-      - etcd_data:/etcd-data
+      - ../../.runtime/etcd/data:/etcd-data
     networks:
       - nexus
     ports:
@@ -66,7 +72,4 @@ networks:
     name: nexus
 
 volumes:
-  gateway_data:
-    driver: local
-  etcd_data:
-    driver: local
+  {}

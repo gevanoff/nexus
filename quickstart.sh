@@ -2,36 +2,58 @@
 # Nexus Quick Start Script
 # This script helps you get started with Nexus quickly
 
+# Maintainer note:
+# This script intentionally reuses shared helpers from deploy/scripts/_common.sh.
+# If you need to change OS detection, dependency installation, prompting, env-file
+# behavior, or token generation, prefer updating _common.sh (or adding a helper
+# there) rather than duplicating logic here.
+
 set -euo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# shellcheck source=/dev/null
+source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 GATEWAY_HEALTH_URL="http://localhost:8800/health"
 GATEWAY_API_URL="http://localhost:8800"
 
-# Helper functions
-print_header() {
-    echo -e "${GREEN}=== $1 ===${NC}"
+NS_AUTO_YES="false"
+
+usage() {
+    cat <<'EOF'
+Usage: ./quickstart.sh [--yes]
+
+Options:
+  --yes    Non-interactive mode (assume "yes" for install prompts)
+EOF
 }
 
-print_error() {
-    echo -e "${RED}ERROR: $1${NC}"
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes)
+                NS_AUTO_YES="true"
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                ns_print_error "Unknown argument: $1"
+                usage
+                exit 2
+                ;;
+        esac
+    done
 }
-
-print_warning() {
-    echo -e "${YELLOW}WARNING: $1${NC}"
-}
-
-print_success() {
-    echo -e "${GREEN}✓ $1${NC}"
+ensure_prerequisites() {
+    ns_print_header "Ensuring Prerequisites"
+    # docker + curl are required for quickstart; openssl is optional.
+    ns_ensure_prereqs true true false false false false || true
 }
 
 has_optional_dockerfile() {
@@ -39,55 +61,68 @@ has_optional_dockerfile() {
     [[ -f "services/${service}/Dockerfile" ]]
 }
 
+ensure_runtime_layout() {
+    ns_print_header "Preparing Runtime Directories"
+    ns_ensure_runtime_dirs "$ROOT_DIR"
+    ns_seed_gateway_config_files "$ROOT_DIR"
+    ns_print_ok "Runtime directories ready under: $ROOT_DIR/.runtime"
+}
 # Check prerequisites
 check_prerequisites() {
-    print_header "Checking Prerequisites"
+    ns_print_header "Checking Prerequisites"
 
     if [[ ! -x deploy/scripts/preflight-check.sh ]]; then
-        print_warning "Preflight checker missing executable bit; attempting to fix"
+        ns_print_warn "Preflight checker missing executable bit; attempting to fix"
         chmod +x deploy/scripts/preflight-check.sh || true
-    fi
-
-    if [[ -x deploy/scripts/preflight-check.sh ]]; then
-        if ! deploy/scripts/preflight-check.sh; then
-            print_error "Preflight checks failed. Resolve failures and retry."
-            exit 1
-        fi
     fi
 
     # Check Docker
     if ! command -v docker &> /dev/null; then
-        print_error "Docker is not installed. Please install Docker first."
-        echo "Visit: https://docs.docker.com/get-docker/"
+        ns_print_error "Docker is not installed (or not on PATH)."
         exit 1
     fi
-    print_success "Docker found: $(docker --version)"
+    ns_print_ok "Docker found: $(docker --version)"
 
     # Check Docker Compose
     if ! docker compose version &> /dev/null; then
-        print_error "Docker Compose is not installed or not available."
+        ns_print_error "Docker Compose is not installed or not available."
         exit 1
     fi
-    print_success "Docker Compose found: $(docker compose version)"
+    ns_print_ok "Docker Compose found: $(docker compose version)"
 
     # Check if Docker daemon is running
     if ! docker info &> /dev/null; then
-        print_error "Docker daemon is not running. Please start Docker."
+        ns_print_error "Docker daemon is not running. Please start Docker."
         exit 1
     fi
-    print_success "Docker daemon is running"
+    ns_print_ok "Docker daemon is running"
+
+    if [[ -x deploy/scripts/preflight-check.sh ]]; then
+        if ! deploy/scripts/preflight-check.sh --mode quickstart; then
+            ns_print_error "Preflight checks failed. Resolve failures and retry."
+            exit 1
+        fi
+    fi
 }
 
 # Setup configuration
 setup_config() {
-    print_header "Setting Up Configuration"
+    ns_print_header "Setting Up Configuration"
+
+    if [ ! -f .env.example ]; then
+        ns_print_error "Missing .env.example. Expected at: $ROOT_DIR/.env.example"
+        ns_print_error "If you cloned a partial repo, re-clone the full Nexus repository."
+        exit 1
+    fi
 
     if [ -f .env ]; then
-        print_warning ".env file already exists"
-        read -r -p "Overwrite? (y/N) " -n 1 REPLY
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_warning "Keeping existing .env file"
+        ns_print_warn ".env file already exists"
+        if [[ "$NS_AUTO_YES" == "true" ]]; then
+            ns_print_warn "Non-interactive mode: keeping existing .env"
+            return
+        fi
+        if ! ns_confirm "Overwrite existing .env?"; then
+            ns_print_warn "Keeping existing .env file"
             return
         fi
     fi
@@ -95,71 +130,68 @@ setup_config() {
     cp .env.example .env
     chmod 600 .env
 
-    # Generate random token
-    RANDOM_TOKEN=$(openssl rand -hex 32 2>/dev/null || tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 64 | head -n 1)
+    # Generate random token (shared helper)
+    RANDOM_TOKEN="$(ns_generate_token | tr -d '\r\n')"
 
     # Update token in .env
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
+    if [[ "$(ns_detect_platform)" == "macos" ]]; then
         sed -i '' "s/GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$RANDOM_TOKEN/" .env
     else
-        # Linux
         sed -i "s/GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$RANDOM_TOKEN/" .env
     fi
 
-    print_success "Configuration created"
-    print_success "Bearer token: $RANDOM_TOKEN"
+    ns_print_ok "Configuration created"
+    ns_print_ok "Bearer token: $RANDOM_TOKEN"
     echo "Save this token - you'll need it to access the API!"
     echo
 }
 
 # Pull models for Ollama
 setup_models() {
-    print_header "Setting Up Models"
+    ns_print_header "Setting Up Models"
 
     echo "Which model would you like to install?"
     echo "1) llama3.1:8b (Recommended - Fast, good quality)"
     echo "2) llama3.1:3b (Faster, lighter)"
     echo "3) qwen2.5:14b (Better quality, slower)"
     echo "4) Skip for now"
-    read -r -p "Choice (1-4): " -n 1 REPLY
-    echo
+    REPLY="$(ns_read_choice_char "Choice (1-4): " "4" '^[1-4]$')"
 
     case $REPLY in
         1) MODEL="llama3.1:8b" ;;
         2) MODEL="llama3.1:3b" ;;
         3) MODEL="qwen2.5:14b" ;;
         4)
-            print_warning "Skipping model installation"
+            ns_print_warn "Skipping model installation"
             return
             ;;
         *)
-            print_warning "Invalid choice, skipping model installation"
+            ns_print_warn "Invalid choice, skipping model installation"
             return
             ;;
     esac
 
-    print_header "Pulling model: $MODEL"
+    ns_print_header "Pulling model: $MODEL"
     echo "This may take a few minutes..."
 
     if docker compose exec -T ollama ollama pull "$MODEL"; then
-        print_success "Model $MODEL installed"
+        ns_print_ok "Model $MODEL installed"
     else
-        print_error "Failed to install model $MODEL"
-        print_warning "You can install it later with:"
+        ns_print_error "Failed to install model $MODEL"
+        ns_print_warn "You can install it later with:"
         echo "  docker compose exec ollama ollama pull $MODEL"
     fi
 }
 
 # Start services
 start_services() {
-    print_header "Starting Services"
+    ns_print_header "Starting Services"
 
     local full_available="true"
     if ! has_optional_dockerfile images || ! has_optional_dockerfile tts; then
         full_available="false"
-        print_warning "Full profile requires services/images/Dockerfile and services/tts/Dockerfile"
-        print_warning "Falling back to minimal startup unless those Dockerfiles are added"
+        ns_print_warn "Full profile requires services/images/Dockerfile and services/tts/Dockerfile"
+        ns_print_warn "Falling back to minimal startup unless those Dockerfiles are added"
     fi
 
     echo "Which services would you like to start?"
@@ -169,8 +201,7 @@ start_services() {
     else
         echo "2) Full (unavailable in current repo state)"
     fi
-    read -r -p "Choice (1-2): " -n 1 REPLY
-    echo
+    REPLY="$(ns_read_choice_char "Choice (1-2): " "1" '^[1-2]$')"
 
     case $REPLY in
         2)
@@ -185,26 +216,27 @@ start_services() {
             ;;
     esac
 
-    print_success "Services starting..."
+    ns_print_ok "Services starting..."
     echo "Waiting for services to be ready..."
     sleep 10
 }
 
 # Verify deployment
 verify_deployment() {
-    print_header "Verifying Deployment"
+    ns_print_header "Verifying Deployment"
 
     if ! docker compose ps | grep -q "running"; then
-        print_error "Services are not running"
+    ensure_runtime_layout
+        ns_print_error "Services are not running"
         echo "Check logs with: docker compose logs"
         exit 1
     fi
-    print_success "Services are running"
+    ns_print_ok "Services are running"
 
     if curl -sf "$GATEWAY_HEALTH_URL" > /dev/null; then
-        print_success "Gateway is healthy"
+        ns_print_ok "Gateway is healthy"
     else
-        print_error "Gateway is not responding"
+        ns_print_error "Gateway is not responding"
         echo "Check logs with: docker compose logs gateway"
         exit 1
     fi
@@ -212,15 +244,15 @@ verify_deployment() {
     TOKEN=$(grep '^GATEWAY_BEARER_TOKEN=' .env | cut -d '=' -f2)
 
     if curl -sf -H "Authorization: Bearer $TOKEN" "$GATEWAY_API_URL/v1/models" > /dev/null; then
-        print_success "API authentication working"
+        ns_print_ok "API authentication working"
     else
-        print_warning "API authentication failed. Check your bearer token."
+        ns_print_warn "API authentication failed. Check your bearer token."
     fi
 }
 
 # Display next steps
 show_next_steps() {
-    print_header "Setup Complete!"
+    ns_print_header "Setup Complete!"
 
     TOKEN=$(grep '^GATEWAY_BEARER_TOKEN=' .env | cut -d '=' -f2)
 
@@ -269,20 +301,22 @@ main() {
     echo "╚═══════════════════════════════════════╝"
     echo
 
+    parse_args "$@"
+    ensure_prerequisites
     check_prerequisites
     setup_config
     start_services
 
     echo
-    read -r -p "Would you like to install a model now? (Y/n) " -n 1 REPLY
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if ns_confirm_default_yes "Would you like to install a model now?"; then
         sleep 5
         setup_models
+    else
+        ns_print_warn "Skipping model installation"
     fi
 
     verify_deployment
     show_next_steps
 }
 
-main
+main "$@"

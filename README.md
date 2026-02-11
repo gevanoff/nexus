@@ -30,13 +30,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ### Prerequisites
 
-- Docker Engine with the `docker compose` plugin
-- Bash, curl, openssl (used by setup scripts)
+- Docker Engine with the `docker compose` plugin (Docker Desktop on Windows/macOS)
+- Bash + curl + openssl (used by setup scripts)
 - (Optional) NVIDIA Container Toolkit for GPU services
 
-### Recommended: Scripted Setup
+### Recommended: Guided Setup Script
 
-Use script entrypoints for install/bootstrap instead of manual setup sequences:
+Use the interactive installer to (best-effort) install missing prerequisites, run preflight checks, create `.env` (from `.env.example`), and bring the stack up safely:
 
 ```bash
 chmod +x quickstart.sh deploy/scripts/*.sh
@@ -47,9 +47,24 @@ chmod +x quickstart.sh deploy/scripts/*.sh
 - `install-host-deps.sh` is interactive and installs Docker/Docker Compose (+ optional NVIDIA runtime).
 - `quickstart.sh` runs preflight checks, creates `.env`, starts services, and verifies readiness.
 
-### Day-2 Service Control
+For non-interactive environments, use:
 
 ```bash
+./quickstart.sh --yes
+```
+
+The quickstart flow automatically runs `deploy/scripts/preflight-check.sh` and validates key prerequisites before starting containers.
+
+Gateway persistence is stored on the host under `./.runtime/gateway/` and bind-mounted into the container:
+- **Read-write data** (SQLite DBs, tool logs, cached UI assets): `./.runtime/gateway/data/` → `/var/lib/gateway/data`
+- **Read-only operator config** (model aliases, agent specs, tools registry): `./.runtime/gateway/config/` → `/var/lib/gateway/config`
+
+### Start the Stack
+
+```bash
+# Start core services (gateway + ollama + etcd)
+docker compose up -d
+
 # Check service health
 docker compose ps
 
@@ -132,12 +147,9 @@ See `.env.example` for all available options.
 
 ### Service Configuration
 
-Each service has its own configuration in `services/<name>/.env`:
-
-- `services/gateway/.env` - Gateway settings
-- `services/ollama/.env` - Ollama models and settings
-- `services/images/.env` - Image generation backend configuration
-- `services/tts/.env` - Text-to-speech settings
+- Nexus uses a single env file at `./.env` (created from `./.env.example`).
+- Service-specific templates live under `services/<name>/env/*.example`.
+- Persistent state and large artifacts live under `./.runtime/` (bind mounts), not Docker named volumes.
 
 ## Services
 
@@ -246,7 +258,7 @@ Use `docker compose up` for single-host development.
 
 ### Production
 - Use `docker compose` for simple production deployments
-- Use Kubernetes manifests (in `k8s/`) for orchestrated production deployments
+- For multi-host rollouts, use the per-service manifests in `deploy/` (Docker Compose or nerdctl/containerd)
 - Configure resource limits, health checks, and monitoring
 - Use TLS/HTTPS termination at load balancer or ingress
 
@@ -300,10 +312,10 @@ Nexus replaces the host-based `ai-infra` deployment with containers:
 | launchd/systemd scripts | docker-compose.yml | Unified orchestration |
 | Manual host setup | Dockerfile per service | Reproducible environments |
 | Host networking | Docker networks | Isolated networking |
-| `/var/lib/gateway` | Docker volumes | Persistent data |
+| `/var/lib/gateway` | `./.runtime/gateway/*` bind mounts | Persistent data + operator config |
 | SSH + manual deploys | `docker compose up` | One command deploys |
 
-See [docs/MIGRATION.md](docs/MIGRATION.md) for the scripted migration workflow (`deploy/scripts/migrate-from-ai-infra.sh`).
+See [docs/MIGRATION.md](docs/MIGRATION.md) for the scripted migration workflow (`deploy/scripts/migrate-from-ai-infra.sh`) and detailed manual migration guide.
 
 ## Troubleshooting
 
@@ -333,7 +345,7 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 # Update docker-compose.yml to use gpus
 ```
 
-See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for more solutions.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for additional operational guidance.
 
 ## Contributing
 

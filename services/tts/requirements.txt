@@ -1,0 +1,5 @@
+fastapi>=0.110,<1
+uvicorn[standard]>=0.27,<1
+pydantic>=2,<3
+# Known-working ai-infra pattern: install Pocket TTS from upstream git
+git+https://github.com/kyutai/pocket-tts.git

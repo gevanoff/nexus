@@ -26,7 +26,7 @@ ollama:
   environment:
     - OLLAMA_HOST=0.0.0.0:11434
   volumes:
-    - ollama_data:/root/.ollama
+    - ./.runtime/ollama:/root/.ollama
   deploy:
     resources:
       reservations:
@@ -174,17 +174,17 @@ ollama:
 
 ## Storage
 
-Models are stored in a Docker volume (`ollama_data`) which persists across container restarts.
+Models are stored on the host under `nexus/.runtime/ollama` (bind-mounted into the container at `/root/.ollama`).
 
 To back up models:
 ```bash
 # Create backup
-docker run --rm -v nexus_ollama_data:/data -v $(pwd):/backup \
-  ubuntu tar czf /backup/ollama-models-backup.tar.gz -C /data .
+docker run --rm -v "$(pwd)/.runtime/ollama:/data:ro" -v "$(pwd):/backup" \
+  alpine tar czf /backup/ollama-models-backup.tar.gz -C /data .
 
 # Restore from backup
-docker run --rm -v nexus_ollama_data:/data -v $(pwd):/backup \
-  ubuntu tar xzf /backup/ollama-models-backup.tar.gz -C /data
+docker run --rm -v "$(pwd)/.runtime/ollama:/data" -v "$(pwd):/backup" \
+  alpine tar xzf /backup/ollama-models-backup.tar.gz -C /data
 ```
 
 ## Performance Tuning

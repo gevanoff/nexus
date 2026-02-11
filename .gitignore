@@ -43,6 +43,9 @@ env/
 # Docker
 *.log
 
+# Repo-local container runtime (bind mounts)
+.runtime/
+
 # Data directories
 data/
 *.sqlite
