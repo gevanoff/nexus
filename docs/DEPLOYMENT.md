@@ -19,6 +19,14 @@ chmod +x quickstart.sh deploy/scripts/*.sh
 - `install-host-deps.sh` is interactive and prompts before any privileged package/runtime installation.
 - `preflight-check.sh` validates host tools/files/permissions.
 
+#### Troubleshooting (Windows dev)
+
+If you see `/usr/bin/env: 'bash\r': No such file or directory`, your checkout has **CRLF** line endings on shell scripts.
+
+Preferred fix: clone/open the repo from within WSL (Linux filesystem), then run scripts there.
+
+Alternative fix (if you keep the repo under `/mnt/c/...`): configure git to avoid CRLF checkout (e.g. `core.autocrlf=input` or `false`) and re-checkout the scripts.
+
 ### Guided bootstrap (recommended)
 
 ```bash
