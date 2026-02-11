@@ -1,120 +1,71 @@
-# Image Generation Service
+# Images Service
 
-Text-to-image generation service providing OpenAI-compatible image generation API.
+OpenAI-compatible Images API service.
 
 ## Overview
 
-This service provides text-to-image generation capabilities using state-of-the-art models like SDXL. It exposes an OpenAI-compatible `/v1/images/generations` endpoint.
+This service is implemented as an **OpenAI Images API shim** (ported from `ai-infra/services/invokeai/shim`).
+
+- Exposes `POST /v1/images/generations` returning `data[].b64_json`.
+- Default mode is `SHIM_MODE=stub`, which returns a tiny PNG for contract testing.
+- Optional mode `SHIM_MODE=invokeai_queue` can proxy to an InvokeAI instance (requires additional config).
 
 ## Status
 
-🚧 **Planned** - This service is planned but not yet implemented.
+✅ Implemented (shim; stub-by-default)
 
-## Planned Features
+## Endpoints
 
-- **SDXL Support**: High-quality image generation with Stable Diffusion XL
-- **Multiple Backends**: InvokeAI, ComfyUI, or Automatic1111
-- **OpenAI Compatible**: Drop-in replacement for OpenAI DALL-E API
-- **GPU Accelerated**: NVIDIA GPU support for fast generation
-- **Multiple Sizes**: Support for various image dimensions
-- **Style Controls**: Various artistic styles and parameters
+- `GET /health` (always 200 if process is running)
+- `GET /readyz`
+  - In `stub` mode: always ready
+  - In `invokeai_queue` mode: checks upstream InvokeAI
+- `POST /v1/images/generations`
+- `GET /v1/models` (best-effort; includes shim presets)
+- `GET /v1/metadata`
 
-## Planned Configuration
+## Configuration
+
+See `env/images.env.example`.
+
+Key env vars:
+
+- `SHIM_MODE=stub|invokeai_queue`
+- `INVOKEAI_BASE_URL=http://invokeai:9090`
+
+## Quick test
+
+```bash
+curl -sS http://localhost:7860/health
+
+curl -sS -X POST http://localhost:7860/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"shim smoke test","response_format":"b64_json"}'
+```
+
+## Docker Compose (current)
+
+Nexus persists images state on the host under `nexus/.runtime/images/` and bind-mounts it into the container.
 
 ```yaml
 images:
   build:
     context: ./services/images
+    dockerfile: Dockerfile
   ports:
     - "7860:7860"
   environment:
-    - BACKEND=invokeai
-    - MODELS_PATH=/data/models
-    - OUTPUT_PATH=/data/outputs
+    - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
+    - SHIM_PORT=7860
+    - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
   volumes:
-    - images_data:/data
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - driver: nvidia
-            count: 1
-            capabilities: [gpu]
+    - ./.runtime/images/data:/data
+    - ./.runtime/images/models:/data/models
 ```
 
-## Planned API
+## Notes
 
-### Generate Image
-
-```bash
-curl -X POST http://localhost:8800/v1/images/generations \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{
-    "prompt": "A serene mountain landscape at sunset",
-    "model": "sdxl-base-1.0",
-    "size": "1024x1024",
-    "n": 1,
-    "response_format": "url"
-  }'
-```
-
-Response:
-```json
-{
-  "created": 1234567890,
-  "data": [
-    {
-      "url": "http://localhost:8800/images/abc123.png"
-    }
-  ]
-}
-```
-
-## Planned Backends
-
-### InvokeAI
-- **Pros**: Feature-rich, web UI, model management
-- **Cons**: Heavier resource usage
-- **GPU Memory**: 8GB+ recommended
-
-### ComfyUI
-- **Pros**: Node-based workflow, very flexible
-- **Cons**: More complex setup
-- **GPU Memory**: 8GB+ recommended
-
-### Automatic1111
-- **Pros**: Popular, well-documented, extensions
-- **Cons**: Less modern API
-- **GPU Memory**: 6GB+ recommended
-
-## Planned Models
-
-- `sdxl-base-1.0` - Stable Diffusion XL base model
-- `sdxl-turbo` - Fast SDXL variant
-- `sd-1.5` - Stable Diffusion 1.5 (lighter weight)
-
-## Implementation TODO
-
-- [ ] Create Dockerfile
-- [ ] Implement FastAPI wrapper
-- [ ] Add InvokeAI integration
-- [ ] Add health and metadata endpoints
-- [ ] Add image storage and retrieval
-- [ ] Add model management
-- [ ] Add style presets
-- [ ] Add safety filters
-- [ ] Add rate limiting
-- [ ] Add usage metrics
-
-## Requirements
-
-When implemented, this service will require:
-
-- NVIDIA GPU with 8GB+ VRAM
-- CUDA 11.8+
-- Docker with NVIDIA runtime
-- 50GB+ disk space for models
+In the default `stub` mode, no GPU is required.
 
 ## Contributing
 

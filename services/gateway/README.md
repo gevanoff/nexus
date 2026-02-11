@@ -38,7 +38,10 @@ The Nexus Gateway is the central API gateway that provides:
 
 ## Configuration
 
-Environment variables:
+In Nexus, a single env file (`nexus/.env`) is mounted into the container at `/var/lib/gateway/app/.env`.
+Most gateway settings are configured via environment variables.
+
+Environment variables (common subset):
 
 ```bash
 # Authentication
@@ -68,17 +71,37 @@ MEMORY_V2_ENABLED=true
 METRICS_ENABLED=true
 
 # Data persistence
-MEMORY_DB_PATH=/data/memory.sqlite
-USER_DB_PATH=/data/users.sqlite
+MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
+USER_DB_PATH=/var/lib/gateway/data/users.sqlite
+
+# Operator config (mounted read-only from the host)
+MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
 ```
+
+### Persistence Layout (Host ↔ Container)
+
+Nexus keeps state and large artifacts on the host under `nexus/.runtime/`.
+
+- RW data: `nexus/.runtime/gateway/data/` → `/var/lib/gateway/data`
+- RO operator config: `nexus/.runtime/gateway/config/` → `/var/lib/gateway/config`
+
+Config files are seeded (once) by the setup scripts:
+- `tools_registry.json`
+- `model_aliases.json`
+- `agent_specs.json`
 
 ## Usage
 
 ### Docker
 
 ```bash
-# Build
-docker build -t nexus-gateway .
+# The Nexus gateway image is built from the repo root so it can package the full
+# gateway implementation under ./gateway/.
+
+# Build (from repo root)
+docker build -f nexus/services/gateway/Dockerfile -t nexus-gateway .
 
 # Run
 docker run -p 8800:8800 -p 8801:8801 \
@@ -97,17 +120,7 @@ docker compose up gateway
 
 ### Local Development
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Set environment
-export GATEWAY_BEARER_TOKEN=test-token
-export OLLAMA_BASE_URL=http://localhost:11434
-
-# Run
-uvicorn app.main:app --host 0.0.0.0 --port 8800 --reload
-```
+For gateway-only Python development, see the top-level gateway project at `../../gateway/`.
 
 ## API Examples
 
@@ -167,19 +180,10 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
   http://localhost:8800/v1/ui/layout
 ```
 
-## Extension Points
+## Implementation
 
-This is a minimal gateway implementation. For the full-featured gateway with:
-- Tool bus and agent runtime
-- Memory system (v1 and v2)
-- Image generation support
-- Audio/TTS support
-- User authentication
-- UI endpoints
-- Policy-based routing
-- Advanced metrics
-
-See the original [gevanoff/gateway](https://github.com/gevanoff/gateway) repository.
+Nexus builds and runs the full gateway implementation from the repo’s top-level `gateway/` directory.
+The container runtime layout is kept compatible with the gateway’s expected paths under `/var/lib/gateway/*`.
 
 ## Architecture
 

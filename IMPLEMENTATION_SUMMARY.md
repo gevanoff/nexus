@@ -11,7 +11,8 @@ Nexus successfully combines material from the `gateway` and `ai-infra` repositor
 - **Docker Compose orchestration**: Single `docker-compose.yml` for all services
 - **Service isolation**: Each service runs in its own container with limited host access
 - **Unified networking**: Services communicate over a private Docker network (`nexus`)
-- **Volume management**: Persistent data stored in Docker volumes
+- **Persistence model**: Repo-local host bind mounts under `./.runtime/` (large artifacts + state survive upgrades)
+- **Gateway config split**: Operator config is mounted read-only separately from gateway data
 
 ### 2. Standardized API Conventions ✅
 
@@ -27,7 +28,7 @@ Nexus successfully combines material from the `gateway` and `ai-infra` repositor
 - Request routing to backend services
 - Service discovery via metadata endpoints
 - Health monitoring and metrics
-- Minimal implementation with extension points
+- Full gateway integration from the repo’s top-level `gateway/` project (OpenAI-ish endpoints + tools + memory + UI endpoints)
 
 #### Ollama Service
 - LLM inference using official Ollama image
@@ -36,8 +37,8 @@ Nexus successfully combines material from the `gateway` and `ai-infra` repositor
 - OpenAI-compatible API
 
 #### Template Services
-- Image generation (documentation)
-- Text-to-speech (documentation)
+- Image generation (OpenAI Images shim; stub-by-default)
+- Text-to-speech (Pocket TTS shim)
 - Service template with example implementation
 
 ### 4. Comprehensive Documentation ✅
@@ -64,8 +65,8 @@ Nexus successfully combines material from the `gateway` and `ai-infra` repositor
 ### Discrete Functions
 - Gateway: API aggregation and routing
 - Ollama: LLM inference
-- Images: Text-to-image generation (planned)
-- TTS: Text-to-speech (planned)
+- Images: Text-to-image generation (shim)
+- TTS: Text-to-speech (shim)
 
 ### Limited Host Access
 - Services run in isolated containers
@@ -200,11 +201,15 @@ nexus/
 - [x] Registry convenience scripts for etcd
 - [x] Preflight checker for implicit host/runtime requirements
 - [x] Dynamic backend descriptor catalog and UI layout endpoints
-- [x] Gateway service (minimal implementation)
+- [x] Gateway service (full gateway integration from top-level `gateway/`)
+- [x] Gateway persistence via bind mounts under `./.runtime/`
+- [x] Gateway operator config split (RO config vs RW data)
 - [x] Service discovery specification
 - [x] Etcd-backed service discovery (gateway polling + registry seeding)
 - [x] API standardization
 - [x] Ollama integration
+- [x] Images service (OpenAI Images shim; stub-by-default)
+- [x] TTS service (Pocket TTS shim)
 - [x] Health check system
 - [x] Comprehensive documentation
 - [x] Migration guide
@@ -213,10 +218,6 @@ nexus/
 - [x] Quick start script
 
 ### Planned 📋
-- [ ] Full gateway implementation (tools, memory, agents)
-- [ ] Image generation service
-- [ ] Text-to-speech service
-- [ ] Kubernetes manifests
 - [ ] Monitoring stack (Prometheus + Grafana)
 - [ ] CI/CD pipelines
 - [ ] Integration tests
@@ -239,7 +240,7 @@ nexus/
 1. **Define a minimal service registry strategy** (static config vs. Consul/etcd).
 2. **Specify gateway configuration format** for remote backends (env or config file schema).
 3. **Decide on the internal security posture** (mTLS required vs. private network only).
-4. **Pick the first “real” backend** to implement after gateway + Ollama.
+4. **Harden non-shim backends** (e.g., images `invokeai_queue` mode, production TTS backend, GPU scheduling).
 
 ### Open Questions
 - What is the preferred overlay network (WireGuard/Tailscale/VPC)?

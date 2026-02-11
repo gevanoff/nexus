@@ -14,7 +14,7 @@ Nexus replaces the `ai-infra` macOS/Linux host-based deployment with a unified D
 | **Platform** | macOS/Linux specific | Any Docker platform |
 | **Installation** | Manual host setup | Container images |
 | **Networking** | Host ports + SSH | Docker networks |
-| **Data** | `/var/lib/*/` | Docker volumes |
+| **Data** | `/var/lib/*/` | Host bind mounts under `./.runtime/` |
 | **Updates** | Manual scripts | `docker compose pull` |
 | **Configuration** | Scattered env files | Centralized `.env` |
 | **Service Discovery** | Static config | Dynamic via `/v1/metadata` |
@@ -61,10 +61,10 @@ cd ~/ai-infra  # or wherever ai-infra is located
 cp services/gateway/env/gateway.env ~/gateway.env.backup
 
 # Backup model aliases
-cp services/gateway/env/model_aliases.json ~/model_aliases.json.backup
+cp services/gateway/env/model_aliases.json.example ~/model_aliases.json.backup
 
 # Backup tool registry
-cp services/gateway/env/tools_registry.json ~/tools_registry.json.backup
+cp services/gateway/env/tools_registry.json.example ~/tools_registry.json.backup
 ```
 
 ### Step 2: Install Docker
@@ -154,10 +154,10 @@ docker compose up -d
 docker cp ~/gateway-backup.tar.gz nexus-gateway:/tmp/
 
 # Extract in container
-docker compose exec gateway tar xzf /tmp/gateway-backup.tar.gz -C /data
+docker compose exec gateway tar xzf /tmp/gateway-backup.tar.gz -C /var/lib/gateway/data
 
 # Verify
-docker compose exec gateway ls -la /data
+docker compose exec gateway ls -la /var/lib/gateway/data
 ```
 
 #### Restore Ollama Models
@@ -189,10 +189,8 @@ docker compose restart ollama
 If you had custom model aliases in `model_aliases.json`:
 
 ```bash
-# Extract from backup
-# Edit to update backend URLs (host:port → service:port)
-# Copy to gateway container
-docker cp ~/model_aliases.json.backup nexus-gateway:/data/model_aliases.json
+# Place on host (mounted read-only inside container)
+cp ~/model_aliases.json.backup ./.runtime/gateway/config/model_aliases.json
 docker compose restart gateway
 ```
 
@@ -201,8 +199,8 @@ docker compose restart gateway
 If you had custom tools in `tools_registry.json`:
 
 ```bash
-# Copy to gateway container
-docker cp ~/tools_registry.json.backup nexus-gateway:/data/tools_registry.json
+# Place on host (mounted read-only inside container)
+cp ~/tools_registry.json.backup ./.runtime/gateway/config/tools_registry.json
 docker compose restart gateway
 ```
 
@@ -211,7 +209,7 @@ docker compose restart gateway
 If you had custom agent specs:
 
 ```bash
-docker cp ~/agent_specs.json nexus-gateway:/data/agent_specs.json
+cp ~/agent_specs.json ./.runtime/gateway/config/agent_specs.json
 docker compose restart gateway
 ```
 
@@ -283,7 +281,8 @@ sudo launchctl bootout system/com.ollama.service
 | ai-infra Path | Nexus Location |
 |---------------|----------------|
 | `/var/lib/gateway/app` | Container `/app` |
-| `/var/lib/gateway/data` | Volume `gateway_data` |
+| `/var/lib/gateway/data` | Host `./.runtime/gateway/data` → container `/var/lib/gateway/data` |
+| (operator config) | Host `./.runtime/gateway/config` → container `/var/lib/gateway/config` (read-only) |
 | `/var/lib/gateway/env` | N/A (uses Docker image deps) |
 | `/var/log/gateway/` | Docker logs |
 
@@ -299,7 +298,7 @@ docker compose logs -f gateway
 
 | ai-infra Path | Nexus Location |
 |---------------|----------------|
-| `/var/lib/ollama/models` | Volume `ollama_data` |
+| `/var/lib/ollama/models` | Host `./.runtime/ollama` → container `/root/.ollama` |
 | `/var/log/ollama/` | Docker logs |
 
 ```bash
@@ -337,9 +336,11 @@ IMAGES_HTTP_BASE_URL=http://images:7860
 |----------|-------|-------|
 | `GATEWAY_BEARER_TOKEN` | `GATEWAY_BEARER_TOKEN` | Same |
 | `OLLAMA_BASE_URL` | Auto-set | Uses Docker service name |
-| `MEMORY_DB_PATH` | Auto-set | In Docker volume |
-| `UI_IMAGE_DIR` | Auto-set | In Docker volume |
-| `TOOLS_LOG_PATH` | Auto-set | In Docker volume |
+| `MEMORY_DB_PATH` | Auto-set | In bind-mounted `./.runtime/gateway/data` |
+| `UI_IMAGE_DIR` | Auto-set | In bind-mounted `./.runtime/gateway/data` |
+| `TOOLS_LOG_PATH` | Auto-set | In bind-mounted `./.runtime/gateway/data` |
+
+Note: Nexus uses host bind mounts under `./.runtime/` (not Docker named volumes).
 
 ### Port Mappings
 
@@ -353,14 +354,15 @@ IMAGES_HTTP_BASE_URL=http://images:7860
 ### Data Directories
 
 ```bash
-# ai-infra data locations → Nexus volumes
+# ai-infra data locations → Nexus bind mounts (repo-local by default)
 
-/var/lib/gateway/data/           → gateway_data volume
-/var/lib/gateway/data/memory.sqlite → gateway_data:/data/memory.sqlite
-/var/lib/gateway/data/users.sqlite  → gateway_data:/data/users.sqlite
-/var/lib/gateway/data/ui_images/    → gateway_data:/data/ui_images/
+/var/lib/gateway/data/              → ./.runtime/gateway/data/
+/var/lib/gateway/config (operator)  → ./.runtime/gateway/config/
+/var/lib/gateway/data/memory.sqlite → ./.runtime/gateway/data/memory.sqlite
+/var/lib/gateway/data/users.sqlite  → ./.runtime/gateway/data/users.sqlite
+/var/lib/gateway/data/ui_images/    → ./.runtime/gateway/data/ui_images/
 
-/var/lib/ollama/models/          → ollama_data volume
+/var/lib/ollama/models/             → ./.runtime/ollama/
 ```
 
 ## Rollback Plan
@@ -440,8 +442,8 @@ docker compose exec ollama ollama pull llama3.1:8b
 ### Permission Issues
 
 ```bash
-# Fix volume permissions
-docker compose exec gateway chown -R 1000:1000 /data
+# Fix bind-mount permissions
+docker compose exec gateway chown -R 1000:1000 /var/lib/gateway/data
 ```
 
 ### Network Issues

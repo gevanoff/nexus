@@ -19,6 +19,12 @@ chmod +x quickstart.sh deploy/scripts/*.sh
 ./quickstart.sh
 ```
 
+If you prefer not to rely on executable bits:
+
+```bash
+bash quickstart.sh
+```
+
 This path runs preflight checks, creates a secured `.env`, and verifies gateway readiness.
 
 1. **Clone the repository**
@@ -58,7 +64,33 @@ curl http://localhost:8800/health
 # Test with authentication
 curl -H "Authorization: Bearer YOUR_TOKEN" \
   http://localhost:8800/v1/models
+
+# Smoke test (uses .env token)
+bash deploy/scripts/smoke-test-gateway.sh
+
+# Full contract-style verifier (runs inside the gateway container)
+bash deploy/scripts/verify-gateway.sh
+
+# TTS backend smoke test (direct to tts service)
+bash deploy/scripts/smoke-test-tts.sh
 ```
+
+### Gateway persistence + tools registry
+
+Nexus keeps persistent state and large artifacts on the **host filesystem** under `./.runtime/` and bind-mounts them into containers.
+
+- Gateway data: `./.runtime/gateway/data` → `/var/lib/gateway/data` (read-write)
+- Gateway config: `./.runtime/gateway/config` → `/var/lib/gateway/config` (read-only inside container)
+- Ollama models: `./.runtime/ollama` → `/root/.ollama` (read-write; large files)
+- Images data/models: `./.runtime/images/*` → `/data` and `/data/models` (read-write; large files)
+- TTS data: `./.runtime/tts/data` → `/data` (read-write)
+- etcd state: `./.runtime/etcd/data` → `/etcd-data` (read-write)
+
+- Edit gateway operator config on the host under `./.runtime/gateway/config/`:
+  - `tools_registry.json` (seeded from `services/gateway/env/tools_registry.json.example`)
+  - `model_aliases.json` (seeded from `services/gateway/env/model_aliases.json.example`)
+  - `agent_specs.json` (seeded from `services/gateway/env/agent_specs.json.example`)
+- No image rebuild is required after edits; restart the gateway container if you want a clean reload.
 
 ## Deployment Scripts
 
@@ -68,6 +100,43 @@ curl -H "Authorization: Bearer YOUR_TOKEN" \
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd
+
+### Shared script library
+
+All Nexus management scripts share common bash helpers in `deploy/scripts/_common.sh` (OS detection, prerequisite installation, env-file helpers, token generation). Keep shared logic there to avoid drift.
+
+### Env file locations
+
+- Local quickstart uses `./.env` (created from `./.env.example`).
+- Host/CI deploys can store secrets in `deploy/env/.env.dev` and `deploy/env/.env.prod` (see `deploy/env/README.md`).
+- `deploy/scripts/deploy.sh` will prefer `deploy/env/.env.<environment>` if present; otherwise it falls back to `./.env`.
+
+## Recommended Script Sequence
+
+### Local (single host)
+
+1. `quickstart.sh` (recommended) — installs prerequisites (best-effort), runs preflight, creates `.env`, brings the stack up, and verifies health.
+2. (Optional) `deploy/scripts/register-service.sh` — only needed if you want to register additional non-compose backends into etcd.
+3. `deploy/scripts/list-services.sh` — verify what’s registered in etcd.
+
+### Local (manual, no quickstart)
+
+1. `deploy/scripts/preflight-check.sh` — verify Docker + required files.
+2. `cp .env.example .env` — edit `.env` as needed.
+3. `docker compose up -d` (or `docker compose --profile full up -d`).
+
+### Remote (single host)
+
+1. On the remote host: clone Nexus to `/opt/nexus`.
+2. From your local machine: `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`.
+  - Internally runs remote preflight + remote `deploy/scripts/deploy.sh`.
+
+### Remote (multi-host)
+
+1. Deploy etcd + gateway on one host.
+2. Deploy backends (ollama/images/tts) on other hosts.
+3. Register each backend base URL in etcd with `deploy/scripts/register-service.sh`.
+4. Confirm registrations with `deploy/scripts/list-services.sh`.
 
 ## Service Profiles
 
@@ -161,29 +230,38 @@ services:
 
 ### 3. Persistent Storage
 
-Use host directories for better control:
+By default, Nexus persists state and large artifacts on the host under `./.runtime/` and bind-mounts them into containers.
+
+Gateway is split into:
+- RW data: `./.runtime/gateway/data` → `/var/lib/gateway/data`
+- RO operator config: `./.runtime/gateway/config` → `/var/lib/gateway/config`
+
+To relocate persistence outside the repo in production (e.g. `/opt/nexus/runtime`), change the bind-mount sources in `docker-compose.yml`.
+
+Example (illustrative):
 
 ```yaml
-volumes:
-  gateway_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /opt/nexus/data/gateway
-  
-  ollama_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /opt/nexus/data/ollama
+services:
+  gateway:
+    volumes:
+      - /opt/nexus/runtime/gateway/data:/var/lib/gateway/data
+      - /opt/nexus/runtime/gateway/config:/var/lib/gateway/config:ro
+      - /opt/nexus/runtime/gateway/app.env:/var/lib/gateway/app/.env:ro
+
+  ollama:
+    volumes:
+      - /opt/nexus/runtime/ollama:/root/.ollama
+
+  etcd:
+    volumes:
+      - /opt/nexus/runtime/etcd/data:/etcd-data
 ```
 
-Create directories:
+Create directories (example):
+
 ```bash
-sudo mkdir -p /opt/nexus/data/{gateway,ollama,images,tts}
-sudo chown -R 1000:1000 /opt/nexus/data
+sudo mkdir -p /opt/nexus/runtime/gateway/{data,config} /opt/nexus/runtime/etcd/data /opt/nexus/runtime/ollama
+sudo chown -R 1000:1000 /opt/nexus/runtime
 ```
 
 ### 4. Logging
@@ -321,17 +399,23 @@ Automated backups for persistent data:
 BACKUP_DIR="/backups/nexus"
 DATE=$(date +%Y%m%d_%H%M%S)
 
-# Backup gateway data
+# Backup gateway data (bind-mounted from the repo)
 docker run --rm \
-  -v nexus_gateway_data:/data \
-  -v $BACKUP_DIR:/backup \
-  alpine tar czf /backup/gateway-$DATE.tar.gz -C /data .
+  -v "$(pwd)/.runtime/gateway/data:/data:ro" \
+  -v "$BACKUP_DIR:/backup" \
+  alpine tar czf "/backup/gateway-$DATE.tar.gz" -C /data .
 
-# Backup ollama models
+# Backup gateway operator config (bind-mounted from the repo)
 docker run --rm \
-  -v nexus_ollama_data:/data \
-  -v $BACKUP_DIR:/backup \
-  alpine tar czf /backup/ollama-$DATE.tar.gz -C /data .
+  -v "$(pwd)/.runtime/gateway/config:/config:ro" \
+  -v "$BACKUP_DIR:/backup" \
+  alpine tar czf "/backup/gateway-config-$DATE.tar.gz" -C /config .
+
+# Backup ollama models (bind-mounted from the repo)
+docker run --rm \
+  -v "$(pwd)/.runtime/ollama:/data:ro" \
+  -v "$BACKUP_DIR:/backup" \
+  alpine tar czf "/backup/ollama-$DATE.tar.gz" -C /data .
 
 # Rotate old backups (keep last 7 days)
 find $BACKUP_DIR -name "*.tar.gz" -mtime +7 -delete

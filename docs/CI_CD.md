@@ -10,7 +10,7 @@ This guide outlines a dev → main deployment workflow without exposing secrets 
 
 ## Secrets Management
 
-- Store secrets in a **host-side env file** (e.g., `deploy/env/.env.dev` and `.env.prod`).
+- Store secrets in a **host-side env file** (recommended: `deploy/env/.env.dev` and `deploy/env/.env.prod`).
 - Keep env files **out of git** and managed by host admins.
 - For stronger isolation, use **Docker secrets** or a secrets manager (Vault, AWS Secrets Manager).
 - Store CI secrets in GitHub Actions **Secrets** (registry credentials, SSH keys).
@@ -30,7 +30,7 @@ They expect the following GitHub Secrets:
 - `DEV_SSH_HOST`, `DEV_SSH_USER`, `DEV_SSH_KEY`
 - `PROD_SSH_HOST`, `PROD_SSH_USER`, `PROD_SSH_KEY`
 
-Update the workflows to build/push additional service images (ollama, images, tts) as those Dockerfiles are implemented.
+Update the workflows to build/push the service images you run in your deployment (gateway, images, tts). Note that Ollama typically uses the upstream `ollama/ollama` image and may not be built in CI.
 
 ## Convenience Scripts
 
@@ -55,6 +55,9 @@ chmod +x deploy/scripts/*.sh quickstart.sh
 ./deploy/scripts/deploy.sh dev dev
 ```
 
+By default, `deploy/scripts/deploy.sh` will use `deploy/env/.env.dev` if it exists, otherwise it falls back to `./.env`.
+Create `deploy/env/.env.dev` by copying from `./.env.example` (see `deploy/env/README.md`).
+
 ### Remote deployment (from CI or operator machine)
 
 ```bash
@@ -68,6 +71,9 @@ chmod +x deploy/scripts/*.sh quickstart.sh
 ```bash
 ./deploy/scripts/deploy.sh prod main
 ```
+
+By default, `deploy/scripts/deploy.sh` will use `deploy/env/.env.prod` if it exists, otherwise it falls back to `./.env`.
+Create `deploy/env/.env.prod` by copying from `./.env.example` (see `deploy/env/README.md`).
 
 ## Notes
 
