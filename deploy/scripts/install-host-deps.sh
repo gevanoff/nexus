@@ -134,6 +134,13 @@ install_nvidia_runtime() {
   local distro
   distro="$(. /etc/os-release; printf '%s%s' "$ID" "$VERSION_ID")"
 
+  # Check for apt-get availability (required for Debian/Ubuntu-based systems)
+  if ! command -v apt-get >/dev/null 2>&1; then
+    red "apt-get is not available. This NVIDIA runtime setup only supports apt-based distributions."
+    red "Please install NVIDIA Container Toolkit manually for your distribution."
+    return
+  fi
+
   curl -fsSL https://nvidia.github.io/nvidia-docker/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   curl -fsSL "https://nvidia.github.io/nvidia-docker/${distro}/nvidia-docker.list" \
     | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' \
@@ -141,7 +148,14 @@ install_nvidia_runtime() {
 
   sudo apt-get update
   sudo apt-get install -y nvidia-docker2
-  sudo systemctl restart docker
+
+  # Restart Docker using systemctl if available, otherwise provide manual instructions
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl restart docker
+  else
+    yellow "systemctl is not available. Please restart Docker manually to apply NVIDIA runtime changes."
+    yellow "Common alternatives: 'sudo service docker restart' or 'sudo /etc/init.d/docker restart'"
+  fi
 
   if confirm "Run NVIDIA runtime validation container (docker run --gpus all ... nvidia-smi)?"; then
     docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
