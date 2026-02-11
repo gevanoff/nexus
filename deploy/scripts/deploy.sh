@@ -57,4 +57,4 @@ for compose_file in "${compose_files[@]}"; do
   compose_args+=("-f" "$compose_file")
 done
 
-docker-compose --env-file "$env_file" "${compose_args[@]}" up -d --build
+docker compose --env-file "$env_file" "${compose_args[@]}" up -d --build
