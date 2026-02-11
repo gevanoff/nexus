@@ -391,7 +391,7 @@ ns_install_prereqs_macos() {
   fi
 
   if [[ "$need_docker" == "true" ]]; then
-    # macOS runs Linux containers inside a VM.
+    # macOS can run Docker/OCI Linux containers only via a Linux VM (containers share the host kernel).
     # Default to Colima for headless hosts; set NS_MACOS_DOCKER_PROVIDER=desktop to use Docker Desktop.
     local provider="${NS_MACOS_DOCKER_PROVIDER:-colima}"
     if [[ "$provider" == "desktop" ]]; then
@@ -399,7 +399,7 @@ ns_install_prereqs_macos() {
       ns_print_warn "If Docker Desktop was just installed, launch it once before using docker."
     else
       (brew install colima docker docker-compose || true)
-      ns_print_warn "Headless macOS note: start the Docker VM with 'colima start' before using docker."
+      ns_print_warn "Headless macOS note: start the Linux VM with 'colima start' before using docker."
     fi
   fi
   [[ "$need_curl" == "true" ]] && (brew install curl || true)

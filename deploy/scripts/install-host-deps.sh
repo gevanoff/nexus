@@ -102,7 +102,7 @@ install_macos_docker() {
   fi
 
   echo
-  yellow "macOS note: containers require a Linux VM on macOS."
+  yellow "macOS note: Docker/OCI Linux containers require a Linux kernel; on macOS they run inside a lightweight VM (Colima/Lima/etc.)."
   yellow "For headless hosts, we recommend Colima (CLI-managed)."
   echo
 
