@@ -4,7 +4,7 @@ This directory provides per-service manifests for Docker Compose and containerd 
 
 ## Docker Compose
 
-Use the deployment wrappers instead of manual compose command sequences (from repo root):
+Use the deployment wrappers instead of manual compose command sequences. From the repository root:
 
 ```bash
 ./deploy/scripts/deploy.sh dev dev
