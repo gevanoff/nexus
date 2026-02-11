@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Gateway Video UI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0d12;
+        --panel: #111821;
+        --panel-strong: #141c27;
+        --border: rgba(231,237,246,0.12);
+        --text: #e7edf6;
+        --muted: #a9b4c3;
+        --accent: #6fb8ff;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(111,184,255,0.16), transparent 60%),
+          radial-gradient(900px 500px at 80% 0%, rgba(139,227,201,0.12), transparent 55%),
+          linear-gradient(180deg, #0a0d12 0%, #0c1016 100%);
+        color: var(--text);
+      }
+      main { max-width: 980px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 16px; font-weight: 650; }
+      .hint { font-size: 12px; color: var(--muted); }
+      a { color: #9ac2ff; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      .card { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 12px; padding: 12px; box-shadow: 0 12px 30px rgba(6,10,16,0.35); }
+      .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .row > * { flex: 0 0 auto; }
+
+      label { display:flex; flex-direction:column; gap:6px; }
+      label span { font-size: 12px; color: var(--muted); }
+      select, input, textarea, button { font: inherit; }
+      select, input, textarea {
+        box-sizing: border-box;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95));
+        color: var(--text);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      select option,
+      select optgroup {
+        background: #0f151f;
+        color: var(--text);
+      }
+      textarea { width: 100%; resize: vertical; min-height: 90px; }
+      button { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(22,28,38,0.95), rgba(15,20,28,0.95)); color: var(--text); cursor: pointer; box-shadow: 0 10px 20px rgba(8,12,18,0.35); }
+      button:hover { border-color: rgba(111,184,255,0.4); }
+      button:disabled { opacity: 0.6; cursor: default; }
+
+      .out { margin-top: 12px; }
+      .pill { display:inline-flex; gap:8px; align-items:center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); }
+      .error { color: #ffb4b4; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <link rel="icon" href="/static/ai-infra.png" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png" />
+      <link rel="manifest" href="/static/site.webmanifest">
+      <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#2563eb" />
+      <meta name="msapplication-TileColor" content="#0b0d10">
+      <meta name="msapplication-config" content="/static/browserconfig.xml">
+      <meta name="theme-color" content="#0b0d10">
+      <header>
+        <div>
+          <h1>Gateway Video UI</h1>
+          <div class="hint">Generate videos via the SkyReels-V2 backend.</div>
+        </div>
+        <div class="row">
+          <a class="pill" href="/ui">Back to Chat</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="row" style="justify-content:space-between">
+          <label style="min-width: 320px; flex: 1 1 640px;">
+            <span>Prompt</span>
+            <textarea id="prompt" placeholder="Describe the video you want to generate"></textarea>
+          </label>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <label>
+            <span>Duration (sec)</span>
+            <input id="duration" type="number" min="1" max="30" step="1" value="6" />
+            <span class="hint">Range: 1-30</span>
+          </label>
+
+          <label>
+            <span>Resolution</span>
+            <select id="resolution">
+              <option value="720p" selected>720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </label>
+
+          <button id="generate" type="button">Generate</button>
+        </div>
+
+        <div class="out">
+          <div id="status" class="hint"></div>
+          <div id="meta" class="hint" style="margin-top: 8px"></div>
+          <div id="preview" style="margin-top: 12px"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/video.js?v=1"></script>
+  </body>
+</html>

@@ -72,15 +72,10 @@ for path in services/gateway/Dockerfile docker-compose.yml; do
   fi
 done
 
-# Gateway source layout can vary:
-# - Monorepo layout: ../gateway/app/* exists (compose build context is ..)
-# - Standalone layout: services/gateway/app/* exists (older/minimal gateway)
-if [[ -f "../gateway/app/main.py" && -f "../gateway/app/requirements.freeze.txt" ]]; then
-  ok "Gateway source present: ../gateway/app"
-elif [[ -f "services/gateway/app/main.py" ]]; then
+if [[ -f "services/gateway/app/main.py" && -f "services/gateway/app/requirements.freeze.txt" ]]; then
   ok "Gateway source present: services/gateway/app"
 else
-  fail "Gateway source missing (expected ../gateway/app or services/gateway/app)"
+  fail "Gateway source missing (expected services/gateway/app with requirements.freeze.txt)"
 fi
 
 for service in images tts; do

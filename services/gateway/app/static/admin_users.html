@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Gateway Admin - Users</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0d12;
+        --panel: #111821;
+        --panel-strong: #141c27;
+        --border: rgba(231,237,246,0.12);
+        --text: #e7edf6;
+        --muted: #a9b4c3;
+        --accent: #6fb8ff;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(111,184,255,0.16), transparent 60%),
+          radial-gradient(900px 500px at 80% 0%, rgba(139,227,201,0.12), transparent 55%),
+          linear-gradient(180deg, #0a0d12 0%, #0c1016 100%);
+        color: var(--text);
+      }
+      main { max-width: 980px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 16px; font-weight: 650; }
+      .hint { font-size: 12px; color: var(--muted); }
+      .card { background: linear-gradient(180deg, rgba(13,20,30,0.96), rgba(8,13,20,0.96)); border: 1px solid rgba(231,237,246,0.12); padding: 16px; border-radius: 12px; box-shadow: 0 12px 30px rgba(6,10,16,0.35); }
+      label { display:block; margin-bottom: 8px; }
+      input[type="text"], input[type="password"] { box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95)); color: var(--text); width: 100%; }
+      select { box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95)); color: var(--text); width: 100%; }
+      select option,
+      select optgroup { background: #0f151f; color: var(--text); }
+      .row { display:flex; gap:8px; align-items:center; }
+      .stack { display:flex; flex-direction:column; gap:8px; }
+      button { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(22,28,38,0.95), rgba(15,20,28,0.95)); color: var(--text); cursor: pointer; box-shadow: 0 10px 20px rgba(8,12,18,0.35); }
+      button:hover { border-color: rgba(111,184,255,0.4); }
+      button.primary { background: linear-gradient(180deg, rgba(32,46,64,0.95), rgba(20,30,44,0.95)); border-color: rgba(96,145,220,0.6); }
+      .result { margin-top: 12px; font-family: monospace; white-space: pre-wrap; color: #c6d2e4; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { padding: 8px; text-align: left; border-bottom: 1px solid rgba(231,237,246,0.06); }
+      th { color: #9fb0c9; font-weight: 600; }
+      .status { display:inline-flex; align-items:center; gap:6px; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(231,237,246,0.12); }
+      .status.active { background: rgba(74,181,120,0.15); color: #a7e0bf; }
+      .status.disabled { background: rgba(210,114,114,0.12); color: #e6b0b0; }
+      .status.admin { background: rgba(120,165,255,0.15); color: #b7d4ff; }
+      .muted { color: var(--muted); font-size: 12px; }
+      .split { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      @media (max-width: 820px) {
+        .split { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Gateway Admin</h1>
+          <div class="hint">User management — admins only</div>
+        </div>
+        <div>
+          <a href="/ui" style="color:#9fbff5; text-decoration:none;">← Back to Chat UI</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="split">
+          <div>
+            <h2 style="font-size:14px;margin-top:0">Create User</h2>
+            <form id="createForm">
+              <label>Username
+                <input id="username" type="text" autocomplete="username" />
+              </label>
+              <label>Password
+                <input id="password" type="password" autocomplete="new-password" />
+              </label>
+              <label class="row"><input id="isadmin" type="checkbox"/> <span>Admin</span></label>
+              <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+                <button type="submit">Create</button>
+              </div>
+            </form>
+            <div id="createResult" class="result"></div>
+          </div>
+          <div>
+            <h2 style="font-size:14px;margin-top:0">Bulk Actions</h2>
+            <div class="stack">
+              <label>Action
+                <select id="bulkAction">
+                  <option value="">Select an action</option>
+                  <option value="activate">Activate</option>
+                  <option value="deactivate">Deactivate</option>
+                  <option value="admin">Make Admin</option>
+                  <option value="non-admin">Remove Admin</option>
+                  <option value="reset-password">Reset Password</option>
+                  <option value="delete">Delete</option>
+                </select>
+              </label>
+              <label id="passwordRow" style="display:none;">New Password
+                <input id="bulkPassword" type="password" autocomplete="new-password" />
+              </label>
+              <label id="deleteRow" style="display:none;">Type <code>delete</code> to confirm
+                <input id="deleteConfirm" type="text" autocomplete="off" />
+              </label>
+              <div class="muted">Select users in the table to apply actions.</div>
+              <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+                <button id="applyBulk" class="primary" type="button">Apply</button>
+              </div>
+              <div id="bulkResult" class="result"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <h2 style="font-size:14px;margin-top:0">Users</h2>
+          <button id="refreshUsers" type="button">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:32px;"><input id="selectAll" type="checkbox" /></th>
+              <th>User</th>
+              <th>Status</th>
+              <th>Roles</th>
+            </tr>
+          </thead>
+          <tbody id="usersTable">
+          </tbody>
+        </table>
+      </section>
+
+    </main>
+    <script>
+      async function postJson(url, body){
+        const res = await fetch(url, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body), credentials:'same-origin'});
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      }
+      async function getJson(url){
+        const res = await fetch(url, {credentials:'same-origin'});
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      }
+      function setText(id, text){
+        const el = document.getElementById(id);
+        el.textContent = text;
+      }
+      function renderUsers(users){
+        const tbody = document.getElementById('usersTable');
+        tbody.innerHTML = '';
+        users.forEach((u)=>{
+          const tr = document.createElement('tr');
+          
+          // Checkbox column
+          const tdCheck = document.createElement('td');
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.className = 'user-check';
+          checkbox.setAttribute('data-username', u.username);
+          tdCheck.appendChild(checkbox);
+          tr.appendChild(tdCheck);
+          
+          // Username column
+          const tdUser = document.createElement('td');
+          tdUser.textContent = u.username;
+          tr.appendChild(tdUser);
+          
+          // Status column
+          const tdStatus = document.createElement('td');
+          const statusSpan = document.createElement('span');
+          statusSpan.className = u.disabled ? 'status disabled' : 'status active';
+          statusSpan.textContent = u.disabled ? 'Disabled' : 'Active';
+          tdStatus.appendChild(statusSpan);
+          tr.appendChild(tdStatus);
+          
+          // Roles column
+          const tdRole = document.createElement('td');
+          const roleSpan = document.createElement('span');
+          roleSpan.className = u.admin ? 'status admin' : 'muted';
+          roleSpan.textContent = u.admin ? 'Admin' : 'Member';
+          tdRole.appendChild(roleSpan);
+          tr.appendChild(tdRole);
+          
+          tbody.appendChild(tr);
+        });
+      }
+      async function loadUsers(){
+        const data = await getJson('/ui/api/users');
+        renderUsers(data.users || []);
+        document.getElementById('selectAll').checked = false;
+      }
+      function selectedUsers(){
+        return Array.from(document.querySelectorAll('.user-check'))
+          .filter((el)=>el.checked)
+          .map((el)=>el.getAttribute('data-username'));
+      }
+      document.getElementById('createForm').addEventListener('submit', async (ev)=>{
+        ev.preventDefault();
+        const u = document.getElementById('username').value.trim();
+        const p = document.getElementById('password').value;
+        const a = document.getElementById('isadmin').checked;
+        setText('createResult', '');
+        try{
+          const j = await postJson('/ui/api/users', {username:u, password:p, admin:a});
+          setText('createResult', JSON.stringify(j, null, 2));
+          await loadUsers();
+        }catch(e){
+          setText('createResult', String(e));
+        }
+      });
+      document.getElementById('bulkAction').addEventListener('change', (ev)=>{
+        const val = ev.target.value;
+        document.getElementById('passwordRow').style.display = val === 'reset-password' ? 'block' : 'none';
+        document.getElementById('deleteRow').style.display = val === 'delete' ? 'block' : 'none';
+      });
+      document.getElementById('applyBulk').addEventListener('click', async ()=>{
+        setText('bulkResult', '');
+        const action = document.getElementById('bulkAction').value;
+        const users = selectedUsers();
+        const password = document.getElementById('bulkPassword').value;
+        const confirmText = document.getElementById('deleteConfirm').value.trim().toLowerCase();
+        if (!action){
+          setText('bulkResult', 'Select an action.');
+          return;
+        }
+        if (users.length === 0){
+          setText('bulkResult', 'Select at least one user.');
+          return;
+        }
+        if (action === 'reset-password' && !password){
+          setText('bulkResult', 'Enter a new password.');
+          return;
+        }
+        if (action === 'delete' && confirmText !== 'delete'){
+          setText('bulkResult', 'Type "delete" to confirm deletions.');
+          return;
+        }
+        try{
+          const payload = {action, users};
+          if (action === 'reset-password'){
+            payload.password = password;
+          }
+          if (action === 'delete'){
+            payload.confirm = confirmText;
+          }
+          const res = await postJson('/ui/api/users/bulk', payload);
+          setText('bulkResult', JSON.stringify(res, null, 2));
+          await loadUsers();
+        }catch(e){
+          setText('bulkResult', String(e));
+        }
+      });
+      document.getElementById('selectAll').addEventListener('change', (ev)=>{
+        const checked = ev.target.checked;
+        document.querySelectorAll('.user-check').forEach((el)=>{ el.checked = checked; });
+      });
+      document.getElementById('refreshUsers').addEventListener('click', async ()=>{
+        setText('bulkResult', '');
+        await loadUsers();
+      });
+      loadUsers().catch((e)=>setText('bulkResult', String(e)));
+    </script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "retrieval": [
+    {
+      "query": "What is this gateway for?",
+      "expect_ids": [],
+      "min_hits": 1,
+      "top_k": 6,
+      "min_sim": 0.25
+    }
+  ]
+}

@@ -4,8 +4,8 @@ services:
   # Gateway Service - Central API gateway
   gateway:
     build:
-      context: ..
-      dockerfile: nexus/services/gateway/Dockerfile
+      context: ./services/gateway
+      dockerfile: Dockerfile
     container_name: nexus-gateway
     ports:
       - "${GATEWAY_PORT:-8800}:8800"

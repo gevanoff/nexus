@@ -20,7 +20,7 @@ Interactive migration helper from ai-infra to Nexus.
 
 Options:
   --backup-dir <path>    Directory where backup files should be written.
-  --ai-infra-dir <path>  Path to existing ai-infra checkout.
+  --ai-infra-dir <path>  (Optional) Path to existing ai-infra checkout.
   --nexus-dir <path>     Path to Nexus repository (default: current repo root).
   --skip-deploy          Skip 'docker compose up -d'.
   --skip-restore         Skip data/config restore steps.
@@ -126,14 +126,18 @@ backup_ai_infra() {
     echo "Skipping Ollama data backup; /var/lib/ollama not found."
   fi
 
-  local gateway_env="$AI_INFRA_DIR/services/gateway/env"
-  for file in gateway.env model_aliases.json tools_registry.json agent_specs.json; do
-    if [[ -f "$gateway_env/$file" ]]; then
-      cp "$gateway_env/$file" "$BACKUP_DIR/$file.backup"
-      chmod 600 "$BACKUP_DIR/$file.backup"
-      echo "Backed up $file"
-    fi
-  done
+  if [[ -n "${AI_INFRA_DIR:-}" && -d "$AI_INFRA_DIR/services/gateway/env" ]]; then
+    local gateway_env="$AI_INFRA_DIR/services/gateway/env"
+    for file in gateway.env model_aliases.json tools_registry.json agent_specs.json; do
+      if [[ -f "$gateway_env/$file" ]]; then
+        cp "$gateway_env/$file" "$BACKUP_DIR/$file.backup"
+        chmod 600 "$BACKUP_DIR/$file.backup"
+        echo "Backed up $file"
+      fi
+    done
+  else
+    echo "Skipping ai-infra env/config backup; no ai-infra checkout provided."
+  fi
 }
 
 prepare_nexus() {
@@ -271,9 +275,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$AI_INFRA_DIR" ]]; then
-  AI_INFRA_DIR="$HOME/ai-infra"
-fi
 if [[ -z "$BACKUP_DIR" ]]; then
   BACKUP_DIR="$HOME/nexus-migration-backup"
 fi
@@ -294,7 +295,6 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
-require_dir "$AI_INFRA_DIR" "ai-infra"
 require_dir "$NEXUS_DIR" "nexus"
 
 # Portable path normalization
@@ -320,13 +320,19 @@ normalize_path() {
   fi
 }
 
-AI_INFRA_DIR="$(normalize_path "$AI_INFRA_DIR")"
+if [[ -n "${AI_INFRA_DIR:-}" ]]; then
+  AI_INFRA_DIR="$(normalize_path "$AI_INFRA_DIR")"
+fi
 NEXUS_DIR="$(normalize_path "$NEXUS_DIR")"
 mkdir -p "$BACKUP_DIR"
 BACKUP_DIR="$(normalize_path "$BACKUP_DIR")"
 
 echo "Nexus migration helper (interactive)"
-echo "ai-infra: $AI_INFRA_DIR"
+if [[ -n "${AI_INFRA_DIR:-}" ]]; then
+  echo "ai-infra: $AI_INFRA_DIR"
+else
+  echo "ai-infra: (not provided)"
+fi
 echo "nexus: $NEXUS_DIR"
 echo "backups: $BACKUP_DIR"
 
@@ -335,7 +341,7 @@ prepare_nexus
 
 if [[ "$SKIP_DEPLOY" -eq 1 ]]; then
   echo "--skip-deploy specified: skipping restore and migration verification because containers are not running."
-  echo "To restore data manually, run: docker compose up -d && ./deploy/scripts/migrate-from-ai-infra.sh --skip-backup --ai-infra-dir '$AI_INFRA_DIR' --backup-dir '$BACKUP_DIR'"
+  echo "To restore data manually, run: docker compose up -d && ./deploy/scripts/migrate-from-ai-infra.sh --backup-dir '$BACKUP_DIR'"
 else
   if [[ "$SKIP_RESTORE" -eq 0 ]]; then
     restore_into_nexus

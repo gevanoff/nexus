@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Voice Clone UI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0d12;
+        --panel: #111821;
+        --panel-strong: #141c27;
+        --border: rgba(231,237,246,0.12);
+        --text: #e7edf6;
+        --muted: #a9b4c3;
+        --accent: #6fb8ff;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(111,184,255,0.16), transparent 60%),
+          radial-gradient(900px 500px at 80% 0%, rgba(139,227,201,0.12), transparent 55%),
+          linear-gradient(180deg, #0a0d12 0%, #0c1016 100%);
+        color: var(--text);
+      }
+      main { max-width: 980px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 16px; font-weight: 650; }
+      .hint { font-size: 12px; color: var(--muted); }
+      a { color: #9ac2ff; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      .card { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 12px; padding: 12px; box-shadow: 0 12px 30px rgba(6,10,16,0.35); }
+      .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .row > * { flex: 0 0 auto; }
+      .section-title { font-size: 12px; color: var(--muted); letter-spacing: 0.02em; text-transform: uppercase; }
+
+      label { display:flex; flex-direction:column; gap:6px; }
+      label span { font-size: 12px; color: var(--muted); }
+      select, input, textarea, button { font: inherit; }
+      select, input, textarea {
+        box-sizing: border-box;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95));
+        color: var(--text);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      select option,
+      select optgroup {
+        background: #0f151f;
+        color: var(--text);
+      }
+      textarea { width: 100%; resize: vertical; min-height: 90px; }
+      button { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(22,28,38,0.95), rgba(15,20,28,0.95)); color: var(--text); cursor: pointer; box-shadow: 0 10px 20px rgba(8,12,18,0.35); }
+      button:hover { border-color: rgba(111,184,255,0.4); }
+      button:disabled { opacity: 0.6; cursor: default; }
+
+      .out { margin-top: 12px; }
+      .audio-card { display:flex; flex-direction:column; gap:10px; width: 100%; max-width: 640px; }
+      .pill { display:inline-flex; gap:8px; align-items:center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); }
+      .error { color: #ffb4b4; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <link rel="icon" href="/static/ai-infra.png" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png" />
+      <link rel="manifest" href="/static/site.webmanifest">
+      <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#2563eb" />
+      <meta name="msapplication-TileColor" content="#0b0d10">
+      <meta name="msapplication-config" content="/static/browserconfig.xml">
+      <meta name="theme-color" content="#0b0d10">
+      <header>
+        <div>
+          <h1>Voice Clone UI</h1>
+          <div class="hint">Upload a reference audio sample and synthesize speech with a cloned voice.</div>
+        </div>
+        <div class="row">
+          <a class="pill" href="/ui">Back to Chat</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="row" style="justify-content:space-between">
+          <label>
+            <span>TTS Backend</span>
+            <select id="backend">
+              <option value="">(default)</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Backend health</span>
+            <div id="backendHealth" class="hint">Loading...</div>
+          </label>
+        </div>
+
+        <div class="row" style="justify-content:space-between; margin-top:12px">
+          <label style="min-width: 320px; flex: 1 1 640px;">
+            <span>Text</span>
+            <textarea id="text" placeholder="Enter text to speak"></textarea>
+          </label>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <span class="section-title">Source audio</span>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label>
+            <span>Prompt Audio</span>
+            <input id="promptAudio" type="file" accept="audio/*" />
+          </label>
+          <label>
+            <span>Record Sample</span>
+            <div class="row">
+              <button id="recordAudio" type="button">Record</button>
+              <button id="stopRecording" type="button" disabled>Stop</button>
+              <button id="clearRecording" type="button" disabled>Clear</button>
+            </div>
+            <div id="recordStatus" class="hint">No recording yet.</div>
+          </label>
+          <div id="recordPlayer" class="audio-card"></div>
+          <label>
+            <span>Saved Voice</span>
+            <select id="savedVoice">
+              <option value="">(none)</option>
+            </select>
+          </label>
+          <label>
+            <span>Voice Name (save)</span>
+            <input id="voiceName" type="text" placeholder="e.g. alex_ref" />
+          </label>
+          <button id="saveVoice" type="button">Save Voice Sample</button>
+          <button id="deleteVoice" type="button">Delete Selected</button>
+        </div>
+
+        <div class="row backend-section" style="margin-top:12px" data-backends="qwen">
+          <span class="section-title">Qwen3-TTS options</span>
+        </div>
+        <div class="row backend-section" style="margin-top:8px" data-backends="qwen">
+          <label>
+            <span>Language</span>
+            <select id="language">
+              <option value="">(default)</option>
+              <option value="English" selected>English</option>
+              <option value="Chinese">Chinese</option>
+              <option value="Auto">Auto</option>
+            </select>
+          </label>
+          <label style="min-width: 320px; flex: 1 1 640px;">
+            <span>Reference Text (Qwen3-TTS)</span>
+            <textarea id="refText" placeholder="Transcript of reference audio"></textarea>
+          </label>
+        </div>
+
+        <div class="row backend-section" style="margin-top:12px" data-backends="qwen">
+          <label style="min-width: 320px; flex: 1 1 640px;">
+            <span>Reference Audio URL/Base64 (Qwen3-TTS)</span>
+            <textarea id="refAudio" placeholder="URL or base64 for ref_audio (optional if uploading file)"></textarea>
+          </label>
+          <label>
+            <span>X-vector only mode</span>
+            <select id="xVectorOnly">
+              <option value="">(default)</option>
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row backend-section" style="margin-top:12px" data-backends="qwen">
+          <label style="min-width: 320px; flex: 1 1 640px;">
+            <span>Voice Clone Prompt (JSON, Qwen3-TTS)</span>
+            <textarea id="voiceClonePrompt" placeholder="Paste prompt JSON returned by create_voice_clone_prompt"></textarea>
+          </label>
+        </div>
+
+        <div class="row backend-section" style="margin-top:12px" data-backends="qwen,lux,default">
+          <label>
+            <span>Preset Profile</span>
+            <select id="preset">
+              <option value="">(none)</option>
+              <option value="fast">Fast (steps=3, t_shift=0.8)</option>
+              <option value="balanced">Balanced (steps=4, t_shift=0.9)</option>
+              <option value="quality">Quality (steps=6, t_shift=0.95)</option>
+            </select>
+          </label>
+          <label>
+            <span>RMS</span>
+            <input id="rms" type="number" step="0.001" value="0.01" />
+          </label>
+          <label>
+            <span>Duration (sec)</span>
+            <input id="duration" type="number" step="0.1" value="5" />
+          </label>
+          <label>
+            <span>Num steps</span>
+            <input id="numSteps" type="number" step="1" value="4" />
+          </label>
+          <label>
+            <span>T shift</span>
+            <input id="tShift" type="number" step="0.1" value="0.9" />
+          </label>
+          <label>
+            <span>Speed</span>
+            <input id="speed" type="number" step="0.1" value="1.0" />
+          </label>
+          <label>
+            <span>Return smooth</span>
+            <select id="returnSmooth">
+              <option value="">(default)</option>
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </label>
+          <label class="backend-section" data-backends="qwen">
+            <span>Max new tokens</span>
+            <input id="maxNewTokens" type="number" step="1" placeholder="optional" />
+          </label>
+          <label class="backend-section" data-backends="qwen">
+            <span>Top-p</span>
+            <input id="topP" type="number" step="0.01" placeholder="optional" />
+          </label>
+          <button id="generate" type="button">Generate</button>
+        </div>
+
+        <div class="out">
+          <div id="status" class="hint"></div>
+          <div id="meta" class="hint" style="margin-top: 8px"></div>
+          <div id="player" style="margin-top: 12px"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/voice_clone.js?v=1"></script>
+  </body>
+</html>

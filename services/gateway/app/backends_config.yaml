@@ -1,0 +1,173 @@
+# Backend configuration: defines backend classes, capabilities, and enforcement policies
+# This is the single source of truth for routing, admission control, and payload policies
+
+backends:
+  local_mlx:
+    class: local_mlx
+    base_url: http://127.0.0.1:10240/v1
+    description: macOS Nexa (MLX) - local inference
+    supported_capabilities:
+      - chat
+      - embeddings
+    concurrency_limits:
+      chat: 2
+      embeddings: 2
+    health:
+      # OpenAI-style servers commonly expose /models but not /healthz.
+      # Use /models as a lightweight liveness/readiness signal.
+      liveness: /models
+      readiness: /models
+    payload_policy:
+      # MLX doesn't generate images
+      images_format: null
+
+  gpu_fast:
+    class: gpu_fast
+    base_url: http://ai1:9050
+    description: ai1 - SDXL Turbo (RTX 5060 Ti, 16GB VRAM)
+    supported_capabilities:
+      - images
+    concurrency_limits:
+      images: 2
+    health:
+      liveness: /health
+      readiness: /readyz
+    payload_policy:
+      images_format: url
+      images_allow_base64: true
+      images_max_bytes: 50000000
+
+  ollama:
+    class: ollama
+    base_url: http://127.0.0.1:11434
+    description: localhost Ollama
+    supported_capabilities:
+      - chat
+      - embeddings
+    concurrency_limits:
+      chat: 4
+      embeddings: 4
+    health:
+      liveness: /api/version
+      readiness: /api/version
+    payload_policy:
+      images_format: null
+
+  gpu_heavy:
+    class: gpu_heavy
+    base_url: http://ada2:7860
+    description: ada2 - RTX 6000 Ada, 46GB VRAM
+    supported_capabilities:
+      - images
+    concurrency_limits:
+      images: 2
+    health:
+      liveness: /healthz
+      readiness: /readyz
+    payload_policy:
+      # Images default to URL, only allow base64 when explicitly requested
+      images_format: url
+      images_allow_base64: true
+      images_max_bytes: 50000000
+
+  heartmula_music:
+    class: heartmula_music
+    base_url: ${HEARTMULA_BASE_URL}
+    description: HeartMula music generator (HTTP)
+    supported_capabilities:
+      - music
+    concurrency_limits:
+      music: 2
+    health:
+      liveness: /healthz
+      readiness: /readyz
+    payload_policy: {}
+
+  pocket_tts:
+    class: pocket_tts
+    base_url: http://ai2:9940
+    description: Pocket TTS backend
+    supported_capabilities:
+      - tts
+    concurrency_limits:
+      tts: 4
+    health:
+      liveness: /healthz
+      readiness: /readyz
+    payload_policy: {}
+
+  qwen3_tts:
+    class: qwen3_tts
+    base_url: http://ai2:9175
+    description: Qwen3-TTS shim
+    supported_capabilities:
+      - tts
+    concurrency_limits:
+      tts: 2
+    health:
+      liveness: /health
+      readiness: /readyz
+    payload_policy: {}
+
+  skyreels_v2:
+    class: skyreels_v2
+    base_url: ${SKYREELS_BASE_URL}
+    description: SkyReels-V2 video shim
+    supported_capabilities: []
+    concurrency_limits: {}
+    health:
+      liveness: /healthz
+      readiness: /readyz
+    payload_policy: {}
+
+  followyourcanvas:
+    class: followyourcanvas
+    base_url: ${FYC_API_BASE_URL}
+    description: FollowYourCanvas video shim
+    supported_capabilities: []
+    concurrency_limits: {}
+    health:
+      liveness: /healthz
+      readiness: /readyz
+    payload_policy: {}
+
+  lighton_ocr:
+    class: lighton_ocr
+    base_url: ${LIGHTON_OCR_API_BASE_URL}
+    description: LightOnOCR shim
+    supported_capabilities:
+      - ocr
+    concurrency_limits:
+      ocr: 2
+    health:
+      liveness: /health
+      readiness: /readyz
+    payload_policy: {}
+
+  personaplex:
+    class: personaplex
+    base_url: ${PERSONAPLEX_BASE_URL}
+    description: PersonaPlex chat shim
+    supported_capabilities: []
+    concurrency_limits: {}
+    health:
+      liveness: /healthz
+      readiness: /readyz
+    payload_policy: {}
+
+  luxtts:
+    class: luxtts
+    base_url: http://ai2:9170
+    description: LuxTTS shim
+    supported_capabilities:
+      - tts
+    concurrency_limits:
+      tts: 2
+    health:
+      liveness: /health
+      readiness: /readyz
+    payload_policy: {}
+
+# Legacy backend names map to backend classes
+legacy_mapping:
+  mlx: local_mlx

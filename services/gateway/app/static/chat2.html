@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Gateway Chat UI (v2)</title>
+    <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0d12;
+      --bg-elevated: #0f151f;
+      --panel: #111821;
+      --panel-strong: #141c27;
+      --border: rgba(231,237,246,0.12);
+      --border-strong: rgba(231,237,246,0.2);
+      --text: #e7edf6;
+      --muted: #a9b4c3;
+      --accent: #6fb8ff;
+      --accent-2: #8be3c9;
+    }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(111,184,255,0.16), transparent 60%),
+          radial-gradient(900px 500px at 80% 0%, rgba(139,227,201,0.12), transparent 55%),
+          linear-gradient(180deg, #0a0d12 0%, #0c1016 100%);
+        color: var(--text);
+      }
+      main { max-width: 980px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 16px; font-weight: 650; }
+      .hint { font-size: 12px; color: var(--muted); }
+      .topbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; position: relative; }
+      select, input, textarea, button { font: inherit; }
+      select, input, textarea {
+        box-sizing: border-box;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95));
+        color: var(--text);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      select option,
+      select optgroup {
+        background: #0f151f;
+        color: var(--text);
+      }
+      button {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(22,28,38,0.95), rgba(15,20,28,0.95));
+        color: var(--text);
+        cursor: pointer;
+        transition: transform 0.08s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 10px 20px rgba(8,12,18,0.35);
+      }
+      button:hover { background: linear-gradient(180deg, rgba(26,34,45,0.98), rgba(16,22,31,0.98)); border-color: rgba(111,184,255,0.4); }
+      button:active { transform: translateY(1px) scale(0.98); background: rgba(111,184,255,0.14); }
+      button:focus-visible { outline: 2px solid rgba(111,184,255,0.6); outline-offset: 2px; }
+      button:disabled { opacity: 0.6; cursor: default; transform: none; }
+      .chat {
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95));
+        border-radius: 12px;
+        padding: 12px;
+        min-height: 340px;
+        height: 60vh;
+        overflow-y: auto;
+        box-shadow: 0 12px 30px rgba(6,10,16,0.35);
+      }
+      .msg { display:flex; flex-direction:column; gap:6px; padding: 10px; border-radius: 12px; margin: 10px 0; border: 1px solid rgba(231,237,246,0.10); background: rgba(14,20,30,0.65); }
+      .msg.user { background: linear-gradient(180deg, rgba(50,110,255,0.16), rgba(20,26,36,0.7)); }
+      .msg.assistant { background: linear-gradient(180deg, rgba(231,237,246,0.08), rgba(18,24,32,0.7)); }
+      .msg.system { background: linear-gradient(180deg, rgba(255, 200, 50, 0.12), rgba(32,26,18,0.6)); }
+      .meta { font-size: 12px; color: var(--muted); }
+      .content { white-space: pre-wrap; line-height: 1.5; }
+      .thinking-line { font-size: 12px; color: #93a4ba; font-style: italic; margin-bottom: 6px; }
+      .composer { margin-top: 12px; display:flex; gap:10px; }
+      .composer textarea { flex: 1; min-height: 64px; resize: vertical; }
+      .right { display:flex; flex-direction:column; gap:10px; }
+      .pill {
+        display:inline-flex;
+        gap:8px;
+        align-items:center;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      img.gen { max-width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--border); }
+      .audio-card { display:flex; flex-direction:column; gap:10px; width: 100%; max-width: 640px; }
+      .audio-controls { display:flex; flex-direction:column; gap:6px; }
+      .audio-meta { display:flex; justify-content:space-between; font-size: 12px; color: #a9b4c3; }
+      .audio-sliders { display:flex; gap:10px; align-items:center; }
+      .audio-sliders input[type="range"] { flex: 1; }
+      .msg audio { width: 100%; max-width: 520px; }
+      /* Progress bar */
+      .progress {
+        width: 100%;
+        background: rgba(231,237,246,0.06);
+        border-radius: 8px;
+        height: 10px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+      .progress-inner { height: 10px; background: linear-gradient(90deg,var(--accent),var(--accent-2)); width: 100%; }
+      .progress-inner.indeterminate { animation: progress-slide 1.2s ease-in-out infinite; transform-origin: left; }
+      .progress-text { font-size: 12px; color: var(--muted); margin-top: 6px; }
+      @keyframes progress-slide {
+        0% { transform: translateX(-70%); }
+        50% { transform: translateX(0%); }
+        100% { transform: translateX(70%); }
+      }
+      @media (max-width: 760px) { .composer { flex-direction: column; } }
+      /* Modal styles */
+      .modal { display: none; }
+      .modal[aria-hidden="false"] { display: block; position: fixed; inset: 0; z-index: 1200; }
+      .modal-backdrop { position: absolute; inset: 0; background: rgba(4,8,12,0.7); backdrop-filter: blur(2px); }
+      .modal-panel {
+        position: relative;
+        width: 100%;
+        max-width: 560px;
+        margin: 6vh auto;
+        background: linear-gradient(180deg, rgba(13,20,30,0.96), rgba(9,14,22,0.96));
+        border-radius: 12px;
+        padding: 16px;
+        border: 1px solid rgba(231,237,246,0.12);
+        color: var(--text);
+        z-index: 1210;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.45);
+      }
+      .modal-panel h3 { font-size: 16px; }
+      .modal-panel label { display:block; font-size:13px; }
+      /* Apps dropdown menu */
+      .apps-menu {
+        position: absolute;
+        right: 0;
+        top: 44px;
+        min-width: 200px;
+        background: linear-gradient(180deg, rgba(13,20,30,0.98), rgba(8,12,20,0.98));
+        border: 1px solid rgba(231,237,246,0.12);
+        border-radius: 8px;
+        padding: 6px;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.6);
+        z-index: 1200;
+        display: none;
+      }
+      .apps-menu .menu-item { display: block; padding: 8px 10px; color: #e7edf6; text-decoration: none; border-radius: 6px; }
+      .apps-menu .menu-item:hover { background: rgba(231,237,246,0.03); }
+      .apps-menu .menu-sep { height: 1px; background: rgba(231,237,246,0.04); margin: 6px 0; }
+      .apps-btn { display:inline-flex; align-items:center; gap:8px; }
+      .apps-btn .caret { font-size: 12px; color: #93a4ba; margin-left: 4px; }
+      .apps-menu[aria-hidden="true"] { display: none; }
+      .apps-menu[aria-hidden="false"] { display: block; }
+      .status-panel {
+        margin-top: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 8px 12px;
+        background: linear-gradient(180deg, rgba(16,22,30,0.92), rgba(10,15,22,0.92));
+        box-shadow: 0 10px 24px rgba(6,10,16,0.35);
+      }
+      .status-panel summary { cursor: pointer; font-weight: 600; color: #e7edf6; }
+      .status-body { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+      .status-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .status-list { display: flex; flex-direction: column; gap: 8px; }
+      .status-group { display: flex; flex-direction: column; gap: 8px; }
+      .status-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #93a4ba; }
+      .status-group-list { display: flex; flex-direction: column; gap: 8px; }
+      .status-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; border: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(20,28,38,0.9), rgba(14,20,28,0.9)); }
+      .status-row.ok { background: rgba(62, 197, 126, 0.12); border-color: rgba(62, 197, 126, 0.28); }
+      .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
+      .status-row.bad { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.28); }
+      .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+      .status-name { font-weight: 600; }
+      .status-name-alias { font-weight: 400; color: #93a4ba; }
+      .status-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+      .status-badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid transparent; }
+      .status-badge.ok { background: rgba(111,184,255,0.18); color: #cfe7ff; border-color: rgba(111,184,255,0.4); }
+      .status-badge.warn { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
+      .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-detail { font-size: 12px; color: var(--muted); }
+      .status-aliases { font-size: 12px; color: #b7c4d6; }
+      .status-error { font-size: 12px; color: #ffb6b6; }
+      .status-empty { font-size: 12px; color: #93a4ba; }
+      .loading-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #93a4ba; }
+      .loading-indicator::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid rgba(231,237,246,0.18);
+        border-top-color: #6fb8ff;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .attachments-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+      .attachments-panel .attachments-list { display: flex; flex-direction: column; gap: 6px; }
+      .attachment-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(231,237,246,0.12); background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); font-size: 12px; }
+      .attachment-row .attachment-name { color: #dfe7f3; }
+      .attachment-row .attachment-meta { color: #93a4ba; font-size: 11px; }
+      .attachment-row button { padding: 4px 8px; font-size: 11px; }
+      .message-attachments { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+      .message-attachments a { color: #9fc2ff; }
+      .settings-layout { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: start; }
+      .settings-menu { display: flex; flex-direction: column; gap: 6px; }
+      .settings-menu button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; }
+      .settings-menu button.active { background: rgba(111,184,255,0.16); border-color: rgba(111,184,255,0.4); }
+      .settings-section { display: none; flex-direction: column; gap: 8px; }
+      .settings-section.active { display: flex; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <link rel="icon" href="/static/ai-infra.png" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png" />
+      <link rel="manifest" href="/static/site.webmanifest">
+      <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#2563eb" />
+      <meta name="msapplication-TileColor" content="#0b0d10">
+      <meta name="msapplication-config" content="/static/browserconfig.xml">
+      <meta name="theme-color" content="#0b0d10">
+      <header>
+        <div>
+          <h1>Gateway chat (v2)</h1>
+          <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Streams status + output tokens (no hidden chain-of-thought).</div>
+        </div>
+        <div class="topbar">
+          <span class="pill">
+            <span class="hint">Model</span>
+            <select id="model"></select>
+            <button id="loadModels" type="button">Load</button>
+          </span>
+          <!-- Auto-detect toggles removed to simplify UI -->
+          <div style="position:relative;">
+            <button id="appsBtn" class="pill apps-btn" type="button" aria-expanded="false">
+              <span class="apps-label">Apps</span>
+              <span class="caret" aria-hidden="true">▾</span>
+            </button>
+            <div id="appsMenu" class="apps-menu" hidden aria-hidden="true">
+              <a class="menu-item" href="/ui/image">Image UI</a>
+              <a class="menu-item" href="/ui/music">Music UI</a>
+              <a class="menu-item" href="/ui/video">Video UI</a>
+              <a class="menu-item" href="/ui/personaplex">PersonaPlex UI</a>
+              <a class="menu-item" href="/ui/tts">Text-to-speech</a>
+              <a class="menu-item" href="/ui/voice-clone">Voice Clone</a>
+              <a class="menu-item" href="/ui/ocr">OCR / Scan</a>
+              <div class="menu-sep"></div>
+              <a id="adminUiLink" class="menu-item admin-only" href="/ui/admin/users" style="display:none">Admin UI</a>
+            </div>
+          </div>
+          <button id="clear" type="button">Clear message box</button>
+          <button id="clearChat" type="button">Clear Chat</button>
+          <button id="resetSession" type="button">Reset Session</button>
+          <button id="settingsBtn" type="button" title="Settings">⚙️</button>
+        </div>
+      </header>
+
+      <div id="chat" class="chat" aria-live="polite"></div>
+
+      <div class="composer">
+        <textarea id="input" placeholder="Message (try: /image a cozy cabin in snow at dusk)"></textarea>
+        <div class="right">
+          <button id="send">Send</button>
+          <button id="attachBtn" type="button">Attach file</button>
+          <div class="hint">Chat streams from <code>/ui/api/chat_stream</code>. Images use <code>/ui/api/image</code>.</div>
+        </div>
+      </div>
+      <div class="attachments-panel">
+        <input id="fileInput" type="file" multiple hidden />
+        <div id="attachmentsList" class="attachments-list" hidden></div>
+      </div>
+
+      <details open style="margin-top:10px">
+        <summary>Command legend</summary>
+        <div style="margin-top:8px; font-size:13px; color:#c6d2e4;">
+          <ul>
+            <li><strong>/image</strong> — generate images via the Image UI/API. Works: use <code>/image a cozy cabin at dusk</code> or click <a href="/ui/image">Image UI</a>.</li>
+            <li><strong>/music</strong> — generate short music clips via the Music UI/API. Works: try <code>/music chill lo-fi beat</code> or open <a href="/ui/music">Music UI</a>.</li>
+            <li><strong>/speech</strong> (or use the Text-to-Speech UI) — synthesize audio via TTS backends. Works: open <a href="/ui/tts">Text-to-speech</a> or use the TTS controls after chat output.</li>
+            <li><strong>/clone</strong> — open the Voice Clone UI to upload a reference clip and synthesize speech. Open <a href="/ui/voice-clone">Voice Clone</a>.</li>
+            <li><strong>/scan</strong> — run OCR against an image URL (LightOnOCR). Works: <code>/scan https://example.org/photo.jpg</code> or open <a href="/ui/ocr">OCR UI</a> if available.</li>
+            <li><strong>/video</strong> — video generation UI via SkyReels-V2. Open <a href="/ui/video">Video UI</a>.</li>
+          </ul>
+          <div class="hint" style="margin-top:6px">Notes: Chat commands require that the UI is reachable (see <code>UI_IP_ALLOWLIST</code>) and you may need to be authenticated for persisted storage.</div>
+        </div>
+      </details>
+
+      <details id="backendStatusPanel" class="status-panel">
+        <summary>Backend status</summary>
+        <div class="status-body">
+          <div class="status-meta">
+            <span id="backendStatusUpdated" class="hint">Last updated: --</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button id="backendStatusRefresh" type="button">Refresh</button>
+              <span id="backendStatusSpinner" class="loading-indicator" hidden>Refreshing…</span>
+            </div>
+          </div>
+          <div id="backendStatusError" class="status-error" hidden></div>
+          <div id="backendStatusList" class="status-list">
+            <div class="status-empty">Expand to load backend status.</div>
+          </div>
+        </div>
+      </details>
+    </main>
+
+    <!-- Settings modal -->
+    <div id="settingsModal" class="modal" aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" id="settingsBackdrop"></div>
+      <div class="modal-panel" role="document">
+        <header style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <h3 style="margin:0">User Settings</h3>
+          <button id="settingsClose" aria-label="Close">✕</button>
+        </header>
+        <form id="settingsForm">
+          <div class="settings-layout">
+            <nav class="settings-menu">
+              <button type="button" data-section="settings-backends" class="active">Backends</button>
+              <button type="button" data-section="settings-profile">Profile</button>
+              <button type="button" data-section="settings-ui">UI</button>
+              <button type="button" data-section="settings-security">Security</button>
+            </nav>
+            <div>
+              <section id="settings-backends" class="settings-section active">
+                <label>Preferred chat model
+                  <select id="settings_model_preference"></select>
+                </label>
+                <label>Preferred TTS backend
+                  <select id="settings_tts_backend"><option value="">(default)</option></select>
+                </label>
+                <label>Preferred TTS voice
+                  <select id="settings_tts_voice"><option value="">(default)</option></select>
+                </label>
+              </section>
+              <section id="settings-profile" class="settings-section">
+                <label>System prompt
+                  <textarea id="settings_system_prompt" placeholder="Optional system prompt to guide assistant for your account" rows="3" style="min-width:100%"></textarea>
+                </label>
+                <label>Tone guidance
+                  <input type="text" id="settings_profile_tone" placeholder="e.g. concise, friendly, expert" />
+                </label>
+              </section>
+              <section id="settings-ui" class="settings-section">
+                <label>Show timestamps
+                  <input type="checkbox" id="settings_show_timestamps" />
+                </label>
+                <label>Audio volume
+                  <input type="range" id="settings_audio_volume" min="0" max="1" step="0.01" />
+                </label>
+                <label>Auto-play TTS
+                  <input type="checkbox" id="settings_autoplay_tts" />
+                </label>
+              </section>
+              <section id="settings-security" class="settings-section">
+                <fieldset id="settings_password_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px">
+                  <legend style="font-size:13px">Change password</legend>
+                  <label>Current password
+                    <input type="password" id="settings_current_password" />
+                  </label>
+                  <label>New password
+                    <input type="password" id="settings_new_password" />
+                  </label>
+                  <label>Confirm new password
+                    <input type="password" id="settings_confirm_password" />
+                  </label>
+                </fieldset>
+              </section>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+            <button type="button" id="settings_cancel">Cancel</button>
+            <button type="button" id="settings_save">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="/static/chat.js?v=1"></script>
+  </body>
+</html>

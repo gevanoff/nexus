@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+      <link rel="icon" href="/static/ai-infra.png" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png" />
+      <link rel="manifest" href="/static/site.webmanifest">
+      <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#2563eb" />
+      <meta name="msapplication-TileColor" content="#0b0d10">
+      <meta name="msapplication-config" content="/static/browserconfig.xml">
+      <meta name="theme-color" content="#0b0d10">
+    <title>Gateway Music UI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0d12;
+        --panel: #111821;
+        --panel-strong: #141c27;
+        --border: rgba(231,237,246,0.12);
+        --text: #e7edf6;
+        --muted: #a9b4c3;
+        --accent: #6fb8ff;
+        --accent-2: #8be3c9;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(111,184,255,0.16), transparent 60%),
+          radial-gradient(900px 500px at 80% 0%, rgba(139,227,201,0.12), transparent 55%),
+          linear-gradient(180deg, #0a0d12 0%, #0c1016 100%);
+        color: var(--text);
+      }
+      main { max-width: 980px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 16px; font-weight: 650; }
+      .hint { font-size: 12px; color: var(--muted); }
+      a { color: #9ac2ff; text-decoration: none; }
+      a:hover { text-decoration: underline; }
+
+      .card { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 12px; padding: 12px; box-shadow: 0 12px 30px rgba(6,10,16,0.35); }
+      .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .row > * { flex: 0 0 auto; }
+
+      label { display:flex; flex-direction:column; gap:6px; }
+      label span { font-size: 12px; color: var(--muted); }
+      select, input, textarea, button { font: inherit; }
+      select, input, textarea {
+        box-sizing: border-box;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95));
+        color: var(--text);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      select option,
+      select optgroup {
+        background: #0f151f;
+        color: var(--text);
+      }
+      textarea { width: 100%; resize: vertical; min-height: 90px; }
+      button { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: linear-gradient(180deg, rgba(22,28,38,0.95), rgba(15,20,28,0.95)); color: var(--text); cursor: pointer; box-shadow: 0 10px 20px rgba(8,12,18,0.35); }
+      button:hover { border-color: rgba(111,184,255,0.4); }
+      button:disabled { opacity: 0.6; cursor: default; }
+
+      .out { margin-top: 12px; }
+      .gallery { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+      .thumb { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 12px; padding: 10px; }
+      .audio-card { display:flex; flex-direction:column; gap:10px; width: 100%; }
+      .audio-controls { display:flex; flex-direction:column; gap:6px; }
+      .audio-meta { display:flex; justify-content:space-between; font-size: 12px; color: var(--muted); }
+      .audio-sliders { display:flex; gap:10px; align-items:center; }
+      .audio-sliders input[type="range"] { flex: 1; }
+      pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #c6d2e4; }
+
+      .pill { display:inline-flex; gap:8px; align-items:center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); }
+      .error { color: #ffb4b4; }
+      fieldset { border: 1px solid rgba(231,237,246,0.12); border-radius: 12px; padding: 12px; background: linear-gradient(180deg, rgba(20,26,36,0.7), rgba(14,19,28,0.7)); }
+      legend { padding: 0 8px; font-size: 12px; color: var(--muted); }
+
+      .progress {
+        width: 100%; background: rgba(231,237,246,0.06); border-radius: 8px; height: 10px; overflow: hidden; margin-top: 8px;
+      }
+      .progress-inner { height: 10px; background: linear-gradient(90deg,var(--accent),var(--accent-2)); width: 100%; }
+      .progress-inner.indeterminate { animation: progress-slide 1.2s ease-in-out infinite; transform-origin: left; }
+      .progress-text { font-size: 12px; color: var(--muted); margin-top: 6px; }
+      @keyframes progress-slide {
+        0% { transform: translateX(-70%); }
+        50% { transform: translateX(0%); }
+        100% { transform: translateX(70%); }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Gateway Music UI</h1>
+          <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Calls <code>/ui/api/music</code>.</div>
+        </div>
+        <div class="row">
+          <a class="pill" href="/ui">Back to Chat</a>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="row" style="justify-content:space-between">
+          <div class="row" style="gap:12px">
+            <label style="min-width: 220px; flex: 1 1 420px;">
+              <span>Style / Genre</span>
+              <textarea id="style" placeholder="e.g. phonk, dark electronic, instrumental"></textarea>
+            </label>
+            <label style="min-width: 220px; flex: 1 1 420px;">
+              <span>Lyrics (optional)</span>
+              <textarea id="lyrics" placeholder="Song lyrics here... (leave empty for instrumental)"></textarea>
+            </label>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <label>
+            <span>Duration (sec)</span>
+            <input id="duration" type="number" min="1" max="180" step="1" value="15" />
+            <span class="hint">Range: 1-180</span>
+          </label>
+
+          <label style="min-width: 240px; flex: 1 1 240px;">
+            <span>Model (optional)</span>
+            <input id="model" type="text" placeholder="e.g. heartmula-v1" />
+          </label>
+
+          <button id="generate" type="button">Generate</button>
+        </div>
+
+        <details style="margin-top: 12px;">
+          <summary>Advanced options</summary>
+          <fieldset style="margin-top:10px">
+            <legend>Creative controls (with ranges)</legend>
+            <div class="row" style="margin-top:6px">
+              <label>
+                <span title="Creativity Level (0.0-2.0): Low (0.0-0.5)=predictable/safe, Medium (0.7-1.0)=balanced, High (1.5-2.0)=experimental/wild">Creativity</span>
+                <input id="temperature" type="number" min="0" max="2" step="0.01" placeholder="0.8" />
+                <span class="hint">Range: 0.0-2.0</span>
+              </label>
+
+              <label>
+                <span title="Focus Range (0.0-1.0): Low (0.1-0.5)=narrow focus on most likely elements, High (0.9-1.0)=broad inclusion of diverse options">Focus</span>
+                <input id="top_p" type="number" min="0" max="1" step="0.01" placeholder="0.95" />
+                <span class="hint">Range: 0.0-1.0</span>
+              </label>
+
+              <label>
+                <span title="Choice Limit (0-100): Low (1-10)=very restrictive/predictable, Medium (20-50)=balanced variety, High (50+)=maximum creativity">Choices</span>
+                <input id="top_k" type="number" min="0" max="100" step="1" placeholder="0" />
+                <span class="hint">Range: 0-100</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset style="margin-top:10px">
+            <legend>Metadata</legend>
+            <label style="margin-top:6px">
+              <span>Tags (comma)</span>
+              <input id="tags" placeholder="electronic,dance" />
+              <span class="hint">Example: ambient,lofi,cinematic</span>
+            </label>
+
+            <label style="margin-top:10px">
+              <span>Extra JSON (optional)</span>
+              <textarea id="extra" placeholder='{"seed": 1234}'></textarea>
+              <span class="hint">Provide additional backend-specific fields.</span>
+            </label>
+          </fieldset>
+        </details>
+
+        <div class="out">
+          <div id="status" class="hint"></div>
+          <div id="meta" class="hint" style="margin-top: 8px"></div>
+          <div id="music_progress" style="margin-top:8px"></div>
+        </div>
+      </section>
+
+      <section class="out" style="margin-top:12px">
+        <div id="gallery" class="gallery"></div>
+      </section>
+
+      <section class="out" style="margin-top:12px">
+        <details>
+          <summary>Last request/response</summary>
+          <pre id="debug"></pre>
+        </details>
+      </section>
+    </main>
+
+    <script src="/static/music.js?v=1"></script>
+  </body>
+</html>

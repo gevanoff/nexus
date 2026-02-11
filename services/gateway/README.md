@@ -120,7 +120,7 @@ docker compose up gateway
 
 ### Local Development
 
-For gateway-only Python development, see the top-level gateway project at `../../gateway/`.
+The gateway source is vendored into this repo under `services/gateway/app` and `services/gateway/tools`.
 
 ## API Examples
 

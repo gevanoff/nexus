@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <style>svg { shape-rendering: geometricPrecision; }</style>
+  </defs>
+  <image href="/static/ai-infra.png" x="0" y="0" width="64" height="64" />
+</svg>

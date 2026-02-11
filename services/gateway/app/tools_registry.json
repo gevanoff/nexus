@@ -1,0 +1,91 @@
+{
+  "tools": [
+    {
+      "name": "echo",
+      "version": "1",
+      "description": "Example tool executed as a subprocess. Reads JSON args on stdin; writes text/JSON to stdout.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "msg": { "type": "string" }
+        },
+        "required": ["msg"],
+        "additionalProperties": false
+      },
+      "exec": {
+        "type": "subprocess",
+        "argv": ["/usr/bin/python3", "-c", "import sys,json; a=json.load(sys.stdin); print(a.get('msg',''))"],
+        "timeout_sec": 5,
+        "cwd": "/var/lib/gateway/tools"
+      }
+    },
+    {
+      "name": "followyourcanvas_generate",
+      "version": "1",
+      "description": "Generate a video via the FollowYourCanvas backend (POST /v1/videos/generations).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" },
+          "duration_seconds": { "type": "integer", "minimum": 1 },
+          "width": { "type": "integer", "minimum": 64 },
+          "height": { "type": "integer", "minimum": 64 },
+          "seed": { "type": "integer" }
+        },
+        "required": ["prompt"],
+        "additionalProperties": true
+      },
+      "exec": {
+        "type": "subprocess",
+        "argv": ["/usr/bin/python3", "/var/lib/gateway/tools/followyourcanvas_generate.py"],
+        "timeout_sec": 900,
+        "cwd": "/var/lib/gateway/tools"
+      }
+    },
+    {
+      "name": "heartmula_generate",
+      "version": "1",
+      "description": "Generate music via the HeartMula backend (POST /v1/music/generations).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" },
+          "input": { "type": "string" },
+          "duration": { "type": "number" },
+          "temperature": { "type": "number" },
+          "top_k": { "type": "integer" },
+          "top_p": { "type": "number" }
+        },
+        "required": [],
+        "additionalProperties": true
+      },
+      "exec": {
+        "type": "subprocess",
+        "argv": ["python", "c:\\Users\\paper\\Code\\ai-infra\\services\\heartmula\\tools\\heartmula_generate.py"],
+        "timeout_sec": 120,
+        "cwd": "c:\\Users\\paper\\Code\\gateway"
+      }
+    }
+    ,
+    {
+      "name": "lighton_ocr",
+      "version": "1",
+      "description": "Run OCR via the LightOnOCR shim (POST /v1/ocr).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "image_url": { "type": "string", "description": "Public image URL to scan." },
+          "image_base64": { "type": "string", "description": "Base64 image data (optional)." }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "exec": {
+        "type": "subprocess",
+        "argv": ["/usr/bin/python3", "/var/lib/gateway/tools/lighton_ocr_tool.py"],
+        "timeout_sec": 120,
+        "cwd": "/var/lib/gateway/tools"
+      }
+    }
+  ]
+}

@@ -36,6 +36,8 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: deploy over SSH
 - `./deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
+- `./scripts/backup-and-deploy-parallel.sh`: backup legacy host data (best-effort) and deploy Nexus on parallel ports
+
 
 ## Recommended Sequence
 
@@ -48,6 +50,10 @@ Manual local alternative:
 1. `./scripts/preflight-check.sh`
 2. `cp ../.env.example ../.env` (edit as needed)
 3. `docker compose up -d`
+
+Parallel (side-by-side with an existing gateway/ai-infra deployment):
+
+1. `./scripts/backup-and-deploy-parallel.sh` (recommended for first parallel cutover)
 
 Remote host deploy:
 

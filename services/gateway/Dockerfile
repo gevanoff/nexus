@@ -18,19 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps (pinned)
-COPY gateway/app/requirements.freeze.txt /tmp/requirements.freeze.txt
+COPY app/requirements.freeze.txt /tmp/requirements.freeze.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.freeze.txt
 
 # App code
-COPY gateway/app/ /var/lib/gateway/app/
+COPY app/ /var/lib/gateway/app/
 
 # Convenience: ship gateway tools into the image as well.
-COPY gateway/tools/ /var/lib/gateway/tools/
-
-# Additional tool scripts (ported from ai-infra service tool shims)
-COPY ai-infra/services/followyourcanvas/tools/followyourcanvas_generate.py /var/lib/gateway/tools/followyourcanvas_generate.py
-COPY ai-infra/services/heartmula/tools/heartmula_generate.py /var/lib/gateway/tools/heartmula_generate.py
-COPY ai-infra/services/skyreels-v2/tools/skyreels_generate.py /var/lib/gateway/tools/skyreels_generate.py
+COPY tools/ /var/lib/gateway/tools/
 
 # Create runtime dirs used by the app (data + tool logs + tool sandbox)
 RUN mkdir -p \

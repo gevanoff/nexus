@@ -14,8 +14,8 @@ services:
     volumes:
       - ./.runtime/gateway-dev/data:/var/lib/gateway/data
       - ./.runtime/gateway/config:/var/lib/gateway/config:ro
-      - ../gateway/app:/var/lib/gateway/app
-      - ../gateway/tools:/var/lib/gateway/tools
+      - ./services/gateway/app:/var/lib/gateway/app
+      - ./services/gateway/tools:/var/lib/gateway/tools
 
   ollama:
     container_name: nexus-ollama-dev
