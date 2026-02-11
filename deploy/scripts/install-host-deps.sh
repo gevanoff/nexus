@@ -72,6 +72,10 @@ install_linux_compose_plugin() {
     exit 1
   fi
 
+  if ! need_cmd apt-get; then
+    yellow "apt-get is not available on this system. Please install the Docker Compose plugin using your distribution's package manager or see: https://docs.docker.com/compose/install/linux/"
+    return
+  fi
   sudo apt-get update
   sudo apt-get install -y docker-compose-plugin
   green "Docker Compose plugin installation complete."
