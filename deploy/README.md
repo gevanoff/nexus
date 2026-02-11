@@ -4,44 +4,38 @@ This directory provides per-service manifests for Docker Compose and containerd 
 
 ## Docker Compose
 
+Use the deployment wrappers instead of manual compose command sequences. From the repository root:
+
 ```bash
-# Create the shared network
-docker network create nexus
+./deploy/scripts/deploy.sh dev dev
+```
 
-# Start gateway + etcd
-cd deploy/docker-compose
+For remote hosts:
 
-docker compose -f gateway.yml up -d
+```bash
+./deploy/scripts/remote-deploy.sh dev dev user@dev-host
 ```
 
 ## containerd (nerdctl)
 
-```bash
-# Create the shared network
-nerdctl network create nexus
-
-# Start gateway + etcd
-cd deploy/containerd
-
-nerdctl compose -f gateway.yml up -d
-```
+Containerd manifests remain available in `deploy/containerd/`, but operational install/deploy guidance is script-first via `deploy/scripts/*.sh`.
 
 ## Setup and Deployment Scripts
 
 Make sure helper scripts are executable before first use:
 
 ```bash
-chmod +x ../quickstart.sh ./scripts/*.sh
+chmod +x quickstart.sh deploy/scripts/*.sh
 ```
 
-Script entrypoints:
+Script entrypoints (all invoked from repo root):
 
-- `../quickstart.sh`: interactive local bootstrap (preflight + `.env` + startup)
-- `./scripts/preflight-check.sh`: host validation for required tools/files/permissions
-- `./scripts/deploy.sh <dev|prod> <branch>`: deploy current repo on a host
-- `./scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: deploy over SSH
-- `./scripts/register-service.sh <name> <base-url> <etcd-url>`: register backend in etcd
-- `./scripts/list-services.sh <etcd-url>`: inspect registered services
+- `./quickstart.sh`: interactive local bootstrap (preflight + `.env` + startup)
+- `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
+- `./deploy/scripts/deploy.sh <dev|prod> <branch>`: deploy current repo on a host
+- `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: deploy over SSH
+- `./deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register backend in etcd
+- `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 
 ## Recommended Sequence
 
@@ -66,5 +60,5 @@ Remote host deploy:
 - Update base URLs (e.g., `OLLAMA_BASE_URL`) to point to remote services when running across hosts.
 - Persistence uses host bind mounts under `../.runtime/` (including gateway RO config at `../.runtime/gateway/config`).
 - The UI is intentionally separated from the gateway for production deployments; keep it as a standalone container when it is implemented.
-- For branch-based deploys, see `deploy/scripts/deploy.sh` and `deploy/scripts/remote-deploy.sh`.
-- For etcd convenience, use `deploy/scripts/register-service.sh` and `deploy/scripts/list-services.sh`.
+- For branch-based deploys, see `./deploy/scripts/deploy.sh` and `./deploy/scripts/remote-deploy.sh` (invoked from repo root).
+- For etcd convenience, use `./deploy/scripts/register-service.sh` and `./deploy/scripts/list-services.sh` (invoked from repo root).

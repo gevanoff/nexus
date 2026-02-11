@@ -50,6 +50,7 @@ echo "Nexus preflight checks"
 check_cmd docker "Docker"
 check_cmd curl "curl"
 check_cmd_optional openssl "openssl"
+check_cmd_optional python3 "python3"
 
 if docker info >/dev/null 2>&1; then
   ok "Docker daemon reachable"

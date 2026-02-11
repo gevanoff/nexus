@@ -31,7 +31,86 @@ Before migrating:
 - [ ] Plan migration window
 - [ ] Notify users of downtime
 
-## Migration Steps
+## Recommended Migration Path (Scripted)
+
+The automated migration script handles backup, deployment, restore, and verification. This is the recommended approach for most users.
+
+### Step 1: Ensure Scripts are Executable
+
+```bash
+chmod +x deploy/scripts/*.sh quickstart.sh
+```
+
+### Step 2: Install Docker/Docker Compose (If Needed)
+
+Run the host dependency installer if Docker/Docker Compose are not already present (interactive):
+
+```bash
+./deploy/scripts/install-host-deps.sh
+```
+
+This script prompts before any privileged package/runtime installation and supports optional NVIDIA runtime setup.
+
+### Step 3: Run the Migration Helper
+
+Interactive mode (recommended):
+
+```bash
+./deploy/scripts/migrate-from-ai-infra.sh
+```
+
+The migration helper prompts for and/or automates:
+- ai-infra backup creation (gateway data, Ollama model list, optional full Ollama archive)
+- Nexus `.env` initialization and token generation
+- `docker compose up -d`
+- Restore of gateway/Ollama data and config backups
+- Post-migration validation (`docker compose ps`, `/health`, optional `/v1/models`)
+- Optional shutdown of legacy ai-infra services
+
+### Non-Interactive Usage
+
+For automated runs, provide all required paths and flags:
+
+```bash
+./deploy/scripts/migrate-from-ai-infra.sh \
+  --ai-infra-dir "$HOME/ai-infra" \
+  --backup-dir "$HOME/nexus-migration-backup" \
+  --nexus-dir "$(pwd)" \
+  --yes
+```
+
+Optional flags:
+- `--skip-deploy`: backup + prep without `docker compose up -d`
+- `--skip-restore`: skip restore steps and only perform backup/deploy/verify
+
+### What the Script Automates
+
+The migration script handles the following tasks that were previously manual:
+- Docker and Docker Compose installation (via `install-host-deps.sh`)
+- Optional NVIDIA runtime installation
+- Backup/restore command sequences
+- Container copy/extract commands for migration artifacts
+- Migration verification command sequence
+- Optional legacy service shutdown
+
+### Post-Migration Checks
+
+After script completion, verify the migration:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 gateway ollama
+
+# Test API endpoints
+curl http://localhost:8800/health
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8800/v1/models
+```
+
+---
+
+## Manual Migration Steps (Reference)
+
+The following manual steps are provided as a reference for users who prefer manual control or need to troubleshoot the automated script. Most users should use the scripted approach above.
 
 ### Step 1: Backup Current Setup
 
@@ -78,19 +157,14 @@ sudo sh get-docker.sh
 sudo usermod -aG docker $USER
 
 # macOS
-brew install --cask docker
+# Install Docker Desktop from docker.com
+
+# Log out and back in for group changes to take effect
 ```
 
-Install Docker Compose:
+### Step 3: Install NVIDIA Container Toolkit (GPU Hosts Only)
 
-```bash
-# Linux
-sudo apt-get install docker-compose-plugin
-
-# macOS (included with Docker Desktop)
-```
-
-### Step 3: Install NVIDIA Docker Runtime (for GPU)
+If you need GPU support:
 
 ```bash
 # Ubuntu/Debian
@@ -239,8 +313,7 @@ Check service health:
 
 ```bash
 docker compose ps
-docker compose logs gateway | tail -50
-docker compose logs ollama | tail -50
+docker compose logs --tail=100 gateway ollama
 ```
 
 ### Step 8: Update Client Applications

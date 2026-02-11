@@ -6,16 +6,20 @@ This guide covers deploying Nexus in different environments.
 
 ### Prerequisites
 
-- Docker Engine 20.10+ with `docker compose` plugin
-- Bash, curl, openssl, python3 (used by setup/install scripts)
-- (Optional) NVIDIA Container Toolkit for GPU support
+Use scripted setup/install flows instead of manual installation steps:
 
-### Basic Deployment
+```bash
+chmod +x quickstart.sh deploy/scripts/*.sh
+./deploy/scripts/install-host-deps.sh
+./deploy/scripts/preflight-check.sh
+```
+
+- `install-host-deps.sh` is interactive and prompts before any privileged package/runtime installation.
+- `preflight-check.sh` validates host tools/files/permissions.
 
 ### Guided bootstrap (recommended)
 
 ```bash
-chmod +x quickstart.sh deploy/scripts/*.sh
 ./quickstart.sh
 ```
 
@@ -26,6 +30,8 @@ bash quickstart.sh
 ```
 
 This path runs preflight checks, creates a secured `.env`, and verifies gateway readiness.
+
+### Basic Deployment
 
 1. **Clone the repository**
 
@@ -75,6 +81,13 @@ bash deploy/scripts/verify-gateway.sh
 bash deploy/scripts/smoke-test-tts.sh
 ```
 
+### Alternative deployment wrappers
+
+```bash
+./deploy/scripts/deploy.sh dev dev
+./deploy/scripts/remote-deploy.sh dev dev user@dev-host
+```
+
 ### Gateway persistence + tools registry
 
 Nexus keeps persistent state and large artifacts on the **host filesystem** under `./.runtime/` and bind-mounts them into containers.
@@ -94,12 +107,14 @@ Nexus keeps persistent state and large artifacts on the **host filesystem** unde
 
 ## Deployment Scripts
 
+- `deploy/scripts/install-host-deps.sh`: interactive host dependency installer for Docker/Compose (+ optional NVIDIA runtime)
 - `quickstart.sh`: interactive setup/install flow for local environments
 - `deploy/scripts/preflight-check.sh`: validates dependencies, files, and script permissions
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: environment-aware local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
-- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd
-- `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd
+- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd (requires `python3`)
+- `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd (requires `python3`)
+- `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from legacy ai-infra deployments
 
 ### Shared script library
 

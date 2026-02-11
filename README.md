@@ -40,8 +40,12 @@ Use the interactive installer to (best-effort) install missing prerequisites, ru
 
 ```bash
 chmod +x quickstart.sh deploy/scripts/*.sh
+./deploy/scripts/install-host-deps.sh
 ./quickstart.sh
 ```
+
+- `install-host-deps.sh` is interactive and installs Docker/Docker Compose (+ optional NVIDIA runtime).
+- `quickstart.sh` runs preflight checks, creates `.env`, starts services, and verifies readiness.
 
 For non-interactive environments, use:
 
@@ -311,8 +315,7 @@ Nexus replaces the host-based `ai-infra` deployment with containers:
 | `/var/lib/gateway` | `./.runtime/gateway/*` bind mounts | Persistent data + operator config |
 | SSH + manual deploys | `docker compose up` | One command deploys |
 
-See [docs/MIGRATION.md](docs/MIGRATION.md) for detailed migration guide.
-For the script run order, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#recommended-script-sequence).
+See [docs/MIGRATION.md](docs/MIGRATION.md) for the scripted migration workflow (`deploy/scripts/migrate-from-ai-infra.sh`) and detailed manual migration guide.
 
 ## Troubleshooting
 
