@@ -30,6 +30,12 @@ fi
 failures=0
 warnings=0
 
+# Track common blockers so we can print actionable follow-ups.
+missing_docker="false"
+missing_compose="false"
+docker_daemon_ok="false"
+missing_env="false"
+
 ok() { echo "[OK] $1"; }
 warn() { echo "[WARN] $1"; warnings=$((warnings+1)); }
 fail() { echo "[FAIL] $1"; failures=$((failures+1)); }
@@ -61,8 +67,13 @@ check_cmd curl "curl"
 check_cmd_optional openssl "openssl"
 check_cmd_optional python3 "python3"
 
+if ! ns_have_cmd docker; then
+  missing_docker="true"
+fi
+
 if docker info >/dev/null 2>&1; then
   ok "Docker daemon reachable"
+  docker_daemon_ok="true"
 else
   fail "Docker daemon not reachable"
   if [[ "$platform" == "macos" ]]; then
@@ -80,6 +91,7 @@ if [[ -n "${compose_cmd:-}" ]]; then
   ok "Docker Compose available (${compose_cmd})"
 else
   fail "Docker Compose unavailable"
+  missing_compose="true"
   if [[ "$platform" == "macos" ]]; then
     warn "macOS: install Compose (either 'docker compose' plugin or 'docker-compose' binary), then retry."
   fi
@@ -140,6 +152,7 @@ if [[ -f deploy/env/.env.dev || -f deploy/env/.env.prod ]]; then
 fi
 
 if [[ "$has_any_env" != "true" ]]; then
+  missing_env="true"
   case "$mode" in
     quickstart)
       warn "Missing .env (quickstart will create it from .env.example)"
@@ -153,6 +166,40 @@ if [[ "$has_any_env" != "true" ]]; then
       ;;
   esac
 fi
+
+echo
+echo "Next steps (suggested order)"
+if [[ "$missing_docker" == "true" ]]; then
+  echo "  1) Install Docker/Colima prerequisites: ./deploy/scripts/install-host-deps.sh"
+elif [[ "$docker_daemon_ok" != "true" ]]; then
+  if [[ "$platform" == "macos" ]]; then
+    if ns_have_cmd colima; then
+      echo "  1) Start Colima: colima start"
+    else
+      echo "  1) Start your Docker backend (Colima or Docker Desktop)"
+    fi
+  else
+    echo "  1) Start Docker, then re-run preflight"
+  fi
+else
+  echo "  1) Docker looks OK"
+fi
+
+if [[ "$missing_compose" == "true" ]]; then
+  echo "  2) Install Docker Compose: ./deploy/scripts/install-host-deps.sh"
+else
+  echo "  2) Docker Compose looks OK"
+fi
+
+if [[ "$missing_env" == "true" ]]; then
+  echo "  3) Create config: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)"
+else
+  echo "  3) Config file looks OK"
+fi
+
+echo "  4) Re-run: ./deploy/scripts/preflight-check.sh --mode ${mode}"
+echo "  5) Deploy:  ./deploy/scripts/deploy.sh dev main   (or prod)"
+echo "  6) Verify:  ./deploy/scripts/verify-gateway.sh && ./deploy/scripts/smoke-test-gateway.sh"
 
 echo
 if [[ $failures -gt 0 ]]; then

@@ -19,6 +19,13 @@ usage() {
   cat <<'EOF'
 Usage: deploy/scripts/deploy.sh [--yes] [--env-file PATH] <environment> <branch>
 
+Suggested order (typical):
+  1) ./deploy/scripts/install-host-deps.sh
+  2) ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
+  3) ./deploy/scripts/preflight-check.sh --mode deploy
+  4) ./deploy/scripts/deploy.sh dev main   (or prod)
+  5) ./deploy/scripts/verify-gateway.sh
+
 Arguments:
   environment: dev | prod
   branch: git branch to deploy (e.g., dev or main)

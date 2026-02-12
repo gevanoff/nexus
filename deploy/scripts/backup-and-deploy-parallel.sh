@@ -20,6 +20,11 @@ Usage: deploy/scripts/backup-and-deploy-parallel.sh [options]
 Backs up legacy host data (if present) and deploys Nexus on parallel ports so it
 can run side-by-side with an existing ai-infra/gateway deployment.
 
+Suggested order (typical):
+  1) ./deploy/scripts/install-host-deps.sh
+  2) ./deploy/scripts/backup-and-deploy-parallel.sh --yes
+  3) ./deploy/scripts/smoke-test-gateway.sh
+
 Options:
   --backup-dir <path>    Backup output directory (default: ./deploy/backups/<timestamp>)
   --env-file <path>      Env file to deploy with (default: ./deploy/env/.env.parallel)

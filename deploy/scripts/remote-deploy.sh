@@ -18,6 +18,13 @@ usage() {
   cat <<'EOF'
 Usage: deploy/scripts/remote-deploy.sh [--yes] <environment> <branch> <host>
 
+Suggested order (typical):
+  1) On the remote host, clone Nexus into /opt/nexus
+  2) On the remote host: ./deploy/scripts/install-host-deps.sh
+  3) On the remote host: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
+  4) On the remote host: ./deploy/scripts/preflight-check.sh --mode deploy
+  5) From your machine: ./deploy/scripts/remote-deploy.sh dev main user@host
+
 Arguments:
   environment: dev | prod
   branch: git branch to deploy (e.g., dev or main)

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Next steps (typical):
+#  - Deploy first: ./deploy/scripts/deploy.sh dev main (or quickstart.sh)
+#  - Then run: ./deploy/scripts/verify-gateway.sh
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
