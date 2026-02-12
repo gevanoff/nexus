@@ -19,11 +19,16 @@ usage() {
 Usage: deploy/scripts/remote-deploy.sh [--yes] <environment> <branch> <host>
 
 Suggested order (typical):
-  1) On the remote host, clone Nexus into /opt/nexus
-  2) On the remote host: ./deploy/scripts/install-host-deps.sh
-  3) On the remote host: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
-  4) On the remote host: ./deploy/scripts/preflight-check.sh --mode deploy
-  5) From your machine: ./deploy/scripts/remote-deploy.sh dev main user@host
+  1) On the remote host, ensure /opt/nexus exists and is writable by the deploy user
+     - Standard deploy user: ai
+     - Standard ownership:
+       - macOS:  ai:staff
+       - Linux:  ai:ai
+  2) On the remote host, clone Nexus into /opt/nexus
+  3) On the remote host: ./deploy/scripts/install-host-deps.sh
+  4) On the remote host: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
+  5) On the remote host: ./deploy/scripts/preflight-check.sh --mode deploy
+  6) From your machine: ./deploy/scripts/remote-deploy.sh dev main ai@host
 
 Arguments:
   environment: dev | prod
@@ -73,6 +78,11 @@ parse_args() {
 
 parse_args "$@"
 
+ssh_user="${host%@*}"
+if [[ "$ssh_user" != "ai" ]]; then
+  ns_print_warn "Standard deploy user is 'ai' (you passed '$ssh_user'). Continuing anyway."
+fi
+
 case "$environment" in
   dev|prod) ;;
   *)
@@ -108,14 +118,34 @@ fi
 
 remote_cmd=$(cat <<'EOS'
 set -euo pipefail
-if [[ ! -d /opt/nexus ]]; then
-  echo "ERROR: /opt/nexus not found on remote host." >&2
-  echo "Clone the Nexus repo on the remote host at /opt/nexus, then re-run." >&2
+repo_dir="/opt/nexus"
+desired_user="ai"
+desired_group="ai"
+if [[ "$(uname -s 2>/dev/null || echo unknown)" == "Darwin" ]]; then
+  desired_group="staff"
+fi
+
+if [[ ! -d "$repo_dir" ]]; then
+  echo "ERROR: ${repo_dir} not found on remote host." >&2
+  echo "Standard location is ${repo_dir} (owned by ${desired_user}:${desired_group})." >&2
+  echo "Create it with:" >&2
+  echo "  sudo mkdir -p ${repo_dir}" >&2
+  echo "  sudo chown -R ${desired_user}:${desired_group} ${repo_dir}" >&2
+  echo "Then clone Nexus into it as '${desired_user}':" >&2
+  echo "  git clone <repo-url> ${repo_dir}" >&2
   exit 1
 fi
-cd /opt/nexus
-env_file="/opt/nexus/.env"
-candidate="/opt/nexus/deploy/env/.env.$1"
+
+if [[ ! -w "$repo_dir" ]]; then
+  echo "ERROR: ${repo_dir} is not writable by $(whoami)." >&2
+  echo "Fix ownership/permissions (expected ${desired_user}:${desired_group}):" >&2
+  echo "  sudo chown -R ${desired_user}:${desired_group} ${repo_dir}" >&2
+  exit 1
+fi
+
+cd "$repo_dir"
+env_file="${repo_dir}/.env"
+candidate="${repo_dir}/deploy/env/.env.$1"
 if [[ -f "$candidate" ]]; then
   env_file="$candidate"
 fi

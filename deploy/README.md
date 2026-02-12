@@ -57,8 +57,14 @@ Parallel (side-by-side with an existing gateway/ai-infra deployment):
 
 Remote host deploy:
 
-1. Clone this repo to `/opt/nexus` on the remote host
-2. Run `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>` from your local machine
+1. Standardize the remote host layout:
+	 - Deploy user: `ai`
+	 - Repo location: `/opt/nexus`
+	 - Ownership:
+		 - macOS: `ai:staff`
+		 - Linux: `ai:ai`
+2. Clone this repo to `/opt/nexus` on the remote host (as the `ai` user)
+3. Run `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>` from your local machine
 
 ## Windows development note
 

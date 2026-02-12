@@ -152,8 +152,14 @@ All Nexus management scripts share common bash helpers in `deploy/scripts/_commo
 
 ### Remote (single host)
 
-1. On the remote host: clone Nexus to `/opt/nexus`.
-2. From your local machine: `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`.
+1. On the remote host, standardize the deployment layout:
+   - Deploy user: `ai`
+   - Repo location: `/opt/nexus`
+   - Ownership:
+     - macOS: `ai:staff`
+     - Linux: `ai:ai`
+2. On the remote host: clone Nexus to `/opt/nexus` (as the `ai` user).
+3. From your local machine: `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>`.
   - Internally runs remote preflight + remote `deploy/scripts/deploy.sh`.
 
 ### Remote (multi-host)
