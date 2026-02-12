@@ -102,6 +102,32 @@ install_linux_compose_plugin() {
   green "Docker Compose plugin installation complete."
 }
 
+install_linux_lsof() {
+  if need_cmd lsof; then
+    green "lsof already installed: $(lsof -v 2>/dev/null | head -n 1 || echo lsof)"
+    return
+  fi
+
+  if ! confirm "lsof is missing (required for port diagnostics). Install lsof via apt-get?"; then
+    yellow "Skipping lsof installation. (Preflight will fail until installed.)"
+    return
+  fi
+
+  if ! need_cmd sudo; then
+    red "sudo is required to install lsof on Linux."
+    exit 1
+  fi
+
+  if ! need_cmd apt-get; then
+    yellow "apt-get is not available. Please install 'lsof' using your distro's package manager."
+    return
+  fi
+
+  sudo apt-get update
+  sudo apt-get install -y lsof
+  green "lsof installation complete."
+}
+
 install_macos_docker() {
   if need_cmd docker; then
     green "Docker command detected: $(docker --version 2>/dev/null || true)"
@@ -156,6 +182,26 @@ install_macos_docker() {
   fi
 
   yellow "Skipping Docker installation on macOS."
+}
+
+install_macos_lsof() {
+  if need_cmd lsof; then
+    green "lsof already installed"
+    return
+  fi
+
+  if ! need_cmd brew; then
+    red "Homebrew is required to install lsof automatically on macOS. Install Homebrew first."
+    exit 1
+  fi
+
+  if ! confirm "lsof is missing (required for port diagnostics). Install via Homebrew?"; then
+    yellow "Skipping lsof installation. (Preflight will fail until installed.)"
+    return
+  fi
+
+  brew install lsof
+  green "lsof installation complete."
 }
 
 install_nvidia_runtime() {
@@ -223,8 +269,10 @@ main() {
   if [[ "${OSTYPE:-}" == linux* ]]; then
     install_linux_docker
     install_linux_compose_plugin
+    install_linux_lsof
   elif [[ "${OSTYPE:-}" == darwin* ]]; then
     install_macos_docker
+    install_macos_lsof
   else
     yellow "Unsupported OSTYPE '${OSTYPE:-unknown}'. Manual dependency installation may be required."
   fi

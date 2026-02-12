@@ -22,10 +22,27 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 mode="default"
-if [[ ${1:-} == "--mode" ]]; then
-  mode="${2:-default}"
-  shift 2 || true
-fi
+env_file_arg=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      mode="${2:-default}"
+      shift 2 || true
+      ;;
+    --env-file)
+      env_file_arg="${2:-}"
+      shift 2 || true
+      ;;
+    -h|--help)
+      echo "Usage: deploy/scripts/preflight-check.sh [--mode <default|quickstart|deploy>] [--env-file PATH]"
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 failures=0
 warnings=0
@@ -35,6 +52,7 @@ missing_docker="false"
 missing_compose="false"
 docker_daemon_ok="false"
 missing_env="false"
+missing_lsof="false"
 
 ok() { echo "[OK] $1"; }
 warn() { echo "[WARN] $1"; warnings=$((warnings+1)); }
@@ -64,8 +82,20 @@ echo "Nexus preflight checks"
 platform="$(ns_detect_platform)"
 check_cmd docker "Docker"
 check_cmd curl "curl"
+check_cmd lsof "lsof"
 check_cmd_optional openssl "openssl"
 check_cmd_optional python3 "python3"
+
+if ! ns_have_cmd lsof; then
+  missing_lsof="true"
+  echo
+  echo "Next steps (required)"
+  echo "  1) Install lsof: ./deploy/scripts/install-host-deps.sh"
+  echo "  2) Re-run: ./deploy/scripts/preflight-check.sh --mode ${mode}"
+  echo
+  echo "Preflight completed with $failures failure(s) and $warnings warning(s)."
+  exit 1
+fi
 
 if ! ns_have_cmd docker; then
   missing_docker="true"
@@ -177,6 +207,95 @@ if [[ "$has_any_env" != "true" ]]; then
 fi
 
 echo
+echo "Port checks"
+
+env_file_for_ports="${env_file_arg:-}"
+if [[ -z "${env_file_for_ports:-}" ]]; then
+  env_file_for_ports="$(ns_guess_env_file "$ROOT_DIR")"
+fi
+
+if [[ -n "${env_file_for_ports:-}" && -f "$env_file_for_ports" ]]; then
+  ok "Using env file for ports: ${env_file_for_ports#$ROOT_DIR/}"
+else
+  warn "No env file provided/found; using default ports from compose"
+  env_file_for_ports=""
+fi
+
+check_port_required() {
+  local key="$1"
+  local default_port="$2"
+  local label="$3"
+
+  local port
+  port="$(ns_env_get "$env_file_for_ports" "$key" "$default_port")"
+
+  if ! ns_is_valid_port "$port"; then
+    warn "${label}: invalid ${key} value '${port}' (expected 1-65535)"
+    return 0
+  fi
+
+  local find_cmd
+  find_cmd="$(ns_port_find_listener_cmd "$port")"
+
+  local rc
+  ns_port_in_use "$port"; rc=$?
+  if [[ $rc -eq 0 ]]; then
+    fail "${label}: port ${port} is already in use"
+    if [[ -n "${find_cmd:-}" ]]; then
+      warn "Find the listener with: ${find_cmd}"
+    else
+      warn "Install 'lsof' (preferred) to show which process is listening."
+    fi
+    details="$(ns_port_in_use_details "$port" || true)"
+    if [[ -n "${details:-}" ]]; then
+      warn "Listener (best-effort):"
+      while IFS= read -r line; do
+        [[ -z "${line:-}" ]] && continue
+        warn "  ${line}"
+      done <<<"$details"
+    fi
+  elif [[ $rc -eq 1 ]]; then
+    ok "${label}: port ${port} looks free"
+  else
+    warn "${label}: unable to check port ${port} (missing lsof/ss/netstat?)"
+  fi
+}
+
+check_port_optional() {
+  local key="$1"
+  local default_port="$2"
+  local label="$3"
+
+  local port
+  port="$(ns_env_get "$env_file_for_ports" "$key" "$default_port")"
+
+  if ! ns_is_valid_port "$port"; then
+    warn "${label}: invalid ${key} value '${port}' (expected 1-65535)"
+    return 0
+  fi
+
+  local rc
+  ns_port_in_use "$port"; rc=$?
+  if [[ $rc -eq 0 ]]; then
+    warn "${label}: port ${port} is already in use (this only matters if you enable that service/profile)"
+  elif [[ $rc -eq 1 ]]; then
+    ok "${label}: port ${port} looks free"
+  else
+    warn "${label}: unable to check port ${port} (missing lsof/ss/netstat?)"
+  fi
+}
+
+# Core services (started by default)
+check_port_required GATEWAY_PORT 8800 "Gateway API"
+check_port_required OBSERVABILITY_PORT 8801 "Gateway observability"
+check_port_required OLLAMA_PORT 11434 "Ollama"
+check_port_required ETCD_PORT 2379 "etcd"
+
+# Optional services (profiles in docker-compose.yml)
+check_port_optional IMAGES_PORT 7860 "Images service"
+check_port_optional TTS_PORT 9940 "TTS service"
+
+echo
 echo "Next steps (suggested order)"
 if [[ "$missing_docker" == "true" ]]; then
   echo "  1) Install Docker/Colima prerequisites: ./deploy/scripts/install-host-deps.sh"
@@ -198,6 +317,16 @@ if [[ "$missing_compose" == "true" ]]; then
   echo "  2) Install Docker Compose: ./deploy/scripts/install-host-deps.sh"
 else
   echo "  2) Docker Compose looks OK"
+fi
+
+if [[ "$missing_lsof" == "true" ]]; then
+  echo "  3) Install lsof (required for port diagnostics): ./deploy/scripts/install-host-deps.sh"
+  echo "  4) Re-run: ./deploy/scripts/preflight-check.sh --mode ${mode}"
+  echo "  5) Deploy:  ./deploy/scripts/deploy.sh dev main   (or prod)"
+  echo "  6) Verify:  ./deploy/scripts/verify-gateway.sh && ./deploy/scripts/smoke-test-gateway.sh"
+  echo
+  echo "Preflight completed with $failures failure(s) and $warnings warning(s)."
+  exit 1
 fi
 
 if [[ "$missing_env" == "true" ]]; then

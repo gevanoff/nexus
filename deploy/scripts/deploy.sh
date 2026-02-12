@@ -148,7 +148,7 @@ fi
 
 ns_print_header "Running preflight checks"
 if [[ -x "$ROOT_DIR/deploy/scripts/preflight-check.sh" ]]; then
-  "$ROOT_DIR/deploy/scripts/preflight-check.sh" --mode deploy
+  "$ROOT_DIR/deploy/scripts/preflight-check.sh" --mode deploy --env-file "$env_file"
 else
   ns_print_warn "Preflight checker not executable: deploy/scripts/preflight-check.sh"
 fi

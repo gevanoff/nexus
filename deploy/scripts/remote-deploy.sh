@@ -114,7 +114,12 @@ if [[ ! -d /opt/nexus ]]; then
   exit 1
 fi
 cd /opt/nexus
-./deploy/scripts/preflight-check.sh --mode deploy || true
+env_file="/opt/nexus/.env"
+candidate="/opt/nexus/deploy/env/.env.$1"
+if [[ -f "$candidate" ]]; then
+  env_file="$candidate"
+fi
+./deploy/scripts/preflight-check.sh --mode deploy --env-file "$env_file" || true
 ./deploy/scripts/deploy.sh "$@"
 EOS
 )

@@ -23,6 +23,187 @@ ns_print_ok() { echo -e "${_GREEN}✓ $1${_NC}"; }
 
 ns_have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+ns_env_get() {
+  # Read a single KEY=value from a dotenv-style file.
+  # Usage: ns_env_get <env_file> <key> [default]
+  local env_file="$1"
+  local key="$2"
+  local default_value="${3:-}"
+
+  if [[ -z "${env_file:-}" || ! -f "$env_file" ]]; then
+    echo "$default_value"
+    return 0
+  fi
+
+  local line
+  line="$(grep -E "^[[:space:]]*${key}=" "$env_file" 2>/dev/null | tail -n 1 || true)"
+  if [[ -z "${line:-}" ]]; then
+    echo "$default_value"
+    return 0
+  fi
+
+  local value
+  value="${line#*=}"
+  value="${value%\r}"
+
+  # Strip surrounding quotes if present.
+  if [[ ${#value} -ge 2 ]]; then
+    if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+
+  echo "$value"
+}
+
+ns_guess_env_file() {
+  # Best-effort env file selection for tools like preflight that may not know
+  # the exact deploy environment.
+  # Usage: ns_guess_env_file <repo_root>
+  local repo_root="$1"
+  if [[ -f "$repo_root/.env" ]]; then
+    echo "$repo_root/.env"
+    return 0
+  fi
+  if [[ -f "$repo_root/deploy/env/.env.dev" ]]; then
+    echo "$repo_root/deploy/env/.env.dev"
+    return 0
+  fi
+  if [[ -f "$repo_root/deploy/env/.env.prod" ]]; then
+    echo "$repo_root/deploy/env/.env.prod"
+    return 0
+  fi
+  echo ""
+}
+
+ns_is_valid_port() {
+  local port="$1"
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  ((port >= 1 && port <= 65535))
+}
+
+ns_port_in_use() {
+  # Returns:
+  #  0 if port has a TCP listener
+  #  1 if no listener detected
+  #  2 if unable to check (missing tools)
+  local port="$1"
+  if ! ns_is_valid_port "$port"; then
+    return 2
+  fi
+
+  if ns_have_cmd lsof; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+
+  if ns_have_cmd ss; then
+    # ss returns 0 even when empty; grep for a listener.
+    ss -ltn "sport = :$port" 2>/dev/null | grep -q ":$port" && return 0
+    return 1
+  fi
+
+  if ns_have_cmd netstat; then
+    # Best-effort; output differs by OS.
+    netstat -an 2>/dev/null | grep -E "[\.:]${port}[[:space:]].*LISTEN" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+
+  return 2
+}
+
+ns_port_in_use_details() {
+  # Best-effort details suitable for printing (may be empty).
+  local port="$1"
+  if ! ns_is_valid_port "$port"; then
+    return 0
+  fi
+  if ns_have_cmd lsof; then
+    # Prefer a stable, small summary.
+    ns_port_listener_process_summary "$port" || true
+    return 0
+  fi
+  if ns_have_cmd ss; then
+    ss -ltnp "sport = :$port" 2>/dev/null | head -n 5 || true
+    return 0
+  fi
+  if ns_have_cmd netstat; then
+    netstat -an 2>/dev/null | grep -E "[\.:]${port}[[:space:]].*LISTEN" | head -n 5 || true
+    return 0
+  fi
+}
+
+ns_port_listener_process_summary() {
+  # Prints one line per listening process:
+  #   COMMAND=<comm> PID=<pid> PPID=<ppid>
+  # Requires: lsof; uses ps for PPID when available.
+  local port="$1"
+  if ! ns_is_valid_port "$port"; then
+    return 1
+  fi
+  if ! ns_have_cmd lsof; then
+    return 1
+  fi
+
+  local pids
+  pids="$(lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -n 10 || true)"
+  if [[ -z "${pids:-}" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r pid; do
+    [[ -z "${pid:-}" ]] && continue
+    if ns_have_cmd ps; then
+      # ps output: PID PPID COMMAND
+      local ps_line
+      ps_line="$(ps -o pid= -o ppid= -o comm= -p "$pid" 2>/dev/null | head -n 1 || true)"
+      if [[ -n "${ps_line:-}" ]]; then
+        # Normalize whitespace and split (trim leading spaces).
+        ps_line="$(echo "$ps_line" | tr -s ' ' )"
+        while [[ "${ps_line:0:1}" == " " ]]; do
+          ps_line="${ps_line:1}"
+        done
+        local pid_out ppid_out comm_out
+        pid_out="$(echo "$ps_line" | cut -d ' ' -f1)"
+        ppid_out="$(echo "$ps_line" | cut -d ' ' -f2)"
+        comm_out="$(echo "$ps_line" | cut -d ' ' -f3-)"
+        echo "COMMAND=${comm_out} PID=${pid_out} PPID=${ppid_out}"
+        continue
+      fi
+    fi
+
+    # Fallback: use lsof row (command + pid only)
+    local lsof_row
+    lsof_row="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -n 2 | tail -n 1 || true)"
+    if [[ -n "${lsof_row:-}" ]]; then
+      local comm pid2 _rest
+      read -r comm pid2 _rest <<<"$lsof_row" || true
+      if [[ -n "${comm:-}" && -n "${pid2:-}" ]]; then
+        echo "COMMAND=${comm} PID=${pid2} PPID=?"
+      fi
+    fi
+  done <<<"$pids"
+}
+
+ns_port_find_listener_cmd() {
+  local port="$1"
+  if ns_have_cmd lsof; then
+    echo "lsof -nP -iTCP:${port} -sTCP:LISTEN"
+    return 0
+  fi
+  if ns_have_cmd ss; then
+    echo "ss -ltnp 'sport = :${port}'"
+    return 0
+  fi
+  if ns_have_cmd netstat; then
+    echo "netstat -an | grep -E '[\\.:]${port}[[:space:]].*LISTEN'"
+    return 0
+  fi
+  echo ""
+}
+
 # Docker Compose compatibility
 #
 # Compose exists in two common forms:
@@ -373,6 +554,7 @@ ns_install_prereqs_linux() {
     $SUDO apt-get update
     local pkgs=()
     [[ "$need_docker" == "true" ]] && pkgs+=(docker.io docker-compose-plugin)
+    [[ "$need_docker" == "true" ]] && pkgs+=(lsof)
     [[ "$need_curl" == "true" ]] && pkgs+=(curl ca-certificates)
     [[ "$need_openssl" == "true" ]] && pkgs+=(openssl)
     [[ "$need_git" == "true" ]] && pkgs+=(git)
@@ -384,6 +566,7 @@ ns_install_prereqs_linux() {
   if ns_have_cmd dnf; then
     local pkgs=()
     [[ "$need_docker" == "true" ]] && pkgs+=(docker docker-compose-plugin)
+    [[ "$need_docker" == "true" ]] && pkgs+=(lsof)
     [[ "$need_curl" == "true" ]] && pkgs+=(curl ca-certificates)
     [[ "$need_openssl" == "true" ]] && pkgs+=(openssl)
     [[ "$need_git" == "true" ]] && pkgs+=(git)
@@ -395,6 +578,7 @@ ns_install_prereqs_linux() {
   if ns_have_cmd yum; then
     local pkgs=()
     [[ "$need_docker" == "true" ]] && pkgs+=(docker docker-compose-plugin)
+    [[ "$need_docker" == "true" ]] && pkgs+=(lsof)
     [[ "$need_curl" == "true" ]] && pkgs+=(curl ca-certificates)
     [[ "$need_openssl" == "true" ]] && pkgs+=(openssl)
     [[ "$need_git" == "true" ]] && pkgs+=(git)
@@ -406,6 +590,7 @@ ns_install_prereqs_linux() {
   if ns_have_cmd pacman; then
     local pkgs=()
     [[ "$need_docker" == "true" ]] && pkgs+=(docker docker-compose)
+    [[ "$need_docker" == "true" ]] && pkgs+=(lsof)
     [[ "$need_curl" == "true" ]] && pkgs+=(curl ca-certificates)
     [[ "$need_openssl" == "true" ]] && pkgs+=(openssl)
     [[ "$need_git" == "true" ]] && pkgs+=(git)
@@ -417,6 +602,7 @@ ns_install_prereqs_linux() {
   if ns_have_cmd zypper; then
     local pkgs=()
     [[ "$need_docker" == "true" ]] && pkgs+=(docker docker-compose)
+    [[ "$need_docker" == "true" ]] && pkgs+=(lsof)
     [[ "$need_curl" == "true" ]] && pkgs+=(curl ca-certificates)
     [[ "$need_openssl" == "true" ]] && pkgs+=(openssl)
     [[ "$need_git" == "true" ]] && pkgs+=(git)
@@ -452,6 +638,10 @@ ns_install_prereqs_macos() {
       (brew install colima docker docker-compose || true)
       ns_print_warn "Headless macOS note: start the Linux VM with 'colima start' before using docker."
     fi
+  fi
+  # lsof is required for port diagnostics; install via brew if missing.
+  if ! ns_have_cmd lsof; then
+    (brew install lsof || true)
   fi
   [[ "$need_curl" == "true" ]] && (brew install curl || true)
   [[ "$need_openssl" == "true" ]] && (brew install openssl || true)
