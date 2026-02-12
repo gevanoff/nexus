@@ -23,6 +23,57 @@ ns_print_ok() { echo -e "${_GREEN}✓ $1${_NC}"; }
 
 ns_have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# Docker Compose compatibility
+#
+# Compose exists in two common forms:
+# - Compose v2 plugin: `docker compose ...`
+# - Legacy/standalone binary: `docker-compose ...`
+#
+# Nexus scripts must support either, because some macOS setups expose only
+# `docker-compose`.
+
+ns_compose_cmd_string() {
+  if docker compose version >/dev/null 2>&1; then
+    echo "docker compose"
+    return 0
+  fi
+  if ns_have_cmd docker-compose && docker-compose version >/dev/null 2>&1; then
+    echo "docker-compose"
+    return 0
+  fi
+  echo ""
+  return 1
+}
+
+ns_compose_available() {
+  ns_compose_cmd_string >/dev/null 2>&1
+}
+
+ns_compose_version() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose version
+    return 0
+  fi
+  if ns_have_cmd docker-compose && docker-compose version >/dev/null 2>&1; then
+    docker-compose version
+    return 0
+  fi
+  return 1
+}
+
+ns_compose() {
+  if docker compose version >/dev/null 2>&1; then
+    docker compose "$@"
+    return $?
+  fi
+  if ns_have_cmd docker-compose && docker-compose version >/dev/null 2>&1; then
+    docker-compose "$@"
+    return $?
+  fi
+  ns_print_error "Docker Compose is not available (need either 'docker compose' or 'docker-compose')."
+  return 1
+}
+
 ns_mkdir_p() {
   # Best-effort mkdir -p with helpful error.
   local dir="$1"

@@ -153,8 +153,8 @@ ns_require_cmd curl
 if ! docker info >/dev/null 2>&1; then
   ns_die "Docker daemon is not reachable. Start Docker and retry."
 fi
-if ! docker compose version >/dev/null 2>&1; then
-  ns_die "Docker Compose plugin is not available (need: docker compose)."
+if ! ns_compose_available; then
+  ns_die "Docker Compose is not available (need either 'docker compose' or 'docker-compose')."
 fi
 
 ns_mkdir_p "$BACKUP_DIR"
@@ -182,7 +182,7 @@ ns_seed_gateway_config_files "$ROOT_DIR"
 
 # 3) Deploy
 ns_print_header "Deploying Nexus (parallel)"
-docker compose --env-file "$ENV_FILE" up -d --build
+ns_compose --env-file "$ENV_FILE" up -d --build
 
 # 4) Verify
 ns_print_header "Verifying Nexus (parallel)"

@@ -19,14 +19,14 @@ if [[ -z "${TOKEN}" ]]; then
   ns_die "GATEWAY_BEARER_TOKEN is not set (set env var or put it in ${ENV_FILE})."
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  ns_die "Docker Compose plugin not available (need: docker compose)."
+if ! ns_compose_available; then
+  ns_die "Docker Compose is not available (need either 'docker compose' or 'docker-compose')."
 fi
 
 ns_print_header "Gateway Verifier (in-container)"
 
 # Run the verifier inside the gateway container so we don't depend on host Python.
-docker compose exec -T gateway \
+ns_compose exec -T gateway \
   python3 /var/lib/gateway/tools/verify_gateway.py \
   --skip-pytest \
   --base-url http://127.0.0.1:8800 \

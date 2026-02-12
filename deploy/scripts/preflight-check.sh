@@ -74,16 +74,14 @@ else
   fi
 fi
 
-if docker compose version >/dev/null 2>&1; then
-  ok "Docker Compose available"
+compose_cmd=""
+compose_cmd="$(ns_compose_cmd_string 2>/dev/null || true)"
+if [[ -n "${compose_cmd:-}" ]]; then
+  ok "Docker Compose available (${compose_cmd})"
 else
   fail "Docker Compose unavailable"
   if [[ "$platform" == "macos" ]]; then
-    if ns_have_cmd docker-compose; then
-      warn "macOS: 'docker-compose' exists but 'docker compose' plugin not found. If installed via Homebrew, link the plugin into ~/.docker/cli-plugins (or set cliPluginsExtraDirs)."
-    else
-      warn "macOS: install the Compose v2 plugin (Homebrew: 'brew install docker-compose'), then ensure docker can find it (e.g. ~/.docker/cli-plugins/docker-compose)."
-    fi
+    warn "macOS: install Compose (either 'docker compose' plugin or 'docker-compose' binary), then retry."
   fi
 fi
 

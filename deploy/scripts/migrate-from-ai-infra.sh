@@ -22,7 +22,7 @@ Options:
   --backup-dir <path>    Directory where backup files should be written.
   --ai-infra-dir <path>  (Optional) Path to existing ai-infra checkout.
   --nexus-dir <path>     Path to Nexus repository (default: current repo root).
-  --skip-deploy          Skip 'docker compose up -d'.
+  --skip-deploy          Skip container bring-up (compose up -d).
   --skip-restore         Skip data/config restore steps.
   --yes                  Non-interactive mode (auto-accept confirmations).
   -h, --help             Show this help text.
@@ -71,7 +71,7 @@ require_file() {
 
 container_id_for() {
   local service="$1"
-  docker compose ps -q "$service" | head -n1
+  dc ps -q "$service" | head -n1
 }
 
 backup_ai_infra() {
@@ -171,7 +171,7 @@ prepare_nexus() {
   fi
 
   if [[ "$SKIP_DEPLOY" -eq 0 ]]; then
-    docker compose up -d
+    dc up -d
   fi
 }
 
@@ -185,7 +185,7 @@ restore_into_nexus() {
     echo "Gateway container not found; cannot restore gateway data." >&2
   elif [[ -f "$BACKUP_DIR/gateway-backup.tar.gz" ]]; then
     docker cp "$BACKUP_DIR/gateway-backup.tar.gz" "$gateway_cid:/tmp/gateway-backup.tar.gz"
-    docker compose exec -T gateway tar xzf /tmp/gateway-backup.tar.gz -C /data
+    dc exec -T gateway tar xzf /tmp/gateway-backup.tar.gz -C /data
   fi
 
   if [[ -n "$gateway_cid" ]]; then
@@ -198,7 +198,7 @@ restore_into_nexus() {
     if [[ -f "$BACKUP_DIR/agent_specs.json.backup" ]]; then
       docker cp "$BACKUP_DIR/agent_specs.json.backup" "$gateway_cid:/data/agent_specs.json"
     fi
-    docker compose restart gateway || true
+    dc restart gateway || true
   fi
 
   if [[ -n "$ollama_cid" && -f "$BACKUP_DIR/ollama-models.txt" ]]; then
@@ -207,7 +207,7 @@ restore_into_nexus() {
         local model
         model="$(awk '{print $1}' <<<"$model_line")"
         [[ -n "$model" && "$model" != "NAME" ]] || continue
-        docker compose exec -T ollama ollama pull "$model" || true
+        dc exec -T ollama ollama pull "$model" || true
       done < "$BACKUP_DIR/ollama-models.txt"
     fi
   fi
@@ -215,15 +215,15 @@ restore_into_nexus() {
   if [[ -n "$ollama_cid" && -f "$BACKUP_DIR/ollama-backup.tar.gz" ]]; then
     if confirm "Restore full ollama-backup.tar.gz into /root/.ollama?"; then
       docker cp "$BACKUP_DIR/ollama-backup.tar.gz" "$ollama_cid:/tmp/ollama-backup.tar.gz"
-      docker compose exec -T ollama tar xzf /tmp/ollama-backup.tar.gz -C /root/.ollama
-      docker compose restart ollama
+      dc exec -T ollama tar xzf /tmp/ollama-backup.tar.gz -C /root/.ollama
+      dc restart ollama
     fi
   fi
 }
 
 verify_migration() {
   cd "$NEXUS_DIR"
-  docker compose ps
+  dc ps
 
   local gateway_port
   gateway_port=8800
@@ -289,9 +289,21 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-# Verify Docker Compose is available
-if ! docker compose version >/dev/null 2>&1; then
-  echo "Error: 'docker compose' is not available. Please install Docker Compose (or a Docker version that includes it)." >&2
+# Verify Docker Compose is available (support both `docker compose` and `docker-compose`)
+dc() {
+  echo "Error: Docker Compose is not available (need either 'docker compose' or 'docker-compose')." >&2
+  exit 1
+}
+
+COMPOSE_CMD=""
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD="docker compose"
+  dc() { docker compose "$@"; }
+elif need_cmd docker-compose && docker-compose version >/dev/null 2>&1; then
+  COMPOSE_CMD="docker-compose"
+  dc() { docker-compose "$@"; }
+else
+  echo "Error: Docker Compose is not available (need either 'docker compose' or 'docker-compose')." >&2
   exit 1
 fi
 
@@ -341,7 +353,7 @@ prepare_nexus
 
 if [[ "$SKIP_DEPLOY" -eq 1 ]]; then
   echo "--skip-deploy specified: skipping restore and migration verification because containers are not running."
-  echo "To restore data manually, run: docker compose up -d && ./deploy/scripts/migrate-from-ai-infra.sh --backup-dir '$BACKUP_DIR'"
+  echo "To restore data manually, run: ${COMPOSE_CMD} up -d && ./deploy/scripts/migrate-from-ai-infra.sh --backup-dir '$BACKUP_DIR'"
 else
   if [[ "$SKIP_RESTORE" -eq 0 ]]; then
     restore_into_nexus
@@ -352,4 +364,4 @@ else
 fi
 
 echo "Migration script completed."
-echo "Review logs with: docker compose logs --tail=100 gateway ollama"
+echo "Review logs with: ${COMPOSE_CMD} logs --tail=100 gateway ollama"

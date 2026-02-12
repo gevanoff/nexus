@@ -67,12 +67,17 @@ install_linux_docker() {
 
 install_linux_compose_plugin() {
   if docker compose version >/dev/null 2>&1; then
-    green "Docker Compose plugin already available: $(docker compose version)"
+    green "Docker Compose available: $(docker compose version)"
     return
   fi
 
-  if ! confirm "Docker Compose plugin is missing. Install docker-compose-plugin via apt-get?"; then
-    yellow "Skipping Docker Compose plugin installation."
+  if need_cmd docker-compose && docker-compose version >/dev/null 2>&1; then
+    green "Docker Compose available: $(docker-compose version)"
+    return
+  fi
+
+  if ! confirm "Docker Compose is missing. Install docker-compose-plugin via apt-get?"; then
+    yellow "Skipping Docker Compose installation."
     return
   fi
 

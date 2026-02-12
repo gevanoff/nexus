@@ -84,11 +84,11 @@ check_prerequisites() {
     ns_print_ok "Docker found: $(docker --version)"
 
     # Check Docker Compose
-    if ! docker compose version &> /dev/null; then
-        ns_print_error "Docker Compose is not installed or not available."
+    if ! ns_compose_available; then
+        ns_print_error "Docker Compose is not installed or not available (need either 'docker compose' or 'docker-compose')."
         exit 1
     fi
-    ns_print_ok "Docker Compose found: $(docker compose version)"
+    ns_print_ok "Docker Compose found: $(ns_compose_version)"
 
     # Check if Docker daemon is running
     if ! docker info &> /dev/null; then
@@ -174,12 +174,12 @@ setup_models() {
     ns_print_header "Pulling model: $MODEL"
     echo "This may take a few minutes..."
 
-    if docker compose exec -T ollama ollama pull "$MODEL"; then
+    if ns_compose exec -T ollama ollama pull "$MODEL"; then
         ns_print_ok "Model $MODEL installed"
     else
         ns_print_error "Failed to install model $MODEL"
         ns_print_warn "You can install it later with:"
-        echo "  docker compose exec ollama ollama pull $MODEL"
+        echo "  $(ns_compose_cmd_string) exec ollama ollama pull $MODEL"
     fi
 }
 
@@ -206,13 +206,13 @@ start_services() {
     case $REPLY in
         2)
             if [[ "$full_available" == "true" ]]; then
-                docker compose --profile full up -d
+                ns_compose --profile full up -d
             else
-                docker compose up -d
+                ns_compose up -d
             fi
             ;;
         *)
-            docker compose up -d
+            ns_compose up -d
             ;;
     esac
 
@@ -225,10 +225,10 @@ start_services() {
 verify_deployment() {
     ns_print_header "Verifying Deployment"
 
-    if ! docker compose ps | grep -q "running"; then
+    if ! ns_compose ps | grep -q "running"; then
     ensure_runtime_layout
         ns_print_error "Services are not running"
-        echo "Check logs with: docker compose logs"
+        echo "Check logs with: $(ns_compose_cmd_string) logs"
         exit 1
     fi
     ns_print_ok "Services are running"
@@ -237,7 +237,7 @@ verify_deployment() {
         ns_print_ok "Gateway is healthy"
     else
         ns_print_error "Gateway is not responding"
-        echo "Check logs with: docker compose logs gateway"
+        echo "Check logs with: $(ns_compose_cmd_string) logs gateway"
         exit 1
     fi
 
@@ -283,10 +283,10 @@ show_next_steps() {
 EOS
     echo
     echo "View logs:"
-    echo "  docker compose logs -f"
+    echo "  $(ns_compose_cmd_string) logs -f"
     echo
     echo "Stop services:"
-    echo "  docker compose down"
+    echo "  $(ns_compose_cmd_string) down"
     echo
     echo "Documentation: ./docs"
     echo

@@ -112,8 +112,8 @@ if ! docker info >/dev/null 2>&1; then
   ns_print_error "Docker daemon is not reachable. Start Docker and retry."
   exit 1
 fi
-if ! docker compose version >/dev/null 2>&1; then
-  ns_print_error "Docker Compose plugin is not available (need: 'docker compose')."
+if ! ns_compose_available; then
+  ns_print_error "Docker Compose is not available (need either 'docker compose' or 'docker-compose')."
   exit 1
 fi
 if ! ns_have_cmd git; then
@@ -150,4 +150,4 @@ for compose_file in "${compose_files[@]}"; do
   compose_args+=("-f" "$compose_file")
 done
 
-docker compose --env-file "$env_file" "${compose_args[@]}" up -d --build
+ns_compose --env-file "$env_file" "${compose_args[@]}" up -d --build
