@@ -28,8 +28,8 @@ MANIFEST
 
 # Virtual environments
 venv/
-ENV/
-env/
+/ENV/
+/env/
 .venv
 
 # IDE
@@ -72,6 +72,7 @@ models/
 # Service-specific
 services/*/data/
 services/*/.env
+services/*/env/
 
 # Testing
 .pytest_cache/
