@@ -128,6 +128,11 @@ if ! ns_have_cmd git; then
   exit 1
 fi
 
+ns_print_header "Updating code"
+git fetch origin "$branch"
+git checkout "$branch"
+git pull --ff-only origin "$branch"
+
 ns_print_header "Ensuring configuration"
 ns_ensure_env_file "$env_file" "$ROOT_DIR"
 
@@ -147,10 +152,6 @@ if [[ -x "$ROOT_DIR/deploy/scripts/preflight-check.sh" ]]; then
 else
   ns_print_warn "Preflight checker not executable: deploy/scripts/preflight-check.sh"
 fi
-
-git fetch origin "$branch"
-git checkout "$branch"
-git pull --ff-only origin "$branch"
 
 compose_args=()
 for compose_file in "${compose_files[@]}"; do
