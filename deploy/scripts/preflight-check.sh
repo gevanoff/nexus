@@ -135,14 +135,11 @@ for path in services/gateway/Dockerfile docker-compose.yml; do
   fi
 done
 
-for path in services/gateway/env/tools_registry.json.example services/gateway/env/model_aliases.json.example services/gateway/env/agent_specs.json.example; do
-  if [[ -f "$path" ]]; then
-    ok "Template present: $path"
-  else
-    warn "Template missing: $path"
-    warn "If you just upgraded or switched branches, run: git pull"
-  fi
-done
+if [[ -f "services/gateway/app/tools_registry.json" ]]; then
+  ok "Gateway tools registry present: services/gateway/app/tools_registry.json"
+else
+  fail "Missing gateway tools registry: services/gateway/app/tools_registry.json"
+fi
 
 if [[ -f "services/gateway/app/main.py" && -f "services/gateway/app/requirements.freeze.txt" ]]; then
   ok "Gateway source present: services/gateway/app"

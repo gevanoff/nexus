@@ -286,9 +286,10 @@ ns_seed_gateway_config_files() {
   local repo_root="$1"
   ns_ensure_gateway_runtime_dirs "$repo_root"
 
-  local tools_registry_template="${repo_root}/services/gateway/env/tools_registry.json.example"
-  local model_aliases_template="${repo_root}/services/gateway/env/model_aliases.json.example"
-  local agent_specs_template="${repo_root}/services/gateway/env/agent_specs.json.example"
+  # NOTE: Do not rely on services/gateway/env/* here. That directory is gitignored
+  # (it may contain secrets on some hosts) and does not exist in a clean checkout.
+  # Use tracked defaults from services/gateway/app/ instead.
+  local tools_registry_template="${repo_root}/services/gateway/app/tools_registry.json"
 
   local tools_registry_dst="${repo_root}/.runtime/gateway/config/tools_registry.json"
   local model_aliases_dst="${repo_root}/.runtime/gateway/config/model_aliases.json"
@@ -322,30 +323,19 @@ ns_seed_gateway_config_files() {
     fi
   fi
 
+  # Optional operator config: if these files don't exist, the gateway falls back
+  # to built-in defaults. We seed minimal JSON so operators have a stable place
+  # to edit without modifying the container image.
   if [[ ! -f "$model_aliases_dst" ]]; then
-    if [[ -f "$model_aliases_template" ]]; then
-      cp "$model_aliases_template" "$model_aliases_dst" 2>/dev/null || {
-        ns_print_error "Failed to seed model aliases: $model_aliases_dst"
-        return 1
-      }
-      chmod 600 "$model_aliases_dst" 2>/dev/null || true
-      ns_print_ok "Seeded model aliases: $model_aliases_dst"
-    else
-      ns_print_warn "Model aliases template not found: $model_aliases_template (skipping seed)"
-    fi
+    printf '%s\n' '{"aliases":{}}' >"$model_aliases_dst" 2>/dev/null || true
+    chmod 600 "$model_aliases_dst" 2>/dev/null || true
+    [[ -f "$model_aliases_dst" ]] && ns_print_ok "Seeded model aliases: $model_aliases_dst"
   fi
 
   if [[ ! -f "$agent_specs_dst" ]]; then
-    if [[ -f "$agent_specs_template" ]]; then
-      cp "$agent_specs_template" "$agent_specs_dst" 2>/dev/null || {
-        ns_print_error "Failed to seed agent specs: $agent_specs_dst"
-        return 1
-      }
-      chmod 600 "$agent_specs_dst" 2>/dev/null || true
-      ns_print_ok "Seeded agent specs: $agent_specs_dst"
-    else
-      ns_print_warn "Agent specs template not found: $agent_specs_template (skipping seed)"
-    fi
+    printf '%s\n' '{}' >"$agent_specs_dst" 2>/dev/null || true
+    chmod 600 "$agent_specs_dst" 2>/dev/null || true
+    [[ -f "$agent_specs_dst" ]] && ns_print_ok "Seeded agent specs: $agent_specs_dst"
   fi
 }
 
