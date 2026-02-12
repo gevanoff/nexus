@@ -197,7 +197,12 @@ else
   echo "  3) Config file looks OK"
 fi
 
-echo "  4) Re-run: ./deploy/scripts/preflight-check.sh --mode ${mode}"
+if [[ "$missing_docker" == "true" || "$missing_compose" == "true" || "$missing_env" == "true" || "$docker_daemon_ok" != "true" ]]; then
+  echo "  4) After fixing items above, re-run: ./deploy/scripts/preflight-check.sh --mode ${mode}"
+else
+  echo "  4) Preflight looks good; proceed to deploy"
+fi
+
 echo "  5) Deploy:  ./deploy/scripts/deploy.sh dev main   (or prod)"
 echo "  6) Verify:  ./deploy/scripts/verify-gateway.sh && ./deploy/scripts/smoke-test-gateway.sh"
 

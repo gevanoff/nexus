@@ -86,13 +86,9 @@ services:
     networks:
       - nexus
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # CPU-only by default.
+    # If you want NVIDIA GPU acceleration on Linux, add it via an override compose file
+    # that reserves an NVIDIA device (and ensure NVIDIA Container Toolkit is installed).
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
