@@ -169,22 +169,76 @@ else
   fail "Missing .env.example (expected at repo root). Re-clone repo or restore file."
 fi
 
+check_env_file_perms() {
+  local path="$1"
+  local label="$2"
+
+  if [[ ! -f "$path" ]]; then
+    return 0
+  fi
+
+  local perms
+  perms="$(ns_stat_perms "$path" 2>/dev/null || true)"
+  if [[ -z "${perms:-}" ]]; then
+    warn "${label} permissions: unable to determine"
+    return 0
+  fi
+
+  if [[ "$perms" -le 600 ]]; then
+    ok "${label} permissions look safe (${perms})"
+    return 0
+  fi
+
+  if [[ "$mode" == "deploy" ]]; then
+    fail "${label} permissions are broad (${perms}), expected 600 or tighter"
+  else
+    warn "${label} permissions are broad (${perms}), expected 600 or tighter"
+  fi
+}
+
 has_any_env="false"
+existing_envs=()
 if [[ -f .env ]]; then
   has_any_env="true"
+  existing_envs+=(".env")
   ok "Config present: .env"
-  perms="$(ns_stat_perms .env)"
-  if [[ "$perms" -le 600 ]]; then
-    ok ".env permissions look safe ($perms)"
-  else
-    warn ".env permissions are broad ($perms), expected 600 or tighter"
-  fi
+  check_env_file_perms ".env" ".env"
 fi
 
 if [[ -f deploy/env/.env.dev || -f deploy/env/.env.prod ]]; then
   has_any_env="true"
-  [[ -f deploy/env/.env.dev ]] && ok "Host env present: deploy/env/.env.dev"
-  [[ -f deploy/env/.env.prod ]] && ok "Host env present: deploy/env/.env.prod"
+  if [[ -f deploy/env/.env.dev ]]; then
+    existing_envs+=("deploy/env/.env.dev")
+    ok "Host env present: deploy/env/.env.dev"
+  fi
+  if [[ -f deploy/env/.env.prod ]]; then
+    existing_envs+=("deploy/env/.env.prod")
+    ok "Host env present: deploy/env/.env.prod"
+  fi
+  [[ -f deploy/env/.env.dev ]] && check_env_file_perms "deploy/env/.env.dev" "deploy/env/.env.dev"
+  [[ -f deploy/env/.env.prod ]] && check_env_file_perms "deploy/env/.env.prod" "deploy/env/.env.prod"
+fi
+
+# In deploy mode, match deploy.sh behavior: it will refuse to run with an env file
+# that has permissions broader than 600. We can only be strict if we know which env
+# file will be used.
+if [[ "$mode" == "deploy" ]]; then
+  if [[ -n "${env_file_arg:-}" ]]; then
+    if [[ -f "$env_file_arg" ]]; then
+      check_env_file_perms "$env_file_arg" "$env_file_arg"
+    else
+      # Not an error: deploy.sh will create it (chmod 600) if missing.
+      warn "Env file path provided but not present yet: $env_file_arg (deploy will create it)"
+    fi
+  else
+    if [[ ${#existing_envs[@]} -gt 1 ]]; then
+      warn "Multiple env files found; preflight can't know which deploy.sh will use."
+      warn "Re-run with: ./deploy/scripts/preflight-check.sh --mode deploy --env-file <path>"
+    elif [[ ${#existing_envs[@]} -eq 1 ]]; then
+      # If there's exactly one env file in play, be strict about it.
+      check_env_file_perms "${existing_envs[0]}" "${existing_envs[0]}"
+    fi
+  fi
 fi
 
 if [[ "$has_any_env" != "true" ]]; then
