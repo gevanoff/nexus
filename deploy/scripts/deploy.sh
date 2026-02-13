@@ -84,10 +84,10 @@ fi
 
 case "$environment" in
   dev)
-    compose_files=("docker-compose.yml" "docker-compose.dev.yml")
+    compose_files=("docker-compose.gateway.yml" "docker-compose.gateway.dev.yml")
     ;;
   prod)
-    compose_files=("docker-compose.yml")
+    compose_files=("docker-compose.gateway.yml")
     ;;
   *)
     ns_print_error "Unknown environment: $environment"

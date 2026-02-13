@@ -4,7 +4,7 @@ Policy: **one Docker Compose file per component**.
 
 Current layout (preferred): per-component compose files live in the `nexus/` root so all bind-mount paths remain unchanged.
 
-- `docker-compose.yml` (gateway)
+- `docker-compose.gateway.yml`
 - `docker-compose.ollama.yml`
 - `docker-compose.etcd.yml`
 - `docker-compose.images.yml`
@@ -12,7 +12,7 @@ Current layout (preferred): per-component compose files live in the `nexus/` roo
 
 Dev overrides (layer on top of the corresponding base file):
 
-- `docker-compose.dev.yml` (gateway dev override)
+- `docker-compose.gateway.dev.yml`
 - `docker-compose.ollama.dev.yml`
 - `docker-compose.etcd.dev.yml`
 - `docker-compose.images.dev.yml`

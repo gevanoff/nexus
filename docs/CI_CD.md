@@ -48,7 +48,7 @@ chmod +x deploy/scripts/*.sh quickstart.sh
 ## Dev Branch Deployment
 
 - Create a permanent `dev` branch.
-- Configure hosts to run dev containers with `docker-compose.dev.yml` overrides.
+- Configure hosts to run dev containers with `docker-compose.<service>.dev.yml` overrides (e.g. `docker-compose.gateway.dev.yml`).
 - Use separate ports, volumes, and network names to avoid collisions with production.
 
 ### Example: Deploy dev branch

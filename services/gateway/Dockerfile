@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # Full-featured Local AI Gateway container.
-# NOTE: This Dockerfile is built from the repository root as context (see nexus/docker-compose.yml).
+# NOTE: This Dockerfile is built from the repository root as context (see nexus/docker-compose.gateway.yml).
 # It intentionally preserves the known-working runtime layout from ai-infra under /var/lib/gateway/*.
 
 ENV PYTHONDONTWRITEBYTECODE=1

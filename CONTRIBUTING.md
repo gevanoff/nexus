@@ -179,7 +179,7 @@ HEALTHCHECK CMD curl -f http://localhost:9000/health || exit 1
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
 ```
 
-5. **Add to docker-compose.yml**
+5. **Add a per-component compose file** (create `docker-compose.<service>.yml`)
 
 6. **Add documentation**
    - Service README.md

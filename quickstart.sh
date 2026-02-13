@@ -195,7 +195,7 @@ start_services() {
 
     # Minimal stack: gateway + ollama + etcd
     COMPOSE_ARGS=(
-        -f docker-compose.yml
+        -f docker-compose.gateway.yml
         -f docker-compose.ollama.yml
         -f docker-compose.etcd.yml
     )

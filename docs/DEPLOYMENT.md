@@ -230,7 +230,7 @@ gateway:
 
 ### 2. Resource Limits
 
-Add resource limits to docker-compose.yml:
+Add resource limits to the relevant `docker-compose.<component>.yml` file:
 
 ```yaml
 services:
@@ -267,7 +267,7 @@ Gateway is split into:
 - RW data: `./.runtime/gateway/data` → `/var/lib/gateway/data`
 - RO operator config: `./.runtime/gateway/config` → `/var/lib/gateway/config`
 
-To relocate persistence outside the repo in production (e.g. `/opt/nexus/runtime`), change the bind-mount sources in `docker-compose.yml`.
+To relocate persistence outside the repo in production (e.g. `/opt/nexus/runtime`), change the bind-mount sources in the relevant `docker-compose.<component>.yml` file.
 
 Example (illustrative):
 
@@ -297,7 +297,7 @@ sudo chown -R 1000:1000 /opt/nexus/runtime
 
 ### 4. Logging
 
-Configure logging in docker-compose.yml:
+Configure logging in the relevant `docker-compose.<component>.yml` file:
 
 ```yaml
 services:
@@ -473,7 +473,7 @@ scrape_configs:
       - targets: ['gateway:8801']
 ```
 
-Add to docker-compose.yml:
+Add a new `docker-compose.<service>.yml`:
 
 ```yaml
 prometheus:
@@ -489,7 +489,7 @@ prometheus:
 
 ### Grafana
 
-Add to docker-compose.yml:
+Add a new `docker-compose.<service>.yml`:
 
 ```yaml
 grafana:

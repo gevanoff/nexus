@@ -488,7 +488,7 @@ Set up monitoring for new deployment:
 
 ```bash
 # Add Prometheus + Grafana
-docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+docker compose -f docker-compose.gateway.yml -f docker-compose.monitoring.yml up -d
 ```
 
 ### Automation
@@ -543,7 +543,7 @@ docker compose up -d
 # Verify NVIDIA runtime
 docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 
-# Check docker-compose.yml has GPU config
+# Check docker-compose.ollama.yml has GPU config
 ```
 
 ## Multi-Host Migration
@@ -555,7 +555,7 @@ If you had services on different hosts (ai1, ai2, ada2), you have options:
 Run all services on one powerful host:
 
 ```bash
-# docker-compose.yml already configured for this
+# docker-compose.ollama.yml already configured for this
 docker compose --profile full up -d
 ```
 
@@ -587,7 +587,7 @@ docker swarm init
 docker swarm join --token ...
 
 # Deploy stack
-docker stack deploy -c docker-compose.yml nexus
+docker stack deploy -c docker-compose.gateway.yml -c docker-compose.ollama.yml -c docker-compose.etcd.yml nexus
 ```
 
 ## Support

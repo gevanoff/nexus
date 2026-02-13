@@ -260,7 +260,7 @@ Key differences:
 - **No host installation scripts**: Everything runs in containers
 - **Unified networking**: Docker network instead of host ports + SSH
 - **Portable**: Works on any Docker-capable host (macOS, Linux, Windows)
-- **Reproducible**: Defined in version-controlled docker-compose.yml
+- **Reproducible**: Defined in version-controlled `docker-compose.*.yml` files
 - **Isolated**: Services can't access host filesystem without explicit volume mounts
 
 ## Future Enhancements

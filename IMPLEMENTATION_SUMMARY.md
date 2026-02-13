@@ -8,7 +8,7 @@ Nexus successfully combines material from the `gateway` and `ai-infra` repositor
 
 ### 1. Container-Based Architecture ✅
 
-- **Docker Compose orchestration**: Single `docker-compose.yml` for all services
+- **Docker Compose orchestration**: One `docker-compose.<component>.yml` file per service (layer with `-f`)
 - **Service isolation**: Each service runs in its own container with limited host access
 - **Unified networking**: Services communicate over a private Docker network (`nexus`)
 - **Persistence model**: Repo-local host bind mounts under `./.runtime/` (large artifacts + state survive upgrades)
@@ -55,7 +55,7 @@ Nexus successfully combines material from the `gateway` and `ai-infra` repositor
 ### 5. Development Tools ✅
 
 - **quickstart.sh**: Automated setup script
-- **docker-compose.yml**: Service orchestration
+- **docker-compose.<component>.yml**: Service orchestration (one file per component)
 - **.env.example**: Configuration template
 - **.gitignore**: Proper exclusions for Docker development
 - **Template service**: Starting point for new services
@@ -148,7 +148,7 @@ Host A (macOS)        Host B (Ubuntu)      Host C (Ubuntu)
 
 4. **Consistency**
    - Before: Different setups per host
-   - After: Reproducible from docker-compose.yml
+   - After: Reproducible from per-component compose files
 
 5. **Updates**
    - Before: Manual update scripts per service
@@ -162,7 +162,9 @@ nexus/
 ├── ARCHITECTURE.md                     # System design
 ├── SERVICE_API_SPECIFICATION.md        # API standards
 ├── CONTRIBUTING.md                     # Contribution guide
-├── docker-compose.yml                  # Service orchestration
+├── docker-compose.gateway.yml          # Gateway component
+├── docker-compose.ollama.yml           # Ollama component
+├── docker-compose.etcd.yml             # Etcd component
 ├── .env.example                        # Configuration template
 ├── .gitignore                          # Git exclusions
 ├── quickstart.sh                       # Setup automation
@@ -263,7 +265,7 @@ nexus/
 3. **Implement additional services**
    - Use `services/template/` as starting point
    - Follow `SERVICE_API_SPECIFICATION.md`
-   - Add to `docker-compose.yml`
+   - Add a new `docker-compose.<service>.yml`
 
 4. **Review replication plan**
    - Use `docs/REPLICATION_PLAN.md` to map remaining gateway/ai-infra parity gaps.
@@ -308,7 +310,7 @@ nexus/
 
 Nexus successfully transforms the multi-host, script-based ai-infra deployment into a modern, container-based microservices architecture. The implementation provides:
 
-- **Unified deployment**: Single docker-compose.yml for all services
+- **Unified deployment**: Compose layering via multiple per-component files
 - **Portability**: Runs anywhere Docker is available
 - **Extensibility**: Easy to add new services
 - **Standards compliance**: OpenAI-compatible APIs

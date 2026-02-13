@@ -66,16 +66,16 @@ Gateway persistence is stored on the host under `./.runtime/gateway/` and bind-m
 
 ```bash
 # Start core services (gateway + ollama + etcd)
-docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d
 
 # Check service health
-docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml ps
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml ps
 
 # View gateway logs
-docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml logs -f gateway
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml logs -f gateway
 
 # Stop services
-docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml down
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml down
 ```
 
 ### Setup/Install Scripts Reference
@@ -198,7 +198,8 @@ See `services/README.md` for complete service documentation.
    - `/readyz` - Readiness check
    - `/v1/metadata` - Capability advertisement
 3. Add Dockerfile
-4. Add to `docker-compose.yml`
+4. Add a new per-component compose file (e.g. `docker-compose.<service>.yml`)
+  - Policy: see `COMPOSE_POLICY.md`.
 5. Gateway auto-discovers via `/v1/metadata`
 
 See [SERVICE_API_SPECIFICATION.md](SERVICE_API_SPECIFICATION.md) for API requirements.
@@ -209,7 +210,9 @@ See [SERVICE_API_SPECIFICATION.md](SERVICE_API_SPECIFICATION.md) for API require
 
 ```
 nexus/
-├── docker-compose.yml          # Service orchestration
+├── docker-compose.gateway.yml  # Gateway component
+├── docker-compose.ollama.yml   # Ollama component
+├── docker-compose.etcd.yml     # Etcd component
 ├── .env.example                # Configuration template
 ├── ARCHITECTURE.md             # Design documentation
 ├── SERVICE_API_SPECIFICATION.md # API standards
@@ -236,7 +239,7 @@ docker compose exec gateway python tools/verify_gateway.py
 
 ```bash
 # Start with hot reload
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.gateway.yml -f docker-compose.gateway.dev.yml up -d
 
 # View logs for specific service
 docker compose logs -f ollama
@@ -312,7 +315,7 @@ Nexus replaces the host-based `ai-infra` deployment with containers:
 
 | Old (ai-infra) | New (Nexus) | Notes |
 |----------------|-------------|-------|
-| launchd/systemd scripts | docker-compose.yml | Unified orchestration |
+| launchd/systemd scripts | docker-compose.*.yml | One-file-per-component compose |
 | Manual host setup | Dockerfile per service | Reproducible environments |
 | Host networking | Docker networks | Isolated networking |
 | `/var/lib/gateway` | `./.runtime/gateway/*` bind mounts | Persistent data + operator config |
@@ -345,7 +348,7 @@ docker compose exec gateway curl http://ollama:11434/health
 # Verify NVIDIA runtime
 docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 
-# Update docker-compose.yml to use gpus
+# Update docker-compose.ollama.yml to use gpus
 ```
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for additional operational guidance.

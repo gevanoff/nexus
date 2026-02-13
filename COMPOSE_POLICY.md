@@ -12,7 +12,7 @@ Policy: **one Docker Compose file per component**.
 
 Base component files (production-ish defaults):
 
-- `docker-compose.yml` (gateway)
+- `docker-compose.gateway.yml`
 - `docker-compose.ollama.yml`
 - `docker-compose.etcd.yml`
 - `docker-compose.images.yml`
@@ -20,7 +20,7 @@ Base component files (production-ish defaults):
 
 Dev overrides (optional, layer on top):
 
-- `docker-compose.dev.yml` (gateway)
+- `docker-compose.gateway.dev.yml`
 - `docker-compose.ollama.dev.yml`
 - `docker-compose.etcd.dev.yml`
 - `docker-compose.images.dev.yml`
@@ -31,25 +31,26 @@ Dev overrides (optional, layer on top):
 Core stack:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d
 ```
+
 
 Add components:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.images.yml up -d
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.images.yml up -d
 ```
 
 Dev gateway:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.gateway.yml -f docker-compose.gateway.dev.yml up -d
 ```
 
 Dev core stack:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+docker compose -f docker-compose.gateway.yml -f docker-compose.gateway.dev.yml \
   -f docker-compose.ollama.yml -f docker-compose.ollama.dev.yml \
   -f docker-compose.etcd.yml -f docker-compose.etcd.dev.yml up -d
 ```

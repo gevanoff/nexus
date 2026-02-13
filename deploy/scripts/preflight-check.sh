@@ -127,7 +127,7 @@ else
   fi
 fi
 
-for path in services/gateway/Dockerfile docker-compose.yml; do
+for path in services/gateway/Dockerfile docker-compose.gateway.yml; do
   if [[ -f "$path" ]]; then
     ok "Required file present: $path"
   else
@@ -342,7 +342,7 @@ check_port_required OBSERVABILITY_PORT 8801 "Gateway observability"
 check_port_required OLLAMA_PORT 11434 "Ollama"
 check_port_required ETCD_PORT 2379 "etcd"
 
-# Optional services (profiles in docker-compose.yml)
+# Optional services (separate compose files)
 check_port_optional IMAGES_PORT 7860 "Images service"
 check_port_optional TTS_PORT 9940 "TTS service"
 

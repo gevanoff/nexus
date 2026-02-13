@@ -25,7 +25,7 @@ See [SERVICE_API_SPECIFICATION.md](../../SERVICE_API_SPECIFICATION.md) for detai
 ```
 services/my-service/
 ├── Dockerfile              # Container build definition
-├── docker-compose.yml      # Optional: standalone testing
+├── docker-compose.<service>.yml  # Optional: standalone testing
 ├── requirements.txt        # Python dependencies
 ├── .env.example           # Configuration template
 ├── README.md              # Service documentation
@@ -86,7 +86,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
 
 ### 5. Add to Docker Compose
 
-Add to `docker-compose.yml`:
+Create a `docker-compose.<service>.yml` file:
 
 ```yaml
 my-service:

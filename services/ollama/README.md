@@ -16,7 +16,7 @@ This service uses the official Ollama Docker image with configuration for Nexus 
 
 ## Configuration
 
-The Ollama service is configured in the main `docker-compose.yml` with:
+The Ollama service is configured in `docker-compose.ollama.yml` with:
 
 ```yaml
 ollama:
@@ -159,7 +159,7 @@ docker compose logs ollama | grep -i gpu
 
 ### Disable GPU (CPU Only)
 
-To run on CPU only, remove the deploy section from docker-compose.yml:
+To run on CPU only, remove the deploy section from docker-compose.ollama.yml:
 
 ```yaml
 ollama:

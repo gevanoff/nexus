@@ -112,7 +112,7 @@ docker run -p 8800:8800 -p 8801:8801 \
 
 ### Docker Compose
 
-The gateway is included in the main `docker-compose.yml`. Start with:
+The gateway is configured in `docker-compose.gateway.yml`. Start with:
 
 ```bash
 docker compose up gateway
