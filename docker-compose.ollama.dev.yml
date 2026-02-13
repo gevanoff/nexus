@@ -1,0 +1,16 @@
+services:
+  # Dev override for the Ollama service.
+  # Shared host paths:
+  # - ./.runtime/ollama-dev is Ollama's persistent model store for dev
+  ollama:
+    container_name: nexus-ollama-dev
+    ports:
+      - "${DEV_OLLAMA_PORT:-11435}:11434"
+    volumes:
+      - ./.runtime/ollama-dev:/root/.ollama
+
+networks:
+  nexus:
+    name: nexus-dev
+
+volumes: {}

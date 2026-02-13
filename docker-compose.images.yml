@@ -1,0 +1,39 @@
+services:
+  # Image Generation Service (InvokeAI)
+  # Shared host paths:
+  # - ./.runtime/images/* is the images service's state and models cache
+  images:
+    build:
+      context: ./services/images
+      dockerfile: Dockerfile
+    container_name: nexus-images
+    ports:
+      - "${IMAGES_PORT:-7860}:7860"
+    environment:
+      # OpenAI Images API shim (InvokeAI-compatible)
+      - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
+      - SHIM_PORT=7860
+      # Optional: only used when SHIM_MODE=invokeai_queue
+      - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
+    volumes:
+      - ./.runtime/images/data:/data
+      - ./.runtime/images/models:/data/models
+    networks:
+      - nexus
+    restart: unless-stopped
+    # Note: GPU is only required if/when you run a real image backend.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

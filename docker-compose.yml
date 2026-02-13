@@ -1,5 +1,9 @@
 services:
   # Gateway Service - Central API gateway
+  # Shared host paths:
+  # - ./.runtime/gateway/data is gateway's RW data dir (SQLite DBs, tool logs, cached UI assets)
+  # - ./.runtime/gateway/config is gateway's RO operator config (aliases/specs/tools registry)
+  # - ./.env is bind-mounted into the container for parity with macOS launchd layout
   gateway:
     build:
       context: ./services/gateway
@@ -18,48 +22,45 @@ services:
       - ETCD_PREFIX=${ETCD_PREFIX:-/nexus/services/}
       - ETCD_POLL_INTERVAL=${ETCD_POLL_INTERVAL:-15}
       - ETCD_SEED_FROM_ENV=${ETCD_SEED_FROM_ENV:-true}
-      
+
       # Observability
       - OBSERVABILITY_HOST=0.0.0.0
       - OBSERVABILITY_PORT=8801
       - METRICS_ENABLED=true
-      
+
       # Upstream services (using Docker service names)
       - OLLAMA_BASE_URL=http://ollama:11434
       - IMAGES_BACKEND=${IMAGES_BACKEND:-http_openai_images}
       - IMAGES_HTTP_BASE_URL=http://images:7860
       - AUDIO_BACKEND_URL=http://tts:9940
-      
+
       # Routing configuration
       - DEFAULT_BACKEND=ollama
       - ROUTER_ENABLE_POLICY=true
-      
+
       # Request limits
       - MAX_REQUEST_BYTES=10485760
-      
+
       # Data persistence paths (inside container)
       - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
       - USER_DB_PATH=/var/lib/gateway/data/users.sqlite
       - UI_IMAGE_DIR=/var/lib/gateway/data/ui_images
       - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
       - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
-      
+
       # Tool bus configuration
       - TOOLS_LOG_MODE=ndjson
       - TOOLS_LOG_PATH=/var/lib/gateway/data/tools/invocations.jsonl
       - TOOLS_LOG_DIR=/var/lib/gateway/data/tools
       - TOOLS_SHELL_CWD=/var/lib/gateway/data/tools_work
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
-      
+
       # Memory v2
       - MEMORY_V2_ENABLED=true
     volumes:
       - ./.runtime/gateway/data:/var/lib/gateway/data
       - ./.runtime/gateway/config:/var/lib/gateway/config:ro
       - ./.env:/var/lib/gateway/app/.env:ro
-    depends_on:
-      - ollama
-      - etcd
     networks:
       - nexus
     restart: unless-stopped
@@ -69,123 +70,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # Ollama Service - LLM inference
-  ollama:
-    image: ollama/ollama:latest
-    container_name: nexus-ollama
-    ports:
-      - "${OLLAMA_PORT:-11434}:11434"
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-      - OLLAMA_MODELS=/root/.ollama/models
-    volumes:
-      - ./.runtime/ollama:/root/.ollama
-    networks:
-      - nexus
-    restart: unless-stopped
-    # CPU-only by default.
-    # If you want NVIDIA GPU acceleration on Linux, add it via an override compose file
-    # that reserves an NVIDIA device (and ensure NVIDIA Container Toolkit is installed).
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  # Image Generation Service (InvokeAI)
-  images:
-    build:
-      context: ./services/images
-      dockerfile: Dockerfile
-    container_name: nexus-images
-    ports:
-      - "${IMAGES_PORT:-7860}:7860"
-    environment:
-      # OpenAI Images API shim (InvokeAI-compatible)
-      - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
-      - SHIM_PORT=7860
-      # Optional: only used when SHIM_MODE=invokeai_queue
-      - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
-    volumes:
-      - ./.runtime/images/data:/data
-      - ./.runtime/images/models:/data/models
-    networks:
-      - nexus
-    restart: unless-stopped
-    # Note: GPU is only required if/when you run a real image backend.
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    profiles:
-      - full
-      - images
-
-  # TTS Service - Text-to-Speech
-  tts:
-    build:
-      context: ./services/tts
-      dockerfile: Dockerfile
-    container_name: nexus-tts
-    ports:
-      - "${TTS_PORT:-9940}:9940"
-    environment:
-      - POCKET_TTS_HOST=0.0.0.0
-      - POCKET_TTS_PORT=9940
-      - POCKET_TTS_BACKEND=${POCKET_TTS_BACKEND:-auto}
-      - POCKET_TTS_MODEL_NAME=${POCKET_TTS_MODEL_NAME:-pocket-tts}
-      - POCKET_TTS_MODEL_PATH=${POCKET_TTS_MODEL_PATH:-}
-      - POCKET_TTS_VOICE=${POCKET_TTS_VOICE:-alba}
-      - POCKET_TTS_COMMAND=${POCKET_TTS_COMMAND:-pocket-tts}
-    volumes:
-      - ./.runtime/tts/data:/data
-    networks:
-      - nexus
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9940/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    profiles:
-      - full
-      - audio
-
-  # Etcd Service - Service discovery
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.11
-    container_name: nexus-etcd
-    command:
-      - /usr/local/bin/etcd
-      - --name
-      - nexus-etcd
-      - --data-dir
-      - /etcd-data
-      - --listen-client-urls
-      - http://0.0.0.0:2379
-      - --advertise-client-urls
-      - http://etcd:2379
-      - --listen-peer-urls
-      - http://0.0.0.0:2380
-      - --initial-advertise-peer-urls
-      - http://etcd:2380
-      - --initial-cluster
-      - nexus-etcd=http://etcd:2380
-      - --initial-cluster-state
-      - new
-      - --enable-v2
-    volumes:
-      - ./.runtime/etcd/data:/etcd-data
-    networks:
-      - nexus
-    ports:
-      - "${ETCD_PORT:-2379}:2379"
-    restart: unless-stopped
 
 networks:
   nexus:

@@ -1,0 +1,35 @@
+services:
+  # Ollama Service - LLM inference
+  # Shared host paths:
+  # - ./.runtime/ollama is Ollama's persistent model store
+  ollama:
+    image: ollama/ollama:latest
+    container_name: nexus-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_MODELS=/root/.ollama/models
+    volumes:
+      - ./.runtime/ollama:/root/.ollama
+    networks:
+      - nexus
+    restart: unless-stopped
+    # CPU-only by default.
+    # If you want NVIDIA GPU acceleration on Linux, add it via an override compose file
+    # that reserves an NVIDIA device (and ensure NVIDIA Container Toolkit is installed).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

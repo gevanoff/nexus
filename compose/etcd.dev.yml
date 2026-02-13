@@ -1,0 +1,13 @@
+services:
+  etcd:
+    container_name: nexus-etcd-dev
+    ports:
+      - "${DEV_ETCD_PORT:-12379}:2379"
+    volumes:
+      - ../.runtime/etcd-dev/data:/etcd-data
+
+networks:
+  nexus:
+    name: nexus-dev
+
+volumes: {}

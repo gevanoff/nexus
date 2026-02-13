@@ -28,6 +28,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 ## Quick Start
 
+Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per component; use `-f` layering).
+
 ### Prerequisites
 
 - Operator environment: **macOS/Linux hosts** with Docker Engine and the `docker compose` plugin
@@ -64,16 +66,16 @@ Gateway persistence is stored on the host under `./.runtime/gateway/` and bind-m
 
 ```bash
 # Start core services (gateway + ollama + etcd)
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d
 
 # Check service health
-docker compose ps
+docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml ps
 
 # View gateway logs
-docker compose logs -f gateway
+docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml logs -f gateway
 
 # Stop services
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml down
 ```
 
 ### Setup/Install Scripts Reference

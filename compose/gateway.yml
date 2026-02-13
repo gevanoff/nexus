@@ -1,0 +1,77 @@
+services:
+  # Gateway Service - Central API gateway
+  gateway:
+    build:
+      context: ../services/gateway
+      dockerfile: Dockerfile
+    container_name: nexus-gateway
+    ports:
+      - "${GATEWAY_PORT:-8800}:8800"
+      - "${OBSERVABILITY_PORT:-8801}:8801"
+    environment:
+      # Server configuration
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=8800
+      - GATEWAY_BEARER_TOKEN=${GATEWAY_BEARER_TOKEN:-change-me-in-production}
+      - ETCD_ENABLED=${ETCD_ENABLED:-true}
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - ETCD_PREFIX=${ETCD_PREFIX:-/nexus/services/}
+      - ETCD_POLL_INTERVAL=${ETCD_POLL_INTERVAL:-15}
+      - ETCD_SEED_FROM_ENV=${ETCD_SEED_FROM_ENV:-true}
+
+      # Observability
+      - OBSERVABILITY_HOST=0.0.0.0
+      - OBSERVABILITY_PORT=8801
+      - METRICS_ENABLED=true
+
+      # Upstream services (using Docker service names)
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - IMAGES_BACKEND=${IMAGES_BACKEND:-http_openai_images}
+      - IMAGES_HTTP_BASE_URL=http://images:7860
+      - AUDIO_BACKEND_URL=http://tts:9940
+
+      # Routing configuration
+      - DEFAULT_BACKEND=ollama
+      - ROUTER_ENABLE_POLICY=true
+
+      # Request limits
+      - MAX_REQUEST_BYTES=10485760
+
+      # Data persistence paths (inside container)
+      - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
+      - USER_DB_PATH=/var/lib/gateway/data/users.sqlite
+      - UI_IMAGE_DIR=/var/lib/gateway/data/ui_images
+      - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+      - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+
+      # Tool bus configuration
+      - TOOLS_LOG_MODE=ndjson
+      - TOOLS_LOG_PATH=/var/lib/gateway/data/tools/invocations.jsonl
+      - TOOLS_LOG_DIR=/var/lib/gateway/data/tools
+      - TOOLS_SHELL_CWD=/var/lib/gateway/data/tools_work
+      - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
+
+      # Memory v2
+      - MEMORY_V2_ENABLED=true
+    volumes:
+      - ../.runtime/gateway/data:/var/lib/gateway/data
+      - ../.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ../.env:/var/lib/gateway/app/.env:ro
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8800/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

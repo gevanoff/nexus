@@ -22,6 +22,12 @@ GATEWAY_API_URL="http://localhost:8800"
 
 NS_AUTO_YES="false"
 
+# Compose file layering (policy: one compose file per component).
+# Policy reference: see COMPOSE_POLICY.md.
+# We pass explicit -f flags so that all compose operations (up/ps/logs/exec)
+# consistently target the same stack.
+COMPOSE_ARGS=()
+
 usage() {
     cat <<'EOF'
 Usage: ./quickstart.sh [--yes]
@@ -174,18 +180,25 @@ setup_models() {
     ns_print_header "Pulling model: $MODEL"
     echo "This may take a few minutes..."
 
-    if ns_compose exec -T ollama ollama pull "$MODEL"; then
+    if ns_compose "${COMPOSE_ARGS[@]}" exec -T ollama ollama pull "$MODEL"; then
         ns_print_ok "Model $MODEL installed"
     else
         ns_print_error "Failed to install model $MODEL"
         ns_print_warn "You can install it later with:"
-        echo "  $(ns_compose_cmd_string) exec ollama ollama pull $MODEL"
+        echo "  $(ns_compose_cmd_string) ${COMPOSE_ARGS[*]} exec ollama ollama pull $MODEL"
     fi
 }
 
 # Start services
 start_services() {
     ns_print_header "Starting Services"
+
+    # Minimal stack: gateway + ollama + etcd
+    COMPOSE_ARGS=(
+        -f docker-compose.yml
+        -f docker-compose.ollama.yml
+        -f docker-compose.etcd.yml
+    )
 
     local full_available="true"
     if ! has_optional_dockerfile images || ! has_optional_dockerfile tts; then
@@ -206,13 +219,15 @@ start_services() {
     case $REPLY in
         2)
             if [[ "$full_available" == "true" ]]; then
-                ns_compose --profile full up -d
+                ns_compose "${COMPOSE_ARGS[@]}" -f docker-compose.images.yml -f docker-compose.tts.yml up -d
+                # Persist full selection for subsequent commands (models/verify/logs)
+                COMPOSE_ARGS+=( -f docker-compose.images.yml -f docker-compose.tts.yml )
             else
-                ns_compose up -d
+                ns_compose "${COMPOSE_ARGS[@]}" up -d
             fi
             ;;
         *)
-            ns_compose up -d
+            ns_compose "${COMPOSE_ARGS[@]}" up -d
             ;;
     esac
 
@@ -225,10 +240,10 @@ start_services() {
 verify_deployment() {
     ns_print_header "Verifying Deployment"
 
-    if ! ns_compose ps | grep -q "running"; then
+    if ! ns_compose "${COMPOSE_ARGS[@]}" ps | grep -q "running"; then
     ensure_runtime_layout
         ns_print_error "Services are not running"
-        echo "Check logs with: $(ns_compose_cmd_string) logs"
+        echo "Check logs with: $(ns_compose_cmd_string) ${COMPOSE_ARGS[*]} logs"
         exit 1
     fi
     ns_print_ok "Services are running"
@@ -237,7 +252,7 @@ verify_deployment() {
         ns_print_ok "Gateway is healthy"
     else
         ns_print_error "Gateway is not responding"
-        echo "Check logs with: $(ns_compose_cmd_string) logs gateway"
+        echo "Check logs with: $(ns_compose_cmd_string) ${COMPOSE_ARGS[*]} logs gateway"
         exit 1
     fi
 
@@ -283,10 +298,10 @@ show_next_steps() {
 EOS
     echo
     echo "View logs:"
-    echo "  $(ns_compose_cmd_string) logs -f"
+    echo "  $(ns_compose_cmd_string) ${COMPOSE_ARGS[*]} logs -f"
     echo
     echo "Stop services:"
-    echo "  $(ns_compose_cmd_string) down"
+    echo "  $(ns_compose_cmd_string) ${COMPOSE_ARGS[*]} down"
     echo
     echo "Documentation: ./docs"
     echo

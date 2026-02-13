@@ -15,42 +15,6 @@ services:
       - ./services/gateway/app:/var/lib/gateway/app
       - ./services/gateway/tools:/var/lib/gateway/tools
 
-  ollama:
-    container_name: nexus-ollama-dev
-    ports:
-      - "${DEV_OLLAMA_PORT:-11435}:11434"
-    volumes:
-      - ./.runtime/ollama-dev:/root/.ollama
-
-  images:
-    container_name: nexus-images-dev
-    ports:
-      - "${DEV_IMAGES_PORT:-17860}:7860"
-    environment:
-      - SHIM_MODE=${DEV_IMAGES_SHIM_MODE:-stub}
-      - SHIM_PORT=7860
-    volumes:
-      - ./.runtime/images-dev/data:/data
-      - ./.runtime/images-dev/models:/data/models
-
-  tts:
-    container_name: nexus-tts-dev
-    ports:
-      - "${DEV_TTS_PORT:-19940}:9940"
-    environment:
-      - POCKET_TTS_HOST=0.0.0.0
-      - POCKET_TTS_PORT=9940
-      - POCKET_TTS_BACKEND=${DEV_POCKET_TTS_BACKEND:-auto}
-    volumes:
-      - ./.runtime/tts-dev/data:/data
-
-  etcd:
-    container_name: nexus-etcd-dev
-    ports:
-      - "${DEV_ETCD_PORT:-12379}:2379"
-    volumes:
-      - ./.runtime/etcd-dev/data:/etcd-data
-
 networks:
   nexus:
     name: nexus-dev

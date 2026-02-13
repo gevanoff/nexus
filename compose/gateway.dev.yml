@@ -1,0 +1,22 @@
+services:
+  gateway:
+    container_name: nexus-gateway-dev
+    ports:
+      - "${DEV_GATEWAY_PORT:-18800}:8800"
+      - "${DEV_OBSERVABILITY_PORT:-18801}:8801"
+    environment:
+      - GATEWAY_BEARER_TOKEN=${DEV_GATEWAY_BEARER_TOKEN:-dev-change-me}
+      - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+      - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+      - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
+    volumes:
+      - ../.runtime/gateway-dev/data:/var/lib/gateway/data
+      - ../.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ../services/gateway/app:/var/lib/gateway/app
+      - ../services/gateway/tools:/var/lib/gateway/tools
+
+networks:
+  nexus:
+    name: nexus-dev
+
+volumes: {}

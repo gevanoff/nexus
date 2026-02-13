@@ -229,7 +229,7 @@ Single-command startup of full stack for development.
 ### Adding New Services
 1. Implement service with required endpoints (`/health`, `/readyz`, `/v1/metadata`)
 2. Follow OpenAI-compatible API patterns where applicable
-3. Add service to `docker-compose.yml`
+3. Add a new per-component compose file (e.g. `docker-compose.<service>.yml`)
 4. Gateway automatically discovers via `/v1/metadata`
 5. No gateway code changes required
 

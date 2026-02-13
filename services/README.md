@@ -136,7 +136,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
 
 ### 4. Add to Docker Compose
 
-Edit `docker-compose.yml`:
+Create a new per-component compose file (policy: one file per service), e.g. `docker-compose.my-service.yml`:
 
 ```yaml
 my-service:

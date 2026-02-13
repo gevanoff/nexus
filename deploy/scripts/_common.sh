@@ -206,6 +206,9 @@ ns_port_find_listener_cmd() {
 
 # Docker Compose compatibility
 #
+# Compose policy (Nexus): one compose file per component; use -f layering.
+# See: COMPOSE_POLICY.md (repo root).
+#
 # Compose exists in two common forms:
 # - Compose v2 plugin: `docker compose ...`
 # - Legacy/standalone binary: `docker-compose ...`
