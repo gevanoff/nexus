@@ -23,6 +23,16 @@ if [[ -z "${TOKEN}" ]]; then
   ns_die "GATEWAY_BEARER_TOKEN is not set (set env var or put it in ${ENV_FILE})."
 fi
 
+gateway_port="${GATEWAY_PORT:-}"
+obs_port="${OBSERVABILITY_PORT:-}"
+if [[ -f "${ENV_FILE}" ]]; then
+  gateway_port="${gateway_port:-$(ns_env_get "${ENV_FILE}" GATEWAY_PORT 8800)}"
+  obs_port="${obs_port:-$(ns_env_get "${ENV_FILE}" OBSERVABILITY_PORT 8801)}"
+fi
+
+gateway_port="${gateway_port:-8800}"
+obs_port="${obs_port:-8801}"
+
 if ! ns_compose_available; then
   ns_die "Docker Compose is not available (need either 'docker compose' or 'docker-compose')."
 fi
@@ -33,8 +43,8 @@ ns_print_header "Gateway Verifier (in-container)"
 ns_compose exec -T gateway \
   python3 /var/lib/gateway/tools/verify_gateway.py \
   --skip-pytest \
-  --base-url http://127.0.0.1:8800 \
-  --obs-url http://127.0.0.1:8801 \
+  --base-url "http://127.0.0.1:${gateway_port}" \
+  --obs-url "http://127.0.0.1:${obs_port}" \
   --token "${TOKEN}"
 
 ns_print_ok "Verifier passed"

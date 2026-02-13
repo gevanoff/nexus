@@ -10,8 +10,15 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 ns_require_cmd curl
 
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
-BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:${GATEWAY_PORT:-8800}}"
-OBS_URL="${GATEWAY_OBS_URL:-http://127.0.0.1:${OBSERVABILITY_PORT:-8801}}"
+gateway_port="${GATEWAY_PORT:-}"
+obs_port="${OBSERVABILITY_PORT:-}"
+if [[ -f "${ENV_FILE}" ]]; then
+  gateway_port="${gateway_port:-$(ns_env_get "${ENV_FILE}" GATEWAY_PORT 8800)}"
+  obs_port="${obs_port:-$(ns_env_get "${ENV_FILE}" OBSERVABILITY_PORT 8801)}"
+fi
+
+BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:${gateway_port:-8800}}"
+OBS_URL="${GATEWAY_OBS_URL:-http://127.0.0.1:${obs_port:-8801}}"
 
 TOKEN="${GATEWAY_BEARER_TOKEN:-}"
 if [[ -z "${TOKEN}" && -f "${ENV_FILE}" ]]; then
