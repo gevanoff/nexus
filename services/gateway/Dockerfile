@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1
 # Runtime root (mirrors ai-infra)
 ENV GATEWAY_RUNTIME_ROOT=/var/lib/gateway
 
-WORKDIR /var/lib/gateway/app
+WORKDIR /var/lib/gateway
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
