@@ -12,6 +12,8 @@ services:
     ports:
       - "${GATEWAY_PORT:-8800}:8800"
       - "${OBSERVABILITY_PORT:-8801}:8801"
+    env_file:
+      - ./.env
     environment:
       # Server configuration
       - GATEWAY_HOST=0.0.0.0
@@ -60,7 +62,12 @@ services:
     volumes:
       - ./.runtime/gateway/data:/var/lib/gateway/data
       - ./.runtime/gateway/config:/var/lib/gateway/config:ro
-      - ./.env:/var/lib/gateway/app/.env:ro
+      - type: bind
+        source: ./.env
+        target: /var/lib/gateway/app/.env
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - nexus
     restart: unless-stopped
