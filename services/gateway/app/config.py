@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     # Optional diagnostics for UI allowlist failures.
     # When true, 403 responses include observed client/proxy IP details.
     UI_IP_ALLOWLIST_DEBUG: bool = False
+    # Optional: trust proxy headers for UI client IP evaluation, but only when
+    # the direct peer IP is in this allowlist (IPs/CIDRs, comma-separated).
+    # Example: "172.28.0.1,127.0.0.1"
+    UI_TRUST_PROXY_CIDRS: str = ""
 
     # Optional public base URL for constructing absolute URLs in API responses.
     # When set (e.g. "https://ai2:8800"), image responses that would otherwise return

@@ -74,12 +74,36 @@ async def ui_apple_touch(req: Request):
 _SAFE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
-def _client_ip(req: Request) -> str:
+def _peer_ip(req: Request) -> str:
     try:
         c = req.client
         return (c.host or "").strip() if c else ""
     except Exception:
         return ""
+
+
+def _parse_forwarded_for(header_value: str) -> str:
+    raw = (header_value or "").strip()
+    if not raw:
+        return ""
+    for part in raw.split(","):
+        token = part.strip().strip('"').strip()
+        if not token:
+            continue
+        if token.startswith("[") and token.endswith("]"):
+            token = token[1:-1].strip()
+        if token.startswith("for="):
+            token = token[4:].strip().strip('"').strip()
+        if token.startswith("[") and "]" in token:
+            token = token[1: token.index("]")]
+        if token.count(":") == 1 and token.rsplit(":", 1)[1].isdigit() and "." in token:
+            token = token.rsplit(":", 1)[0]
+        try:
+            ipaddress.ip_address(token)
+            return token
+        except Exception:
+            continue
+    return ""
 
 
 def _parse_ip_allowlist(raw: str) -> list[Any]:
@@ -99,6 +123,58 @@ def _parse_ip_allowlist(raw: str) -> list[Any]:
     return items
 
 
+def _ip_matches_allowlist(ip_s: str, allow: list[Any]) -> bool:
+    try:
+        ip = ipaddress.ip_address((ip_s or "").strip())
+    except Exception:
+        return False
+    for item in allow:
+        try:
+            if isinstance(item, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+                if ip == item:
+                    return True
+            else:
+                if ip in item:
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def _client_ip(req: Request) -> str:
+    peer = _peer_ip(req)
+    trusted_raw = (getattr(S, "UI_TRUST_PROXY_CIDRS", "") or "").strip()
+    trusted = _parse_ip_allowlist(trusted_raw)
+    if not trusted or not _ip_matches_allowlist(peer, trusted):
+        return peer
+
+    try:
+        xff = (req.headers.get("x-forwarded-for") or "").strip()
+    except Exception:
+        xff = ""
+    parsed_xff = _parse_forwarded_for(xff)
+    if parsed_xff:
+        return parsed_xff
+
+    try:
+        xri = (req.headers.get("x-real-ip") or "").strip()
+    except Exception:
+        xri = ""
+    parsed_xri = _parse_forwarded_for(xri)
+    if parsed_xri:
+        return parsed_xri
+
+    try:
+        fwd = (req.headers.get("forwarded") or "").strip()
+    except Exception:
+        fwd = ""
+    parsed_fwd = _parse_forwarded_for(fwd)
+    if parsed_fwd:
+        return parsed_fwd
+
+    return peer
+
+
 def _ui_deny_detail(req: Request, message: str) -> Any:
     if not bool(getattr(S, "UI_IP_ALLOWLIST_DEBUG", False)):
         return message
@@ -110,10 +186,12 @@ def _ui_deny_detail(req: Request, message: str) -> Any:
         "error": "ui_access_denied",
         "message": message,
         "client_ip": _client_ip(req),
+        "peer_ip": _peer_ip(req),
         "x_forwarded_for": (headers.get("x-forwarded-for") or "").strip(),
         "x_real_ip": (headers.get("x-real-ip") or "").strip(),
         "forwarded": (headers.get("forwarded") or "").strip(),
         "ui_ip_allowlist": (getattr(S, "UI_IP_ALLOWLIST", "") or "").strip(),
+        "ui_trust_proxy_cidrs": (getattr(S, "UI_TRUST_PROXY_CIDRS", "") or "").strip(),
     }
 
 
