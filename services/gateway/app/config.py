@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Optional: restrict tokenless UI endpoints (/ui, /ui/api/*) to specific client IPs/CIDRs.
     # If empty, the UI endpoints are disabled (403) to avoid exposing unauthenticated access.
     UI_IP_ALLOWLIST: str = ""
+    # Optional diagnostics for UI allowlist failures.
+    # When true, 403 responses include observed client/proxy IP details.
+    UI_IP_ALLOWLIST_DEBUG: bool = False
 
     # Optional public base URL for constructing absolute URLs in API responses.
     # When set (e.g. "https://ai2:8800"), image responses that would otherwise return

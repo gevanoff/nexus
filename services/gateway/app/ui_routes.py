@@ -99,16 +99,34 @@ def _parse_ip_allowlist(raw: str) -> list[Any]:
     return items
 
 
+def _ui_deny_detail(req: Request, message: str) -> Any:
+    if not bool(getattr(S, "UI_IP_ALLOWLIST_DEBUG", False)):
+        return message
+    try:
+        headers = req.headers
+    except Exception:
+        headers = {}
+    return {
+        "error": "ui_access_denied",
+        "message": message,
+        "client_ip": _client_ip(req),
+        "x_forwarded_for": (headers.get("x-forwarded-for") or "").strip(),
+        "x_real_ip": (headers.get("x-real-ip") or "").strip(),
+        "forwarded": (headers.get("forwarded") or "").strip(),
+        "ui_ip_allowlist": (getattr(S, "UI_IP_ALLOWLIST", "") or "").strip(),
+    }
+
+
 def _require_ui_access(req: Request) -> None:
     raw = (getattr(S, "UI_IP_ALLOWLIST", "") or "").strip()
     if not raw:
-        raise HTTPException(status_code=403, detail="UI disabled (set UI_IP_ALLOWLIST to trusted IPs/CIDRs)")
+        raise HTTPException(status_code=403, detail=_ui_deny_detail(req, "UI disabled (set UI_IP_ALLOWLIST to trusted IPs/CIDRs)"))
 
     ip_s = _client_ip(req)
     try:
         ip = ipaddress.ip_address(ip_s)
     except Exception:
-        raise HTTPException(status_code=403, detail="UI denied (unknown client IP)")
+        raise HTTPException(status_code=403, detail=_ui_deny_detail(req, "UI denied (unknown client IP)"))
 
     allow = _parse_ip_allowlist(raw)
     for item in allow:
@@ -122,7 +140,7 @@ def _require_ui_access(req: Request) -> None:
         except Exception:
             continue
 
-    raise HTTPException(status_code=403, detail="UI denied (client IP not allowlisted)")
+    raise HTTPException(status_code=403, detail=_ui_deny_detail(req, "UI denied (client IP not allowlisted)"))
 
 
 def _session_cookie_name() -> str:
