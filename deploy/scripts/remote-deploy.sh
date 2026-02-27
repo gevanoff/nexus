@@ -19,12 +19,12 @@ usage() {
 Usage: deploy/scripts/remote-deploy.sh [--yes] <environment> <branch> <host>
 
 Suggested order (typical):
-  1) On the remote host, ensure /opt/nexus exists and is writable by the deploy user
+  1) On the remote host, ensure /Users/ai/nexus exists and is writable by the deploy user
      - Standard deploy user: ai
      - Standard ownership:
        - macOS:  ai:staff
        - Linux:  ai:ai
-  2) On the remote host, clone Nexus into /opt/nexus
+  2) On the remote host, clone Nexus into /Users/ai/nexus
   3) On the remote host: ./deploy/scripts/install-host-deps.sh
   4) On the remote host: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
   5) On the remote host: ./deploy/scripts/preflight-check.sh --mode deploy
@@ -118,7 +118,7 @@ fi
 
 remote_cmd=$(cat <<'EOS'
 set -euo pipefail
-repo_dir="/opt/nexus"
+repo_dir="${NEXUS_REMOTE_DIR:-/Users/ai/nexus}"
 desired_user="ai"
 desired_group="ai"
 if [[ "$(uname -s 2>/dev/null || echo unknown)" == "Darwin" ]]; then
