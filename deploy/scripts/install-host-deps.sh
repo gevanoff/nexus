@@ -145,8 +145,8 @@ install_macos_docker() {
   echo
 
   if confirm "Install Colima (headless) + docker CLI + docker compose plugin via Homebrew?"; then
-    brew install colima docker docker-compose
-    green "Colima + docker CLI installed."
+    brew install colima docker docker-compose qemu
+    green "Colima + docker CLI installed (with qemu fallback support)."
 
     # Homebrew's docker-compose formula installs the Compose v2 plugin under:
     #   $HOMEBREW_PREFIX/lib/docker/cli-plugins/docker-compose
@@ -167,10 +167,16 @@ install_macos_docker() {
     fi
 
     if confirm "Start Colima now (recommended)?"; then
-      colima start
-      green "Colima started. 'docker info' should work now."
+      if colima start; then
+        green "Colima started. 'docker info' should work now."
+      else
+        yellow "Colima default start failed; trying qemu fallback..."
+        colima start --vm-type qemu
+        green "Colima started with qemu fallback. 'docker info' should work now."
+      fi
     else
       yellow "Start Colima later with: colima start"
+      yellow "If VZ startup fails, use: colima start --vm-type qemu"
     fi
     return
   fi

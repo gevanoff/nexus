@@ -302,6 +302,18 @@ ns_try_start_docker_daemon() {
         if ns_have_cmd docker; then
           docker context use colima >/dev/null 2>&1 || true
         fi
+
+        if ! docker info >/dev/null 2>&1; then
+          if ns_have_cmd qemu-img; then
+            ns_print_warn "Colima default start did not bring Docker up; attempting 'colima start --vm-type qemu'..."
+            colima start --vm-type qemu >/dev/null 2>&1 || true
+            if ns_have_cmd docker; then
+              docker context use colima >/dev/null 2>&1 || true
+            fi
+          else
+            ns_print_warn "Colima may require QEMU fallback on this host; install with: brew install qemu"
+          fi
+        fi
       fi
 
       if ! docker info >/dev/null 2>&1; then
@@ -352,6 +364,7 @@ ns_ensure_docker_daemon() {
     fi
     if ns_have_cmd colima; then
       ns_print_warn "macOS: if using Colima, run: colima start"
+      ns_print_warn "macOS: if Colima VZ fails, install QEMU ('brew install qemu') then run: colima start --vm-type qemu"
     fi
     ns_print_warn "macOS: otherwise start Docker Desktop and wait for 'docker info' to succeed"
   fi
@@ -728,8 +741,9 @@ ns_install_prereqs_macos() {
       (brew install --cask docker || true)
       ns_print_warn "If Docker Desktop was just installed, launch it once before using docker."
     else
-      (brew install colima docker docker-compose || true)
+      (brew install colima docker docker-compose qemu || true)
       ns_print_warn "Headless macOS note: start the Linux VM with 'colima start' before using docker."
+      ns_print_warn "If VZ startup fails, use QEMU fallback: colima start --vm-type qemu"
     fi
   fi
   # lsof is required for port diagnostics; install via brew if missing.
