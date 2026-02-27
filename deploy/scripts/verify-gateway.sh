@@ -16,8 +16,16 @@ ns_require_cmd docker
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 TOKEN="${GATEWAY_BEARER_TOKEN:-}"
 if [[ -z "${TOKEN}" && -f "${ENV_FILE}" ]]; then
-  TOKEN="$(grep -E '^GATEWAY_BEARER_TOKEN=' "${ENV_FILE}" | head -n 1 | cut -d '=' -f2-)"
+  TOKEN="$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")"
 fi
+
+# SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
+COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
+for compose_file in docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml; do
+  if [[ ! -f "$ROOT_DIR/$compose_file" ]]; then
+    ns_die "Compose file not found: $ROOT_DIR/$compose_file (run from a complete Nexus checkout)."
+  fi
+done
 
 if [[ -z "${TOKEN}" ]]; then
   ns_die "GATEWAY_BEARER_TOKEN is not set (set env var or put it in ${ENV_FILE})."
@@ -39,8 +47,12 @@ fi
 
 ns_print_header "Gateway Verifier (in-container)"
 
+if ! ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" ps gateway >/dev/null 2>&1; then
+  ns_die "Compose could not resolve service 'gateway'. Ensure core compose files are present and try: ./deploy/scripts/ops-stack.sh"
+fi
+
 # Run the verifier inside the gateway container so we don't depend on host Python.
-ns_compose exec -T gateway \
+ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T gateway \
   python3 /var/lib/gateway/tools/verify_gateway.py \
   --skip-pytest \
   --base-url "http://127.0.0.1:${gateway_port}" \
