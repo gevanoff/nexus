@@ -886,6 +886,47 @@ ns_ensure_project_env_bind_source() {
   ns_ensure_env_file "$root_env" "$root_dir"
 }
 
+ns_colima_path_visible() {
+  # Usage: ns_colima_path_visible <path>
+  local check_path="$1"
+  [[ -n "${check_path:-}" ]] || return 1
+  colima ssh -- test -e "$check_path" >/dev/null 2>&1
+}
+
+ns_try_auto_fix_colima_bind_source() {
+  # Best-effort automatic remediation for missing Colima bind mounts.
+  # Usage: ns_try_auto_fix_colima_bind_source <mount_path>
+  local mount_path="$1"
+  local auto_fix="${NS_COLIMA_AUTO_FIX_BIND_SOURCE:-true}"
+
+  [[ "$auto_fix" == "true" ]] || return 1
+  [[ -n "${mount_path:-}" ]] || return 1
+  [[ -d "$mount_path" ]] || return 1
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    ns_print_warn "Skipping automatic Colima bind remediation as root user."
+    return 1
+  fi
+
+  case "${NS_COLIMA_AUTO_FIX_ATTEMPTED_MOUNTS:-}" in
+    *"|${mount_path}|"*)
+      return 1
+      ;;
+  esac
+  NS_COLIMA_AUTO_FIX_ATTEMPTED_MOUNTS="${NS_COLIMA_AUTO_FIX_ATTEMPTED_MOUNTS:-}|${mount_path}|"
+
+  ns_print_warn "Attempting automatic Colima mount remediation for: $mount_path"
+  colima stop >/dev/null 2>&1 || true
+  if ! colima start --mount "${mount_path}:w" >/dev/null 2>&1; then
+    ns_print_warn "Automatic Colima restart with mount failed."
+    return 1
+  fi
+
+  docker context use colima >/dev/null 2>&1 || true
+  ns_wait_for_docker_daemon 75 || true
+  return 0
+}
+
 ns_verify_docker_bind_source() {
   # Verify the active Docker context can see a host bind source path.
   # Especially important for Colima, where only selected host paths are mounted.
@@ -914,16 +955,29 @@ ns_verify_docker_bind_source() {
 
   if [[ "$ctx" == "colima" ]] && ns_have_cmd colima; then
     if ! colima status >/dev/null 2>&1; then
-      ns_print_error "Colima context is selected but Colima is not running."
-      ns_print_warn "Start Colima first: colima start"
-      return 1
+      ns_print_warn "Colima context is selected but Colima is not running; attempting automatic start..."
+      colima start >/dev/null 2>&1 || true
+      docker context use colima >/dev/null 2>&1 || true
+      ns_wait_for_docker_daemon 75 || true
+      if ! colima status >/dev/null 2>&1; then
+        ns_print_error "Colima context is selected but Colima is not running."
+        ns_print_warn "Start Colima first: colima start"
+        return 1
+      fi
     fi
 
-    if ! colima ssh -- test -e "$abs_path_physical" >/dev/null 2>&1 && ! colima ssh -- test -e "$abs_path_logical" >/dev/null 2>&1; then
+    if ! ns_colima_path_visible "$abs_path_physical" && ! ns_colima_path_visible "$abs_path_logical"; then
       local mount_hint
       mount_hint="$abs_path_physical"
       if [[ -f "$abs_path_physical" ]]; then
         mount_hint="$(dirname "$abs_path_physical")"
+      fi
+
+      if ns_try_auto_fix_colima_bind_source "$mount_hint"; then
+        if ns_colima_path_visible "$abs_path_physical" || ns_colima_path_visible "$abs_path_logical"; then
+          ns_print_ok "Colima bind source path became visible after automatic remediation."
+          return 0
+        fi
       fi
 
       ns_print_error "Active Docker context (colima) cannot see bind source path."
