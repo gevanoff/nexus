@@ -30,6 +30,18 @@ if [[ -z "${embeddings_model}" && -f "${ENV_FILE}" ]]; then
 fi
 embeddings_model="${embeddings_model:-nomic-embed-text}"
 
+ollama_model_fast="${OLLAMA_MODEL_FAST:-}"
+if [[ -z "${ollama_model_fast}" && -f "${ENV_FILE}" ]]; then
+  ollama_model_fast="$(ns_env_get "${ENV_FILE}" OLLAMA_MODEL_FAST "qwen2.5:7b")"
+fi
+ollama_model_fast="${ollama_model_fast:-qwen2.5:7b}"
+
+ollama_model_strong="${OLLAMA_MODEL_STRONG:-}"
+if [[ -z "${ollama_model_strong}" && -f "${ENV_FILE}" ]]; then
+  ollama_model_strong="$(ns_env_get "${ENV_FILE}" OLLAMA_MODEL_STRONG "qwen2.5:32b")"
+fi
+ollama_model_strong="${ollama_model_strong:-qwen2.5:32b}"
+
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
 
@@ -99,6 +111,16 @@ http_check() {
   return 1
 }
 
+ollama_model_present() {
+  # Usage: ollama_model_present <model>
+  local model="$1"
+  local escaped
+  escaped="$(printf '%s' "$model" | sed 's/[][(){}.^$*+?|\\/]/\\&/g')"
+  # Accept exact model name with either explicit tag suffix or bare name column.
+  ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null |
+    grep -E "^${escaped}(:[^[:space:]]+)?[[:space:]]" >/dev/null 2>&1
+}
+
 print_step "Gateway Diagnostics"
 echo "Repo root: ${ROOT_DIR}"
 echo "Env file: ${ENV_FILE}"
@@ -163,12 +185,35 @@ http_check "POST ${BASE_URL}/v1/embeddings" "POST" "${BASE_URL}/v1/embeddings" "
 
 print_step "Ollama embeddings model readiness"
 echo "Expected embeddings model: ${embeddings_model}"
-if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null | grep -E "^${embeddings_model}[[:space:]]" >/dev/null 2>&1; then
+if ollama_model_present "$embeddings_model"; then
   ns_print_ok "Embeddings model is present in Ollama"
 else
   ns_print_error "Embeddings model not present in Ollama: ${embeddings_model}"
   ns_print_warn "Pull it with:"
   ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${embeddings_model}"
+  mark_fail
+fi
+
+print_step "Ollama chat model readiness"
+echo "Expected chat models:"
+echo "  fast=${ollama_model_fast}"
+echo "  strong=${ollama_model_strong}"
+
+if ollama_model_present "$ollama_model_fast"; then
+  ns_print_ok "Fast chat model is present"
+else
+  ns_print_error "Fast chat model not present: ${ollama_model_fast}"
+  ns_print_warn "Pull it with:"
+  ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${ollama_model_fast}"
+  mark_fail
+fi
+
+if ollama_model_present "$ollama_model_strong"; then
+  ns_print_ok "Strong chat model is present"
+else
+  ns_print_error "Strong chat model not present: ${ollama_model_strong}"
+  ns_print_warn "Pull it with:"
+  ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${ollama_model_strong}"
   mark_fail
 fi
 
