@@ -42,6 +42,7 @@ run_check() {
   local payload="${5:-}"
   local tmp
   local status
+  local body_preview
 
   tmp="$(mktemp)"
 
@@ -66,13 +67,19 @@ run_check() {
 
   ns_print_error "${label} failed with HTTP ${status}."
   if [[ -s "$tmp" ]]; then
+    body_preview="$(head -c 600 "$tmp" 2>/dev/null || true)"
     ns_print_warn "Response body (first 400 chars):"
-    head -c 400 "$tmp" 2>/dev/null || true
+    echo "$body_preview" | head -c 400
     echo
   fi
   rm -f "$tmp"
 
-  if [[ "$status" == "401" || "$status" == "403" ]]; then
+  if [[ "$status" == "403" && "${body_preview:-}" == *"Client IP not allowed"* ]]; then
+    ns_print_warn "Gateway IP allowlist rejected this host request."
+    ns_print_warn "Set IP_ALLOWLIST in ${ENV_FILE} to include your client IP/CIDR, then restart stack."
+    ns_print_warn "Common Docker bridge peer for this stack: 172.28.0.1"
+    ns_print_warn "Then re-run: ./deploy/scripts/diagnose-gateway.sh"
+  elif [[ "$status" == "401" || "$status" == "403" ]]; then
     ns_print_warn "Auth rejected. Verify token source and value:"
     ns_print_warn "  - Env var GATEWAY_BEARER_TOKEN"
     ns_print_warn "  - Or ${ENV_FILE} contains matching GATEWAY_BEARER_TOKEN used by gateway container"

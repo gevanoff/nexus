@@ -24,6 +24,11 @@ TOKEN="${GATEWAY_BEARER_TOKEN:-}"
 if [[ -z "${TOKEN}" && -f "${ENV_FILE}" ]]; then
   TOKEN="$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")"
 fi
+embeddings_model="${EMBEDDINGS_MODEL:-}"
+if [[ -z "${embeddings_model}" && -f "${ENV_FILE}" ]]; then
+  embeddings_model="$(ns_env_get "${ENV_FILE}" EMBEDDINGS_MODEL "nomic-embed-text")"
+fi
+embeddings_model="${embeddings_model:-nomic-embed-text}"
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
@@ -48,6 +53,7 @@ http_check() {
   local payload="${5:-}"
   local tmp
   local status
+  local body_preview
 
   tmp="$(mktemp)"
 
@@ -73,13 +79,18 @@ http_check() {
 
   ns_print_error "$label -> HTTP $status"
   if [[ -s "$tmp" ]]; then
+    body_preview="$(head -c 600 "$tmp" 2>/dev/null || true)"
     ns_print_warn "Body (first 600 chars):"
-    head -c 600 "$tmp" 2>/dev/null || true
+    echo "$body_preview"
     echo
   fi
   rm -f "$tmp"
 
-  if [[ "$status" == "401" || "$status" == "403" ]]; then
+  if [[ "$status" == "403" && "${body_preview:-}" == *"Client IP not allowed"* ]]; then
+    ns_print_warn "IP allowlist rejection detected."
+    ns_print_warn "Set IP_ALLOWLIST in ${ENV_FILE} to include your client IP/CIDR, then restart stack."
+    ns_print_warn "Common Docker bridge peer for this stack: 172.28.0.1"
+  elif [[ "$status" == "401" || "$status" == "403" ]]; then
     ns_print_warn "Auth failure: token may be wrong for the running gateway instance."
     ns_print_warn "Token source: ${ENV_FILE} (or GATEWAY_BEARER_TOKEN env var)."
   fi
@@ -149,6 +160,17 @@ fi
 
 http_check "GET ${BASE_URL}/v1/models" "GET" "${BASE_URL}/v1/models" "true"
 http_check "POST ${BASE_URL}/v1/embeddings" "POST" "${BASE_URL}/v1/embeddings" "true" '{"model":"default","input":"diagnose"}'
+
+print_step "Ollama embeddings model readiness"
+echo "Expected embeddings model: ${embeddings_model}"
+if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null | grep -E "^${embeddings_model}[[:space:]]" >/dev/null 2>&1; then
+  ns_print_ok "Embeddings model is present in Ollama"
+else
+  ns_print_error "Embeddings model not present in Ollama: ${embeddings_model}"
+  ns_print_warn "Pull it with:"
+  ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${embeddings_model}"
+  mark_fail
+fi
 
 print_step "Verifier run (in-container)"
 if [[ -n "${TOKEN}" ]]; then
