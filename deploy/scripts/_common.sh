@@ -892,6 +892,8 @@ ns_verify_docker_bind_source() {
   # Usage: ns_verify_docker_bind_source <path>
   local bind_path="$1"
   local abs_path=""
+  local abs_path_logical=""
+  local abs_path_physical=""
 
   if [[ -z "${bind_path:-}" ]]; then
     ns_print_error "ns_verify_docker_bind_source called with empty path"
@@ -903,7 +905,9 @@ ns_verify_docker_bind_source() {
     return 1
   fi
 
-  abs_path="$(cd "$(dirname "$bind_path")" && pwd)/$(basename "$bind_path")"
+  abs_path_logical="$(cd "$(dirname "$bind_path")" && pwd)/$(basename "$bind_path")"
+  abs_path_physical="$(cd "$(dirname "$bind_path")" && pwd -P)/$(basename "$bind_path")"
+  abs_path="$abs_path_physical"
 
   local ctx
   ctx="$(docker context show 2>/dev/null || true)"
@@ -915,14 +919,26 @@ ns_verify_docker_bind_source() {
       return 1
     fi
 
-    if ! colima ssh -- test -e "$abs_path" >/dev/null 2>&1; then
-      ns_print_error "Active Docker context (colima) cannot see bind source path: $abs_path"
-      ns_print_warn "This commonly happens when Nexus is under /opt and Colima has no /opt mount."
+    if ! colima ssh -- test -e "$abs_path_physical" >/dev/null 2>&1 && ! colima ssh -- test -e "$abs_path_logical" >/dev/null 2>&1; then
+      local mount_hint
+      mount_hint="$abs_path_physical"
+      if [[ -f "$abs_path_physical" ]]; then
+        mount_hint="$(dirname "$abs_path_physical")"
+      fi
+
+      ns_print_error "Active Docker context (colima) cannot see bind source path."
+      if [[ "$abs_path_physical" != "$abs_path_logical" ]]; then
+        ns_print_warn "Checked physical path: $abs_path_physical"
+        ns_print_warn "Checked logical path:  $abs_path_logical"
+      else
+        ns_print_warn "Checked path: $abs_path_physical"
+      fi
+      ns_print_warn "This usually means the path is not mounted into Colima (or only a symlink alias was mounted)."
       ns_print_warn "Fix options:"
       ns_print_warn "  1) Move Nexus under /Users/<you>/..."
       ns_print_warn "  2) Or restart Colima with mount(s):"
       ns_print_warn "     colima stop"
-      ns_print_warn "     colima start --mount /opt:w"
+      ns_print_warn "     colima start --mount ${mount_hint}:w"
       return 1
     fi
   fi
