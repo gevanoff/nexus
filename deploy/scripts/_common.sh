@@ -863,3 +863,25 @@ ns_ensure_env_file() {
 
   ns_print_ok "Created $env_file"
 }
+
+ns_ensure_project_env_bind_source() {
+  # Ensure compose bind source <root>/.env exists, even when using --env-file
+  # with another path (e.g., deploy/env/.env.dev).
+  # Usage: ns_ensure_project_env_bind_source <root_dir> <selected_env_file>
+  local root_dir="$1"
+  local selected_env_file="$2"
+  local root_env="${root_dir}/.env"
+
+  if [[ -f "$root_env" ]]; then
+    return 0
+  fi
+
+  if [[ -n "$selected_env_file" && -f "$selected_env_file" && "$selected_env_file" != "$root_env" ]]; then
+    cp "$selected_env_file" "$root_env"
+    chmod 600 "$root_env" 2>/dev/null || true
+    ns_print_warn "Created ${root_env} from ${selected_env_file} for compose bind mount compatibility."
+    return 0
+  fi
+
+  ns_ensure_env_file "$root_env" "$root_dir"
+}

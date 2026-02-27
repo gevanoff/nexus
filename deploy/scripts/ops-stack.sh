@@ -68,6 +68,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
   ns_ensure_env_file "$ENV_FILE" "$ROOT_DIR"
 fi
 
+ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
+
 if [[ "$NO_PULL" != "true" ]]; then
   ns_print_header "Updating code"
   if ! ns_have_cmd git; then

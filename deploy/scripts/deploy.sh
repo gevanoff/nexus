@@ -135,6 +135,7 @@ git pull --ff-only origin "$branch"
 
 ns_print_header "Ensuring configuration"
 ns_ensure_env_file "$env_file" "$ROOT_DIR"
+ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file"
 
 ns_print_header "Preparing runtime directories"
 ns_ensure_runtime_dirs "$ROOT_DIR"
