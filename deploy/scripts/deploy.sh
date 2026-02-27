@@ -140,6 +140,8 @@ ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file"
 ns_print_header "Preparing runtime directories"
 ns_ensure_runtime_dirs "$ROOT_DIR"
 ns_seed_gateway_config_files "$ROOT_DIR"
+ns_verify_docker_bind_source "$ROOT_DIR"
+ns_verify_docker_bind_source "$ROOT_DIR/.env"
 
 perms="$(ns_stat_perms "$env_file")"
 if [[ -n "$perms" && "$perms" -gt 600 ]]; then

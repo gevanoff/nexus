@@ -885,3 +885,47 @@ ns_ensure_project_env_bind_source() {
 
   ns_ensure_env_file "$root_env" "$root_dir"
 }
+
+ns_verify_docker_bind_source() {
+  # Verify the active Docker context can see a host bind source path.
+  # Especially important for Colima, where only selected host paths are mounted.
+  # Usage: ns_verify_docker_bind_source <path>
+  local bind_path="$1"
+  local abs_path=""
+
+  if [[ -z "${bind_path:-}" ]]; then
+    ns_print_error "ns_verify_docker_bind_source called with empty path"
+    return 1
+  fi
+
+  if [[ ! -e "$bind_path" ]]; then
+    ns_print_error "Bind source path does not exist on host: $bind_path"
+    return 1
+  fi
+
+  abs_path="$(cd "$(dirname "$bind_path")" && pwd)/$(basename "$bind_path")"
+
+  local ctx
+  ctx="$(docker context show 2>/dev/null || true)"
+
+  if [[ "$ctx" == "colima" ]] && ns_have_cmd colima; then
+    if ! colima status >/dev/null 2>&1; then
+      ns_print_error "Colima context is selected but Colima is not running."
+      ns_print_warn "Start Colima first: colima start"
+      return 1
+    fi
+
+    if ! colima ssh -- test -e "$abs_path" >/dev/null 2>&1; then
+      ns_print_error "Active Docker context (colima) cannot see bind source path: $abs_path"
+      ns_print_warn "This commonly happens when Nexus is under /opt and Colima has no /opt mount."
+      ns_print_warn "Fix options:"
+      ns_print_warn "  1) Move Nexus under /Users/<you>/..."
+      ns_print_warn "  2) Or restart Colima with mount(s):"
+      ns_print_warn "     colima stop"
+      ns_print_warn "     colima start --mount /opt:w"
+      return 1
+    fi
+  fi
+
+  return 0
+}

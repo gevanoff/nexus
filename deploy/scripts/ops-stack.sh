@@ -106,6 +106,8 @@ fi
 ns_print_header "Preparing runtime"
 ns_ensure_runtime_dirs "$ROOT_DIR"
 ns_seed_gateway_config_files "$ROOT_DIR"
+ns_verify_docker_bind_source "$ROOT_DIR"
+ns_verify_docker_bind_source "$ROOT_DIR/.env"
 
 ns_print_header "Restarting core stack"
 if [[ "$NO_BUILD" == "true" ]]; then

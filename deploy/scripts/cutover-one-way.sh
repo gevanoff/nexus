@@ -80,6 +80,8 @@ ns_print_header "Preparing Nexus configuration"
 ns_ensure_env_file "$NEXUS_DIR/.env" "$NEXUS_DIR"
 ns_ensure_runtime_dirs "$NEXUS_DIR"
 ns_seed_gateway_config_files "$NEXUS_DIR"
+ns_verify_docker_bind_source "$NEXUS_DIR"
+ns_verify_docker_bind_source "$NEXUS_DIR/.env"
 
 ns_print_header "Running Nexus preflight"
 if [[ -x "$NEXUS_DIR/deploy/scripts/preflight-check.sh" ]]; then
