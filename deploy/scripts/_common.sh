@@ -289,6 +289,13 @@ ns_try_start_docker_daemon() {
 
   case "$platform" in
     macos)
+      if [[ "${EUID:-$(id -u)}" -eq 0 ]] && ns_have_cmd colima; then
+        ns_print_error "Detected root execution with Colima on macOS. Colima/Lima must run as a non-root user."
+        ns_print_warn "Re-run this script as your normal user (do not use sudo for the whole script)."
+        ns_print_warn "Then start Docker runtime with: colima start"
+        return 1
+      fi
+
       if ns_have_cmd colima; then
         ns_print_warn "Docker daemon not reachable; attempting 'colima start'..."
         colima start >/dev/null 2>&1 || true
@@ -340,6 +347,9 @@ ns_ensure_docker_daemon() {
   platform="$(ns_detect_platform)"
   ns_print_error "Docker daemon is not reachable."
   if [[ "$platform" == "macos" ]]; then
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]] && ns_have_cmd colima; then
+      ns_print_warn "Colima cannot run as root. Use a normal user shell and run: colima start"
+    fi
     if ns_have_cmd colima; then
       ns_print_warn "macOS: if using Colima, run: colima start"
     fi

@@ -12,6 +12,10 @@ NEXUS_DIR="${NEXUS_DIR:-$ROOT_DIR}"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/gateway-backups}"
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
 
+if [[ "$(ns_detect_platform)" == "macos" ]] && [[ "${EUID:-$(id -u)}" -eq 0 ]] && ns_have_cmd colima; then
+  ns_die "Do not run this script with sudo on macOS when using Colima. Run as a normal user and let individual commands use sudo."
+fi
+
 usage() {
   cat <<'EOF'
 Usage: deploy/scripts/cutover-one-way.sh
