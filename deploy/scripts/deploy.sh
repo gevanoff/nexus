@@ -115,7 +115,7 @@ if ! ns_have_cmd docker; then
   ns_print_error "Docker is required but not installed."
   exit 1
 fi
-if ! docker info >/dev/null 2>&1; then
+if ! ns_ensure_docker_daemon true; then
   ns_print_error "Docker daemon is not reachable. Start Docker and retry."
   exit 1
 fi

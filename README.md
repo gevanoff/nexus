@@ -86,6 +86,7 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/preflight-check.sh`: dependency + permission checks
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: host-local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: list registered services in etcd
 

@@ -101,7 +101,7 @@ if ! ns_have_cmd docker; then
   missing_docker="true"
 fi
 
-if docker info >/dev/null 2>&1; then
+if ns_ensure_docker_daemon true >/dev/null 2>&1; then
   ok "Docker daemon reachable"
   docker_daemon_ok="true"
 else

@@ -258,6 +258,96 @@ ns_compose() {
   return 1
 }
 
+ns_wait_for_docker_daemon() {
+  # Wait for docker daemon/API to become reachable.
+  # Usage: ns_wait_for_docker_daemon [timeout_seconds]
+  local timeout_sec="${1:-60}"
+  local i=0
+  while (( i < timeout_sec )); do
+    if docker info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+ns_try_start_docker_daemon() {
+  # Best-effort attempt to start Docker runtime when CLI exists but daemon is down.
+  # Usage: ns_try_start_docker_daemon
+  if ! ns_have_cmd docker; then
+    return 1
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local platform
+  platform="$(ns_detect_platform)"
+
+  case "$platform" in
+    macos)
+      if ns_have_cmd colima; then
+        ns_print_warn "Docker daemon not reachable; attempting 'colima start'..."
+        colima start >/dev/null 2>&1 || true
+        if ns_have_cmd docker; then
+          docker context use colima >/dev/null 2>&1 || true
+        fi
+      fi
+
+      if ! docker info >/dev/null 2>&1; then
+        if [[ -d /Applications/Docker.app ]] && ns_have_cmd open; then
+          ns_print_warn "Docker daemon still unreachable; attempting to start Docker Desktop..."
+          open -a Docker >/dev/null 2>&1 || true
+        fi
+      fi
+      ;;
+
+    linux)
+      if ns_have_cmd systemctl; then
+        ns_print_warn "Docker daemon not reachable; attempting 'sudo systemctl start docker'..."
+        sudo systemctl start docker >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+
+  ns_wait_for_docker_daemon 75
+}
+
+ns_ensure_docker_daemon() {
+  # Ensure docker daemon is reachable, with optional auto-start attempt.
+  # Usage: ns_ensure_docker_daemon [auto_start=true|false]
+  local auto_start="${1:-true}"
+
+  if ! ns_have_cmd docker; then
+    ns_print_error "Docker is required but not installed."
+    return 1
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [[ "$auto_start" == "true" ]]; then
+    if ns_try_start_docker_daemon; then
+      return 0
+    fi
+  fi
+
+  local platform
+  platform="$(ns_detect_platform)"
+  ns_print_error "Docker daemon is not reachable."
+  if [[ "$platform" == "macos" ]]; then
+    if ns_have_cmd colima; then
+      ns_print_warn "macOS: if using Colima, run: colima start"
+    fi
+    ns_print_warn "macOS: otherwise start Docker Desktop and wait for 'docker info' to succeed"
+  fi
+  return 1
+}
+
 ns_mkdir_p() {
   # Best-effort mkdir -p with helpful error.
   local dir="$1"

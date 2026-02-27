@@ -96,9 +96,9 @@ check_prerequisites() {
     fi
     ns_print_ok "Docker Compose found: $(ns_compose_version)"
 
-    # Check if Docker daemon is running
-    if ! docker info &> /dev/null; then
-        ns_print_error "Docker daemon is not running. Please start Docker."
+    # Check if Docker daemon is running (with best-effort auto-start)
+    if ! ns_ensure_docker_daemon true; then
+        ns_print_error "Docker daemon is not running. Please start Docker and retry."
         exit 1
     fi
     ns_print_ok "Docker daemon is running"
