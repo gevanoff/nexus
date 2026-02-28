@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT_DIR"
+
+# shellcheck source=/dev/null
+source "$ROOT_DIR/deploy/scripts/_common.sh"
+
+ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
+CHECK_ONLY="false"
+
+usage() {
+  cat <<'EOF'
+Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only]
+
+Idempotently checks required Ollama models and pulls only missing ones.
+Required models are derived from env (or defaults):
+  - EMBEDDINGS_MODEL (default: nomic-embed-text)
+  - OLLAMA_MODEL_FAST (default: qwen2.5:7b)
+  - OLLAMA_MODEL_STRONG (default: qwen2.5:32b)
+
+Options:
+  --env-file PATH   Env file path (default: ./.env)
+  --check-only      Check/report only; do not pull missing models
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --env-file)
+      ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    --check-only)
+      CHECK_ONLY="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      ns_die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+# SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
+COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
+
+for compose_file in docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml; do
+  if [[ ! -f "$ROOT_DIR/$compose_file" ]]; then
+    ns_die "Compose file not found: $ROOT_DIR/$compose_file"
+  fi
+done
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  ns_print_warn "Env file not found at $ENV_FILE; creating from .env.example"
+  ns_ensure_env_file "$ENV_FILE" "$ROOT_DIR"
+fi
+
+ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
+
+ns_print_header "Prewarm Ollama models"
+
+ns_require_cmd docker || exit 1
+if ! ns_compose_available; then
+  ns_die "Docker Compose is not available"
+fi
+if ! ns_ensure_docker_daemon true; then
+  ns_die "Docker daemon is not reachable"
+fi
+
+# Ensure ollama service exists and is started.
+if ! ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" ps ollama >/dev/null 2>&1; then
+  ns_die "Compose could not resolve service 'ollama'."
+fi
+ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" up -d ollama >/dev/null
+
+embeddings_model="${EMBEDDINGS_MODEL:-$(ns_env_get "$ENV_FILE" EMBEDDINGS_MODEL "nomic-embed-text")}"
+ollama_model_fast="${OLLAMA_MODEL_FAST:-$(ns_env_get "$ENV_FILE" OLLAMA_MODEL_FAST "qwen2.5:7b")}"
+ollama_model_strong="${OLLAMA_MODEL_STRONG:-$(ns_env_get "$ENV_FILE" OLLAMA_MODEL_STRONG "qwen2.5:32b")}"
+
+declare -a required_models=()
+add_unique_model() {
+  local candidate="$1"
+  [[ -n "${candidate:-}" ]] || return 0
+  local existing
+  for existing in "${required_models[@]:-}"; do
+    if [[ "$existing" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  required_models+=("$candidate")
+}
+
+add_unique_model "$embeddings_model"
+add_unique_model "$ollama_model_fast"
+add_unique_model "$ollama_model_strong"
+
+if [[ "${#required_models[@]}" -eq 0 ]]; then
+  ns_die "No required models were resolved from environment/defaults"
+fi
+
+echo "Required models: ${required_models[*]}"
+
+escape_ere() {
+  printf '%s' "$1" | sed 's/[][(){}.^$*+?|\\/]/\\&/g'
+}
+
+list_output="$(ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null || true)"
+
+model_present_in_list() {
+  local model="$1"
+  local escaped
+  escaped="$(escape_ere "$model")"
+  echo "$list_output" | grep -E "^${escaped}(:[^[:space:]]+)?[[:space:]]" >/dev/null 2>&1
+}
+
+declare -a missing_models=()
+for model in "${required_models[@]}"; do
+  if model_present_in_list "$model"; then
+    ns_print_ok "Model present: $model"
+  else
+    ns_print_warn "Model missing: $model"
+    missing_models+=("$model")
+  fi
+done
+
+if [[ "${#missing_models[@]}" -eq 0 ]]; then
+  ns_print_ok "All required models are already present"
+  exit 0
+fi
+
+if [[ "$CHECK_ONLY" == "true" ]]; then
+  ns_print_error "Missing models detected (check-only mode): ${missing_models[*]}"
+  exit 1
+fi
+
+ns_print_header "Pulling missing models"
+for model in "${missing_models[@]}"; do
+  ns_print_warn "Pulling $model ..."
+  ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama pull "$model"
+done
+
+list_output="$(ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null || true)"
+
+still_missing=0
+for model in "${required_models[@]}"; do
+  if model_present_in_list "$model"; then
+    ns_print_ok "Model ready: $model"
+  else
+    ns_print_error "Model still missing after pull: $model"
+    still_missing=1
+  fi
+done
+
+if [[ "$still_missing" -ne 0 ]]; then
+  exit 1
+fi
+
+ns_print_ok "Model prewarm complete"
