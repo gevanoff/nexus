@@ -39,7 +39,7 @@ backends:
 
   ollama:
     class: ollama
-    base_url: http://127.0.0.1:11434
+    base_url: ${OLLAMA_BASE_URL}
     description: localhost Ollama
     supported_capabilities:
       - chat
