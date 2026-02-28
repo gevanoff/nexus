@@ -45,8 +45,13 @@ class Settings(BaseSettings):
     # Optional request guardrails.
     # - MAX_REQUEST_BYTES: 0 disables. When enabled, requests exceeding this size return 413.
     # - IP_ALLOWLIST: comma-separated IPs and/or CIDRs (e.g. "127.0.0.1,10.0.0.0/8"). Empty allows all.
+    # - TRUST_PROXY_CIDRS: when set, if direct peer is trusted, API IP allowlists use
+    #   forwarded headers (X-Forwarded-For, X-Real-IP, Forwarded) to evaluate client IP.
+    # - IP_ALLOWLIST_DEBUG: when true, 403 responses include resolved peer/header details.
     MAX_REQUEST_BYTES: int = 1_000_000
     IP_ALLOWLIST: str = ""
+    TRUST_PROXY_CIDRS: str = ""
+    IP_ALLOWLIST_DEBUG: bool = False
 
     # Optional: restrict tokenless UI endpoints (/ui, /ui/api/*) to specific client IPs/CIDRs.
     # If empty, the UI endpoints are disabled (403) to avoid exposing unauthenticated access.

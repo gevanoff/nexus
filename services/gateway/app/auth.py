@@ -11,6 +11,103 @@ from app.config import S
 logger = logging.getLogger(__name__)
 
 
+def _peer_ip(req: Request) -> str:
+    try:
+        c = req.client
+        return (c.host or "").strip() if c else ""
+    except Exception:
+        return ""
+
+
+def _parse_forwarded_for(header_value: str) -> str:
+    raw = (header_value or "").strip()
+    if not raw:
+        return ""
+    for part in raw.split(","):
+        token = part.strip().strip('"').strip()
+        if not token:
+            continue
+        if token.startswith("[") and token.endswith("]"):
+            token = token[1:-1].strip()
+        if token.startswith("for="):
+            token = token[4:].strip().strip('"').strip()
+        if token.startswith("[") and "]" in token:
+            token = token[1: token.index("]")]
+        if token.count(":") == 1 and token.rsplit(":", 1)[1].isdigit() and "." in token:
+            token = token.rsplit(":", 1)[0]
+        try:
+            ipaddress.ip_address(token)
+            return token
+        except Exception:
+            continue
+    return ""
+
+
+def _parse_proxy_trust(raw: str) -> list[ipaddress._BaseNetwork]:  # type: ignore[attr-defined]
+    out: list[ipaddress._BaseNetwork] = []  # type: ignore[attr-defined]
+    for part in (raw or "").split(","):
+        s = part.strip()
+        if not s:
+            continue
+        try:
+            if "/" not in s:
+                ip = ipaddress.ip_address(s)
+                s = f"{ip}/{32 if ip.version == 4 else 128}"
+            out.append(ipaddress.ip_network(s, strict=False))
+        except Exception:
+            continue
+    return out
+
+
+def _ip_in_networks(ip_s: str, networks: list[ipaddress._BaseNetwork]) -> bool:  # type: ignore[attr-defined]
+    try:
+        ip = ipaddress.ip_address((ip_s or "").strip())
+    except Exception:
+        return False
+    for net in networks:
+        try:
+            if ip in net:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _client_ip(req: Request) -> str:
+    # SYNC-CHECK(proxy-ip-resolution): keep behavior aligned with UI routes.
+    peer = _peer_ip(req)
+    trusted_raw = (getattr(S, "TRUST_PROXY_CIDRS", "") or "").strip()
+    trusted = _parse_proxy_trust(trusted_raw)
+    if not trusted or not _ip_in_networks(peer, trusted):
+        return peer
+
+    try:
+        xff = (req.headers.get("x-forwarded-for") or "").strip()
+    except Exception:
+        xff = ""
+    parsed_xff = _parse_forwarded_for(xff)
+    if parsed_xff:
+        return parsed_xff
+
+    try:
+        xri = (req.headers.get("x-real-ip") or "").strip()
+    except Exception:
+        xri = ""
+    parsed_xri = _parse_forwarded_for(xri)
+    if parsed_xri:
+        return parsed_xri
+
+    try:
+        fwd = (req.headers.get("forwarded") or "").strip()
+    except Exception:
+        fwd = ""
+    parsed_fwd = _parse_forwarded_for(fwd)
+    if parsed_fwd:
+        return parsed_fwd
+
+    return peer
+
+
 def _parse_allowlist(raw: str) -> list[ipaddress._BaseNetwork]:  # type: ignore[attr-defined]
     out: list[ipaddress._BaseNetwork] = []  # type: ignore[attr-defined]
     for part in (raw or "").split(","):
@@ -33,7 +130,7 @@ def _client_ip_allowed(req: Request, *, raw_allowlist: str) -> bool:
     if not raw:
         return True
     try:
-        host = (getattr(getattr(req, "client", None), "host", None) or "").strip()
+        host = _client_ip(req)
         if not host:
             return False
         ip = ipaddress.ip_address(host)
@@ -44,6 +141,26 @@ def _client_ip_allowed(req: Request, *, raw_allowlist: str) -> bool:
     if not nets:
         return False
     return any(ip in net for net in nets)
+
+
+def _ip_allowlist_detail(req: Request, message: str) -> object:
+    if not bool(getattr(S, "IP_ALLOWLIST_DEBUG", False)):
+        return message
+    try:
+        headers = req.headers
+    except Exception:
+        headers = {}
+    return {
+        "error": "ip_allowlist_denied",
+        "message": message,
+        "client_ip": _client_ip(req),
+        "peer_ip": _peer_ip(req),
+        "x_forwarded_for": (headers.get("x-forwarded-for") or "").strip(),
+        "x_real_ip": (headers.get("x-real-ip") or "").strip(),
+        "forwarded": (headers.get("forwarded") or "").strip(),
+        "ip_allowlist": (getattr(S, "IP_ALLOWLIST", "") or "").strip(),
+        "trust_proxy_cidrs": (getattr(S, "TRUST_PROXY_CIDRS", "") or "").strip(),
+    }
 
 
 @functools.lru_cache(maxsize=16)
@@ -131,9 +248,9 @@ def require_bearer(req: Request) -> None:
     if raw_allowlist:
         try:
             if not _client_ip_allowed(req, raw_allowlist=raw_allowlist):
-                raise HTTPException(status_code=403, detail="Client IP not allowed")
+                raise HTTPException(status_code=403, detail=_ip_allowlist_detail(req, "Client IP not allowed"))
         except HTTPException:
             raise
         except Exception:
             # If allowlist parsing fails, fail closed.
-            raise HTTPException(status_code=403, detail="Client IP not allowed")
+            raise HTTPException(status_code=403, detail=_ip_allowlist_detail(req, "Client IP not allowed"))
