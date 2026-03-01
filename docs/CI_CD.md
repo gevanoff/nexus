@@ -2,6 +2,8 @@
 
 This guide outlines a dev → main deployment workflow without exposing secrets in the repository.
 
+> Temporary status: GitHub Actions build/deploy workflows are currently manual-only (`workflow_dispatch`) until image upload target/registry configuration is finalized.
+
 ## Automatic Build & Deploy (Suggested Flow)
 
 1. **CI build**: build and tag images on pushes to `dev` and `main`.
