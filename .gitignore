@@ -72,7 +72,8 @@ models/
 # Service-specific
 services/*/data/
 services/*/.env
-services/*/env/
+services/*/env/*
+!services/*/env/*.example
 
 # Testing
 .pytest_cache/
