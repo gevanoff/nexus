@@ -29,6 +29,13 @@ Each service is:
 - **Status**: 🔧 Configuration only (uses official image)
 - **Documentation**: [ollama/README.md](ollama/README.md)
 
+#### MLX (`mlx/`)
+- **Purpose**: MLX OpenAI-compatible model serving
+- **Port**: 10240
+- **Capabilities**: Chat completions, embeddings
+- **Status**: 🚧 Initial containerized port scaffold (migration in progress)
+- **Documentation**: [mlx/README.md](mlx/README.md)
+
 ### AI Services
 
 #### Images (`images/`)

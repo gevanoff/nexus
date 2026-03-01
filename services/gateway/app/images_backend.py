@@ -21,6 +21,13 @@ def _effective_images_http_base_url() -> str:
     """
 
     raw = (getattr(S, "IMAGES_HTTP_BASE_URL", "") or "").strip().rstrip("/")
+    images_backend = (getattr(S, "IMAGES_BACKEND", "") or "mock").strip().lower()
+
+    # For OpenAI-style image backend flow in Nexus, prefer the in-network images service.
+    # This avoids deriving unrelated backend hostnames and failing with DNS ConnectError.
+    if not raw and images_backend == "http_openai_images":
+        return "http://images:7860"
+
     if not raw:
         return ""
 
@@ -28,6 +35,9 @@ def _effective_images_http_base_url() -> str:
     loopbacks = ("http://127.0.0.1", "http://localhost", "https://127.0.0.1", "https://localhost")
     if not any(raw.startswith(p) for p in loopbacks):
         return raw
+
+    if images_backend == "http_openai_images":
+        return "http://images:7860"
 
     backend_class = (getattr(S, "IMAGES_BACKEND_CLASS", "") or "").strip() or "gpu_heavy"
     try:

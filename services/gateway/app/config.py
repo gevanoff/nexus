@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     # image server (e.g., Nexa exposing POST /v1/images/generations).
     IMAGES_BACKEND: Literal["mock", "http_a1111", "http_openai_images"] = "mock"
     IMAGES_BACKEND_CLASS: str = "gpu_heavy"  # Backend class for routing/admission control
-    IMAGES_HTTP_BASE_URL: str = "http://127.0.0.1:7860"
+    IMAGES_HTTP_BASE_URL: str = "http://images:7860"
     IMAGES_HTTP_TIMEOUT_SEC: float = 120.0
     IMAGES_A1111_STEPS: int = 20
     IMAGES_MAX_PIXELS: int = 2_000_000

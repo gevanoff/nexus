@@ -71,6 +71,9 @@ docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f doc
 # Start core + Telegram bot (optional)
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.telegram-bot.yml up -d
 
+# Start core + MLX component (optional)
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.mlx.yml up -d
+
 # Check service health
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml ps
 
