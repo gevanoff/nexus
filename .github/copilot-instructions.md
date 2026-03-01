@@ -21,6 +21,7 @@
 - Detect OS (`uname`/platform checks) and auto-select compatible behavior.
 - Avoid GNU-only assumptions unless guarded by OS checks; include BSD/macOS-safe alternatives.
 - Prefer portable shell patterns and fail clearly when prerequisites are missing.
+- Any script that operators/users are expected to run directly must be executable (`chmod +x`) and committed with the executable bit set.
 
 ## Reuse and consistency rules
 - Before modifying code, search for existing similar implementations in-repo and follow established patterns.

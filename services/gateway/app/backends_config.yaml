@@ -4,7 +4,7 @@
 backends:
   local_mlx:
     class: local_mlx
-    base_url: http://127.0.0.1:10240/v1
+    base_url: ${MLX_BASE_URL}
     description: macOS Nexa (MLX) - local inference
     supported_capabilities:
       - chat
