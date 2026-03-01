@@ -6,6 +6,10 @@ if [[ "$(uname -s 2>/dev/null || echo unknown)" != "Darwin" ]]; then
   exit 1
 fi
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# shellcheck source=/dev/null
+source "$ROOT_DIR/deploy/scripts/_python.sh"
+
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
     echo "ERROR: missing required command: $1" >&2
@@ -13,56 +17,8 @@ require_cmd() {
   }
 }
 
-python_is_supported_for_mlx() {
-  local py_bin="${1:-}"
-  local ver
-  local major
-  local minor
-
-  if [[ -z "$py_bin" ]]; then
-    return 1
-  fi
-
-  ver="$($py_bin -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)"
-  if [[ -z "$ver" ]]; then
-    return 1
-  fi
-
-  major="${ver%%.*}"
-  minor="${ver##*.}"
-
-  if [[ "$major" -gt 3 ]]; then
-    return 0
-  fi
-  if [[ "$major" -eq 3 && "$minor" -ge 11 ]]; then
-    return 0
-  fi
-  return 1
-}
-
 choose_python_for_mlx() {
-  local candidates=()
-  local candidate
-  local resolved
-
-  if [[ -n "${MLX_PYTHON:-}" ]]; then
-    candidates+=("${MLX_PYTHON}")
-  fi
-  candidates+=(python3.12 python3.11 python3)
-
-  for candidate in "${candidates[@]}"; do
-    if [[ -x "$candidate" ]]; then
-      resolved="$candidate"
-    else
-      resolved="$(command -v "$candidate" 2>/dev/null || true)"
-    fi
-    if [[ -n "$resolved" ]] && python_is_supported_for_mlx "$resolved"; then
-      echo "$resolved"
-      return 0
-    fi
-  done
-
-  return 1
+  ns_python_choose_at_least 3 11 "${MLX_PYTHON:-}" python3.12 python3.11 python3
 }
 
 MLX_USER="${MLX_USER:-mlx}"
@@ -140,6 +96,7 @@ require_cmd sudo
 require_cmd launchctl
 require_cmd plutil
 require_cmd dscl
+require_cmd curl
 
 MLX_PYTHON_BIN="$(choose_python_for_mlx || true)"
 if [[ -z "$MLX_PYTHON_BIN" ]]; then
@@ -173,7 +130,7 @@ sudo chown -R "${MLX_USER}:staff" "${MLX_HOME}" "${MLX_LOG_DIR}"
 sudo chmod 750 "${MLX_HOME}" "${MLX_HOME}/cache" "${MLX_HOME}/run" "${MLX_LOG_DIR}"
 
 if [[ -x "${MLX_VENV}/bin/python" ]]; then
-  if ! python_is_supported_for_mlx "${MLX_VENV}/bin/python"; then
+  if ! ns_python_is_at_least "${MLX_VENV}/bin/python" 3 11; then
     echo "Existing MLX venv uses Python <3.11; recreating ${MLX_VENV}" >&2
     sudo rm -rf "${MLX_VENV}"
   fi
@@ -256,6 +213,23 @@ sudo plutil -lint "${PLIST_PATH}" >/dev/null
 sudo launchctl bootout "system/${LAUNCHD_LABEL}" 2>/dev/null || true
 sudo launchctl bootstrap system "${PLIST_PATH}"
 sudo launchctl kickstart -k "system/${LAUNCHD_LABEL}"
+
+for _ in {1..20}; do
+  if curl -fsS "http://${MLX_HOST}:${MLX_PORT}/v1/models" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! curl -fsS "http://${MLX_HOST}:${MLX_PORT}/v1/models" >/dev/null 2>&1; then
+  echo "ERROR: launchd service started but health endpoint is not reachable yet: http://${MLX_HOST}:${MLX_PORT}/v1/models" >&2
+  echo "Check service state:" >&2
+  echo "  sudo launchctl print system/${LAUNCHD_LABEL}" >&2
+  echo "Check logs:" >&2
+  echo "  sudo tail -n 120 ${MLX_LOG_DIR}/mlx-openai.err.log" >&2
+  echo "  sudo tail -n 120 ${MLX_LOG_DIR}/mlx-openai.out.log" >&2
+  exit 1
+fi
 
 echo "Installed ${LAUNCHD_LABEL} (${MLX_USER}) on ${MLX_HOST}:${MLX_PORT}" >&2
 echo "Health check: curl -fsS http://${MLX_HOST}:${MLX_PORT}/v1/models" >&2
