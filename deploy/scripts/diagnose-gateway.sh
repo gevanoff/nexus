@@ -232,6 +232,76 @@ else
   mark_fail
 fi
 
+print_step "Backend access matrix (from gateway container)"
+if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T gateway python3 - <<'PY'
+import sys
+import time
+import urllib.request
+
+from app.backends import get_registry
+from app.health_checker import get_health_checker
+
+
+def probe(url: str, timeout: float = 5.0) -> tuple[int, str, int]:
+  started = time.time()
+  status = 0
+  err = ""
+  try:
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+      status = int(resp.getcode() or 0)
+  except Exception as exc:
+    err = f"{type(exc).__name__}: {exc}"
+  elapsed_ms = int((time.time() - started) * 1000)
+  return status, err, elapsed_ms
+
+
+registry = get_registry()
+checker = get_health_checker()
+
+print("backend_access_header=backend|liveness|readyz|checker|base_url")
+failures = 0
+
+for backend_class, cfg in sorted(registry.backends.items(), key=lambda kv: kv[0]):
+  base = (cfg.base_url or "").rstrip("/")
+  checker_state = checker.get_status(backend_class)
+  checker_repr = "unknown"
+  if checker_state is not None:
+    checker_repr = f"healthy={checker_state.is_healthy},ready={checker_state.is_ready}"
+    if checker_state.error:
+      checker_repr += f",error={checker_state.error}"
+
+  if not base or not (base.startswith("http://") or base.startswith("https://")):
+    print(f"backend_access={backend_class}|skip(base_url_unset)|skip(base_url_unset)|{checker_repr}|{base}")
+    continue
+
+  live_url = f"{base}{cfg.health_liveness}"
+  ready_url = f"{base}{cfg.health_readiness}"
+  live_status, live_err, live_ms = probe(live_url)
+  ready_status, ready_err, ready_ms = probe(ready_url)
+
+  live_repr = f"{live_status}({live_ms}ms)" if not live_err else f"err({live_ms}ms):{live_err}"
+  ready_repr = f"{ready_status}({ready_ms}ms)" if not ready_err else f"err({ready_ms}ms):{ready_err}"
+
+  print(f"backend_access={backend_class}|{live_repr}|{ready_repr}|{checker_repr}|{base}")
+
+  if live_status != 200 or ready_status != 200 or live_err or ready_err:
+    failures += 1
+
+if failures:
+  print(f"backend_access_failures={failures}")
+  sys.exit(1)
+
+print("backend_access_failures=0")
+PY
+then
+  ns_print_ok "Configured backend probes succeeded"
+else
+  ns_print_error "One or more configured backend probes failed"
+  ns_print_warn "Review backend_access lines above to identify failing backend class and endpoint"
+  mark_fail
+fi
+
 print_step "Ollama embeddings model readiness"
 echo "Expected embeddings model: ${embeddings_model}"
 if ollama_model_present "$embeddings_model"; then
