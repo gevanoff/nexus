@@ -49,6 +49,15 @@ Install host-native MLX on macOS with:
 ./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
 ```
 
+Installer prerequisites:
+
+- Python `>=3.11` is required for current `mlx-openai-server` builds.
+- If your default `python3` is older (for example macOS system Python 3.9), install a newer one and pin it for install:
+
+```bash
+MLX_PYTHON=/opt/homebrew/bin/python3.12 ./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
+```
+
 ## Troubleshooting Restart Loops
 
 1. Remove `-f docker-compose.mlx.yml` from your compose invocation on Linux/Windows hosts.

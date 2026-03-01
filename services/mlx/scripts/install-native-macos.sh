@@ -13,6 +13,58 @@ require_cmd() {
   }
 }
 
+python_is_supported_for_mlx() {
+  local py_bin="${1:-}"
+  local ver
+  local major
+  local minor
+
+  if [[ -z "$py_bin" ]]; then
+    return 1
+  fi
+
+  ver="$($py_bin -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true)"
+  if [[ -z "$ver" ]]; then
+    return 1
+  fi
+
+  major="${ver%%.*}"
+  minor="${ver##*.}"
+
+  if [[ "$major" -gt 3 ]]; then
+    return 0
+  fi
+  if [[ "$major" -eq 3 && "$minor" -ge 11 ]]; then
+    return 0
+  fi
+  return 1
+}
+
+choose_python_for_mlx() {
+  local candidates=()
+  local candidate
+  local resolved
+
+  if [[ -n "${MLX_PYTHON:-}" ]]; then
+    candidates+=("${MLX_PYTHON}")
+  fi
+  candidates+=(python3.12 python3.11 python3)
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "$candidate" ]]; then
+      resolved="$candidate"
+    else
+      resolved="$(command -v "$candidate" 2>/dev/null || true)"
+    fi
+    if [[ -n "$resolved" ]] && python_is_supported_for_mlx "$resolved"; then
+      echo "$resolved"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 MLX_USER="${MLX_USER:-mlx}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-10240}"
@@ -87,8 +139,15 @@ fi
 require_cmd sudo
 require_cmd launchctl
 require_cmd plutil
-require_cmd python3
 require_cmd dscl
+
+MLX_PYTHON_BIN="$(choose_python_for_mlx || true)"
+if [[ -z "$MLX_PYTHON_BIN" ]]; then
+  echo "ERROR: could not find Python >=3.11 required by mlx-openai-server." >&2
+  echo "Install one (example: brew install python@3.12), then re-run with:" >&2
+  echo "  MLX_PYTHON=/opt/homebrew/bin/python3.12 ./services/mlx/scripts/install-native-macos.sh --host ${MLX_HOST} --port ${MLX_PORT}" >&2
+  exit 1
+fi
 
 if ! id -u "${MLX_USER}" >/dev/null 2>&1; then
   if [[ "$CREATE_USER" != "1" ]]; then
@@ -113,17 +172,24 @@ sudo mkdir -p "${MLX_HOME}/cache" "${MLX_HOME}/run" "${MLX_LOG_DIR}"
 sudo chown -R "${MLX_USER}:staff" "${MLX_HOME}" "${MLX_LOG_DIR}"
 sudo chmod 750 "${MLX_HOME}" "${MLX_HOME}/cache" "${MLX_HOME}/run" "${MLX_LOG_DIR}"
 
+if [[ -x "${MLX_VENV}/bin/python" ]]; then
+  if ! python_is_supported_for_mlx "${MLX_VENV}/bin/python"; then
+    echo "Existing MLX venv uses Python <3.11; recreating ${MLX_VENV}" >&2
+    sudo rm -rf "${MLX_VENV}"
+  fi
+fi
+
 sudo mkdir -p "${MLX_VENV}"
 sudo chown -R root:wheel "${MLX_VENV}"
 sudo chmod -R go-w "${MLX_VENV}"
 
 if [[ ! -x "${MLX_VENV}/bin/python" ]]; then
-  sudo python3 -m venv "${MLX_VENV}"
+  sudo -H "$MLX_PYTHON_BIN" -m venv "${MLX_VENV}"
 fi
 
-sudo "${MLX_VENV}/bin/python" -m pip install --upgrade pip setuptools wheel
+sudo -H "${MLX_VENV}/bin/python" -m pip install --upgrade --no-cache-dir pip setuptools wheel
 # shellcheck disable=SC2086
-sudo "${MLX_VENV}/bin/python" -m pip install --upgrade ${MLX_PIP_PACKAGES}
+sudo -H "${MLX_VENV}/bin/python" -m pip install --upgrade --no-cache-dir ${MLX_PIP_PACKAGES}
 
 if [[ ! -x "${MLX_VENV}/bin/mlx-openai-server" ]]; then
   echo "ERROR: mlx-openai-server executable was not installed into ${MLX_VENV}/bin" >&2
