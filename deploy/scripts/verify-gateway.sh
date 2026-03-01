@@ -15,13 +15,52 @@ ns_require_cmd docker
 
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 TOKEN="${GATEWAY_BEARER_TOKEN:-}"
+WITH_MLX="false"
+
+usage() {
+  cat <<'EOF'
+Usage: deploy/scripts/verify-gateway.sh [--env-file PATH] [--with-mlx]
+
+Run in-container gateway contract verification.
+
+Options:
+  --env-file PATH   Env file path (default: ./.env)
+  --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --env-file)
+      ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    --with-mlx)
+      WITH_MLX="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      ns_die "Unknown argument: $1"
+      ;;
+  esac
+done
+
 if [[ -z "${TOKEN}" && -f "${ENV_FILE}" ]]; then
   TOKEN="$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")"
 fi
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
-for compose_file in docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml; do
+COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml)
+if [[ "$WITH_MLX" == "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
+  COMPOSE_FILES+=(docker-compose.mlx.yml)
+fi
+for compose_file in "${COMPOSE_FILES[@]}"; do
   if [[ ! -f "$ROOT_DIR/$compose_file" ]]; then
     ns_die "Compose file not found: $ROOT_DIR/$compose_file (run from a complete Nexus checkout)."
   fi
@@ -48,7 +87,7 @@ fi
 ns_print_header "Gateway Verifier (in-container)"
 
 if ! ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" ps gateway >/dev/null 2>&1; then
-  ns_die "Compose could not resolve service 'gateway'. Ensure core compose files are present and try: ./deploy/scripts/ops-stack.sh"
+  ns_die "Compose could not resolve service 'gateway'. Ensure compose files are present and try: ./deploy/scripts/ops-stack.sh"
 fi
 
 # Run the verifier inside the gateway container so we don't depend on host Python.

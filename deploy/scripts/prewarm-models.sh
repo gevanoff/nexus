@@ -10,6 +10,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 CHECK_ONLY="false"
+WITH_MLX="false"
 
 usage() {
   cat <<'EOF'
@@ -24,6 +25,7 @@ Required models are derived from env (or defaults):
 Options:
   --env-file PATH   Env file path (default: ./.env)
   --check-only      Check/report only; do not pull missing models
+  --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
 EOF
 }
 
@@ -35,6 +37,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check-only)
       CHECK_ONLY="true"
+      shift
+      ;;
+    --with-mlx)
+      WITH_MLX="true"
       shift
       ;;
     -h|--help)
@@ -49,8 +55,13 @@ done
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
+COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml)
+if [[ "$WITH_MLX" == "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
+  COMPOSE_FILES+=(docker-compose.mlx.yml)
+fi
 
-for compose_file in docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml; do
+for compose_file in "${COMPOSE_FILES[@]}"; do
   if [[ ! -f "$ROOT_DIR/$compose_file" ]]; then
     ns_die "Compose file not found: $ROOT_DIR/$compose_file"
   fi

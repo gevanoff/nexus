@@ -11,6 +11,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 NEXUS_DIR="${NEXUS_DIR:-$ROOT_DIR}"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/gateway-backups}"
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
+WITH_MLX="false"
 
 if [[ "$(ns_detect_platform)" == "macos" ]] && [[ "${EUID:-$(id -u)}" -eq 0 ]] && ns_have_cmd colima; then
   ns_die "Do not run this script with sudo on macOS when using Colima. Run as a normal user and let individual commands use sudo."
@@ -18,19 +19,37 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/cutover-one-way.sh
+Usage: deploy/scripts/cutover-one-way.sh [--with-mlx]
 
 One-way host-local cutover from legacy ai-infra launchd services to Nexus containers.
 
 Env vars (optional):
   NEXUS_DIR    Nexus repo root (default: current repo root)
   BACKUP_DIR   Where to write legacy gateway data backups
+
+Options:
+  --with-mlx   Include MLX component (docker-compose.mlx.yml) during cutover
 EOF
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --with-mlx)
+      WITH_MLX="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      ns_die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+if [[ "$WITH_MLX" == "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
 fi
 
 ns_print_header "One-way cutover: legacy -> Nexus"
@@ -107,7 +126,11 @@ for i in {1..60}; do
 done
 
 ns_print_header "Verifying gateway contract"
-"$NEXUS_DIR/deploy/scripts/verify-gateway.sh"
+if [[ "$WITH_MLX" == "true" ]]; then
+  "$NEXUS_DIR/deploy/scripts/verify-gateway.sh" --with-mlx
+else
+  "$NEXUS_DIR/deploy/scripts/verify-gateway.sh"
+fi
 
 ns_print_header "Cutover complete"
 ns_compose "${COMPOSE_ARGS[@]}" ps

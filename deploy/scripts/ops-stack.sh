@@ -157,7 +157,11 @@ for i in {1..60}; do
 done
 
 ns_print_header "Running verifier"
-ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh"
+if [[ "$WITH_MLX" == "true" ]]; then
+  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" --with-mlx
+else
+  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh"
+fi
 
 ns_print_header "Ops complete"
 ns_compose "${COMPOSE_ARGS[@]}" ps
