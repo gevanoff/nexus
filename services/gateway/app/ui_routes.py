@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import hashlib
@@ -40,6 +41,10 @@ from app import user_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_UI_MODELS_CACHE_LOCK = asyncio.Lock()
+_UI_MODELS_CACHE_VALUE: Optional[Dict[str, Any]] = None
+_UI_MODELS_CACHE_EXPIRES_AT: float = 0.0
 
 
 @router.get("/favicon.ico", include_in_schema=False)
@@ -219,6 +224,79 @@ def _require_ui_access(req: Request) -> None:
             continue
 
     raise HTTPException(status_code=403, detail=_ui_deny_detail(req, "UI denied (client IP not allowlisted)"))
+
+
+def _ui_models_probe_timeout_sec() -> float:
+    try:
+        value = float(getattr(S, "UI_MODELS_PROBE_TIMEOUT_SEC", 4.0) or 4.0)
+    except Exception:
+        value = 4.0
+    return min(30.0, max(0.5, value))
+
+
+def _ui_models_cache_ttl_sec() -> float:
+    try:
+        value = float(getattr(S, "UI_MODELS_CACHE_TTL_SEC", 8.0) or 8.0)
+    except Exception:
+        value = 8.0
+    return min(300.0, max(0.0, value))
+
+
+def _clone_ui_models_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "object": payload.get("object", "list"),
+        "data": [dict(item) for item in (payload.get("data") or []) if isinstance(item, dict)],
+    }
+    diagnostics = payload.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        out["diagnostics"] = json.loads(json.dumps(diagnostics, ensure_ascii=False))
+    return out
+
+
+async def _probe_ollama_models(client: httpx.AsyncClient, now: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    url = f"{S.OLLAMA_BASE_URL.rstrip('/')}/api/tags"
+    started = time.perf_counter()
+    diag: Dict[str, Any] = {"url": url, "ok": False}
+    items: list[dict[str, Any]] = []
+    try:
+        r = await client.get(url)
+        diag["status"] = r.status_code
+        r.raise_for_status()
+        models = r.json().get("models", [])
+        for m in models:
+            name = m.get("name")
+            if name:
+                items.append({"id": f"ollama:{name}", "object": "model", "created": now, "owned_by": "local"})
+        diag["ok"] = True
+        diag["count"] = len(items)
+    except Exception as exc:
+        diag["error"] = str(exc)
+    finally:
+        diag["duration_ms"] = int((time.perf_counter() - started) * 1000)
+    return items, diag
+
+
+async def _probe_mlx_models(client: httpx.AsyncClient, now: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    url = f"{S.MLX_BASE_URL.rstrip('/')}/models"
+    started = time.perf_counter()
+    diag: Dict[str, Any] = {"url": url, "ok": False}
+    items: list[dict[str, Any]] = []
+    try:
+        r = await client.get(url)
+        diag["status"] = r.status_code
+        r.raise_for_status()
+        models = r.json().get("data", [])
+        for m in models:
+            mid = m.get("id")
+            if mid:
+                items.append({"id": f"mlx:{mid}", "object": "model", "created": now, "owned_by": "local"})
+        diag["ok"] = True
+        diag["count"] = len(items)
+    except Exception as exc:
+        diag["error"] = str(exc)
+    finally:
+        diag["duration_ms"] = int((time.perf_counter() - started) * 1000)
+    return items, diag
 
 
 def _session_cookie_name() -> str:
@@ -1736,34 +1814,48 @@ async def ui_uploaded_file(req: Request, name: str):
 
 @router.get("/ui/api/models", include_in_schema=False)
 async def ui_models(req: Request) -> Dict[str, Any]:
+    global _UI_MODELS_CACHE_VALUE, _UI_MODELS_CACHE_EXPIRES_AT
+
     _require_ui_access(req)
     user = _require_user(req)
 
     now = now_unix()
     data: Dict[str, Any] = {"object": "list", "data": []}
+    cache_ttl_sec = _ui_models_cache_ttl_sec()
+    probe_timeout_sec = _ui_models_probe_timeout_sec()
+    now_monotonic = time.time()
 
-    async with _httpx_client(timeout=30) as client:
-        try:
-            r = await client.get(f"{S.OLLAMA_BASE_URL}/api/tags")
-            r.raise_for_status()
-            models = r.json().get("models", [])
-            for m in models:
-                name = m.get("name")
-                if name:
-                    data["data"].append({"id": f"ollama:{name}", "object": "model", "created": now, "owned_by": "local"})
-        except Exception:
-            pass
+    if cache_ttl_sec > 0 and _UI_MODELS_CACHE_VALUE is not None and now_monotonic < _UI_MODELS_CACHE_EXPIRES_AT:
+        cached = _clone_ui_models_payload(_UI_MODELS_CACHE_VALUE)
+        diagnostics = cached.get("diagnostics") if isinstance(cached.get("diagnostics"), dict) else {}
+        diagnostics["cache"] = {
+            "hit": True,
+            "ttl_sec": cache_ttl_sec,
+            "expires_in_sec": max(0.0, round(_UI_MODELS_CACHE_EXPIRES_AT - now_monotonic, 3)),
+        }
+        cached["diagnostics"] = diagnostics
+        return cached
 
-        try:
-            r = await client.get(f"{S.MLX_BASE_URL}/models")
-            r.raise_for_status()
-            models = r.json().get("data", [])
-            for m in models:
-                mid = m.get("id")
-                if mid:
-                    data["data"].append({"id": f"mlx:{mid}", "object": "model", "created": now, "owned_by": "local"})
-        except Exception:
-            pass
+    async with _UI_MODELS_CACHE_LOCK:
+        now_monotonic = time.time()
+        if cache_ttl_sec > 0 and _UI_MODELS_CACHE_VALUE is not None and now_monotonic < _UI_MODELS_CACHE_EXPIRES_AT:
+            cached = _clone_ui_models_payload(_UI_MODELS_CACHE_VALUE)
+            diagnostics = cached.get("diagnostics") if isinstance(cached.get("diagnostics"), dict) else {}
+            diagnostics["cache"] = {
+                "hit": True,
+                "ttl_sec": cache_ttl_sec,
+                "expires_in_sec": max(0.0, round(_UI_MODELS_CACHE_EXPIRES_AT - now_monotonic, 3)),
+            }
+            cached["diagnostics"] = diagnostics
+            return cached
+
+        async with _httpx_client(timeout=probe_timeout_sec) as client:
+            (ollama_items, ollama_diag), (mlx_items, mlx_diag) = await asyncio.gather(
+                _probe_ollama_models(client, now),
+                _probe_mlx_models(client, now),
+            )
+        data["data"].extend(ollama_items)
+        data["data"].extend(mlx_items)
 
     # Add convenience backend pseudo-models.
     data["data"].append({"id": "ollama", "object": "model", "created": now, "owned_by": "gateway"})
@@ -1786,7 +1878,39 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             item["temperature_cap"] = a.temperature_cap
         data["data"].append(item)
 
-    return data
+        diagnostics: Dict[str, Any] = {
+            "probe_timeout_sec": probe_timeout_sec,
+            "sources": {
+                "ollama": ollama_diag,
+                "mlx": mlx_diag,
+            },
+            "cache": {
+                "hit": False,
+                "ttl_sec": cache_ttl_sec,
+            },
+        }
+
+        try:
+            mlx_health = get_health_checker().get_status("local_mlx")
+            if mlx_health is not None:
+                diagnostics["health_checker"] = {
+                    "local_mlx": {
+                        "healthy": mlx_health.is_healthy,
+                        "ready": mlx_health.is_ready,
+                        "error": mlx_health.error,
+                        "last_check": mlx_health.last_check,
+                    }
+                }
+        except Exception:
+            pass
+
+        data["diagnostics"] = diagnostics
+
+        if cache_ttl_sec > 0:
+            _UI_MODELS_CACHE_VALUE = _clone_ui_models_payload(data)
+            _UI_MODELS_CACHE_EXPIRES_AT = time.time() + cache_ttl_sec
+
+        return data
 
 
 @router.post("/ui/api/chat", include_in_schema=False)

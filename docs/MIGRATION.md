@@ -108,6 +108,39 @@ curl http://localhost:8800/health
 curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8800/v1/models
 ```
 
+### Telegram Bot Migration (Optional)
+
+If you used the host-based telegram service in `ai-infra/services/telegram-bot`, move only secrets/config into Nexus `.env`:
+
+- `TELEGRAM_TOKEN`
+- `GATEWAY_BEARER_TOKEN`
+
+Optional tuning vars:
+
+- `TELEGRAM_GATEWAY_BASE_URL` (recommended: `http://gateway:8800`)
+- `TELEGRAM_GATEWAY_MODEL`
+- `TELEGRAM_MAX_HISTORY`
+- `TELEGRAM_MAX_MESSAGE`
+- `TELEGRAM_LOG_LEVEL`
+
+Start Nexus bot component:
+
+```bash
+docker compose --env-file .env \
+  -f docker-compose.gateway.yml \
+  -f docker-compose.ollama.yml \
+  -f docker-compose.etcd.yml \
+  -f docker-compose.telegram-bot.yml up -d --build
+```
+
+Validate:
+
+```bash
+./deploy/scripts/diagnose-telegram-bot.sh
+```
+
+You do not need to migrate legacy `systemd` or `launchd` units when using Nexus container mode.
+
 ---
 
 ## Manual Migration Steps (Reference)

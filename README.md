@@ -68,6 +68,9 @@ Gateway persistence is stored on the host under `./.runtime/gateway/` and bind-m
 # Start core services (gateway + ollama + etcd)
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d
 
+# Start core + Telegram bot (optional)
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.telegram-bot.yml up -d
+
 # Check service health
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml ps
 
@@ -183,6 +186,11 @@ Nexus includes the following services:
 - Multiple voice options
 - Streaming audio output
 - **Port**: 9940
+
+### Telegram Bot (`services/telegram-bot/`)
+- Telegram chat bridge into Gateway endpoints
+- Uses `TELEGRAM_TOKEN` and `GATEWAY_BEARER_TOKEN` from `.env`
+- Containerized component (no host systemd/launchd required)
 
 ### Etcd (`etcd`)
 - Service discovery registry for multi-host deployments

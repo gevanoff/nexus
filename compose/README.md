@@ -9,6 +9,7 @@ Current layout (preferred): per-component compose files live in the `nexus/` roo
 - `docker-compose.etcd.yml`
 - `docker-compose.images.yml`
 - `docker-compose.tts.yml`
+- `docker-compose.telegram-bot.yml`
 
 Dev overrides (layer on top of the corresponding base file):
 

@@ -45,6 +45,12 @@ Each service is:
 - **Status**: ✅ Implemented (Pocket TTS shim)
 - **Documentation**: [tts/README.md](tts/README.md)
 
+#### Telegram Bot (`telegram-bot/`)
+- **Purpose**: Telegram chat interface for Gateway
+- **Capabilities**: Chat, image, speech, and music command forwarding via Gateway APIs
+- **Status**: ✅ Implemented (containerized component)
+- **Documentation**: [telegram-bot/README.md](telegram-bot/README.md)
+
 ### Development
 
 #### Template (`template/`)
@@ -68,6 +74,11 @@ Each service is:
 │  Ollama  │ │Images│ │  TTS   │
 │   LLM    │ │ Gen  │ │ Audio  │
 └──────────┘ └──────┘ └────────┘
+  │
+  ▼
+┌──────────────┐
+│ Telegram Bot │
+└──────────────┘
 ```
 
 For multi-host rollouts, use the per-service manifests in `deploy/` to run individual services on separate hosts.

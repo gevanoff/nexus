@@ -17,6 +17,7 @@ Base component files (production-ish defaults):
 - `docker-compose.etcd.yml`
 - `docker-compose.images.yml`
 - `docker-compose.tts.yml`
+- `docker-compose.telegram-bot.yml`
 
 Dev overrides (optional, layer on top):
 
@@ -25,6 +26,8 @@ Dev overrides (optional, layer on top):
 - `docker-compose.etcd.dev.yml`
 - `docker-compose.images.dev.yml`
 - `docker-compose.tts.dev.yml`
+
+Note: `telegram-bot` currently uses only a base compose file (no dev override).
 
 ## Usage
 
@@ -39,6 +42,12 @@ Add components:
 
 ```bash
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.images.yml up -d
+```
+
+Core + Telegram bot:
+
+```bash
+docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.telegram-bot.yml up -d
 ```
 
 Dev gateway:

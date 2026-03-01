@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     UI_IMAGE_TTL_SEC: int = 900
     UI_IMAGE_MAX_BYTES: int = 50_000_000
 
+    # UI model list endpoint tuning
+    # - UI_MODELS_PROBE_TIMEOUT_SEC bounds per-backend probe latency when loading models.
+    # - UI_MODELS_CACHE_TTL_SEC caches model lists briefly to avoid repeated upstream calls.
+    UI_MODELS_PROBE_TIMEOUT_SEC: float = 4.0
+    UI_MODELS_CACHE_TTL_SEC: float = 8.0
+
     # Tokenless UI file attachments (chat uploads)
     UI_FILE_DIR: str = "/var/lib/gateway/data/ui_files"
     UI_FILE_TTL_SEC: int = 60 * 60 * 24 * 7  # 7 days

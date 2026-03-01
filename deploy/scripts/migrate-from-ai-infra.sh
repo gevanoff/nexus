@@ -138,6 +138,18 @@ backup_ai_infra() {
   else
     echo "Skipping ai-infra env/config backup; no ai-infra checkout provided."
   fi
+
+  if [[ -n "${AI_INFRA_DIR:-}" && -f "$AI_INFRA_DIR/services/telegram-bot/env/telegram-bot.env.example" ]]; then
+    cp "$AI_INFRA_DIR/services/telegram-bot/env/telegram-bot.env.example" "$BACKUP_DIR/telegram-bot.env.example.backup"
+    chmod 600 "$BACKUP_DIR/telegram-bot.env.example.backup"
+    echo "Backed up telegram-bot env template"
+  fi
+
+  if [[ -n "${AI_INFRA_DIR:-}" && -f "$AI_INFRA_DIR/services/telegram-bot/env/telegram-bot.env" ]]; then
+    cp "$AI_INFRA_DIR/services/telegram-bot/env/telegram-bot.env" "$BACKUP_DIR/telegram-bot.env.backup"
+    chmod 600 "$BACKUP_DIR/telegram-bot.env.backup"
+    echo "Backed up telegram-bot runtime env"
+  fi
 }
 
 prepare_nexus() {
@@ -168,6 +180,23 @@ prepare_nexus() {
     printf '\nGATEWAY_BEARER_TOKEN=%s\n' "$token" >> .env
     chmod 600 .env
     echo "Added GATEWAY_BEARER_TOKEN to .env"
+  fi
+
+  if [[ -f "$BACKUP_DIR/telegram-bot.env.backup" ]]; then
+    local tg_token
+    tg_token="$(grep '^TELEGRAM_TOKEN=' "$BACKUP_DIR/telegram-bot.env.backup" | cut -d= -f2- || true)"
+    if [[ -n "${tg_token:-}" ]]; then
+      if grep -q '^TELEGRAM_TOKEN=' .env; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+          sed -i '' "s/^TELEGRAM_TOKEN=.*/TELEGRAM_TOKEN=$tg_token/" .env
+        else
+          sed -i "s/^TELEGRAM_TOKEN=.*/TELEGRAM_TOKEN=$tg_token/" .env
+        fi
+      else
+        printf '\nTELEGRAM_TOKEN=%s\n' "$tg_token" >> .env
+      fi
+      echo "Imported TELEGRAM_TOKEN into Nexus .env from telegram-bot backup"
+    fi
   fi
 
   if [[ "$SKIP_DEPLOY" -eq 0 ]]; then

@@ -181,7 +181,56 @@ else
 fi
 
 http_check "GET ${BASE_URL}/v1/models" "GET" "${BASE_URL}/v1/models" "true"
+http_check "GET ${BASE_URL}/v1/gateway/status" "GET" "${BASE_URL}/v1/gateway/status" "true"
 http_check "POST ${BASE_URL}/v1/embeddings" "POST" "${BASE_URL}/v1/embeddings" "true" '{"model":"default","input":"diagnose"}'
+
+print_step "MLX readiness (from gateway container)"
+if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T gateway python3 - <<'PY'
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+base = (os.getenv("MLX_BASE_URL") or "http://mlx:10240/v1").rstrip("/")
+url = f"{base}/models"
+start = time.time()
+try:
+  req = urllib.request.Request(url, method="GET")
+  with urllib.request.urlopen(req, timeout=5) as resp:
+    status = int(resp.getcode() or 0)
+    body = resp.read().decode("utf-8", errors="replace")
+
+  model_count = 0
+  try:
+    payload = json.loads(body)
+    data = payload.get("data")
+    if isinstance(data, list):
+      model_count = len(data)
+  except Exception:
+    pass
+
+  elapsed_ms = int((time.time() - start) * 1000)
+  print(f"mlx_url={url}")
+  print(f"mlx_status={status}")
+  print(f"mlx_model_count={model_count}")
+  print(f"mlx_probe_ms={elapsed_ms}")
+  sys.exit(0 if status == 200 else 1)
+except Exception as exc:
+  elapsed_ms = int((time.time() - start) * 1000)
+  print(f"mlx_url={url}")
+  print(f"mlx_probe_ms={elapsed_ms}")
+  print(f"mlx_error={exc}")
+  sys.exit(1)
+PY
+then
+  ns_print_ok "MLX /models probe from gateway container succeeded"
+else
+  ns_print_error "MLX /models probe from gateway container failed"
+  ns_print_warn "Check MLX container/service availability and MLX_BASE_URL in ${ENV_FILE}."
+  mark_fail
+fi
 
 print_step "Ollama embeddings model readiness"
 echo "Expected embeddings model: ${embeddings_model}"

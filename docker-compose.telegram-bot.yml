@@ -1,0 +1,32 @@
+services:
+  # Telegram Bot Service - Chat bridge from Telegram to Gateway APIs
+  telegram-bot:
+    build:
+      context: ./services/telegram-bot
+      dockerfile: Dockerfile
+    container_name: nexus-telegram-bot
+    env_file:
+      - ./.env
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - GATEWAY_BEARER_TOKEN=${GATEWAY_BEARER_TOKEN:-}
+      - GATEWAY_BASE_URL=${TELEGRAM_GATEWAY_BASE_URL:-http://gateway:8800}
+      - GATEWAY_MODEL=${TELEGRAM_GATEWAY_MODEL:-auto}
+      - MAX_HISTORY=${TELEGRAM_MAX_HISTORY:-20}
+      - LOG_LEVEL=${TELEGRAM_LOG_LEVEL:-info}
+      - TELEGRAM_MAX_MESSAGE=${TELEGRAM_MAX_MESSAGE:-3900}
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}
