@@ -16,16 +16,20 @@ ns_require_cmd docker
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 TOKEN="${GATEWAY_BEARER_TOKEN:-}"
 WITH_MLX="false"
+EXTERNAL_OLLAMA="false"
+EXTERNAL_MLX="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/verify-gateway.sh [--env-file PATH] [--with-mlx]
+Usage: deploy/scripts/verify-gateway.sh [--env-file PATH] [--with-mlx] [--external-ollama] [--external-mlx]
 
 Run in-container gateway contract verification.
 
 Options:
   --env-file PATH   Env file path (default: ./.env)
   --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
+  --external-ollama Use external/native Ollama (do not include docker-compose.ollama.yml)
+  --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml)
 EOF
 }
 
@@ -37,6 +41,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-mlx)
       WITH_MLX="true"
+      shift
+      ;;
+    --external-ollama)
+      EXTERNAL_OLLAMA="true"
+      shift
+      ;;
+    --external-mlx)
+      EXTERNAL_MLX="true"
       shift
       ;;
     -h|--help)
@@ -54,9 +66,16 @@ if [[ -z "${TOKEN}" && -f "${ENV_FILE}" ]]; then
 fi
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
-COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
-COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml)
-if [[ "$WITH_MLX" == "true" ]]; then
+COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
+COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.etcd.yml)
+if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.ollama.yml)
+  COMPOSE_FILES+=(docker-compose.ollama.yml)
+fi
+if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" == "true" ]]; then
+  ns_die "Use either --with-mlx (containerized MLX) or --external-mlx (host-native MLX), not both."
+fi
+if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" != "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
   COMPOSE_FILES+=(docker-compose.mlx.yml)
 fi

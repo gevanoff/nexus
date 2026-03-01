@@ -30,6 +30,12 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed design documentation.
 
 Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per component; use `-f` layering).
 
+### Backend Placement Policy
+
+- Backends that can use Apple Silicon acceleration must run on macOS bare metal (host-native), not in Linux containers.
+- Backends that are CPU-only and do not benefit from NVIDIA acceleration should run in containers on a Mac (currently only `ai2`).
+- NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
+
 ### Prerequisites
 
 - Operator environment: **macOS/Linux hosts** with Docker Engine and the `docker compose` plugin
@@ -84,6 +90,77 @@ docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f doc
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml down
 ```
 
+### Native Apple Silicon Accelerator Mode (Recommended for Ollama + MLX)
+
+For Apple-accelerated inference, run Ollama/MLX natively on a macOS Apple Silicon host and keep Nexus control-plane services in containers.
+
+```bash
+# Containerized control plane only (no ollama/mlx containers)
+docker compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d
+```
+
+Set these in `.env` so Gateway targets native services:
+
+```bash
+# Same-machine macOS host from inside Docker Desktop containers
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+MLX_BASE_URL=http://host.docker.internal:10240/v1
+
+# Or remote Mac accelerator node
+# OLLAMA_BASE_URL=http://mac-accelerator-01:11434
+# MLX_BASE_URL=http://mac-accelerator-01:10240/v1
+```
+
+Security recommendations for native accelerator hosts:
+- Bind native inference services to loopback when possible and front them with a local reverse proxy.
+- Enforce IP allowlist and firewall rules so only Gateway hosts can connect.
+- Run services under dedicated non-admin users with minimal filesystem permissions.
+- Keep model/cache directories scoped to service users and avoid broad host mounts.
+
+### Ollama + MLX Container-to-Bare-Metal Migration Runbook
+
+Use this when moving inference from `docker-compose.ollama.yml` / `docker-compose.mlx.yml` to a macOS Apple Silicon host.
+
+1. On the macOS host, install native services:
+
+```bash
+./services/ollama/scripts/install-native-macos.sh --host 127.0.0.1 --port 11434
+./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
+```
+
+2. Verify native service health on the macOS host:
+
+```bash
+curl -fsS http://127.0.0.1:11434/api/version
+curl -fsS http://127.0.0.1:10240/v1/models
+```
+
+3. In `nexus/.env`, set external/native targets:
+
+```bash
+# Same machine (Docker Desktop on macOS)
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+MLX_BASE_URL=http://host.docker.internal:10240/v1
+
+# Or remote macOS accelerator node
+# OLLAMA_BASE_URL=http://<mac-host-or-ip>:11434
+# MLX_BASE_URL=http://<mac-host-or-ip>:10240/v1
+```
+
+4. Restart Nexus without containerized Ollama/MLX:
+
+```bash
+docker compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build
+```
+
+5. Verify Gateway against external/native backends:
+
+```bash
+./deploy/scripts/verify-gateway.sh --external-ollama --external-mlx
+```
+
+6. After successful verification, keep `docker-compose.ollama.yml` and `docker-compose.mlx.yml` out of steady-state compose invocations.
+
 ### Setup/Install Scripts Reference
 
 These scripts are the current supported setup/install and deployment entrypoints:
@@ -93,6 +170,8 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: host-local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
+- `services/ollama/scripts/install-native-macos.sh`: install/manage host-native Ollama (launchd)
+- `services/mlx/scripts/install-native-macos.sh`: install/manage host-native MLX (launchd)
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: list registered services in etcd
 

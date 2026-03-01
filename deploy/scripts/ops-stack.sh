@@ -14,6 +14,8 @@ NO_PULL="false"
 NO_BUILD="false"
 WITH_TELEGRAM="false"
 WITH_MLX="false"
+EXTERNAL_OLLAMA="false"
+EXTERNAL_MLX="false"
 
 usage() {
   cat <<'EOF'
@@ -32,6 +34,8 @@ Options:
   --no-build        Skip image rebuild (use compose up -d without --build)
   --with-telegram   Include telegram-bot component (docker-compose.telegram-bot.yml)
   --with-mlx        Include MLX component (docker-compose.mlx.yml)
+  --external-ollama Use external/native Ollama (do not include docker-compose.ollama.yml)
+  --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml)
 EOF
 }
 
@@ -61,6 +65,14 @@ while [[ $# -gt 0 ]]; do
       WITH_MLX="true"
       shift
       ;;
+    --external-ollama)
+      EXTERNAL_OLLAMA="true"
+      shift
+      ;;
+    --external-mlx)
+      EXTERNAL_MLX="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -71,11 +83,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
+COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
+if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.ollama.yml)
+fi
 if [[ "$WITH_TELEGRAM" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.telegram-bot.yml)
 fi
-if [[ "$WITH_MLX" == "true" ]]; then
+if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" == "true" ]]; then
+  ns_die "Use either --with-mlx (containerized MLX) or --external-mlx (host-native MLX), not both."
+fi
+if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" != "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
 fi
 
@@ -158,9 +176,20 @@ done
 
 ns_print_header "Running verifier"
 if [[ "$WITH_MLX" == "true" ]]; then
-  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" --with-mlx
+  if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
+    ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" --with-mlx --external-ollama
+  else
+    ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" --with-mlx
+  fi
 else
-  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh"
+  verify_args=()
+  if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
+    verify_args+=(--external-ollama)
+  fi
+  if [[ "$EXTERNAL_MLX" == "true" ]]; then
+    verify_args+=(--external-mlx)
+  fi
+  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" "${verify_args[@]}"
 fi
 
 ns_print_header "Ops complete"

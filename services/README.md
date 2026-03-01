@@ -2,6 +2,12 @@
 
 This directory contains all containerized services in the Nexus infrastructure.
 
+## Backend Placement Policy
+
+- Backends that can use Apple Silicon acceleration must run host-native on macOS bare metal.
+- CPU-only backends that do not benefit from NVIDIA acceleration should run as containers on a Mac (currently only `ai2`).
+- NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
+
 ## Overview
 
 Each service is:
@@ -26,14 +32,14 @@ Each service is:
 - **Purpose**: Large language model inference
 - **Port**: 11434
 - **Capabilities**: Chat completions, text completions, embeddings
-- **Status**: 🔧 Configuration only (uses official image)
+- **Status**: 🔧 Configuration + host-native macOS installer
 - **Documentation**: [ollama/README.md](ollama/README.md)
 
 #### MLX (`mlx/`)
 - **Purpose**: MLX OpenAI-compatible model serving
 - **Port**: 10240
 - **Capabilities**: Chat completions, embeddings
-- **Status**: 🚧 Initial containerized port scaffold (migration in progress)
+- **Status**: 🚧 Container scaffold + host-native macOS installer (preferred runtime)
 - **Documentation**: [mlx/README.md](mlx/README.md)
 
 ### AI Services

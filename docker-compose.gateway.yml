@@ -31,7 +31,7 @@ services:
       - METRICS_ENABLED=true
 
       # Upstream services (using Docker service names)
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
       - IMAGES_BACKEND=${IMAGES_BACKEND:-http_openai_images}
       - IMAGES_HTTP_BASE_URL=http://images:7860
       - AUDIO_BACKEND_URL=http://tts:9940

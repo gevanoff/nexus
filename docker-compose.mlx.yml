@@ -22,7 +22,9 @@ services:
       - ./.runtime/mlx/cache:/var/lib/mlx/cache
     networks:
       - nexus
-    restart: unless-stopped
+    # MLX runtime is Apple-Silicon/macOS specific; this Linux container may exit
+    # immediately on unsupported hosts. Keep restart disabled to avoid noisy loops.
+    restart: "no"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:10240/v1/models"]
       interval: 30s

@@ -2,21 +2,32 @@
 
 Ollama is a large language model inference service that provides OpenAI-compatible APIs.
 
+## Placement Policy
+
+- Ollama should run host-native on macOS bare metal when Apple Silicon acceleration is desired.
+- CPU-only backends that do not benefit from NVIDIA acceleration should run as containers on a Mac (currently only `ai2`).
+- NVIDIA-accelerated workloads should run on Linux/NVIDIA hosts.
+
 ## Overview
 
-This service uses the official Ollama Docker image with configuration for Nexus integration.
+Nexus supports two operational modes:
+
+1. **Containerized Ollama** (Linux container, default compose component)
+2. **Native Ollama on macOS Apple Silicon** (recommended when you want Apple-accelerated inference)
+
+For Apple Silicon acceleration, run Ollama natively on macOS and point Gateway at that host via `OLLAMA_BASE_URL`.
 
 ## Features
 
 - **Multiple Models**: Supports Llama, Qwen, Mistral, Gemma, and more
 - **Streaming**: Real-time streaming responses
 - **OpenAI Compatible**: Drop-in replacement for OpenAI API
-- **GPU Accelerated**: NVIDIA GPU support via Docker runtime
+- **GPU Accelerated**: Native Apple Silicon acceleration (macOS host-native) or NVIDIA acceleration (Linux + NVIDIA container runtime)
 - **Model Management**: Pull and manage models via API
 
 ## Configuration
 
-The Ollama service is configured in `docker-compose.ollama.yml` with:
+Containerized Ollama is configured in `docker-compose.ollama.yml` with:
 
 ```yaml
 ollama:
@@ -27,13 +38,25 @@ ollama:
     - OLLAMA_HOST=0.0.0.0:11434
   volumes:
     - ./.runtime/ollama:/root/.ollama
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - driver: nvidia
-            count: all
-            capabilities: [gpu]
+```
+
+Gateway target is controlled with `OLLAMA_BASE_URL` (set in `.env`):
+
+```bash
+# Containerized Ollama (same compose project)
+OLLAMA_BASE_URL=http://ollama:11434
+
+# Native macOS Ollama on same machine as Docker Desktop
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+
+# Native macOS Ollama on remote accelerator host
+OLLAMA_BASE_URL=http://<mac-host-or-ip>:11434
+```
+
+Install host-native Ollama on macOS with:
+
+```bash
+./services/ollama/scripts/install-native-macos.sh --host 127.0.0.1 --port 11434
 ```
 
 ## Usage
@@ -141,6 +164,12 @@ docker compose exec ollama ollama pull <model-name>
 
 ## GPU Support
 
+### Apple Silicon (macOS host-native)
+
+- Ollama can use Apple Silicon acceleration when running natively on macOS.
+- Linux containers do not provide direct Metal/ANE passthrough for Ollama workloads.
+- Recommended pattern: run Ollama on the macOS host and access it from Gateway via HTTP.
+
 ### Requirements
 
 - NVIDIA GPU
@@ -247,6 +276,32 @@ docker compose ps ollama
 Should show "healthy" status.
 
 ## Troubleshooting
+
+### Migration from containerized to host-native
+
+```bash
+# 1) Install/start native Ollama on macOS
+./services/ollama/scripts/install-native-macos.sh --host 127.0.0.1 --port 11434
+
+# 2) Verify local health on macOS host
+curl -fsS http://127.0.0.1:11434/api/version
+
+# 3) Update nexus/.env
+# OLLAMA_BASE_URL=http://host.docker.internal:11434
+
+# 4) Start Nexus without ollama container
+docker compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build
+
+# 5) Verify gateway contract using external/native Ollama
+./deploy/scripts/verify-gateway.sh --external-ollama
+```
+
+### Native-macOS security baseline
+
+- Run Ollama under a dedicated non-admin user.
+- Restrict listener exposure (loopback or LAN allowlist only).
+- Apply host firewall rules to allow only Gateway/control-plane source IPs.
+- Keep model directories owned by the service account with least-privilege permissions.
 
 ### Service won't start
 
