@@ -126,14 +126,21 @@ else
 fi
 
 ns_print_header "Waiting for gateway health"
+obs_port="${OBSERVABILITY_PORT:-}"
+if [[ -z "${obs_port}" && -f "$ENV_FILE" ]]; then
+  obs_port="$(ns_env_get "$ENV_FILE" OBSERVABILITY_PORT 8801)"
+fi
+obs_port="${obs_port:-8801}"
+obs_health_url="http://127.0.0.1:${obs_port}/health"
+
 for i in {1..60}; do
-  if curl -fsS http://127.0.0.1:8800/health >/dev/null 2>&1; then
-    ns_print_ok "Gateway health endpoint is up"
+  if curl -fsS "$obs_health_url" >/dev/null 2>&1; then
+    ns_print_ok "Gateway observability health endpoint is up (${obs_health_url})"
     break
   fi
   sleep 2
   if [[ "$i" -eq 60 ]]; then
-    ns_print_error "Gateway did not become healthy in time"
+    ns_print_error "Gateway did not become healthy in time (${obs_health_url})"
     ns_compose "${COMPOSE_ARGS[@]}" ps || true
     ns_compose "${COMPOSE_ARGS[@]}" logs --tail=120 gateway || true
     exit 1
