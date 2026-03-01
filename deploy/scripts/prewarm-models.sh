@@ -11,10 +11,11 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 CHECK_ONLY="false"
 WITH_MLX="false"
+EXTERNAL_OLLAMA="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only]
+Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only] [--external-ollama]
 
 Idempotently checks required Ollama models and pulls only missing ones.
 Required models are derived from env (or defaults):
@@ -26,6 +27,7 @@ Options:
   --env-file PATH   Env file path (default: ./.env)
   --check-only      Check/report only; do not pull missing models
   --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
+  --external-ollama Use external/native Ollama via OLLAMA_BASE_URL (no ollama container)
 EOF
 }
 
@@ -43,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       WITH_MLX="true"
       shift
       ;;
+    --external-ollama)
+      EXTERNAL_OLLAMA="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -54,8 +60,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
-COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
-COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml)
+COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
+COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.etcd.yml)
+if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.ollama.yml)
+  COMPOSE_FILES+=(docker-compose.ollama.yml)
+fi
 if [[ "$WITH_MLX" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
   COMPOSE_FILES+=(docker-compose.mlx.yml)
@@ -84,11 +94,18 @@ if ! ns_ensure_docker_daemon true; then
   ns_die "Docker daemon is not reachable"
 fi
 
-# Ensure ollama service exists and is started.
-if ! ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" ps ollama >/dev/null 2>&1; then
-  ns_die "Compose could not resolve service 'ollama'."
+ollama_base_url="${OLLAMA_BASE_URL:-$(ns_env_get "$ENV_FILE" OLLAMA_BASE_URL "http://ollama:11434") }"
+ollama_base_url="${ollama_base_url% }"
+ollama_base_url="${ollama_base_url%/}"
+ollama_tags_url="${ollama_base_url}/api/tags"
+
+if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
+  # Ensure ollama service exists and is started.
+  if ! ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" ps ollama >/dev/null 2>&1; then
+    ns_die "Compose could not resolve service 'ollama'."
+  fi
+  ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" up -d ollama >/dev/null
 fi
-ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" up -d ollama >/dev/null
 
 embeddings_model="${EMBEDDINGS_MODEL:-$(ns_env_get "$ENV_FILE" EMBEDDINGS_MODEL "nomic-embed-text")}"
 ollama_model_fast="${OLLAMA_MODEL_FAST:-$(ns_env_get "$ENV_FILE" OLLAMA_MODEL_FAST "qwen2.5:7b")}"
@@ -121,13 +138,43 @@ escape_ere() {
   printf '%s' "$1" | sed 's/[][(){}.^$*+?|\\/]/\\&/g'
 }
 
-list_output="$(ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null || true)"
+if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
+  ns_print_warn "Using external/native Ollama endpoint: ${ollama_base_url}"
+  list_output="$(curl -fsS "$ollama_tags_url" 2>/dev/null || true)"
+  if [[ -z "$list_output" ]]; then
+    ns_die "Could not reach external Ollama at ${ollama_tags_url}"
+  fi
+else
+  list_output="$(ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null || true)"
+fi
 
 model_present_in_list() {
   local model="$1"
-  local escaped
-  escaped="$(escape_ere "$model")"
-  echo "$list_output" | grep -E "^${escaped}(:[^[:space:]]+)?[[:space:]]" >/dev/null 2>&1
+  if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
+    python3 - "$model" <<'PY' <<<"$list_output"
+import json
+import sys
+
+target = sys.argv[1]
+data = sys.stdin.read()
+
+try:
+    payload = json.loads(data)
+except Exception:
+    sys.exit(1)
+
+for item in payload.get("models", []):
+    name = item.get("name", "")
+    if name == target or name.startswith(target + ":"):
+        sys.exit(0)
+
+sys.exit(1)
+PY
+  else
+    local escaped
+    escaped="$(escape_ere "$model")"
+    echo "$list_output" | grep -E "^${escaped}(:[^[:space:]]+)?[[:space:]]" >/dev/null 2>&1
+  fi
 }
 
 declare -a missing_models=()
@@ -153,10 +200,18 @@ fi
 ns_print_header "Pulling missing models"
 for model in "${missing_models[@]}"; do
   ns_print_warn "Pulling $model ..."
-  ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama pull "$model"
+  if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
+    curl -fsS -X POST "${ollama_base_url}/api/pull" -H "Content-Type: application/json" -d "{\"model\":\"${model}\"}" >/dev/null
+  else
+    ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama pull "$model"
+  fi
 done
 
-list_output="$(ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null || true)"
+if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
+  list_output="$(curl -fsS "$ollama_tags_url" 2>/dev/null || true)"
+else
+  list_output="$(ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null || true)"
+fi
 
 still_missing=0
 for model in "${required_models[@]}"; do

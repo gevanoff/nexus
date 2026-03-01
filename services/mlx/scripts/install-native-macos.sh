@@ -211,7 +211,19 @@ sudo chmod 644 "${PLIST_PATH}"
 sudo plutil -lint "${PLIST_PATH}" >/dev/null
 
 sudo launchctl bootout "system/${LAUNCHD_LABEL}" 2>/dev/null || true
-sudo launchctl bootstrap system "${PLIST_PATH}"
+sudo launchctl remove "${LAUNCHD_LABEL}" 2>/dev/null || true
+sudo rm -f "${PLIST_PATH}.bak" 2>/dev/null || true
+sudo cp "${PLIST_PATH}" "${PLIST_PATH}.bak"
+if ! sudo launchctl bootstrap system "${PLIST_PATH}"; then
+  echo "ERROR: launchctl bootstrap failed for ${LAUNCHD_LABEL}" >&2
+  echo "Try these cleanup commands, then rerun installer:" >&2
+  echo "  sudo launchctl bootout system/${LAUNCHD_LABEL} || true" >&2
+  echo "  sudo launchctl remove ${LAUNCHD_LABEL} || true" >&2
+  echo "  sudo rm -f ${PLIST_PATH}" >&2
+  echo "Current state:" >&2
+  echo "  sudo launchctl print system/${LAUNCHD_LABEL}" >&2
+  exit 1
+fi
 sudo launchctl kickstart -k "system/${LAUNCHD_LABEL}"
 
 for _ in {1..20}; do
