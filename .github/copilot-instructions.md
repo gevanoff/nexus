@@ -12,6 +12,11 @@
 - Development-host helper scripts may exist, but are not the default production/test deploy path.
 - Keep changes minimal and rooted in real deploy/runtime needs.
 
+## Migration-first backend policy
+- Nexus is the destination architecture for services previously run under `ai-infra/`.
+- When a backend exists in `ai-infra/` but is missing in Nexus, do **not** recommend running the legacy `ai-infra` service as the steady-state solution.
+- Instead, begin porting that backend into Nexus (service directory, container image, compose component, env/docs/diagnostics updates) and treat any legacy usage as temporary migration context only.
+
 ## Commit and distribution policy
 - If code updates require user changes on test/production hosts, commit and push to `origin`.
 - Do not stop at recommendations when practical code/docs updates can be completed safely.
