@@ -8,6 +8,40 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
+WITH_MLX="false"
+
+usage() {
+  cat <<'EOF'
+Usage: deploy/scripts/diagnose-gateway.sh [--env-file PATH] [--with-mlx]
+
+Diagnostics for Nexus gateway stack.
+
+Options:
+  --env-file PATH   Env file path (default: ./.env)
+  --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --env-file)
+      ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    --with-mlx)
+      WITH_MLX="true"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      ns_die "Unknown argument: $1"
+      ;;
+  esac
+done
+
 gateway_port="${GATEWAY_PORT:-}"
 obs_port="${OBSERVABILITY_PORT:-}"
 if [[ -f "${ENV_FILE}" ]]; then
@@ -44,6 +78,11 @@ ollama_model_strong="${ollama_model_strong:-qwen2.5:32b}"
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
+COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml)
+if [[ "$WITH_MLX" == "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
+  COMPOSE_FILES+=(docker-compose.mlx.yml)
+fi
 
 rc=0
 
@@ -151,7 +190,7 @@ else
 fi
 
 print_step "Compose files and stack state"
-for compose_file in docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml; do
+for compose_file in "${COMPOSE_FILES[@]}"; do
   if [[ -f "$ROOT_DIR/$compose_file" ]]; then
     ns_print_ok "Found $compose_file"
   else

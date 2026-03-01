@@ -13,6 +13,7 @@ BRANCH=""
 NO_PULL="false"
 NO_BUILD="false"
 WITH_TELEGRAM="false"
+WITH_MLX="false"
 
 usage() {
   cat <<'EOF'
@@ -30,6 +31,7 @@ Options:
   --no-pull         Skip git fetch/pull
   --no-build        Skip image rebuild (use compose up -d without --build)
   --with-telegram   Include telegram-bot component (docker-compose.telegram-bot.yml)
+  --with-mlx        Include MLX component (docker-compose.mlx.yml)
 EOF
 }
 
@@ -55,6 +57,10 @@ while [[ $# -gt 0 ]]; do
       WITH_TELEGRAM="true"
       shift
       ;;
+    --with-mlx)
+      WITH_MLX="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -68,6 +74,9 @@ done
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
 if [[ "$WITH_TELEGRAM" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.telegram-bot.yml)
+fi
+if [[ "$WITH_MLX" == "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
 fi
 
 ns_print_header "Nexus Ops: update + restart + verify"

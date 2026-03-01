@@ -484,6 +484,13 @@ ns_ensure_etcd_runtime_dirs() {
   ns_mkdir_p "${repo_root}/.runtime/etcd/data"
 }
 
+ns_ensure_mlx_runtime_dirs() {
+  # MLX service persistence (model/cache artifacts).
+  # Usage: ns_ensure_mlx_runtime_dirs <repo_root>
+  local repo_root="$1"
+  ns_mkdir_p "${repo_root}/.runtime/mlx/cache"
+}
+
 ns_ensure_runtime_dirs() {
   # Create all repo-local runtime dirs.
   # Usage: ns_ensure_runtime_dirs <repo_root>
@@ -493,6 +500,7 @@ ns_ensure_runtime_dirs() {
   ns_ensure_images_runtime_dirs "$repo_root"
   ns_ensure_tts_runtime_dirs "$repo_root"
   ns_ensure_etcd_runtime_dirs "$repo_root"
+  ns_ensure_mlx_runtime_dirs "$repo_root"
 }
 
 ns_seed_gateway_tools_registry() {
