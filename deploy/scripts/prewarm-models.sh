@@ -12,10 +12,11 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 CHECK_ONLY="false"
 WITH_MLX="false"
 EXTERNAL_OLLAMA="false"
+OLLAMA_BASE_URL_OVERRIDE="${PREWARM_OLLAMA_BASE_URL:-}"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only] [--external-ollama]
+Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only] [--external-ollama] [--ollama-base-url URL]
 
 Idempotently checks required Ollama models and pulls only missing ones.
 Required models are derived from env (or defaults):
@@ -28,6 +29,9 @@ Options:
   --check-only      Check/report only; do not pull missing models
   --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
   --external-ollama Use external/native Ollama via OLLAMA_BASE_URL (no ollama container)
+  --ollama-base-url URL
+                    Explicit URL for prewarm target (overrides OLLAMA_BASE_URL);
+                    also supported via PREWARM_OLLAMA_BASE_URL env var.
 EOF
 }
 
@@ -48,6 +52,10 @@ while [[ $# -gt 0 ]]; do
     --external-ollama)
       EXTERNAL_OLLAMA="true"
       shift
+      ;;
+    --ollama-base-url)
+      OLLAMA_BASE_URL_OVERRIDE="${2:-}"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -96,8 +104,11 @@ if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
   fi
 fi
 
-ollama_base_url="${OLLAMA_BASE_URL:-$(ns_env_get "$ENV_FILE" OLLAMA_BASE_URL "http://ollama:11434") }"
-ollama_base_url="${ollama_base_url% }"
+if [[ -n "${OLLAMA_BASE_URL_OVERRIDE:-}" ]]; then
+  ollama_base_url="$OLLAMA_BASE_URL_OVERRIDE"
+else
+  ollama_base_url="${OLLAMA_BASE_URL:-$(ns_env_get "$ENV_FILE" OLLAMA_BASE_URL "http://ollama:11434")}"
+fi
 ollama_base_url="${ollama_base_url%/}"
 ollama_tags_url="${ollama_base_url}/api/tags"
 
@@ -143,6 +154,18 @@ escape_ere() {
 if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
   ns_print_warn "Using external/native Ollama endpoint: ${ollama_base_url}"
   list_output="$(curl -fsS "$ollama_tags_url" 2>/dev/null || true)"
+  if [[ -z "$list_output" ]]; then
+    fallback_base_url="${ollama_base_url/host.docker.internal/127.0.0.1}"
+    if [[ "$fallback_base_url" != "$ollama_base_url" ]]; then
+      ns_print_warn "Retrying external Ollama endpoint using host-local fallback: ${fallback_base_url}"
+      fallback_tags_url="${fallback_base_url}/api/tags"
+      list_output="$(curl -fsS "$fallback_tags_url" 2>/dev/null || true)"
+      if [[ -n "$list_output" ]]; then
+        ollama_base_url="$fallback_base_url"
+        ollama_tags_url="$fallback_tags_url"
+      fi
+    fi
+  fi
   if [[ -z "$list_output" ]]; then
     ns_die "Could not reach external Ollama at ${ollama_tags_url}"
   fi
