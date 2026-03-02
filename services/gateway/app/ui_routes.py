@@ -2872,6 +2872,47 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                 }
             )
         backends.append(entry)
+
+    telegram_entry: Dict[str, Any] = {
+        "backend_class": "telegram_bot",
+        "capabilities": ["bridge"],
+    }
+    telegram_token = (os.getenv("TELEGRAM_TOKEN") or "").strip()
+    if not telegram_token:
+        telegram_entry.update(
+            {
+                "healthy": False,
+                "ready": False,
+                "error": "TELEGRAM_TOKEN not configured",
+            }
+        )
+    else:
+        telegram_api_url = f"https://api.telegram.org/bot{telegram_token}/getMe"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(telegram_api_url)
+            payload = resp.json() if resp.content else {}
+            ok = bool(resp.status_code == 200 and isinstance(payload, dict) and payload.get("ok") is True)
+            telegram_entry.update(
+                {
+                    "healthy": ok,
+                    "ready": ok,
+                    "last_check": time.time(),
+                }
+            )
+            if not ok:
+                telegram_entry["error"] = f"telegram getMe failed (status {resp.status_code})"
+        except Exception as e:
+            telegram_entry.update(
+                {
+                    "healthy": False,
+                    "ready": False,
+                    "last_check": time.time(),
+                    "error": f"telegram check failed: {type(e).__name__}: {e}",
+                }
+            )
+    backends.append(telegram_entry)
+
     backends.sort(key=lambda item: item.get("backend_class") or "")
     return {"generated_at": time.time(), "backends": backends}
 
