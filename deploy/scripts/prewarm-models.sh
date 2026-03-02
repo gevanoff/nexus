@@ -86,12 +86,14 @@ ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
 
 ns_print_header "Prewarm Ollama models"
 
-ns_require_cmd docker || exit 1
-if ! ns_compose_available; then
-  ns_die "Docker Compose is not available"
-fi
-if ! ns_ensure_docker_daemon true; then
-  ns_die "Docker daemon is not reachable"
+if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
+  ns_require_cmd docker || exit 1
+  if ! ns_compose_available; then
+    ns_die "Docker Compose is not available"
+  fi
+  if ! ns_ensure_docker_daemon true; then
+    ns_die "Docker daemon is not reachable"
+  fi
 fi
 
 ollama_base_url="${OLLAMA_BASE_URL:-$(ns_env_get "$ENV_FILE" OLLAMA_BASE_URL "http://ollama:11434") }"
