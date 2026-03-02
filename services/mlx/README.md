@@ -58,6 +58,18 @@ Installer prerequisites:
 MLX_PYTHON=/opt/homebrew/bin/python3.12 ./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
 ```
 
+Prewarm MLX runtime/model (recommended after install or restart):
+
+```bash
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1
+```
+
+Gateway integration pattern:
+
+- Run MLX host-native on Apple Silicon (`127.0.0.1:10240/v1` on the MLX host).
+- Set `MLX_BASE_URL` in `nexus/.env` to the host URL that Gateway containers can reach (for same-machine Docker Desktop, `http://host.docker.internal:10240/v1`).
+- Gateway uses this backend for chat/embeddings when routing selects backend class `local_mlx`.
+
 ## Troubleshooting Restart Loops
 
 1. Remove `-f docker-compose.mlx.yml` from your compose invocation on Linux/Windows hosts.

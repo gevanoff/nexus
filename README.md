@@ -170,6 +170,8 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: host-local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
+- `deploy/scripts/prewarm-models.sh`: prewarm Ollama models (container or host-native mode)
+- `deploy/scripts/prewarm-mlx.sh`: prewarm MLX model runtime (host-native recommended)
 - `services/ollama/scripts/install-native-macos.sh`: install/manage host-native Ollama (launchd)
 - `services/mlx/scripts/install-native-macos.sh`: install/manage host-native MLX (launchd)
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register service metadata in etcd
