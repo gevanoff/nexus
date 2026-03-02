@@ -1,0 +1,42 @@
+services:
+  # Qwen3-TTS Service - OpenAI-compatible TTS shim
+  # Shared host paths:
+  # - ./.runtime/qwen3-tts/data is Qwen3-TTS state/cache/workdir
+  qwen3-tts:
+    build:
+      context: ./services/qwen3-tts
+      dockerfile: Dockerfile
+    container_name: nexus-qwen3-tts
+    ports:
+      - "${QWEN3_TTS_PORT:-9175}:9175"
+    environment:
+      - QWEN3_TTS_HOST=0.0.0.0
+      - QWEN3_TTS_PORT=9175
+      - QWEN3_TTS_MODEL=${QWEN3_TTS_MODEL:-qwen3-tts}
+      - QWEN3_TTS_OUTPUT_FORMAT=${QWEN3_TTS_OUTPUT_FORMAT:-wav}
+      - QWEN3_TTS_UPSTREAM_BASE_URL=${QWEN3_TTS_UPSTREAM_BASE_URL:-}
+      - QWEN3_TTS_UPSTREAM_ENDPOINT=${QWEN3_TTS_UPSTREAM_ENDPOINT:-/v1/audio/speech}
+      - QWEN3_TTS_RUN_COMMAND=${QWEN3_TTS_RUN_COMMAND:-}
+      - QWEN3_TTS_TIMEOUT_SEC=${QWEN3_TTS_TIMEOUT_SEC:-120}
+      - QWEN3_TTS_READYZ_TIMEOUT_SEC=${QWEN3_TTS_READYZ_TIMEOUT_SEC:-20}
+      - QWEN3_TTS_WORKDIR=${QWEN3_TTS_WORKDIR:-/var/lib/qwen3-tts/app}
+    volumes:
+      - ./.runtime/qwen3-tts/data:/var/lib/qwen3-tts
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9175/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

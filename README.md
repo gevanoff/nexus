@@ -291,6 +291,16 @@ Nexus includes the following services:
 - Streaming audio output
 - **Port**: 9940
 
+### LuxTTS (`services/luxtts/`)
+- OpenAI-compatible LuxTTS shim
+- Proxy/subprocess runtime modes
+- **Port**: 9170
+
+### Qwen3-TTS (`services/qwen3-tts/`)
+- OpenAI-compatible Qwen3-TTS shim
+- Proxy/subprocess runtime modes
+- **Port**: 9175
+
 ### Telegram Bot (`services/telegram-bot/`)
 - Telegram chat bridge into Gateway endpoints
 - Uses `TELEGRAM_TOKEN` and `GATEWAY_BEARER_TOKEN` from `.env`

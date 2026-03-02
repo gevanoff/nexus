@@ -85,7 +85,7 @@ backends:
 
   pocket_tts:
     class: pocket_tts
-    base_url: http://ai2:9940
+    base_url: ${POCKET_TTS_BASE_URL}
     description: Pocket TTS backend
     supported_capabilities:
       - tts
@@ -98,7 +98,7 @@ backends:
 
   qwen3_tts:
     class: qwen3_tts
-    base_url: http://ai2:9175
+    base_url: ${QWEN3_TTS_BASE_URL}
     description: Qwen3-TTS shim
     supported_capabilities:
       - tts
@@ -157,7 +157,7 @@ backends:
 
   luxtts:
     class: luxtts
-    base_url: http://ai2:9170
+    base_url: ${LUXTTS_BASE_URL}
     description: LuxTTS shim
     supported_capabilities:
       - tts

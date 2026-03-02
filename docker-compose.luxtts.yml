@@ -1,0 +1,42 @@
+services:
+  # LuxTTS Service - OpenAI-compatible TTS shim
+  # Shared host paths:
+  # - ./.runtime/luxtts/data is LuxTTS state/cache/workdir
+  luxtts:
+    build:
+      context: ./services/luxtts
+      dockerfile: Dockerfile
+    container_name: nexus-luxtts
+    ports:
+      - "${LUXTTS_PORT:-9170}:9170"
+    environment:
+      - LUXTTS_HOST=0.0.0.0
+      - LUXTTS_PORT=9170
+      - LUXTTS_MODEL=${LUXTTS_MODEL:-luxtts}
+      - LUXTTS_OUTPUT_FORMAT=${LUXTTS_OUTPUT_FORMAT:-wav}
+      - LUXTTS_UPSTREAM_BASE_URL=${LUXTTS_UPSTREAM_BASE_URL:-}
+      - LUXTTS_UPSTREAM_ENDPOINT=${LUXTTS_UPSTREAM_ENDPOINT:-/v1/audio/speech}
+      - LUXTTS_RUN_COMMAND=${LUXTTS_RUN_COMMAND:-}
+      - LUXTTS_TIMEOUT_SEC=${LUXTTS_TIMEOUT_SEC:-120}
+      - LUXTTS_READYZ_TIMEOUT_SEC=${LUXTTS_READYZ_TIMEOUT_SEC:-20}
+      - LUXTTS_WORKDIR=${LUXTTS_WORKDIR:-/var/lib/luxtts/app}
+    volumes:
+      - ./.runtime/luxtts/data:/var/lib/luxtts
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9170/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

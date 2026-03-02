@@ -58,6 +58,20 @@ Each service is:
 - **Status**: ✅ Implemented (Pocket TTS shim)
 - **Documentation**: [tts/README.md](tts/README.md)
 
+#### LuxTTS (`luxtts/`)
+- **Purpose**: LuxTTS OpenAI-compatible shim
+- **Port**: 9170
+- **Capabilities**: Audio generation from text
+- **Status**: 🚧 Containerized shim ported from `ai-infra`
+- **Documentation**: [luxtts/README.md](luxtts/README.md)
+
+#### Qwen3-TTS (`qwen3-tts/`)
+- **Purpose**: Qwen3-TTS OpenAI-compatible shim
+- **Port**: 9175
+- **Capabilities**: Audio generation from text
+- **Status**: 🚧 Containerized shim ported from `ai-infra`
+- **Documentation**: [qwen3-tts/README.md](qwen3-tts/README.md)
+
 #### Telegram Bot (`telegram-bot/`)
 - **Purpose**: Telegram chat interface for Gateway
 - **Capabilities**: Chat, image, speech, and music command forwarding via Gateway APIs

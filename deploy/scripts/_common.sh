@@ -475,6 +475,8 @@ ns_ensure_tts_runtime_dirs() {
   # Usage: ns_ensure_tts_runtime_dirs <repo_root>
   local repo_root="$1"
   ns_mkdir_p "${repo_root}/.runtime/tts/data"
+  ns_mkdir_p "${repo_root}/.runtime/luxtts/data"
+  ns_mkdir_p "${repo_root}/.runtime/qwen3-tts/data"
 }
 
 ns_ensure_etcd_runtime_dirs() {

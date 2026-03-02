@@ -17,6 +17,8 @@ Base component files (production-ish defaults):
 - `docker-compose.etcd.yml`
 - `docker-compose.images.yml`
 - `docker-compose.tts.yml`
+- `docker-compose.luxtts.yml`
+- `docker-compose.qwen3-tts.yml`
 - `docker-compose.telegram-bot.yml`
 
 Dev overrides (optional, layer on top):

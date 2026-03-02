@@ -1,0 +1,303 @@
+import asyncio
+import json
+import os
+import tempfile
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import httpx
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse, StreamingResponse
+
+
+app = FastAPI(title="LuxTTS Shim", version="0.1")
+
+
+def _env(name: str, default: Optional[str] = None) -> Optional[str]:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    value = value.strip()
+    return value if value else default
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = _env(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _now() -> int:
+    return int(time.time())
+
+
+def _upstream_base_url() -> Optional[str]:
+    url = _env("LUXTTS_UPSTREAM_BASE_URL")
+    if not url:
+        return None
+    return url.rstrip("/")
+
+
+def _upstream_endpoint() -> str:
+    return _env("LUXTTS_UPSTREAM_ENDPOINT", "/v1/audio/speech") or "/v1/audio/speech"
+
+
+def _run_command() -> Optional[str]:
+    cmd = _env("LUXTTS_RUN_COMMAND")
+    return cmd
+
+
+def _timeout_sec() -> int:
+    return _int_env("LUXTTS_TIMEOUT_SEC", 120)
+
+
+def _readyz_timeout_sec() -> int:
+    return _int_env("LUXTTS_READYZ_TIMEOUT_SEC", 20)
+
+
+def _workdir() -> str:
+    return _env("LUXTTS_WORKDIR", "/var/lib/luxtts/app") or "/var/lib/luxtts/app"
+
+
+def _model_id() -> str:
+    return _env("LUXTTS_MODEL", "luxtts") or "luxtts"
+
+
+def _output_format() -> str:
+    return _env("LUXTTS_OUTPUT_FORMAT", "wav") or "wav"
+
+
+def _readyz_input() -> str:
+    return _env("LUXTTS_READYZ_INPUT", "readyz") or "readyz"
+
+
+def _readyz_voice() -> str:
+    return _env("LUXTTS_READYZ_VOICE", "alloy") or "alloy"
+
+
+@app.get("/health")
+def health() -> Dict[str, Any]:
+    return {"ok": True, "time": _now(), "service": "luxtts-shim"}
+
+
+@app.get("/healthz")
+def healthz() -> Dict[str, Any]:
+    return health()
+
+
+@app.get("/v1/models")
+def models() -> Dict[str, Any]:
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": _model_id(),
+                "object": "model",
+                "owned_by": "luxtts",
+            }
+        ],
+    }
+
+
+@app.post("/v1/audio/speech")
+async def audio_speech(payload: Dict[str, Any]) -> Any:
+    upstream = _upstream_base_url()
+    if upstream:
+        timeout = httpx.Timeout(connect=10.0, read=float(_timeout_sec()), write=10.0, pool=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(f"{upstream}{_upstream_endpoint()}", json=payload)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            return StreamingResponse(resp.aiter_bytes(), media_type=resp.headers.get("content-type", "audio/wav"))
+
+    cmd = _run_command()
+    if not cmd:
+        raise HTTPException(
+            status_code=501,
+            detail="LUXTTS_UPSTREAM_BASE_URL not set and LUXTTS_RUN_COMMAND not set; shim cannot synthesize audio.",
+        )
+
+    job_id = f"luxtts_{uuid.uuid4().hex}"
+    with tempfile.TemporaryDirectory(prefix="luxtts-") as tmpdir:
+        workdir = Path(tmpdir)
+        request_json_path = workdir / "request.json"
+        output_path = workdir / f"output.{_output_format()}"
+        request_json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        env = os.environ.copy()
+        env["LUXTTS_JOB_ID"] = job_id
+        env["LUXTTS_REQUEST_JSON"] = str(request_json_path)
+        env["LUXTTS_OUTPUT_PATH"] = str(output_path)
+
+        proc = await asyncio.create_subprocess_exec(
+            "/bin/bash",
+            "-lc",
+            cmd,
+            cwd=_workdir(),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=float(_timeout_sec()))
+        except TimeoutError:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=10.0)
+            except TimeoutError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "error": "luxtts subprocess timed out",
+                    "job_id": job_id,
+                    "timeout_sec": _timeout_sec(),
+                },
+            )
+
+        if proc.returncode != 0:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "luxtts subprocess failed",
+                    "returncode": proc.returncode,
+                    "stdout": (stdout_bytes or b"").decode(errors="ignore")[-4000:],
+                    "stderr": (stderr_bytes or b"").decode(errors="ignore")[-4000:],
+                },
+            )
+
+        if not output_path.exists():
+            raise HTTPException(status_code=502, detail="LUXTTS_OUTPUT_PATH not written by subprocess.")
+
+        return StreamingResponse(output_path.open("rb"), media_type="audio/wav")
+
+
+@app.get("/readyz")
+async def readyz() -> JSONResponse:
+    upstream = _upstream_base_url()
+    if upstream:
+        timeout = httpx.Timeout(connect=5.0, read=5.0, write=5.0, pool=5.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(f"{upstream}/v1/models")
+            if resp.status_code < 400:
+                return JSONResponse(status_code=200, content={"ok": True, "mode": "upstream"})
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "ok": False,
+                    "reason": "upstream_probe_failed",
+                    "detail": f"Upstream /v1/models returned {resp.status_code}",
+                },
+            )
+        except httpx.HTTPError as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "ok": False,
+                    "reason": "upstream_probe_failed",
+                    "detail": f"Upstream probe error: {exc}",
+                },
+            )
+
+    cmd = _run_command()
+    if cmd:
+        payload = {
+            "model": _model_id(),
+            "input": _readyz_input(),
+            "voice": _readyz_voice(),
+            "response_format": _output_format(),
+        }
+        job_id = f"luxtts_readyz_{uuid.uuid4().hex}"
+        with tempfile.TemporaryDirectory(prefix="luxtts-readyz-") as tmpdir:
+            workdir = Path(tmpdir)
+            request_json_path = workdir / "request.json"
+            output_path = workdir / f"output.{_output_format()}"
+            request_json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            env = os.environ.copy()
+            env["LUXTTS_JOB_ID"] = job_id
+            env["LUXTTS_REQUEST_JSON"] = str(request_json_path)
+            env["LUXTTS_OUTPUT_PATH"] = str(output_path)
+
+            proc = await asyncio.create_subprocess_exec(
+                "/bin/bash",
+                "-lc",
+                cmd,
+                cwd=_workdir(),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=float(_readyz_timeout_sec()),
+                )
+            except TimeoutError:
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=10.0)
+                except TimeoutError:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "ok": False,
+                        "reason": "run_command_timeout",
+                        "detail": f"Readyz run_command timed out after {_readyz_timeout_sec()}s",
+                    },
+                )
+
+            if proc.returncode != 0:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "ok": False,
+                        "reason": "run_command_failed",
+                        "detail": {
+                            "returncode": proc.returncode,
+                            "stdout": (stdout_bytes or b"").decode(errors="ignore")[-4000:],
+                            "stderr": (stderr_bytes or b"").decode(errors="ignore")[-4000:],
+                        },
+                    },
+                )
+
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "ok": False,
+                        "reason": "run_command_no_output",
+                        "detail": "Readyz run_command did not produce output.",
+                    },
+                )
+
+            return JSONResponse(status_code=200, content={"ok": True, "mode": "run_command"})
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "ok": False,
+            "reason": "missing_configuration",
+            "detail": "Set LUXTTS_UPSTREAM_BASE_URL or LUXTTS_RUN_COMMAND.",
+        },
+    )
