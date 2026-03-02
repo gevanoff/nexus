@@ -11,7 +11,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 CHECK_ONLY="false"
 MLX_BASE_URL_OVERRIDE="${PREWARM_MLX_BASE_URL:-}"
-WARMUP_TIMEOUT_SEC="${MLX_WARMUP_TIMEOUT_SEC:-180}"
+WARMUP_TIMEOUT_SEC="${MLX_WARMUP_TIMEOUT_SEC:-0}"
 FROM_ALIASES="false"
 ALIASES_FILE="${ROOT_DIR}/.runtime/gateway/config/model_aliases.json"
 
@@ -34,7 +34,8 @@ Options:
   --model MODEL       Explicit model id/path for warmup request (repeatable)
   --from-aliases      Include all backend=mlx models from model_aliases.json
   --aliases-file PATH Alias config path (default: ./.runtime/gateway/config/model_aliases.json)
-  --timeout-sec N     Curl timeout in seconds for warmup request (default: 180)
+  --timeout-sec N     Curl timeout in seconds for each warmup request.
+                    Use 0 for no timeout (default: 0)
 EOF
 }
 
@@ -215,6 +216,16 @@ warmup_url="${mlx_base_url}/chat/completions"
 
 for mlx_model in "${models_to_warm[@]}"; do
   warmup_payload="{\"model\":\"${mlx_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1,\"temperature\":0}"
+  if [[ "$WARMUP_TIMEOUT_SEC" == "0" ]]; then
+    ns_print_warn "Sending warmup request for ${mlx_model} to ${warmup_url} (timeout disabled)"
+    if curl -fsS -X POST "$warmup_url" -H "Content-Type: application/json" -d "$warmup_payload" >/dev/null; then
+      ns_print_ok "MLX warmup request succeeded: ${mlx_model}"
+    else
+      ns_die "MLX warmup request failed: ${mlx_model}"
+    fi
+    continue
+  fi
+
   ns_print_warn "Sending warmup request for ${mlx_model} to ${warmup_url} (timeout ${WARMUP_TIMEOUT_SEC}s)"
   if curl -fsS --max-time "$WARMUP_TIMEOUT_SEC" -X POST "$warmup_url" -H "Content-Type: application/json" -d "$warmup_payload" >/dev/null; then
     ns_print_ok "MLX warmup request succeeded: ${mlx_model}"

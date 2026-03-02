@@ -72,6 +72,12 @@ Prewarm MLX runtime/model (recommended after install or restart):
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1
 ```
 
+For very large first-time model downloads/warmups, keep timeout disabled (default):
+
+```bash
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --timeout-sec 0
+```
+
 Prewarm from Gateway alias config (`.runtime/gateway/config/model_aliases.json`):
 
 ```bash
@@ -84,6 +90,7 @@ Notes:
 - `prewarm-mlx.sh --from-aliases` warms every unique alias with `"backend": "mlx"`.
 - `prewarm-models.sh --from-aliases` checks/pulls every unique alias with `"backend": "ollama"`.
 - Both scripts also support `--aliases-file <path>` to point at a non-default alias file.
+- `prewarm-mlx.sh` uses `--timeout-sec 0` by default (no timeout), which is recommended for large model first-run warmups.
 
 Gateway integration pattern:
 
