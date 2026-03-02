@@ -72,6 +72,19 @@ Prewarm MLX runtime/model (recommended after install or restart):
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1
 ```
 
+Prewarm from Gateway alias config (`.runtime/gateway/config/model_aliases.json`):
+
+```bash
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --from-aliases
+./deploy/scripts/prewarm-models.sh --external-ollama --from-aliases
+```
+
+Notes:
+
+- `prewarm-mlx.sh --from-aliases` warms every unique alias with `"backend": "mlx"`.
+- `prewarm-models.sh --from-aliases` checks/pulls every unique alias with `"backend": "ollama"`.
+- Both scripts also support `--aliases-file <path>` to point at a non-default alias file.
+
 Gateway integration pattern:
 
 - Run MLX host-native on Apple Silicon (`127.0.0.1:10240/v1` on the MLX host).

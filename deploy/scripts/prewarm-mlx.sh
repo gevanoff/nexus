@@ -11,12 +11,15 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 CHECK_ONLY="false"
 MLX_BASE_URL_OVERRIDE="${PREWARM_MLX_BASE_URL:-}"
-MLX_MODEL_OVERRIDE=""
 WARMUP_TIMEOUT_SEC="${MLX_WARMUP_TIMEOUT_SEC:-180}"
+FROM_ALIASES="false"
+ALIASES_FILE="${ROOT_DIR}/.runtime/gateway/config/model_aliases.json"
+
+declare -a MLX_MODEL_OVERRIDES=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/prewarm-mlx.sh [--env-file PATH] [--check-only] [--mlx-base-url URL] [--model MODEL] [--timeout-sec N]
+Usage: deploy/scripts/prewarm-mlx.sh [--env-file PATH] [--check-only] [--mlx-base-url URL] [--model MODEL] [--from-aliases] [--aliases-file PATH] [--timeout-sec N]
 
 Checks MLX availability and optionally sends a minimal warmup generation request.
 Defaults are derived from env:
@@ -28,9 +31,23 @@ Options:
   --check-only        Check/report only; do not send warmup request
   --mlx-base-url URL  Explicit MLX URL (overrides MLX_BASE_URL);
                       also supported via PREWARM_MLX_BASE_URL env var.
-  --model MODEL       Explicit model id/path for warmup request
+  --model MODEL       Explicit model id/path for warmup request (repeatable)
+  --from-aliases      Include all backend=mlx models from model_aliases.json
+  --aliases-file PATH Alias config path (default: ./.runtime/gateway/config/model_aliases.json)
   --timeout-sec N     Curl timeout in seconds for warmup request (default: 180)
 EOF
+}
+
+add_unique_model() {
+  local candidate="$1"
+  [[ -n "${candidate:-}" ]] || return 0
+  local existing
+  for existing in "${models_to_warm[@]:-}"; do
+    if [[ "$existing" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  models_to_warm+=("$candidate")
 }
 
 while [[ $# -gt 0 ]]; do
@@ -48,7 +65,16 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --model)
-      MLX_MODEL_OVERRIDE="${2:-}"
+      MLX_MODEL_OVERRIDES+=("${2:-}")
+      shift 2
+      ;;
+    --from-aliases)
+      FROM_ALIASES="true"
+      shift
+      ;;
+    --aliases-file)
+      ALIASES_FILE="${2:-}"
+      FROM_ALIASES="true"
       shift 2
       ;;
     --timeout-sec)
@@ -84,17 +110,51 @@ else
 fi
 mlx_base_url="${mlx_base_url%/}"
 
-if [[ -n "${MLX_MODEL_OVERRIDE:-}" ]]; then
-  mlx_model="$MLX_MODEL_OVERRIDE"
+declare -a models_to_warm=()
+
+if [[ "${#MLX_MODEL_OVERRIDES[@]}" -gt 0 ]]; then
+  for explicit_model in "${MLX_MODEL_OVERRIDES[@]}"; do
+    add_unique_model "$explicit_model"
+  done
 else
-  mlx_model="${MLX_MODEL_PATH:-$(ns_env_get "$ENV_FILE" MLX_MODEL_PATH "mlx-community/gemma-2-2b-it-8bit")}"
+  add_unique_model "${MLX_MODEL_PATH:-$(ns_env_get "$ENV_FILE" MLX_MODEL_PATH "mlx-community/gemma-2-2b-it-8bit")}"
+fi
+
+if [[ "$FROM_ALIASES" == "true" ]]; then
+  if [[ ! -f "$ALIASES_FILE" ]]; then
+    ns_die "Alias file not found: $ALIASES_FILE"
+  fi
+  while IFS= read -r alias_model; do
+    add_unique_model "$alias_model"
+  done < <(python3 - "$ALIASES_FILE" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+for alias in payload.get("aliases", {}).values():
+    if not isinstance(alias, dict):
+        continue
+    if alias.get("backend") != "mlx":
+        continue
+    model = str(alias.get("model", "")).strip()
+    if model:
+        print(model)
+PY
+)
+fi
+
+if [[ "${#models_to_warm[@]}" -eq 0 ]]; then
+  ns_die "No MLX models resolved from options, aliases, or environment"
 fi
 
 models_url="${mlx_base_url}/models"
 
 ns_print_header "Prewarm MLX"
 echo "MLX base URL: ${mlx_base_url}"
-echo "MLX model: ${mlx_model}"
+echo "MLX models: ${models_to_warm[*]}"
 
 models_json="$(curl -fsS "$models_url" 2>/dev/null || true)"
 if [[ -z "$models_json" ]]; then
@@ -138,11 +198,13 @@ sys.exit(1)
 PY
 }
 
-if model_present "$mlx_model" "$models_json"; then
-  ns_print_ok "MLX model is advertised: ${mlx_model}"
-else
-  ns_print_warn "MLX model not listed in /models yet: ${mlx_model}"
-fi
+for mlx_model in "${models_to_warm[@]}"; do
+  if model_present "$mlx_model" "$models_json"; then
+    ns_print_ok "MLX model is advertised: ${mlx_model}"
+  else
+    ns_print_warn "MLX model not listed in /models yet: ${mlx_model}"
+  fi
+done
 
 if [[ "$CHECK_ONLY" == "true" ]]; then
   ns_print_ok "Check-only mode complete"
@@ -150,11 +212,13 @@ if [[ "$CHECK_ONLY" == "true" ]]; then
 fi
 
 warmup_url="${mlx_base_url}/chat/completions"
-warmup_payload="{\"model\":\"${mlx_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1,\"temperature\":0}"
 
-ns_print_warn "Sending warmup request to ${warmup_url} (timeout ${WARMUP_TIMEOUT_SEC}s)"
-if curl -fsS --max-time "$WARMUP_TIMEOUT_SEC" -X POST "$warmup_url" -H "Content-Type: application/json" -d "$warmup_payload" >/dev/null; then
-  ns_print_ok "MLX warmup request succeeded"
-else
-  ns_die "MLX warmup request failed"
-fi
+for mlx_model in "${models_to_warm[@]}"; do
+  warmup_payload="{\"model\":\"${mlx_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1,\"temperature\":0}"
+  ns_print_warn "Sending warmup request for ${mlx_model} to ${warmup_url} (timeout ${WARMUP_TIMEOUT_SEC}s)"
+  if curl -fsS --max-time "$WARMUP_TIMEOUT_SEC" -X POST "$warmup_url" -H "Content-Type: application/json" -d "$warmup_payload" >/dev/null; then
+    ns_print_ok "MLX warmup request succeeded: ${mlx_model}"
+  else
+    ns_die "MLX warmup request failed: ${mlx_model}"
+  fi
+done

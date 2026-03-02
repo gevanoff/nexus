@@ -14,10 +14,12 @@ WITH_MLX="false"
 EXTERNAL_OLLAMA="false"
 OLLAMA_BASE_URL_OVERRIDE="${PREWARM_OLLAMA_BASE_URL:-}"
 EXTERNAL_OLLAMA_SET="false"
+FROM_ALIASES="false"
+ALIASES_FILE="${ROOT_DIR}/.runtime/gateway/config/model_aliases.json"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only] [--external-ollama] [--ollama-base-url URL]
+Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only] [--external-ollama] [--ollama-base-url URL] [--model MODEL] [--from-aliases] [--aliases-file PATH]
 
 Idempotently checks required Ollama models and pulls only missing ones.
 Required models are derived from env (or defaults):
@@ -33,8 +35,14 @@ Options:
   --ollama-base-url URL
                     Explicit URL for prewarm target (overrides OLLAMA_BASE_URL);
                     also supported via PREWARM_OLLAMA_BASE_URL env var.
+  --model MODEL     Add an explicit model to warm/check (repeatable)
+  --from-aliases    Include all backend=ollama models from model_aliases.json
+  --aliases-file PATH
+                    Alias config path (default: ./.runtime/gateway/config/model_aliases.json)
 EOF
 }
+
+declare -a EXPLICIT_MODELS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -57,6 +65,19 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ollama-base-url)
       OLLAMA_BASE_URL_OVERRIDE="${2:-}"
+      shift 2
+      ;;
+    --model)
+      EXPLICIT_MODELS+=("${2:-}")
+      shift 2
+      ;;
+    --from-aliases)
+      FROM_ALIASES="true"
+      shift
+      ;;
+    --aliases-file)
+      ALIASES_FILE="${2:-}"
+      FROM_ALIASES="true"
       shift 2
       ;;
     -h|--help)
@@ -116,6 +137,10 @@ else
   ns_require_cmd python3 || exit 1
 fi
 
+if [[ "$FROM_ALIASES" == "true" ]]; then
+  ns_require_cmd python3 || exit 1
+fi
+
 if [[ -n "${OLLAMA_BASE_URL_OVERRIDE:-}" ]]; then
   ollama_base_url="$OLLAMA_BASE_URL_OVERRIDE"
 else
@@ -152,6 +177,36 @@ add_unique_model() {
 add_unique_model "$embeddings_model"
 add_unique_model "$ollama_model_fast"
 add_unique_model "$ollama_model_strong"
+
+for explicit_model in "${EXPLICIT_MODELS[@]:-}"; do
+  add_unique_model "$explicit_model"
+done
+
+if [[ "$FROM_ALIASES" == "true" ]]; then
+  if [[ ! -f "$ALIASES_FILE" ]]; then
+    ns_die "Alias file not found: $ALIASES_FILE"
+  fi
+  while IFS= read -r alias_model; do
+    add_unique_model "$alias_model"
+  done < <(python3 - "$ALIASES_FILE" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+for alias in payload.get("aliases", {}).values():
+    if not isinstance(alias, dict):
+        continue
+    if alias.get("backend") != "ollama":
+        continue
+    model = str(alias.get("model", "")).strip()
+    if model:
+        print(model)
+PY
+)
+fi
 
 if [[ "${#required_models[@]}" -eq 0 ]]; then
   ns_die "No required models were resolved from environment/defaults"
