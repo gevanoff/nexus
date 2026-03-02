@@ -16,10 +16,10 @@ services:
       - QWEN3_TTS_OUTPUT_FORMAT=${QWEN3_TTS_OUTPUT_FORMAT:-wav}
       - QWEN3_TTS_UPSTREAM_BASE_URL=${QWEN3_TTS_UPSTREAM_BASE_URL:-}
       - QWEN3_TTS_UPSTREAM_ENDPOINT=${QWEN3_TTS_UPSTREAM_ENDPOINT:-/v1/audio/speech}
-      - QWEN3_TTS_RUN_COMMAND=${QWEN3_TTS_RUN_COMMAND:-}
+      - QWEN3_TTS_RUN_COMMAND=${QWEN3_TTS_RUN_COMMAND:-python /app/app/scripts/run_qwen3_tts.py}
       - QWEN3_TTS_TIMEOUT_SEC=${QWEN3_TTS_TIMEOUT_SEC:-120}
       - QWEN3_TTS_READYZ_TIMEOUT_SEC=${QWEN3_TTS_READYZ_TIMEOUT_SEC:-20}
-      - QWEN3_TTS_WORKDIR=${QWEN3_TTS_WORKDIR:-/var/lib/qwen3-tts/app}
+      - QWEN3_TTS_WORKDIR=${QWEN3_TTS_WORKDIR:-/app}
     volumes:
       - ./.runtime/qwen3-tts/data:/var/lib/qwen3-tts
     networks:

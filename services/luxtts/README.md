@@ -18,6 +18,7 @@ OpenAI-compatible LuxTTS shim for Nexus (`POST /v1/audio/speech`).
 
 - Env template: `env/luxtts.env.example`
 - Port: `9170`
+- Container-native default: baked-in `LUXTTS_RUN_COMMAND=python /app/app/scripts/run_luxtts.py`
 
 Readiness behavior:
 

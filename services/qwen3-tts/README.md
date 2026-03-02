@@ -18,6 +18,7 @@ OpenAI-compatible Qwen3-TTS shim for Nexus (`POST /v1/audio/speech`).
 
 - Env template: `env/qwen3-tts.env.example`
 - Port: `9175`
+- Container-native default: baked-in `QWEN3_TTS_RUN_COMMAND=python /app/app/scripts/run_qwen3_tts.py`
 
 Readiness behavior:
 

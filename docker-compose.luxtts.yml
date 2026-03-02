@@ -16,10 +16,10 @@ services:
       - LUXTTS_OUTPUT_FORMAT=${LUXTTS_OUTPUT_FORMAT:-wav}
       - LUXTTS_UPSTREAM_BASE_URL=${LUXTTS_UPSTREAM_BASE_URL:-}
       - LUXTTS_UPSTREAM_ENDPOINT=${LUXTTS_UPSTREAM_ENDPOINT:-/v1/audio/speech}
-      - LUXTTS_RUN_COMMAND=${LUXTTS_RUN_COMMAND:-}
+      - LUXTTS_RUN_COMMAND=${LUXTTS_RUN_COMMAND:-python /app/app/scripts/run_luxtts.py}
       - LUXTTS_TIMEOUT_SEC=${LUXTTS_TIMEOUT_SEC:-120}
       - LUXTTS_READYZ_TIMEOUT_SEC=${LUXTTS_READYZ_TIMEOUT_SEC:-20}
-      - LUXTTS_WORKDIR=${LUXTTS_WORKDIR:-/var/lib/luxtts/app}
+      - LUXTTS_WORKDIR=${LUXTTS_WORKDIR:-/app}
     volumes:
       - ./.runtime/luxtts/data:/var/lib/luxtts
     networks:
