@@ -75,6 +75,10 @@ services/*/.env
 services/*/env/
 !services/mlx/env/
 !services/mlx/env/*.example
+!services/luxtts/env/
+!services/luxtts/env/*.example
+!services/qwen3-tts/env/
+!services/qwen3-tts/env/*.example
 
 # Testing
 .pytest_cache/
