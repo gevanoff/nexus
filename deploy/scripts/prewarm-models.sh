@@ -112,6 +112,8 @@ if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
   if ! ns_ensure_docker_daemon true; then
     ns_die "Docker daemon is not reachable"
   fi
+else
+  ns_require_cmd python3 || exit 1
 fi
 
 if [[ -n "${OLLAMA_BASE_URL_OVERRIDE:-}" ]]; then
@@ -186,12 +188,12 @@ fi
 model_present_in_list() {
   local model="$1"
   if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
-    python3 - "$model" <<'PY' <<<"$list_output"
+  python3 - "$model" "$list_output" <<'PY'
 import json
 import sys
 
 target = sys.argv[1]
-data = sys.stdin.read()
+data = sys.argv[2]
 
 try:
     payload = json.loads(data)
