@@ -1,6 +1,6 @@
-# TTS Service
+# Pocket TTS Service (`services/tts`)
 
-OpenAI-compatible text-to-speech backend.
+OpenAI-compatible text-to-speech backend for the `pocket_tts` backend class.
 
 ## Overview
 

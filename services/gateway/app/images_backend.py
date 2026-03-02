@@ -353,10 +353,19 @@ async def generate_images(
                         guidance_used = None
                     break
 
-        async with _httpx_client(timeout=timeout) as client:
-            r = await client.post(f"{base}/v1/images/generations", json=payload)
-            r.raise_for_status()
-            out = r.json()
+        fallback_base = "http://images:7860"
+        try:
+            async with _httpx_client(timeout=timeout) as client:
+                r = await client.post(f"{base}/v1/images/generations", json=payload)
+                r.raise_for_status()
+                out = r.json()
+        except httpx.ConnectError as e:
+            if base == fallback_base:
+                raise RuntimeError(f"image backend connect error: {type(e).__name__}: {e}") from e
+            async with _httpx_client(timeout=timeout) as client:
+                r = await client.post(f"{fallback_base}/v1/images/generations", json=payload)
+                r.raise_for_status()
+                out = r.json()
 
         data = out.get("data") if isinstance(out, dict) else None
         if not (isinstance(data, list) and data and all(isinstance(x, dict) for x in data)):

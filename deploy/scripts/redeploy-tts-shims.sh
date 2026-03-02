@@ -16,8 +16,8 @@ usage() {
   cat <<'EOF'
 Usage: deploy/scripts/redeploy-tts-shims.sh [--env-file PATH] [--no-build] [--skip-gateway]
 
-Redeploy containerized LuxtTS and Qwen3-TTS shims and optionally restart Gateway
-so backend routing/health reflects updated TTS components.
+Redeploy containerized Pocket TTS, LuxtTS, and Qwen3-TTS services and optionally
+restart Gateway so backend routing/health reflects updated TTS components.
 
 Options:
   --env-file PATH   Env file path (default: ./.env)
@@ -71,22 +71,27 @@ compose_args=(
   --env-file "$ENV_FILE"
   -f docker-compose.gateway.yml
   -f docker-compose.etcd.yml
+  -f docker-compose.tts.yml
   -f docker-compose.luxtts.yml
   -f docker-compose.qwen3-tts.yml
 )
 
-ns_print_header "Redeploying LuxtTS + Qwen3-TTS"
+ns_print_header "Redeploying Pocket TTS + LuxtTS + Qwen3-TTS"
 if [[ "$NO_BUILD" == "true" ]]; then
-  ns_compose "${compose_args[@]}" up -d luxtts qwen3-tts
+  ns_compose "${compose_args[@]}" up -d tts luxtts qwen3-tts
 else
-  ns_compose "${compose_args[@]}" up -d --build luxtts qwen3-tts
+  ns_compose "${compose_args[@]}" up -d --build tts luxtts qwen3-tts
 fi
 
-ns_print_header "Waiting for TTS shim health"
+ns_print_header "Waiting for TTS service health"
 for i in {1..60}; do
+  pocket_ok="false"
   luxtts_ok="false"
   qwen_ok="false"
 
+  if curl -fsS "http://127.0.0.1:${TTS_PORT:-9940}/health" >/dev/null 2>&1; then
+    pocket_ok="true"
+  fi
   if curl -fsS "http://127.0.0.1:${LUXTTS_PORT:-9170}/health" >/dev/null 2>&1; then
     luxtts_ok="true"
   fi
@@ -94,15 +99,15 @@ for i in {1..60}; do
     qwen_ok="true"
   fi
 
-  if [[ "$luxtts_ok" == "true" && "$qwen_ok" == "true" ]]; then
-    ns_print_ok "LuxtTS and Qwen3-TTS health endpoints are up"
+  if [[ "$pocket_ok" == "true" && "$luxtts_ok" == "true" && "$qwen_ok" == "true" ]]; then
+    ns_print_ok "Pocket TTS, LuxtTS, and Qwen3-TTS health endpoints are up"
     break
   fi
 
   if [[ "$i" -eq 60 ]]; then
-    ns_print_error "Timed out waiting for LuxtTS/Qwen3-TTS health endpoints"
+    ns_print_error "Timed out waiting for TTS service health endpoints"
     ns_compose "${compose_args[@]}" ps || true
-    ns_compose "${compose_args[@]}" logs --tail=120 luxtts qwen3-tts || true
+    ns_compose "${compose_args[@]}" logs --tail=120 tts luxtts qwen3-tts || true
     exit 1
   fi
   sleep 2
@@ -139,5 +144,5 @@ if [[ "$SKIP_GATEWAY" != "true" ]]; then
   done
 fi
 
-ns_print_header "TTS shim redeploy complete"
+ns_print_header "TTS service redeploy complete"
 ns_compose "${compose_args[@]}" ps
