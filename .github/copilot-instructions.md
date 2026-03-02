@@ -43,6 +43,11 @@
 - If commands are needed, provide one-liners where possible.
 - If one line is not possible, provide one command per code block.
 
+## Command formatting default
+- When presenting shell/terminal commands to users, always place commands inside fenced code blocks by default.
+- Do not provide runnable commands as plain prose lines.
+- Prefer one command per code block for clarity unless the user explicitly asks for grouped multi-line blocks.
+
 ## Operational references
 - Primary docs/scripts: `nexus/deploy/`, `nexus/docs/`, top-level compose files.
 - Gateway implementation reference: `gateway/app/` and `gateway/tests/`.

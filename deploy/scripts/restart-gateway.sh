@@ -59,6 +59,13 @@ if ! ns_ensure_docker_daemon true; then
 fi
 
 ns_print_header "Restarting Gateway"
+if ! ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml config >/dev/null 2>&1; then
+  ns_print_error "Compose failed to parse $ENV_FILE"
+  ns_print_warn "Check for malformed variable syntax (for example an unmatched \\${...} expression)."
+  ns_print_warn "Hint: inspect around the line number reported by docker compose."
+  exit 1
+fi
+
 if [[ "$NO_BUILD" == "true" ]]; then
   ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d gateway
 else
