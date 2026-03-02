@@ -9,16 +9,24 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 WITH_MLX="false"
+EXTERNAL_OLLAMA="false"
+EXTERNAL_MLX="false"
+EXTERNAL_OLLAMA_SET="false"
+EXTERNAL_MLX_SET="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/diagnose-gateway.sh [--env-file PATH] [--with-mlx]
+Usage: deploy/scripts/diagnose-gateway.sh [--env-file PATH] [--with-mlx] [--external-ollama] [--external-mlx]
 
 Diagnostics for Nexus gateway stack.
 
 Options:
   --env-file PATH   Env file path (default: ./.env)
   --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
+  --external-ollama Use external/native Ollama (do not include docker-compose.ollama.yml).
+                     If not set explicitly, auto-detected from OLLAMA_BASE_URL.
+  --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml).
+                     If not set explicitly, auto-detected from MLX_BASE_URL.
 EOF
 }
 
@@ -32,6 +40,16 @@ while [[ $# -gt 0 ]]; do
       WITH_MLX="true"
       shift
       ;;
+    --external-ollama)
+      EXTERNAL_OLLAMA="true"
+      EXTERNAL_OLLAMA_SET="true"
+      shift
+      ;;
+    --external-mlx)
+      EXTERNAL_MLX="true"
+      EXTERNAL_MLX_SET="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -41,6 +59,27 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ! -f "${ENV_FILE}" ]]; then
+  ns_print_warn "Env file not found at ${ENV_FILE}; creating from .env.example"
+  ns_ensure_env_file "${ENV_FILE}" "$ROOT_DIR"
+fi
+
+if [[ "$EXTERNAL_OLLAMA_SET" != "true" ]]; then
+  ollama_base_url="$(ns_env_get "${ENV_FILE}" OLLAMA_BASE_URL "http://ollama:11434")"
+  ollama_base_url="${ollama_base_url%/}"
+  if [[ "$ollama_base_url" != "http://ollama:11434" ]]; then
+    EXTERNAL_OLLAMA="true"
+  fi
+fi
+
+if [[ "$EXTERNAL_MLX_SET" != "true" ]]; then
+  mlx_base_url="$(ns_env_get "${ENV_FILE}" MLX_BASE_URL "http://mlx:10240/v1")"
+  mlx_base_url="${mlx_base_url%/}"
+  if [[ "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
+    EXTERNAL_MLX="true"
+  fi
+fi
 
 gateway_port="${GATEWAY_PORT:-}"
 obs_port="${OBSERVABILITY_PORT:-}"
@@ -77,9 +116,16 @@ fi
 ollama_model_strong="${ollama_model_strong:-qwen2.5:32b}"
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
-COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
-COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.ollama.yml docker-compose.etcd.yml)
-if [[ "$WITH_MLX" == "true" ]]; then
+COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
+COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.etcd.yml)
+if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.ollama.yml)
+  COMPOSE_FILES+=(docker-compose.ollama.yml)
+fi
+if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" == "true" ]]; then
+  ns_die "Use either --with-mlx (containerized MLX) or --external-mlx (host-native MLX), not both."
+fi
+if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" != "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
   COMPOSE_FILES+=(docker-compose.mlx.yml)
 fi

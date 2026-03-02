@@ -13,6 +13,7 @@ CHECK_ONLY="false"
 WITH_MLX="false"
 EXTERNAL_OLLAMA="false"
 OLLAMA_BASE_URL_OVERRIDE="${PREWARM_OLLAMA_BASE_URL:-}"
+EXTERNAL_OLLAMA_SET="false"
 
 usage() {
   cat <<'EOF'
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --external-ollama)
       EXTERNAL_OLLAMA="true"
+      EXTERNAL_OLLAMA_SET="true"
       shift
       ;;
     --ollama-base-url)
@@ -66,6 +68,19 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  ns_print_warn "Env file not found at $ENV_FILE; creating from .env.example"
+  ns_ensure_env_file "$ENV_FILE" "$ROOT_DIR"
+fi
+
+if [[ "$EXTERNAL_OLLAMA_SET" != "true" ]]; then
+  autodetect_ollama_base_url="$(ns_env_get "$ENV_FILE" OLLAMA_BASE_URL "http://ollama:11434")"
+  autodetect_ollama_base_url="${autodetect_ollama_base_url%/}"
+  if [[ "$autodetect_ollama_base_url" != "http://ollama:11434" ]]; then
+    EXTERNAL_OLLAMA="true"
+  fi
+fi
 
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
@@ -84,11 +99,6 @@ for compose_file in "${COMPOSE_FILES[@]}"; do
     ns_die "Compose file not found: $ROOT_DIR/$compose_file"
   fi
 done
-
-if [[ ! -f "$ENV_FILE" ]]; then
-  ns_print_warn "Env file not found at $ENV_FILE; creating from .env.example"
-  ns_ensure_env_file "$ENV_FILE" "$ROOT_DIR"
-fi
 
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
 
