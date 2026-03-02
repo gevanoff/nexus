@@ -117,6 +117,36 @@ Recommended `ai2` alias-to-model mapping (starting point):
 }
 ```
 
+`ai2` quality-max profile (higher latency, higher quality):
+
+```json
+{
+	"aliases": {
+		"fast": {
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-14B-Instruct-4bit",
+			"tools": false
+		},
+		"default": {
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-72B-Instruct-4bit",
+			"tools": true
+		},
+		"coder": {
+			"backend": "ollama",
+			"model": "qwen2.5-coder:32b",
+			"tools": true
+		},
+		"long": {
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+			"context_window": 131072,
+			"tools": false
+		}
+	}
+}
+```
+
 Alias-by-alias alternatives (if available and validated in your environment):
 
 - `fast` (lowest latency):
@@ -133,6 +163,33 @@ Alias-by-alias alternatives (if available and validated in your environment):
 	- Alternatives: use the same family as `default` with reduced concurrency, or lower-parameter instruct model for higher sustained throughput.
 
 If a specific MLX model identifier is unavailable, keep alias names and routing shape, then swap only `model` values.
+
+## Are these models already configured?
+
+Not by default in a fresh checkout.
+
+- These model mappings are documentation examples until you place one profile into `nexus/.runtime/gateway/config/model_aliases.json` on the host running Gateway.
+- In the current workspace, that runtime file does not exist yet, so these aliases are not active.
+
+## Do you need to prewarm?
+
+Yes—after changing aliases or restarting services, prewarm the selected runtime/model set.
+
+- Prewarm MLX aliases/models:
+
+```bash
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-14B-Instruct-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-32B-Instruct-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-72B-Instruct-4bit
+```
+
+- Prewarm Ollama aliases/models:
+
+```bash
+./deploy/scripts/prewarm-models.sh --external-ollama --model qwen2.5-coder:32b
+```
+
+If models are not already present locally, first-request warmup may trigger a download/conversion step and take significantly longer.
 
 Why keep Ollama alongside MLX (even on `ai2`):
 
