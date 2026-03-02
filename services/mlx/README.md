@@ -70,6 +70,34 @@ Gateway integration pattern:
 - Set `MLX_BASE_URL` in `nexus/.env` to the host URL that Gateway containers can reach (for same-machine Docker Desktop, `http://host.docker.internal:10240/v1`).
 - Gateway uses this backend for chat/embeddings when routing selects backend class `local_mlx`.
 
+Example: split fast chat on MLX and strong/coder on Ollama
+
+Create `nexus/.runtime/gateway/config/model_aliases.json` with:
+
+```json
+{
+	"aliases": {
+		"default": { "backend": "ollama", "model": "qwen2.5:32b", "tools": true },
+		"fast":    { "backend": "mlx",    "model": "mlx-community/gemma-2-2b-it-8bit", "tools": false },
+		"coder":   { "backend": "ollama", "model": "qwen2.5-coder:14b", "tools": true },
+		"long":    { "backend": "mlx",    "model": "mlx-community/gemma-2-2b-it-8bit", "context_window": 40000, "tools": false }
+	}
+}
+```
+
+Then restart Gateway so aliases are reloaded:
+
+```bash
+docker-compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build gateway
+```
+
+Usage via OpenAI-compatible API:
+
+- `model: "fast"` routes to MLX (low-latency interactive prompts)
+- `model: "default"` routes to Ollama strong model
+- `model: "coder"` routes to Ollama coding model
+- `model: "long"` routes to MLX long-context profile
+
 ## Troubleshooting Restart Loops
 
 1. Remove `-f docker-compose.mlx.yml` from your compose invocation on Linux/Windows hosts.

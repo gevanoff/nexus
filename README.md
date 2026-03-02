@@ -241,6 +241,8 @@ See `.env.example` for all available options.
 - Nexus uses a single env file at `./.env` (created from `./.env.example`).
 - Service-specific templates live under `services/<name>/env/*.example`.
 - Persistent state and large artifacts live under `./.runtime/` (bind mounts), not Docker named volumes.
+- Gateway model alias config lives at `./.runtime/gateway/config/model_aliases.json`.
+- For a practical MLX-fast + Ollama-strong split example, see `services/mlx/README.md`.
 
 ## Services
 
