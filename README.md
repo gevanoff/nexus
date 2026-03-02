@@ -36,6 +36,17 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - Backends that are CPU-only and do not benefit from NVIDIA acceleration should run in containers on a Mac (currently only `ai2`).
 - NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
 
+### Current Host Inventory (2026-03-02 snapshot)
+
+- `ai2` (macOS Apple Silicon): **512GB unified memory**. Primary host-native accelerator target for `ollama` + `mlx`.
+- `ada2` (Linux/NVIDIA): ~31GiB RAM, NVIDIA RTX 6000 Ada (46GB VRAM), currently running heavy CUDA workloads (`heartmula`, `invokeai`).
+- `ai1` (Linux/NVIDIA): ~15GiB RAM, NVIDIA RTX 5060 Ti (16GB VRAM), currently running SDXL Turbo workload.
+
+Operational implication:
+- Keep latency-sensitive and high-context LLM traffic on `ai2` via host-native MLX/Ollama.
+- Keep NVIDIA-centric image/vision/CUDA services on `ada2`/`ai1`.
+- Avoid scheduling additional persistent LLM GPU workloads on `ada2`/`ai1` unless capacity is explicitly reclaimed.
+
 ### Prerequisites
 
 - Operator environment: **macOS/Linux hosts** with Docker Engine and the `docker compose` plugin
@@ -243,6 +254,7 @@ See `.env.example` for all available options.
 - Persistent state and large artifacts live under `./.runtime/` (bind mounts), not Docker named volumes.
 - Gateway model alias config lives at `./.runtime/gateway/config/model_aliases.json`.
 - For a practical MLX-fast + Ollama-strong split example, see `services/mlx/README.md`.
+- For `ai2` (512GB) model tier recommendations and Linux host placement notes, see `services/mlx/README.md`.
 
 ## Services
 

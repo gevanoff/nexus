@@ -8,6 +8,14 @@ Containerized MLX OpenAI-compatible server component for Nexus.
 - CPU-only backends that do not benefit from NVIDIA acceleration should run as containers on a Mac (currently only `ai2`).
 - NVIDIA-accelerated workloads should run on Linux/NVIDIA hosts.
 
+## Current Host Profile Guidance (2026-03-02)
+
+- `ai2` (macOS Apple Silicon, 512GB unified memory): primary host for host-native `mlx` and `ollama`.
+- `ada2` (Linux, RTX 6000 Ada 46GB VRAM, ~31GiB RAM): keep focused on CUDA-heavy workloads (currently occupied by `heartmula` + `invokeai`).
+- `ai1` (Linux, RTX 5060 Ti 16GB VRAM, ~15GiB RAM): keep focused on smaller CUDA image workloads (currently SDXL Turbo active).
+
+Use this split to avoid cross-host contention: LLM chat/coding/default aliases on `ai2`, image/CUDA pipelines on `ada2`/`ai1`.
+
 ## Platform Compatibility
 
 `mlx-openai-server` requires **macOS on Apple Silicon (M-series)**. Docker containers in Nexus run Linux userspace/kernel semantics, so this component can fail to start and appear in a restart loop on unsupported environments.
@@ -70,20 +78,67 @@ Gateway integration pattern:
 - Set `MLX_BASE_URL` in `nexus/.env` to the host URL that Gateway containers can reach (for same-machine Docker Desktop, `http://host.docker.internal:10240/v1`).
 - Gateway uses this backend for chat/embeddings when routing selects backend class `local_mlx`.
 
-Example: split fast chat on MLX and strong/coder on Ollama
+## Recommended Model Strategy for `ai2` (512GB)
 
-Create `nexus/.runtime/gateway/config/model_aliases.json` with:
+With 512GB unified memory, `ai2` can run much larger MLX models than typical Mac deployments. Best-practice routing is still tiered by latency target:
+
+- `fast` (interactive/lowest latency): 7B–14B instruct models on MLX.
+- `default` (best quality for general chat): 32B–72B instruct models (MLX or Ollama, choose by measured latency/quality).
+- `coder` (tool-heavy/codegen): coding-specialized 14B–32B model, usually Ollama first for broader catalog.
+- `long` (large context sessions): MLX model profile with raised `context_window` and conservative concurrency.
+
+Recommended `ai2` alias-to-model mapping (starting point):
 
 ```json
 {
 	"aliases": {
-		"default": { "backend": "ollama", "model": "qwen2.5:32b", "tools": true },
-		"fast":    { "backend": "mlx",    "model": "mlx-community/gemma-2-2b-it-8bit", "tools": false },
-		"coder":   { "backend": "ollama", "model": "qwen2.5-coder:14b", "tools": true },
-		"long":    { "backend": "mlx",    "model": "mlx-community/gemma-2-2b-it-8bit", "context_window": 40000, "tools": false }
+		"fast": {
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+			"tools": false
+		},
+		"default": {
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+			"tools": true
+		},
+		"coder": {
+			"backend": "ollama",
+			"model": "qwen2.5-coder:32b",
+			"tools": true
+		},
+		"long": {
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-14B-Instruct-4bit",
+			"context_window": 65536,
+			"tools": false
+		}
 	}
 }
 ```
+
+Alias-by-alias alternatives (if available and validated in your environment):
+
+- `fast` (lowest latency):
+	- Primary: `mlx-community/Qwen2.5-7B-Instruct-4bit`
+	- Alternatives: `mlx-community/Llama-3.1-8B-Instruct-4bit`, `mlx-community/Gemma-2-9B-it-4bit`
+- `default` (best overall quality):
+	- Primary: `mlx-community/Qwen2.5-32B-Instruct-4bit`
+	- Alternatives: `mlx-community/Qwen2.5-72B-Instruct-4bit` (higher quality, higher latency), `mlx-community/Llama-3.3-70B-Instruct-4bit`
+- `coder` (code + tools):
+	- Primary: `qwen2.5-coder:32b` (Ollama)
+	- MLX candidate if preferred: `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` or `mlx-community/Qwen2.5-Coder-32B-Instruct-4bit`
+- `long` (extended context):
+	- Primary: `mlx-community/Qwen2.5-14B-Instruct-4bit` with `context_window` `65536`
+	- Alternatives: use the same family as `default` with reduced concurrency, or lower-parameter instruct model for higher sustained throughput.
+
+If a specific MLX model identifier is unavailable, keep alias names and routing shape, then swap only `model` values.
+
+Why keep Ollama alongside MLX (even on `ai2`):
+
+- Ollama gives broader one-command model availability and easier fallback coverage.
+- MLX gives top Apple Silicon efficiency and excellent low-latency local inference.
+- Running both lets Gateway route by workload instead of forcing one runtime for all requests.
 
 Then restart Gateway so aliases are reloaded:
 
