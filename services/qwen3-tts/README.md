@@ -18,13 +18,27 @@ OpenAI-compatible Qwen3-TTS shim for Nexus (`POST /v1/audio/speech`).
 
 - Env template: `env/qwen3-tts.env.example`
 - Port: `9175`
-- Container-native default: baked-in `QWEN3_TTS_RUN_COMMAND=python /app/app/scripts/run_qwen3_tts.py`
+- Container-native default: baked-in `QWEN3_TTS_RUN_COMMAND=python /app/app/scripts/run_qwen3_tts.py` (local runner)
 
 Readiness behavior:
 
 - `readyz` is healthy when either:
   - `QWEN3_TTS_UPSTREAM_BASE_URL` points to a reachable OpenAI-compatible TTS upstream, or
-  - `QWEN3_TTS_RUN_COMMAND` is configured and produces audio output.
+  - `QWEN3_TTS_RUN_COMMAND` is configured and local Qwen3-TTS resources are available.
+
+## Local-resource mode (no external inference service)
+
+`QWEN3_TTS_RUN_COMMAND` can run fully local if the Qwen3-TTS code/resources exist under the mounted runtime path.
+
+Expected runtime path inside container:
+
+- `/var/lib/qwen3-tts/app` (mapped from `./.runtime/qwen3-tts/data` on host)
+
+Required pieces:
+
+- Qwen3-TTS app/repo code (providing `qwen_tts`)
+- model access (via `QWEN3_TTS_MODEL_ID`),
+- task-specific config (speaker/voice clone inputs).
 
 ## Compose
 

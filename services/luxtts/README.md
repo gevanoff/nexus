@@ -18,13 +18,27 @@ OpenAI-compatible LuxTTS shim for Nexus (`POST /v1/audio/speech`).
 
 - Env template: `env/luxtts.env.example`
 - Port: `9170`
-- Container-native default: baked-in `LUXTTS_RUN_COMMAND=python /app/app/scripts/run_luxtts.py`
+- Container-native default: baked-in `LUXTTS_RUN_COMMAND=python /app/app/scripts/run_luxtts.py` (local runner)
 
 Readiness behavior:
 
 - `readyz` is healthy when either:
   - `LUXTTS_UPSTREAM_BASE_URL` points to a reachable OpenAI-compatible TTS upstream, or
-  - `LUXTTS_RUN_COMMAND` is configured and produces audio output.
+  - `LUXTTS_RUN_COMMAND` is configured and local LuxTTS resources are available.
+
+## Local-resource mode (no external inference service)
+
+`LUXTTS_RUN_COMMAND` can run fully local if the LuxTTS code/resources exist under the mounted runtime path.
+
+Expected runtime path inside container:
+
+- `/var/lib/luxtts/app` (mapped from `./.runtime/luxtts/data` on host)
+
+Required pieces:
+
+- LuxTTS app/repo code (providing `zipvoice.luxvoice`)
+- model access (via `LUXTTS_MODEL_ID`),
+- prompt audio (`LUXTTS_PROMPT_AUDIO` or `LUXTTS_VOICE_MAP_JSON`).
 
 ## Compose
 
