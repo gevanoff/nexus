@@ -95,7 +95,7 @@ def _readyz_input() -> str:
 
 
 def _readyz_voice() -> str:
-    return _env("QWEN3_TTS_READYZ_VOICE", "alloy") or "alloy"
+    return _env("QWEN3_TTS_READYZ_VOICE", "en-us") or "en-us"
 
 
 def _voices() -> list[str]:

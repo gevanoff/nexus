@@ -102,8 +102,28 @@
           <pre id="debug"></pre>
         </details>
       </section>
+
+      <section class="out" style="margin-top:12px">
+        <details class="card" data-backend-status data-backends="lighton_ocr">
+          <summary>Relevant backend status</summary>
+          <div style="margin-top:8px">
+            <div class="row" style="justify-content:space-between">
+              <span class="hint backend-status-updated">Last updated: --</span>
+              <div class="row" style="gap:8px">
+                <button type="button" class="backend-status-refresh">Refresh</button>
+                <span class="hint backend-status-spinner" hidden>Refreshing...</span>
+              </div>
+            </div>
+            <div class="hint error backend-status-error" hidden style="margin-top:8px"></div>
+            <div class="backend-status-list" style="margin-top:8px">
+              <div class="hint">Expand to load backend status.</div>
+            </div>
+          </div>
+        </details>
+      </section>
     </main>
 
+    <script src="/static/backend_status_panel.js?v=1"></script>
     <script src="/static/ocr.js?v=1"></script>
   </body>
 </html>
