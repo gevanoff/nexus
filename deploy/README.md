@@ -34,6 +34,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
 - `./deploy/scripts/deploy.sh <dev|prod> <branch>`: deploy current repo on a host
 - `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: deploy over SSH
+- `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
 - `./deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 - `./deploy/scripts/backup-and-deploy-parallel.sh`: backup legacy host data (best-effort) and deploy Nexus on parallel ports

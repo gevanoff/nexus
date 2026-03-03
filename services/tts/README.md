@@ -58,6 +58,23 @@ tts:
     - POCKET_TTS_BACKEND=${POCKET_TTS_BACKEND:-auto}
   volumes:
     - ./.runtime/tts/data:/data
+    - ./.runtime/tts_refs:/var/lib/tts_refs:ro
+```
+
+## Shared reference-audio pool
+
+The TTS containers share a read-only reference-audio mount at `/var/lib/tts_refs` (host path: `nexus/.runtime/tts_refs`).
+
+Seed this pool from one or more local folders/files:
+
+```bash
+./deploy/scripts/seed-tts-refs.sh --source /path/to/voice-samples
+```
+
+Preview without copying:
+
+```bash
+./deploy/scripts/seed-tts-refs.sh --source /path/a --source /path/b --dry-run
 ```
 
 ## Contributing

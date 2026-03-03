@@ -2,6 +2,7 @@ services:
   # TTS Service - Text-to-Speech
   # Shared host paths:
   # - ./.runtime/tts/data is the TTS service's state dir
+  # - ./.runtime/tts_refs is shared reference audio (mounted read-only)
   tts:
     build:
       context: ./services/tts
@@ -19,6 +20,7 @@ services:
       - POCKET_TTS_COMMAND=${POCKET_TTS_COMMAND:-pocket-tts}
     volumes:
       - ./.runtime/tts/data:/data
+      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
     networks:
       - nexus
     restart: unless-stopped

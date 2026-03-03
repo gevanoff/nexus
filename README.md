@@ -183,6 +183,7 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
 - `deploy/scripts/restart-gateway.sh`: restart/rebuild only Gateway so code/config updates are picked up quickly
 - `deploy/scripts/redeploy-tts-shims.sh`: redeploy containerized `pocket_tts` + `luxtts` + `qwen3-tts` and optionally restart Gateway
+- `deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` from local audio files with content-hash dedup
 - `deploy/scripts/prewarm-models.sh`: prewarm Ollama models (container or host-native mode)
 - `deploy/scripts/prewarm-mlx.sh`: prewarm MLX model runtime (host-native recommended)
 
@@ -194,6 +195,22 @@ Alias-aware prewarm options:
 - `services/mlx/scripts/install-native-macos.sh`: install/manage host-native MLX (launchd)
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: list registered services in etcd
+
+### Seed shared TTS refs
+
+Use this utility to populate the shared reference-audio pool used by Gateway and TTS containers (`./.runtime/tts_refs`).
+
+```bash
+./deploy/scripts/seed-tts-refs.sh --source /path/to/voice-samples
+```
+
+Multiple sources and dry-run preview:
+
+```bash
+./deploy/scripts/seed-tts-refs.sh --source /path/a --source /path/b --dry-run
+```
+
+The script sanitizes voice IDs from filenames and deduplicates by audio content hash, so re-seeding does not create duplicates.
 
 ### Access the Gateway
 
