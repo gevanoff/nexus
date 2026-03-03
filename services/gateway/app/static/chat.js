@@ -523,7 +523,6 @@
       ttsVoice: "",
       ttsBackend: "",
       showTimestamps: false,
-      backendStatusExpanded: !!(backendStatusPanel && backendStatusPanel.open),
       audioVolume: 1.0,
       autoPlayTTS: false,
       systemPrompt: "",
@@ -541,7 +540,6 @@
           ttsVoice: s.tts?.voice || s.tts_voice || s.ttsVoice || "",
           ttsBackend: s.tts?.backend_class || s.tts?.backend || s.tts_backend || s.ttsBackend || "",
           showTimestamps: !!(s.ui && s.ui.showTimestamps || s.showTimestamps),
-          backendStatusExpanded: !!(s.ui && s.ui.backendStatusExpanded || s.backendStatusExpanded),
           audioVolume: typeof s.audioVolume === 'number' ? s.audioVolume : (s.audio && typeof s.audio.volume === 'number' ? s.audio.volume : (s.audioVolume || 1.0)),
           autoPlayTTS: !!(s.audio && s.audio.autoPlayTTS || s.autoPlayTTS),
           systemPrompt: (s.profile && s.profile.system_prompt) || s.profile?.system_prompt || s.profile?.systemPrompt || "",
@@ -556,9 +554,8 @@
 
     function applyUserSettingsToUi() {
       if (backendStatusPanel) {
-        const shouldOpen = !!userSettings.backendStatusExpanded;
-        if (backendStatusPanel.open !== shouldOpen) {
-          backendStatusPanel.open = shouldOpen;
+        if (!backendStatusPanel.open) {
+          backendStatusPanel.open = true;
         }
       }
     }
@@ -575,7 +572,6 @@
         const backendSelect = document.getElementById('settings_tts_backend');
         const select = document.getElementById('settings_tts_voice');
         const showTs = document.getElementById('settings_show_timestamps');
-        const backendExpanded = document.getElementById('settings_backend_status_expanded');
         const vol = document.getElementById('settings_audio_volume');
         const autoplay = document.getElementById('settings_autoplay_tts');
         const preferredModel = document.getElementById('settings_model_preference');
@@ -643,7 +639,6 @@
         }
         if (select) select.value = userSettings.ttsVoice || "";
         if (showTs) showTs.checked = !!userSettings.showTimestamps;
-        if (backendExpanded) backendExpanded.checked = !!userSettings.backendStatusExpanded;
         if (vol) vol.value = String(Number(userSettings.audioVolume || 1));
         if (autoplay) autoplay.checked = !!userSettings.autoPlayTTS;
         if (preferredModel) {
@@ -694,7 +689,6 @@
       const backendSelect = document.getElementById('settings_tts_backend');
       const select = document.getElementById('settings_tts_voice');
       const showTs = document.getElementById('settings_show_timestamps');
-      const backendExpanded = document.getElementById('settings_backend_status_expanded');
       const vol = document.getElementById('settings_audio_volume');
       const autoplay = document.getElementById('settings_autoplay_tts');
       const preferredModel = document.getElementById('settings_model_preference');
@@ -708,7 +702,6 @@
         tts: { voice: select ? select.value : "", backend_class: backendSelect ? backendSelect.value : "" },
         ui: {
           showTimestamps: !!(showTs && showTs.checked),
-          backendStatusExpanded: !!(backendExpanded && backendExpanded.checked),
         },
         audioVolume: vol ? Number(vol.value) : 1.0,
         autoPlayTTS: !!(autoplay && autoplay.checked),
@@ -748,7 +741,6 @@
         userSettings.ttsVoice = newSettings.tts.voice || "";
         userSettings.ttsBackend = newSettings.tts.backend_class || "";
         userSettings.showTimestamps = !!newSettings.ui.showTimestamps;
-        userSettings.backendStatusExpanded = !!newSettings.ui.backendStatusExpanded;
         userSettings.audioVolume = Number(newSettings.audioVolume || 1.0);
         userSettings.autoPlayTTS = !!newSettings.autoPlayTTS;
         userSettings.systemPrompt = newSettings.profile?.system_prompt || "";
@@ -1449,16 +1441,15 @@
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
       if (settingsSave) settingsSave.addEventListener('click', () => saveSettingsFromModal());
       if (backendStatusPanel) {
+        backendStatusPanel.open = true;
         backendStatusPanel.addEventListener('toggle', () => {
-          if (backendStatusPanel.open) {
-            startBackendStatusPolling();
-          } else {
-            stopBackendStatusPolling();
+          if (!backendStatusPanel.open) {
+            backendStatusPanel.open = true;
+            return;
           }
-        });
-        if (backendStatusPanel.open) {
           startBackendStatusPolling();
-        }
+        });
+        startBackendStatusPolling();
       }
       if (backendStatusRefresh) {
         backendStatusRefresh.addEventListener('click', () => {
