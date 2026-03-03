@@ -114,6 +114,17 @@ def _text(payload: dict) -> str:
 
 
 def main() -> int:
+    if _bool_env("LUXTTS_READYZ_PROBE", False):
+        payload = _read_request_payload()
+        voice = payload.get("voice") or _env("LUXTTS_VOICE")
+        voice_map = _json_env("LUXTTS_VOICE_MAP_JSON")
+        mapped_prompt = voice_map.get(voice) if isinstance(voice, str) else None
+        prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
+        if not prompt_audio:
+            _fail("Set LUXTTS_PROMPT_AUDIO or LUXTTS_VOICE_MAP_JSON (for OpenAI voice mapping)")
+        _try_import_luxtts()
+        return 0
+
     out_path = _env("LUXTTS_OUTPUT_PATH")
     if not out_path:
         _fail("LUXTTS_OUTPUT_PATH is not set")

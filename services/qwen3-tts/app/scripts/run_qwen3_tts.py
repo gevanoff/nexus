@@ -93,6 +93,11 @@ def _text(payload: dict) -> str:
 
 
 def main() -> int:
+    if _bool_env("QWEN3_TTS_READYZ_PROBE", False):
+        _read_request_payload()
+        _try_import_qwen3_tts()
+        return 0
+
     out_path = _env("QWEN3_TTS_OUTPUT_PATH")
     if not out_path:
         _fail("QWEN3_TTS_OUTPUT_PATH is not set")

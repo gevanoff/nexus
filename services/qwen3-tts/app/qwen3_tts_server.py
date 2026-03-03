@@ -63,7 +63,7 @@ def _timeout_sec() -> int:
 
 
 def _readyz_timeout_sec() -> int:
-    return _int_env("QWEN3_TTS_READYZ_TIMEOUT_SEC", 20)
+    return _int_env("QWEN3_TTS_READYZ_TIMEOUT_SEC", 30)
 
 
 def _workdir() -> str:
@@ -279,6 +279,7 @@ async def readyz() -> JSONResponse:
             env["QWEN3_TTS_JOB_ID"] = job_id
             env["QWEN3_TTS_REQUEST_JSON"] = str(request_json_path)
             env["QWEN3_TTS_OUTPUT_PATH"] = str(output_path)
+            env["QWEN3_TTS_READYZ_PROBE"] = "1"
 
             resolved_cwd = _resolve_workdir()
             try:
@@ -342,17 +343,7 @@ async def readyz() -> JSONResponse:
                     },
                 )
 
-            if not output_path.exists() or output_path.stat().st_size == 0:
-                return JSONResponse(
-                    status_code=503,
-                    content={
-                        "ok": False,
-                        "reason": "run_command_no_output",
-                        "detail": "Readyz run_command did not produce output.",
-                    },
-                )
-
-            return JSONResponse(status_code=200, content={"ok": True, "mode": "run_command"})
+            return JSONResponse(status_code=200, content={"ok": True, "mode": "run_command_probe"})
 
     return JSONResponse(
         status_code=503,
