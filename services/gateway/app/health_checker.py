@@ -106,6 +106,17 @@ class HealthChecker:
                 try:
                     health_resp = await client.get(f"{base_url}{config.health_liveness}")
                     is_healthy = health_resp.status_code == 200
+                    if not is_healthy:
+                        detail = ""
+                        try:
+                            detail = (health_resp.text or "").strip()
+                        except Exception:
+                            detail = ""
+                        if detail:
+                            detail = detail.replace("\n", " ")[:600]
+                            error = f"liveness returned HTTP {health_resp.status_code}: {detail}"
+                        else:
+                            error = f"liveness returned HTTP {health_resp.status_code}"
                 except Exception as e:
                     error = f"liveness check failed: {e}"
 
@@ -114,6 +125,17 @@ class HealthChecker:
                     try:
                         ready_resp = await client.get(f"{base_url}{config.health_readiness}")
                         is_ready = ready_resp.status_code == 200
+                        if not is_ready:
+                            detail = ""
+                            try:
+                                detail = (ready_resp.text or "").strip()
+                            except Exception:
+                                detail = ""
+                            if detail:
+                                detail = detail.replace("\n", " ")[:600]
+                                error = f"readiness returned HTTP {ready_resp.status_code}: {detail}"
+                            else:
+                                error = f"readiness returned HTTP {ready_resp.status_code}"
                     except Exception as e:
                         error = f"readiness check failed: {e}"
         except Exception as e:

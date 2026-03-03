@@ -1,6 +1,7 @@
 (() => {
   const panelSelector = 'details[data-backend-status]';
   const styleId = 'backend-status-shared-styles';
+  let backendStatusExpandedPreferencePromise = null;
 
   function ensureSharedStyles() {
     if (document.getElementById(styleId)) return;
@@ -46,6 +47,28 @@
       return true;
     }
     return false;
+  }
+
+  async function loadBackendStatusExpandedPreference() {
+    if (backendStatusExpandedPreferencePromise) {
+      return backendStatusExpandedPreferencePromise;
+    }
+    backendStatusExpandedPreferencePromise = (async () => {
+      try {
+        const resp = await fetch('/ui/api/user/settings', { method: 'GET', credentials: 'same-origin' });
+        if (handle401(resp)) return null;
+        if (!resp.ok) return null;
+        const payload = await resp.json();
+        const s = payload?.settings || {};
+        const value = s?.ui?.backendStatusExpanded;
+        if (typeof value === 'boolean') return value;
+        if (typeof s?.backendStatusExpanded === 'boolean') return s.backendStatusExpanded;
+        return null;
+      } catch (e) {
+        return null;
+      }
+    })();
+    return backendStatusExpandedPreferencePromise;
   }
 
   function formatTimestamp(tsSeconds) {
@@ -269,9 +292,15 @@
       });
     }
 
-    if (panel.open) {
-      startPolling();
-    }
+    void (async () => {
+      const pref = await loadBackendStatusExpandedPreference();
+      if (typeof pref === 'boolean') {
+        panel.open = pref;
+      }
+      if (panel.open) {
+        startPolling();
+      }
+    })();
   }
 
   function initAll() {
