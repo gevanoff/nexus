@@ -44,6 +44,10 @@ EOF
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+to_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 sha256_file() {
   local path="$1"
   if have_cmd sha256sum; then
@@ -74,7 +78,7 @@ sanitize_name() {
 
 is_audio_ext() {
   local ext="$1"
-  case "${ext,,}" in
+  case "$(to_lower "$ext")" in
     wav|mp3|ogg|webm|flac|m4a) return 0 ;;
     *) return 1 ;;
   esac
@@ -160,7 +164,7 @@ collect_from_dir() {
 
 process_file() {
   local src="$1"
-  local filename ext stem safe_stem src_hash existing dst candidate idx
+  local filename ext ext_lc stem safe_stem src_hash existing dst candidate idx
 
   filename="$(basename "$src")"
   ext="${filename##*.}"
@@ -177,6 +181,7 @@ process_file() {
 
   stem="${filename%.*}"
   safe_stem="$(sanitize_name "$stem")"
+  ext_lc="$(to_lower "$ext")"
   src_hash="$(sha256_file "$src")"
 
   existing="$(find_existing_hash "$src_hash" "$TARGET")"
@@ -186,14 +191,14 @@ process_file() {
     return 0
   fi
 
-  dst="$TARGET/${safe_stem}.${ext,,}"
+  dst="$TARGET/${safe_stem}.${ext_lc}"
   if [[ -e "$dst" ]]; then
     if [[ "$FORCE" == "true" ]]; then
       idx=2
-      candidate="$TARGET/${safe_stem}_${idx}.${ext,,}"
+      candidate="$TARGET/${safe_stem}_${idx}.${ext_lc}"
       while [[ -e "$candidate" ]]; do
         idx=$((idx + 1))
-        candidate="$TARGET/${safe_stem}_${idx}.${ext,,}"
+        candidate="$TARGET/${safe_stem}_${idx}.${ext_lc}"
       done
       dst="$candidate"
     else
