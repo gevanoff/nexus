@@ -9,5 +9,6 @@ numpy>=1.26,<3
 onnxruntime>=1.18,<2
 safetensors>=0.4,<1
 sox>=1.4,<2
+einops>=0.7,<1
 torchaudio>=2.3,<3
 torch>=2.3,<3
