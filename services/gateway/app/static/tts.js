@@ -13,6 +13,20 @@
 
   let activeObjectUrl = null;
 
+  function handle401(resp) {
+    if (resp && resp.status === 401) {
+      const back = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/ui/login?next=${back}`;
+      return true;
+    }
+    return false;
+  }
+
+  function setBackendHealthText(text) {
+    if (!backendHealthEl) return;
+    backendHealthEl.textContent = text || "Unknown";
+  }
+
   function setStatus(text, isError) {
     statusEl.textContent = text || "";
     statusEl.className = isError ? "hint error" : "hint";
@@ -53,14 +67,20 @@
   async function loadVoices() {
     if (!voiceEl) return;
     try {
+      voiceEl.innerHTML = '<option value="">(default)</option>';
       const backendClass = String(backendEl?.value || "").trim();
       const qs = backendClass ? `?backend_class=${encodeURIComponent(backendClass)}` : "";
       const resp = await fetch(`/ui/api/tts/voices${qs}`, { method: 'GET', credentials: 'same-origin' });
-      if (!resp.ok) return;
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        setStatus(`Failed to load voices (HTTP ${resp.status}).`, true);
+        return;
+      }
       let payload;
       try {
         payload = await resp.json();
       } catch {
+        setStatus("Failed to parse voices response.", true);
         return;
       }
 
@@ -91,7 +111,7 @@
         voiceEl.appendChild(opt);
       }
     } catch (e) {
-      // ignore failures; voices are optional
+      setStatus(`Failed to load voices: ${String(e?.message || e)}`, true);
     }
   }
 
@@ -99,10 +119,22 @@
     if (!backendEl) return;
     try {
       const resp = await fetch('/ui/api/tts/backends', { method: 'GET', credentials: 'same-origin' });
-      if (!resp.ok) return;
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        setBackendHealthText(`Unavailable (HTTP ${resp.status})`);
+        setStatus(`Failed to load TTS backends (HTTP ${resp.status}).`, true);
+        return;
+      }
       const payload = await resp.json();
-      const list = Array.isArray(payload?.available_backends) ? payload.available_backends : [];
+      const list = Array.isArray(payload?.available_backends)
+        ? payload.available_backends
+        : Array.isArray(payload?.backends)
+          ? payload.backends
+          : [];
       backendEl.innerHTML = '<option value="">(default)</option>';
+      if (!list.length) {
+        setBackendHealthText("No TTS backends available");
+      }
       for (const item of list) {
         const val = item?.backend_class;
         if (!val) continue;
@@ -116,11 +148,14 @@
         const selected = list.find((b) => b.backend_class === backendEl.value) || list[0];
         if (selected) {
           const health = selected?.ready === false ? 'not ready' : (selected?.healthy === false ? 'unhealthy' : 'ready');
-          backendHealthEl.textContent = `${selected.backend_class}: ${health}`;
+          setBackendHealthText(`${selected.backend_class}: ${health}`);
+        } else {
+          setBackendHealthText("No backend selected");
         }
       }
     } catch (e) {
-      // ignore
+      setBackendHealthText("Unavailable");
+      setStatus(`Failed to load TTS backends: ${String(e?.message || e)}`, true);
     }
   }
 
@@ -338,6 +373,7 @@
   async function loadUserSettings() {
     try {
       const resp = await fetch('/ui/api/user/settings', { method: 'GET', credentials: 'same-origin' });
+      if (handle401(resp)) return null;
       if (!resp.ok) return null;
       const payload = await resp.json();
       return payload && payload.settings ? payload.settings : null;
@@ -354,6 +390,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ settings }),
       });
+      if (handle401(resp)) return false;
       return resp.ok;
     } catch (e) {
       return false;
@@ -391,6 +428,9 @@
     if (backendEl) {
       backendEl.addEventListener('change', async () => {
         const backendClass = String(backendEl.value || '').trim();
+        if (!backendClass) {
+          setBackendHealthText('default: auto');
+        }
         await loadVoices();
         const ok = await saveUserSettings({ tts: { backend_class: backendClass } });
         if (!ok) {
