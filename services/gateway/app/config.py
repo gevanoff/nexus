@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     POCKET_TTS_BASE_URL: str = "http://tts:9940"
     LUXTTS_BASE_URL: str = "http://luxtts:9170"
     QWEN3_TTS_BASE_URL: str = "http://qwen3-tts:9175"
-    TTS_TIMEOUT_SEC: float = 60.0
+    TTS_TIMEOUT_SEC: float = 180.0
     TTS_GENERATE_PATH: str = "/v1/audio/speech"
     TTS_BACKEND_CLASS: str = "pocket_tts"
     TTS_CLONE_PATH: str = "/v1/audio/clone"
