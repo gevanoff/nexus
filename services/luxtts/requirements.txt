@@ -17,3 +17,4 @@ jieba>=0.42,<1
 pypinyin>=0.51,<1
 piper-phonemize>=1.1,<2
 pydub>=0.25,<1
+cn2an>=0.5,<1
