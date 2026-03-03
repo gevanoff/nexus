@@ -53,6 +53,11 @@ def _run_command() -> Optional[str]:
     return cmd
 
 
+def _shell_bin() -> str:
+    shell = _env("LUXTTS_SHELL", "/bin/sh") or "/bin/sh"
+    return shell
+
+
 def _timeout_sec() -> int:
     return _int_env("LUXTTS_TIMEOUT_SEC", 120)
 
@@ -135,15 +140,25 @@ async def audio_speech(payload: Dict[str, Any]) -> Any:
         env["LUXTTS_REQUEST_JSON"] = str(request_json_path)
         env["LUXTTS_OUTPUT_PATH"] = str(output_path)
 
-        proc = await asyncio.create_subprocess_exec(
-            "/bin/bash",
-            "-lc",
-            cmd,
-            cwd=_workdir(),
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                _shell_bin(),
+                "-c",
+                cmd,
+                cwd=_workdir(),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "luxtts subprocess launch failed",
+                    "detail": f"{type(e).__name__}: {e}",
+                    "shell": _shell_bin(),
+                },
+            )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=float(_timeout_sec()))
         except TimeoutError:
@@ -232,15 +247,26 @@ async def readyz() -> JSONResponse:
             env["LUXTTS_REQUEST_JSON"] = str(request_json_path)
             env["LUXTTS_OUTPUT_PATH"] = str(output_path)
 
-            proc = await asyncio.create_subprocess_exec(
-                "/bin/bash",
-                "-lc",
-                cmd,
-                cwd=_workdir(),
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    _shell_bin(),
+                    "-c",
+                    cmd,
+                    cwd=_workdir(),
+                    env=env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except Exception as e:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "ok": False,
+                        "reason": "run_command_launch_failed",
+                        "detail": f"{type(e).__name__}: {e}",
+                        "shell": _shell_bin(),
+                    },
+                )
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(),
