@@ -104,7 +104,7 @@ def _voices() -> list[str]:
         values = [item.strip() for item in raw.split(",") if item.strip()]
         if values:
             return values
-    return ["en-us", "en", "en-gb", "en-sc", "en-n", "en-rp", "en-wm", "en-wi", "en+f3", "en+m3"]
+    return ["vivian", "ryan", "serena", "aiden", "dylan", "ono_anna", "sohee", "uncle_fu", "eric"]
 
 
 @app.get("/health")

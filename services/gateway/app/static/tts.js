@@ -36,6 +36,16 @@
     metaEl.textContent = text || "";
   }
 
+  function ensureVoiceSelectionValid() {
+    if (!voiceEl) return;
+    const selected = String(voiceEl.value || "").trim();
+    if (!selected) return;
+    const options = Array.from(voiceEl.options || []).map((opt) => String(opt.value || "").trim());
+    if (!options.includes(selected)) {
+      voiceEl.value = "";
+    }
+  }
+
   function clearPlayer() {
     if (activeObjectUrl) {
       try {
@@ -110,6 +120,7 @@
         opt.textContent = label;
         voiceEl.appendChild(opt);
       }
+      ensureVoiceSelectionValid();
     } catch (e) {
       setStatus(`Failed to load voices: ${String(e?.message || e)}`, true);
     }
@@ -418,10 +429,12 @@
     }
     if (serverSettings && serverSettings.tts && serverSettings.tts.voice && voiceEl) {
       try { voiceEl.value = serverSettings.tts.voice; } catch (e) {}
+      ensureVoiceSelectionValid();
     } else {
       try {
         const saved = localStorage.getItem('gw_ui_tts_voice');
         if (saved && voiceEl) voiceEl.value = saved;
+        ensureVoiceSelectionValid();
       } catch (e) {}
     }
 
