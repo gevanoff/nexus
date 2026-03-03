@@ -47,6 +47,7 @@ services:
       - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
       - USER_DB_PATH=/var/lib/gateway/data/users.sqlite
       - UI_IMAGE_DIR=/var/lib/gateway/data/ui_images
+      - VOICE_LIBRARY_DIR=/var/lib/tts_refs
       - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
       - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
 
@@ -61,6 +62,7 @@ services:
       - MEMORY_V2_ENABLED=true
     volumes:
       - ./.runtime/gateway/data:/var/lib/gateway/data
+      - ./.runtime/tts_refs:/var/lib/tts_refs
       - ./.runtime/gateway/config:/var/lib/gateway/config:ro
       - type: bind
         source: ./.env

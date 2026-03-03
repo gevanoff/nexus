@@ -55,6 +55,32 @@ def _json_env(name: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _refs_dir() -> str:
+    return _env("LUXTTS_REFS_DIR") or "/var/lib/tts_refs"
+
+
+def _discover_ref_map() -> dict:
+    directory = _refs_dir()
+    if not directory:
+        return {}
+    refs = Path(directory)
+    if not refs.exists() or not refs.is_dir():
+        return {}
+    allowed_exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    out = {}
+    for entry in refs.iterdir():
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() not in allowed_exts:
+            continue
+        key = entry.stem.strip()
+        if not key:
+            continue
+        out[key] = str(entry)
+        out[key.lower()] = str(entry)
+    return out
+
+
 def _try_import_luxtts():
     candidates = [
         _env("LUXTTS_APP_DIR"),
@@ -115,8 +141,10 @@ def _text(payload: dict) -> str:
 
 def _resolve_prompt_audio(payload: dict) -> str:
     voice = payload.get("voice") or _env("LUXTTS_VOICE")
-    voice_map = _json_env("LUXTTS_VOICE_MAP_JSON")
-    mapped_prompt = voice_map.get(voice) if isinstance(voice, str) else None
+    voice_map = {**_discover_ref_map(), **_json_env("LUXTTS_VOICE_MAP_JSON")}
+    mapped_prompt = None
+    if isinstance(voice, str):
+        mapped_prompt = voice_map.get(voice) or voice_map.get(voice.lower())
     prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
     prompt_audio = str(prompt_audio or "").strip()
     if not prompt_audio:

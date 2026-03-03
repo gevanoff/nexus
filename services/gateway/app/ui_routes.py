@@ -649,6 +649,78 @@ def _safe_voice_name(name: str) -> str:
     return clean[:48] if clean else "voice"
 
 
+def _voice_library_index_path() -> str:
+    return os.path.join(_voice_library_dir(), ".voice_index.json")
+
+
+def _sha256_bytes(raw: bytes) -> str:
+    return hashlib.sha256(bytes(raw)).hexdigest()
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_voice_index() -> Dict[str, Dict[str, Any]]:
+    path = _voice_library_index_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            out: Dict[str, Dict[str, Any]] = {}
+            for k, v in data.items():
+                if isinstance(k, str) and isinstance(v, dict):
+                    out[k] = v
+            return out
+    except Exception:
+        return {}
+    return {}
+
+
+def _save_voice_index(index: Dict[str, Dict[str, Any]]) -> None:
+    path = _voice_library_index_path()
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _iter_voice_files(lib: str):
+    for name in os.listdir(lib):
+        if not name or name.startswith("."):
+            continue
+        full = os.path.join(lib, name)
+        if os.path.isfile(full):
+            yield name, full
+
+
+def _voice_record_from_file(name: str, full: str) -> Dict[str, Any]:
+    voice_id, _sep, _ext = name.partition(".")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    mime = "audio/wav"
+    if ext == "mp3":
+        mime = "audio/mpeg"
+    elif ext == "ogg":
+        mime = "audio/ogg"
+    elif ext == "webm":
+        mime = "audio/webm"
+    return {
+        "id": voice_id,
+        "name": _safe_voice_name(voice_id),
+        "filename": name,
+        "mime": mime,
+        "bytes": os.path.getsize(full),
+        "sha256": _sha256_file(full),
+    }
+
+
 def _save_voice_sample(*, name: str, audio_bytes: bytes, mime_hint: str) -> Dict[str, Any]:
     if not isinstance(audio_bytes, (bytes, bytearray)):
         raise ValueError("audio_bytes must be bytes")
@@ -657,31 +729,93 @@ def _save_voice_sample(*, name: str, audio_bytes: bytes, mime_hint: str) -> Dict
 
     lib = _voice_library_dir()
     _ensure_dir(lib)
+    sha256 = _sha256_bytes(audio_bytes)
+    index = _load_voice_index()
+    existing = index.get(sha256)
+    if isinstance(existing, dict):
+        filename = str(existing.get("filename") or "")
+        if filename and os.path.isfile(os.path.join(lib, filename)):
+            out = dict(existing)
+            out["deduplicated"] = True
+            return out
+
+    for file_name, full in _iter_voice_files(lib):
+        try:
+            if _sha256_file(full) == sha256:
+                record = _voice_record_from_file(file_name, full)
+                index[sha256] = record
+                _save_voice_index(index)
+                record["deduplicated"] = True
+                return record
+        except Exception:
+            continue
+
     mime = (mime_hint or "audio/wav").strip()
     ext = _audio_mime_to_ext(mime)
     safe_name = _safe_voice_name(name)
-    voice_id = f"{safe_name}_{secrets.token_urlsafe(8)}".replace("-", "_")
+    voice_id = f"{safe_name}_{sha256[:12]}"
     fname = f"{voice_id}.{ext}"
+    collision_idx = 1
+    while os.path.exists(os.path.join(lib, fname)):
+        candidate_id = f"{voice_id}_{collision_idx}"
+        fname = f"{candidate_id}.{ext}"
+        collision_idx += 1
+
     path = os.path.join(lib, fname)
     with open(path, "wb") as f:
         f.write(bytes(audio_bytes))
-    return {"id": voice_id, "name": safe_name, "filename": fname, "mime": mime, "bytes": len(audio_bytes)}
+
+    final_id = fname.rsplit(".", 1)[0]
+    record = {
+        "id": final_id,
+        "name": safe_name,
+        "filename": fname,
+        "mime": mime,
+        "bytes": len(audio_bytes),
+        "sha256": sha256,
+    }
+    index[sha256] = record
+    _save_voice_index(index)
+    return record
 
 
 def _list_voice_samples() -> list[Dict[str, Any]]:
     lib = _voice_library_dir()
     if not os.path.isdir(lib):
         return []
+    seen: set[str] = set()
     out: list[Dict[str, Any]] = []
-    for name in os.listdir(lib):
-        if not name or name.startswith("."):
+
+    index = _load_voice_index()
+    for rec in index.values():
+        if not isinstance(rec, dict):
             continue
-        full = os.path.join(lib, name)
+        filename = str(rec.get("filename") or "")
+        if not filename:
+            continue
+        full = os.path.join(lib, filename)
         if not os.path.isfile(full):
             continue
-        voice_id, _sep, _ext = name.partition(".")
-        out.append({"id": voice_id, "filename": name})
-    out.sort(key=lambda x: x.get("id") or "")
+        item = dict(rec)
+        item.setdefault("id", filename.rsplit(".", 1)[0])
+        item.setdefault("bytes", os.path.getsize(full))
+        out.append(item)
+        seen.add(filename)
+
+    for name, full in _iter_voice_files(lib):
+        if name in seen:
+            continue
+        try:
+            record = _voice_record_from_file(name, full)
+            out.append(record)
+            sha = str(record.get("sha256") or "")
+            if sha:
+                index[sha] = record
+        except Exception:
+            continue
+
+    _save_voice_index(index)
+    out.sort(key=lambda x: str(x.get("id") or ""))
     return out
 
 
@@ -718,14 +852,29 @@ def _delete_voice_sample(voice_id: str) -> bool:
         return False
     safe = _safe_voice_name(voice_id)
     removed = False
+    removed_files: set[str] = set()
     for name in os.listdir(lib):
         if name.startswith(safe):
             full = os.path.join(lib, name)
             try:
                 os.remove(full)
                 removed = True
+                removed_files.add(name)
             except Exception:
                 continue
+
+    if removed:
+        index = _load_voice_index()
+        kept: Dict[str, Dict[str, Any]] = {}
+        for sha, rec in index.items():
+            if not isinstance(rec, dict):
+                continue
+            filename = str(rec.get("filename") or "")
+            if filename in removed_files:
+                continue
+            kept[sha] = rec
+        _save_voice_index(kept)
+
     return removed
 
 

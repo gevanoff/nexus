@@ -20,12 +20,14 @@ services:
       - LUXTTS_APP_DIR=${LUXTTS_APP_DIR:-/var/lib/luxtts/app}
       - LUXTTS_PROMPT_AUDIO=${LUXTTS_PROMPT_AUDIO:-}
       - LUXTTS_VOICE_MAP_JSON=${LUXTTS_VOICE_MAP_JSON:-}
+      - LUXTTS_REFS_DIR=${LUXTTS_REFS_DIR:-/var/lib/tts_refs}
       - LUXTTS_VOICE=${LUXTTS_VOICE:-alloy}
       - LUXTTS_TIMEOUT_SEC=${LUXTTS_TIMEOUT_SEC:-120}
       - LUXTTS_READYZ_TIMEOUT_SEC=${LUXTTS_READYZ_TIMEOUT_SEC:-20}
       - LUXTTS_WORKDIR=${LUXTTS_WORKDIR:-/app}
     volumes:
       - ./.runtime/luxtts/data:/var/lib/luxtts
+      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
     networks:
       - nexus
     restart: unless-stopped

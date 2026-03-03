@@ -12,6 +12,7 @@ services:
       - POCKET_TTS_BACKEND=${DEV_POCKET_TTS_BACKEND:-auto}
     volumes:
       - ./.runtime/tts-dev/data:/data
+      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
 
 networks:
   nexus:

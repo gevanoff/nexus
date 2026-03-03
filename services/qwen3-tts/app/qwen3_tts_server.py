@@ -98,13 +98,74 @@ def _readyz_voice() -> str:
     return _env("QWEN3_TTS_READYZ_VOICE", "en-us") or "en-us"
 
 
+def _json_env(name: str) -> dict[str, Any]:
+    raw = _env(name)
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _refs_dir() -> str:
+    return _env("QWEN3_TTS_REFS_DIR", "/var/lib/tts_refs") or "/var/lib/tts_refs"
+
+
+def _discover_ref_voices() -> list[str]:
+    directory = _refs_dir().strip()
+    if not directory or not os.path.isdir(directory):
+        return []
+    exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in os.listdir(directory):
+        full = os.path.join(directory, name)
+        if not os.path.isfile(full):
+            continue
+        stem, ext = os.path.splitext(name)
+        if ext.lower() not in exts:
+            continue
+        voice = stem.strip().lower()
+        if not voice or voice in seen:
+            continue
+        seen.add(voice)
+        out.append(voice)
+    out.sort()
+    return out
+
+
 def _voices() -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    def add(values: list[str]) -> None:
+        for value in values:
+            v = str(value or "").strip()
+            if not v:
+                continue
+            k = v.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            merged.append(v)
+
     raw = _env("QWEN3_TTS_VOICES")
     if raw:
         values = [item.strip() for item in raw.split(",") if item.strip()]
-        if values:
-            return values
-    return ["vivian", "ryan", "serena", "aiden", "dylan", "ono_anna", "sohee", "uncle_fu", "eric"]
+        add(values)
+
+    default_voices = ["vivian", "ryan", "serena", "aiden", "dylan", "ono_anna", "sohee", "uncle_fu", "eric"]
+    add(default_voices)
+
+    map_keys = [str(k).strip() for k in _json_env("QWEN3_TTS_VOICE_MAP_JSON").keys()]
+    add(map_keys)
+    ref_map_keys = [str(k).strip() for k in _json_env("QWEN3_TTS_REF_MAP_JSON").keys()]
+    add(ref_map_keys)
+    add(_discover_ref_voices())
+
+    return merged
 
 
 @app.get("/health")

@@ -35,6 +35,32 @@ def _json_env(name: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _refs_dir() -> str:
+    return _env("QWEN3_TTS_REFS_DIR") or "/var/lib/tts_refs"
+
+
+def _discover_ref_map() -> dict:
+    directory = _refs_dir()
+    if not directory:
+        return {}
+    refs = Path(directory)
+    if not refs.exists() or not refs.is_dir():
+        return {}
+    allowed_exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    out = {}
+    for entry in refs.iterdir():
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() not in allowed_exts:
+            continue
+        key = entry.stem.strip()
+        if not key:
+            continue
+        out[key] = str(entry)
+        out[key.lower()] = str(entry)
+    return out
+
+
 def _try_import_qwen3_tts():
     candidates = [
         _env("QWEN3_TTS_APP_DIR"),
@@ -122,6 +148,13 @@ def main() -> int:
 
     model = Qwen3TTSModel.from_pretrained(model_id, **model_kwargs)
 
+    voice = payload.get("voice")
+    voice_text = str(voice).strip() if isinstance(voice, str) else ""
+    ref_map = {**_discover_ref_map(), **_json_env("QWEN3_TTS_REF_MAP_JSON")}
+    mapped_ref_audio = ""
+    if voice_text:
+        mapped_ref_audio = str(ref_map.get(voice_text) or ref_map.get(voice_text.lower()) or "").strip()
+
     if task == "voice_design":
         language = _env("QWEN3_TTS_LANGUAGE") or "Auto"
         instruct = _env("QWEN3_TTS_INSTRUCT") or ""
@@ -132,8 +165,8 @@ def main() -> int:
         )
     elif task == "voice_clone":
         language = _env("QWEN3_TTS_LANGUAGE") or "Auto"
-        ref_audio = _env("QWEN3_TTS_REF_AUDIO")
-        ref_text = _env("QWEN3_TTS_REF_TEXT")
+        ref_audio = _env("QWEN3_TTS_REF_AUDIO") or mapped_ref_audio
+        ref_text = _env("QWEN3_TTS_REF_TEXT") or _env("QWEN3_TTS_REFS_REF_TEXT")
         if not ref_audio:
             _fail("QWEN3_TTS_REF_AUDIO is not set for voice_clone")
         x_vector_only = _bool_env("QWEN3_TTS_X_VECTOR_ONLY", False)
@@ -146,27 +179,36 @@ def main() -> int:
         )
     else:
         language = _env("QWEN3_TTS_LANGUAGE") or "Auto"
-        default_voice_map = {
-            "alloy": "Vivian",
-            "echo": "Ryan",
-            "fable": "Serena",
-            "onyx": "Aiden",
-            "nova": "Dylan",
-            "shimmer": "Ono_Anna",
-        }
-        voice_map = {**default_voice_map, **_json_env("QWEN3_TTS_VOICE_MAP_JSON")}
-        voice = payload.get("voice")
-        if isinstance(voice, str) and voice:
-            speaker = voice_map.get(voice, voice)
+        if mapped_ref_audio:
+            x_vector_only = _bool_env("QWEN3_TTS_X_VECTOR_ONLY", False)
+            wavs, sample_rate = model.generate_voice_clone(
+                text=text,
+                language=language,
+                ref_audio=mapped_ref_audio,
+                ref_text=_env("QWEN3_TTS_REFS_REF_TEXT") or _env("QWEN3_TTS_REF_TEXT"),
+                x_vector_only_mode=x_vector_only,
+            )
         else:
-            speaker = _env("QWEN3_TTS_SPEAKER") or "Vivian"
-        instruct = _env("QWEN3_TTS_INSTRUCT") or ""
-        wavs, sample_rate = model.generate_custom_voice(
-            text=text,
-            language=language,
-            speaker=speaker,
-            instruct=instruct,
-        )
+            default_voice_map = {
+                "alloy": "Vivian",
+                "echo": "Ryan",
+                "fable": "Serena",
+                "onyx": "Aiden",
+                "nova": "Dylan",
+                "shimmer": "Ono_Anna",
+            }
+            voice_map = {**default_voice_map, **_json_env("QWEN3_TTS_VOICE_MAP_JSON")}
+            if isinstance(voice, str) and voice:
+                speaker = voice_map.get(voice, voice)
+            else:
+                speaker = _env("QWEN3_TTS_SPEAKER") or "Vivian"
+            instruct = _env("QWEN3_TTS_INSTRUCT") or ""
+            wavs, sample_rate = model.generate_custom_voice(
+                text=text,
+                language=language,
+                speaker=speaker,
+                instruct=instruct,
+            )
 
     if not wavs:
         _fail("QWEN3_TTS returned empty audio list")

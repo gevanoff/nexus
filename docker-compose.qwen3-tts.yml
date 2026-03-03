@@ -23,9 +23,12 @@ services:
       - QWEN3_TTS_LANGUAGE=${QWEN3_TTS_LANGUAGE:-Auto}
       - QWEN3_TTS_SPEAKER=${QWEN3_TTS_SPEAKER:-Vivian}
       - QWEN3_TTS_VOICE_MAP_JSON=${QWEN3_TTS_VOICE_MAP_JSON:-}
+      - QWEN3_TTS_REF_MAP_JSON=${QWEN3_TTS_REF_MAP_JSON:-}
       - QWEN3_TTS_INSTRUCT=${QWEN3_TTS_INSTRUCT:-}
       - QWEN3_TTS_REF_AUDIO=${QWEN3_TTS_REF_AUDIO:-}
       - QWEN3_TTS_REF_TEXT=${QWEN3_TTS_REF_TEXT:-}
+      - QWEN3_TTS_REFS_DIR=${QWEN3_TTS_REFS_DIR:-/var/lib/tts_refs}
+      - QWEN3_TTS_REFS_REF_TEXT=${QWEN3_TTS_REFS_REF_TEXT:-}
       - QWEN3_TTS_X_VECTOR_ONLY=${QWEN3_TTS_X_VECTOR_ONLY:-false}
       - QWEN3_TTS_DEVICE_MAP=${QWEN3_TTS_DEVICE_MAP:-cpu}
       - QWEN3_TTS_DTYPE=${QWEN3_TTS_DTYPE:-float32}
@@ -35,6 +38,7 @@ services:
       - QWEN3_TTS_WORKDIR=${QWEN3_TTS_WORKDIR:-/app}
     volumes:
       - ./.runtime/qwen3-tts/data:/var/lib/qwen3-tts
+      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
     networks:
       - nexus
     restart: unless-stopped
