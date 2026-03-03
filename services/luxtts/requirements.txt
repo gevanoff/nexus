@@ -12,3 +12,4 @@ einops>=0.7,<1
 vocos>=0.1,<1
 torchaudio>=2.3,<3
 torch>=2.3,<3
+tensorboard>=2.16,<3
