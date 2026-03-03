@@ -98,6 +98,15 @@ def _readyz_voice() -> str:
     return _env("QWEN3_TTS_READYZ_VOICE", "alloy") or "alloy"
 
 
+def _voices() -> list[str]:
+    raw = _env("QWEN3_TTS_VOICES")
+    if raw:
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+        if values:
+            return values
+    return ["en-us", "en", "en-gb", "en-sc", "en-n", "en-rp", "en-wm", "en-wi", "en+f3", "en+m3"]
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     return {"ok": True, "time": _now(), "service": "qwen3-tts-shim"}
@@ -120,6 +129,16 @@ def models() -> Dict[str, Any]:
             }
         ],
     }
+
+
+@app.get("/v1/voices")
+def voices_v1() -> list[str]:
+    return _voices()
+
+
+@app.get("/voices")
+def voices_compat() -> list[str]:
+    return _voices()
 
 
 @app.post("/v1/audio/speech")
