@@ -39,10 +39,14 @@
   function ensureVoiceSelectionValid() {
     if (!voiceEl) return;
     const selected = String(voiceEl.value || "").trim();
-    if (!selected) return;
     const options = Array.from(voiceEl.options || []).map((opt) => String(opt.value || "").trim());
+    const hasDefault = options.includes("default");
+    if (!selected) {
+      voiceEl.value = hasDefault ? "default" : (options[0] || "");
+      return;
+    }
     if (!options.includes(selected)) {
-      voiceEl.value = "";
+      voiceEl.value = hasDefault ? "default" : (options[0] || "");
     }
   }
 
@@ -63,13 +67,13 @@
     if (!text) throw new Error("text is required");
 
     const backendClass = String(backendEl?.value || "").trim();
-    const voice = String(voiceEl.value || "").trim();
+    const voice = String(voiceEl?.value || "").trim() || "default";
     const speedRaw = parseFloat(String(speedEl.value || "1"));
     const speed = Number.isFinite(speedRaw) ? Math.min(2, Math.max(0.5, speedRaw)) : 1;
 
     const body = { text, speed };
     if (backendClass) body.backend_class = backendClass;
-    if (voice) body.voice = voice;
+    body.voice = voice;
 
     return body;
   }
@@ -77,7 +81,8 @@
   async function loadVoices() {
     if (!voiceEl) return;
     try {
-      voiceEl.innerHTML = '<option value="">(default)</option>';
+      const previous = String(voiceEl.value || "").trim();
+      voiceEl.innerHTML = '<option value="default">default</option>';
       const backendClass = String(backendEl?.value || "").trim();
       const qs = backendClass ? `?backend_class=${encodeURIComponent(backendClass)}` : "";
       const resp = await fetch(`/ui/api/tts/voices${qs}`, { method: 'GET', credentials: 'same-origin' });
@@ -115,10 +120,14 @@
           label = v.name || v.id || v.voice || val;
         }
         if (!val) continue;
+        if (val === "default") continue;
         const opt = document.createElement('option');
         opt.value = val;
         opt.textContent = label;
         voiceEl.appendChild(opt);
+      }
+      if (previous) {
+        voiceEl.value = previous;
       }
       ensureVoiceSelectionValid();
     } catch (e) {

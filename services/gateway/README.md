@@ -236,6 +236,10 @@ Structured logging to stdout with:
 
 ## Troubleshooting
 
+## UI TODO Backlog
+
+- Chat UI: Add a conversation history log/sidebar and a "resume previous conversation" flow so users can intentionally continue prior sessions.
+
 ### Gateway won't start
 
 ```bash

@@ -432,6 +432,16 @@ def _tts_gateway_headers(meta: Dict[str, Any]) -> Dict[str, str]:
     return headers
 
 
+def _merge_user_settings(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = dict(base or {})
+    for key, value in (patch or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge_user_settings(out.get(key) or {}, value)
+        else:
+            out[key] = value
+    return out
+
+
 def _ui_image_dir() -> str:
     return (getattr(S, "UI_IMAGE_DIR", "") or "/var/lib/gateway/data/ui_images").strip() or "/var/lib/gateway/data/ui_images"
 
@@ -1587,8 +1597,10 @@ async def ui_user_settings_put(req: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="settings must be an object")
     if user is None:
         raise HTTPException(status_code=401, detail="authentication required")
-    user_store.set_settings(S.USER_DB_PATH, user_id=user.id, settings=settings)
-    return {"ok": True}
+    current = user_store.get_settings(S.USER_DB_PATH, user_id=user.id) or {}
+    merged = _merge_user_settings(current if isinstance(current, dict) else {}, settings)
+    user_store.set_settings(S.USER_DB_PATH, user_id=user.id, settings=merged)
+    return {"ok": True, "settings": merged}
 
 
 @router.post("/ui/api/user/password", include_in_schema=False)

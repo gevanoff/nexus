@@ -48,6 +48,10 @@
 - Do not provide runnable commands as plain prose lines.
 - Prefer one command per code block for clarity unless the user explicitly asks for grouped multi-line blocks.
 
+## Compose CLI on ai2/ai3
+- On hosts `ai2` and `ai3`, always use `docker-compose` (hyphenated) in commands.
+- Do not use `docker compose` for those hosts.
+
 ## Operational references
 - Primary docs/scripts: `nexus/deploy/`, `nexus/docs/`, top-level compose files.
 - Gateway implementation reference: `gateway/app/` and `gateway/tests/`.

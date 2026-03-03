@@ -1402,7 +1402,10 @@
     document.addEventListener('DOMContentLoaded', () => {
       if (!chatEl) return;
       void loadModels();
-      (async () => { await loadUserSettings(); await ensureConversation(); await loadConversation(); })();
+      (async () => {
+        await loadUserSettings();
+        await resetSession();
+      })();
       async function handleSendClick() {
         const text = (inputEl.value || '').trim();
         if (!text && pendingAttachments.length === 0) return;
