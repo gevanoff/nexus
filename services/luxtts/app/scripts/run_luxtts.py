@@ -113,15 +113,28 @@ def _text(payload: dict) -> str:
     return text
 
 
+def _resolve_prompt_audio(payload: dict) -> str:
+    voice = payload.get("voice") or _env("LUXTTS_VOICE")
+    voice_map = _json_env("LUXTTS_VOICE_MAP_JSON")
+    mapped_prompt = voice_map.get(voice) if isinstance(voice, str) else None
+    prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
+    prompt_audio = str(prompt_audio or "").strip()
+    if not prompt_audio:
+        _fail("Set LUXTTS_PROMPT_AUDIO or LUXTTS_VOICE_MAP_JSON (for OpenAI voice mapping)")
+    prompt_path = Path(prompt_audio)
+    if not prompt_path.exists() or not prompt_path.is_file():
+        _fail(
+            "Configured LuxTTS prompt audio file does not exist or is not a file: "
+            f"{prompt_audio}. Ensure the file is available inside container "
+            "(e.g. /var/lib/luxtts/prompt.wav, mapped from ./.runtime/luxtts/data/prompt.wav)."
+        )
+    return str(prompt_path)
+
+
 def main() -> int:
     if _bool_env("LUXTTS_READYZ_PROBE", False):
         payload = _read_request_payload()
-        voice = payload.get("voice") or _env("LUXTTS_VOICE")
-        voice_map = _json_env("LUXTTS_VOICE_MAP_JSON")
-        mapped_prompt = voice_map.get(voice) if isinstance(voice, str) else None
-        prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
-        if not prompt_audio:
-            _fail("Set LUXTTS_PROMPT_AUDIO or LUXTTS_VOICE_MAP_JSON (for OpenAI voice mapping)")
+        _resolve_prompt_audio(payload)
         _try_import_luxtts()
         return 0
 
@@ -131,13 +144,7 @@ def main() -> int:
 
     payload = _read_request_payload()
     text = _text(payload)
-
-    voice = payload.get("voice") or _env("LUXTTS_VOICE")
-    voice_map = _json_env("LUXTTS_VOICE_MAP_JSON")
-    mapped_prompt = voice_map.get(voice) if isinstance(voice, str) else None
-    prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
-    if not prompt_audio:
-        _fail("Set LUXTTS_PROMPT_AUDIO or LUXTTS_VOICE_MAP_JSON (for OpenAI voice mapping)")
+    prompt_audio = _resolve_prompt_audio(payload)
 
     LuxTTS, sf, torch_mod = _try_import_luxtts()
 

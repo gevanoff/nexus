@@ -1259,6 +1259,8 @@ async def ui_api_tts_voices(req: Request):
 
     async with _httpx_client(timeout=10) as client:
         last_err = None
+        last_status: Optional[int] = None
+        last_body: str = ""
         for p in ("/v1/voices", "/voices"):
             try:
                 r = await client.get(f"{base}{p}")
@@ -1267,8 +1269,20 @@ async def ui_api_tts_voices(req: Request):
                         return JSONResponse(r.json())
                     except Exception:
                         return JSONResponse({"data": r.text})
+                last_status = r.status_code
+                try:
+                    last_body = (r.text or "")[:500]
+                except Exception:
+                    last_body = ""
             except Exception as e:
                 last_err = e
+
+    # Some backends may not expose voice-list endpoints. Return a safe fallback
+    # for UI population instead of surfacing a 502.
+    if backend_class and "pocket" in backend_class:
+        return JSONResponse(["default"])
+    if last_err is None and last_status is not None:
+        return JSONResponse(["default"])
 
     raise HTTPException(status_code=502, detail=f"tts backend voices query failed: {last_err}")
 
