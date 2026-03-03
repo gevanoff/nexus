@@ -70,6 +70,18 @@ def _workdir() -> str:
     return _env("LUXTTS_WORKDIR", "/var/lib/luxtts/app") or "/var/lib/luxtts/app"
 
 
+def _resolve_workdir() -> str:
+    candidates = [
+        (_workdir() or "").strip(),
+        "/app",
+        "/",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return "/"
+
+
 def _model_id() -> str:
     return _env("LUXTTS_MODEL", "luxtts") or "luxtts"
 
@@ -140,12 +152,13 @@ async def audio_speech(payload: Dict[str, Any]) -> Any:
         env["LUXTTS_REQUEST_JSON"] = str(request_json_path)
         env["LUXTTS_OUTPUT_PATH"] = str(output_path)
 
+        resolved_cwd = _resolve_workdir()
         try:
             proc = await asyncio.create_subprocess_exec(
                 _shell_bin(),
                 "-c",
                 cmd,
-                cwd=_workdir(),
+                cwd=resolved_cwd,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -157,6 +170,7 @@ async def audio_speech(payload: Dict[str, Any]) -> Any:
                     "error": "luxtts subprocess launch failed",
                     "detail": f"{type(e).__name__}: {e}",
                     "shell": _shell_bin(),
+                    "cwd": resolved_cwd,
                 },
             )
         try:
@@ -247,12 +261,13 @@ async def readyz() -> JSONResponse:
             env["LUXTTS_REQUEST_JSON"] = str(request_json_path)
             env["LUXTTS_OUTPUT_PATH"] = str(output_path)
 
+            resolved_cwd = _resolve_workdir()
             try:
                 proc = await asyncio.create_subprocess_exec(
                     _shell_bin(),
                     "-c",
                     cmd,
-                    cwd=_workdir(),
+                    cwd=resolved_cwd,
                     env=env,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -265,6 +280,7 @@ async def readyz() -> JSONResponse:
                         "reason": "run_command_launch_failed",
                         "detail": f"{type(e).__name__}: {e}",
                         "shell": _shell_bin(),
+                        "cwd": resolved_cwd,
                     },
                 )
             try:
