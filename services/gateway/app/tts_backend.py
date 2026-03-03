@@ -33,9 +33,9 @@ def _effective_tts_base_url(*, backend_class: str) -> str:
 
 def _effective_timeout_sec() -> float:
     try:
-        return float(getattr(S, "TTS_TIMEOUT_SEC", 180.0) or 180.0)
+        return float(getattr(S, "TTS_TIMEOUT_SEC", 300.0) or 300.0)
     except Exception:
-        return 180.0
+        return 300.0
 
 
 def _effective_generate_path() -> str:

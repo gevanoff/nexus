@@ -59,7 +59,7 @@ def _shell_bin() -> str:
 
 
 def _timeout_sec() -> int:
-    return _int_env("QWEN3_TTS_TIMEOUT_SEC", 120)
+    return _int_env("QWEN3_TTS_TIMEOUT_SEC", 300)
 
 
 def _readyz_timeout_sec() -> int:
