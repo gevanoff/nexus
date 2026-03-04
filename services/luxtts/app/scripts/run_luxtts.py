@@ -145,19 +145,38 @@ def _resolve_prompt_audio(payload: dict) -> str:
     mapped_prompt = None
     if isinstance(voice, str):
         mapped_prompt = voice_map.get(voice) or voice_map.get(voice.lower())
-    default_prompt = str(Path(_refs_dir()) / "prompt.wav")
-    prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio") or default_prompt
-    prompt_audio = str(prompt_audio or "").strip()
-    if not prompt_audio:
-        _fail("Set LUXTTS_PROMPT_AUDIO or LUXTTS_VOICE_MAP_JSON (for OpenAI voice mapping)")
-    prompt_path = Path(prompt_audio)
-    if not prompt_path.exists() or not prompt_path.is_file():
-        _fail(
-            "Configured LuxTTS prompt audio file does not exist or is not a file: "
-            f"{prompt_audio}. Ensure the file is available inside container "
-            "(e.g. /var/lib/luxtts/voices/prompt.wav or /var/lib/luxtts/prompt.wav)."
-        )
-    return str(prompt_path)
+    explicit_prompt = _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
+    default_prompts = [
+        str(Path(_refs_dir()) / "prompt.wav"),
+        "/var/lib/luxtts/prompt.wav",
+    ]
+
+    candidates = []
+    if mapped_prompt:
+        candidates.append(str(mapped_prompt).strip())
+    if explicit_prompt:
+        candidates.append(str(explicit_prompt).strip())
+    candidates.extend(default_prompts)
+
+    seen = set()
+    normalized = []
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+
+    for candidate in normalized:
+        prompt_path = Path(candidate)
+        if prompt_path.exists() and prompt_path.is_file():
+            return str(prompt_path)
+
+    _fail(
+        "Configured LuxTTS prompt audio file does not exist or is not a file. "
+        f"Checked: {', '.join(normalized)}. Ensure one exists inside container "
+        "(e.g. /var/lib/luxtts/voices/prompt.wav or /var/lib/luxtts/prompt.wav)."
+    )
 
 
 def main() -> int:
