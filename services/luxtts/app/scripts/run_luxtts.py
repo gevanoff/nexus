@@ -145,7 +145,8 @@ def _resolve_prompt_audio(payload: dict) -> str:
     mapped_prompt = None
     if isinstance(voice, str):
         mapped_prompt = voice_map.get(voice) or voice_map.get(voice.lower())
-    prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
+    default_prompt = str(Path(_refs_dir()) / "prompt.wav")
+    prompt_audio = mapped_prompt or _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio") or default_prompt
     prompt_audio = str(prompt_audio or "").strip()
     if not prompt_audio:
         _fail("Set LUXTTS_PROMPT_AUDIO or LUXTTS_VOICE_MAP_JSON (for OpenAI voice mapping)")
@@ -154,7 +155,7 @@ def _resolve_prompt_audio(payload: dict) -> str:
         _fail(
             "Configured LuxTTS prompt audio file does not exist or is not a file: "
             f"{prompt_audio}. Ensure the file is available inside container "
-            "(e.g. /var/lib/luxtts/prompt.wav, mapped from ./.runtime/luxtts/data/prompt.wav)."
+            "(e.g. /var/lib/luxtts/voices/prompt.wav or /var/lib/luxtts/prompt.wav)."
         )
     return str(prompt_path)
 

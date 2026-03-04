@@ -26,6 +26,15 @@ Readiness behavior:
   - `QWEN3_TTS_UPSTREAM_BASE_URL` points to a reachable OpenAI-compatible TTS upstream, or
   - `QWEN3_TTS_RUN_COMMAND` is configured and local Qwen3-TTS resources are available.
 
+Startup refs sync behavior:
+
+- By default, the container copies supported audio refs from shared mount `/var/lib/tts_refs` into local `/var/lib/qwen3-tts/voices` at startup.
+- Voice IDs are discovered from filenames in the local directory.
+- This allows operators to rename files in `/var/lib/qwen3-tts/voices` without changing shared source filenames.
+- Sync controls:
+  - `QWEN3_TTS_SYNC_SHARED_REFS=true|false`
+  - `QWEN3_TTS_SYNC_OVERWRITE=true|false` (default `false`, preserves local edits/renames)
+
 ## Local-resource mode (no external inference service)
 
 `QWEN3_TTS_RUN_COMMAND` can run fully local if the Qwen3-TTS code/resources exist under the mounted runtime path.

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -110,7 +111,46 @@ def _json_env(name: str) -> dict[str, Any]:
 
 
 def _refs_dir() -> str:
-    return _env("LUXTTS_REFS_DIR", "/var/lib/tts_refs") or "/var/lib/tts_refs"
+    return _env("LUXTTS_REFS_DIR", "/var/lib/luxtts/voices") or "/var/lib/luxtts/voices"
+
+
+def _shared_refs_dir() -> str:
+    return _env("LUXTTS_SHARED_REFS_DIR", "/var/lib/tts_refs") or "/var/lib/tts_refs"
+
+
+def _sync_shared_refs_enabled() -> bool:
+    raw = (_env("LUXTTS_SYNC_SHARED_REFS", "true") or "true").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _sync_overwrite_enabled() -> bool:
+    raw = (_env("LUXTTS_SYNC_OVERWRITE", "false") or "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _sync_shared_refs_to_local() -> None:
+    if not _sync_shared_refs_enabled():
+        return
+    source = _shared_refs_dir().strip()
+    destination = _refs_dir().strip()
+    if not source or not destination:
+        return
+    if not os.path.isdir(source):
+        return
+    os.makedirs(destination, exist_ok=True)
+    allowed_exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    overwrite = _sync_overwrite_enabled()
+    for name in os.listdir(source):
+        src_path = os.path.join(source, name)
+        if not os.path.isfile(src_path):
+            continue
+        _, ext = os.path.splitext(name)
+        if ext.lower() not in allowed_exts:
+            continue
+        dst_path = os.path.join(destination, name)
+        if os.path.exists(dst_path) and not overwrite:
+            continue
+        shutil.copy2(src_path, dst_path)
 
 
 def _discover_ref_voices() -> list[str]:
@@ -134,6 +174,11 @@ def _discover_ref_voices() -> list[str]:
         out.append(voice)
     out.sort()
     return out
+
+
+@app.on_event("startup")
+def startup_sync_refs() -> None:
+    _sync_shared_refs_to_local()
 
 
 def _voices() -> list[str]:
