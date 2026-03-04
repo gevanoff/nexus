@@ -48,6 +48,22 @@ to_lower() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
 }
 
+canonical_path() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    (cd "$path" 2>/dev/null && pwd -P)
+    return $?
+  fi
+  if [[ -f "$path" ]]; then
+    local parent base
+    parent="$(cd "$(dirname "$path")" 2>/dev/null && pwd -P)" || return 1
+    base="$(basename "$path")"
+    printf '%s/%s' "$parent" "$base"
+    return 0
+  fi
+  return 1
+}
+
 sha256_file() {
   local path="$1"
   if have_cmd sha256sum; then
@@ -108,12 +124,22 @@ declare -a SOURCES=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --source)
-      SOURCES+=("${2:-}")
-      shift 2 || true
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        ns_print_error "--source requires a path value"
+        usage
+        exit 2
+      fi
+      SOURCES+=("$2")
+      shift 2
       ;;
     --target)
-      TARGET="${2:-$TARGET}"
-      shift 2 || true
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        ns_print_error "--target requires a directory value"
+        usage
+        exit 2
+      fi
+      TARGET="$2"
+      shift 2
       ;;
     --non-recursive)
       RECURSIVE="false"
@@ -146,6 +172,18 @@ if [[ ${#SOURCES[@]} -eq 0 ]]; then
 fi
 
 mkdir -p "$TARGET"
+
+if [[ ! -d "$TARGET" ]]; then
+  ns_print_error "Target is not a directory: $TARGET"
+  exit 1
+fi
+
+if [[ ! -w "$TARGET" ]]; then
+  ns_print_error "Target is not writable: $TARGET"
+  exit 1
+fi
+
+TARGET_CANON="$(canonical_path "$TARGET" || true)"
 
 copied=0
 skipped_dupe=0
@@ -225,6 +263,11 @@ for source in "${SOURCES[@]}"; do
   fi
 
   if [[ -d "$source" ]]; then
+    SOURCE_CANON="$(canonical_path "$source" || true)"
+    if [[ -n "$TARGET_CANON" && -n "$SOURCE_CANON" && "$SOURCE_CANON" == "$TARGET_CANON" ]]; then
+      ns_print_warn "Skipping source directory equal to target: $source"
+      continue
+    fi
     while IFS= read -r -d '' f; do
       process_file "$f"
     done < <(collect_from_dir "$source" "$RECURSIVE")
