@@ -91,6 +91,21 @@ def _output_format() -> str:
     return _env("LUXTTS_OUTPUT_FORMAT", "wav") or "wav"
 
 
+def _media_type_for_output_format(fmt: Optional[str]) -> str:
+    normalized = (fmt or "wav").strip().lower()
+    if normalized == "mp3":
+        return "audio/mpeg"
+    if normalized == "ogg":
+        return "audio/ogg"
+    if normalized == "flac":
+        return "audio/flac"
+    if normalized == "webm":
+        return "audio/webm"
+    if normalized in {"m4a", "aac"}:
+        return "audio/mp4"
+    return "audio/wav"
+
+
 def _readyz_input() -> str:
     return _env("LUXTTS_READYZ_INPUT", "readyz") or "readyz"
 
@@ -201,12 +216,12 @@ def _voices() -> list[str]:
         values = [item.strip() for item in raw.split(",") if item.strip()]
         add(values)
 
-    default_voices = ["en-us", "en", "en-gb", "en-sc", "en-n", "en-rp", "en-wm", "en-wi", "en+f3", "en+m3"]
-    add(default_voices)
-
     map_keys = [str(k).strip() for k in _json_env("LUXTTS_VOICE_MAP_JSON").keys()]
     add(map_keys)
     add(_discover_ref_voices())
+
+    if not merged:
+        add(["prompt"])
 
     return merged
 
@@ -332,8 +347,10 @@ async def audio_speech(payload: Dict[str, Any]) -> Any:
 
         if not output_path.exists():
             raise HTTPException(status_code=502, detail="LUXTTS_OUTPUT_PATH not written by subprocess.")
+        if output_path.stat().st_size <= 0:
+            raise HTTPException(status_code=502, detail="LUXTTS_OUTPUT_PATH is empty.")
 
-        return StreamingResponse(output_path.open("rb"), media_type="audio/wav")
+        return StreamingResponse(output_path.open("rb"), media_type=_media_type_for_output_format(_output_format()))
 
 
 @app.get("/readyz")

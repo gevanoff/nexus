@@ -91,6 +91,21 @@ def _output_format() -> str:
     return _env("QWEN3_TTS_OUTPUT_FORMAT", "wav") or "wav"
 
 
+def _media_type_for_output_format(fmt: Optional[str]) -> str:
+    normalized = (fmt or "wav").strip().lower()
+    if normalized == "mp3":
+        return "audio/mpeg"
+    if normalized == "ogg":
+        return "audio/ogg"
+    if normalized == "flac":
+        return "audio/flac"
+    if normalized == "webm":
+        return "audio/webm"
+    if normalized in {"m4a", "aac"}:
+        return "audio/mp4"
+    return "audio/wav"
+
+
 def _readyz_input() -> str:
     return _env("QWEN3_TTS_READYZ_INPUT", "readyz") or "readyz"
 
@@ -334,8 +349,10 @@ async def audio_speech(payload: Dict[str, Any]) -> Any:
 
         if not output_path.exists():
             raise HTTPException(status_code=502, detail="QWEN3_TTS_OUTPUT_PATH not written by subprocess.")
+        if output_path.stat().st_size <= 0:
+            raise HTTPException(status_code=502, detail="QWEN3_TTS_OUTPUT_PATH is empty.")
 
-        return StreamingResponse(output_path.open("rb"), media_type="audio/wav")
+        return StreamingResponse(output_path.open("rb"), media_type=_media_type_for_output_format(_output_format()))
 
 
 @app.get("/readyz")
