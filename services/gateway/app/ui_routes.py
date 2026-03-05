@@ -1435,16 +1435,18 @@ async def ui_api_tts_voices(req: Request):
 
     _add(await _fetch_backend_voices(base))
 
-    # Best-effort: include other TTS backend voices so users can keep one shared naming set.
-    for cls in ("pocket_tts", "luxtts", "qwen3_tts"):
-        if cls == backend_class:
-            continue
-        peer_base = _effective_tts_base_url(backend_class=cls)
-        if not peer_base or peer_base == base:
-            continue
-        _add(await _fetch_backend_voices(peer_base))
+    is_qwen = str(backend_class or "").strip().lower() == "qwen3_tts"
+    if not is_qwen:
+        # Best-effort: include other TTS backend voices so users can keep one shared naming set.
+        for cls in ("pocket_tts", "luxtts", "qwen3_tts"):
+            if cls == backend_class:
+                continue
+            peer_base = _effective_tts_base_url(backend_class=cls)
+            if not peer_base or peer_base == base:
+                continue
+            _add(await _fetch_backend_voices(peer_base))
 
-    _add(_shared_ref_voices())
+        _add(_shared_ref_voices())
 
     if not merged:
         merged = ["default"]

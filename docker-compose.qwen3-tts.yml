@@ -28,6 +28,7 @@ services:
       - QWEN3_TTS_REF_AUDIO=${QWEN3_TTS_REF_AUDIO:-}
       - QWEN3_TTS_REF_TEXT=${QWEN3_TTS_REF_TEXT:-}
       - QWEN3_TTS_REFS_DIR=${QWEN3_TTS_REFS_DIR:-/var/lib/qwen3-tts/voices}
+      - QWEN3_TTS_EXPOSE_REF_VOICES=${QWEN3_TTS_EXPOSE_REF_VOICES:-false}
       - QWEN3_TTS_SHARED_REFS_DIR=${QWEN3_TTS_SHARED_REFS_DIR:-/var/lib/tts_refs}
       - QWEN3_TTS_SYNC_SHARED_REFS=${QWEN3_TTS_SYNC_SHARED_REFS:-true}
       - QWEN3_TTS_SYNC_OVERWRITE=${QWEN3_TTS_SYNC_OVERWRITE:-false}
@@ -39,9 +40,13 @@ services:
       - QWEN3_TTS_TIMEOUT_SEC=${QWEN3_TTS_TIMEOUT_SEC:-300}
       - QWEN3_TTS_READYZ_TIMEOUT_SEC=${QWEN3_TTS_READYZ_TIMEOUT_SEC:-20}
       - QWEN3_TTS_WORKDIR=${QWEN3_TTS_WORKDIR:-/app}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
+      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
       - ./.runtime/qwen3-tts/data:/var/lib/qwen3-tts
       - ./.runtime/tts_refs:/var/lib/tts_refs:ro
+      - ./.runtime/huggingface:/var/lib/huggingface
     networks:
       - nexus
     restart: unless-stopped

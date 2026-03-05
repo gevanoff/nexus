@@ -19,9 +19,13 @@ services:
       - POCKET_TTS_VOICE=${POCKET_TTS_VOICE:-alba}
       - POCKET_TTS_COMMAND=${POCKET_TTS_COMMAND:-pocket-tts}
       - POCKET_TTS_REFS_DIR=${POCKET_TTS_REFS_DIR:-/var/lib/tts_refs}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
+      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
       - ./.runtime/tts/data:/data
       - ./.runtime/tts_refs:/var/lib/tts_refs:ro
+      - ./.runtime/huggingface:/var/lib/huggingface
     networks:
       - nexus
     restart: unless-stopped

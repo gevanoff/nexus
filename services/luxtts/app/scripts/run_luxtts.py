@@ -193,6 +193,25 @@ def _resolve_prompt_audio(payload: dict) -> str:
     )
 
 
+def _fallback_prompt_audio() -> str:
+    candidates = [
+        str(Path(_refs_dir()) / "penny.wav"),
+        str(Path(_refs_dir()) / "prompt.wav"),
+        "/var/lib/luxtts/penny.wav",
+        "/var/lib/luxtts/prompt.wav",
+    ]
+    for candidate in candidates:
+        p = Path(candidate)
+        if p.exists() and p.is_file():
+            return str(p)
+    return ""
+
+
+def _is_lux_kernel_size_error(exc: Exception) -> bool:
+    message = str(exc or "")
+    return "Kernel size can't be greater than actual input size" in message
+
+
 def main() -> int:
     if _bool_env("LUXTTS_READYZ_PROBE", False):
         payload = _read_request_payload()
@@ -234,14 +253,33 @@ def main() -> int:
         speed = max(0.5, min(2.0, requested_speed))
     return_smooth = _bool_env("LUXTTS_RETURN_SMOOTH", False)
 
-    final_wav = lux_tts.generate_speech(
-        text,
-        encoded_prompt,
-        num_steps=num_steps,
-        t_shift=t_shift,
-        speed=speed,
-        return_smooth=return_smooth,
-    )
+    try:
+        final_wav = lux_tts.generate_speech(
+            text,
+            encoded_prompt,
+            num_steps=num_steps,
+            t_shift=t_shift,
+            speed=speed,
+            return_smooth=return_smooth,
+        )
+    except Exception as exc:
+        if not _is_lux_kernel_size_error(exc):
+            raise
+        fallback_prompt = _fallback_prompt_audio()
+        if not fallback_prompt or fallback_prompt == prompt_audio:
+            raise
+        if ref_duration > 0:
+            encoded_prompt = lux_tts.encode_prompt(fallback_prompt, duration=ref_duration, rms=rms)
+        else:
+            encoded_prompt = lux_tts.encode_prompt(fallback_prompt, rms=rms)
+        final_wav = lux_tts.generate_speech(
+            text,
+            encoded_prompt,
+            num_steps=num_steps,
+            t_shift=t_shift,
+            speed=1.0,
+            return_smooth=return_smooth,
+        )
 
     try:
         final_wav = final_wav.numpy().squeeze()

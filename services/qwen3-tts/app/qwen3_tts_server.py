@@ -143,6 +143,11 @@ def _sync_overwrite_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _expose_ref_voices() -> bool:
+    raw = (_env("QWEN3_TTS_EXPOSE_REF_VOICES", "false") or "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _sync_shared_refs_to_local() -> None:
     if not _sync_shared_refs_enabled():
         return
@@ -221,9 +226,10 @@ def _voices() -> list[str]:
 
     map_keys = [str(k).strip() for k in _json_env("QWEN3_TTS_VOICE_MAP_JSON").keys()]
     add(map_keys)
-    ref_map_keys = [str(k).strip() for k in _json_env("QWEN3_TTS_REF_MAP_JSON").keys()]
-    add(ref_map_keys)
-    add(_discover_ref_voices())
+    if _expose_ref_voices():
+        ref_map_keys = [str(k).strip() for k in _json_env("QWEN3_TTS_REF_MAP_JSON").keys()]
+        add(ref_map_keys)
+        add(_discover_ref_voices())
 
     return merged
 

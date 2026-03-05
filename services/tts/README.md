@@ -77,6 +77,19 @@ Preview without copying:
 ./deploy/scripts/seed-tts-refs.sh --source /path/a --source /path/b --dry-run
 ```
 
+## Hugging Face auth (for cloning-capable artifacts)
+
+If Pocket TTS reports that voice-cloning weights are gated, set one of these in `nexus/.env`:
+
+- `HF_TOKEN=...`
+- `HUGGINGFACE_HUB_TOKEN=...` (preferred by `huggingface_hub`; falls back to `HF_TOKEN` in compose)
+
+Optional cache location:
+
+- `HF_HOME=/var/lib/huggingface`
+
+Nexus compose mounts host cache at `./.runtime/huggingface` for reuse across Pocket/Lux/Qwen containers.
+
 ## Contributing
 
 Want to implement this service? See:

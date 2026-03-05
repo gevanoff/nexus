@@ -35,6 +35,12 @@ Startup refs sync behavior:
   - `QWEN3_TTS_SYNC_SHARED_REFS=true|false`
   - `QWEN3_TTS_SYNC_OVERWRITE=true|false` (default `false`, preserves local edits/renames)
 
+Voice exposure behavior:
+
+- By default, `/v1/voices` exposes Qwen built-in voices (plus explicit `QWEN3_TTS_VOICES` / `QWEN3_TTS_VOICE_MAP_JSON` aliases).
+- Ref-derived voice names are hidden by default to avoid presenting cross-model names that cannot be used as native Qwen speakers.
+- To expose ref-derived names intentionally, set `QWEN3_TTS_EXPOSE_REF_VOICES=true`.
+
 ## Local-resource mode (no external inference service)
 
 `QWEN3_TTS_RUN_COMMAND` can run fully local if the Qwen3-TTS code/resources exist under the mounted runtime path.

@@ -82,6 +82,22 @@ def _discover_predefined_voices() -> list[str]:
     return [v for v in values if v]
 
 
+def _is_clone_required_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return "trying to use voice cloning" in message or "model with voice cloning" in message
+
+
+def _default_catalog_voice() -> str:
+    configured = str(os.getenv("POCKET_TTS_VOICE", "")).strip()
+    predefined = _discover_predefined_voices()
+    if configured:
+        for item in predefined:
+            if item.lower() == configured.lower():
+                return item
+        return configured
+    return predefined[0] if predefined else "alba"
+
+
 def _voices() -> list[str]:
     merged: list[str] = []
     seen: set[str] = set()
@@ -187,15 +203,24 @@ class PocketTTSBackend:
                 raise RuntimeError(f"TTSModel API only supports wav format, got {response_format}")
             try:
                 voice_state = backend.get_state_for_audio_prompt(resolved_voice)
+            except Exception as exc:
+                if not _is_clone_required_error(exc):
+                    raise RuntimeError(f"TTSModel API failed: {exc}")
+                fallback_voice = _default_catalog_voice()
+                if str(fallback_voice).strip().lower() == str(resolved_voice).strip().lower():
+                    raise RuntimeError(f"TTSModel API failed: {exc}")
+                try:
+                    voice_state = backend.get_state_for_audio_prompt(fallback_voice)
+                except Exception:
+                    raise RuntimeError(f"TTSModel API failed: {exc}")
+
+            try:
                 audio_tensor = backend.generate_audio(voice_state, text)
-                # Convert torch tensor to wav bytes
                 import numpy as np
                 import wave
                 import io
                 audio_np = audio_tensor.detach().cpu().numpy()
-                # Scale float32 [-1, 1] to int16
                 audio_int16 = (audio_np * 32767).astype(np.int16)
-                # Assume 16-bit PCM, mono
                 buffer = io.BytesIO()
                 with wave.open(buffer, 'wb') as wav_file:
                     wav_file.setnchannels(1)
