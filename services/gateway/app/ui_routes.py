@@ -1394,31 +1394,6 @@ async def ui_api_tts_voices(req: Request):
                         return []
         return []
 
-    def _shared_ref_voices() -> list[str]:
-        refs_dir = (os.environ.get("TTS_SHARED_REFS_DIR") or "/var/lib/tts_refs").strip()
-        if not refs_dir or not os.path.isdir(refs_dir):
-            return []
-        exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
-        out: list[str] = []
-        seen: set[str] = set()
-        for name in os.listdir(refs_dir):
-            full = os.path.join(refs_dir, name)
-            if not os.path.isfile(full):
-                continue
-            stem, ext = os.path.splitext(name)
-            if ext.lower() not in exts:
-                continue
-            voice = stem.strip()
-            if not voice:
-                continue
-            key = voice.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(voice)
-        out.sort()
-        return out
-
     merged: list[str] = []
     seen: set[str] = set()
 
@@ -1434,19 +1409,6 @@ async def ui_api_tts_voices(req: Request):
             merged.append(v)
 
     _add(await _fetch_backend_voices(base))
-
-    is_qwen = str(backend_class or "").strip().lower() == "qwen3_tts"
-    if not is_qwen:
-        # Best-effort: include other TTS backend voices so users can keep one shared naming set.
-        for cls in ("pocket_tts", "luxtts", "qwen3_tts"):
-            if cls == backend_class:
-                continue
-            peer_base = _effective_tts_base_url(backend_class=cls)
-            if not peer_base or peer_base == base:
-                continue
-            _add(await _fetch_backend_voices(peer_base))
-
-        _add(_shared_ref_voices())
 
     if not merged:
         merged = ["default"]

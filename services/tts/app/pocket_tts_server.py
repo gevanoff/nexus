@@ -82,20 +82,9 @@ def _discover_predefined_voices() -> list[str]:
     return [v for v in values if v]
 
 
-def _is_clone_required_error(exc: Exception) -> bool:
-    message = str(exc or "").lower()
-    return "trying to use voice cloning" in message or "model with voice cloning" in message
-
-
-def _default_catalog_voice() -> str:
-    configured = str(os.getenv("POCKET_TTS_VOICE", "")).strip()
-    predefined = _discover_predefined_voices()
-    if configured:
-        for item in predefined:
-            if item.lower() == configured.lower():
-                return item
-        return configured
-    return predefined[0] if predefined else "alba"
+def _expose_ref_voices() -> bool:
+    raw = str(os.getenv("POCKET_TTS_EXPOSE_REF_VOICES", "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _voices() -> list[str]:
@@ -118,7 +107,8 @@ def _voices() -> list[str]:
         add([item.strip() for item in raw.split(",") if item.strip()])
 
     add(_discover_predefined_voices())
-    add(_discover_ref_voices())
+    if _expose_ref_voices():
+        add(_discover_ref_voices())
 
     if not merged:
         add(["default"])
@@ -203,18 +193,6 @@ class PocketTTSBackend:
                 raise RuntimeError(f"TTSModel API only supports wav format, got {response_format}")
             try:
                 voice_state = backend.get_state_for_audio_prompt(resolved_voice)
-            except Exception as exc:
-                if not _is_clone_required_error(exc):
-                    raise RuntimeError(f"TTSModel API failed: {exc}")
-                fallback_voice = _default_catalog_voice()
-                if str(fallback_voice).strip().lower() == str(resolved_voice).strip().lower():
-                    raise RuntimeError(f"TTSModel API failed: {exc}")
-                try:
-                    voice_state = backend.get_state_for_audio_prompt(fallback_voice)
-                except Exception:
-                    raise RuntimeError(f"TTSModel API failed: {exc}")
-
-            try:
                 audio_tensor = backend.generate_audio(voice_state, text)
                 import numpy as np
                 import wave

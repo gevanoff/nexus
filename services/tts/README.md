@@ -28,6 +28,7 @@ It exposes an OpenAI-compatible `POST /v1/audio/speech` endpoint that the gatewa
   - `POCKET_TTS_COMMAND=pocket-tts`
   - `POCKET_TTS_MODEL_PATH=`
   - `POCKET_TTS_VOICE=alba`
+  - `POCKET_TTS_EXPOSE_REF_VOICES=false` (default; keeps `/v1/voices` to Pocket-native catalog)
 
 ## Quick test
 
