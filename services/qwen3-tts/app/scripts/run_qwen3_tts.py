@@ -118,6 +118,11 @@ def _text(payload: dict) -> str:
     return text
 
 
+def _supports_voice_clone_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return "does not support generate_voice_clone" in message
+
+
 def main() -> int:
     if _bool_env("QWEN3_TTS_READYZ_PROBE", False):
         _read_request_payload()
@@ -170,24 +175,60 @@ def main() -> int:
         if not ref_audio:
             _fail("QWEN3_TTS_REF_AUDIO is not set for voice_clone")
         x_vector_only = _bool_env("QWEN3_TTS_X_VECTOR_ONLY", False)
-        wavs, sample_rate = model.generate_voice_clone(
-            text=text,
-            language=language,
-            ref_audio=ref_audio,
-            ref_text=ref_text,
-            x_vector_only_mode=x_vector_only,
-        )
+        try:
+            wavs, sample_rate = model.generate_voice_clone(
+                text=text,
+                language=language,
+                ref_audio=ref_audio,
+                ref_text=ref_text,
+                x_vector_only_mode=x_vector_only,
+            )
+        except Exception as exc:
+            if not _supports_voice_clone_error(exc):
+                raise
+            speaker = _env("QWEN3_TTS_SPEAKER") or "Vivian"
+            instruct = _env("QWEN3_TTS_INSTRUCT") or ""
+            wavs, sample_rate = model.generate_custom_voice(
+                text=text,
+                language=language,
+                speaker=speaker,
+                instruct=instruct,
+            )
     else:
         language = _env("QWEN3_TTS_LANGUAGE") or "Auto"
         if mapped_ref_audio:
             x_vector_only = _bool_env("QWEN3_TTS_X_VECTOR_ONLY", False)
-            wavs, sample_rate = model.generate_voice_clone(
-                text=text,
-                language=language,
-                ref_audio=mapped_ref_audio,
-                ref_text=_env("QWEN3_TTS_REFS_REF_TEXT") or _env("QWEN3_TTS_REF_TEXT"),
-                x_vector_only_mode=x_vector_only,
-            )
+            try:
+                wavs, sample_rate = model.generate_voice_clone(
+                    text=text,
+                    language=language,
+                    ref_audio=mapped_ref_audio,
+                    ref_text=_env("QWEN3_TTS_REFS_REF_TEXT") or _env("QWEN3_TTS_REF_TEXT"),
+                    x_vector_only_mode=x_vector_only,
+                )
+            except Exception as exc:
+                if not _supports_voice_clone_error(exc):
+                    raise
+                default_voice_map = {
+                    "alloy": "Vivian",
+                    "echo": "Ryan",
+                    "fable": "Serena",
+                    "onyx": "Aiden",
+                    "nova": "Dylan",
+                    "shimmer": "Ono_Anna",
+                }
+                voice_map = {**default_voice_map, **_json_env("QWEN3_TTS_VOICE_MAP_JSON")}
+                if isinstance(voice, str) and voice:
+                    speaker = voice_map.get(voice, _env("QWEN3_TTS_SPEAKER") or "Vivian")
+                else:
+                    speaker = _env("QWEN3_TTS_SPEAKER") or "Vivian"
+                instruct = _env("QWEN3_TTS_INSTRUCT") or ""
+                wavs, sample_rate = model.generate_custom_voice(
+                    text=text,
+                    language=language,
+                    speaker=speaker,
+                    instruct=instruct,
+                )
         else:
             default_voice_map = {
                 "alloy": "Vivian",

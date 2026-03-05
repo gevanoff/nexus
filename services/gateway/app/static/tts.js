@@ -6,12 +6,34 @@
   const backendHealthEl = $("backendHealth");
   const voiceEl = $("voice");
   const speedEl = $("speed");
+  const speedRangeHintEl = $("speedRangeHint");
   const generateEl = $("generate");
   const statusEl = $("status");
   const metaEl = $("meta");
   const playerEl = $("player");
 
   let activeObjectUrl = null;
+
+  const UI_SPEED_MIN = 1;
+  const UI_SPEED_MAX = 10;
+  const UI_SPEED_STEP = 1;
+  const UI_SPEED_DEFAULT = 5;
+
+  function configureSpeedControl() {
+    if (!speedEl) return;
+    speedEl.min = String(UI_SPEED_MIN);
+    speedEl.max = String(UI_SPEED_MAX);
+    speedEl.step = String(UI_SPEED_STEP);
+    const current = parseFloat(String(speedEl.value || ""));
+    if (!Number.isFinite(current)) {
+      speedEl.value = String(UI_SPEED_DEFAULT);
+    } else {
+      speedEl.value = String(Math.min(UI_SPEED_MAX, Math.max(UI_SPEED_MIN, current)));
+    }
+    if (speedRangeHintEl) {
+      speedRangeHintEl.textContent = `Range: ${UI_SPEED_MIN}-${UI_SPEED_MAX}`;
+    }
+  }
 
   function handle401(resp) {
     if (resp && resp.status === 401) {
@@ -68,8 +90,10 @@
 
     const backendClass = String(backendEl?.value || "").trim();
     const voice = String(voiceEl?.value || "").trim() || "default";
-    const speedRaw = parseFloat(String(speedEl.value || "1"));
-    const speed = Number.isFinite(speedRaw) ? Math.min(2, Math.max(0.5, speedRaw)) : 1;
+    const speedRaw = parseFloat(String(speedEl.value || String(UI_SPEED_DEFAULT)));
+    const speed = Number.isFinite(speedRaw)
+      ? Math.min(UI_SPEED_MAX, Math.max(UI_SPEED_MIN, speedRaw))
+      : UI_SPEED_DEFAULT;
 
     const body = { text, speed };
     if (backendClass) body.backend_class = backendClass;
@@ -418,6 +442,7 @@
   }
 
   // Load available backends/voices, apply saved setting (server or localStorage), and bind UI handlers.
+  configureSpeedControl();
   (async () => {
     await loadBackends();
     await loadVoices();

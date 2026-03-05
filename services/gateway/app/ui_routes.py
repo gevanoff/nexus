@@ -1395,7 +1395,7 @@ async def ui_api_tts_voices(req: Request):
         return []
 
     def _shared_ref_voices() -> list[str]:
-        refs_dir = (os.environ.get("VOICE_LIBRARY_DIR") or "/var/lib/tts_refs").strip()
+        refs_dir = (os.environ.get("TTS_SHARED_REFS_DIR") or "/var/lib/tts_refs").strip()
         if not refs_dir or not os.path.isdir(refs_dir):
             return []
         exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}

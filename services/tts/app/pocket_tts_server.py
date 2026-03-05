@@ -235,32 +235,55 @@ class PocketTTSBackend:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             output_path = Path(tmp.name)
 
-        cmd = [self.command] + self.command_args
+        base = [self.command] + self.command_args
+
+        def _common_flags() -> list[str]:
+            flags: list[str] = []
+            if self.model_arg and self.model_path:
+                flags += [self.model_arg, self.model_path]
+            if self.voice_arg and voice:
+                flags += [self.voice_arg, voice]
+            if self.format_arg:
+                flags += [self.format_arg, response_format]
+            return flags
+
+        attempts: list[list[str]] = []
+        common = _common_flags()
+
+        # Legacy flat options style.
+        legacy = list(base)
         if self.text_arg:
-            cmd += [self.text_arg, text]
+            legacy += [self.text_arg, text]
         if self.output_arg:
-            cmd += [self.output_arg, str(output_path)]
-        if self.model_arg and self.model_path:
-            cmd += [self.model_arg, self.model_path]
-        if self.voice_arg and voice:
-            cmd += [self.voice_arg, voice]
-        if self.format_arg:
-            cmd += [self.format_arg, response_format]
+            legacy += [self.output_arg, str(output_path)]
+        legacy += common
+        attempts.append(legacy)
 
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                f"Pocket TTS command not found: {self.command}. Set POCKET_TTS_COMMAND to a valid binary."
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"Pocket TTS command failed: {exc.stderr.decode('utf-8', errors='ignore')}"
-            ) from exc
+        # Common subcommand variants seen in modern CLIs.
+        attempts.append(list(base) + ["synthesize", text, "--output", str(output_path)] + common)
+        attempts.append(list(base) + ["synthesize", "--text", text, "--output", str(output_path)] + common)
+        attempts.append(list(base) + ["tts", text, "--output", str(output_path)] + common)
+        attempts.append(list(base) + ["generate", text, "--output", str(output_path)] + common)
+        attempts.append(list(base) + ["speak", text, "--output", str(output_path)] + common)
 
-        audio = output_path.read_bytes()
+        last_error = ""
+        for cmd in attempts:
+            try:
+                subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if output_path.exists() and output_path.stat().st_size > 0:
+                    audio = output_path.read_bytes()
+                    output_path.unlink(missing_ok=True)
+                    return audio
+                last_error = f"Command succeeded but output file missing/empty: {' '.join(cmd)}"
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    f"Pocket TTS command not found: {self.command}. Set POCKET_TTS_COMMAND to a valid binary."
+                ) from exc
+            except subprocess.CalledProcessError as exc:
+                last_error = (exc.stderr or b"").decode("utf-8", errors="ignore")
+
         output_path.unlink(missing_ok=True)
-        return audio
+        raise RuntimeError(f"Pocket TTS command failed: {last_error}")
 
     def synthesize(self, text: str, voice: str, response_format: str) -> bytes:
         backend_pref = self.backend.lower()
