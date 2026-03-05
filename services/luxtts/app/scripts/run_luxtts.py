@@ -159,7 +159,9 @@ def _resolve_prompt_audio(payload: dict) -> str:
         mapped_prompt = voice_map.get(voice) or voice_map.get(voice.lower())
     explicit_prompt = _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
     default_prompts = [
+        str(Path(_refs_dir()) / "penny.wav"),
         str(Path(_refs_dir()) / "prompt.wav"),
+        "/var/lib/luxtts/penny.wav",
         "/var/lib/luxtts/prompt.wav",
     ]
 
@@ -187,7 +189,7 @@ def _resolve_prompt_audio(payload: dict) -> str:
     _fail(
         "Configured LuxTTS prompt audio file does not exist or is not a file. "
         f"Checked: {', '.join(normalized)}. Ensure one exists inside container "
-        "(e.g. /var/lib/luxtts/voices/prompt.wav or /var/lib/luxtts/prompt.wav)."
+        "(e.g. /var/lib/luxtts/voices/penny.wav or /var/lib/luxtts/voices/prompt.wav)."
     )
 
 

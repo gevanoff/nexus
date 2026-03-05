@@ -21,6 +21,75 @@ from pydantic import BaseModel, Field
 app = FastAPI(title="Pocket TTS")
 
 
+def _refs_dir() -> str:
+    return (os.getenv("POCKET_TTS_REFS_DIR") or "/var/lib/tts_refs").strip()
+
+
+def _discover_ref_voices() -> list[str]:
+    directory = _refs_dir()
+    if not directory or not os.path.isdir(directory):
+        return []
+    allowed_exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in os.listdir(directory):
+        full = os.path.join(directory, entry)
+        if not os.path.isfile(full):
+            continue
+        stem, ext = os.path.splitext(entry)
+        if ext.lower() not in allowed_exts:
+            continue
+        voice = stem.strip()
+        if not voice:
+            continue
+        key = voice.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(voice)
+    out.sort()
+    return out
+
+
+def _discover_predefined_voices() -> list[str]:
+    try:
+        from pocket_tts.utils.utils import PREDEFINED_VOICES  # type: ignore
+    except Exception:
+        return []
+    if hasattr(PREDEFINED_VOICES, "keys"):
+        values = [str(k).strip() for k in PREDEFINED_VOICES.keys()]
+    else:
+        values = [str(v).strip() for v in PREDEFINED_VOICES]
+    return [v for v in values if v]
+
+
+def _voices() -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    def add(values: list[str]) -> None:
+        for value in values:
+            v = str(value or "").strip()
+            if not v:
+                continue
+            k = v.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            merged.append(v)
+
+    raw = os.getenv("POCKET_TTS_VOICES", "")
+    if raw.strip():
+        add([item.strip() for item in raw.split(",") if item.strip()])
+
+    add(_discover_predefined_voices())
+    add(_discover_ref_voices())
+
+    if not merged:
+        add(["default"])
+    return merged
+
+
 class SpeechRequest(BaseModel):
     input: str = Field(default=..., min_length=1)
     model: Optional[str] = None
@@ -244,6 +313,16 @@ async def list_models() -> dict[str, Any]:
             }
         ],
     }
+
+
+@app.get("/v1/voices")
+async def list_voices_v1() -> list[str]:
+    return _voices()
+
+
+@app.get("/voices")
+async def list_voices_compat() -> list[str]:
+    return _voices()
 
 
 @app.post("/v1/audio/speech")

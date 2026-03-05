@@ -1370,70 +1370,86 @@ async def ui_api_tts_voices(req: Request):
     if not base:
         raise HTTPException(status_code=404, detail="tts backend not configured")
 
-    # Special-case local pocket_tts which does not expose a voice-listing endpoint.
-    # If pocket_tts is importable in-process and defines PREDEFINED_VOICES, return that.
-    if backend_class and "pocket" in backend_class:
-        try:
-            from pocket_tts.utils.utils import PREDEFINED_VOICES  # type: ignore
-            if PREDEFINED_VOICES:
-                return JSONResponse(list(PREDEFINED_VOICES.keys()) if hasattr(PREDEFINED_VOICES, 'keys') else list(PREDEFINED_VOICES))
-        except Exception:
-            # If import fails in this Python environment, try invoking a known pocket-tts python
-            # executable (common path used on deployments) to extract PREDEFINED_VOICES.
-            candidates = []
-            # allow explicit override via settings or environment
-            try:
-                p = (getattr(S, "POCKET_TTS_PYTHON", None) or os.environ.get("POCKET_TTS_PYTHON") or "").strip()
-                if p:
-                    candidates.append(p)
-            except Exception:
-                pass
-            # common deployment path
-            candidates.extend(["/var/lib/pocket-tts/env/bin/python", "/var/lib/pocket-tts/venv/bin/python"])
+    def _normalize_voice_payload(payload: Any) -> list[str]:
+        if isinstance(payload, list):
+            return [str(v).strip() for v in payload if str(v or "").strip()]
+        if isinstance(payload, dict):
+            for key in ("voices", "data", "items"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [str(v).strip() for v in value if str(v or "").strip()]
+        return []
 
-            for py in candidates:
+    async def _fetch_backend_voices(base_url: str) -> list[str]:
+        async with _httpx_client(timeout=10) as client:
+            for p in ("/v1/voices", "/voices"):
                 try:
-                    args = [py, "-c", "import json; from pocket_tts.utils.utils import PREDEFINED_VOICES; print(json.dumps(list(PREDEFINED_VOICES.keys()) if hasattr(PREDEFINED_VOICES, 'keys') else list(PREDEFINED_VOICES)))"]
-                    proc = subprocess.run(args, capture_output=True, text=True, timeout=5)
-                    if proc.returncode == 0 and proc.stdout:
-                        try:
-                            payload = json.loads(proc.stdout.strip())
-                            if isinstance(payload, list):
-                                return JSONResponse(payload)
-                        except Exception:
-                            # ignore parse errors and continue
-                            pass
+                    r = await client.get(f"{base_url}{p}")
                 except Exception:
                     continue
-
-    async with _httpx_client(timeout=10) as client:
-        last_err = None
-        last_status: Optional[int] = None
-        last_body: str = ""
-        for p in ("/v1/voices", "/voices"):
-            try:
-                r = await client.get(f"{base}{p}")
                 if 200 <= r.status_code < 300:
                     try:
-                        return JSONResponse(r.json())
+                        return _normalize_voice_payload(r.json())
                     except Exception:
-                        return JSONResponse({"data": r.text})
-                last_status = r.status_code
-                try:
-                    last_body = (r.text or "")[:500]
-                except Exception:
-                    last_body = ""
-            except Exception as e:
-                last_err = e
+                        return []
+        return []
 
-    # Some backends may not expose voice-list endpoints. Return a safe fallback
-    # for UI population instead of surfacing a 502.
-    if backend_class and "pocket" in backend_class:
-        return JSONResponse(["default"])
-    if last_err is None and last_status is not None:
-        return JSONResponse(["default"])
+    def _shared_ref_voices() -> list[str]:
+        refs_dir = (os.environ.get("VOICE_LIBRARY_DIR") or "/var/lib/tts_refs").strip()
+        if not refs_dir or not os.path.isdir(refs_dir):
+            return []
+        exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+        out: list[str] = []
+        seen: set[str] = set()
+        for name in os.listdir(refs_dir):
+            full = os.path.join(refs_dir, name)
+            if not os.path.isfile(full):
+                continue
+            stem, ext = os.path.splitext(name)
+            if ext.lower() not in exts:
+                continue
+            voice = stem.strip()
+            if not voice:
+                continue
+            key = voice.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(voice)
+        out.sort()
+        return out
 
-    raise HTTPException(status_code=502, detail=f"tts backend voices query failed: {last_err}")
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    def _add(values: list[str]) -> None:
+        for value in values:
+            v = str(value or "").strip()
+            if not v:
+                continue
+            k = v.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            merged.append(v)
+
+    _add(await _fetch_backend_voices(base))
+
+    # Best-effort: include other TTS backend voices so users can keep one shared naming set.
+    for cls in ("pocket_tts", "luxtts", "qwen3_tts"):
+        if cls == backend_class:
+            continue
+        peer_base = _effective_tts_base_url(backend_class=cls)
+        if not peer_base or peer_base == base:
+            continue
+        _add(await _fetch_backend_voices(peer_base))
+
+    _add(_shared_ref_voices())
+
+    if not merged:
+        merged = ["default"]
+
+    return JSONResponse(merged)
 
 
 @router.post("/ui/api/tts/clone", include_in_schema=False)

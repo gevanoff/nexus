@@ -49,7 +49,7 @@ Required pieces:
 - model access (via `LUXTTS_MODEL_ID`),
 - prompt audio (`LUXTTS_PROMPT_AUDIO` or `LUXTTS_VOICE_MAP_JSON`).
 
-Default prompt lookup now also checks `/var/lib/luxtts/voices/prompt.wav`.
+Default prompt lookup now checks `/var/lib/luxtts/voices/penny.wav` first (then `prompt.wav` for compatibility).
 
 ## Compose
 

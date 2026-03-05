@@ -18,6 +18,7 @@ services:
       - POCKET_TTS_MODEL_PATH=${POCKET_TTS_MODEL_PATH:-}
       - POCKET_TTS_VOICE=${POCKET_TTS_VOICE:-alba}
       - POCKET_TTS_COMMAND=${POCKET_TTS_COMMAND:-pocket-tts}
+      - POCKET_TTS_REFS_DIR=${POCKET_TTS_REFS_DIR:-/var/lib/tts_refs}
     volumes:
       - ./.runtime/tts/data:/data
       - ./.runtime/tts_refs:/var/lib/tts_refs:ro
