@@ -45,7 +45,45 @@ def _effective_generate_path() -> str:
     return p
 
 
-def _normalize_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _speed_range_for_backend(backend_class: str) -> tuple[float, float]:
+    key = str(backend_class or "").strip().lower()
+    # Keep the current operational range by default; backends can diverge later.
+    if "lux" in key:
+        return 0.5, 2.0
+    if "qwen" in key:
+        return 0.5, 2.0
+    if "pocket" in key:
+        return 0.5, 2.0
+    return 0.5, 2.0
+
+
+def _normalize_speed(speed_value: Any, *, backend_class: str) -> float | None:
+    try:
+        speed = float(speed_value)
+    except Exception:
+        return None
+
+    min_speed, max_speed = _speed_range_for_backend(backend_class)
+
+    # Backward compatibility: existing callers already send backend-domain speed.
+    if speed <= 2.0:
+        return _clamp(speed, min_speed, max_speed)
+
+    # Normalized UI scale: 1..10 maps linearly to backend range.
+    if 1.0 <= speed <= 10.0:
+        normalized = (speed - 1.0) / 9.0
+        mapped = min_speed + (normalized * (max_speed - min_speed))
+        return _clamp(mapped, min_speed, max_speed)
+
+    # Out-of-range values are clamped to backend limits.
+    return _clamp(speed, min_speed, max_speed)
+
+
+def _normalize_payload(body: Dict[str, Any], *, backend_class: str) -> Dict[str, Any]:
     payload = dict(body)
     if "text" not in payload and isinstance(payload.get("input"), str):
         payload["text"] = payload.get("input")
@@ -59,11 +97,11 @@ def _normalize_payload(body: Dict[str, Any]) -> Dict[str, Any]:
             payload.pop("voice", None)
 
     if "speed" in payload:
-        try:
-            speed = float(payload["speed"])
-            payload["speed"] = max(0.5, min(2.0, speed))
-        except Exception:
+        normalized = _normalize_speed(payload.get("speed"), backend_class=backend_class)
+        if normalized is None:
             payload.pop("speed", None)
+        else:
+            payload["speed"] = normalized
 
     return payload
 
@@ -107,7 +145,7 @@ async def generate_tts(*, backend_class: str, body: Dict[str, Any]) -> TtsResult
 
     timeout = _effective_timeout_sec()
     path = _effective_generate_path()
-    payload = _normalize_payload(body)
+    payload = _normalize_payload(body, backend_class=backend_class)
 
     started = time.time()
     async with httpx.AsyncClient(timeout=timeout) as client:

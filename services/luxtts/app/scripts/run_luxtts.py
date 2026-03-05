@@ -139,6 +139,18 @@ def _text(payload: dict) -> str:
     return text
 
 
+def _payload_float(payload: dict, key: str) -> float | None:
+    if key not in payload:
+        return None
+    raw = payload.get(key)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _resolve_prompt_audio(payload: dict) -> str:
     voice = payload.get("voice") or _env("LUXTTS_VOICE")
     voice_map = {**_discover_ref_map(), **_json_env("LUXTTS_VOICE_MAP_JSON")}
@@ -213,7 +225,11 @@ def main() -> int:
 
     num_steps = _int_env("LUXTTS_NUM_STEPS", 4)
     t_shift = _float_env("LUXTTS_T_SHIFT", 0.9)
-    speed = _float_env("LUXTTS_SPEED", 1.0)
+    requested_speed = _payload_float(payload, "speed")
+    if requested_speed is None:
+        speed = _float_env("LUXTTS_SPEED", 1.0)
+    else:
+        speed = max(0.5, min(2.0, requested_speed))
     return_smooth = _bool_env("LUXTTS_RETURN_SMOOTH", False)
 
     final_wav = lux_tts.generate_speech(
