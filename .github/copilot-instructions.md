@@ -34,6 +34,12 @@
 - Add explicit maintenance markers when needed to link related logic blocks, using a structured tag like `SYNC-CHECK(<topic>)`.
 - When shared logic is repeated, prefer extracting helpers/libraries to reduce drift.
 
+## UI numeric scale standardization
+- For backend numeric tunables that are not already standardized across providers, keep the UI-facing scale standardized and translate in gateway/backend adapters.
+- Prefer a normalized UI scale (for example `1-10`, or `0-9` where required by UX) and map to backend-native ranges server-side.
+- Preserve backward compatibility for existing API callers where practical.
+- Apply this consistently across all relevant tunables (not only speed).
+
 ## Security and hardening
 - After code changes, perform a quick security pass for obvious risks (unsafe shell execution, path traversal, secret leakage, missing input validation, insecure defaults).
 - Apply basic hardening fixes within scope before handing off.
