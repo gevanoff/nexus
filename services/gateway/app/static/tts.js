@@ -3,7 +3,6 @@
 
   const textEl = $("text");
   const backendEl = $("backend");
-  const backendHealthEl = $("backendHealth");
   const voiceEl = $("voice");
   const speedEl = $("speed");
   const speedRangeHintEl = $("speedRangeHint");
@@ -42,11 +41,6 @@
       return true;
     }
     return false;
-  }
-
-  function setBackendHealthText(text) {
-    if (!backendHealthEl) return;
-    backendHealthEl.textContent = text || "Unknown";
   }
 
   function setStatus(text, isError) {
@@ -165,7 +159,6 @@
       const resp = await fetch('/ui/api/tts/backends', { method: 'GET', credentials: 'same-origin' });
       if (handle401(resp)) return;
       if (!resp.ok) {
-        setBackendHealthText(`Unavailable (HTTP ${resp.status})`);
         setStatus(`Failed to load TTS backends (HTTP ${resp.status}).`, true);
         return;
       }
@@ -176,9 +169,6 @@
           ? payload.backends
           : [];
       backendEl.innerHTML = '<option value="">(default)</option>';
-      if (!list.length) {
-        setBackendHealthText("No TTS backends available");
-      }
       for (const item of list) {
         const val = item?.backend_class;
         if (!val) continue;
@@ -188,17 +178,7 @@
         opt.textContent = item?.description ? `${val} — ${item.description} (${health})` : `${val} (${health})`;
         backendEl.appendChild(opt);
       }
-      if (backendHealthEl) {
-        const selected = list.find((b) => b.backend_class === backendEl.value) || list[0];
-        if (selected) {
-          const health = selected?.ready === false ? 'not ready' : (selected?.healthy === false ? 'unhealthy' : 'ready');
-          setBackendHealthText(`${selected.backend_class}: ${health}`);
-        } else {
-          setBackendHealthText("No backend selected");
-        }
-      }
     } catch (e) {
-      setBackendHealthText("Unavailable");
       setStatus(`Failed to load TTS backends: ${String(e?.message || e)}`, true);
     }
   }

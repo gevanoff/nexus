@@ -1394,6 +1394,31 @@ async def ui_api_tts_voices(req: Request):
                         return []
         return []
 
+    def _shared_ref_voices() -> list[str]:
+        refs_dir = (os.environ.get("TTS_SHARED_REFS_DIR") or "/var/lib/tts_refs").strip()
+        if not refs_dir or not os.path.isdir(refs_dir):
+            return []
+        exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+        out: list[str] = []
+        seen: set[str] = set()
+        for name in os.listdir(refs_dir):
+            full = os.path.join(refs_dir, name)
+            if not os.path.isfile(full):
+                continue
+            stem, ext = os.path.splitext(name)
+            if ext.lower() not in exts:
+                continue
+            voice = stem.strip()
+            if not voice:
+                continue
+            key = voice.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(voice)
+        out.sort()
+        return out
+
     merged: list[str] = []
     seen: set[str] = set()
 
@@ -1409,6 +1434,11 @@ async def ui_api_tts_voices(req: Request):
             merged.append(v)
 
     _add(await _fetch_backend_voices(base))
+
+    # Lux can consume broad prompt-audio refs from the shared reference pool.
+    # Keep Pocket/Qwen backend-scoped to avoid exposing unusable names there.
+    if str(backend_class or "").strip().lower() == "luxtts":
+        _add(_shared_ref_voices())
 
     if not merged:
         merged = ["default"]
