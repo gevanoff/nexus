@@ -36,7 +36,27 @@ def _json_env(name: str) -> dict:
 
 
 def _refs_dir() -> str:
-    return _env("QWEN3_TTS_REFS_DIR") or "/var/lib/tts_refs"
+    return _env("QWEN3_TTS_REFS_DIR") or "/var/lib/qwen3-tts/voices"
+
+
+_SUPPORTED_QWEN_SPEAKERS = {
+    "aiden",
+    "dylan",
+    "eric",
+    "ono_anna",
+    "ryan",
+    "serena",
+    "sohee",
+    "uncle_fu",
+    "vivian",
+}
+
+
+def _resolve_supported_speaker(candidate: str, fallback: str = "Vivian") -> str:
+    value = str(candidate or "").strip()
+    if value and value.lower() in _SUPPORTED_QWEN_SPEAKERS:
+        return value
+    return fallback
 
 
 def _discover_ref_map() -> dict:
@@ -186,7 +206,7 @@ def main() -> int:
         except Exception as exc:
             if not _supports_voice_clone_error(exc):
                 raise
-            speaker = _env("QWEN3_TTS_SPEAKER") or "Vivian"
+            speaker = _resolve_supported_speaker(_env("QWEN3_TTS_SPEAKER") or "Vivian")
             instruct = _env("QWEN3_TTS_INSTRUCT") or ""
             wavs, sample_rate = model.generate_custom_voice(
                 text=text,
@@ -219,9 +239,11 @@ def main() -> int:
                 }
                 voice_map = {**default_voice_map, **_json_env("QWEN3_TTS_VOICE_MAP_JSON")}
                 if isinstance(voice, str) and voice:
-                    speaker = voice_map.get(voice, _env("QWEN3_TTS_SPEAKER") or "Vivian")
+                    speaker = _resolve_supported_speaker(
+                        voice_map.get(voice, _env("QWEN3_TTS_SPEAKER") or "Vivian")
+                    )
                 else:
-                    speaker = _env("QWEN3_TTS_SPEAKER") or "Vivian"
+                    speaker = _resolve_supported_speaker(_env("QWEN3_TTS_SPEAKER") or "Vivian")
                 instruct = _env("QWEN3_TTS_INSTRUCT") or ""
                 wavs, sample_rate = model.generate_custom_voice(
                     text=text,
@@ -240,9 +262,9 @@ def main() -> int:
             }
             voice_map = {**default_voice_map, **_json_env("QWEN3_TTS_VOICE_MAP_JSON")}
             if isinstance(voice, str) and voice:
-                speaker = voice_map.get(voice, voice)
+                speaker = _resolve_supported_speaker(voice_map.get(voice, voice))
             else:
-                speaker = _env("QWEN3_TTS_SPEAKER") or "Vivian"
+                speaker = _resolve_supported_speaker(_env("QWEN3_TTS_SPEAKER") or "Vivian")
             instruct = _env("QWEN3_TTS_INSTRUCT") or ""
             wavs, sample_rate = model.generate_custom_voice(
                 text=text,

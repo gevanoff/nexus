@@ -51,6 +51,25 @@ def _discover_ref_voices() -> list[str]:
     return out
 
 
+def _resolve_ref_voice_input(voice: str) -> str:
+    raw = str(voice or "").strip()
+    if not raw:
+        return raw
+    if os.path.isfile(raw):
+        return raw
+
+    refs_dir = _refs_dir()
+    if not refs_dir or not os.path.isdir(refs_dir):
+        return raw
+
+    allowed_exts = (".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a")
+    for ext in allowed_exts:
+        candidate = os.path.join(refs_dir, f"{raw}{ext}")
+        if os.path.isfile(candidate):
+            return candidate
+    return raw
+
+
 def _discover_predefined_voices() -> list[str]:
     try:
         from pocket_tts.utils.utils import PREDEFINED_VOICES  # type: ignore
@@ -160,12 +179,14 @@ class PocketTTSBackend:
         if backend is None:
             raise RuntimeError("python backend not loaded")
 
+        resolved_voice = _resolve_ref_voice_input(voice)
+
         # Check for TTSModel API
         if hasattr(backend, "generate_audio") and hasattr(backend, "get_state_for_audio_prompt"):
             if response_format != "wav":
                 raise RuntimeError(f"TTSModel API only supports wav format, got {response_format}")
             try:
-                voice_state = backend.get_state_for_audio_prompt(voice)
+                voice_state = backend.get_state_for_audio_prompt(resolved_voice)
                 audio_tensor = backend.generate_audio(voice_state, text)
                 # Convert torch tensor to wav bytes
                 import numpy as np
@@ -192,10 +213,10 @@ class PocketTTSBackend:
                 # Try different argument combinations
                 arg_sets = [
                     (text,),  # simplest
-                    (text, voice),  # text and voice
-                    {"text": text, "voice": voice},  # kwargs
-                    {"text": text, "voice": voice, "format": response_format},  # with format
-                    {"text": text, "voice": voice, "model_path": self.model_path or None, "sample_rate": self.sample_rate, "response_format": response_format},  # full
+                    (text, resolved_voice),  # text and voice
+                    {"text": text, "voice": resolved_voice},  # kwargs
+                    {"text": text, "voice": resolved_voice, "format": response_format},  # with format
+                    {"text": text, "voice": resolved_voice, "model_path": self.model_path or None, "sample_rate": self.sample_rate, "response_format": response_format},  # full
                 ]
                 for args in arg_sets:
                     try:
@@ -300,8 +321,17 @@ class PocketTTSBackend:
             if self._ensure_python_backend():
                 try:
                     return self._python_synthesize(text, voice, response_format)
-                except RuntimeError:
-                    pass  # fall back to command
+                except RuntimeError as exc:
+                    # Fall back to command backend only for API-compatibility failures.
+                    # For synthesis/runtime failures (e.g. unknown voice), bubble up the
+                    # python error instead of masking it behind unrelated CLI failures.
+                    msg = str(exc or "").lower()
+                    fallback_markers = (
+                        "python backend not loaded",
+                        "did not expose a compatible synthesize method",
+                    )
+                    if not any(marker in msg for marker in fallback_markers):
+                        raise
             return self._command_synthesize(text, voice, response_format)
 
 

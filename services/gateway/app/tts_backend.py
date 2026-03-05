@@ -157,10 +157,10 @@ async def generate_tts(*, backend_class: str, body: Dict[str, Any]) -> TtsResult
             detail = r.json()
         except Exception:
             detail = r.text
-        raise RuntimeError(f"pocket-tts HTTP {r.status_code}: {detail}")
+        raise RuntimeError(f"{backend_class} HTTP {r.status_code}: {detail}")
 
     gateway = {
-        "backend": "pocket-tts",
+        "backend": backend_class,
         "backend_class": backend_class,
         "upstream_base_url": base,
         "upstream_path": path,

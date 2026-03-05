@@ -56,7 +56,7 @@ def _json_env(name: str) -> dict:
 
 
 def _refs_dir() -> str:
-    return _env("LUXTTS_REFS_DIR") or "/var/lib/tts_refs"
+    return _env("LUXTTS_REFS_DIR") or "/var/lib/luxtts/voices"
 
 
 def _discover_ref_map() -> dict:
