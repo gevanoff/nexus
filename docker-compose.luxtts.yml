@@ -28,13 +28,13 @@ services:
       - LUXTTS_TIMEOUT_SEC=${LUXTTS_TIMEOUT_SEC:-120}
       - LUXTTS_READYZ_TIMEOUT_SEC=${LUXTTS_READYZ_TIMEOUT_SEC:-20}
       - LUXTTS_WORKDIR=${LUXTTS_WORKDIR:-/app}
-        - HF_TOKEN=${HF_TOKEN:-}
-        - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
-        - HF_HOME=${HF_HOME:-/var/lib/huggingface}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
+      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
       - ./.runtime/luxtts/data:/var/lib/luxtts
       - ./.runtime/tts_refs:/var/lib/tts_refs:ro
-        - ./.runtime/huggingface:/var/lib/huggingface
+      - ./.runtime/huggingface:/var/lib/huggingface
     networks:
       - nexus
     restart: unless-stopped
