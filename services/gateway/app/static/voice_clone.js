@@ -21,22 +21,6 @@
   let recorder = null;
   let recordingStream = null;
 
-  function normalizeBackendKey(backendClass) {
-    const val = String(backendClass || "").toLowerCase();
-    if (val.includes("qwen")) return "qwen";
-    if (val.includes("lux")) return "lux";
-    return "default";
-  }
-
-  function handle401(resp) {
-    if (resp && resp.status === 401) {
-      const back = encodeURIComponent(window.location.pathname + window.location.search);
-      window.location.href = `/ui/login?next=${back}`;
-      return true;
-    }
-    return false;
-  }
-
   function setStatus(text, isError) {
     statusEl.textContent = text || "";
     statusEl.className = isError ? "hint error" : "hint";
@@ -149,36 +133,6 @@
     playerEl.appendChild(wrapper);
   }
 
-  async function loadBackends() {
-    if (!backendEl) return;
-    try {
-      const resp = await fetch('/ui/api/tts/backends', { method: 'GET', credentials: 'same-origin' });
-      if (handle401(resp)) return;
-      if (!resp.ok) {
-        setStatus(`Failed to load backends (HTTP ${resp.status}).`, true);
-        return;
-      }
-      const payload = await resp.json();
-      const list = Array.isArray(payload?.available_backends) ? payload.available_backends : [];
-      const filtered = list.filter((item) => {
-        const key = normalizeBackendKey(item?.backend_class);
-        return key === "qwen" || key === "lux";
-      });
-      backendEl.innerHTML = '<option value="">(default)</option>';
-      for (const item of filtered) {
-        const val = item?.backend_class;
-        if (!val) continue;
-        const opt = document.createElement('option');
-        opt.value = val;
-        const health = item?.ready === false ? 'not ready' : (item?.healthy === false ? 'unhealthy' : 'ready');
-        opt.textContent = item?.description ? `${val} — ${item.description} (${health})` : `${val} (${health})`;
-        backendEl.appendChild(opt);
-      }
-    } catch (e) {
-      setStatus(`Failed to load backends: ${String(e?.message || e)}`, true);
-    }
-  }
-
   function buildFormData() {
     const text = String(textEl.value || "").trim();
     if (!text) throw new Error("text is required");
@@ -194,14 +148,6 @@
 
     const backendClass = String(backendEl?.value || "").trim();
     if (backendClass) fd.append("backend_class", backendClass);
-
-    if (normalizeBackendKey(backendClass) === "qwen") {
-      const script = String(sampleTextEl?.value || "").trim();
-      if (script) {
-        fd.append("language", "English");
-        fd.append("ref_text", script);
-      }
-    }
 
     return fd;
   }
@@ -228,8 +174,6 @@
         credentials: 'same-origin',
         body: formData,
       });
-
-      if (handle401(resp)) return;
 
       const contentType = resp.headers.get('content-type') || '';
       if (!resp.ok) {
@@ -280,6 +224,6 @@
   if (stopRecordingEl) stopRecordingEl.addEventListener('click', stopRecording);
   if (clearRecordingEl) clearRecordingEl.addEventListener('click', clearRecording);
 
-  loadBackends();
+  if (backendEl) backendEl.value = "luxtts";
   clearRecording();
 })();
