@@ -9,7 +9,7 @@ PORT="10240"
 DRY_RUN="false"
 REMOVE="false"
 
-declare -a ALLOW_IPS=("10.10.22.156" "172.28.0.0/16" "127.0.0.1")
+declare -a ALLOW_IPS=("10.10.22.156" "172.28.0.0/16" "127.0.0.1" "192.168.65.0/24")
 
 usage() {
   cat <<'EOF'
@@ -17,7 +17,7 @@ Usage: deploy/scripts/allowlist-mlx-macos.sh [options]
 
 Configure macOS pf firewall to allow MLX port access only from selected client IPs.
 Defaults:
-  - allow sources: 10.10.22.156, 172.28.0.0/16, 127.0.0.1
+  - allow sources: 10.10.22.156, 172.28.0.0/16, 127.0.0.1, 192.168.65.0/24
   - port: 10240
   - anchor: nexus/mlx_allowlist
 

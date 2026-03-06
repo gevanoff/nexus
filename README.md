@@ -142,7 +142,7 @@ Security recommendations for native accelerator hosts:
 - Run services under dedicated non-admin users with minimal filesystem permissions.
 - Keep model/cache directories scoped to service users and avoid broad host mounts.
 
-macOS helper for MLX allowlisting (port `10240`, defaults: `10.10.22.156`, `172.28.0.0/16`, `127.0.0.1`):
+macOS helper for MLX allowlisting (port `10240`, defaults: `10.10.22.156`, `172.28.0.0/16`, `127.0.0.1`, `192.168.65.0/24`):
 
 ```bash
 ./deploy/scripts/allowlist-mlx-macos.sh
