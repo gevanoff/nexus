@@ -4,6 +4,7 @@
   const textEl = $("text");
   const backendEl = $("backend");
   const promptAudioEl = $("promptAudio");
+  const voiceNameEl = $("voiceName");
   const sampleTextEl = $("sampleText");
   const recordAudioEl = $("recordAudio");
   const stopRecordingEl = $("stopRecording");
@@ -149,6 +150,9 @@
     const backendClass = String(backendEl?.value || "").trim();
     if (backendClass) fd.append("backend_class", backendClass);
 
+    const voiceName = String(voiceNameEl?.value || "").trim();
+    if (voiceName) fd.append("voice_name", voiceName);
+
     return fd;
   }
 
@@ -176,6 +180,7 @@
       });
 
       const contentType = resp.headers.get('content-type') || '';
+      const savedVoiceId = String(resp.headers.get('X-Gateway-Voice-Id') || '').trim();
       if (!resp.ok) {
         const err = await resp.text();
         setStatus(err || `HTTP ${resp.status}`, true);
@@ -211,7 +216,11 @@
         renderAudio(url);
       }
 
-      setStatus("Audio ready.", false);
+      if (savedVoiceId) {
+        setStatus(`Audio ready. Saved voice: ${savedVoiceId}`, false);
+      } else {
+        setStatus("Audio ready.", false);
+      }
     } catch (e) {
       setStatus(String(e), true);
     } finally {

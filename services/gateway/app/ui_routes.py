@@ -729,6 +729,20 @@ def _save_voice_sample(*, name: str, audio_bytes: bytes, mime_hint: str) -> Dict
 
     lib = _voice_library_dir()
     _ensure_dir(lib)
+    safe_name = _safe_voice_name(name)
+
+    lower_name = safe_name.lower()
+    for rec in _list_voice_samples():
+        rec_name = str((rec or {}).get("name") or "").strip().lower()
+        if rec_name and rec_name == lower_name:
+            raise ValueError(f"voice name '{safe_name}' already exists")
+
+    prefix = f"{safe_name.lower()}_"
+    for file_name, _full in _iter_voice_files(lib):
+        file_stem = str(file_name.rsplit(".", 1)[0] if "." in file_name else file_name).strip().lower()
+        if file_stem == lower_name or file_stem.startswith(prefix):
+            raise ValueError(f"voice name '{safe_name}' already exists")
+
     sha256 = _sha256_bytes(audio_bytes)
     index = _load_voice_index()
     existing = index.get(sha256)
@@ -752,7 +766,6 @@ def _save_voice_sample(*, name: str, audio_bytes: bytes, mime_hint: str) -> Dict
 
     mime = (mime_hint or "audio/wav").strip()
     ext = _audio_mime_to_ext(mime)
-    safe_name = _safe_voice_name(name)
     voice_id = f"{safe_name}_{sha256[:12]}"
     fname = f"{voice_id}.{ext}"
     collision_idx = 1
@@ -1545,6 +1558,26 @@ async def ui_api_tts_clone(
 
     if not file_bytes and not ref_audio and not voice_clone_prompt:
         raise HTTPException(status_code=400, detail="prompt_audio, voice_id, ref_audio, or voice_clone_prompt is required")
+
+    if voice_name and file_bytes:
+        safe_name = _safe_voice_name(str(voice_name))
+        if not safe_name:
+            raise HTTPException(status_code=400, detail="voice_name is invalid")
+        try:
+            lib = _voice_library_dir()
+            _ensure_dir(lib)
+            lower_name = safe_name.lower()
+            for rec in _list_voice_samples():
+                rec_name = str((rec or {}).get("name") or "").strip().lower()
+                if rec_name and rec_name == lower_name:
+                    raise HTTPException(status_code=409, detail=f"voice name '{safe_name}' already exists")
+            prefix = f"{lower_name}_"
+            for file_name, _full in _iter_voice_files(lib):
+                file_stem = str(file_name.rsplit(".", 1)[0] if "." in file_name else file_name).strip().lower()
+                if file_stem == lower_name or file_stem.startswith(prefix):
+                    raise HTTPException(status_code=409, detail=f"voice name '{safe_name}' already exists")
+        except HTTPException:
+            raise
 
     files = None
     if file_bytes:
