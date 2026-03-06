@@ -15,6 +15,7 @@ The Nexus Gateway is the central API gateway that provides:
 - **Health Checks**: Monitors backend service health
 - **Metrics**: Prometheus-compatible metrics endpoint
 - **Streaming**: Supports streaming responses for chat completions
+- **User API Keys**: Per-user bearer keys that can be created/revoked from UI settings
 
 ## Endpoints
 
@@ -35,6 +36,17 @@ The Nexus Gateway is the central API gateway that provides:
 - `GET /v1/registry` - List service records from the gateway registry
 - `GET /v1/backends/catalog` - Return backend descriptors and endpoint/capability contracts
 - `GET /v1/ui/layout` - Return gateway-generated UI layout (Chat primary + specialized backend panels)
+
+### User API Key Endpoints (UI Authenticated)
+
+- `GET /ui/api/user/api-keys` - List API keys for the authenticated user
+- `POST /ui/api/user/api-keys` - Create a new API key for the authenticated user
+- `DELETE /ui/api/user/api-keys/{key_id}` - Revoke one API key for the authenticated user
+
+Notes:
+- Raw API key values are only returned once at key creation.
+- API keys can be used as `Authorization: Bearer <api-key>` for gateway API calls.
+- UI browser login/session flow remains supported alongside API keys.
 
 ## Configuration
 

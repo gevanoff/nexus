@@ -330,6 +330,13 @@ def _require_user(req: Request) -> Optional[user_store.User]:
         return None
     token = _session_token_from_req(req)
     user = user_store.get_user_by_session(S.USER_DB_PATH, token=token)
+    if user is None and token:
+        try:
+            resolved = user_store.get_user_by_api_key(S.USER_DB_PATH, token=token, touch_last_used=True)
+            if resolved:
+                user, _key_meta = resolved
+        except Exception:
+            user = None
     if user is None:
         raise HTTPException(status_code=401, detail="authentication required")
     try:
@@ -1834,6 +1841,68 @@ async def ui_user_settings_put(req: Request) -> Dict[str, Any]:
     merged = _merge_user_settings(current if isinstance(current, dict) else {}, settings)
     user_store.set_settings(S.USER_DB_PATH, user_id=user.id, settings=merged)
     return {"ok": True, "settings": merged}
+
+
+@router.get("/ui/api/user/api-keys", include_in_schema=False)
+async def ui_user_api_keys_list(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    keys = user_store.list_api_keys(S.USER_DB_PATH, user_id=user.id)
+    return {"api_keys": keys}
+
+
+@router.post("/ui/api/user/api-keys", include_in_schema=False)
+async def ui_user_api_keys_create(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    expires_ts = body.get("expires_ts")
+    expires_val: int | None = None
+    if expires_ts is not None:
+        try:
+            expires_val = int(expires_ts)
+        except Exception:
+            raise HTTPException(status_code=400, detail="expires_ts must be an integer unix timestamp")
+
+    policy = body.get("policy")
+    if policy is not None and not isinstance(policy, dict):
+        raise HTTPException(status_code=400, detail="policy must be an object")
+
+    try:
+        created = user_store.create_api_key(
+            S.USER_DB_PATH,
+            user_id=user.id,
+            name=name,
+            expires_ts=expires_val,
+            policy=policy if isinstance(policy, dict) else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Include the raw token only once at creation.
+    return {"api_key": created}
+
+
+@router.delete("/ui/api/user/api-keys/{key_id}", include_in_schema=False)
+async def ui_user_api_keys_revoke(req: Request, key_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    ok = user_store.revoke_api_key(S.USER_DB_PATH, user_id=user.id, key_id=key_id)
+    return {"ok": ok, "key_id": key_id}
 
 
 @router.post("/ui/api/user/password", include_in_schema=False)

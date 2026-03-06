@@ -530,6 +530,133 @@
       preferredModel: "default",
     };
 
+    async function loadApiKeys() {
+      try {
+        const resp = await fetch('/ui/api/user/api-keys', { method: 'GET', credentials: 'same-origin' });
+        if (handle401(resp)) return [];
+        if (!resp.ok) return [];
+        const payload = await resp.json();
+        return Array.isArray(payload?.api_keys) ? payload.api_keys : [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function renderApiKeys(items) {
+      const listEl = document.getElementById('settings_api_keys_list');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+
+      const keys = Array.isArray(items) ? items : [];
+      if (!keys.length) {
+        const empty = document.createElement('div');
+        empty.className = 'hint';
+        empty.textContent = 'No API keys created yet.';
+        listEl.appendChild(empty);
+        return;
+      }
+
+      for (const item of keys) {
+        const row = document.createElement('div');
+        row.className = 'attachment-row';
+
+        const left = document.createElement('div');
+        left.style.display = 'flex';
+        left.style.flexDirection = 'column';
+        left.style.gap = '4px';
+
+        const name = document.createElement('div');
+        name.className = 'attachment-name';
+        const keyName = String(item?.name || 'unnamed');
+        const hint = String(item?.token_hint || '');
+        name.textContent = hint ? `${keyName} (${hint})` : keyName;
+        left.appendChild(name);
+
+        const meta = document.createElement('div');
+        meta.className = 'attachment-meta';
+        const parts = [];
+        if (Number.isFinite(item?.created_ts)) parts.push(`created ${formatTimestamp(Number(item.created_ts))}`);
+        if (Number.isFinite(item?.last_used_ts)) parts.push(`last used ${formatTimestamp(Number(item.last_used_ts))}`);
+        if (item?.revoked) parts.push('revoked');
+        if (Number.isFinite(item?.expires_ts)) parts.push(`expires ${formatTimestamp(Number(item.expires_ts))}`);
+        meta.textContent = parts.join(' • ') || 'active';
+        left.appendChild(meta);
+
+        row.appendChild(left);
+
+        const revokeBtn = document.createElement('button');
+        revokeBtn.type = 'button';
+        revokeBtn.textContent = item?.revoked ? 'Revoked' : 'Revoke';
+        revokeBtn.disabled = !!item?.revoked;
+        revokeBtn.addEventListener('click', async () => {
+          const keyId = String(item?.id || '').trim();
+          if (!keyId) return;
+          if (!confirm(`Revoke API key '${keyName}'?`)) return;
+          try {
+            const resp = await fetch(`/ui/api/user/api-keys/${encodeURIComponent(keyId)}`, { method: 'DELETE', credentials: 'same-origin' });
+            if (handle401(resp)) return;
+            if (!resp.ok) {
+              const txt = await resp.text();
+              alert(`Failed to revoke API key: ${txt || resp.status}`);
+              return;
+            }
+            const refreshed = await loadApiKeys();
+            renderApiKeys(refreshed);
+          } catch (e) {
+            alert(`Failed to revoke API key: ${String(e)}`);
+          }
+        });
+        row.appendChild(revokeBtn);
+
+        listEl.appendChild(row);
+      }
+    }
+
+    async function createApiKeyFromSettings() {
+      const nameEl = document.getElementById('settings_api_key_name');
+      const resultEl = document.getElementById('settings_api_key_result');
+      const createBtn = document.getElementById('settings_create_api_key');
+      const keyName = String(nameEl?.value || '').trim();
+      if (!keyName) {
+        alert('API key name is required');
+        return;
+      }
+
+      try {
+        if (createBtn) createBtn.disabled = true;
+        const resp = await fetch('/ui/api/user/api-keys', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: keyName }),
+        });
+        if (handle401(resp)) return;
+        if (!resp.ok) {
+          const txt = await resp.text();
+          alert(`Failed to create API key: ${txt || resp.status}`);
+          return;
+        }
+
+        const payload = await resp.json();
+        const key = payload?.api_key || {};
+        const token = String(key?.token || '').trim();
+        if (resultEl) {
+          if (token) {
+            resultEl.textContent = `New API key (shown once):\n${token}`;
+          } else {
+            resultEl.textContent = 'API key created, but token was not returned.';
+          }
+        }
+        if (nameEl) nameEl.value = '';
+        const refreshed = await loadApiKeys();
+        renderApiKeys(refreshed);
+      } catch (e) {
+        alert(`Failed to create API key: ${String(e)}`);
+      } finally {
+        if (createBtn) createBtn.disabled = false;
+      }
+    }
+
     async function loadUserSettings() {
       try {
         const resp = await fetch('/ui/api/user/settings', { method: 'GET', credentials: 'same-origin' });
@@ -657,6 +784,8 @@
         // when unauthenticated or the endpoint returns 401/403.
         try {
           const pwField = document.getElementById('settings_password_fieldset');
+          const apiKeysField = document.getElementById('settings_api_keys_fieldset');
+          const apiKeyResult = document.getElementById('settings_api_key_result');
           let showPw = false;
           try {
             const r = await fetch('/ui/api/auth/me', { method: 'GET', credentials: 'same-origin' });
@@ -671,6 +800,12 @@
             showPw = false;
           }
           if (pwField) pwField.style.display = showPw ? 'block' : 'none';
+          if (apiKeysField) apiKeysField.style.display = showPw ? 'block' : 'none';
+          if (apiKeyResult) apiKeyResult.textContent = '';
+          if (showPw) {
+            const keys = await loadApiKeys();
+            renderApiKeys(keys);
+          }
         } catch (e) {}
 
         modal.setAttribute('aria-hidden', 'false');
@@ -1437,9 +1572,11 @@
       const settingsCancel = document.getElementById('settings_cancel');
       const settingsSave = document.getElementById('settings_save');
       const settingsClose = document.getElementById('settingsClose');
+      const createApiKeyBtn = document.getElementById('settings_create_api_key');
       if (settingsCancel) settingsCancel.addEventListener('click', () => closeSettings());
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
       if (settingsSave) settingsSave.addEventListener('click', () => saveSettingsFromModal());
+      if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
       if (backendStatusPanel) {
         backendStatusPanel.open = true;
         backendStatusPanel.addEventListener('toggle', () => {

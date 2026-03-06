@@ -368,6 +368,18 @@
                     <input type="password" id="settings_confirm_password" />
                   </label>
                 </fieldset>
+                <fieldset id="settings_api_keys_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">API keys</legend>
+                  <div class="hint" style="margin-bottom:8px">Create personal keys for scripts and API clients. A new key is shown only once.</div>
+                  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+                    <label style="flex:1 1 260px">Key name
+                      <input type="text" id="settings_api_key_name" placeholder="e.g. laptop-cli" />
+                    </label>
+                    <button type="button" id="settings_create_api_key">Create key</button>
+                  </div>
+                  <div id="settings_api_key_result" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
+                  <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+                </fieldset>
               </section>
             </div>
           </div>

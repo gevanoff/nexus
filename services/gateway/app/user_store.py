@@ -5,6 +5,8 @@ import os
 import secrets
 import sqlite3
 import time
+import hashlib
+import hmac
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -73,8 +75,28 @@ def init_db(db_path: str) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_api_keys (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          token_hash TEXT UNIQUE NOT NULL,
+          token_hint TEXT NOT NULL,
+          created_ts INTEGER NOT NULL,
+          updated_ts INTEGER NOT NULL,
+          last_used_ts INTEGER,
+          revoked_ts INTEGER,
+          expires_ts INTEGER,
+          policy_json TEXT NOT NULL DEFAULT '{}',
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_user_conversations_user ON user_conversations(user_id, updated_ts);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys(user_id, created_ts);")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_api_keys_hash ON user_api_keys(token_hash);")
     conn.commit()
     conn.close()
     # Ensure legacy DBs have the 'admin' column
@@ -91,6 +113,218 @@ def init_db(db_path: str) -> None:
             conn.close()
         except Exception:
             pass
+
+
+def _hash_api_key(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def _new_api_key_token() -> str:
+    return "gk_" + secrets.token_urlsafe(40).replace("-", "_")
+
+
+def _api_key_hint(token: str) -> str:
+    value = (token or "").strip()
+    if len(value) <= 8:
+        return value
+    return f"{value[:8]}...{value[-4:]}"
+
+
+def create_api_key(
+    db_path: str,
+    *,
+    user_id: int,
+    name: str,
+    expires_ts: Optional[int] = None,
+    policy: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    label = (name or "").strip()
+    if not label:
+        raise ValueError("name required")
+
+    now = _now()
+    key_id = secrets.token_urlsafe(12).replace("-", "_")
+    raw_token = _new_api_key_token()
+    token_hash = _hash_api_key(raw_token)
+    token_hint = _api_key_hint(raw_token)
+    policy_obj = policy if isinstance(policy, dict) else {}
+
+    conn = _db(db_path)
+    try:
+        exists = conn.execute("SELECT id FROM users WHERE id=?", (int(user_id),)).fetchone()
+        if not exists:
+            raise ValueError("user not found")
+
+        conn.execute(
+            """
+            INSERT INTO user_api_keys(id,user_id,name,token_hash,token_hint,created_ts,updated_ts,last_used_ts,revoked_ts,expires_ts,policy_json)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                key_id,
+                int(user_id),
+                label,
+                token_hash,
+                token_hint,
+                now,
+                now,
+                None,
+                None,
+                int(expires_ts) if expires_ts is not None else None,
+                json.dumps(policy_obj, ensure_ascii=False),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "id": key_id,
+        "name": label,
+        "token": raw_token,
+        "token_hint": token_hint,
+        "created_ts": now,
+        "expires_ts": int(expires_ts) if expires_ts is not None else None,
+        "revoked": False,
+        "policy": policy_obj,
+    }
+
+
+def list_api_keys(db_path: str, *, user_id: int) -> List[Dict[str, Any]]:
+    conn = _db(db_path)
+    rows = conn.execute(
+        """
+        SELECT id, name, token_hint, created_ts, updated_ts, last_used_ts, revoked_ts, expires_ts, policy_json
+        FROM user_api_keys
+        WHERE user_id=?
+        ORDER BY created_ts DESC
+        """,
+        (int(user_id),),
+    ).fetchall()
+    conn.close()
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        policy: Dict[str, Any] = {}
+        try:
+            parsed = json.loads(r[8] or "{}")
+            if isinstance(parsed, dict):
+                policy = parsed
+        except Exception:
+            policy = {}
+        out.append(
+            {
+                "id": str(r[0]),
+                "name": str(r[1] or ""),
+                "token_hint": str(r[2] or ""),
+                "created_ts": int(r[3] or 0),
+                "updated_ts": int(r[4] or 0),
+                "last_used_ts": int(r[5]) if r[5] is not None else None,
+                "revoked": r[6] is not None,
+                "revoked_ts": int(r[6]) if r[6] is not None else None,
+                "expires_ts": int(r[7]) if r[7] is not None else None,
+                "policy": policy,
+            }
+        )
+    return out
+
+
+def revoke_api_key(db_path: str, *, user_id: int, key_id: str) -> bool:
+    now = _now()
+    conn = _db(db_path)
+    cur = conn.execute(
+        """
+        UPDATE user_api_keys
+        SET revoked_ts=?, updated_ts=?
+        WHERE id=? AND user_id=? AND revoked_ts IS NULL
+        """,
+        (now, now, str(key_id), int(user_id)),
+    )
+    conn.commit()
+    conn.close()
+    return cur.rowcount > 0
+
+
+def get_user_by_api_key(db_path: str, *, token: str, touch_last_used: bool = True) -> Optional[tuple[User, Dict[str, Any]]]:
+    raw = (token or "").strip()
+    if not raw:
+        return None
+    token_hash = _hash_api_key(raw)
+
+    now = _now()
+    conn = _db(db_path)
+    row = conn.execute(
+        """
+        SELECT
+          u.id, u.username, u.disabled, u.admin,
+          k.id, k.name, k.token_hint, k.created_ts, k.updated_ts, k.last_used_ts, k.revoked_ts, k.expires_ts, k.policy_json, k.token_hash
+        FROM user_api_keys k
+        JOIN users u ON u.id = k.user_id
+        WHERE k.token_hash = ?
+        """,
+        (token_hash,),
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return None
+
+    (
+        user_id,
+        username,
+        disabled,
+        admin,
+        key_id,
+        key_name,
+        token_hint,
+        created_ts,
+        updated_ts,
+        last_used_ts,
+        revoked_ts,
+        expires_ts,
+        policy_json,
+        stored_hash,
+    ) = row
+
+    if not hmac.compare_digest(str(stored_hash or ""), token_hash):
+        conn.close()
+        return None
+    if bool(disabled):
+        conn.close()
+        return None
+    if revoked_ts is not None:
+        conn.close()
+        return None
+    if expires_ts is not None and int(expires_ts) < now:
+        conn.close()
+        return None
+
+    if touch_last_used:
+        conn.execute("UPDATE user_api_keys SET last_used_ts=?, updated_ts=? WHERE id=?", (now, now, str(key_id)))
+        conn.commit()
+    conn.close()
+
+    policy: Dict[str, Any] = {}
+    try:
+        parsed = json.loads(policy_json or "{}")
+        if isinstance(parsed, dict):
+            policy = parsed
+    except Exception:
+        policy = {}
+
+    user = User(id=int(user_id), username=str(username), disabled=False, admin=bool(admin))
+    key_meta = {
+        "id": str(key_id),
+        "name": str(key_name or ""),
+        "token_hint": str(token_hint or ""),
+        "created_ts": int(created_ts or 0),
+        "updated_ts": int(updated_ts or 0),
+        "last_used_ts": int(last_used_ts) if last_used_ts is not None else None,
+        "revoked": False,
+        "expires_ts": int(expires_ts) if expires_ts is not None else None,
+        "policy": policy,
+    }
+    return user, key_meta
 
 
 def _hash_password(password: str, salt: bytes) -> str:

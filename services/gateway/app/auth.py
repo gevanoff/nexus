@@ -7,6 +7,7 @@ import logging
 from fastapi import HTTPException, Request
 
 from app.config import S
+from app import user_store
 
 logger = logging.getLogger(__name__)
 
@@ -202,8 +203,25 @@ def bearer_token_from_headers(headers: dict[str, str] | None) -> str:
 def token_policy_for_token(token: str) -> dict:
     if not isinstance(token, str) or not token.strip():
         return {}
+    token_clean = token.strip()
+
     pols, _ok = _load_token_policies()
-    return pols.get(token.strip(), {})
+    static_policy = pols.get(token_clean, {})
+    if isinstance(static_policy, dict) and static_policy:
+        return static_policy
+
+    # API-key policy lookup (best-effort; no auth decision here).
+    try:
+        if not bool(getattr(S, "USER_AUTH_ENABLED", True)):
+            return {}
+        resolved = user_store.get_user_by_api_key(S.USER_DB_PATH, token=token_clean, touch_last_used=False)
+        if not resolved:
+            return {}
+        _user, key_meta = resolved
+        policy = key_meta.get("policy") if isinstance(key_meta, dict) else {}
+        return policy if isinstance(policy, dict) else {}
+    except Exception:
+        return {}
 
 
 def _allowed_bearer_tokens() -> set[str]:
@@ -219,7 +237,21 @@ def require_bearer(req: Request) -> None:
     if not auth.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = auth.split(" ", 1)[1].strip()
-    if token not in _allowed_bearer_tokens():
+    static_token_ok = token in _allowed_bearer_tokens()
+
+    key_user = None
+    key_meta = None
+    if not static_token_ok:
+        try:
+            if bool(getattr(S, "USER_AUTH_ENABLED", True)):
+                resolved = user_store.get_user_by_api_key(S.USER_DB_PATH, token=token, touch_last_used=True)
+                if resolved:
+                    key_user, key_meta = resolved
+        except Exception:
+            key_user = None
+            key_meta = None
+
+    if not static_token_ok and key_user is None:
         raise HTTPException(status_code=403, detail="Invalid bearer token")
 
     # Load token policies once per request and optionally fail closed if configured.
@@ -229,9 +261,19 @@ def require_bearer(req: Request) -> None:
 
     # Attach token/policy for downstream handlers.
     policy = pols.get(token, {}) if isinstance(pols, dict) else {}
+    if not isinstance(policy, dict):
+        policy = {}
+    if key_meta is not None and isinstance(key_meta, dict):
+        key_policy = key_meta.get("policy")
+        if isinstance(key_policy, dict):
+            policy = key_policy
     try:
         req.state.bearer_token = token
         req.state.token_policy = policy
+        req.state.auth_kind = "api_key" if key_user is not None else "static_bearer"
+        if key_user is not None:
+            req.state.user = key_user
+            req.state.api_key = key_meta
     except Exception:
         pass
 
