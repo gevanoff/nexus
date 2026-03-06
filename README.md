@@ -142,6 +142,18 @@ Security recommendations for native accelerator hosts:
 - Run services under dedicated non-admin users with minimal filesystem permissions.
 - Keep model/cache directories scoped to service users and avoid broad host mounts.
 
+macOS helper for MLX allowlisting (port `10240`, default allow IP `10.10.22.156`):
+
+```bash
+./deploy/scripts/allowlist-mlx-macos.sh
+```
+
+To allow multiple client IPs:
+
+```bash
+./deploy/scripts/allowlist-mlx-macos.sh --allow 10.10.22.156 --allow 10.10.22.157
+```
+
 ### Ollama + MLX Container-to-Bare-Metal Migration Runbook
 
 Use this when moving inference from `docker-compose.ollama.yml` / `docker-compose.mlx.yml` to a macOS Apple Silicon host.
@@ -207,6 +219,7 @@ Alias-aware prewarm options:
 - `deploy/scripts/prewarm-mlx.sh --from-aliases`: include all `backend=mlx` models from `./.runtime/gateway/config/model_aliases.json`
 - `services/ollama/scripts/install-native-macos.sh`: install/manage host-native Ollama (launchd)
 - `services/mlx/scripts/install-native-macos.sh`: install/manage host-native MLX (launchd)
+- `deploy/scripts/allowlist-mlx-macos.sh`: configure macOS `pf` allowlist for MLX port access
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: list registered services in etcd
 
