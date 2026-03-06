@@ -3,38 +3,19 @@
 
   const textEl = $("text");
   const backendEl = $("backend");
-  const backendHealthEl = $("backendHealth");
   const promptAudioEl = $("promptAudio");
-  const savedVoiceEl = $("savedVoice");
-  const voiceNameEl = $("voiceName");
-  const saveVoiceEl = $("saveVoice");
-  const deleteVoiceEl = $("deleteVoice");
+  const sampleTextEl = $("sampleText");
   const recordAudioEl = $("recordAudio");
   const stopRecordingEl = $("stopRecording");
   const clearRecordingEl = $("clearRecording");
   const recordStatusEl = $("recordStatus");
   const recordPlayerEl = $("recordPlayer");
-  const presetEl = $("preset");
-  const languageEl = $("language");
-  const refTextEl = $("refText");
-  const refAudioEl = $("refAudio");
-  const xVectorOnlyEl = $("xVectorOnly");
-  const voiceClonePromptEl = $("voiceClonePrompt");
-  const maxNewTokensEl = $("maxNewTokens");
-  const topPEl = $("topP");
-  const rmsEl = $("rms");
-  const durationEl = $("duration");
-  const numStepsEl = $("numSteps");
-  const tShiftEl = $("tShift");
-  const speedEl = $("speed");
-  const returnSmoothEl = $("returnSmooth");
   const generateEl = $("generate");
   const statusEl = $("status");
   const metaEl = $("meta");
   const playerEl = $("player");
 
   let activeObjectUrl = null;
-  let backendCache = [];
   let recordObjectUrl = null;
   let recordedBlob = null;
   let recorder = null;
@@ -47,17 +28,13 @@
     return "default";
   }
 
-  function updateBackendSections() {
-    const fallbackClass = backendCache?.[0]?.backend_class || "";
-    const backendClass = String(backendEl?.value || "").trim() || fallbackClass;
-    const key = normalizeBackendKey(backendClass);
-    const sections = document.querySelectorAll("[data-backends]");
-    sections.forEach((el) => {
-      const raw = String(el.getAttribute("data-backends") || "");
-      const list = raw.split(",").map((item) => item.trim()).filter(Boolean);
-      const show = list.includes("all") || list.includes(key);
-      el.hidden = !show;
-    });
+  function handle401(resp) {
+    if (resp && resp.status === 401) {
+      const back = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/ui/login?next=${back}`;
+      return true;
+    }
+    return false;
   }
 
   function setStatus(text, isError) {
@@ -90,6 +67,7 @@
     if (recordPlayerEl) recordPlayerEl.innerHTML = "";
     setRecordStatus("No recording yet.");
     if (clearRecordingEl) clearRecordingEl.disabled = true;
+    if (promptAudioEl) promptAudioEl.value = "";
   }
 
   function renderRecording(blob) {
@@ -122,7 +100,7 @@
         const blob = new Blob(chunks, { type: recorder?.mimeType || "audio/webm" });
         recordedBlob = blob;
         renderRecording(blob);
-        setRecordStatus("Recording ready. It will be used if no file is uploaded.");
+        setRecordStatus("Recording ready. It will be used unless a file is uploaded.");
         if (recordAudioEl) recordAudioEl.disabled = false;
         if (stopRecordingEl) stopRecordingEl.disabled = true;
         if (recordingStream) {
@@ -175,14 +153,17 @@
     if (!backendEl) return;
     try {
       const resp = await fetch('/ui/api/tts/backends', { method: 'GET', credentials: 'same-origin' });
-      if (!resp.ok) return;
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        setStatus(`Failed to load backends (HTTP ${resp.status}).`, true);
+        return;
+      }
       const payload = await resp.json();
       const list = Array.isArray(payload?.available_backends) ? payload.available_backends : [];
       const filtered = list.filter((item) => {
         const key = normalizeBackendKey(item?.backend_class);
         return key === "qwen" || key === "lux";
       });
-      backendCache = filtered;
       backendEl.innerHTML = '<option value="">(default)</option>';
       for (const item of filtered) {
         const val = item?.backend_class;
@@ -193,40 +174,9 @@
         opt.textContent = item?.description ? `${val} — ${item.description} (${health})` : `${val} (${health})`;
         backendEl.appendChild(opt);
       }
-      updateBackendHealth();
-      updateBackendSections();
-    } catch (e) {}
-  }
-
-  function updateBackendHealth() {
-    if (!backendHealthEl) return;
-    const list = backendCache || [];
-    const selected = list.find((b) => b.backend_class === backendEl.value) || list[0];
-    if (selected) {
-      const health = selected?.ready === false ? 'not ready' : (selected?.healthy === false ? 'unhealthy' : 'ready');
-      backendHealthEl.textContent = `${selected.backend_class}: ${health}`;
-    } else {
-      backendHealthEl.textContent = 'unknown';
+    } catch (e) {
+      setStatus(`Failed to load backends: ${String(e?.message || e)}`, true);
     }
-  }
-
-  async function loadVoiceLibrary() {
-    if (!savedVoiceEl) return;
-    try {
-      const resp = await fetch('/ui/api/tts/voice-library', { method: 'GET', credentials: 'same-origin' });
-      if (!resp.ok) return;
-      const payload = await resp.json();
-      const list = Array.isArray(payload?.voices) ? payload.voices : [];
-      savedVoiceEl.innerHTML = '<option value="">(none)</option>';
-      for (const item of list) {
-        const id = item?.id || '';
-        if (!id) continue;
-        const opt = document.createElement('option');
-        opt.value = id;
-        opt.textContent = id;
-        savedVoiceEl.appendChild(opt);
-      }
-    } catch (e) {}
   }
 
   function buildFormData() {
@@ -238,46 +188,20 @@
     const fd = new FormData();
     fd.append("text", text);
     if (promptAudio) fd.append("prompt_audio", promptAudio.file, promptAudio.name);
-
-    const voiceId = String(savedVoiceEl?.value || "").trim();
-    const refAudio = String(refAudioEl?.value || "").trim();
-    const voiceClonePrompt = String(voiceClonePromptEl?.value || "").trim();
-    if (!promptAudio && !voiceId && !refAudio && !voiceClonePrompt) {
-      throw new Error("prompt audio file, saved voice, ref_audio, or voice clone prompt is required");
+    if (!promptAudio) {
+      throw new Error("upload sample audio or record a sample first");
     }
-    if (voiceId) fd.append("voice_id", voiceId);
-
-    const voiceName = String(voiceNameEl?.value || "").trim();
-    if (voiceName) fd.append("voice_name", voiceName);
-
-    const language = String(languageEl?.value || "").trim();
-    if (language) fd.append("language", language);
-    const refText = String(refTextEl?.value || "").trim();
-    if (refText) fd.append("ref_text", refText);
-    if (refAudio) fd.append("ref_audio", refAudio);
-    if (voiceClonePrompt) fd.append("voice_clone_prompt", voiceClonePrompt);
-    const xVectorOnly = String(xVectorOnlyEl?.value || "").trim();
-    if (xVectorOnly) fd.append("x_vector_only_mode", xVectorOnly);
-    const maxNewTokens = String(maxNewTokensEl?.value || "").trim();
-    if (maxNewTokens) fd.append("max_new_tokens", maxNewTokens);
-    const topP = String(topPEl?.value || "").trim();
-    if (topP) fd.append("top_p", topP);
 
     const backendClass = String(backendEl?.value || "").trim();
     if (backendClass) fd.append("backend_class", backendClass);
 
-    const rms = String(rmsEl?.value || "").trim();
-    if (rms) fd.append("rms", rms);
-    const duration = String(durationEl?.value || "").trim();
-    if (duration) fd.append("duration", duration);
-    const numSteps = String(numStepsEl?.value || "").trim();
-    if (numSteps) fd.append("num_steps", numSteps);
-    const tShift = String(tShiftEl?.value || "").trim();
-    if (tShift) fd.append("t_shift", tShift);
-    const speed = String(speedEl?.value || "").trim();
-    if (speed) fd.append("speed", speed);
-    const returnSmooth = String(returnSmoothEl?.value || "").trim();
-    if (returnSmooth) fd.append("return_smooth", returnSmooth);
+    if (normalizeBackendKey(backendClass) === "qwen") {
+      const script = String(sampleTextEl?.value || "").trim();
+      if (script) {
+        fd.append("language", "English");
+        fd.append("ref_text", script);
+      }
+    }
 
     return fd;
   }
@@ -304,6 +228,8 @@
         credentials: 'same-origin',
         body: formData,
       });
+
+      if (handle401(resp)) return;
 
       const contentType = resp.headers.get('content-type') || '';
       if (!resp.ok) {
@@ -349,63 +275,11 @@
     }
   }
 
-  async function handleSaveVoice() {
-    setStatus("", false);
-    setMeta("");
-    const name = String(voiceNameEl?.value || "").trim();
-    const promptAudio = getPromptAudio();
-    if (!name) { setStatus("voice name is required", true); return; }
-    if (!promptAudio) { setStatus("prompt audio file or recording is required", true); return; }
-    const fd = new FormData();
-    fd.append("voice_name", name);
-    fd.append("prompt_audio", promptAudio.file, promptAudio.name);
-    try {
-      const resp = await fetch('/ui/api/tts/voice-library', { method: 'POST', credentials: 'same-origin', body: fd });
-      const text = await resp.text();
-      if (!resp.ok) { setStatus(text || `HTTP ${resp.status}`, true); return; }
-      await loadVoiceLibrary();
-      setStatus("Saved voice sample.", false);
-    } catch (e) { setStatus(String(e), true); }
-  }
-
-  async function handleDeleteVoice() {
-    const voiceId = String(savedVoiceEl?.value || "").trim();
-    if (!voiceId) { setStatus("select a saved voice", true); return; }
-    try {
-      const resp = await fetch(`/ui/api/tts/voice-library/${encodeURIComponent(voiceId)}`, { method: 'DELETE', credentials: 'same-origin' });
-      if (!resp.ok) { setStatus(await resp.text(), true); return; }
-      await loadVoiceLibrary();
-      setStatus("Deleted voice sample.", false);
-    } catch (e) { setStatus(String(e), true); }
-  }
-
-  function applyPreset() {
-    const preset = String(presetEl?.value || "").trim();
-    if (preset === "fast") {
-      if (numStepsEl) numStepsEl.value = "3";
-      if (tShiftEl) tShiftEl.value = "0.8";
-    } else if (preset === "balanced") {
-      if (numStepsEl) numStepsEl.value = "4";
-      if (tShiftEl) tShiftEl.value = "0.9";
-    } else if (preset === "quality") {
-      if (numStepsEl) numStepsEl.value = "6";
-      if (tShiftEl) tShiftEl.value = "0.95";
-    }
-  }
-
-  generateEl.addEventListener('click', handleGenerate);
-  if (saveVoiceEl) saveVoiceEl.addEventListener('click', handleSaveVoice);
-  if (deleteVoiceEl) deleteVoiceEl.addEventListener('click', handleDeleteVoice);
+  if (generateEl) generateEl.addEventListener('click', handleGenerate);
   if (recordAudioEl) recordAudioEl.addEventListener('click', startRecording);
   if (stopRecordingEl) stopRecordingEl.addEventListener('click', stopRecording);
   if (clearRecordingEl) clearRecordingEl.addEventListener('click', clearRecording);
-  if (backendEl) backendEl.addEventListener('change', () => {
-    updateBackendHealth();
-    updateBackendSections();
-  });
-  if (presetEl) presetEl.addEventListener('change', applyPreset);
+
   loadBackends();
-  loadVoiceLibrary();
-  updateBackendSections();
   clearRecording();
 })();

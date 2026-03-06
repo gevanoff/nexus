@@ -1366,6 +1366,7 @@ async def ui_api_tts_voices(req: Request):
     _require_user(req)
 
     backend_class = _resolve_tts_backend_class(req, None, explicit=str(req.query_params.get("backend_class") or "").strip())
+    backend_key = str(backend_class or "").strip().lower()
     base = _effective_tts_base_url(backend_class=backend_class)
     if not base:
         raise HTTPException(status_code=404, detail="tts backend not configured")
@@ -1419,26 +1420,48 @@ async def ui_api_tts_voices(req: Request):
         out.sort()
         return out
 
-    merged: list[str] = []
-    seen: set[str] = set()
+    backend_voices = await _fetch_backend_voices(base)
 
-    def _add(values: list[str]) -> None:
-        for value in values:
+    if backend_key == "luxtts":
+        native_seen: set[str] = set()
+        native: list[dict[str, str]] = []
+        for value in backend_voices:
             v = str(value or "").strip()
             if not v:
                 continue
-            k = v.lower()
-            if k in seen:
+            key = v.lower()
+            if key in native_seen:
                 continue
-            seen.add(k)
-            merged.append(v)
+            native_seen.add(key)
+            native.append({"id": v, "name": v, "group": "native"})
 
-    _add(await _fetch_backend_voices(base))
+        shared: list[dict[str, str]] = []
+        for value in _shared_ref_voices():
+            v = str(value or "").strip()
+            if not v:
+                continue
+            key = v.lower()
+            if key in native_seen:
+                continue
+            native_seen.add(key)
+            shared.append({"id": v, "name": v, "group": "shared"})
 
-    # Lux can consume broad prompt-audio refs from the shared reference pool.
-    # Keep Pocket/Qwen backend-scoped to avoid exposing unusable names there.
-    if str(backend_class or "").strip().lower() == "luxtts":
-        _add(_shared_ref_voices())
+        merged_grouped = native + shared
+        if not merged_grouped:
+            return JSONResponse(["default"])
+        return JSONResponse(merged_grouped)
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in backend_voices:
+        v = str(value or "").strip()
+        if not v:
+            continue
+        k = v.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        merged.append(v)
 
     if not merged:
         merged = ["default"]

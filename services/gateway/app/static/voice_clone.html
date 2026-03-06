@@ -77,7 +77,7 @@
       <header>
         <div>
           <h1>Voice Clone UI</h1>
-          <div class="hint">Upload a reference audio sample and synthesize speech with a cloned voice.</div>
+          <div class="hint">Upload a sample audio file or record a sample reading directly in this page.</div>
         </div>
         <div class="row">
           <a class="pill" href="/ui">Back to Chat</a>
@@ -85,17 +85,12 @@
       </header>
 
       <section class="card">
-        <div class="row" style="justify-content:space-between">
+        <div class="row">
           <label>
             <span>TTS Backend</span>
             <select id="backend">
               <option value="">(default)</option>
             </select>
-          </label>
-
-          <label>
-            <span>Backend health</span>
-            <div id="backendHealth" class="hint">Loading...</div>
           </label>
         </div>
 
@@ -107,15 +102,24 @@
         </div>
 
         <div class="row" style="margin-top:12px">
-          <span class="section-title">Source audio</span>
+          <span class="section-title">Read This Sample Text While Recording</span>
         </div>
-        <div class="row" style="margin-top:8px">
+
+        <div class="row" style="margin-top:8px; justify-content:space-between">
+          <label style="min-width: 320px; flex: 1 1 640px;">
+            <span>Sample script (recommended)</span>
+            <textarea id="sampleText" readonly>The river of language moves steadily through memory and meaning. As you read this passage aloud, keep your pace natural and your tone clear. Speak with your usual voice, without trying to perform or exaggerate expression. Brief pauses between phrases are welcome, and steady breathing helps maintain consistency. This sample should provide enough variation in sounds, rhythm, and emphasis to build a reliable voice reference. If you make a mistake, continue speaking smoothly and finish the passage. Consistency is more important than perfection. When possible, record in a quiet space with minimal background noise and keep your microphone at a stable distance. A longer, clean recording usually produces better cloning quality than a short or noisy one. After recording, listen once before generating audio.</textarea>
+          </label>
+        </div>
+
+        <div class="row" style="margin-top:8px; align-items:flex-start;">
           <label>
-            <span>Prompt Audio</span>
+            <span>Upload sample audio</span>
             <input id="promptAudio" type="file" accept="audio/*" />
           </label>
+
           <label>
-            <span>Record Sample</span>
+            <span>Record sample in browser</span>
             <div class="row">
               <button id="recordAudio" type="button">Record</button>
               <button id="stopRecording" type="button" disabled>Stop</button>
@@ -123,108 +127,11 @@
             </div>
             <div id="recordStatus" class="hint">No recording yet.</div>
           </label>
+
           <div id="recordPlayer" class="audio-card"></div>
-          <label>
-            <span>Saved Voice</span>
-            <select id="savedVoice">
-              <option value="">(none)</option>
-            </select>
-          </label>
-          <label>
-            <span>Voice Name (save)</span>
-            <input id="voiceName" type="text" placeholder="e.g. alex_ref" />
-          </label>
-          <button id="saveVoice" type="button">Save Voice Sample</button>
-          <button id="deleteVoice" type="button">Delete Selected</button>
         </div>
 
-        <div class="row backend-section" style="margin-top:12px" data-backends="qwen">
-          <span class="section-title">Qwen3-TTS options</span>
-        </div>
-        <div class="row backend-section" style="margin-top:8px" data-backends="qwen">
-          <label>
-            <span>Language</span>
-            <select id="language">
-              <option value="">(default)</option>
-              <option value="English" selected>English</option>
-              <option value="Chinese">Chinese</option>
-              <option value="Auto">Auto</option>
-            </select>
-          </label>
-          <label style="min-width: 320px; flex: 1 1 640px;">
-            <span>Reference Text (Qwen3-TTS)</span>
-            <textarea id="refText" placeholder="Transcript of reference audio"></textarea>
-          </label>
-        </div>
-
-        <div class="row backend-section" style="margin-top:12px" data-backends="qwen">
-          <label style="min-width: 320px; flex: 1 1 640px;">
-            <span>Reference Audio URL/Base64 (Qwen3-TTS)</span>
-            <textarea id="refAudio" placeholder="URL or base64 for ref_audio (optional if uploading file)"></textarea>
-          </label>
-          <label>
-            <span>X-vector only mode</span>
-            <select id="xVectorOnly">
-              <option value="">(default)</option>
-              <option value="true">true</option>
-              <option value="false">false</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="row backend-section" style="margin-top:12px" data-backends="qwen">
-          <label style="min-width: 320px; flex: 1 1 640px;">
-            <span>Voice Clone Prompt (JSON, Qwen3-TTS)</span>
-            <textarea id="voiceClonePrompt" placeholder="Paste prompt JSON returned by create_voice_clone_prompt"></textarea>
-          </label>
-        </div>
-
-        <div class="row backend-section" style="margin-top:12px" data-backends="qwen,lux,default">
-          <label>
-            <span>Preset Profile</span>
-            <select id="preset">
-              <option value="">(none)</option>
-              <option value="fast">Fast (steps=3, t_shift=0.8)</option>
-              <option value="balanced">Balanced (steps=4, t_shift=0.9)</option>
-              <option value="quality">Quality (steps=6, t_shift=0.95)</option>
-            </select>
-          </label>
-          <label>
-            <span>RMS</span>
-            <input id="rms" type="number" step="0.001" value="0.01" />
-          </label>
-          <label>
-            <span>Duration (sec)</span>
-            <input id="duration" type="number" step="0.1" value="5" />
-          </label>
-          <label>
-            <span>Num steps</span>
-            <input id="numSteps" type="number" step="1" value="4" />
-          </label>
-          <label>
-            <span>T shift</span>
-            <input id="tShift" type="number" step="0.1" value="0.9" />
-          </label>
-          <label>
-            <span>Speed</span>
-            <input id="speed" type="number" step="0.1" value="1.0" />
-          </label>
-          <label>
-            <span>Return smooth</span>
-            <select id="returnSmooth">
-              <option value="">(default)</option>
-              <option value="true">true</option>
-              <option value="false">false</option>
-            </select>
-          </label>
-          <label class="backend-section" data-backends="qwen">
-            <span>Max new tokens</span>
-            <input id="maxNewTokens" type="number" step="1" placeholder="optional" />
-          </label>
-          <label class="backend-section" data-backends="qwen">
-            <span>Top-p</span>
-            <input id="topP" type="number" step="0.01" placeholder="optional" />
-          </label>
+        <div class="row" style="margin-top:12px">
           <button id="generate" type="button">Generate</button>
         </div>
 
@@ -256,6 +163,6 @@
     </main>
 
     <script src="/static/backend_status_panel.js?v=2"></script>
-    <script src="/static/voice_clone.js?v=1"></script>
+    <script src="/static/voice_clone.js?v=2"></script>
   </body>
 </html>

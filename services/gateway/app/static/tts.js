@@ -128,21 +128,40 @@
         list = payload.items;
       }
 
+      const groupRoots = new Map();
+      const ensureGroup = (name) => {
+        const key = String(name || '').toLowerCase();
+        if (!key) return null;
+        if (groupRoots.has(key)) return groupRoots.get(key);
+        const g = document.createElement('optgroup');
+        g.label = key === 'native' ? 'Native voices' : (key === 'shared' ? 'Shared refs' : name);
+        groupRoots.set(key, g);
+        voiceEl.appendChild(g);
+        return g;
+      };
+
       for (const v of list) {
         let val = '';
         let label = '';
+        let group = '';
         if (typeof v === 'string') {
           val = v; label = v;
         } else if (v && typeof v === 'object') {
           val = v.id || v.name || v.voice || JSON.stringify(v);
           label = v.name || v.id || v.voice || val;
+          group = String(v.group || '').trim();
         }
         if (!val) continue;
         if (val === "default") continue;
         const opt = document.createElement('option');
         opt.value = val;
         opt.textContent = label;
-        voiceEl.appendChild(opt);
+        const groupRoot = ensureGroup(group);
+        if (groupRoot) {
+          groupRoot.appendChild(opt);
+        } else {
+          voiceEl.appendChild(opt);
+        }
       }
       if (previous) {
         voiceEl.value = previous;
