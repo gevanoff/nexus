@@ -41,7 +41,7 @@ services:
       - ROUTER_ENABLE_POLICY=true
 
       # Request limits
-      - MAX_REQUEST_BYTES=10485760
+      - MAX_REQUEST_BYTES=104857600
 
       # Data persistence paths (inside container)
       - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
