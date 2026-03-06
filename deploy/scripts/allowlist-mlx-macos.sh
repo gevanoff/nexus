@@ -9,7 +9,7 @@ PORT="10240"
 DRY_RUN="false"
 REMOVE="false"
 
-declare -a ALLOW_IPS=("10.10.22.156")
+declare -a ALLOW_IPS=("10.10.22.156" "172.28.0.0/16" "127.0.0.1")
 
 usage() {
   cat <<'EOF'
@@ -17,7 +17,7 @@ Usage: deploy/scripts/allowlist-mlx-macos.sh [options]
 
 Configure macOS pf firewall to allow MLX port access only from selected client IPs.
 Defaults:
-  - allow IP: 10.10.22.156
+  - allow sources: 10.10.22.156, 172.28.0.0/16, 127.0.0.1
   - port: 10240
   - anchor: nexus/mlx_allowlist
 
@@ -79,10 +79,10 @@ if [[ "$REMOVE" == "false" ]]; then
   declare -a validated=()
   for ip in "${ALLOW_IPS[@]}"; do
     [[ -n "$ip" ]] || continue
-    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    if [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[1-2][0-9]|3[0-2])$ ]]; then
       validated+=("$ip")
     else
-      echo "ERROR: Invalid IPv4 address: $ip" >&2
+      echo "ERROR: Invalid IPv4 or CIDR source: $ip" >&2
       exit 1
     fi
   done
