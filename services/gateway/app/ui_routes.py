@@ -1488,7 +1488,7 @@ async def ui_api_tts_clone(
     prompt_audio: UploadFile | None = File(None),
     text: str = Form(...),
     backend_class: str = Form(""),
-    voice_name: str = Form(""),
+    voice_name: str = Form(...),
     voice_id: str = Form(""),
     language: Optional[str] = Form(None),
     ref_text: Optional[str] = Form(None),
@@ -1509,6 +1509,9 @@ async def ui_api_tts_clone(
 
     if not text or not str(text).strip():
         raise HTTPException(status_code=400, detail="text is required")
+
+    if not voice_name or not str(voice_name).strip():
+        raise HTTPException(status_code=400, detail="voice_name is required")
 
     backend = _resolve_tts_backend_class(req, None, explicit=str(backend_class or "").strip())
     base = _effective_tts_base_url(backend_class=backend)
@@ -1559,10 +1562,11 @@ async def ui_api_tts_clone(
     if not file_bytes and not ref_audio and not voice_clone_prompt:
         raise HTTPException(status_code=400, detail="prompt_audio, voice_id, ref_audio, or voice_clone_prompt is required")
 
-    if voice_name and file_bytes:
-        safe_name = _safe_voice_name(str(voice_name))
-        if not safe_name:
-            raise HTTPException(status_code=400, detail="voice_name is invalid")
+    safe_name = _safe_voice_name(str(voice_name))
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="voice_name is invalid")
+
+    if file_bytes:
         try:
             lib = _voice_library_dir()
             _ensure_dir(lib)
@@ -1615,9 +1619,9 @@ async def ui_api_tts_clone(
     try:
         url, _ = _save_ui_audio(audio_bytes=resp.content, mime_hint=content_type)
         headers = {"X-Gateway-TTS-URL": url}
-        if voice_name:
+        if file_bytes:
             try:
-                saved = _save_voice_sample(name=voice_name, audio_bytes=file_bytes, mime_hint=file_mime or "audio/wav")
+                saved = _save_voice_sample(name=safe_name, audio_bytes=file_bytes, mime_hint=file_mime or "audio/wav")
                 headers["X-Gateway-Voice-Id"] = saved.get("id") or ""
             except Exception:
                 pass

@@ -215,7 +215,10 @@
     if (backendClass) fd.append("backend_class", backendClass);
 
     const voiceName = String(voiceNameEl?.value || "").trim();
-    if (voiceName) fd.append("voice_name", voiceName);
+    if (!voiceName) {
+      throw new Error("voice name is required");
+    }
+    fd.append("voice_name", voiceName);
 
     return fd;
   }
