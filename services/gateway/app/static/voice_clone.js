@@ -43,6 +43,46 @@
     if (recordStatusEl) recordStatusEl.textContent = text || "";
   }
 
+  async function getMicPermissionState() {
+    try {
+      if (!navigator?.permissions?.query) return "unknown";
+      const status = await navigator.permissions.query({ name: "microphone" });
+      return String(status?.state || "unknown");
+    } catch (e) {
+      return "unknown";
+    }
+  }
+
+  async function diagnoseMicReadiness() {
+    const reasons = [];
+
+    if (!window.isSecureContext) {
+      reasons.push("This page is not in a secure context (HTTPS or localhost is required).");
+    }
+
+    if (!navigator?.mediaDevices) {
+      reasons.push("Browser API missing: navigator.mediaDevices is unavailable.");
+    }
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      reasons.push("Browser API missing: mediaDevices.getUserMedia is unavailable.");
+    }
+    if (typeof MediaRecorder === "undefined") {
+      reasons.push("Browser API missing: MediaRecorder is unavailable.");
+    }
+
+    const permissionState = await getMicPermissionState();
+    if (permissionState === "denied") {
+      reasons.push("Microphone permission is denied for this site in browser settings.");
+    }
+
+    return { reasons, permissionState };
+  }
+
+  function browserMicPermissionHelp() {
+    const host = window.location.host;
+    return `Enable microphone permission for ${host} in your browser site settings, then reload this page.`;
+  }
+
   function clearRecording() {
     if (recordObjectUrl) {
       try { URL.revokeObjectURL(recordObjectUrl); } catch (e) {}
@@ -70,10 +110,21 @@
   }
 
   async function startRecording() {
-    if (!navigator?.mediaDevices?.getUserMedia) {
-      setRecordStatus("Recording is not supported in this browser.");
+    const diagnostics = await diagnoseMicReadiness();
+    if (diagnostics.reasons.length > 0) {
+      const details = diagnostics.reasons.join(" ");
+      if (!window.isSecureContext) {
+        const secureUrl = `https://${window.location.host}${window.location.pathname}${window.location.search}`;
+        setRecordStatus(`${details} Open: ${secureUrl}`);
+      } else if (diagnostics.permissionState === "denied") {
+        setRecordStatus(`${details} ${browserMicPermissionHelp()}`);
+      } else {
+        setRecordStatus(details);
+      }
       return;
     }
+
+    // Calling getUserMedia here initiates the browser permission prompt when state is "prompt".
     try {
       recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       recorder = new MediaRecorder(recordingStream);
@@ -98,7 +149,16 @@
       if (recordAudioEl) recordAudioEl.disabled = true;
       if (stopRecordingEl) stopRecordingEl.disabled = false;
     } catch (e) {
-      setRecordStatus(`Unable to start recording: ${String(e?.message || e)}`);
+      const code = String(e?.name || "");
+      if (code === "NotAllowedError" || code === "SecurityError") {
+        setRecordStatus(`Microphone access denied. ${browserMicPermissionHelp()}`);
+      } else if (code === "NotFoundError" || code === "DevicesNotFoundError") {
+        setRecordStatus("No microphone device was found.");
+      } else if (code === "NotReadableError") {
+        setRecordStatus("Microphone is busy or unavailable (possibly in use by another app).");
+      } else {
+        setRecordStatus(`Unable to start recording: ${String(e?.message || e)}`);
+      }
       if (recordAudioEl) recordAudioEl.disabled = false;
       if (stopRecordingEl) stopRecordingEl.disabled = true;
     }
@@ -235,4 +295,13 @@
 
   if (backendEl) backendEl.value = "luxtts";
   clearRecording();
+  diagnoseMicReadiness().then((diagnostics) => {
+    if (!diagnostics.reasons.length) {
+      setRecordStatus("Microphone appears available. Click Record to grant access/start.");
+    } else if (diagnostics.permissionState === "denied") {
+      setRecordStatus(`${diagnostics.reasons.join(" ")} ${browserMicPermissionHelp()}`);
+    } else {
+      setRecordStatus(diagnostics.reasons.join(" "));
+    }
+  }).catch(() => {});
 })();

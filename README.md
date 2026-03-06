@@ -101,6 +101,20 @@ docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f doc
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml down
 ```
 
+### HTTPS Proxy (nginx: 80 -> 443 redirect)
+
+Generate a local/self-signed cert (or place your real certs at `./.runtime/nginx/certs/fullchain.pem` and `./.runtime/nginx/certs/privkey.pem`):
+
+```bash
+./deploy/scripts/generate-nginx-self-signed-cert.sh
+```
+
+Start nginx TLS terminator in front of gateway:
+
+```bash
+docker compose -f docker-compose.gateway.yml -f docker-compose.nginx.yml up -d --build
+```
+
 ### Native Apple Silicon Accelerator Mode (Recommended for Ollama + MLX)
 
 For Apple-accelerated inference, run Ollama/MLX natively on a macOS Apple Silicon host and keep Nexus control-plane services in containers.

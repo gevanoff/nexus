@@ -475,8 +475,17 @@ ns_ensure_tts_runtime_dirs() {
   # Usage: ns_ensure_tts_runtime_dirs <repo_root>
   local repo_root="$1"
   ns_mkdir_p "${repo_root}/.runtime/tts/data"
+  ns_mkdir_p "${repo_root}/.runtime/tts_refs"
+  ns_mkdir_p "${repo_root}/.runtime/huggingface"
   ns_mkdir_p "${repo_root}/.runtime/luxtts/data"
   ns_mkdir_p "${repo_root}/.runtime/qwen3-tts/data"
+}
+
+ns_ensure_nginx_runtime_dirs() {
+  # nginx TLS termination certs.
+  # Usage: ns_ensure_nginx_runtime_dirs <repo_root>
+  local repo_root="$1"
+  ns_mkdir_p "${repo_root}/.runtime/nginx/certs"
 }
 
 ns_ensure_etcd_runtime_dirs() {
@@ -501,6 +510,7 @@ ns_ensure_runtime_dirs() {
   ns_ensure_ollama_runtime_dirs "$repo_root"
   ns_ensure_images_runtime_dirs "$repo_root"
   ns_ensure_tts_runtime_dirs "$repo_root"
+  ns_ensure_nginx_runtime_dirs "$repo_root"
   ns_ensure_etcd_runtime_dirs "$repo_root"
   ns_ensure_mlx_runtime_dirs "$repo_root"
 }
