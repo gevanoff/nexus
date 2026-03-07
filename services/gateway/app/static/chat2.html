@@ -212,6 +212,37 @@
       .settings-menu button.active { background: rgba(111,184,255,0.16); border-color: rgba(111,184,255,0.4); }
       .settings-section { display: none; flex-direction: column; gap: 8px; }
       .settings-section.active { display: flex; }
+      .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+      .header-status-row { display:flex; align-items:center; gap:8px; min-height:20px; }
+      .status-indicator {
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        padding:2px 8px;
+        border-radius:999px;
+        border:1px solid rgba(231,237,246,0.08);
+        background: rgba(231,237,246,0.04);
+        color: #9fb3d6;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+        cursor: help;
+        box-shadow: none;
+      }
+      .status-indicator::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #8a96a8;
+      }
+      .status-indicator.active {
+        color: #cfe7ff;
+        border-color: rgba(111,184,255,0.22);
+        background: rgba(111,184,255,0.08);
+      }
+      .status-indicator.active::before {
+        background: #6fb8ff;
+      }
     </style>
   </head>
   <body>
@@ -228,6 +259,10 @@
         <div>
           <h1>Gateway chat (v2)</h1>
           <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Streams status + output tokens (no hidden chain-of-thought).</div>
+        </div>
+        <div class="header-right">
+        <div class="header-status-row">
+          <span id="apiKeyStatus" class="status-indicator" style="display:none">API key active</span>
         </div>
         <div class="topbar">
           <span class="pill">
@@ -256,9 +291,8 @@
           <button id="clear" type="button">Clear message box</button>
           <button id="clearChat" type="button">Clear Chat</button>
           <button id="resetSession" type="button">Reset Session</button>
-          <span id="apiKeyStatus" class="pill" style="display:none">API key active</span>
-          <button id="forgetApiKey" type="button" style="display:none">Forget API key</button>
           <button id="settingsBtn" type="button" title="Settings">⚙️</button>
+        </div>
         </div>
       </header>
 
@@ -378,6 +412,7 @@
                       <input type="text" id="settings_api_key_name" placeholder="e.g. laptop-cli" />
                     </label>
                     <button type="button" id="settings_create_api_key">Create key</button>
+                    <button type="button" id="settings_forget_browser_api_key">Forget browser key</button>
                   </div>
                   <div id="settings_api_key_result" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
                   <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>

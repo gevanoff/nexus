@@ -33,7 +33,6 @@
     const clearChatEl = $("clearChat");
     const resetSessionEl = $("resetSession");
     const apiKeyStatusEl = $("apiKeyStatus");
-    const forgetApiKeyEl = $("forgetApiKey");
     const settingsBtn = $("settingsBtn");
     const attachBtn = $("attachBtn");
     const fileInput = $("fileInput");
@@ -692,11 +691,15 @@
     function updateApiKeyStatusUi() {
       const hasApiKey = !!(window.GatewayAuth && window.GatewayAuth.getApiKey && window.GatewayAuth.getApiKey());
       if (apiKeyStatusEl) {
-        apiKeyStatusEl.style.display = hasApiKey ? 'inline-flex' : 'none';
-        apiKeyStatusEl.textContent = hasApiKey ? 'API key active' : '';
-      }
-      if (forgetApiKeyEl) {
-        forgetApiKeyEl.style.display = hasApiKey ? 'inline-block' : 'none';
+        apiKeyStatusEl.style.display = 'inline-flex';
+        apiKeyStatusEl.textContent = hasApiKey ? 'API key active' : 'API key inactive';
+        apiKeyStatusEl.classList.toggle('active', hasApiKey);
+        apiKeyStatusEl.setAttribute(
+          'title',
+          hasApiKey
+            ? 'A saved personal API key is active in this browser and will be sent with UI API requests.'
+            : 'No personal API key is saved in this browser. UI API access relies on your login session.'
+        );
       }
     }
 
@@ -1598,11 +1601,12 @@
       const settingsSave = document.getElementById('settings_save');
       const settingsClose = document.getElementById('settingsClose');
       const createApiKeyBtn = document.getElementById('settings_create_api_key');
+      const forgetBrowserApiKeyBtn = document.getElementById('settings_forget_browser_api_key');
       if (settingsCancel) settingsCancel.addEventListener('click', () => closeSettings());
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
       if (settingsSave) settingsSave.addEventListener('click', () => saveSettingsFromModal());
       if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
-      if (forgetApiKeyEl) forgetApiKeyEl.addEventListener('click', () => forgetStoredApiKey());
+      if (forgetBrowserApiKeyBtn) forgetBrowserApiKeyBtn.addEventListener('click', () => forgetStoredApiKey());
       if (backendStatusPanel) {
         backendStatusPanel.open = true;
         backendStatusPanel.addEventListener('toggle', () => {
