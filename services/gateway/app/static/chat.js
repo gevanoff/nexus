@@ -32,6 +32,8 @@
     const clearEl = $("clear");
     const clearChatEl = $("clearChat");
     const resetSessionEl = $("resetSession");
+    const apiKeyStatusEl = $("apiKeyStatus");
+    const forgetApiKeyEl = $("forgetApiKey");
     const settingsBtn = $("settingsBtn");
     const attachBtn = $("attachBtn");
     const fileInput = $("fileInput");
@@ -684,6 +686,29 @@
         if (!backendStatusPanel.open) {
           backendStatusPanel.open = true;
         }
+      }
+    }
+
+    function updateApiKeyStatusUi() {
+      const hasApiKey = !!(window.GatewayAuth && window.GatewayAuth.getApiKey && window.GatewayAuth.getApiKey());
+      if (apiKeyStatusEl) {
+        apiKeyStatusEl.style.display = hasApiKey ? 'inline-flex' : 'none';
+        apiKeyStatusEl.textContent = hasApiKey ? 'API key active' : '';
+      }
+      if (forgetApiKeyEl) {
+        forgetApiKeyEl.style.display = hasApiKey ? 'inline-block' : 'none';
+      }
+    }
+
+    function forgetStoredApiKey() {
+      try {
+        if (window.GatewayAuth && window.GatewayAuth.clearApiKey) {
+          window.GatewayAuth.clearApiKey();
+        }
+        updateApiKeyStatusUi();
+        addMessage({ role: 'system', content: 'Saved API key cleared for this browser.' });
+      } catch (e) {
+        addMessage({ role: 'system', content: `Failed to clear saved API key: ${String(e)}` });
       }
     }
 
@@ -1577,6 +1602,7 @@
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
       if (settingsSave) settingsSave.addEventListener('click', () => saveSettingsFromModal());
       if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
+      if (forgetApiKeyEl) forgetApiKeyEl.addEventListener('click', () => forgetStoredApiKey());
       if (backendStatusPanel) {
         backendStatusPanel.open = true;
         backendStatusPanel.addEventListener('toggle', () => {
@@ -1646,6 +1672,8 @@
           }
         } catch (e) {}
       })();
+      window.addEventListener('gateway-auth-changed', () => updateApiKeyStatusUi());
+      updateApiKeyStatusUi();
       if (inputEl) {
         inputEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {

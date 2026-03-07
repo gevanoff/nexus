@@ -2,6 +2,16 @@
   const STORAGE_KEY = 'gateway_api_key';
   const originalFetch = window.fetch.bind(window);
 
+  function emitAuthChanged() {
+    try {
+      window.dispatchEvent(new CustomEvent('gateway-auth-changed', {
+        detail: { hasApiKey: !!getApiKey() },
+      }));
+    } catch (e) {
+      // ignore event dispatch failures
+    }
+  }
+
   function getApiKey() {
     try {
       return String(window.localStorage.getItem(STORAGE_KEY) || '').trim();
@@ -21,6 +31,7 @@
     } catch (e) {
       // ignore storage failures
     }
+    emitAuthChanged();
   }
 
   function clearApiKey() {
@@ -29,6 +40,7 @@
     } catch (e) {
       // ignore storage failures
     }
+    emitAuthChanged();
   }
 
   function resolveUrl(input) {
@@ -112,4 +124,5 @@
     clearApiKey,
     validateApiKey,
   };
+  emitAuthChanged();
 })();
