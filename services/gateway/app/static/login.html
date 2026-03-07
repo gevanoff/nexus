@@ -52,6 +52,9 @@
         box-shadow: 0 10px 20px rgba(8,12,18,0.35);
       }
       .meta { margin-top:12px; font-size:13px; color: #9fb3d6 }
+      .divider { margin: 18px 0 10px; border-top: 1px solid rgba(231,237,246,0.08); }
+      .row { display:flex; gap:10px; flex-wrap:wrap; }
+      .row button { margin-top: 0; }
     </style>
   </head>
   <body>
@@ -68,8 +71,18 @@
       <div>
         <button id="login">Sign in</button>
       </div>
+      <div class="divider"></div>
+      <div>
+        <label for="apiKey">API key</label>
+        <input id="apiKey" type="password" autocomplete="off" placeholder="Paste a personal API key" />
+      </div>
+      <div class="row" style="margin-top:16px;">
+        <button id="useApiKey" type="button">Use API key</button>
+        <button id="clearApiKey" type="button">Clear saved key</button>
+      </div>
       <div class="meta" id="meta"> </div>
     </div>
+    <script src="/static/auth_client.js?v=1"></script>
     <script src="/static/login.js"></script>
   </body>
 </html>

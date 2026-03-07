@@ -47,6 +47,7 @@ Notes:
 - Raw API key values are only returned once at key creation.
 - API keys can be used as `Authorization: Bearer <api-key>` for gateway API calls.
 - UI browser login/session flow remains supported alongside API keys.
+- The `/ui/login` page also accepts a personal API key and stores it client-side for browser-based UI/API use.
 
 ## Configuration
 

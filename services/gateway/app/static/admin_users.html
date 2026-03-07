@@ -134,6 +134,7 @@
       </section>
 
     </main>
+    <script src="/static/auth_client.js?v=1"></script>
     <script>
       async function postJson(url, body){
         const res = await fetch(url, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body), credentials:'same-origin'});
