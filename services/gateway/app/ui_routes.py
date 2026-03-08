@@ -898,6 +898,46 @@ def _delete_voice_sample(voice_id: str) -> bool:
     return removed
 
 
+def _rename_voice_sample(voice_id: str, new_name: str) -> Dict[str, Any] | None:
+    safe_id = _safe_voice_name(voice_id)
+    safe_name = _safe_voice_name(new_name)
+    if not safe_id:
+        return None
+    if not safe_name:
+        raise ValueError("voice_name is invalid")
+
+    current_records = _list_voice_samples()
+    target_id = ""
+    for rec in current_records:
+        rec_id = str((rec or {}).get("id") or "").strip()
+        if rec_id == safe_id:
+            target_id = rec_id
+            break
+    if not target_id:
+        return None
+
+    for rec in current_records:
+        rec_id = str((rec or {}).get("id") or "").strip()
+        rec_name = str((rec or {}).get("name") or "").strip().lower()
+        if rec_id != target_id and rec_name and rec_name == safe_name.lower():
+            raise ValueError(f"voice name '{safe_name}' already exists")
+
+    index = _load_voice_index()
+    for sha, rec in list(index.items()):
+        if not isinstance(rec, dict):
+            continue
+        rec_id = str(rec.get("id") or "").strip()
+        if rec_id != target_id:
+            continue
+        updated = dict(rec)
+        updated["name"] = safe_name
+        index[sha] = updated
+        _save_voice_index(index)
+        return updated
+
+    return None
+
+
 def _gateway_headers(meta: Dict[str, Any]) -> Dict[str, str]:
     headers: Dict[str, str] = {}
     if not isinstance(meta, dict):
@@ -1443,6 +1483,12 @@ async def ui_api_tts_voices(req: Request):
     backend_voices = await _fetch_backend_voices(base)
 
     if backend_key == "luxtts":
+        cloned_records = _list_voice_samples()
+        cloned_ids = {
+            str((rec or {}).get("id") or "").strip().lower()
+            for rec in cloned_records
+            if str((rec or {}).get("id") or "").strip()
+        }
         native_seen: set[str] = set()
         native: list[dict[str, str]] = []
         for value in backend_voices:
@@ -1455,18 +1501,28 @@ async def ui_api_tts_voices(req: Request):
             native_seen.add(key)
             native.append({"id": v, "name": v, "group": "native"})
 
+        cloned: list[dict[str, str]] = []
+        for rec in cloned_records:
+            voice_id = str((rec or {}).get("id") or "").strip()
+            voice_name = str((rec or {}).get("name") or voice_id).strip()
+            if not voice_id:
+                continue
+            cloned.append({"id": voice_id, "name": voice_name or voice_id, "group": "cloned"})
+
         shared: list[dict[str, str]] = []
         for value in _shared_ref_voices():
             v = str(value or "").strip()
             if not v:
                 continue
             key = v.lower()
+            if key in cloned_ids:
+                continue
             if key in native_seen:
                 continue
             native_seen.add(key)
             shared.append({"id": v, "name": v, "group": "shared"})
 
-        merged_grouped = native + shared
+        merged_grouped = native + cloned + shared
         if not merged_grouped:
             return JSONResponse(["default"])
         return JSONResponse(merged_grouped)
@@ -1641,7 +1697,7 @@ async def ui_api_tts_clone(
 async def ui_api_voice_library_list(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     _require_user(req)
-    return {"voices": _list_voice_samples()}
+    return {"voices": _list_voice_samples(), "max_bytes": _voice_library_max_bytes()}
 
 
 @router.post("/ui/api/tts/voice-library", include_in_schema=False)
@@ -1657,8 +1713,35 @@ async def ui_api_voice_library_save(
     file_bytes = await prompt_audio.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="prompt_audio is required")
-    saved = _save_voice_sample(name=voice_name, audio_bytes=file_bytes, mime_hint=prompt_audio.content_type or "audio/wav")
+    try:
+        saved = _save_voice_sample(name=voice_name, audio_bytes=file_bytes, mime_hint=prompt_audio.content_type or "audio/wav")
+    except ValueError as exc:
+        detail = str(exc)
+        status = 409 if "already exists" in detail.lower() else 400
+        raise HTTPException(status_code=status, detail=detail)
     return {"voice": saved}
+
+
+@router.patch("/ui/api/tts/voice-library/{voice_id}", include_in_schema=False)
+async def ui_api_voice_library_rename(req: Request, voice_id: str):
+    _require_ui_access(req)
+    _require_user(req)
+    try:
+        payload = await req.json()
+    except Exception:
+        payload = {}
+    voice_name = str((payload or {}).get("voice_name") or "").strip()
+    if not voice_name:
+        raise HTTPException(status_code=400, detail="voice_name is required")
+    try:
+        renamed = _rename_voice_sample(voice_id, voice_name)
+    except ValueError as exc:
+        detail = str(exc)
+        status = 409 if "already exists" in detail.lower() else 400
+        raise HTTPException(status_code=status, detail=detail)
+    if renamed is None:
+        raise HTTPException(status_code=404, detail="voice not found")
+    return {"voice": renamed}
 
 
 @router.delete("/ui/api/tts/voice-library/{voice_id}", include_in_schema=False)

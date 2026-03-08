@@ -249,6 +249,13 @@ Structured logging to stdout with:
 
 ## Troubleshooting
 
+## TTS Voice Workflow
+
+- Use `/ui/voice-clone` to upload or record reusable voice references.
+- Saved voices are stored in the shared `./.runtime/tts_refs` library used by Gateway and LuxTTS.
+- Use `/ui/tts` with the `luxtts` backend to generate speech from those saved voices.
+- The TTS voice picker groups LuxTTS voices into native voices, cloned voices, and shared refs.
+
 ## UI TODO Backlog
 
 - Chat UI: Add a conversation history log/sidebar and a "resume previous conversation" flow so users can intentionally continue prior sessions.

@@ -134,7 +134,11 @@
         if (!key) return null;
         if (groupRoots.has(key)) return groupRoots.get(key);
         const g = document.createElement('optgroup');
-        g.label = key === 'native' ? 'Native voices' : (key === 'shared' ? 'Shared refs' : name);
+        g.label = key === 'native'
+          ? 'Native voices'
+          : (key === 'cloned'
+            ? 'Cloned voices'
+            : (key === 'shared' ? 'Shared refs' : name));
         groupRoots.set(key, g);
         voiceEl.appendChild(g);
         return g;

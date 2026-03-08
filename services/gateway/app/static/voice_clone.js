@@ -1,26 +1,26 @@
 (() => {
   const $ = (id) => document.getElementById(id);
 
-  const textEl = $("text");
-  const backendEl = $("backend");
   const promptAudioEl = $("promptAudio");
   const voiceNameEl = $("voiceName");
   const sampleTextEl = $("sampleText");
   const recordAudioEl = $("recordAudio");
   const stopRecordingEl = $("stopRecording");
   const clearRecordingEl = $("clearRecording");
+  const uploadHintEl = $("uploadHint");
+  const saveVoiceEl = $("saveVoice");
+  const refreshVoicesEl = $("refreshVoices");
+  const voiceListEl = $("voiceList");
   const recordStatusEl = $("recordStatus");
   const recordPlayerEl = $("recordPlayer");
-  const generateEl = $("generate");
   const statusEl = $("status");
   const metaEl = $("meta");
-  const playerEl = $("player");
 
-  let activeObjectUrl = null;
   let recordObjectUrl = null;
   let recordedBlob = null;
   let recorder = null;
   let recordingStream = null;
+  let libraryMaxBytes = 0;
 
   function setStatus(text, isError) {
     statusEl.textContent = text || "";
@@ -29,14 +29,6 @@
 
   function setMeta(text) {
     metaEl.textContent = text || "";
-  }
-
-  function clearPlayer() {
-    if (activeObjectUrl) {
-      try { URL.revokeObjectURL(activeObjectUrl); } catch (e) {}
-      activeObjectUrl = null;
-    }
-    if (playerEl) playerEl.innerHTML = "";
   }
 
   function setRecordStatus(text) {
@@ -97,6 +89,7 @@
     setRecordStatus("No recording yet.");
     if (clearRecordingEl) clearRecordingEl.disabled = true;
     if (promptAudioEl) promptAudioEl.value = "";
+    updateUploadHint();
   }
 
   function renderRecording(blob) {
@@ -174,6 +167,31 @@
     }
   }
 
+  function formatBytes(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    let size = value;
+    let idx = 0;
+    while (size >= 1024 && idx < units.length - 1) {
+      size /= 1024;
+      idx += 1;
+    }
+    return `${size >= 10 || idx === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[idx]}`;
+  }
+
+  function updateUploadHint() {
+    if (!uploadHintEl) return;
+    const selected = promptAudioEl?.files && promptAudioEl.files[0];
+    if (selected) {
+      const limit = libraryMaxBytes ? ` Limit: ${formatBytes(libraryMaxBytes)}.` : "";
+      uploadHintEl.textContent = `Selected ${selected.name} (${formatBytes(selected.size)}).${limit}`;
+      return;
+    }
+    const limit = libraryMaxBytes ? ` Keep it under ${formatBytes(libraryMaxBytes)} when possible.` : "";
+    uploadHintEl.textContent = `Choose a short reference clip.${limit}`;
+  }
+
   function getPromptAudio() {
     const file = promptAudioEl?.files && promptAudioEl.files[0];
     if (file) {
@@ -186,47 +204,155 @@
     return null;
   }
 
-  function renderAudio(url) {
-    if (!url || !playerEl) return;
-    const wrapper = document.createElement("div");
-    wrapper.className = "audio-card";
-    const audio = document.createElement("audio");
-    audio.src = url;
-    audio.preload = "metadata";
-    audio.controls = true;
-    wrapper.appendChild(audio);
-    playerEl.appendChild(wrapper);
-  }
-
   function buildFormData() {
-    const text = String(textEl.value || "").trim();
-    if (!text) throw new Error("text is required");
+    const voiceName = String(voiceNameEl?.value || "").trim();
+    if (!voiceName) throw new Error("voice name is required");
 
     const promptAudio = getPromptAudio();
+    if (!promptAudio) throw new Error("upload sample audio or record a sample first");
+
+    if (libraryMaxBytes && Number(promptAudio.file?.size || 0) > libraryMaxBytes) {
+      throw new Error(`audio exceeds library limit (${formatBytes(libraryMaxBytes)})`);
+    }
 
     const fd = new FormData();
-    fd.append("text", text);
-    if (promptAudio) fd.append("prompt_audio", promptAudio.file, promptAudio.name);
-    if (!promptAudio) {
-      throw new Error("upload sample audio or record a sample first");
-    }
-
-    const backendClass = String(backendEl?.value || "").trim();
-    if (backendClass) fd.append("backend_class", backendClass);
-
-    const voiceName = String(voiceNameEl?.value || "").trim();
-    if (!voiceName) {
-      throw new Error("voice name is required");
-    }
     fd.append("voice_name", voiceName);
+    fd.append("prompt_audio", promptAudio.file, promptAudio.name);
 
     return fd;
   }
 
-  async function handleGenerate() {
+  function describeError(statusCode, text) {
+    const raw = String(text || "").trim();
+    if (statusCode === 413 || /request entity too large/i.test(raw)) {
+      return "Upload rejected by nginx before Gateway received it. The active reverse-proxy body limit is still lower than this file size.";
+    }
+    return raw || `HTTP ${statusCode}`;
+  }
+
+  async function loadVoiceLibrary() {
+    if (!voiceListEl) return;
+    voiceListEl.innerHTML = '<div class="hint">Loading saved voices...</div>';
+    try {
+      const resp = await fetch('/ui/api/tts/voice-library', {
+        method: 'GET',
+        credentials: 'same-origin',
+      });
+      if (!resp.ok) {
+        const err = await resp.text();
+        voiceListEl.innerHTML = `<div class="hint error">${describeError(resp.status, err)}</div>`;
+        return;
+      }
+      const payload = await resp.json();
+      libraryMaxBytes = Number(payload?.max_bytes || 0);
+      updateUploadHint();
+      renderVoiceLibrary(Array.isArray(payload?.voices) ? payload.voices : []);
+    } catch (e) {
+      voiceListEl.innerHTML = `<div class="hint error">${String(e?.message || e)}</div>`;
+    }
+  }
+
+  function renderVoiceLibrary(items) {
+    if (!voiceListEl) return;
+    voiceListEl.innerHTML = '';
+    const voices = Array.isArray(items) ? items : [];
+    if (!voices.length) {
+      voiceListEl.innerHTML = '<div class="hint">No saved voices yet.</div>';
+      return;
+    }
+
+    for (const item of voices) {
+      const row = document.createElement('div');
+      row.className = 'voice-row';
+
+      const main = document.createElement('div');
+      main.className = 'voice-main';
+
+      const name = document.createElement('div');
+      name.className = 'voice-name';
+      name.textContent = String(item?.name || item?.id || 'voice');
+      main.appendChild(name);
+
+      const meta = document.createElement('div');
+      meta.className = 'voice-meta';
+      const parts = [];
+      if (item?.filename) parts.push(String(item.filename));
+      if (Number.isFinite(item?.bytes)) parts.push(formatBytes(Number(item.bytes)));
+      if (item?.id) parts.push(`id: ${String(item.id)}`);
+      meta.textContent = parts.join(' • ');
+      main.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'voice-actions';
+
+      const renameBtn = document.createElement('button');
+      renameBtn.type = 'button';
+      renameBtn.dataset.uiRole = 'secondary';
+      renameBtn.textContent = 'Rename';
+      renameBtn.addEventListener('click', async () => {
+        const currentName = String(item?.name || item?.id || '').trim();
+        const nextName = window.prompt('Rename voice', currentName);
+        if (nextName == null) return;
+        const trimmed = String(nextName || '').trim();
+        if (!trimmed || trimmed === currentName) return;
+        setStatus('Renaming voice...', false);
+        try {
+          const resp = await fetch(`/ui/api/tts/voice-library/${encodeURIComponent(String(item?.id || ''))}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ voice_name: trimmed }),
+          });
+          if (!resp.ok) {
+            const err = await resp.text();
+            setStatus(describeError(resp.status, err), true);
+            return;
+          }
+          setStatus(`Renamed voice to ${trimmed}.`, false);
+          await loadVoiceLibrary();
+        } catch (e) {
+          setStatus(String(e?.message || e), true);
+        }
+      });
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.dataset.uiRole = 'danger';
+      deleteBtn.textContent = 'Remove';
+      deleteBtn.addEventListener('click', async () => {
+        const voiceId = String(item?.id || '').trim();
+        const voiceName = String(item?.name || voiceId).trim();
+        if (!voiceId) return;
+        if (!window.confirm(`Remove voice '${voiceName}'?`)) return;
+        setStatus('Removing voice...', false);
+        try {
+          const resp = await fetch(`/ui/api/tts/voice-library/${encodeURIComponent(voiceId)}`, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+          });
+          if (!resp.ok) {
+            const err = await resp.text();
+            setStatus(describeError(resp.status, err), true);
+            return;
+          }
+          setStatus(`Removed voice ${voiceName}.`, false);
+          await loadVoiceLibrary();
+        } catch (e) {
+          setStatus(String(e?.message || e), true);
+        }
+      });
+
+      actions.appendChild(renameBtn);
+      actions.appendChild(deleteBtn);
+      row.appendChild(main);
+      row.appendChild(actions);
+      voiceListEl.appendChild(row);
+    }
+  }
+
+  async function handleSaveVoice() {
     setStatus("", false);
     setMeta("");
-    clearPlayer();
 
     let formData;
     try {
@@ -236,72 +362,48 @@
       return;
     }
 
-    generateEl.disabled = true;
-    setStatus("Generating...", false);
+    saveVoiceEl.disabled = true;
+    setStatus("Saving voice...", false);
 
     try {
-      const resp = await fetch('/ui/api/tts/clone', {
+      const resp = await fetch('/ui/api/tts/voice-library', {
         method: 'POST',
         credentials: 'same-origin',
         body: formData,
       });
 
-      const contentType = resp.headers.get('content-type') || '';
-      const savedVoiceId = String(resp.headers.get('X-Gateway-Voice-Id') || '').trim();
       if (!resp.ok) {
         const err = await resp.text();
-        setStatus(err || `HTTP ${resp.status}`, true);
+        setStatus(describeError(resp.status, err), true);
         return;
       }
 
-      if (contentType.includes('application/json')) {
-        const payload = await resp.json();
-        const raw = payload?.audio_base64 || payload?.audio || payload?.audio_data;
-        if (raw) {
-          let b64 = String(raw || "");
-          if (b64.startsWith('data:')) {
-            renderAudio(b64);
-          } else {
-            const binary = atob(b64);
-            const len = binary.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i += 1) bytes[i] = binary.charCodeAt(i);
-            const blob = new Blob([bytes], { type: payload?.content_type || 'audio/wav' });
-            const url = URL.createObjectURL(blob);
-            activeObjectUrl = url;
-            renderAudio(url);
-          }
-        } else if (payload?.audio_url) {
-          renderAudio(String(payload.audio_url));
-        } else {
-          setMeta(JSON.stringify(payload, null, 2));
-        }
-      } else {
-        const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        activeObjectUrl = url;
-        renderAudio(url);
-      }
-
-      if (savedVoiceId) {
-        setStatus(`Audio ready. Saved voice: ${savedVoiceId}`, false);
-      } else {
-        setStatus("Audio ready.", false);
-      }
+      const payload = await resp.json();
+      const saved = payload?.voice || {};
+      const savedName = String(saved?.name || voiceNameEl?.value || '').trim();
+      const savedId = String(saved?.id || '').trim();
+      setStatus(savedId ? `Saved voice ${savedName} (${savedId}).` : `Saved voice ${savedName}.`, false);
+      setMeta('Use this voice from the Text-to-Speech UI with the LuxTTS backend.');
+      clearRecording();
+      if (voiceNameEl) voiceNameEl.value = '';
+      await loadVoiceLibrary();
     } catch (e) {
       setStatus(String(e), true);
     } finally {
-      generateEl.disabled = false;
+      saveVoiceEl.disabled = false;
     }
   }
 
-  if (generateEl) generateEl.addEventListener('click', handleGenerate);
+  if (saveVoiceEl) saveVoiceEl.addEventListener('click', handleSaveVoice);
+  if (refreshVoicesEl) refreshVoicesEl.addEventListener('click', loadVoiceLibrary);
   if (recordAudioEl) recordAudioEl.addEventListener('click', startRecording);
   if (stopRecordingEl) stopRecordingEl.addEventListener('click', stopRecording);
   if (clearRecordingEl) clearRecordingEl.addEventListener('click', clearRecording);
+  if (promptAudioEl) promptAudioEl.addEventListener('change', updateUploadHint);
 
-  if (backendEl) backendEl.value = "luxtts";
   clearRecording();
+  updateUploadHint();
+  loadVoiceLibrary().catch(() => {});
   diagnoseMicReadiness().then((diagnostics) => {
     if (!diagnostics.reasons.length) {
       setRecordStatus("Microphone appears available. Click Record to grant access/start.");

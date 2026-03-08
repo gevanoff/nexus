@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Voice Clone UI</title>
+    <title>Voice Library UI</title>
     <style>
       :root {
         color-scheme: dark;
@@ -62,6 +62,12 @@
       .audio-card { display:flex; flex-direction:column; gap:10px; width: 100%; max-width: 640px; }
       .pill { display:inline-flex; gap:8px; align-items:center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); }
       .error { color: #ffb4b4; }
+      .voice-list { display:flex; flex-direction:column; gap:10px; }
+      .voice-row { display:flex; gap:10px; justify-content:space-between; align-items:center; flex-wrap:wrap; border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 10px; background: linear-gradient(180deg, rgba(20,26,36,0.78), rgba(14,19,28,0.78)); }
+      .voice-main { display:flex; flex-direction:column; gap:4px; min-width: 240px; }
+      .voice-name { font-weight: 600; }
+      .voice-meta { font-size: 12px; color: var(--muted); }
+      .voice-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
   </head>
@@ -77,31 +83,17 @@
       <meta name="theme-color" content="#0b0d10">
       <header>
         <div>
-          <h1>Voice Clone UI</h1>
-          <div class="hint">Upload a sample audio file or record a sample reading directly in this page.</div>
+          <h1>Voice Library UI</h1>
+          <div class="hint">Upload or record voice references here, then use them from the LuxTTS voice picker in the Text-to-Speech UI.</div>
         </div>
         <div class="row">
           <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
+          <a class="pill" href="/ui/tts" data-ui-role="nav">Open Text-to-Speech</a>
         </div>
       </header>
 
       <section class="card">
-        <div class="row">
-          <label>
-            <span>TTS Backend</span>
-            <select id="backend">
-              <option value="">(default)</option>
-              <option value="luxtts" selected>luxtts</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="row" style="justify-content:space-between; margin-top:12px">
-          <label style="min-width: 320px; flex: 1 1 640px;">
-            <span>Text</span>
-            <textarea id="text" placeholder="Enter text to speak"></textarea>
-          </label>
-        </div>
+        <div class="hint">LuxTTS is currently the intended consumer of these saved voice references. Keep samples short, clean, and easy to identify by name.</div>
 
         <div class="row" style="margin-top:12px">
           <span class="section-title">Read This Sample Text While Recording</span>
@@ -118,6 +110,7 @@
           <label>
             <span>Upload sample audio</span>
             <input id="promptAudio" type="file" accept="audio/*" />
+            <span id="uploadHint" class="hint">Choose a short reference clip.</span>
           </label>
 
           <label>
@@ -139,13 +132,27 @@
         </div>
 
         <div class="row" style="margin-top:12px">
-          <button id="generate" type="button" data-ui-role="action">Generate</button>
+          <button id="saveVoice" type="button" data-ui-role="action">Save voice</button>
         </div>
 
         <div class="out">
           <div id="status" class="hint"></div>
           <div id="meta" class="hint" style="margin-top: 8px"></div>
-          <div id="player" style="margin-top: 12px"></div>
+        </div>
+      </section>
+
+      <section class="out" style="margin-top:12px">
+        <div class="card">
+          <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div>
+              <div class="section-title">Saved Voices</div>
+              <div class="hint">These names appear in LuxTTS under the cloned voices section.</div>
+            </div>
+            <button id="refreshVoices" type="button" data-ui-role="secondary">Refresh</button>
+          </div>
+          <div id="voiceList" class="voice-list">
+            <div class="hint">Loading saved voices...</div>
+          </div>
         </div>
       </section>
 
@@ -171,6 +178,6 @@
 
     <script src="/static/auth_client.js?v=1"></script>
     <script src="/static/backend_status_panel.js?v=2"></script>
-    <script src="/static/voice_clone.js?v=2"></script>
+    <script src="/static/voice_clone.js?v=3"></script>
   </body>
 </html>
