@@ -252,11 +252,13 @@ def models() -> Dict[str, Any]:
 
 @app.get("/v1/voices")
 def voices_v1() -> list[str]:
+    _sync_shared_refs_to_local()
     return _voices()
 
 
 @app.get("/voices")
 def voices_compat() -> list[str]:
+    _sync_shared_refs_to_local()
     return _voices()
 
 
@@ -277,6 +279,8 @@ async def audio_speech(payload: Dict[str, Any]) -> Any:
             status_code=501,
             detail="LUXTTS_UPSTREAM_BASE_URL not set and LUXTTS_RUN_COMMAND not set; shim cannot synthesize audio.",
         )
+
+    _sync_shared_refs_to_local()
 
     job_id = f"luxtts_{uuid.uuid4().hex}"
     with tempfile.TemporaryDirectory(prefix="luxtts-") as tmpdir:

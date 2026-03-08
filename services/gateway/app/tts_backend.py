@@ -73,10 +73,15 @@ def _normalize_speed(speed_value: Any, *, backend_class: str) -> float | None:
     if speed <= 2.0:
         return _clamp(speed, min_speed, max_speed)
 
-    # Normalized UI scale: 1..10 maps linearly to backend range.
+    # Normalized UI scale: 1..10 with 5 as natural speed (1.0).
     if 1.0 <= speed <= 10.0:
-        normalized = (speed - 1.0) / 9.0
-        mapped = min_speed + (normalized * (max_speed - min_speed))
+        neutral_speed = _clamp(1.0, min_speed, max_speed)
+        if speed <= 5.0:
+            normalized = (speed - 1.0) / 4.0
+            mapped = min_speed + (normalized * (neutral_speed - min_speed))
+            return _clamp(mapped, min_speed, max_speed)
+        normalized = (speed - 5.0) / 5.0
+        mapped = neutral_speed + (normalized * (max_speed - neutral_speed))
         return _clamp(mapped, min_speed, max_speed)
 
     # Out-of-range values are clamped to backend limits.
