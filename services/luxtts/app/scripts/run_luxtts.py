@@ -67,7 +67,7 @@ def _discover_ref_map() -> dict:
     refs = Path(directory)
     if not refs.exists() or not refs.is_dir():
         return {}
-    allowed_exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    allowed_exts = {".wav", ".mp3", ".ogg", ".weba", ".webm", ".flac", ".m4a", ".aac"}
     out = {}
     for entry in refs.iterdir():
         if not entry.is_file():

@@ -253,6 +253,8 @@ Structured logging to stdout with:
 
 - Use `/ui/voice-clone` to upload or record reusable voice references.
 - Saved voices are stored in the shared `./.runtime/tts_refs` library used by Gateway and LuxTTS.
+- For LuxTTS, reference clips of roughly 5-15 seconds work better than very short samples; clips under about 2 seconds can fail conditioning or sound generic.
+- Large uploads can still be rejected by the active nginx/reverse-proxy body limit before Gateway receives them.
 - Use `/ui/tts` with the `luxtts` backend to generate speech from those saved voices.
 - The TTS voice picker groups LuxTTS voices into native voices, cloned voices, and shared refs.
 

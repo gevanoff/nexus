@@ -612,8 +612,16 @@ def _audio_mime_to_ext(mime: str) -> str:
         return "mp3"
     if m == "audio/ogg":
         return "ogg"
+    if m in ("audio/weba",):
+        return "weba"
     if m == "audio/webm":
         return "webm"
+    if m in ("audio/mp4", "audio/m4a", "audio/x-m4a"):
+        return "m4a"
+    if m == "audio/aac":
+        return "aac"
+    if m == "audio/flac":
+        return "flac"
     return "bin"
 
 
@@ -722,8 +730,16 @@ def _voice_record_from_file(name: str, full: str) -> Dict[str, Any]:
         mime = "audio/mpeg"
     elif ext == "ogg":
         mime = "audio/ogg"
+    elif ext == "weba":
+        mime = "audio/webm"
     elif ext == "webm":
         mime = "audio/webm"
+    elif ext == "m4a":
+        mime = "audio/mp4"
+    elif ext == "aac":
+        mime = "audio/aac"
+    elif ext == "flac":
+        mime = "audio/flac"
     return {
         "id": voice_id,
         "name": _safe_voice_name(voice_id),
@@ -866,8 +882,16 @@ def _load_voice_sample(voice_id: str) -> tuple[bytes, str] | None:
                 mime = "audio/mpeg"
             elif ext == "ogg":
                 mime = "audio/ogg"
+            elif ext == "weba":
+                mime = "audio/webm"
             elif ext == "webm":
                 mime = "audio/webm"
+            elif ext == "m4a":
+                mime = "audio/mp4"
+            elif ext == "aac":
+                mime = "audio/aac"
+            elif ext == "flac":
+                mime = "audio/flac"
             return data, mime
     return None
 
@@ -1503,7 +1527,7 @@ async def ui_api_tts_voices(req: Request):
         refs_dir = (os.environ.get("TTS_SHARED_REFS_DIR") or "/var/lib/tts_refs").strip()
         if not refs_dir or not os.path.isdir(refs_dir):
             return []
-        exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+        exts = {".wav", ".mp3", ".ogg", ".weba", ".webm", ".flac", ".m4a", ".aac"}
         out: list[str] = []
         seen: set[str] = set()
         for name in os.listdir(refs_dir):

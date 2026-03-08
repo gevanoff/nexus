@@ -185,11 +185,11 @@
     const selected = promptAudioEl?.files && promptAudioEl.files[0];
     if (selected) {
       const limit = libraryMaxBytes ? ` Limit: ${formatBytes(libraryMaxBytes)}.` : "";
-      uploadHintEl.textContent = `Selected ${selected.name} (${formatBytes(selected.size)}).${limit}`;
+      uploadHintEl.textContent = `Selected ${selected.name} (${formatBytes(selected.size)}). Recommended sample length is about 5-15 seconds.${limit}`;
       return;
     }
     const limit = libraryMaxBytes ? ` Keep it under ${formatBytes(libraryMaxBytes)} when possible.` : "";
-    uploadHintEl.textContent = `Choose a short reference clip.${limit}`;
+    uploadHintEl.textContent = `Choose a clean reference clip around 5-15 seconds long.${limit}`;
   }
 
   function getPromptAudio() {

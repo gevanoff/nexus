@@ -153,7 +153,7 @@ def _sync_shared_refs_to_local() -> None:
     if not os.path.isdir(source):
         return
     os.makedirs(destination, exist_ok=True)
-    allowed_exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    allowed_exts = {".wav", ".mp3", ".ogg", ".weba", ".webm", ".flac", ".m4a", ".aac"}
     overwrite = _sync_overwrite_enabled()
     for name in os.listdir(source):
         src_path = os.path.join(source, name)
@@ -172,7 +172,7 @@ def _discover_ref_voices() -> list[str]:
     directory = _refs_dir().strip()
     if not directory or not os.path.isdir(directory):
         return []
-    exts = {".wav", ".mp3", ".ogg", ".webm", ".flac", ".m4a"}
+    exts = {".wav", ".mp3", ".ogg", ".weba", ".webm", ".flac", ".m4a", ".aac"}
     out: list[str] = []
     seen: set[str] = set()
     for name in os.listdir(directory):
