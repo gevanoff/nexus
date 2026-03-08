@@ -418,6 +418,44 @@ def _collect_model_candidates(obj: Any) -> List[dict]:
     return out
 
 
+def _model_candidate_type(item: dict) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("type", "model_type"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return ""
+
+
+def _is_generation_model_candidate(item: dict) -> bool:
+    if not isinstance(item, dict):
+        return False
+
+    model_type = _model_candidate_type(item)
+    if model_type in {
+        "lora",
+        "vae",
+        "controlnet",
+        "embedding",
+        "textual_inversion",
+        "ip_adapter",
+        "t2i_adapter",
+        "clip_embed",
+        "clip_vision",
+    }:
+        return False
+
+    if model_type in {"main", "checkpoint"}:
+        return True
+
+    if not model_type:
+        return True
+
+    # Be conservative for unknown types that still look like base generation models.
+    return model_type.endswith("main") or model_type.endswith("checkpoint")
+
+
 def _list_invokeai_models(*, cfg: ShimConfig) -> Tuple[Optional[str], List[dict]]:
     """Best-effort list of InvokeAI models.
 
@@ -457,7 +495,8 @@ def _list_invokeai_models(*, cfg: ShimConfig) -> Tuple[Optional[str], List[dict]
         if not candidates:
             candidates = _collect_model_candidates(out)
         if candidates:
-            return (models_url, candidates)
+            filtered = [m for m in candidates if _is_generation_model_candidate(m)]
+            return (models_url, filtered)
 
     schema = _fetch_openapi_schema(cfg.invokeai_base_url)
     if not isinstance(schema, dict):
@@ -502,7 +541,8 @@ def _list_invokeai_models(*, cfg: ShimConfig) -> Tuple[Optional[str], List[dict]
         candidates = _collect_model_candidates(out)
         if candidates:
             logger.info("Discovered InvokeAI model list via %s", url)
-            return (url, candidates)
+            filtered = [m for m in candidates if _is_generation_model_candidate(m)]
+            return (url, filtered)
 
     if last_error is not None:
         raise last_error
@@ -524,6 +564,8 @@ def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[di
     except HTTPException as exc:
         last_error = exc
         candidates = []
+
+    candidates = [m for m in candidates if _is_generation_model_candidate(m)]
 
     if not candidates:
         # If model listing is unavailable, leave the graph template's model as-is.
