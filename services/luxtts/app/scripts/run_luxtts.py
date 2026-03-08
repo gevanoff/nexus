@@ -158,7 +158,8 @@ def _resolve_prompt_audio(payload: dict) -> str:
     mapped_prompt = None
     if isinstance(voice, str):
         mapped_prompt = voice_map.get(voice) or voice_map.get(voice.lower())
-    explicit_prompt = _env("LUXTTS_PROMPT_AUDIO") or payload.get("prompt_audio")
+    request_prompt = payload.get("prompt_audio")
+    env_prompt = _env("LUXTTS_PROMPT_AUDIO")
     default_prompts = [
         str(Path(_refs_dir()) / "penny.wav"),
         str(Path(_refs_dir()) / "prompt.wav"),
@@ -167,10 +168,12 @@ def _resolve_prompt_audio(payload: dict) -> str:
     ]
 
     candidates = []
+    if request_prompt:
+        candidates.append(str(request_prompt).strip())
     if mapped_prompt:
         candidates.append(str(mapped_prompt).strip())
-    if explicit_prompt:
-        candidates.append(str(explicit_prompt).strip())
+    if env_prompt:
+        candidates.append(str(env_prompt).strip())
     candidates.extend(default_prompts)
 
     seen = set()

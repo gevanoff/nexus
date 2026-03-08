@@ -872,6 +872,35 @@ def _load_voice_sample(voice_id: str) -> tuple[bytes, str] | None:
     return None
 
 
+def _voice_sample_record(voice_ref: str) -> Dict[str, Any] | None:
+    ref = str(voice_ref or "").strip()
+    if not ref:
+        return None
+    ref_lower = ref.lower()
+    for rec in _list_voice_samples():
+        rec_id = str((rec or {}).get("id") or "").strip()
+        rec_name = str((rec or {}).get("name") or "").strip()
+        if rec_id and rec_id.lower() == ref_lower:
+            return rec
+        if rec_name and rec_name.lower() == ref_lower:
+            return rec
+    return None
+
+
+def _voice_sample_path(voice_ref: str) -> str:
+    lib = _voice_library_dir()
+    if not os.path.isdir(lib):
+        return ""
+    rec = _voice_sample_record(voice_ref)
+    if not isinstance(rec, dict):
+        return ""
+    filename = str(rec.get("filename") or "").strip()
+    if not filename:
+        return ""
+    full = os.path.join(lib, filename)
+    return full if os.path.isfile(full) else ""
+
+
 def _delete_voice_sample(voice_id: str) -> bool:
     lib = _voice_library_dir()
     if not os.path.isdir(lib):
@@ -1383,6 +1412,15 @@ async def ui_api_tts(req: Request):
         # best-effort only; fall back to request-provided or backend default
         pass
     backend_class = _resolve_tts_backend_class(req, body)
+
+    try:
+        requested_voice = str(body.get("voice") or "").strip()
+    except Exception:
+        requested_voice = ""
+    if requested_voice and str(backend_class or "").strip().lower() == "luxtts":
+        sample_path = _voice_sample_path(requested_voice)
+        if sample_path:
+            body["prompt_audio"] = sample_path
 
     check_backend_ready(backend_class, route_kind="tts")
     await check_capability(backend_class, "tts")
