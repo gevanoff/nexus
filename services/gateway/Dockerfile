@@ -15,6 +15,7 @@ WORKDIR /var/lib/gateway
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps (pinned)

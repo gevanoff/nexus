@@ -11,6 +11,7 @@ import mimetypes
 import os
 import re
 import secrets
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -625,6 +626,47 @@ def _audio_mime_to_ext(mime: str) -> str:
     return "bin"
 
 
+def _normalize_voice_audio_for_storage(*, audio_bytes: bytes, mime_hint: str) -> tuple[bytes, str]:
+    mime = (mime_hint or "audio/wav").strip() or "audio/wav"
+    if mime.lower() in {"audio/wav", "audio/x-wav"}:
+        return bytes(audio_bytes), "audio/wav"
+
+    input_ext = _audio_mime_to_ext(mime)
+    if input_ext == "bin":
+        input_ext = "dat"
+
+    with tempfile.TemporaryDirectory(prefix="gateway-voice-audio-") as tmpdir:
+        input_path = os.path.join(tmpdir, f"input.{input_ext}")
+        output_path = os.path.join(tmpdir, "output.wav")
+        with open(input_path, "wb") as f:
+            f.write(bytes(audio_bytes))
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_path,
+            "-ac",
+            "1",
+            "-ar",
+            "24000",
+            "-c:a",
+            "pcm_s16le",
+            output_path,
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except FileNotFoundError as exc:
+            raise ValueError("ffmpeg is required to normalize uploaded voice samples") from exc
+        if proc.returncode != 0 or not os.path.isfile(output_path):
+            detail = (proc.stderr or proc.stdout or "ffmpeg conversion failed").strip()
+            raise ValueError(f"failed to normalize voice sample to wav: {detail[-400:]}")
+
+        with open(output_path, "rb") as f:
+            normalized = f.read()
+        return normalized, "audio/wav"
+
+
 def _save_ui_audio(*, audio_bytes: bytes, mime_hint: str) -> tuple[str, str]:
     audio_dir = _ui_audio_dir()
     ttl_sec = _ui_audio_ttl_sec()
@@ -755,6 +797,10 @@ def _save_voice_sample(*, name: str, audio_bytes: bytes, mime_hint: str) -> Dict
         raise ValueError("audio_bytes must be bytes")
     if len(audio_bytes) > _voice_library_max_bytes():
         raise ValueError("audio exceeds voice library limit")
+
+    audio_bytes, mime_hint = _normalize_voice_audio_for_storage(audio_bytes=bytes(audio_bytes), mime_hint=mime_hint)
+    if len(audio_bytes) > _voice_library_max_bytes():
+        raise ValueError("audio exceeds voice library limit after wav normalization")
 
     lib = _voice_library_dir()
     _ensure_dir(lib)
