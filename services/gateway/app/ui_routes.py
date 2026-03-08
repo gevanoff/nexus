@@ -430,12 +430,18 @@ def _tts_gateway_headers(meta: Dict[str, Any]) -> Dict[str, str]:
     backend = meta.get("backend")
     backend_class = meta.get("backend_class")
     latency = meta.get("upstream_latency_ms")
+    voice = meta.get("voice")
+    speed = meta.get("speed")
     if backend:
         headers["x-gateway-backend"] = str(backend)
     if backend_class:
         headers["x-gateway-backend-class"] = str(backend_class)
     if latency is not None:
         headers["x-gateway-upstream-latency-ms"] = str(latency)
+    if voice:
+        headers["x-gateway-tts-voice"] = str(voice)
+    if speed is not None:
+        headers["x-gateway-tts-speed"] = str(speed)
     return headers
 
 

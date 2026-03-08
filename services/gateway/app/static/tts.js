@@ -52,6 +52,18 @@
     metaEl.textContent = text || "";
   }
 
+  function buildGatewayMetaFromHeaders(resp) {
+    if (!resp) return "";
+    const backend = String(resp.headers.get("x-gateway-backend-class") || resp.headers.get("x-gateway-backend") || "").trim();
+    const voice = String(resp.headers.get("x-gateway-tts-voice") || "").trim();
+    const speed = String(resp.headers.get("x-gateway-tts-speed") || "").trim();
+    const parts = [];
+    if (backend) parts.push(`Backend: ${backend}`);
+    if (voice) parts.push(`Voice: ${voice}`);
+    if (speed) parts.push(`Speed: ${speed}`);
+    return parts.join(' | ');
+  }
+
   function ensureVoiceSelectionValid() {
     if (!voiceEl) return;
     const selected = String(voiceEl.value || "").trim();
@@ -373,10 +385,12 @@
       });
 
       const contentType = resp.headers.get("content-type") || "";
+      const headerMeta = buildGatewayMetaFromHeaders(resp);
 
       if (!resp.ok) {
         const text = await resp.text();
         setStatus(`HTTP ${resp.status}: ${text}`, true);
+        if (headerMeta) setMeta(headerMeta);
         return;
       }
 
@@ -394,7 +408,16 @@
         }
 
         if (payload?._gateway) {
-          setMeta(`Backend: ${payload._gateway.backend_class || payload._gateway.backend}`);
+          const parts = [];
+          const backend = String(payload._gateway.backend_class || payload._gateway.backend || '').trim();
+          const voice = String(payload._gateway.voice || '').trim();
+          const speed = payload._gateway.speed;
+          if (backend) parts.push(`Backend: ${backend}`);
+          if (voice) parts.push(`Voice: ${voice}`);
+          if (speed !== undefined && speed !== null && speed !== '') parts.push(`Speed: ${speed}`);
+          setMeta(parts.join(' | '));
+        } else if (headerMeta) {
+          setMeta(headerMeta);
         }
 
         if (!url) {
@@ -406,6 +429,7 @@
         const blob = await resp.blob();
         url = URL.createObjectURL(blob);
         activeObjectUrl = url;
+        if (headerMeta) setMeta(headerMeta);
       }
 
       setStatus("Audio ready.", false);

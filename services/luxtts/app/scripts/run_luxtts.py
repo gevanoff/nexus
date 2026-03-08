@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -207,6 +208,48 @@ def _fallback_prompt_audio() -> str:
     return ""
 
 
+def _pad_prompt_audio(prompt_audio: str, sf, *, min_duration_sec: float = 2.0) -> str:
+    try:
+        import numpy as np  # type: ignore
+    except Exception:
+        return ""
+
+    try:
+        samples, sample_rate = sf.read(prompt_audio, always_2d=False)
+    except Exception:
+        return ""
+
+    try:
+        target_samples = max(int(float(sample_rate) * float(min_duration_sec)), 1)
+    except Exception:
+        target_samples = 1
+
+    try:
+        current_samples = int(samples.shape[0])
+    except Exception:
+        return ""
+
+    if current_samples >= target_samples:
+        return str(prompt_audio)
+
+    pad_samples = target_samples - current_samples
+    try:
+        if getattr(samples, "ndim", 1) == 1:
+            padded = np.pad(samples, (0, pad_samples), mode="constant")
+        else:
+            padded = np.pad(samples, ((0, pad_samples), (0, 0)), mode="constant")
+    except Exception:
+        return ""
+
+    try:
+        handle = tempfile.NamedTemporaryFile(prefix="luxtts-prompt-", suffix=".wav", delete=False)
+        handle.close()
+        sf.write(handle.name, padded, sample_rate)
+        return str(handle.name)
+    except Exception:
+        return ""
+
+
 def _is_lux_kernel_size_error(exc: Exception) -> bool:
     message = str(exc or "")
     return "Kernel size can't be greater than actual input size" in message
@@ -253,6 +296,7 @@ def main() -> int:
         speed = max(0.5, min(2.0, requested_speed))
     return_smooth = _bool_env("LUXTTS_RETURN_SMOOTH", False)
 
+    padded_prompt_path = ""
     try:
         final_wav = lux_tts.generate_speech(
             text,
@@ -265,19 +309,22 @@ def main() -> int:
     except Exception as exc:
         if not _is_lux_kernel_size_error(exc):
             raise
-        fallback_prompt = _fallback_prompt_audio()
-        if not fallback_prompt or fallback_prompt == prompt_audio:
-            raise
+        padded_prompt_path = _pad_prompt_audio(prompt_audio, sf, min_duration_sec=2.0)
+        if not padded_prompt_path or padded_prompt_path == prompt_audio:
+            _fail(
+                "Reference audio is too short for LuxTTS prompt encoding. "
+                "Use a longer sample or record at least a couple of seconds of speech."
+            )
         if ref_duration > 0:
-            encoded_prompt = lux_tts.encode_prompt(fallback_prompt, duration=ref_duration, rms=rms)
+            encoded_prompt = lux_tts.encode_prompt(padded_prompt_path, duration=ref_duration, rms=rms)
         else:
-            encoded_prompt = lux_tts.encode_prompt(fallback_prompt, rms=rms)
+            encoded_prompt = lux_tts.encode_prompt(padded_prompt_path, rms=rms)
         final_wav = lux_tts.generate_speech(
             text,
             encoded_prompt,
             num_steps=num_steps,
             t_shift=t_shift,
-            speed=1.0,
+            speed=speed,
             return_smooth=return_smooth,
         )
 
@@ -291,6 +338,12 @@ def main() -> int:
     sf.write(str(output), final_wav, 48000)
     if not output.exists() or output.stat().st_size == 0:
         _fail(f"LUXTTS_OUTPUT_PATH is empty: {output}")
+
+    if padded_prompt_path:
+        try:
+            Path(padded_prompt_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     return 0
 

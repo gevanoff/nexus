@@ -61,6 +61,13 @@ def _speed_range_for_backend(backend_class: str) -> tuple[float, float]:
     return 0.5, 2.0
 
 
+def _neutral_speed_for_backend(backend_class: str) -> float:
+    key = str(backend_class or "").strip().lower()
+    if "lux" in key:
+        return 0.85
+    return 1.0
+
+
 def _normalize_speed(speed_value: Any, *, backend_class: str) -> float | None:
     try:
         speed = float(speed_value)
@@ -73,9 +80,9 @@ def _normalize_speed(speed_value: Any, *, backend_class: str) -> float | None:
     if speed <= 2.0:
         return _clamp(speed, min_speed, max_speed)
 
-    # Normalized UI scale: 1..10 with 5 as natural speed (1.0).
+    # Normalized UI scale: 1..10 with 5 mapping to a backend-specific neutral speed.
     if 1.0 <= speed <= 10.0:
-        neutral_speed = _clamp(1.0, min_speed, max_speed)
+        neutral_speed = _clamp(_neutral_speed_for_backend(backend_class), min_speed, max_speed)
         if speed <= 5.0:
             normalized = (speed - 1.0) / 4.0
             mapped = min_speed + (normalized * (neutral_speed - min_speed))
@@ -170,6 +177,8 @@ async def generate_tts(*, backend_class: str, body: Dict[str, Any]) -> TtsResult
         "upstream_base_url": base,
         "upstream_path": path,
         "upstream_latency_ms": round((time.time() - started) * 1000.0, 1),
+        "voice": payload.get("voice") if isinstance(payload.get("voice"), str) else None,
+        "speed": payload.get("speed") if isinstance(payload.get("speed"), (int, float)) else None,
     }
 
     content_type = r.headers.get("content-type", "application/octet-stream")
