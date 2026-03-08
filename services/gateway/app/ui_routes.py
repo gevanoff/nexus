@@ -34,7 +34,7 @@ from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
 from app.router_cfg import router_cfg
 from app.upstreams import call_mlx_openai, call_ollama, stream_mlx_openai_chat, stream_ollama_chat_as_openai
-from app.images_backend import generate_images
+from app.images_backend import generate_images, resolve_images_backend_class
 from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
 from app import user_store
@@ -3081,7 +3081,23 @@ async def ui_chat_stream(req: Request):
                 try:
                     # Announce backend work to the UI
                     pre_events.append({"type": "thinking", "thinking": "Generating image…"})
-                    resp = await generate_images(prompt=prompt or "", size="1024x1024", n=1, model=None, options=None, response_format="url")
+                    backend_class = resolve_images_backend_class(prompt=prompt or "", requested_model=None)
+                    check_backend_ready(backend_class, route_kind="images")
+                    await check_capability(backend_class, "images")
+                    admission = get_admission_controller()
+                    await admission.acquire(backend_class, "images")
+                    try:
+                        resp = await generate_images(
+                            prompt=prompt or "",
+                            size="1024x1024",
+                            n=1,
+                            model=None,
+                            options=None,
+                            response_format="url",
+                            backend_class=backend_class,
+                        )
+                    finally:
+                        admission.release(backend_class, "images")
                     url = None
                     if isinstance(resp, dict):
                         if isinstance(resp.get("data"), list) and resp["data"]:
@@ -3464,13 +3480,25 @@ async def ui_image(req: Request) -> Dict[str, Any]:
         options = None
 
     try:
-        resp = await generate_images(
+        backend_class = resolve_images_backend_class(
             prompt=prompt,
-            size=size,
-            n=n,
-            model=str(model) if isinstance(model, str) and model.strip() else None,
-            options=options,
+            requested_model=str(model) if isinstance(model, str) and model.strip() else None,
         )
+        check_backend_ready(backend_class, route_kind="images")
+        await check_capability(backend_class, "images")
+        admission = get_admission_controller()
+        await admission.acquire(backend_class, "images")
+        try:
+            resp = await generate_images(
+                prompt=prompt,
+                size=size,
+                n=n,
+                model=str(model) if isinstance(model, str) and model.strip() else None,
+                options=options,
+                backend_class=backend_class,
+            )
+        finally:
+            admission.release(backend_class, "images")
 
         # Prefer short-lived URLs for the browser (avoids huge data: URIs and broken rendering).
         if isinstance(resp, dict) and isinstance(resp.get("data"), list):

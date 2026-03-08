@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     # IMAGES_OPENAI_MODEL="auto") selects between FAST/SLOW based on prompt heuristics.
     IMAGES_ENABLE_REQUEST_TYPE: bool = False
     IMAGES_OPENAI_MODEL_FAST: str = "gpu_fast"
-    IMAGES_OPENAI_MODEL_SLOW: str = "gpu_slow"
+    IMAGES_OPENAI_MODEL_SLOW: str = "gpu_heavy"
 
     # HeartMula (music generation)
     # HeartMula is a local HTTP service (see ai-infra/services/heartmula).

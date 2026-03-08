@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from app.auth import require_bearer
-from app.images_backend import generate_images
+from app.images_backend import generate_images, resolve_images_backend_class
 from app.backends import get_admission_controller, check_capability
 from app.health_checker import check_backend_ready
 
@@ -30,9 +30,10 @@ async def images_generations(req: Request):
     # Enforce capability and admission control
     # Note: backend selection for images should come from router/config
     # For now, enforce against the configured images backend
-    from app.config import S
-    
-    backend_class = (getattr(S, "IMAGES_BACKEND_CLASS", "") or "").strip() or "gpu_heavy"
+    backend_class = resolve_images_backend_class(
+        prompt=prompt,
+        requested_model=str(model) if isinstance(model, str) and model.strip() else None,
+    )
     
     # Check backend health/readiness
     check_backend_ready(backend_class, route_kind="images")
@@ -72,6 +73,7 @@ async def images_generations(req: Request):
             model=str(model) if isinstance(model, str) and model.strip() else None,
             options=options,
             response_format=response_format,
+            backend_class=backend_class,
         )
         return result
     except ValueError as e:

@@ -224,7 +224,9 @@
       const gw = payload?._gateway;
       const bits = [];
       if (gw?.backend) bits.push(`backend=${gw.backend}`);
+      if (gw?.backend_class) bits.push(`class=${gw.backend_class}`);
       if (gw?.model) bits.push(`model=${gw.model}`);
+      if (gw?.base_url) bits.push(`target=${gw.base_url}`);
       if (gw?.ui_image_sha256) bits.push(`sha=${String(gw.ui_image_sha256).slice(0, 12)}`);
       if (gw?.ttl_sec) bits.push(`ttl=${gw.ttl_sec}s`);
       metaEl.textContent = bits.join(" • ");

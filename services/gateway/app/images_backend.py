@@ -12,7 +12,43 @@ from app.httpx_client import httpx_client as _httpx_client
 from app.image_storage import convert_response_to_urls
 
 
-def _effective_images_http_base_url() -> str:
+def _get_image_backend_base_url(backend_class: str | None) -> str:
+    backend_class = (backend_class or "").strip()
+    if not backend_class:
+        return ""
+    try:
+        from app.backends import get_registry
+
+        reg = get_registry()
+        cfg = reg.get_backend(backend_class)
+        if cfg and isinstance(cfg.base_url, str):
+            return cfg.base_url.strip().rstrip("/")
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_images_backend_class(*, prompt: str = "", requested_model: str | None = None) -> str:
+    requested = (requested_model or "").strip()
+    if requested and requested.lower() != "auto":
+        base = _get_image_backend_base_url(requested)
+        if base:
+            return requested
+
+    enable_rt = bool(getattr(S, "IMAGES_ENABLE_REQUEST_TYPE", False))
+    configured = (getattr(S, "IMAGES_BACKEND_CLASS", "") or "").strip() or "gpu_heavy"
+    if not enable_rt or (requested and requested.lower() != "auto"):
+        return configured
+
+    fast = (getattr(S, "IMAGES_OPENAI_MODEL_FAST", "gpu_fast") or "gpu_fast").strip()
+    slow = (getattr(S, "IMAGES_OPENAI_MODEL_SLOW", "gpu_heavy") or "gpu_heavy").strip()
+    p = (prompt or "").strip()
+    if _PHOTO_REAL_RE.search(p):
+        return slow
+    return fast
+
+
+def _effective_images_http_base_url(backend_class: str | None = None) -> str:
     """Return the base URL for the configured images HTTP backend.
 
     Prefer explicit IMAGES_HTTP_BASE_URL, but if it appears to be the loopback default
@@ -22,6 +58,11 @@ def _effective_images_http_base_url() -> str:
 
     raw = (getattr(S, "IMAGES_HTTP_BASE_URL", "") or "").strip().rstrip("/")
     images_backend = (getattr(S, "IMAGES_BACKEND", "") or "mock").strip().lower()
+    resolved_backend_class = (backend_class or "").strip() or (getattr(S, "IMAGES_BACKEND_CLASS", "") or "").strip() or "gpu_heavy"
+
+    registry_base = _get_image_backend_base_url(resolved_backend_class)
+    if registry_base and images_backend == "http_openai_images":
+        return registry_base
 
     # For OpenAI-style image backend flow in Nexus, prefer the in-network images service.
     # This avoids deriving unrelated backend hostnames and failing with DNS ConnectError.
@@ -39,16 +80,9 @@ def _effective_images_http_base_url() -> str:
     if images_backend == "http_openai_images":
         return "http://images:7860"
 
-    backend_class = (getattr(S, "IMAGES_BACKEND_CLASS", "") or "").strip() or "gpu_heavy"
     try:
-        from app.backends import get_registry
-
-        reg = get_registry()
-        cfg = reg.get_backend(backend_class)
-        if cfg and isinstance(cfg.base_url, str) and cfg.base_url.strip():
-            derived = cfg.base_url.strip().rstrip("/")
-            if derived and not any(derived.startswith(p) for p in loopbacks):
-                return derived
+        if registry_base and not any(registry_base.startswith(p) for p in loopbacks):
+            return registry_base
     except Exception:
         pass
 
@@ -145,6 +179,7 @@ async def generate_images(
     model: str | None = None,
     options: Dict[str, Any] | None = None,
     response_format: str = "url",
+    backend_class: str | None = None,
 ) -> Dict[str, Any]:
     """Generate images in an OpenAI-ish response shape.
 
@@ -271,7 +306,8 @@ async def generate_images(
         return False
 
     if backend == "http_a1111":
-        base = _effective_images_http_base_url()
+        resolved_backend_class = (backend_class or "").strip() or resolve_images_backend_class(prompt=prompt, requested_model=model)
+        base = _effective_images_http_base_url(resolved_backend_class)
         if not base:
             raise RuntimeError("IMAGES_HTTP_BASE_URL is required for http_a1111")
 
@@ -307,7 +343,8 @@ async def generate_images(
         return resp
 
     if backend == "http_openai_images":
-        base = _effective_images_http_base_url()
+        resolved_backend_class = (backend_class or "").strip() or resolve_images_backend_class(prompt=prompt, requested_model=model)
+        base = _effective_images_http_base_url(resolved_backend_class)
         if not base:
             raise RuntimeError("IMAGES_HTTP_BASE_URL is required for http_openai_images")
 
@@ -381,7 +418,7 @@ async def generate_images(
             raise RuntimeError("image backend did not return b64_json")
 
         resp2: Dict[str, Any] = {"created": int(out.get("created") or time.time()), "data": normalized}
-        resp2["_gateway"] = {"backend": backend, "mime": "image/png"}
+        resp2["_gateway"] = {"backend": backend, "backend_class": resolved_backend_class, "base_url": base, "mime": "image/png"}
         if chosen_model:
             resp2["_gateway"].update({"model": chosen_model, "model_reason": model_reason})
         if guidance_used is not None:
