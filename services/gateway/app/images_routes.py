@@ -25,12 +25,13 @@ async def images_generations(req: Request):
     n = body.get("n", 1)
     size = body.get("size", "1024x1024")
     model = body.get("model")
+    requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
     response_format = body.get("response_format", "url")  # Default to URL
 
     # Enforce capability and admission control
     # Note: backend selection for images should come from router/config
     # For now, enforce against the configured images backend
-    backend_class = resolve_images_backend_class(
+    backend_class = requested_backend_class or resolve_images_backend_class(
         prompt=prompt,
         requested_model=str(model) if isinstance(model, str) and model.strip() else None,
     )

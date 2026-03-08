@@ -76,6 +76,9 @@
 
       .pill { display:inline-flex; gap:8px; align-items:center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); }
       .error { color: #ffb4b4; }
+      .field-help { font-size: 11px; color: var(--muted); line-height: 1.4; }
+      .hidden { display: none !important; }
+      .panel-subtle { border: 1px dashed rgba(231,237,246,0.12); border-radius: 10px; padding: 10px; background: rgba(15, 20, 28, 0.45); }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
   </head>
@@ -102,6 +105,16 @@
         </div>
 
         <div class="row" style="margin-top:12px">
+          <label style="min-width: 200px; flex: 1 1 220px;">
+            <span>Backend</span>
+            <select id="backend"></select>
+            <div id="backendHint" class="field-help"></div>
+          </label>
+
+          <div style="display:flex; align-items:flex-end; gap:8px;">
+            <button id="refreshCatalog" type="button" data-ui-role="secondary">Refresh Backends</button>
+          </div>
+
           <label>
             <span>Size</span>
             <select id="size">
@@ -116,41 +129,74 @@
             <input id="n" type="number" min="1" max="8" step="1" value="1" />
           </label>
 
-          <label style="min-width: 240px; flex: 1 1 240px;">
-            <span>Model (optional)</span>
-            <input id="model" type="text" placeholder="e.g. sd3, flux, etc" />
+          <label style="min-width: 280px; flex: 1 1 280px;">
+            <span>Model</span>
+            <select id="modelSelect"></select>
+            <div id="modelHint" class="field-help"></div>
+          </label>
+
+          <label id="modelCustomWrap" class="hidden" style="min-width: 240px; flex: 1 1 240px;">
+            <span>Custom model id</span>
+            <input id="modelCustom" type="text" placeholder="e.g. sd3, flux, custom model id" />
           </label>
 
           <button id="generate" type="button" data-ui-role="action">Generate</button>
         </div>
 
+        <div id="backendSummary" class="panel-subtle hint" style="margin-top:12px;"></div>
+
+        <div id="modelManagement" class="panel-subtle hint" style="margin-top:12px;"></div>
+
         <details style="margin-top: 12px;">
           <summary>Advanced options</summary>
           <div class="row" style="margin-top:10px">
-            <label>
-              <span>Seed (optional)</span>
+            <label id="seedWrap">
+              <span id="seedLabel">Seed (optional)</span>
               <input id="seed" type="number" step="1" placeholder="e.g. 1234" />
+              <div id="seedHelp" class="field-help"></div>
             </label>
 
-            <label>
-              <span>Steps (optional)</span>
+            <label id="stepsWrap">
+              <span id="stepsLabel">Steps (optional)</span>
               <input id="steps" type="number" min="1" max="200" step="1" placeholder="e.g. 30" />
+              <div id="stepsHelp" class="field-help"></div>
             </label>
 
-            <label>
-              <span>Guidance scale (optional)</span>
+            <label id="guidanceWrap">
+              <span id="guidanceLabel">Guidance scale (optional)</span>
               <input id="guidance" type="number" min="0" max="50" step="0.1" placeholder="e.g. 7.5" />
+              <div id="guidanceHelp" class="field-help"></div>
+            </label>
+
+            <label id="schedulerWrap" class="hidden">
+              <span id="schedulerLabel">Scheduler (optional)</span>
+              <input id="scheduler" type="text" placeholder="e.g. euler" />
+              <div id="schedulerHelp" class="field-help"></div>
+            </label>
+
+            <label id="styleWrap" class="hidden">
+              <span id="styleLabel">Style (optional)</span>
+              <input id="style" type="text" placeholder="e.g. cinematic" />
+              <div id="styleHelp" class="field-help"></div>
+            </label>
+
+            <label id="qualityWrap" class="hidden">
+              <span id="qualityLabel">Quality (optional)</span>
+              <input id="quality" type="text" placeholder="e.g. high" />
+              <div id="qualityHelp" class="field-help"></div>
             </label>
           </div>
 
-          <label style="margin-top:10px">
-            <span>Negative prompt (optional)</span>
+          <label id="negativeWrap" style="margin-top:10px">
+            <span id="negativeLabel">Negative prompt (optional)</span>
             <textarea id="negative" placeholder="Things to avoid..."></textarea>
+            <div id="negativeHelp" class="field-help"></div>
           </label>
 
-          <label style="margin-top:10px">
-            <span>Extra JSON (optional)</span>
+          <label id="extraWrap" style="margin-top:10px">
+            <span id="extraLabel">Extra JSON (optional)</span>
             <textarea id="extra" placeholder='{"cfg_scale": 6, "sampler": "euler"}'></textarea>
+            <div id="extraHelp" class="field-help"></div>
           </label>
         </details>
 

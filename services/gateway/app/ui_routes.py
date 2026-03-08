@@ -47,6 +47,11 @@ _UI_MODELS_CACHE_LOCK = asyncio.Lock()
 _UI_MODELS_CACHE_VALUE: Optional[Dict[str, Any]] = None
 _UI_MODELS_CACHE_EXPIRES_AT: float = 0.0
 
+_IMAGE_BACKEND_LABELS: Dict[str, str] = {
+    "gpu_fast": "SDXL-Turbo",
+    "gpu_heavy": "InvokeAI",
+}
+
 
 @router.get("/favicon.ico", include_in_schema=False)
 async def ui_favicon(req: Request):
@@ -454,6 +459,227 @@ def _merge_user_settings(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[st
         else:
             out[key] = value
     return out
+
+
+def _image_backend_display_name(backend_class: str, description: str = "") -> str:
+    name = _IMAGE_BACKEND_LABELS.get((backend_class or "").strip())
+    if name:
+        return name
+    desc = (description or "").strip()
+    if desc:
+        return desc.split("(", 1)[0].strip()
+    return (backend_class or "").strip() or "images"
+
+
+def _image_backend_option_profile(backend_class: str) -> Dict[str, Any]:
+    common: Dict[str, Dict[str, Any]] = {
+        "seed": {
+            "enabled": True,
+            "label": "Seed",
+            "kind": "number",
+            "placeholder": "e.g. 1234",
+            "help": "Reuse a seed to reproduce similar compositions.",
+        },
+        "steps": {
+            "enabled": True,
+            "label": "Steps",
+            "kind": "number",
+            "min": 1,
+            "max": 200,
+            "step": 1,
+            "placeholder": "e.g. 30",
+            "help": "Higher values usually improve detail at the cost of latency.",
+        },
+        "guidance_scale": {
+            "enabled": True,
+            "label": "Guidance scale",
+            "kind": "number",
+            "min": 0,
+            "max": 50,
+            "step": 0.1,
+            "placeholder": "e.g. 7.5",
+            "help": "Controls how strongly the model follows the prompt.",
+        },
+        "negative_prompt": {
+            "enabled": True,
+            "label": "Negative prompt",
+            "kind": "textarea",
+            "placeholder": "Things to avoid...",
+            "help": "Optional text describing artifacts or subjects to suppress.",
+        },
+        "scheduler": {
+            "enabled": False,
+            "label": "Scheduler",
+            "kind": "text",
+            "placeholder": "e.g. euler",
+            "help": "Only exposed when the backend advertises scheduler control.",
+        },
+        "style": {
+            "enabled": False,
+            "label": "Style",
+            "kind": "text",
+            "placeholder": "e.g. cinematic",
+            "help": "Backend-specific stylistic preset or tag.",
+        },
+        "quality": {
+            "enabled": False,
+            "label": "Quality",
+            "kind": "text",
+            "placeholder": "e.g. high",
+            "help": "Backend-specific quality hint, if supported.",
+        },
+        "extra_json": {
+            "enabled": True,
+            "label": "Extra JSON",
+            "kind": "textarea",
+            "placeholder": '{"cfg_scale": 6, "sampler": "euler"}',
+            "help": "Advanced escape hatch for backend-specific request fields.",
+        },
+    }
+
+    backend = (backend_class or "").strip()
+    if backend == "gpu_fast":
+        common["steps"].update({"default": 4, "max": 12, "help": "Turbo backends usually prefer low step counts for fast turnaround."})
+        common["guidance_scale"].update({"default": 0.0, "help": "SDXL-Turbo commonly works best with guidance near 0."})
+    elif backend == "gpu_heavy":
+        common["steps"].update({"default": 30})
+        common["guidance_scale"].update({"default": 6.0})
+        common["scheduler"]["enabled"] = True
+        common["style"]["enabled"] = True
+        common["quality"]["enabled"] = True
+
+    return {
+        "fields": common,
+        "size_options": ["512x512", "768x768", "1024x1024"],
+        "defaults": {
+            "size": "1024x1024",
+            "n": 1,
+            "steps": common["steps"].get("default"),
+            "guidance_scale": common["guidance_scale"].get("default"),
+        },
+    }
+
+
+def _normalize_image_models_payload(payload: Any) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return [], {"supported": False, "message": "Backend did not return a JSON model catalog."}
+
+    raw_items = payload.get("data")
+    if not isinstance(raw_items, list):
+        for key in ("models", "items"):
+            candidate = payload.get(key)
+            if isinstance(candidate, list):
+                raw_items = candidate
+                break
+    if not isinstance(raw_items, list):
+        raw_items = []
+
+    models: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if isinstance(item, str):
+            model_id = item.strip()
+            if not model_id:
+                continue
+            key = model_id.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            models.append({"id": model_id, "name": model_id})
+            continue
+        if not isinstance(item, dict):
+            continue
+        model_id = ""
+        for key_name in ("id", "key", "model_key", "name", "model"):
+            value = item.get(key_name)
+            if isinstance(value, str) and value.strip():
+                model_id = value.strip()
+                break
+        if not model_id:
+            continue
+        key = model_id.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        entry: Dict[str, Any] = {"id": model_id}
+        name = item.get("name")
+        entry["name"] = name.strip() if isinstance(name, str) and name.strip() else model_id
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict) and metadata:
+            entry["metadata"] = metadata
+        for meta_key in ("owned_by", "object"):
+            meta_value = item.get(meta_key)
+            if isinstance(meta_value, str) and meta_value.strip():
+                entry[meta_key] = meta_value.strip()
+        models.append(entry)
+
+    shim = payload.get("shim") if isinstance(payload.get("shim"), dict) else {}
+    source_url = shim.get("source_url") if isinstance(shim.get("source_url"), str) else ""
+    upstream_error = shim.get("upstream_error") if isinstance(shim.get("upstream_error"), str) else ""
+    management = {
+        "supported": False,
+        "message": "This backend exposes model listing only; install/remove actions are not available through the gateway.",
+    }
+    if source_url:
+        management["source_url"] = source_url
+    if upstream_error:
+        management["upstream_error"] = upstream_error
+    return models, management
+
+
+async def _fetch_image_backend_catalog_entry(client: httpx.AsyncClient, *, backend_class: str, config: Any, checker: Any) -> Dict[str, Any]:
+    status = checker.get_status(backend_class)
+    entry: Dict[str, Any] = {
+        "backend_class": backend_class,
+        "display_name": _image_backend_display_name(backend_class, getattr(config, "description", "")),
+        "description": getattr(config, "description", ""),
+        "base_url": getattr(config, "base_url", ""),
+        "healthy": bool(status.is_healthy) if status is not None else None,
+        "ready": bool(status.is_ready) if status is not None else None,
+        "error": status.error if status is not None else None,
+        "options": _image_backend_option_profile(backend_class),
+        "models": [],
+        "model_management": {
+            "supported": False,
+            "message": "This backend does not advertise model management via the gateway.",
+        },
+    }
+
+    base = (getattr(config, "base_url", "") or "").strip().rstrip("/")
+    if not base:
+        entry["models_error"] = "backend base URL is not configured"
+        return entry
+
+    last_error = ""
+    payload: Dict[str, Any] | None = None
+    for path in ("/v1/models?raw=true", "/v1/models", "/models"):
+        try:
+            resp = await client.get(f"{base}{path}")
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            continue
+        if resp.status_code >= 400:
+            last_error = f"HTTP {resp.status_code}"
+            continue
+        try:
+            data = resp.json()
+        except Exception as exc:
+            last_error = f"invalid JSON: {type(exc).__name__}: {exc}"
+            continue
+        if isinstance(data, dict):
+            payload = data
+            break
+        last_error = "model list returned a non-object payload"
+
+    if payload is None:
+        if last_error:
+            entry["models_error"] = last_error
+        return entry
+
+    models, management = _normalize_image_models_payload(payload)
+    entry["models"] = models
+    entry["model_management"] = management
+    return entry
 
 
 def _ui_image_dir() -> str:
@@ -1458,6 +1684,38 @@ async def ui_api_tts_backends(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     _require_user(req)
     return _capability_availability("tts")
+
+
+@router.get("/ui/api/image/catalog", include_in_schema=False)
+async def ui_api_image_catalog(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+
+    registry = get_registry()
+    checker = get_health_checker()
+    image_backends = [
+        (backend_class, config)
+        for backend_class, config in registry.backends.items()
+        if config.supports("images")
+    ]
+    image_backends.sort(key=lambda item: item[0])
+
+    async with _httpx_client(timeout=8.0) as client:
+        entries = await asyncio.gather(
+            *[
+                _fetch_image_backend_catalog_entry(client, backend_class=backend_class, config=config, checker=checker)
+                for backend_class, config in image_backends
+            ]
+        )
+
+    default_backend_class = (getattr(S, "IMAGES_BACKEND_CLASS", "") or "").strip() or "gpu_heavy"
+    if not any(entry.get("backend_class") == default_backend_class for entry in entries) and entries:
+        default_backend_class = str(entries[0].get("backend_class") or "")
+
+    return {
+        "default_backend_class": default_backend_class,
+        "backends": entries,
+    }
 
 
 @router.post("/ui/api/tts", include_in_schema=False)
@@ -3483,6 +3741,7 @@ async def ui_image(req: Request) -> Dict[str, Any]:
     size = str(body.get("size") or "1024x1024")
     n = int(body.get("n") or 1)
     model = body.get("model")
+    requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
 
     options = {}
     for k in [
@@ -3504,7 +3763,7 @@ async def ui_image(req: Request) -> Dict[str, Any]:
         options = None
 
     try:
-        backend_class = resolve_images_backend_class(
+        backend_class = requested_backend_class or resolve_images_backend_class(
             prompt=prompt,
             requested_model=str(model) if isinstance(model, str) and model.strip() else None,
         )
