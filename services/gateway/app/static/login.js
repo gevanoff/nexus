@@ -61,6 +61,17 @@
       try {
         if (window.GatewayAuth) window.GatewayAuth.setApiKey(apiKey);
       } catch (e) {}
+      try {
+        const sessionResult = window.GatewayAuth ? await window.GatewayAuth.establishBrowserSession(apiKey) : { ok: false, detail: 'Auth client unavailable' };
+        if (!sessionResult || !sessionResult.ok) {
+          const detail = sessionResult && sessionResult.detail ? sessionResult.detail : 'API key session setup failed';
+          meta.textContent = `API key failed: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
+          return;
+        }
+      } catch (e) {
+        meta.textContent = String(e);
+        return;
+      }
       const next = param('next') || '/ui';
       window.location.href = next;
     } catch (e) {

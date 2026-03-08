@@ -1920,6 +1920,30 @@ async def ui_auth_logout(req: Request):
     return resp
 
 
+@router.post("/ui/api/auth/api-key-session", include_in_schema=False)
+async def ui_auth_api_key_session(req: Request):
+    _require_ui_access(req)
+    user = _require_user(req)
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+
+    ttl = int(getattr(S, "USER_SESSION_TTL_SEC", 0) or 0)
+    if ttl <= 0:
+        ttl = 60 * 60 * 12
+
+    session = user_store.create_session(S.USER_DB_PATH, user_id=user.id, ttl_sec=ttl)
+    resp = JSONResponse({"ok": True, "user": {"id": user.id, "username": user.username}})
+    resp.set_cookie(
+        _session_cookie_name(),
+        session.token,
+        max_age=ttl,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+    )
+    return resp
+
+
 @router.get("/ui/api/users", include_in_schema=False)
 async def ui_api_list_users(req: Request):
     _require_ui_access(req)

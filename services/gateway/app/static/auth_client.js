@@ -91,6 +91,43 @@
     emitAuthChanged();
   }
 
+  let sessionReadyPromise = null;
+
+  async function establishBrowserSession(token) {
+    const value = String(token || '').trim();
+    if (!value) return { ok: false, detail: 'API key is required' };
+    try {
+      const resp = await originalFetch('/ui/api/auth/api-key-session', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-Session-Token': value },
+      });
+      let payload = null;
+      try {
+        payload = await resp.json();
+      } catch (e) {
+        payload = null;
+      }
+      if (!resp.ok) {
+        return { ok: false, status: resp.status, detail: payload || `HTTP ${resp.status}` };
+      }
+      return { ok: true, payload };
+    } catch (e) {
+      return { ok: false, detail: String(e && e.message ? e.message : e) };
+    }
+  }
+
+  async function ensureBrowserSession() {
+    const token = getApiKey();
+    if (!token) return { ok: false, detail: 'no API key saved' };
+    if (!sessionReadyPromise) {
+      sessionReadyPromise = establishBrowserSession(token).finally(() => {
+        sessionReadyPromise = null;
+      });
+    }
+    return sessionReadyPromise;
+  }
+
   function resolveUrl(input) {
     try {
       if (typeof input === 'string' || input instanceof URL) {
@@ -235,12 +272,16 @@
   }
 
   window.fetch = authFetch;
+  const initialSessionReady = ensureBrowserSession();
   window.GatewayAuth = {
     storageKey: STORAGE_KEY,
     getApiKey,
     setApiKey,
     clearApiKey,
     validateApiKey,
+    establishBrowserSession,
+    ensureBrowserSession,
+    ready: initialSessionReady,
   };
   document.addEventListener('DOMContentLoaded', () => {
     enhanceTitles();
