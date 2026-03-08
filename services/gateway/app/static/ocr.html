@@ -65,6 +65,7 @@
       pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #c6d2e4; }
       .error { color: #ffb4b4; }
     </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
   </head>
   <body>
     <main>
@@ -74,7 +75,7 @@
           <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Calls <code>/ui/api/scan</code>.</div>
         </div>
         <div class="row">
-          <a class="pill" href="/ui">Back to Chat</a>
+          <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
         </div>
       </header>
 
@@ -85,7 +86,7 @@
         </label>
         <div class="row" style="margin-top:12px; justify-content:space-between;">
           <div id="status" class="hint"></div>
-          <button id="run" type="button">Run OCR</button>
+          <button id="run" type="button" data-ui-role="action">Run OCR</button>
         </div>
       </section>
 
@@ -110,7 +111,7 @@
             <div class="row" style="justify-content:space-between">
               <span class="hint backend-status-updated">Last updated: --</span>
               <div class="row" style="gap:8px">
-                <button type="button" class="backend-status-refresh">Refresh</button>
+                <button type="button" class="backend-status-refresh" data-ui-role="secondary">Refresh</button>
                 <span class="hint backend-status-spinner" hidden>Refreshing...</span>
               </div>
             </div>

@@ -56,6 +56,7 @@
       .row { display:flex; gap:10px; flex-wrap:wrap; }
       .row button { margin-top: 0; }
     </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
   </head>
   <body>
     <div class="card">
@@ -69,7 +70,7 @@
         <input id="password" type="password" autocomplete="current-password" />
       </div>
       <div>
-        <button id="login">Sign in</button>
+        <button id="login" data-ui-role="action">Sign in</button>
       </div>
       <div class="divider"></div>
       <div>
@@ -77,8 +78,8 @@
         <input id="apiKey" type="password" autocomplete="off" placeholder="Paste a personal API key" />
       </div>
       <div class="row" style="margin-top:16px;">
-        <button id="useApiKey" type="button">Use API key</button>
-        <button id="clearApiKey" type="button">Clear saved key</button>
+        <button id="useApiKey" type="button" data-ui-role="action">Use API key</button>
+        <button id="clearApiKey" type="button" data-ui-role="danger">Clear saved key</button>
       </div>
       <div class="meta" id="meta"> </div>
     </div>

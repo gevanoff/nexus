@@ -587,6 +587,7 @@
 
         const revokeBtn = document.createElement('button');
         revokeBtn.type = 'button';
+        revokeBtn.dataset.uiRole = item?.revoked ? 'secondary' : 'danger';
         revokeBtn.textContent = item?.revoked ? 'Revoked' : 'Revoke';
         revokeBtn.disabled = !!item?.revoked;
         revokeBtn.addEventListener('click', async () => {
@@ -1717,6 +1718,7 @@
           meta.textContent = parts.join(" • ");
           const removeBtn = document.createElement("button");
           removeBtn.type = "button";
+          removeBtn.dataset.uiRole = "danger";
           removeBtn.textContent = "Remove";
           removeBtn.addEventListener("click", () => {
             pendingAttachments.splice(idx, 1);

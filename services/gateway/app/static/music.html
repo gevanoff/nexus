@@ -93,6 +93,7 @@
         100% { transform: translateX(70%); }
       }
     </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
   </head>
   <body>
     <main>
@@ -102,7 +103,7 @@
           <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Calls <code>/ui/api/music</code>.</div>
         </div>
         <div class="row">
-          <a class="pill" href="/ui">Back to Chat</a>
+          <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
         </div>
       </header>
 
@@ -132,7 +133,7 @@
             <input id="model" type="text" placeholder="e.g. heartmula-v1" />
           </label>
 
-          <button id="generate" type="button">Generate</button>
+          <button id="generate" type="button" data-ui-role="action">Generate</button>
         </div>
 
         <details style="margin-top: 12px;">
@@ -201,7 +202,7 @@
             <div class="row" style="justify-content:space-between">
               <span class="hint backend-status-updated">Last updated: --</span>
               <div class="row" style="gap:8px">
-                <button type="button" class="backend-status-refresh">Refresh</button>
+                <button type="button" class="backend-status-refresh" data-ui-role="secondary">Refresh</button>
                 <span class="hint backend-status-spinner" hidden>Refreshing...</span>
               </div>
             </div>

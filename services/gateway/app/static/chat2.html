@@ -244,6 +244,7 @@
         background: #6fb8ff;
       }
     </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
   </head>
   <body>
     <main>
@@ -262,17 +263,17 @@
         </div>
         <div class="header-right">
         <div class="header-status-row">
-          <span id="apiKeyStatus" class="status-indicator" style="display:none">API key active</span>
+          <span id="apiKeyStatus" class="status-indicator" data-ui-role="status" style="display:none">API key active</span>
         </div>
         <div class="topbar">
           <span class="pill">
             <span class="hint">Model</span>
             <select id="model"></select>
-            <button id="loadModels" type="button">Load</button>
+            <button id="loadModels" type="button" data-ui-role="secondary">Load</button>
           </span>
           <!-- Auto-detect toggles removed to simplify UI -->
           <div style="position:relative;">
-            <button id="appsBtn" class="pill apps-btn" type="button" aria-expanded="false">
+            <button id="appsBtn" class="pill apps-btn" type="button" aria-expanded="false" data-ui-role="menu">
               <span class="apps-label">Apps</span>
               <span class="caret" aria-hidden="true">▾</span>
             </button>
@@ -288,10 +289,10 @@
               <a id="adminUiLink" class="menu-item admin-only" href="/ui/admin/users" style="display:none">Admin UI</a>
             </div>
           </div>
-          <button id="clear" type="button">Clear message box</button>
-          <button id="clearChat" type="button">Clear Chat</button>
-          <button id="resetSession" type="button">Reset Session</button>
-          <button id="settingsBtn" type="button" title="Settings">⚙️</button>
+          <button id="clear" type="button" data-ui-role="secondary">Clear message box</button>
+          <button id="clearChat" type="button" data-ui-role="danger">Clear Chat</button>
+          <button id="resetSession" type="button" data-ui-role="danger">Reset Session</button>
+          <button id="settingsBtn" type="button" title="Settings" data-ui-role="menu">⚙️</button>
         </div>
         </div>
       </header>
@@ -301,8 +302,8 @@
       <div class="composer">
         <textarea id="input" placeholder="Message (try: /image a cozy cabin in snow at dusk)"></textarea>
         <div class="right">
-          <button id="send">Send</button>
-          <button id="attachBtn" type="button">Attach file</button>
+          <button id="send" data-ui-role="action">Send</button>
+          <button id="attachBtn" type="button" data-ui-role="secondary">Attach file</button>
           <div class="hint">Chat streams from <code>/ui/api/chat_stream</code>. Images use <code>/ui/api/image</code>.</div>
         </div>
       </div>
@@ -332,7 +333,7 @@
           <div class="status-meta">
             <span id="backendStatusUpdated" class="hint">Last updated: --</span>
             <div style="display:flex;align-items:center;gap:8px;">
-              <button id="backendStatusRefresh" type="button">Refresh</button>
+              <button id="backendStatusRefresh" type="button" data-ui-role="secondary">Refresh</button>
               <span id="backendStatusSpinner" class="loading-indicator" hidden>Refreshing…</span>
             </div>
           </div>
@@ -350,15 +351,15 @@
       <div class="modal-panel" role="document">
         <header style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <h3 style="margin:0">User Settings</h3>
-          <button id="settingsClose" aria-label="Close">✕</button>
+          <button id="settingsClose" aria-label="Close" data-ui-role="secondary">✕</button>
         </header>
         <form id="settingsForm">
           <div class="settings-layout">
             <nav class="settings-menu">
-              <button type="button" data-section="settings-backends" class="active">Backends</button>
-              <button type="button" data-section="settings-profile">Profile</button>
-              <button type="button" data-section="settings-ui">UI</button>
-              <button type="button" data-section="settings-security">Security</button>
+              <button type="button" data-section="settings-backends" class="active" data-ui-role="menu">Backends</button>
+              <button type="button" data-section="settings-profile" data-ui-role="menu">Profile</button>
+              <button type="button" data-section="settings-ui" data-ui-role="menu">UI</button>
+              <button type="button" data-section="settings-security" data-ui-role="menu">Security</button>
             </nav>
             <div>
               <section id="settings-backends" class="settings-section active">
@@ -411,8 +412,8 @@
                     <label style="flex:1 1 260px">Key name
                       <input type="text" id="settings_api_key_name" placeholder="e.g. laptop-cli" />
                     </label>
-                    <button type="button" id="settings_create_api_key">Create key</button>
-                    <button type="button" id="settings_forget_browser_api_key">Forget browser key</button>
+                    <button type="button" id="settings_create_api_key" data-ui-role="action">Create key</button>
+                    <button type="button" id="settings_forget_browser_api_key" data-ui-role="danger">Forget browser key</button>
                   </div>
                   <div id="settings_api_key_result" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
                   <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
@@ -421,8 +422,8 @@
             </div>
           </div>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-            <button type="button" id="settings_cancel">Cancel</button>
-            <button type="button" id="settings_save">Save</button>
+            <button type="button" id="settings_cancel" data-ui-role="secondary">Cancel</button>
+            <button type="button" id="settings_save" data-ui-role="action">Save</button>
           </div>
         </form>
       </div>

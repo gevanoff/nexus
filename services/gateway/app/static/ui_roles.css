@@ -1,0 +1,137 @@
+:root {
+  --ui-role-action-bg: linear-gradient(180deg, rgba(70, 142, 226, 0.95), rgba(34, 84, 154, 0.98));
+  --ui-role-action-border: rgba(126, 184, 255, 0.72);
+  --ui-role-action-text: #f6fbff;
+  --ui-role-secondary-bg: linear-gradient(180deg, rgba(24, 31, 42, 0.96), rgba(15, 21, 31, 0.98));
+  --ui-role-secondary-border: rgba(168, 192, 224, 0.22);
+  --ui-role-secondary-text: #dce7f6;
+  --ui-role-menu-bg: linear-gradient(180deg, rgba(20, 34, 46, 0.96), rgba(15, 24, 36, 0.98));
+  --ui-role-menu-border: rgba(111, 184, 255, 0.28);
+  --ui-role-menu-text: #d8ecff;
+  --ui-role-danger-bg: linear-gradient(180deg, rgba(86, 30, 36, 0.96), rgba(52, 18, 24, 0.98));
+  --ui-role-danger-border: rgba(255, 151, 151, 0.34);
+  --ui-role-danger-text: #ffd9d9;
+  --ui-role-status-bg: linear-gradient(180deg, rgba(20, 29, 39, 0.8), rgba(15, 22, 31, 0.84));
+  --ui-role-status-border: rgba(150, 181, 220, 0.18);
+  --ui-role-status-text: #a9bfdc;
+}
+
+button[data-ui-role],
+a[data-ui-role],
+span[data-ui-role],
+.status,
+.status-indicator {
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+button[data-ui-role="action"],
+a[data-ui-role="action"] {
+  background: var(--ui-role-action-bg);
+  border-color: var(--ui-role-action-border);
+  color: var(--ui-role-action-text);
+}
+
+button[data-ui-role="action"]:hover,
+a[data-ui-role="action"]:hover {
+  border-color: rgba(168, 212, 255, 0.9);
+  box-shadow: 0 16px 28px rgba(13, 28, 46, 0.42);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+
+button[data-ui-role="secondary"],
+a[data-ui-role="secondary"],
+a[data-ui-role="nav"] {
+  background: var(--ui-role-secondary-bg);
+  border-color: var(--ui-role-secondary-border);
+  color: var(--ui-role-secondary-text);
+}
+
+button[data-ui-role="secondary"]:hover,
+a[data-ui-role="secondary"]:hover,
+a[data-ui-role="nav"]:hover {
+  border-color: rgba(176, 205, 242, 0.42);
+  box-shadow: 0 14px 24px rgba(8, 12, 18, 0.32);
+  text-decoration: none;
+}
+
+button[data-ui-role="menu"],
+a[data-ui-role="menu"] {
+  background: var(--ui-role-menu-bg);
+  border-color: var(--ui-role-menu-border);
+  color: var(--ui-role-menu-text);
+}
+
+button[data-ui-role="menu"]:hover,
+a[data-ui-role="menu"]:hover,
+button[data-ui-role="menu"][aria-expanded="true"],
+button[data-ui-role="menu"].active {
+  border-color: rgba(136, 205, 255, 0.54);
+  background: linear-gradient(180deg, rgba(24, 41, 55, 0.98), rgba(17, 28, 41, 1));
+  text-decoration: none;
+}
+
+button[data-ui-role="danger"],
+a[data-ui-role="danger"] {
+  background: var(--ui-role-danger-bg);
+  border-color: var(--ui-role-danger-border);
+  color: var(--ui-role-danger-text);
+}
+
+button[data-ui-role="danger"]:hover,
+a[data-ui-role="danger"]:hover {
+  border-color: rgba(255, 179, 179, 0.56);
+  box-shadow: 0 16px 28px rgba(38, 9, 14, 0.36);
+  text-decoration: none;
+}
+
+span[data-ui-role="status"],
+.status,
+.status-indicator {
+  background: var(--ui-role-status-bg);
+  border-color: var(--ui-role-status-border);
+  color: var(--ui-role-status-text);
+  box-shadow: none;
+}
+
+span[data-ui-role="status"],
+.status-indicator {
+  pointer-events: none;
+  cursor: default;
+}
+
+.status.active,
+.status-indicator.active {
+  border-color: rgba(116, 205, 169, 0.28);
+  background: linear-gradient(180deg, rgba(18, 44, 39, 0.8), rgba(14, 31, 28, 0.84));
+  color: #b7e7d7;
+}
+
+.status.disabled {
+  border-color: rgba(255, 173, 173, 0.24);
+  background: linear-gradient(180deg, rgba(58, 26, 30, 0.8), rgba(36, 18, 22, 0.84));
+  color: #efc0c0;
+}
+
+.status.admin {
+  border-color: rgba(151, 188, 255, 0.28);
+  background: linear-gradient(180deg, rgba(22, 38, 64, 0.8), rgba(17, 28, 46, 0.84));
+  color: #c6dcff;
+}
+
+button[data-ui-role]:focus-visible,
+a[data-ui-role]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(143, 196, 255, 0.74);
+  outline-offset: 2px;
+}
+
+button[data-ui-role="danger"]:disabled,
+button[data-ui-role="action"]:disabled,
+button[data-ui-role="secondary"]:disabled,
+button[data-ui-role="menu"]:disabled {
+  transform: none;
+  box-shadow: none;
+}

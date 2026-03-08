@@ -53,6 +53,7 @@
         .split { grid-template-columns: 1fr; }
       }
     </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
   </head>
   <body>
     <main>
@@ -62,7 +63,7 @@
           <div class="hint">User management — admins only</div>
         </div>
         <div>
-          <a href="/ui" style="color:#9fbff5; text-decoration:none;">← Back to Chat UI</a>
+          <a href="/ui" style="color:#9fbff5; text-decoration:none;" data-ui-role="nav">← Back to Chat UI</a>
         </div>
       </header>
 
@@ -79,7 +80,7 @@
               </label>
               <label class="row"><input id="isadmin" type="checkbox"/> <span>Admin</span></label>
               <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-                <button type="submit">Create</button>
+                <button type="submit" data-ui-role="action">Create</button>
               </div>
             </form>
             <div id="createResult" class="result"></div>
@@ -106,7 +107,7 @@
               </label>
               <div class="muted">Select users in the table to apply actions.</div>
               <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-                <button id="applyBulk" class="primary" type="button">Apply</button>
+                <button id="applyBulk" class="primary" type="button" data-ui-role="action">Apply</button>
               </div>
               <div id="bulkResult" class="result"></div>
             </div>
@@ -117,7 +118,7 @@
       <section class="card" style="margin-top:12px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
           <h2 style="font-size:14px;margin-top:0">Users</h2>
-          <button id="refreshUsers" type="button">Refresh</button>
+          <button id="refreshUsers" type="button" data-ui-role="secondary">Refresh</button>
         </div>
         <table>
           <thead>
