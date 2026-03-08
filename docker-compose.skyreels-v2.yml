@@ -1,0 +1,31 @@
+services:
+  skyreels-v2:
+    build:
+      context: ./services/skyreels-v2
+      dockerfile: Dockerfile
+    container_name: nexus-skyreels-v2
+    ports:
+      - "${SKYREELS_PORT:-9180}:9180"
+    environment:
+      - SKYREELS_PORT=9180
+      - SKYREELS_WORKDIR=${SKYREELS_WORKDIR:-/data/app}
+      - SKYREELS_REPO_URL=${SKYREELS_REPO_URL:-https://github.com/SkyworkAI/SkyReels-V2}
+      - SKYREELS_REPO_REF=${SKYREELS_REPO_REF:-}
+      - SKYREELS_UPDATE_ON_START=${SKYREELS_UPDATE_ON_START:-false}
+      - SKYREELS_RUN_COMMAND=${SKYREELS_RUN_COMMAND:-}
+      - SKYREELS_TIMEOUT_SEC=${SKYREELS_TIMEOUT_SEC:-3600}
+    volumes:
+      - ./.runtime/skyreels-v2:/data
+    gpus: all
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

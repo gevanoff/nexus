@@ -1,0 +1,34 @@
+services:
+  personaplex:
+    build:
+      context: ./services/personaplex
+      dockerfile: Dockerfile
+    container_name: nexus-personaplex
+    ports:
+      - "${PERSONAPLEX_PORT:-9160}:9160"
+    environment:
+      - PERSONAPLEX_PORT=9160
+      - PERSONAPLEX_MODEL=${PERSONAPLEX_MODEL:-personaplex}
+      - PERSONAPLEX_WORKDIR=${PERSONAPLEX_WORKDIR:-/data/app}
+      - PERSONAPLEX_REPO_URL=${PERSONAPLEX_REPO_URL:-https://github.com/NVIDIA/personaplex}
+      - PERSONAPLEX_REPO_REF=${PERSONAPLEX_REPO_REF:-}
+      - PERSONAPLEX_UPDATE_ON_START=${PERSONAPLEX_UPDATE_ON_START:-false}
+      - PERSONAPLEX_TIMEOUT_SEC=${PERSONAPLEX_TIMEOUT_SEC:-120}
+      - PERSONAPLEX_DEVICE=${PERSONAPLEX_DEVICE:-cuda}
+      - PERSONAPLEX_UPSTREAM_BASE_URL=${PERSONAPLEX_UPSTREAM_BASE_URL:-}
+      - PERSONAPLEX_RUN_COMMAND=${PERSONAPLEX_RUN_COMMAND:-}
+    volumes:
+      - ./.runtime/personaplex:/data
+    gpus: all
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

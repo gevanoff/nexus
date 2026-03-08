@@ -51,6 +51,55 @@ Each service is:
 - **Status**: ✅ Implemented (shim; stub-by-default)
 - **Documentation**: [images/README.md](images/README.md)
 
+#### InvokeAI (`invokeai/`)
+- **Purpose**: Containerized InvokeAI runtime for the images shim
+- **Port**: 9090
+- **Capabilities**: Image generation runtime and UI/API surface
+- **Status**: 🚧 Official upstream containerized runtime integrated into Nexus compose
+- **Documentation**: [invokeai/README.md](invokeai/README.md)
+
+#### SDXL Turbo (`sdxl-turbo/`)
+- **Purpose**: Fast OpenAI-compatible image generation shim
+- **Port**: 9050
+- **Capabilities**: `POST /v1/images/generations`
+- **Status**: 🚧 Containerized shim ported from `ai-infra`
+- **Documentation**: [sdxl-turbo/README.md](sdxl-turbo/README.md)
+
+#### LightOnOCR (`lighton-ocr/`)
+- **Purpose**: OCR inference shim
+- **Port**: 9155
+- **Capabilities**: `POST /v1/ocr`
+- **Status**: 🚧 Containerized shim ported from `ai-infra`
+- **Documentation**: [lighton-ocr/README.md](lighton-ocr/README.md)
+
+#### PersonaPlex (`personaplex/`)
+- **Purpose**: PersonaPlex chat shim
+- **Port**: 9160
+- **Capabilities**: `POST /v1/chat/completions`
+- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Documentation**: [personaplex/README.md](personaplex/README.md)
+
+#### FollowYourCanvas (`followyourcanvas/`)
+- **Purpose**: Video generation shim
+- **Port**: 9165
+- **Capabilities**: `POST /v1/videos/generations`
+- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Documentation**: [followyourcanvas/README.md](followyourcanvas/README.md)
+
+#### SkyReels V2 (`skyreels-v2/`)
+- **Purpose**: Video generation shim
+- **Port**: 9180
+- **Capabilities**: `POST /v1/videos/generations`
+- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Documentation**: [skyreels-v2/README.md](skyreels-v2/README.md)
+
+#### HeartMula (`heartmula/`)
+- **Purpose**: Music generation shim
+- **Port**: 9185
+- **Capabilities**: `POST /v1/audio/generations`
+- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Documentation**: [heartmula/README.md](heartmula/README.md)
+
 #### TTS (`tts/`)
 - **Purpose**: Text-to-speech synthesis
 - **Port**: 9940

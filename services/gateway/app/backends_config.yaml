@@ -23,8 +23,8 @@ backends:
 
   gpu_fast:
     class: gpu_fast
-    base_url: http://ai1:9050
-    description: ai1 - SDXL Turbo (RTX 5060 Ti, 16GB VRAM)
+    base_url: ${SDXL_TURBO_BASE_URL}
+    description: SDXL Turbo image backend
     supported_capabilities:
       - images
     concurrency_limits:
@@ -55,8 +55,8 @@ backends:
 
   gpu_heavy:
     class: gpu_heavy
-    base_url: http://ada2:7860
-    description: ada2 - RTX 6000 Ada, 46GB VRAM
+    base_url: ${INVOKEAI_BASE_URL}
+    description: InvokeAI image backend
     supported_capabilities:
       - images
     concurrency_limits:
@@ -79,7 +79,7 @@ backends:
     concurrency_limits:
       music: 2
     health:
-      liveness: /healthz
+      liveness: /health
       readiness: /readyz
     payload_policy: {}
 
@@ -111,7 +111,7 @@ backends:
 
   skyreels_v2:
     class: skyreels_v2
-    base_url: ${SKYREELS_BASE_URL}
+    base_url: ${SKYREELS_V2_BASE_URL}
     description: SkyReels-V2 video shim
     supported_capabilities: []
     concurrency_limits: {}
@@ -122,7 +122,7 @@ backends:
 
   followyourcanvas:
     class: followyourcanvas
-    base_url: ${FYC_API_BASE_URL}
+    base_url: ${FOLLOWYOURCANVAS_BASE_URL}
     description: FollowYourCanvas video shim
     supported_capabilities: []
     concurrency_limits: {}

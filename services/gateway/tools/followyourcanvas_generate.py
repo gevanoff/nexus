@@ -53,10 +53,10 @@ def main() -> int:
 
     payload = _read_input()
 
-    base_url = os.environ.get("FYC_API_BASE_URL")
+    base_url = os.environ.get("FOLLOWYOURCANVAS_BASE_URL") or os.environ.get("FYC_API_BASE_URL")
     if not base_url:
         host = os.environ.get("FYC_HOST", "127.0.0.1")
-        port = os.environ.get("FYC_PORT", "8123")
+        port = os.environ.get("FYC_PORT", "9165")
         base_url = f"http://{host}:{port}"
     base_url = base_url.rstrip("/")
     endpoint = f"{base_url}/v1/videos/generations"

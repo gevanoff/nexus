@@ -1,0 +1,36 @@
+services:
+  lighton-ocr:
+    build:
+      context: ./services/lighton-ocr
+      dockerfile: Dockerfile
+      args:
+        AI_TORCH_INDEX_URL: ${AI_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}
+    container_name: nexus-lighton-ocr
+    ports:
+      - "${LIGHTON_OCR_PORT:-9155}:9155"
+    environment:
+      - LIGHTON_OCR_HOST=0.0.0.0
+      - LIGHTON_OCR_PORT=9155
+      - LIGHTON_OCR_MODEL_ID=${LIGHTON_OCR_MODEL_ID:-lightonai/LightOnOCR-2-1B}
+      - LIGHTON_OCR_RUN_COMMAND=${LIGHTON_OCR_RUN_COMMAND:-python /app/app/run_lighton_ocr.py}
+      - LIGHTON_OCR_WORKDIR=${LIGHTON_OCR_WORKDIR:-/app}
+      - LIGHTON_OCR_TIMEOUT_SEC=${LIGHTON_OCR_TIMEOUT_SEC:-120}
+      - LIGHTON_OCR_DEVICE=${LIGHTON_OCR_DEVICE:-auto}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-}
+      - HF_HOME=/data/huggingface
+    volumes:
+      - ./.runtime/lighton-ocr:/data
+    gpus: all
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

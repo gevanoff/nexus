@@ -1,0 +1,31 @@
+services:
+  heartmula:
+    build:
+      context: ./services/heartmula
+      dockerfile: Dockerfile
+    container_name: nexus-heartmula
+    ports:
+      - "${HEARTMULA_PORT:-9185}:9185"
+    environment:
+      - HEARTMULA_PORT=9185
+      - HEARTMULA_WORKDIR=${HEARTMULA_WORKDIR:-/data/app}
+      - HEARTMULA_REPO_URL=${HEARTMULA_REPO_URL:-https://github.com/HeartMuLa/heartlib.git}
+      - HEARTMULA_REPO_REF=${HEARTMULA_REPO_REF:-}
+      - HEARTMULA_UPDATE_ON_START=${HEARTMULA_UPDATE_ON_START:-false}
+      - HEARTMULA_RUN_COMMAND=${HEARTMULA_RUN_COMMAND:-}
+      - HEARTMULA_TIMEOUT_SEC=${HEARTMULA_TIMEOUT_SEC:-1200}
+    volumes:
+      - ./.runtime/heartmula:/data
+    gpus: all
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

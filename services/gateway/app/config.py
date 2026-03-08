@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     IMAGES_BACKEND_CLASS: str = "gpu_heavy"  # Backend class for routing/admission control
     IMAGES_HTTP_BASE_URL: str = "http://images:7860"
     IMAGES_HTTP_TIMEOUT_SEC: float = 120.0
+    SDXL_TURBO_BASE_URL: str = ""
+    INVOKEAI_BASE_URL: str = ""
     IMAGES_A1111_STEPS: int = 20
     IMAGES_MAX_PIXELS: int = 2_000_000
     IMAGES_OPENAI_MODEL: str = ""
@@ -152,11 +154,13 @@ class Settings(BaseSettings):
     VOICE_LIBRARY_MAX_BYTES: int = 50_000_000
 
     # Optional: SkyReels-V2 video generation shim
+    SKYREELS_V2_BASE_URL: str = ""
     SKYREELS_BASE_URL: str = ""
     SKYREELS_TIMEOUT_SEC: float = 3600.0
     SKYREELS_GENERATE_PATH: str = "/v1/videos/generations"
 
     # Optional: FollowYourCanvas video generation shim
+    FOLLOWYOURCANVAS_BASE_URL: str = ""
     FYC_API_BASE_URL: str = ""
 
     # Optional: LightOnOCR shim

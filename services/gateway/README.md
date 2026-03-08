@@ -70,6 +70,10 @@ OBSERVABILITY_PORT=8801
 
 # Backend services
 OLLAMA_BASE_URL=http://ollama:11434
+SDXL_TURBO_BASE_URL=http://sdxl-turbo:9050
+INVOKEAI_BASE_URL=http://invokeai:9090
+LIGHTON_OCR_API_BASE_URL=http://lighton-ocr:9155
+HEARTMULA_BASE_URL=http://heartmula:9185
 DEFAULT_BACKEND=ollama
 
 # Service discovery (etcd)

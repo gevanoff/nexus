@@ -16,7 +16,7 @@ def _env(name: str, default: str) -> str:
 
 
 def _base_url() -> str:
-    return _env("SKYREELS_API_BASE_URL", "http://127.0.0.1:9190").rstrip("/")
+    return _env("SKYREELS_V2_BASE_URL", _env("SKYREELS_API_BASE_URL", _env("SKYREELS_BASE_URL", "http://127.0.0.1:9180"))).rstrip("/")
 
 
 def main() -> int:

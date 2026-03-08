@@ -1,0 +1,29 @@
+services:
+  invokeai:
+    image: ${INVOKEAI_IMAGE:-ghcr.io/invoke-ai/invokeai}
+    container_name: nexus-invokeai
+    ports:
+      - "${INVOKEAI_PORT:-9090}:9090"
+    environment:
+      - INVOKEAI_ROOT=/invokeai
+      - INVOKEAI_HOST=0.0.0.0
+      - INVOKEAI_PORT=9090
+      - CONTAINER_UID=${CONTAINER_UID:-1000}
+      - CONTAINER_GID=${CONTAINER_GID:-1000}
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
+      - HF_HOME=/invokeai/.cache/huggingface
+    volumes:
+      - ./.runtime/invokeai:/invokeai
+    gpus: all
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

@@ -163,7 +163,7 @@ def main(argv: list[str]) -> int:
         "--also-check-openai-images",
         default="",
         metavar="IMAGES_BASE_URL",
-        help="If set, verify an OpenAI-style image server is reachable (e.g. InvokeAI shim at http://ada2:7860)",
+        help="If set, verify an OpenAI-style image server is reachable (e.g. http://invokeai:9090 or http://images:7860)",
     )
     p.add_argument(
         "--openai-images-model",

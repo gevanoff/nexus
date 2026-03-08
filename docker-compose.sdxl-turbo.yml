@@ -1,0 +1,34 @@
+services:
+  sdxl-turbo:
+    build:
+      context: ./services/sdxl-turbo
+      dockerfile: Dockerfile
+      args:
+        AI_TORCH_INDEX_URL: ${AI_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}
+    container_name: nexus-sdxl-turbo
+    ports:
+      - "${SDXL_TURBO_PORT:-9050}:9050"
+    environment:
+      - SDXL_TURBO_MODEL_ID=${SDXL_TURBO_MODEL_ID:-stabilityai/sdxl-turbo}
+      - SDXL_TURBO_CACHE_DIR=/data/cache
+      - SDXL_TURBO_DEVICE=${SDXL_TURBO_DEVICE:-cuda}
+      - SDXL_TURBO_DTYPE=${SDXL_TURBO_DTYPE:-float16}
+      - SDXL_TURBO_NUM_INFERENCE_STEPS=${SDXL_TURBO_NUM_INFERENCE_STEPS:-1}
+      - SDXL_TURBO_GUIDANCE_SCALE=${SDXL_TURBO_GUIDANCE_SCALE:-0.0}
+      - SDXL_TURBO_WIDTH=${SDXL_TURBO_WIDTH:-512}
+      - SDXL_TURBO_HEIGHT=${SDXL_TURBO_HEIGHT:-512}
+    volumes:
+      - ./.runtime/sdxl-turbo:/data
+    gpus: all
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

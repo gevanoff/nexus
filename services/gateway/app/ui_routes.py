@@ -53,6 +53,38 @@ _IMAGE_BACKEND_LABELS: Dict[str, str] = {
 }
 
 
+def _backend_base_url(backend_class: str) -> str:
+    try:
+        registry = get_registry()
+        backend = registry.get_backend(backend_class)
+        if backend and isinstance(backend.base_url, str) and backend.base_url.strip():
+            return backend.base_url.strip().rstrip("/")
+    except Exception:
+        pass
+    return ""
+
+
+def _lighton_ocr_base_url() -> str:
+    return (
+        _backend_base_url("lighton_ocr")
+        or (getattr(S, "LIGHTON_OCR_API_BASE_URL", "") or os.environ.get("LIGHTON_OCR_API_BASE_URL") or "").strip().rstrip("/")
+    )
+
+
+def _skyreels_base_url() -> str:
+    return (
+        _backend_base_url("skyreels_v2")
+        or (getattr(S, "SKYREELS_V2_BASE_URL", "") or getattr(S, "SKYREELS_BASE_URL", "") or os.environ.get("SKYREELS_V2_BASE_URL") or os.environ.get("SKYREELS_BASE_URL") or "").strip().rstrip("/")
+    )
+
+
+def _personaplex_base_url() -> str:
+    return (
+        _backend_base_url("personaplex")
+        or (getattr(S, "PERSONAPLEX_BASE_URL", "") or os.environ.get("PERSONAPLEX_BASE_URL") or "").strip().rstrip("/")
+    )
+
+
 @router.get("/favicon.ico", include_in_schema=False)
 async def ui_favicon(req: Request):
     # Serve a root /favicon.ico so browsers that request it directly get our icon.
@@ -1518,7 +1550,7 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="body must be an object")
 
     request_id = getattr(req.state, "request_id", "")
-    base = (getattr(S, "SKYREELS_BASE_URL", "") or "").strip().rstrip("/")
+    base = _skyreels_base_url()
     if not base:
         raise HTTPException(status_code=404, detail="SkyReels base URL not configured")
 
@@ -1648,7 +1680,7 @@ async def ui_api_personaplex_chat(req: Request) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be an object")
 
-    base = (getattr(S, "PERSONAPLEX_BASE_URL", "") or "").strip().rstrip("/")
+    base = _personaplex_base_url()
     if not base:
         ui_url = (getattr(S, "PERSONAPLEX_UI_URL", "") or "").strip() or "https://localhost:8998"
         raise HTTPException(status_code=501, detail={"error": "personaplex_rest_unavailable", "ui_url": ui_url})
@@ -1675,7 +1707,7 @@ async def ui_api_personaplex_info(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     _require_user(req)
     ui_url = (getattr(S, "PERSONAPLEX_UI_URL", "") or "").strip() or "https://localhost:8998"
-    base = (getattr(S, "PERSONAPLEX_BASE_URL", "") or "").strip().rstrip("/")
+    base = _personaplex_base_url()
     return {"ui_url": ui_url, "rest_enabled": bool(base)}
 
 
@@ -3519,7 +3551,7 @@ async def ui_chat_stream(req: Request):
                         import httpx
                         import json as _json
 
-                        base = (getattr(S, "LIGHTON_OCR_API_BASE_URL", "") or os.environ.get("LIGHTON_OCR_API_BASE_URL") or "").strip().rstrip("/")
+                        base = _lighton_ocr_base_url()
                         if not base:
                             pre_events.append({"type": "delta", "delta": "[Scan] LightOnOCR is not configured (set LIGHTON_OCR_API_BASE_URL in the gateway env)."})
                         else:
@@ -3837,7 +3869,7 @@ async def ui_scan(req: Request) -> Dict[str, Any]:
         import httpx
         import os
 
-        base = (getattr(S, "LIGHTON_OCR_API_BASE_URL", "") or os.environ.get("LIGHTON_OCR_API_BASE_URL") or "").strip().rstrip("/")
+        base = _lighton_ocr_base_url()
         if not base:
             raise HTTPException(
                 status_code=503,

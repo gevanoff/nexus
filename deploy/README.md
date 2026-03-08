@@ -32,12 +32,30 @@ Script entrypoints (all invoked from repo root):
 
 - `./quickstart.sh`: interactive local bootstrap (preflight + `.env` + startup)
 - `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
-- `./deploy/scripts/deploy.sh <dev|prod> <branch>`: deploy current repo on a host
-- `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: deploy over SSH
+- `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: deploy selected components on a host
+- `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] <dev|prod> <branch> <user@host>`: deploy selected components over SSH
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
 - `./deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 - `./deploy/scripts/backup-and-deploy-parallel.sh`: backup legacy host data (best-effort) and deploy Nexus on parallel ports
+
+Example: deploy only the images component to a GPU host:
+
+```bash
+./deploy/scripts/deploy.sh --components images prod main
+```
+
+Example: deploy an NVIDIA image stack on Linux:
+
+```bash
+./deploy/scripts/deploy.sh --components invokeai,images,sdxl-turbo prod main
+```
+
+Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:
+
+```bash
+./deploy/scripts/deploy.sh --component ollama-linux-nvidia prod main
+```
 
 
 ## Recommended Sequence

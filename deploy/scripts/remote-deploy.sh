@@ -13,10 +13,11 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 NS_AUTO_YES="false"
+DEPLOY_OPTIONS=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/remote-deploy.sh [--yes] <environment> <branch> <host>
+Usage: deploy/scripts/remote-deploy.sh [--yes] [--component NAME] [--components LIST] <environment> <branch> <host>
 
 Suggested order (typical):
   1) On the remote host, ensure /Users/ai/nexus exists and is writable by the deploy user
@@ -37,6 +38,10 @@ Arguments:
 
 Options:
   --yes   Non-interactive mode (assume "yes" for install prompts)
+  --component NAME
+          Forward a single component selection to deploy.sh (repeatable)
+  --components LIST
+          Forward a comma-separated component list to deploy.sh
 EOF
 }
 
@@ -46,6 +51,14 @@ parse_args() {
       --yes)
         NS_AUTO_YES="true"
         shift
+        ;;
+      --component)
+        DEPLOY_OPTIONS+=("--component" "${2:-}")
+        shift 2
+        ;;
+      --components)
+        DEPLOY_OPTIONS+=("--components" "${2:-}")
+        shift 2
         ;;
       -h|--help)
         usage
@@ -150,8 +163,8 @@ if [[ -f "$candidate" ]]; then
   env_file="$candidate"
 fi
 ./deploy/scripts/preflight-check.sh --mode deploy --env-file "$env_file" || true
-./deploy/scripts/deploy.sh "$@"
+./deploy/scripts/deploy.sh "${@:3}" "$1" "$2"
 EOS
 )
 
-ssh "${ssh_opts[@]}" "$host" bash -lc "${remote_cmd}" -- "$environment" "$branch"
+ssh "${ssh_opts[@]}" "$host" bash -lc "${remote_cmd}" -- "$environment" "$branch" "${DEPLOY_OPTIONS[@]}"

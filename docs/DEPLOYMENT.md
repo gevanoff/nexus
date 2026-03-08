@@ -68,6 +68,26 @@ docker compose up -d
 docker compose --profile full up -d
 ```
 
+For script-driven component deployments, `deploy.sh` can now target specific compose components instead of only the gateway path:
+
+```bash
+./deploy/scripts/deploy.sh --components images prod main
+```
+
+Repeat `--component` or use a comma-separated `--components` list to deploy only the services that belong on a given host.
+
+Linux/NVIDIA example for image generation hosts:
+
+```bash
+./deploy/scripts/deploy.sh --components invokeai,images,sdxl-turbo prod main
+```
+
+Linux/NVIDIA example for Ollama with the GPU override compose:
+
+```bash
+./deploy/scripts/deploy.sh --component ollama-linux-nvidia prod main
+```
+
 4. **Verify deployment**
 
 ```bash
@@ -121,7 +141,9 @@ Nexus keeps persistent state and large artifacts on the **host filesystem** unde
 - `quickstart.sh`: interactive setup/install flow for local environments
 - `deploy/scripts/preflight-check.sh`: validates dependencies, files, and script permissions
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: environment-aware local deployment
+- `deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: environment-aware local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] <dev|prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd (requires `python3`)
 - `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd (requires `python3`)
 - `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from legacy ai-infra deployments
