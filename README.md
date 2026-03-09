@@ -356,6 +356,8 @@ Nexus includes the following services:
 - Gateway polls for service base URLs
 - **Port**: 2379
 
+Operational scripts and key layout are documented in [docs/ETCD_OPERATIONS.md](docs/ETCD_OPERATIONS.md).
+
 See `services/README.md` for complete service documentation.
 
 ## Adding a New Service
