@@ -289,7 +289,11 @@ check_port_required() {
   find_cmd="$(ns_port_find_listener_cmd "$port")"
 
   local rc
-  ns_port_in_use "$port"; rc=$?
+  if ns_port_in_use "$port"; then
+    rc=0
+  else
+    rc=$?
+  fi
   if [[ $rc -eq 0 ]]; then
     fail "${label}: port ${port} is already in use"
     if [[ -n "${find_cmd:-}" ]]; then
@@ -326,7 +330,11 @@ check_port_optional() {
   fi
 
   local rc
-  ns_port_in_use "$port"; rc=$?
+  if ns_port_in_use "$port"; then
+    rc=0
+  else
+    rc=$?
+  fi
   if [[ $rc -eq 0 ]]; then
     warn "${label}: port ${port} is already in use (this only matters if you enable that service/profile)"
   elif [[ $rc -eq 1 ]]; then
