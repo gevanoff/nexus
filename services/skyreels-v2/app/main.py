@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -36,8 +37,8 @@ def _now() -> int:
     return int(time.time())
 
 
-def _run_command() -> Optional[str]:
-    return _env("SKYREELS_RUN_COMMAND")
+def _runner_script() -> Path:
+    return Path(__file__).with_name("run_skyreels.py")
 
 
 def _timeout_sec() -> int:
@@ -59,14 +60,14 @@ def healthz() -> Dict[str, Any]:
 
 @app.get("/readyz")
 def readyz() -> JSONResponse:
-    if _run_command():
+    if _runner_script().exists() and Path(_workdir()).exists():
         return JSONResponse(status_code=200, content={"ok": True})
     return JSONResponse(
         status_code=503,
         content={
             "ok": False,
             "reason": "missing_configuration",
-            "detail": "Set SKYREELS_RUN_COMMAND to a runnable upstream invocation.",
+            "detail": "SkyReels runner or workdir is missing inside the container.",
         },
     )
 
@@ -78,9 +79,9 @@ def models() -> Dict[str, Any]:
 
 @app.post("/v1/videos/generations")
 async def generate_video(payload: Dict[str, Any]) -> Any:
-    cmd = _run_command()
-    if not cmd:
-        raise HTTPException(status_code=501, detail="SKYREELS_RUN_COMMAND is not configured.")
+    runner = _runner_script()
+    if not runner.exists():
+        raise HTTPException(status_code=501, detail="SkyReels runner is not available in the container.")
 
     job_id = f"skyreels_{uuid.uuid4().hex}"
     with tempfile.TemporaryDirectory(prefix="skyreels-") as tmpdir:
@@ -98,9 +99,8 @@ async def generate_video(payload: Dict[str, Any]) -> Any:
         env["SKYREELS_OUTPUT_DIR"] = str(output_dir)
 
         proc = await asyncio.create_subprocess_exec(
-            "/bin/bash",
-            "-lc",
-            cmd,
+            sys.executable,
+            str(runner),
             cwd=_workdir(),
             env=env,
             stdout=asyncio.subprocess.PIPE,

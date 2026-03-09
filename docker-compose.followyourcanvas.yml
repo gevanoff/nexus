@@ -12,7 +12,6 @@ services:
       - FYC_REPO_URL=${FYC_REPO_URL:-https://github.com/mayuelala/FollowYourCanvas.git}
       - FYC_REPO_REF=${FYC_REPO_REF:-}
       - FYC_UPDATE_ON_START=${FYC_UPDATE_ON_START:-false}
-      - FYC_RUN_COMMAND=${FYC_RUN_COMMAND:-}
       - FYC_TIMEOUT_SEC=${FYC_TIMEOUT_SEC:-1800}
     volumes:
       - ./.runtime/followyourcanvas:/data

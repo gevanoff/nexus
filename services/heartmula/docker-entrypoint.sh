@@ -31,6 +31,10 @@ if [[ -n "${REPO_URL}" ]]; then
       printf '%s' "${req_hash}" > "${REQ_HASH_FILE}"
     fi
   fi
+
+  if [[ -f "${APP_DIR}/pyproject.toml" || -f "${APP_DIR}/setup.py" ]]; then
+    pip install --no-cache-dir -e "${APP_DIR}" || true
+  fi
 fi
 
 export HEARTMULA_WORKDIR="${HEARTMULA_WORKDIR:-${APP_DIR}}"

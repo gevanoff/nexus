@@ -2,7 +2,7 @@
 
 Containerized video-generation shim exposing `POST /v1/videos/generations`.
 
-The container is Nexus-owned. The actual model runtime still depends on the upstream SkyReels-V2 repo, which can be cloned into the persistent data volume on startup.
+The container is Nexus-owned. The upstream SkyReels-V2 repo is still cloned into the persistent data volume on startup, but invocation is now handled by a built-in runner inside the image rather than an operator-supplied command string.
 
 ## Runtime
 

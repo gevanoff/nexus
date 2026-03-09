@@ -12,7 +12,6 @@ services:
       - SKYREELS_REPO_URL=${SKYREELS_REPO_URL:-https://github.com/SkyworkAI/SkyReels-V2}
       - SKYREELS_REPO_REF=${SKYREELS_REPO_REF:-}
       - SKYREELS_UPDATE_ON_START=${SKYREELS_UPDATE_ON_START:-false}
-      - SKYREELS_RUN_COMMAND=${SKYREELS_RUN_COMMAND:-}
       - SKYREELS_TIMEOUT_SEC=${SKYREELS_TIMEOUT_SEC:-3600}
     volumes:
       - ./.runtime/skyreels-v2:/data

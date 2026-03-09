@@ -1,8 +1,8 @@
 # HeartMula Service
 
-Containerized HeartMula shim exposing `POST /v1/audio/generations`.
+Containerized HeartMula service exposing `POST /v1/music/generations` and a compatibility alias at `POST /v1/audio/generations`.
 
-The container is Nexus-owned. The actual model runtime still depends on the upstream HeartMuLa repo, which can be cloned into the persistent data volume on startup.
+The container is Nexus-owned. The upstream HeartMuLa repo is still cloned into the persistent data volume on startup, but the service now owns pipeline loading and generation directly instead of relying on an operator-supplied run command.
 
 ## Runtime
 

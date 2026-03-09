@@ -76,28 +76,28 @@ Each service is:
 - **Purpose**: PersonaPlex chat shim
 - **Port**: 9160
 - **Capabilities**: `POST /v1/chat/completions`
-- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Status**: 🚧 Nexus-owned proxy shim with optional upstream bootstrap
 - **Documentation**: [personaplex/README.md](personaplex/README.md)
 
 #### FollowYourCanvas (`followyourcanvas/`)
 - **Purpose**: Video generation shim
 - **Port**: 9165
 - **Capabilities**: `POST /v1/videos/generations`
-- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Status**: 🚧 Nexus-owned shim with built-in runner and optional upstream bootstrap
 - **Documentation**: [followyourcanvas/README.md](followyourcanvas/README.md)
 
 #### SkyReels V2 (`skyreels-v2/`)
 - **Purpose**: Video generation shim
 - **Port**: 9180
 - **Capabilities**: `POST /v1/videos/generations`
-- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Status**: 🚧 Nexus-owned shim with built-in runner and optional upstream bootstrap
 - **Documentation**: [skyreels-v2/README.md](skyreels-v2/README.md)
 
 #### HeartMula (`heartmula/`)
 - **Purpose**: Music generation shim
 - **Port**: 9185
-- **Capabilities**: `POST /v1/audio/generations`
-- **Status**: 🚧 Nexus-owned shim with optional upstream bootstrap
+- **Capabilities**: `POST /v1/music/generations`
+- **Status**: 🚧 Nexus-owned service with internal pipeline runtime and optional upstream bootstrap
 - **Documentation**: [heartmula/README.md](heartmula/README.md)
 
 #### TTS (`tts/`)

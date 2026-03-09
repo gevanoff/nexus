@@ -42,10 +42,6 @@ def _upstream_base_url() -> Optional[str]:
     return url.rstrip("/")
 
 
-def _run_command() -> Optional[str]:
-    return _env("PERSONAPLEX_RUN_COMMAND")
-
-
 def _timeout_sec() -> int:
     return _int_env("PERSONAPLEX_TIMEOUT_SEC", 120)
 
@@ -100,79 +96,24 @@ async def chat_completions(payload: Dict[str, Any]) -> Any:
             if resp.status_code >= 400:
                 raise HTTPException(status_code=resp.status_code, detail=resp.text)
             return resp.json()
-
-    cmd = _run_command()
-    if not cmd:
-        raise HTTPException(
-            status_code=501,
-            detail="PERSONAPLEX_UPSTREAM_BASE_URL not set and PERSONAPLEX_RUN_COMMAND not set; shim cannot serve chat.",
-        )
-
-    job_id = f"persona_{uuid.uuid4().hex}"
-    request_json = json.dumps(payload, ensure_ascii=False)
-    env = os.environ.copy()
-    env["PERSONAPLEX_JOB_ID"] = job_id
-    env["PERSONAPLEX_REQUEST_JSON"] = request_json
-
-    proc = await asyncio.create_subprocess_exec(
-        "/bin/bash",
-        "-lc",
-        cmd,
-        cwd=_workdir(),
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "error": "personaplex_rest_unavailable",
+            "detail": "This Nexus service no longer accepts an external run command. Configure PERSONAPLEX_UPSTREAM_BASE_URL or use the live PersonaPlex UI.",
+        },
     )
-    try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=float(_timeout_sec()))
-    except TimeoutError as exc:
-        try:
-            proc.terminate()
-        except ProcessLookupError:
-            pass
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=10.0)
-        except TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-        raise HTTPException(
-            status_code=504,
-            detail={"error": "personaplex subprocess timed out", "job_id": job_id, "timeout_sec": _timeout_sec()},
-        ) from exc
-
-    stdout_log = _log_path("personaplex.out.log")
-    stderr_log = _log_path("personaplex.err.log")
-    _append_log(stdout_log, stdout_bytes or b"", job_id)
-    _append_log(stderr_log, stderr_bytes or b"", job_id)
-
-    if proc.returncode != 0:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "personaplex subprocess failed",
-                "returncode": proc.returncode,
-                "stdout": (stdout_bytes or b"").decode(errors="ignore")[-4000:],
-                "stderr": (stderr_bytes or b"").decode(errors="ignore")[-4000:],
-            },
-        )
-
-    try:
-        return json.loads((stdout_bytes or b"{}").decode("utf-8"))
-    except json.JSONDecodeError:
-        return {"raw": (stdout_bytes or b"").decode("utf-8", errors="ignore")}
 
 
 @app.get("/readyz")
 def readyz() -> JSONResponse:
-    if _upstream_base_url() or _run_command():
+    if _upstream_base_url():
         return JSONResponse(status_code=200, content={"ok": True})
     return JSONResponse(
         status_code=503,
         content={
             "ok": False,
             "reason": "missing_configuration",
-            "detail": "Set PERSONAPLEX_UPSTREAM_BASE_URL or PERSONAPLEX_RUN_COMMAND.",
+            "detail": "Set PERSONAPLEX_UPSTREAM_BASE_URL for REST proxying or use the live PersonaPlex UI.",
         },
     )

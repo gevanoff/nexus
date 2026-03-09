@@ -12,7 +12,6 @@ services:
       - HEARTMULA_REPO_URL=${HEARTMULA_REPO_URL:-https://github.com/HeartMuLa/heartlib.git}
       - HEARTMULA_REPO_REF=${HEARTMULA_REPO_REF:-}
       - HEARTMULA_UPDATE_ON_START=${HEARTMULA_UPDATE_ON_START:-false}
-      - HEARTMULA_RUN_COMMAND=${HEARTMULA_RUN_COMMAND:-}
       - HEARTMULA_TIMEOUT_SEC=${HEARTMULA_TIMEOUT_SEC:-1200}
     volumes:
       - ./.runtime/heartmula:/data
