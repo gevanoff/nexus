@@ -21,6 +21,42 @@ choose_python_for_mlx() {
   ns_python_choose_at_least 3 11 "${MLX_PYTHON:-}" python3.12 python3.11 python3
 }
 
+env_file_get() {
+  local env_file="$1"
+  local key="$2"
+  local default_value="${3:-}"
+
+  if [[ -z "${env_file:-}" || ! -f "$env_file" ]]; then
+    echo "$default_value"
+    return 0
+  fi
+
+  local line
+  line="$(grep -E "^[[:space:]]*${key}=" "$env_file" 2>/dev/null | tail -n 1 || true)"
+  if [[ -z "${line:-}" ]]; then
+    echo "$default_value"
+    return 0
+  fi
+
+  local value
+  value="${line#*=}"
+  value="${value%\r}"
+
+  if [[ ${#value} -ge 2 ]]; then
+    if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+
+  echo "$value"
+}
+
+has_shell_override() {
+  [[ -n "${!1+x}" ]]
+}
+
 MLX_USER="${MLX_USER:-mlx}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-10240}"
@@ -33,6 +69,23 @@ MLX_PIP_PACKAGES="${MLX_PIP_PACKAGES:-mlx-openai-server}"
 LAUNCHD_LABEL="${LAUNCHD_LABEL:-com.nexus.mlx.openai.server}"
 PLIST_PATH="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
 CREATE_USER="${CREATE_USER:-1}"
+MLX_ENV_FILE="${MLX_ENV_FILE:-${MLX_HOME}/mlx.env}"
+MLX_LAUNCHER="${MLX_VENV}/bin/mlx-openai-launch"
+
+HOST_FROM_SHELL="false"
+PORT_FROM_SHELL="false"
+MODEL_PATH_FROM_SHELL="false"
+MODEL_TYPE_FROM_SHELL="false"
+
+has_shell_override MLX_HOST && HOST_FROM_SHELL="true"
+has_shell_override MLX_PORT && PORT_FROM_SHELL="true"
+has_shell_override MLX_MODEL_PATH && MODEL_PATH_FROM_SHELL="true"
+has_shell_override MLX_MODEL_TYPE && MODEL_TYPE_FROM_SHELL="true"
+
+HOST_FROM_CLI="false"
+PORT_FROM_CLI="false"
+MODEL_PATH_FROM_CLI="false"
+MODEL_TYPE_FROM_CLI="false"
 
 usage() {
   cat <<'EOF'
@@ -53,18 +106,22 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --model-path)
       MLX_MODEL_PATH="${2:-}"
+      MODEL_PATH_FROM_CLI="true"
       shift 2
       ;;
     --model-type)
       MLX_MODEL_TYPE="${2:-}"
+      MODEL_TYPE_FROM_CLI="true"
       shift 2
       ;;
     --host)
       MLX_HOST="${2:-}"
+      HOST_FROM_CLI="true"
       shift 2
       ;;
     --port)
       MLX_PORT="${2:-}"
+      PORT_FROM_CLI="true"
       shift 2
       ;;
     --user)
@@ -81,6 +138,21 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -f "$MLX_ENV_FILE" ]]; then
+  if [[ "$HOST_FROM_SHELL" != "true" && "$HOST_FROM_CLI" != "true" ]]; then
+    MLX_HOST="$(env_file_get "$MLX_ENV_FILE" MLX_HOST "$MLX_HOST")"
+  fi
+  if [[ "$PORT_FROM_SHELL" != "true" && "$PORT_FROM_CLI" != "true" ]]; then
+    MLX_PORT="$(env_file_get "$MLX_ENV_FILE" MLX_PORT "$MLX_PORT")"
+  fi
+  if [[ "$MODEL_PATH_FROM_SHELL" != "true" && "$MODEL_PATH_FROM_CLI" != "true" ]]; then
+    MLX_MODEL_PATH="$(env_file_get "$MLX_ENV_FILE" MLX_MODEL_PATH "$MLX_MODEL_PATH")"
+  fi
+  if [[ "$MODEL_TYPE_FROM_SHELL" != "true" && "$MODEL_TYPE_FROM_CLI" != "true" ]]; then
+    MLX_MODEL_TYPE="$(env_file_get "$MLX_ENV_FILE" MLX_MODEL_TYPE "$MLX_MODEL_TYPE")"
+  fi
+fi
 
 if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid --port value: ${MLX_PORT}" >&2
@@ -156,6 +228,19 @@ fi
 sudo chown root:wheel "${MLX_VENV}/bin/mlx-openai-server" 2>/dev/null || true
 sudo chmod 755 "${MLX_VENV}/bin/mlx-openai-server" 2>/dev/null || true
 
+sudo cp "${ROOT_DIR}/services/mlx/scripts/run-native-macos.sh" "${MLX_LAUNCHER}"
+sudo chown root:wheel "${MLX_LAUNCHER}"
+sudo chmod 755 "${MLX_LAUNCHER}"
+
+sudo tee "${MLX_ENV_FILE}" >/dev/null <<EOF
+MLX_HOST=${MLX_HOST}
+MLX_PORT=${MLX_PORT}
+MLX_MODEL_PATH=${MLX_MODEL_PATH}
+MLX_MODEL_TYPE=${MLX_MODEL_TYPE}
+EOF
+sudo chown root:wheel "${MLX_ENV_FILE}"
+sudo chmod 644 "${MLX_ENV_FILE}"
+
 sudo tee "${PLIST_PATH}" >/dev/null <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -171,16 +256,7 @@ sudo tee "${PLIST_PATH}" >/dev/null <<EOF
 
     <key>ProgramArguments</key>
     <array>
-      <string>${MLX_VENV}/bin/mlx-openai-server</string>
-      <string>launch</string>
-      <string>--model-path</string>
-      <string>${MLX_MODEL_PATH}</string>
-      <string>--model-type</string>
-      <string>${MLX_MODEL_TYPE}</string>
-      <string>--host</string>
-      <string>${MLX_HOST}</string>
-      <string>--port</string>
-      <string>${MLX_PORT}</string>
+      <string>${MLX_LAUNCHER}</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -196,6 +272,10 @@ sudo tee "${PLIST_PATH}" >/dev/null <<EOF
       <string>${MLX_HOME}/cache/huggingface</string>
       <key>XDG_CACHE_HOME</key>
       <string>${MLX_HOME}/cache</string>
+      <key>MLX_ENV_FILE</key>
+      <string>${MLX_ENV_FILE}</string>
+      <key>MLX_VENV</key>
+      <string>${MLX_VENV}</string>
     </dict>
 
     <key>StandardOutPath</key>
@@ -245,3 +325,4 @@ fi
 
 echo "Installed ${LAUNCHD_LABEL} (${MLX_USER}) on ${MLX_HOST}:${MLX_PORT}" >&2
 echo "Health check: curl -fsS http://${MLX_HOST}:${MLX_PORT}/v1/models" >&2
+echo "Runtime config: ${MLX_ENV_FILE} (edit and kickstart ${LAUNCHD_LABEL} to change model/path)" >&2

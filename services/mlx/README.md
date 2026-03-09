@@ -57,6 +57,16 @@ Install host-native MLX on macOS with:
 ./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
 ```
 
+After first install, the native launchd job reads runtime settings from `/var/lib/mlx/mlx.env`.
+To change models later, update that file and restart the service without rewriting the plist:
+
+```bash
+sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/Qwen2.5-32B-Instruct-4bit#' /var/lib/mlx/mlx.env
+sudo launchctl kickstart -k system/com.nexus.mlx.openai.server
+```
+
+You can also change `MLX_MODEL_TYPE`, `MLX_HOST`, and `MLX_PORT` in the same file.
+
 Installer prerequisites:
 
 - Python `>=3.11` is required for current `mlx-openai-server` builds.
