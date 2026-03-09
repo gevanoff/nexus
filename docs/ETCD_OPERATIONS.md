@@ -108,6 +108,43 @@ This checks:
 - endpoint status
 - member list
 
+## Recovering An Unhealthy Member
+
+When one member is unhealthy, check these in order:
+
+1. container logs
+2. member env values in `.env`
+3. peer reachability on port `2380`
+4. whether the local data dir belongs to an older or mismatched cluster state
+
+Useful commands on the affected host:
+
+```bash
+docker logs --tail 200 nexus-etcd
+```
+
+```bash
+./deploy/scripts/check-etcd-health.sh
+```
+
+```bash
+grep '^ETCD_' .env
+```
+
+Common cases:
+
+- Fresh bootstrap, no important data yet:
+  stop etcd, remove `./.runtime/etcd/data`, rerun `init-etcd-cluster.sh`, and start etcd again.
+- Existing cluster, member data is corrupt or mismatched:
+  restore from snapshot or remove/re-add the member with `etcdctl member remove` and `member add` before restarting it.
+- Peer connectivity failure:
+  confirm both hosts can reach each other on `2380`; etcd peer traffic must work in both directions.
+
+Important:
+
+- A 2-member etcd cluster is not fault-tolerant. If either member is down, quorum is at risk.
+- For durable production use, prefer 3 members.
+
 ## Backup
 
 Create a point-in-time snapshot:
