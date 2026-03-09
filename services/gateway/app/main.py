@@ -63,10 +63,11 @@ async def _startup_check_models() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Initialize backend registry and admission control
-    from app.backends import init_backends
+    from app.backends import init_backends, start_registry_sync, stop_registry_sync
     from app.health_checker import init_health_checker, start_health_checker, stop_health_checker
     
     init_backends()
+    await start_registry_sync()
     init_health_checker()
     observability = ObservabilityServer()
     observability.start()
@@ -83,6 +84,7 @@ async def lifespan(_app: FastAPI):
     
     # Stop health checker on shutdown
     await stop_health_checker()
+    await stop_registry_sync()
     observability.stop()
 
 

@@ -7,7 +7,10 @@ and payload policies. Provides deterministic routing and fast-fail overload prot
 from __future__ import annotations
 
 import asyncio
+import base64
 from dataclasses import dataclass, field
+from dataclasses import replace
+import json
 import os
 from urllib.parse import urlparse
 from pathlib import Path
@@ -17,6 +20,7 @@ import yaml
 from fastapi import HTTPException
 
 from app.config import S, logger
+from app.httpx_client import httpx_client as _httpx_client
 
 
 RouteKind = Literal["chat", "embeddings", "images", "music", "tts"]
@@ -44,12 +48,25 @@ class BackendConfig:
         return self.concurrency_limits.get(route_kind, 1)
 
 
+@dataclass(frozen=True)
+class ServiceRecord:
+    """Service registry record discovered from etcd or synthesized from env."""
+
+    name: str
+    base_url: str
+    metadata_url: str = ""
+    backend_class: str = ""
+    source: str = "unknown"
+
+
 @dataclass
 class BackendRegistry:
     """Registry of all backend configurations."""
 
     backends: Dict[str, BackendConfig]
     legacy_mapping: Dict[str, str]
+    static_backends: Dict[str, BackendConfig] = field(default_factory=dict)
+    service_records: Dict[str, ServiceRecord] = field(default_factory=dict)
 
     def get_backend(self, backend_class: str) -> Optional[BackendConfig]:
         """Get backend config by class name."""
@@ -71,6 +88,192 @@ def _backend_host(base_url: str) -> Optional[str]:
     if not host:
         return None
     return host
+
+
+_SERVICE_NAME_TO_BACKEND_CLASS: Dict[str, str] = {
+    "mlx": "local_mlx",
+    "local_mlx": "local_mlx",
+    "ollama": "ollama",
+    "invokeai": "gpu_heavy",
+    "images": "gpu_heavy",
+    "gpu_heavy": "gpu_heavy",
+    "sdxl-turbo": "gpu_fast",
+    "sdxl_turbo": "gpu_fast",
+    "gpu_fast": "gpu_fast",
+    "heartmula": "heartmula_music",
+    "heartmula_music": "heartmula_music",
+    "tts": "pocket_tts",
+    "pocket-tts": "pocket_tts",
+    "pocket_tts": "pocket_tts",
+    "qwen3-tts": "qwen3_tts",
+    "qwen3_tts": "qwen3_tts",
+    "luxtts": "luxtts",
+    "lighton-ocr": "lighton_ocr",
+    "lighton_ocr": "lighton_ocr",
+    "personaplex": "personaplex",
+    "followyourcanvas": "followyourcanvas",
+    "skyreels-v2": "skyreels_v2",
+    "skyreels_v2": "skyreels_v2",
+}
+
+_BACKEND_CLASS_TO_SERVICE_NAME: Dict[str, str] = {
+    "local_mlx": "mlx",
+    "ollama": "ollama",
+    "gpu_heavy": "images",
+    "gpu_fast": "sdxl-turbo",
+    "heartmula_music": "heartmula",
+    "pocket_tts": "tts",
+    "qwen3_tts": "qwen3-tts",
+    "luxtts": "luxtts",
+    "lighton_ocr": "lighton-ocr",
+    "personaplex": "personaplex",
+    "followyourcanvas": "followyourcanvas",
+    "skyreels_v2": "skyreels-v2",
+}
+
+
+def _service_name_to_backend_class(service_name: str, registry: BackendRegistry) -> Optional[str]:
+    normalized = (service_name or "").strip().lower()
+    if not normalized:
+        return None
+    mapped = _SERVICE_NAME_TO_BACKEND_CLASS.get(normalized)
+    if mapped:
+        return mapped
+    normalized = normalized.replace("-", "_")
+    if normalized in registry.static_backends:
+        return normalized
+    return None
+
+
+def _backend_class_to_service_name(backend_class: str) -> str:
+    return _BACKEND_CLASS_TO_SERVICE_NAME.get(backend_class, backend_class)
+
+
+def _prefix_range_end(prefix: str) -> str:
+    if not prefix:
+        return "\0"
+    return prefix[:-1] + chr(ord(prefix[-1]) + 1)
+
+
+def _decode_b64(raw: str) -> str:
+    return base64.b64decode(raw.encode("ascii")).decode("utf-8")
+
+
+async def _fetch_etcd_service_records() -> Dict[str, ServiceRecord]:
+    prefix = (getattr(S, "ETCD_PREFIX", "") or "").strip() or "/nexus/services/"
+    payload = {
+        "key": base64.b64encode(prefix.encode("utf-8")).decode("ascii"),
+        "range_end": base64.b64encode(_prefix_range_end(prefix).encode("utf-8")).decode("ascii"),
+    }
+    records: Dict[str, ServiceRecord] = {}
+    async with _httpx_client(timeout=getattr(S, "ETCD_TIMEOUT_SEC", 5.0) or 5.0) as client:
+        response = await client.post(f"{S.ETCD_URL.rstrip('/')}/v3/kv/range", json=payload)
+        response.raise_for_status()
+        data = response.json()
+    for item in data.get("kvs", []) if isinstance(data, dict) else []:
+        try:
+            key = _decode_b64(str(item.get("key", "")))
+            raw_value = _decode_b64(str(item.get("value", "")))
+            value = json.loads(raw_value)
+        except Exception:
+            continue
+        if not isinstance(value, dict):
+            continue
+        name = str(value.get("name") or "").strip()
+        if not name:
+            name = key.rsplit("/", 1)[-1].strip()
+        base_url = _sanitize_base_url(str(value.get("base_url") or ""))
+        metadata_url = _sanitize_base_url(str(value.get("metadata_url") or ""))
+        if not name or not base_url:
+            continue
+        records[name] = ServiceRecord(
+            name=name,
+            base_url=base_url,
+            metadata_url=metadata_url,
+            source="etcd",
+        )
+    return records
+
+
+def _build_seed_records(registry: BackendRegistry) -> Dict[str, ServiceRecord]:
+    if not getattr(S, "ETCD_SEED_FROM_ENV", True):
+        return {}
+    seeded: Dict[str, ServiceRecord] = {}
+    for backend_class, config in registry.static_backends.items():
+        base_url = _sanitize_base_url(config.base_url)
+        if not base_url:
+            continue
+        service_name = _backend_class_to_service_name(backend_class)
+        seeded[service_name] = ServiceRecord(
+            name=service_name,
+            base_url=base_url,
+            metadata_url=f"{base_url.rstrip('/')}/v1/metadata",
+            backend_class=backend_class,
+            source="env",
+        )
+    return seeded
+
+
+def _apply_service_records(registry: BackendRegistry, service_records: Dict[str, ServiceRecord]) -> None:
+    effective = dict(registry.static_backends)
+    bound_records: Dict[str, ServiceRecord] = {}
+    for record in service_records.values():
+        backend_class = _service_name_to_backend_class(record.name, registry)
+        if not backend_class:
+            continue
+        config = effective.get(backend_class)
+        if config is None:
+            continue
+        effective[backend_class] = replace(config, base_url=record.base_url)
+        bound_records[record.name] = replace(record, backend_class=backend_class)
+    registry.backends = effective
+    registry.service_records = bound_records
+
+
+async def refresh_registry_from_etcd() -> None:
+    registry = get_registry()
+    service_records = _build_seed_records(registry)
+    if getattr(S, "ETCD_ENABLED", True):
+        try:
+            fetched = await _fetch_etcd_service_records()
+            service_records.update(fetched)
+        except Exception as exc:
+            logger.warning("etcd registry refresh failed: %s: %s", type(exc).__name__, exc)
+    _apply_service_records(registry, service_records)
+
+
+_registry_sync_task: Optional[asyncio.Task] = None
+
+
+async def _registry_sync_loop() -> None:
+    interval = float(getattr(S, "ETCD_POLL_INTERVAL", 15.0) or 15.0)
+    while True:
+        await asyncio.sleep(max(interval, 1.0))
+        await refresh_registry_from_etcd()
+
+
+async def start_registry_sync() -> None:
+    global _registry_sync_task
+    await refresh_registry_from_etcd()
+    if not getattr(S, "ETCD_ENABLED", True):
+        return
+    if _registry_sync_task is not None and not _registry_sync_task.done():
+        return
+    _registry_sync_task = asyncio.create_task(_registry_sync_loop())
+    logger.info("Backend registry sync started")
+
+
+async def stop_registry_sync() -> None:
+    global _registry_sync_task
+    if _registry_sync_task is None:
+        return
+    _registry_sync_task.cancel()
+    try:
+        await _registry_sync_task
+    except asyncio.CancelledError:
+        pass
+    _registry_sync_task = None
+    logger.info("Backend registry sync stopped")
 
 
 def _sanitize_base_url(raw_base_url: str) -> str:
@@ -280,7 +483,11 @@ def load_backends_config(path: Optional[Path] = None) -> BackendRegistry:
     legacy_mapping = data.get("legacy_mapping", {})
 
     logger.info(f"Loaded {len(backends)} backend configs from {path}")
-    return BackendRegistry(backends=backends, legacy_mapping=legacy_mapping)
+    return BackendRegistry(
+        backends=dict(backends),
+        legacy_mapping=legacy_mapping,
+        static_backends=dict(backends),
+    )
 
 
 def _default_registry() -> BackendRegistry:
@@ -307,7 +514,7 @@ def _default_registry() -> BackendRegistry:
             payload_policy={},
         ),
     }
-    return BackendRegistry(backends=backends, legacy_mapping={})
+    return BackendRegistry(backends=dict(backends), legacy_mapping={}, static_backends=dict(backends))
 
 
 # Global registry and admission controller

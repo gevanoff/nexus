@@ -174,6 +174,14 @@ class Settings(BaseSettings):
 
     DEFAULT_BACKEND: Literal["ollama", "mlx"] = "ollama"
 
+    # Service discovery (etcd)
+    ETCD_ENABLED: bool = True
+    ETCD_URL: str = "http://etcd:2379"
+    ETCD_PREFIX: str = "/nexus/services/"
+    ETCD_POLL_INTERVAL: float = 15.0
+    ETCD_SEED_FROM_ENV: bool = True
+    ETCD_TIMEOUT_SEC: float = 5.0
+
     # Backends can each have "strong" and "fast" model choices.
     OLLAMA_MODEL_STRONG: str = "qwen2.5:32b"
     OLLAMA_MODEL_FAST: str = "qwen2.5:7b"

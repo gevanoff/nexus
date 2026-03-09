@@ -36,3 +36,29 @@ async def gateway_status(req: Request):
         "admission_control": admission_stats,
         "backend_health": health_status,
     }
+
+
+@router.get("/v1/registry")
+async def gateway_registry(req: Request):
+    """Return the gateway's current service registry view."""
+    require_bearer(req)
+
+    from app.backends import get_registry
+
+    registry = get_registry()
+    services = []
+    for service_name, record in sorted(registry.service_records.items(), key=lambda item: item[0]):
+        services.append(
+            {
+                "name": record.name,
+                "backend_class": record.backend_class,
+                "base_url": record.base_url,
+                "metadata_url": record.metadata_url,
+                "source": record.source,
+            }
+        )
+
+    return {
+        "services": services,
+        "count": len(services),
+    }
