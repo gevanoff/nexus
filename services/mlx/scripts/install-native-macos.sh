@@ -256,6 +256,7 @@ sudo tee "${PLIST_PATH}" >/dev/null <<EOF
 
     <key>ProgramArguments</key>
     <array>
+      <string>/bin/bash</string>
       <string>${MLX_LAUNCHER}</string>
     </array>
 
