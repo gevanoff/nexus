@@ -15,7 +15,6 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
-COPY env/ ./env/
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
