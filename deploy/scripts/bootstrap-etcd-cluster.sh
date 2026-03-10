@@ -101,7 +101,6 @@ done
 (( ${#MEMBER_SPECS[@]} >= 1 )) || ns_die "At least one --member is required"
 
 ns_ensure_prereqs false false false false false true || true
-ns_have_cmd ssh || ns_die "ssh is required but not installed"
 
 ssh_opts=("-o" "StrictHostKeyChecking=accept-new")
 if [[ "$NS_AUTO_YES" == "true" ]]; then
@@ -134,6 +133,42 @@ for i in "${!member_names[@]}"; do
 done
 [[ "$leader_index" != "-1" ]] || ns_die "--leader must match one of the --member names"
 
+local_hostnames=()
+while IFS= read -r candidate; do
+  [[ -n "${candidate:-}" ]] || continue
+  local_hostnames+=("$candidate")
+done < <(
+  {
+    hostname 2>/dev/null || true
+    hostname -s 2>/dev/null || true
+    hostname -f 2>/dev/null || true
+  } | awk 'NF {print tolower($0)}' | sort -u
+)
+
+is_local_target() {
+  local ssh_target="$1"
+  local advertise_host="$2"
+  local ssh_host="${ssh_target#*@}"
+  local candidate
+
+  case "${ssh_host,,}" in
+    localhost|127.0.0.1|::1)
+      return 0
+      ;;
+  esac
+  case "${advertise_host,,}" in
+    localhost|127.0.0.1|::1)
+      return 0
+      ;;
+  esac
+
+  for candidate in "${local_hostnames[@]}"; do
+    [[ "${ssh_host,,}" == "$candidate" ]] && return 0
+    [[ "${advertise_host,,}" == "$candidate" ]] && return 0
+  done
+  return 1
+}
+
 initial_cluster=""
 for i in "${!member_names[@]}"; do
   entry="${member_names[$i]}=http://${member_hosts[$i]}:2380"
@@ -154,6 +189,8 @@ peer_url="$5"
 initial_cluster="$6"
 cluster_token="$7"
 do_wipe="$8"
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
 resolve_repo_dir() {
   local requested="$1"
@@ -209,6 +246,8 @@ set -euo pipefail
 repo_dir="$1"
 env_file_rel="$2"
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 resolve_repo_dir() {
   local requested="$1"
   if [[ -n "$requested" && "$requested" != "__AUTO__" ]]; then
@@ -247,6 +286,8 @@ remote_health=$(cat <<'EOS'
 set -euo pipefail
 repo_dir="$1"
 env_file_rel="$2"
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
 resolve_repo_dir() {
   local requested="$1"
@@ -288,24 +329,47 @@ run_remote_script() {
   ssh "${ssh_opts[@]}" "$ssh_target" bash -s -- "$@" <<<"$script_body"
 }
 
+run_member_script() {
+  local ssh_target="$1"
+  local advertise_host="$2"
+  local script_body="$3"
+  shift 3
+  if is_local_target "$ssh_target" "$advertise_host"; then
+    bash -s -- "$@" <<<"$script_body"
+    return $?
+  fi
+  if ! ns_have_cmd ssh; then
+    ns_die "ssh is required for remote target: $ssh_target"
+  fi
+  run_remote_script "$ssh_target" "$script_body" "$@"
+}
+
 ns_print_header "Preparing etcd members"
 for i in "${!member_names[@]}"; do
-  ns_print_ok "Preparing ${member_names[$i]} on ${member_ssh[$i]}"
-  run_remote_script "${member_ssh[$i]}" "${remote_prepare}" \
+  if is_local_target "${member_ssh[$i]}" "${member_hosts[$i]}"; then
+    ns_print_ok "Preparing ${member_names[$i]} locally"
+  else
+    ns_print_ok "Preparing ${member_names[$i]} on ${member_ssh[$i]}"
+  fi
+  run_member_script "${member_ssh[$i]}" "${member_hosts[$i]}" "${remote_prepare}" \
     "$REPO_DIR" "$ENV_FILE_REL" "${member_names[$i]}" "http://${member_hosts[$i]}:2379" "http://${member_hosts[$i]}:2380" "$initial_cluster" "$CLUSTER_TOKEN" "$DO_WIPE"
 done
 
 if [[ "$START_CLUSTER" == "true" ]]; then
   ns_print_header "Starting etcd cluster"
   for i in "${!member_names[@]}"; do
-    ns_print_ok "Starting ${member_names[$i]} on ${member_ssh[$i]}"
-    run_remote_script "${member_ssh[$i]}" "${remote_start}" "$REPO_DIR" "$ENV_FILE_REL"
+    if is_local_target "${member_ssh[$i]}" "${member_hosts[$i]}"; then
+      ns_print_ok "Starting ${member_names[$i]} locally"
+    else
+      ns_print_ok "Starting ${member_names[$i]} on ${member_ssh[$i]}"
+    fi
+    run_member_script "${member_ssh[$i]}" "${member_hosts[$i]}" "${remote_start}" "$REPO_DIR" "$ENV_FILE_REL"
   done
 fi
 
 if [[ "$CHECK_HEALTH" == "true" && "$START_CLUSTER" == "true" ]]; then
   ns_print_header "Checking health from coordinator"
-  run_remote_script "${member_ssh[$leader_index]}" "${remote_health}" "$REPO_DIR" "$ENV_FILE_REL"
+  run_member_script "${member_ssh[$leader_index]}" "${member_hosts[$leader_index]}" "${remote_health}" "$REPO_DIR" "$ENV_FILE_REL"
 fi
 
 ns_print_ok "Bootstrap configuration complete"
