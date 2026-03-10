@@ -28,6 +28,19 @@ def _env_float(name: str, default: float) -> float:
     return value
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = _env(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid {name}: {raw}") from exc
+    if value <= 0:
+        raise SystemExit(f"{name} must be greater than zero")
+    return value
+
+
 def _log(message: str) -> None:
     print(message, flush=True)
 
@@ -58,10 +71,60 @@ def _post_json(url: str, payload: dict[str, object], timeout: float) -> None:
             raise RuntimeError(f"etcd returned status {status}")
 
 
-def _put_record(etcd_url: str, key: str, value: dict[str, str], timeout: float) -> None:
+def _post_json_response(url: str, payload: dict[str, object], timeout: float) -> dict[str, object]:
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json", "User-Agent": "nexus-service-registrar/1.0"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        status = getattr(response, "status", 200)
+        if int(status) >= 400:
+            raise RuntimeError(f"etcd returned status {status}")
+        raw = response.read().decode("utf-8")
+    if not raw.strip():
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("etcd returned a non-object response")
+    return parsed
+
+
+def _grant_lease(etcd_url: str, ttl_sec: int, timeout: float) -> str:
+    response = _post_json_response(
+        f"{etcd_url.rstrip('/')}/v3/lease/grant",
+        {"TTL": ttl_sec},
+        timeout,
+    )
+    lease_id = str(response.get("ID") or "").strip()
+    if not lease_id:
+        raise RuntimeError("etcd lease grant did not return an ID")
+    return lease_id
+
+
+def _keepalive_lease(etcd_url: str, lease_id: str, timeout: float) -> None:
+    _post_json(
+        f"{etcd_url.rstrip('/')}/v3/lease/keepalive",
+        {"ID": int(lease_id)},
+        timeout,
+    )
+
+
+def _revoke_lease(etcd_url: str, lease_id: str, timeout: float) -> None:
+    _post_json(
+        f"{etcd_url.rstrip('/')}/v3/lease/revoke",
+        {"ID": int(lease_id)},
+        timeout,
+    )
+
+
+def _put_record(etcd_url: str, key: str, value: dict[str, str], timeout: float, lease_id: str) -> None:
     payload = {
         "key": base64.b64encode(key.encode("utf-8")).decode("ascii"),
         "value": base64.b64encode(json.dumps(value, separators=(",", ":")).encode("utf-8")).decode("ascii"),
+        "lease": int(lease_id),
     }
     _post_json(f"{etcd_url.rstrip('/')}/v3/kv/put", payload, timeout)
 
@@ -87,6 +150,7 @@ def main() -> int:
     interval_sec = _env_float("NEXUS_REGISTRATION_INTERVAL_SEC", 30.0)
     timeout_sec = _env_float("NEXUS_REGISTRATION_TIMEOUT_SEC", 5.0)
     retry_sec = _env_float("NEXUS_REGISTRATION_RETRY_SEC", min(interval_sec, 5.0))
+    lease_ttl_sec = _env_int("NEXUS_REGISTRATION_LEASE_TTL_SEC", max(int(interval_sec * 3), 60))
 
     signal.signal(signal.SIGTERM, _request_shutdown)
     signal.signal(signal.SIGINT, _request_shutdown)
@@ -107,13 +171,18 @@ def main() -> int:
         value["backend_class"] = service_backend_class
 
     is_registered = False
+    lease_id = ""
     while not _shutdown_requested:
         if service_health_url and not _check_url(service_health_url, timeout_sec):
             if is_registered:
                 try:
-                    _delete_record(etcd_url, key, timeout_sec)
+                    if lease_id:
+                        _revoke_lease(etcd_url, lease_id, timeout_sec)
+                    else:
+                        _delete_record(etcd_url, key, timeout_sec)
                     _log(f"deregistered {service_name} after health check failure")
                     is_registered = False
+                    lease_id = ""
                 except Exception as exc:
                     _log(f"deregistration failed for {service_name}: {type(exc).__name__}: {exc}")
             else:
@@ -121,12 +190,20 @@ def main() -> int:
             time.sleep(retry_sec)
             continue
         try:
-            _put_record(etcd_url, key, value, timeout_sec)
+            if not lease_id:
+                lease_id = _grant_lease(etcd_url, lease_ttl_sec, timeout_sec)
+            else:
+                _keepalive_lease(etcd_url, lease_id, timeout_sec)
+            _put_record(etcd_url, key, value, timeout_sec, lease_id)
             if not is_registered:
-                _log(f"registered {service_name} -> {service_base_url} in etcd {etcd_url}")
+                _log(
+                    f"registered {service_name} -> {service_base_url} in etcd {etcd_url} "
+                    f"with lease TTL {lease_ttl_sec}s"
+                )
                 is_registered = True
         except Exception as exc:
             is_registered = False
+            lease_id = ""
             _log(f"registration failed for {service_name}: {type(exc).__name__}: {exc}")
             time.sleep(retry_sec)
             continue
@@ -134,7 +211,10 @@ def main() -> int:
 
     if is_registered:
         try:
-            _delete_record(etcd_url, key, timeout_sec)
+            if lease_id:
+                _revoke_lease(etcd_url, lease_id, timeout_sec)
+            else:
+                _delete_record(etcd_url, key, timeout_sec)
             _log(f"deregistered {service_name} during shutdown")
         except Exception as exc:
             _log(f"shutdown deregistration failed for {service_name}: {type(exc).__name__}: {exc}")

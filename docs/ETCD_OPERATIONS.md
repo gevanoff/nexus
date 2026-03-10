@@ -224,13 +224,15 @@ The restore script:
 ## Service Registration
 
 Most gateway-facing compose services now include a small registrar sidecar.
-When the service becomes healthy, the sidecar writes or refreshes `/nexus/services/<name>` in etcd automatically using the same `*_BASE_URL` env values the gateway already understands.
-If the service later fails its health check, or the stack is stopped cleanly, the sidecar deletes the registration.
+When the service becomes healthy, the sidecar writes `/nexus/services/<name>` in etcd under a renewable lease, using the same `*_BASE_URL` env values the gateway already understands.
+If the service later fails its health check, or the stack is stopped cleanly, the sidecar revokes the lease immediately.
+If the service or registrar crashes uncleanly, the key will expire automatically once the lease TTL elapses without keepalives.
 
 Auto-registration tuning:
 
-- `NEXUS_REGISTRATION_INTERVAL_SEC` controls how often the record is refreshed.
+- `NEXUS_REGISTRATION_INTERVAL_SEC` controls how often the registrar renews the lease and refreshes the record.
 - `NEXUS_REGISTRATION_TIMEOUT_SEC` controls HTTP timeout for health and etcd calls.
+- `NEXUS_REGISTRATION_LEASE_TTL_SEC` controls how long stale keys survive after the registrar disappears unexpectedly.
 - `ETCD_URL` still determines which etcd endpoint receives the registration.
 
 Register a service manually:
