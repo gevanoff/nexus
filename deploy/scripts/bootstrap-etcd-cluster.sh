@@ -281,10 +281,17 @@ env_file="$repo_dir/$env_file_rel"
 EOS
 )
 
+run_remote_script() {
+  local ssh_target="$1"
+  local script_body="$2"
+  shift 2
+  ssh "${ssh_opts[@]}" "$ssh_target" bash -s -- "$@" <<<"$script_body"
+}
+
 ns_print_header "Preparing etcd members"
 for i in "${!member_names[@]}"; do
   ns_print_ok "Preparing ${member_names[$i]} on ${member_ssh[$i]}"
-  ssh "${ssh_opts[@]}" "${member_ssh[$i]}" bash -lc "${remote_prepare}" -- \
+  run_remote_script "${member_ssh[$i]}" "${remote_prepare}" \
     "$REPO_DIR" "$ENV_FILE_REL" "${member_names[$i]}" "http://${member_hosts[$i]}:2379" "http://${member_hosts[$i]}:2380" "$initial_cluster" "$CLUSTER_TOKEN" "$DO_WIPE"
 done
 
@@ -292,13 +299,13 @@ if [[ "$START_CLUSTER" == "true" ]]; then
   ns_print_header "Starting etcd cluster"
   for i in "${!member_names[@]}"; do
     ns_print_ok "Starting ${member_names[$i]} on ${member_ssh[$i]}"
-    ssh "${ssh_opts[@]}" "${member_ssh[$i]}" bash -lc "${remote_start}" -- "$REPO_DIR" "$ENV_FILE_REL"
+    run_remote_script "${member_ssh[$i]}" "${remote_start}" "$REPO_DIR" "$ENV_FILE_REL"
   done
 fi
 
 if [[ "$CHECK_HEALTH" == "true" && "$START_CLUSTER" == "true" ]]; then
   ns_print_header "Checking health from coordinator"
-  ssh "${ssh_opts[@]}" "${member_ssh[$leader_index]}" bash -lc "${remote_health}" -- "$REPO_DIR" "$ENV_FILE_REL"
+  run_remote_script "${member_ssh[$leader_index]}" "${remote_health}" "$REPO_DIR" "$ENV_FILE_REL"
 fi
 
 ns_print_ok "Bootstrap configuration complete"
