@@ -112,6 +112,19 @@ For a brand-new cluster, order is not important as long as all intended members 
 docker compose -f docker-compose.etcd.yml up -d
 ```
 
+For a coordinated clean bootstrap across multiple hosts, use:
+
+```bash
+./deploy/scripts/bootstrap-etcd-cluster.sh \
+  --leader ai2-etcd \
+  --member ai1-etcd,ai1,ai@ai1 \
+  --member ai2-etcd,ai2,ai@ai2 \
+  --member ada2-etcd,ada2,ai@ada2
+```
+
+In this script, `--leader` means bootstrap coordinator and final health-check host.
+It does not force etcd to elect a particular raft leader.
+
 ## Health Checks
 
 Use the health helper:
