@@ -57,6 +57,24 @@ def _check_url(url: str, timeout: float) -> bool:
         return False
 
 
+def _parse_health_urls() -> list[str]:
+    raw_urls = _env("NEXUS_SERVICE_HEALTH_URLS")
+    if raw_urls:
+        urls = [item.strip() for item in raw_urls.replace("\n", ",").split(",")]
+        return [item for item in urls if item]
+    single = _env("NEXUS_SERVICE_HEALTH_URL")
+    return [single] if single else []
+
+
+def _is_service_healthy(urls: list[str], timeout: float) -> bool:
+    if not urls:
+        return True
+    for url in urls:
+        if _check_url(url, timeout):
+            return True
+    return False
+
+
 def _post_json(url: str, payload: dict[str, object], timeout: float) -> None:
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
@@ -143,7 +161,7 @@ def main() -> int:
     service_name = _env("NEXUS_SERVICE_NAME")
     service_base_url = _env("NEXUS_SERVICE_BASE_URL")
     etcd_url = _env("ETCD_URL", "http://etcd:2379")
-    service_health_url = _env("NEXUS_SERVICE_HEALTH_URL")
+    service_health_urls = _parse_health_urls()
     service_metadata_url = _env("NEXUS_SERVICE_METADATA_URL")
     service_backend_class = _env("NEXUS_SERVICE_BACKEND_CLASS")
     prefix = _env("NEXUS_REGISTRY_PREFIX", "/nexus/services/") or "/nexus/services/"
@@ -173,7 +191,7 @@ def main() -> int:
     is_registered = False
     lease_id = ""
     while not _shutdown_requested:
-        if service_health_url and not _check_url(service_health_url, timeout_sec):
+        if not _is_service_healthy(service_health_urls, timeout_sec):
             if is_registered:
                 try:
                     if lease_id:
@@ -186,7 +204,7 @@ def main() -> int:
                 except Exception as exc:
                     _log(f"deregistration failed for {service_name}: {type(exc).__name__}: {exc}")
             else:
-                _log(f"waiting for healthy service: {service_name} ({service_health_url})")
+                _log(f"waiting for healthy service: {service_name} ({', '.join(service_health_urls)})")
             time.sleep(retry_sec)
             continue
         try:

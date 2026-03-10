@@ -18,6 +18,55 @@ services:
     networks:
       - nexus
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          python - <<'PY'
+          import sys
+          import urllib.error
+          import urllib.request
+
+          urls = (
+            'http://127.0.0.1:9090/api/v1/app/version',
+            'http://127.0.0.1:9090/api/v1/version',
+            'http://127.0.0.1:9090/api/v1/app',
+          )
+          for url in urls:
+            try:
+              with urllib.request.urlopen(url, timeout=5) as response:
+                status = getattr(response, 'status', 200)
+                if 200 <= int(status) < 400:
+                  raise SystemExit(0)
+            except urllib.error.HTTPError as exc:
+              if 200 <= int(exc.code) < 400:
+                raise SystemExit(0)
+            except Exception:
+              pass
+          raise SystemExit(1)
+          PY
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  invokeai-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=invokeai-runtime
+      - NEXUS_SERVICE_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
+      - NEXUS_SERVICE_HEALTH_URLS=http://invokeai:9090/api/v1/app/version,http://invokeai:9090/api/v1/version,http://invokeai:9090/api/v1/app
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+      - NEXUS_REGISTRATION_LEASE_TTL_SEC=${NEXUS_REGISTRATION_LEASE_TTL_SEC:-90}
+    depends_on:
+      - invokeai
+    networks:
+      - nexus
+    restart: unless-stopped
 
 networks:
   nexus:

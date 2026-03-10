@@ -14,6 +14,9 @@ Nexus uses the official InvokeAI container path documented by the upstream proje
 
 Use [docker-compose.invokeai.yml](../../docker-compose.invokeai.yml).
 
+Nexus now treats raw InvokeAI as an operational upstream runtime, not as the direct gateway image backend.
+The gateway-facing image backend remains the `images` shim, which should point to InvokeAI via `INVOKEAI_BASE_URL` when `SHIM_MODE=invokeai_queue`.
+
 ## Persistence
 
 - Runtime root: `./.runtime/invokeai`
@@ -26,3 +29,17 @@ Deploy both the InvokeAI runtime and the images shim on the same host for the cu
 ```bash
 ./deploy/scripts/deploy.sh --components invokeai,images prod main
 ```
+
+## Health Checks
+
+For the raw InvokeAI runtime, the practical checks to verify are:
+
+- container logs for startup/migration/model-load failures
+- one of these version endpoints responding on port `9090`:
+	- `/api/v1/app/version`
+	- `/api/v1/version`
+	- `/api/v1/app`
+- GPU visibility inside the container
+- write access and expected contents under `./.runtime/invokeai`
+
+The compose healthcheck and the operational etcd registration use those same endpoint candidates.

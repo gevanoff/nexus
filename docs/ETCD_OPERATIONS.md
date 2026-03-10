@@ -228,6 +228,9 @@ When the service becomes healthy, the sidecar writes `/nexus/services/<name>` in
 If the service later fails its health check, or the stack is stopped cleanly, the sidecar revokes the lease immediately.
 If the service or registrar crashes uncleanly, the key will expire automatically once the lease TTL elapses without keepalives.
 
+Some compose stacks may also publish operational upstream runtimes that are not direct gateway backends, for example `invokeai-runtime`.
+Those records are useful for operator visibility and shim dependencies, but they do not automatically become gateway backends unless their service name or `backend_class` maps to one.
+
 Auto-registration tuning:
 
 - `NEXUS_REGISTRATION_INTERVAL_SEC` controls how often the registrar renews the lease and refreshes the record.

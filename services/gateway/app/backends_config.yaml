@@ -55,8 +55,8 @@ backends:
 
   gpu_heavy:
     class: gpu_heavy
-    base_url: ${INVOKEAI_BASE_URL}
-    description: InvokeAI image backend
+    base_url: ${IMAGES_HTTP_BASE_URL}
+    description: InvokeAI-backed OpenAI images shim
     supported_capabilities:
       - images
     concurrency_limits:
