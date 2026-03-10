@@ -9,7 +9,7 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 NS_AUTO_YES="false"
-REPO_DIR="${NEXUS_REMOTE_DIR:-/Users/ai/nexus}"
+REPO_DIR="${NEXUS_REMOTE_DIR:-__AUTO__}"
 ENV_FILE_REL=".env"
 CLUSTER_TOKEN="nexus-etcd-cluster"
 DO_WIPE="true"
@@ -33,7 +33,7 @@ Required:
 
 Options:
   --yes                        Non-interactive SSH mode
-  --repo-dir PATH              Remote Nexus repo dir (default: /Users/ai/nexus)
+  --repo-dir PATH              Remote Nexus repo dir (default: auto-detect ~/ai/nexus, ~/nexus, /Users/ai/nexus)
   --env-file RELPATH           Env file relative to repo dir (default: .env)
   --cluster-token TOKEN        Shared etcd cluster token
   --no-wipe                    Do not clear remote .runtime/etcd/data before bootstrap
@@ -155,6 +155,34 @@ initial_cluster="$6"
 cluster_token="$7"
 do_wipe="$8"
 
+resolve_repo_dir() {
+  local requested="$1"
+  if [[ -n "$requested" && "$requested" != "__AUTO__" ]]; then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+
+  local candidates=(
+    "$HOME/ai/nexus"
+    "$HOME/nexus"
+    "/Users/ai/nexus"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate/.git" || -f "$candidate/docker-compose.etcd.yml" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  echo "ERROR: Unable to locate Nexus repo on remote host." >&2
+  echo "Checked: ${candidates[*]}" >&2
+  echo "Pass --repo-dir PATH or set NEXUS_REMOTE_DIR." >&2
+  exit 1
+}
+
+repo_dir="$(resolve_repo_dir "$repo_dir")"
+
 cd "$repo_dir"
 env_file="$repo_dir/$env_file_rel"
 
@@ -180,6 +208,34 @@ remote_start=$(cat <<'EOS'
 set -euo pipefail
 repo_dir="$1"
 env_file_rel="$2"
+
+resolve_repo_dir() {
+  local requested="$1"
+  if [[ -n "$requested" && "$requested" != "__AUTO__" ]]; then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+
+  local candidates=(
+    "$HOME/ai/nexus"
+    "$HOME/nexus"
+    "/Users/ai/nexus"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate/.git" || -f "$candidate/docker-compose.etcd.yml" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  echo "ERROR: Unable to locate Nexus repo on remote host." >&2
+  echo "Pass --repo-dir PATH or set NEXUS_REMOTE_DIR." >&2
+  exit 1
+}
+
+repo_dir="$(resolve_repo_dir "$repo_dir")"
+
 cd "$repo_dir"
 env_file="$repo_dir/$env_file_rel"
 source "$repo_dir/deploy/scripts/_common.sh"
@@ -191,6 +247,34 @@ remote_health=$(cat <<'EOS'
 set -euo pipefail
 repo_dir="$1"
 env_file_rel="$2"
+
+resolve_repo_dir() {
+  local requested="$1"
+  if [[ -n "$requested" && "$requested" != "__AUTO__" ]]; then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+
+  local candidates=(
+    "$HOME/ai/nexus"
+    "$HOME/nexus"
+    "/Users/ai/nexus"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate/.git" || -f "$candidate/docker-compose.etcd.yml" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  echo "ERROR: Unable to locate Nexus repo on remote host." >&2
+  echo "Pass --repo-dir PATH or set NEXUS_REMOTE_DIR." >&2
+  exit 1
+}
+
+repo_dir="$(resolve_repo_dir "$repo_dir")"
+
 cd "$repo_dir"
 env_file="$repo_dir/$env_file_rel"
 ./deploy/scripts/check-etcd-health.sh --env-file "$env_file"
