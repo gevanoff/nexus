@@ -1,10 +1,14 @@
 import base64
 import json
 import os
+import signal
 import sys
 import time
 import urllib.error
 import urllib.request
+
+
+_shutdown_requested = False
 
 
 def _env(name: str, default: str = "") -> str:
@@ -40,14 +44,10 @@ def _check_url(url: str, timeout: float) -> bool:
         return False
 
 
-def _put_record(etcd_url: str, key: str, value: dict[str, str], timeout: float) -> None:
-    payload = {
-        "key": base64.b64encode(key.encode("utf-8")).decode("ascii"),
-        "value": base64.b64encode(json.dumps(value, separators=(",", ":")).encode("utf-8")).decode("ascii"),
-    }
-    body = json.dumps(payload).encode("utf-8")
+def _post_json(url: str, payload: dict[str, object], timeout: float) -> None:
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
-        f"{etcd_url.rstrip('/')}/v3/kv/put",
+        url,
         data=body,
         headers={"Content-Type": "application/json", "User-Agent": "nexus-service-registrar/1.0"},
         method="POST",
@@ -56,6 +56,24 @@ def _put_record(etcd_url: str, key: str, value: dict[str, str], timeout: float) 
         status = getattr(response, "status", 200)
         if int(status) >= 400:
             raise RuntimeError(f"etcd returned status {status}")
+
+
+def _put_record(etcd_url: str, key: str, value: dict[str, str], timeout: float) -> None:
+    payload = {
+        "key": base64.b64encode(key.encode("utf-8")).decode("ascii"),
+        "value": base64.b64encode(json.dumps(value, separators=(",", ":")).encode("utf-8")).decode("ascii"),
+    }
+    _post_json(f"{etcd_url.rstrip('/')}/v3/kv/put", payload, timeout)
+
+
+def _delete_record(etcd_url: str, key: str, timeout: float) -> None:
+    payload = {"key": base64.b64encode(key.encode("utf-8")).decode("ascii")}
+    _post_json(f"{etcd_url.rstrip('/')}/v3/kv/deleterange", payload, timeout)
+
+
+def _request_shutdown(_signum: int, _frame: object) -> None:
+    global _shutdown_requested
+    _shutdown_requested = True
 
 
 def main() -> int:
@@ -69,6 +87,9 @@ def main() -> int:
     interval_sec = _env_float("NEXUS_REGISTRATION_INTERVAL_SEC", 30.0)
     timeout_sec = _env_float("NEXUS_REGISTRATION_TIMEOUT_SEC", 5.0)
     retry_sec = _env_float("NEXUS_REGISTRATION_RETRY_SEC", min(interval_sec, 5.0))
+
+    signal.signal(signal.SIGTERM, _request_shutdown)
+    signal.signal(signal.SIGINT, _request_shutdown)
 
     if not service_name:
         raise SystemExit("NEXUS_SERVICE_NAME is required")
@@ -85,23 +106,39 @@ def main() -> int:
     if service_backend_class:
         value["backend_class"] = service_backend_class
 
-    healthy_once = False
-    while True:
+    is_registered = False
+    while not _shutdown_requested:
         if service_health_url and not _check_url(service_health_url, timeout_sec):
-            _log(f"waiting for healthy service: {service_name} ({service_health_url})")
+            if is_registered:
+                try:
+                    _delete_record(etcd_url, key, timeout_sec)
+                    _log(f"deregistered {service_name} after health check failure")
+                    is_registered = False
+                except Exception as exc:
+                    _log(f"deregistration failed for {service_name}: {type(exc).__name__}: {exc}")
+            else:
+                _log(f"waiting for healthy service: {service_name} ({service_health_url})")
             time.sleep(retry_sec)
             continue
         try:
             _put_record(etcd_url, key, value, timeout_sec)
-            if not healthy_once:
+            if not is_registered:
                 _log(f"registered {service_name} -> {service_base_url} in etcd {etcd_url}")
-                healthy_once = True
+                is_registered = True
         except Exception as exc:
-            healthy_once = False
+            is_registered = False
             _log(f"registration failed for {service_name}: {type(exc).__name__}: {exc}")
             time.sleep(retry_sec)
             continue
         time.sleep(interval_sec)
+
+    if is_registered:
+        try:
+            _delete_record(etcd_url, key, timeout_sec)
+            _log(f"deregistered {service_name} during shutdown")
+        except Exception as exc:
+            _log(f"shutdown deregistration failed for {service_name}: {type(exc).__name__}: {exc}")
+    return 0
 
 
 if __name__ == "__main__":

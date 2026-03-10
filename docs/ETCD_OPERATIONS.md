@@ -225,6 +225,7 @@ The restore script:
 
 Most gateway-facing compose services now include a small registrar sidecar.
 When the service becomes healthy, the sidecar writes or refreshes `/nexus/services/<name>` in etcd automatically using the same `*_BASE_URL` env values the gateway already understands.
+If the service later fails its health check, or the stack is stopped cleanly, the sidecar deletes the registration.
 
 Auto-registration tuning:
 
