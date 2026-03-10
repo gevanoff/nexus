@@ -244,6 +244,12 @@ List registered services:
 ./deploy/scripts/list-services.sh http://ai1:2379
 ```
 
+Use raw decoded JSON instead of the default table view:
+
+```bash
+./deploy/scripts/list-services.sh --json http://ai1:2379
+```
+
 ## Operational Guidance
 
 Use etcd first for:

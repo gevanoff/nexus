@@ -13,16 +13,18 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 NS_AUTO_YES="false"
+NS_OUTPUT_FORMAT="table"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/list-services.sh [--yes] <etcd-url>
+Usage: deploy/scripts/list-services.sh [--yes] [--json] <etcd-url>
 
 Example:
   deploy/scripts/list-services.sh http://etcd:2379
 
 Options:
-  --yes   Non-interactive mode (assume "yes" for install prompts)
+  --yes    Non-interactive mode (assume "yes" for install prompts)
+  --json   Print decoded service records as JSON
 EOF
 }
 
@@ -31,6 +33,10 @@ parse_args() {
     case "$1" in
       --yes)
         NS_AUTO_YES="true"
+        shift
+        ;;
+      --json)
+        NS_OUTPUT_FORMAT="json"
         shift
         ;;
       -h|--help)
@@ -84,6 +90,73 @@ print(json.dumps({
 PY
 )
 
-curl -fsS -X POST "${etcd_url%/}/v3/kv/range" \
+response="$(curl -fsS -X POST "${etcd_url%/}/v3/kv/range" \
   -H "Content-Type: application/json" \
-  -d "$payload"
+  -d "$payload")"
+
+$PYTHON - "$NS_OUTPUT_FORMAT" <<'PY' <<<"$response"
+import base64
+import json
+import sys
+
+
+def decode(raw: str) -> str:
+  return base64.b64decode(raw.encode("ascii")).decode("utf-8")
+
+
+output_format = sys.argv[1]
+raw = sys.stdin.read()
+data = json.loads(raw) if raw.strip() else {}
+
+records = []
+for item in data.get("kvs", []) if isinstance(data, dict) else []:
+  try:
+    key = decode(str(item.get("key", "")))
+    value = json.loads(decode(str(item.get("value", ""))))
+  except Exception:
+    continue
+  if not isinstance(value, dict):
+    continue
+  records.append(
+    {
+      "key": key,
+      "name": str(value.get("name") or key.rsplit("/", 1)[-1]),
+      "base_url": str(value.get("base_url") or ""),
+      "metadata_url": str(value.get("metadata_url") or ""),
+      "backend_class": str(value.get("backend_class") or ""),
+    }
+  )
+
+records.sort(key=lambda item: item["name"])
+
+if output_format == "json":
+  print(json.dumps(records, indent=2, sort_keys=True))
+  raise SystemExit(0)
+
+if not records:
+  print("No service registrations found.")
+  raise SystemExit(0)
+
+headers = ["NAME", "BASE URL", "BACKEND CLASS", "METADATA URL"]
+rows = [
+  [
+    record["name"],
+    record["base_url"] or "-",
+    record["backend_class"] or "-",
+    record["metadata_url"] or "-",
+  ]
+  for record in records
+]
+widths = [len(header) for header in headers]
+for row in rows:
+  for index, cell in enumerate(row):
+    widths[index] = max(widths[index], len(cell))
+
+def format_row(values):
+  return "  ".join(value.ljust(widths[index]) for index, value in enumerate(values))
+
+print(format_row(headers))
+print(format_row(["-" * width for width in widths]))
+for row in rows:
+  print(format_row(row))
+PY
