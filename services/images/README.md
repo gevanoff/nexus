@@ -32,6 +32,13 @@ Key env vars:
 
 - `SHIM_MODE=stub|invokeai_queue`
 - `INVOKEAI_BASE_URL=http://invokeai:9090`
+- `IMAGES_HTTP_BASE_URL=http://images:7860` for local compose or `http://<host>:7860` for multi-host gateway routing
+
+Important:
+
+- The gateway and etcd `images` service record must point to the images shim on port `7860`.
+- Raw InvokeAI on port `9090` is an upstream runtime for the shim and does not implement `POST /v1/images/generations`.
+- If the UI is hitting `http://<host>:9090/v1/images/generations`, `IMAGES_HTTP_BASE_URL` or the `images` etcd record is wrong.
 
 ## Quick test
 

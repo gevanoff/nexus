@@ -43,3 +43,11 @@ For the raw InvokeAI runtime, the practical checks to verify are:
 - write access and expected contents under `./.runtime/invokeai`
 
 The compose healthcheck and the operational etcd registration use those same endpoint candidates.
+
+Important routing split:
+
+- InvokeAI runtime: `http://<host>:9090`
+- Nexus images shim: `http://<host>:7860`
+
+The UI/gateway should call the images shim, not raw InvokeAI.
+If you see `405 Method Not Allowed` on `/v1/images/generations` against port `9090`, the gateway or etcd registration is pointed at the wrong service.

@@ -222,6 +222,7 @@ Alias-aware prewarm options:
 - `deploy/scripts/allowlist-mlx-macos.sh`: configure macOS `pf` allowlist for MLX port access
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: manually register non-compose service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: list registered services in etcd
+- `deploy/scripts/set-user-admin.sh <username>`: grant or revoke gateway admin privileges in the host-side users database
 
 ### Seed shared TTS refs
 
