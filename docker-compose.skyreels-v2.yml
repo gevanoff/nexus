@@ -20,6 +20,24 @@ services:
       - nexus
     restart: unless-stopped
 
+  skyreels-v2-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=skyreels-v2
+      - NEXUS_SERVICE_BASE_URL=${SKYREELS_V2_BASE_URL:-http://skyreels-v2:9180}
+      - NEXUS_SERVICE_HEALTH_URL=http://skyreels-v2:9180/readyz
+      - NEXUS_SERVICE_BACKEND_CLASS=skyreels_v2
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - skyreels-v2
+    networks:
+      - nexus
+    restart: unless-stopped
+
 networks:
   nexus:
     driver: bridge

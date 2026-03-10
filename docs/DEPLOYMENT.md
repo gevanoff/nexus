@@ -144,7 +144,7 @@ Nexus keeps persistent state and large artifacts on the **host filesystem** unde
 - `deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: environment-aware local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] <dev|prod> <branch> <user@host>`: remote deployment wrapper
-- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: registers service metadata in etcd (requires `python3`)
+- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: manually registers non-compose or custom service metadata in etcd (requires `python3`)
 - `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd (requires `python3`)
 - `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from legacy ai-infra deployments
 
@@ -188,8 +188,9 @@ All Nexus management scripts share common bash helpers in `deploy/scripts/_commo
 
 1. Deploy etcd + gateway on one host.
 2. Deploy backends (ollama/images/tts) on other hosts.
-3. Register each backend base URL in etcd with `deploy/scripts/register-service.sh`.
-4. Confirm registrations with `deploy/scripts/list-services.sh`.
+3. Start each compose-managed backend stack; the bundled registrar sidecar will publish its record into etcd after the service is healthy.
+4. Use `deploy/scripts/register-service.sh` only for non-compose or externally managed backends.
+5. Confirm registrations with `deploy/scripts/list-services.sh`.
 
 ## Service Profiles
 
@@ -737,7 +738,7 @@ IMAGES_HTTP_BASE_URL=http://ada2:7860
 
 ### Etcd Service Discovery
 
-Nexus uses etcd as the default service registry. Services (or an operator) should register records under `/nexus/services/<name>` with `base_url` and `metadata_url` values. The gateway polls etcd on startup and at intervals, and will fall back to environment defaults if etcd is unavailable.
+Nexus uses etcd as the default service registry. Compose-managed backend stacks now include a registrar sidecar that writes `/nexus/services/<name>` automatically after the service becomes healthy, using the configured `*_BASE_URL` value for that backend. Use `deploy/scripts/register-service.sh` for non-compose or externally managed services. The gateway polls etcd on startup and at intervals, and will fall back to environment defaults if etcd is unavailable.
 
 ### Network Options
 

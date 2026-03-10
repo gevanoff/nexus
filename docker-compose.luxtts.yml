@@ -45,6 +45,25 @@ services:
       retries: 3
       start_period: 30s
 
+  luxtts-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=luxtts
+      - NEXUS_SERVICE_BASE_URL=${LUXTTS_BASE_URL:-http://luxtts:9170}
+      - NEXUS_SERVICE_HEALTH_URL=http://luxtts:9170/readyz
+      - NEXUS_SERVICE_METADATA_URL=${LUXTTS_BASE_URL:-http://luxtts:9170}/v1/metadata
+      - NEXUS_SERVICE_BACKEND_CLASS=luxtts
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - luxtts
+    networks:
+      - nexus
+    restart: unless-stopped
+
 networks:
   nexus:
     driver: bridge

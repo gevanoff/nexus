@@ -26,6 +26,24 @@ services:
       - nexus
     restart: unless-stopped
 
+  lighton-ocr-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=lighton-ocr
+      - NEXUS_SERVICE_BASE_URL=${LIGHTON_OCR_API_BASE_URL:-http://lighton-ocr:9155}
+      - NEXUS_SERVICE_HEALTH_URL=http://lighton-ocr:9155/readyz
+      - NEXUS_SERVICE_BACKEND_CLASS=lighton_ocr
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - lighton-ocr
+    networks:
+      - nexus
+    restart: unless-stopped
+
 networks:
   nexus:
     driver: bridge

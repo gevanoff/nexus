@@ -29,6 +29,25 @@ services:
       retries: 3
       start_period: 60s
 
+  images-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=images
+      - NEXUS_SERVICE_BASE_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}
+      - NEXUS_SERVICE_HEALTH_URL=http://images:7860/readyz
+      - NEXUS_SERVICE_METADATA_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}/v1/metadata
+      - NEXUS_SERVICE_BACKEND_CLASS=gpu_heavy
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - images
+    networks:
+      - nexus
+    restart: unless-stopped
+
 networks:
   nexus:
     driver: bridge

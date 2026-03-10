@@ -220,7 +220,7 @@ Alias-aware prewarm options:
 - `services/ollama/scripts/install-native-macos.sh`: install/manage host-native Ollama (launchd)
 - `services/mlx/scripts/install-native-macos.sh`: install/manage host-native MLX (launchd)
 - `deploy/scripts/allowlist-mlx-macos.sh`: configure macOS `pf` allowlist for MLX port access
-- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: register service metadata in etcd
+- `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: manually register non-compose service metadata in etcd
 - `deploy/scripts/list-services.sh <etcd-url>`: list registered services in etcd
 
 ### Seed shared TTS refs

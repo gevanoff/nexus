@@ -145,6 +145,19 @@ def _service_name_to_backend_class(service_name: str, registry: BackendRegistry)
     return None
 
 
+def _normalize_backend_class(backend_class: str, registry: BackendRegistry) -> Optional[str]:
+    normalized = (backend_class or "").strip().lower()
+    if not normalized:
+        return None
+    normalized = normalized.replace("-", "_")
+    resolved = registry.resolve_backend_class(normalized)
+    if resolved in registry.static_backends:
+        return resolved
+    if normalized in registry.static_backends:
+        return normalized
+    return None
+
+
 def _backend_class_to_service_name(backend_class: str) -> str:
     return _BACKEND_CLASS_TO_SERVICE_NAME.get(backend_class, backend_class)
 
@@ -190,6 +203,7 @@ async def _fetch_etcd_service_records() -> Dict[str, ServiceRecord]:
             name=name,
             base_url=base_url,
             metadata_url=metadata_url,
+            backend_class=str(value.get("backend_class") or "").strip(),
             source="etcd",
         )
     return records
@@ -218,7 +232,9 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
     effective = dict(registry.static_backends)
     bound_records: Dict[str, ServiceRecord] = {}
     for record in service_records.values():
-        backend_class = _service_name_to_backend_class(record.name, registry)
+        backend_class = _normalize_backend_class(record.backend_class, registry)
+        if not backend_class:
+            backend_class = _service_name_to_backend_class(record.name, registry)
         if not backend_class:
             continue
         config = effective.get(backend_class)

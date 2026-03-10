@@ -25,6 +25,24 @@ services:
       retries: 3
       start_period: 30s
 
+  ollama-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=ollama
+      - NEXUS_SERVICE_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - NEXUS_SERVICE_HEALTH_URL=http://ollama:11434/api/version
+      - NEXUS_SERVICE_BACKEND_CLASS=ollama
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - ollama
+    networks:
+      - nexus
+    restart: unless-stopped
+
 networks:
   nexus:
     driver: bridge

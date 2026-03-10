@@ -24,6 +24,24 @@ services:
       - nexus
     restart: unless-stopped
 
+  sdxl-turbo-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=sdxl-turbo
+      - NEXUS_SERVICE_BASE_URL=${SDXL_TURBO_BASE_URL:-http://sdxl-turbo:9050}
+      - NEXUS_SERVICE_HEALTH_URL=http://sdxl-turbo:9050/readyz
+      - NEXUS_SERVICE_BACKEND_CLASS=gpu_fast
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - sdxl-turbo
+    networks:
+      - nexus
+    restart: unless-stopped
+
 networks:
   nexus:
     driver: bridge

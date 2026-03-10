@@ -35,9 +35,13 @@ Service registration value shape:
 {
   "name": "skyreels-v2",
   "base_url": "http://ai1:9180",
-  "metadata_url": "http://ai1:9180/v1/metadata"
+  "metadata_url": "http://ai1:9180/v1/metadata",
+  "backend_class": "skyreels_v2"
 }
 ```
+
+`metadata_url` and `backend_class` are optional.
+Use `backend_class` when the registry record should bind directly to a known gateway backend class instead of relying only on service-name mapping.
 
 Optional host status value shape:
 
@@ -218,6 +222,15 @@ The restore script:
 - restarts etcd
 
 ## Service Registration
+
+Most gateway-facing compose services now include a small registrar sidecar.
+When the service becomes healthy, the sidecar writes or refreshes `/nexus/services/<name>` in etcd automatically using the same `*_BASE_URL` env values the gateway already understands.
+
+Auto-registration tuning:
+
+- `NEXUS_REGISTRATION_INTERVAL_SEC` controls how often the record is refreshed.
+- `NEXUS_REGISTRATION_TIMEOUT_SEC` controls HTTP timeout for health and etcd calls.
+- `ETCD_URL` still determines which etcd endpoint receives the registration.
 
 Register a service manually:
 

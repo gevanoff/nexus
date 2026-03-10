@@ -37,6 +37,25 @@ services:
       retries: 3
       start_period: 30s
 
+  tts-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=tts
+      - NEXUS_SERVICE_BASE_URL=${POCKET_TTS_BASE_URL:-http://tts:9940}
+      - NEXUS_SERVICE_HEALTH_URL=http://tts:9940/readyz
+      - NEXUS_SERVICE_METADATA_URL=${POCKET_TTS_BASE_URL:-http://tts:9940}/v1/metadata
+      - NEXUS_SERVICE_BACKEND_CLASS=pocket_tts
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - tts
+    networks:
+      - nexus
+    restart: unless-stopped
+
 networks:
   nexus:
     driver: bridge
