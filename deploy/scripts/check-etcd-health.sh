@@ -64,9 +64,9 @@ echo "Endpoints: ${ENDPOINTS}"
 
 docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 || ns_die "Container not found: $CONTAINER_NAME"
 
-docker exec "$CONTAINER_NAME" env ETCDCTL_API=3 /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" endpoint health
-docker exec "$CONTAINER_NAME" env ETCDCTL_API=3 /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" endpoint status --write-out=table
+docker exec -e ETCDCTL_API=3 "$CONTAINER_NAME" /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" endpoint health
+docker exec -e ETCDCTL_API=3 "$CONTAINER_NAME" /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" endpoint status --write-out=table
 
 if [[ "$SHOW_MEMBERS" == "true" ]]; then
-  docker exec "$CONTAINER_NAME" env ETCDCTL_API=3 /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" member list --write-out=table
+  docker exec -e ETCDCTL_API=3 "$CONTAINER_NAME" /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" member list --write-out=table
 fi

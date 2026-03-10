@@ -74,7 +74,7 @@ echo "Endpoints: ${ENDPOINTS}"
 echo "Output: ${OUTPUT_PATH}"
 
 docker exec "$CONTAINER_NAME" rm -f "$tmp_snapshot" >/dev/null 2>&1 || true
-docker exec "$CONTAINER_NAME" env ETCDCTL_API=3 /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" snapshot save "$tmp_snapshot"
+docker exec -e ETCDCTL_API=3 "$CONTAINER_NAME" /usr/local/bin/etcdctl --endpoints="$ENDPOINTS" snapshot save "$tmp_snapshot"
 docker cp "${CONTAINER_NAME}:${tmp_snapshot}" "$OUTPUT_PATH"
 docker exec "$CONTAINER_NAME" rm -f "$tmp_snapshot" >/dev/null 2>&1 || true
 

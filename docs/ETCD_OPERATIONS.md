@@ -140,6 +140,12 @@ Common cases:
 - Peer connectivity failure:
   confirm both hosts can reach each other on `2380`; etcd peer traffic must work in both directions.
 
+Ownership note:
+
+- `./.runtime/etcd/data` becoming `root:root` is expected with the current compose setup because the etcd container writes that directory as root.
+- That ownership alone does not mean the member is unhealthy.
+- If you need to delete or move the data dir during recovery, use `sudo` on the host.
+
 Important:
 
 - A 2-member etcd cluster is not fault-tolerant. If either member is down, quorum is at risk.
