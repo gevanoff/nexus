@@ -145,26 +145,35 @@ done < <(
   } | awk 'NF {print tolower($0)}' | sort -u
 )
 
+to_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 is_local_target() {
   local ssh_target="$1"
   local advertise_host="$2"
   local ssh_host="${ssh_target#*@}"
+  local ssh_host_lc
+  local advertise_host_lc
   local candidate
 
-  case "${ssh_host,,}" in
+  ssh_host_lc="$(to_lower "$ssh_host")"
+  advertise_host_lc="$(to_lower "$advertise_host")"
+
+  case "$ssh_host_lc" in
     localhost|127.0.0.1|::1)
       return 0
       ;;
   esac
-  case "${advertise_host,,}" in
+  case "$advertise_host_lc" in
     localhost|127.0.0.1|::1)
       return 0
       ;;
   esac
 
   for candidate in "${local_hostnames[@]}"; do
-    [[ "${ssh_host,,}" == "$candidate" ]] && return 0
-    [[ "${advertise_host,,}" == "$candidate" ]] && return 0
+    [[ "$ssh_host_lc" == "$candidate" ]] && return 0
+    [[ "$advertise_host_lc" == "$candidate" ]] && return 0
   done
   return 1
 }
