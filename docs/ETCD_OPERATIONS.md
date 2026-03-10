@@ -73,22 +73,40 @@ For each host, set:
 - `ETCD_INITIAL_CLUSTER_STATE`
 - `ETCD_INITIAL_CLUSTER_TOKEN`
 
-Use the helper script to write those values into the host env file:
+Use the helper script to write those values into the host env file.
+
+If you want a 3-member cluster across `ai1`, `ai2`, and `ada2`, all three hosts must use the same:
+
+- `ETCD_INITIAL_CLUSTER`
+- `ETCD_INITIAL_CLUSTER_TOKEN`
+- `ETCD_INITIAL_CLUSTER_STATE`
+
+For a brand-new 3-member bootstrap, all three members must start from empty data dirs.
+If one host still has old etcd data, the fresh members will report cluster ID mismatch and remain unhealthy.
+
+Example 3-member cluster string:
+
+```text
+ai1-etcd=http://ai1:2380,ai2-etcd=http://ai2:2380,ada2-etcd=http://ada2:2380
+```
+
+Example on `ai1`:
 
 ```bash
 ./deploy/scripts/init-etcd-cluster.sh \
   --name ai1-etcd \
   --client-url http://ai1:2379 \
   --peer-url http://ai1:2380 \
-  --initial-cluster ai1-etcd=http://ai1:2380,ada2-etcd=http://ada2:2380
+  --initial-cluster ai1-etcd=http://ai1:2380,ai2-etcd=http://ai2:2380,ada2-etcd=http://ada2:2380
 ```
 
-Run the equivalent command on `ada2` with its own member name and URLs.
+Run the equivalent command on `ai2` and `ada2` with their own member names and URLs.
 
 Keep `ETCD_URL` separate from cluster member advertisement.
 If gateway and etcd run in the same compose stack on a host, leave `ETCD_URL` pointed at the local compose service, for example `http://etcd:2379`.
 
-Then start etcd on each host:
+Then start etcd on each host.
+For a brand-new cluster, order is not important as long as all intended members are configured with the same cluster string and token:
 
 ```bash
 docker compose -f docker-compose.etcd.yml up -d
@@ -134,11 +152,17 @@ grep '^ETCD_' .env
 Common cases:
 
 - Fresh bootstrap, no important data yet:
-  stop etcd, remove `./.runtime/etcd/data`, rerun `init-etcd-cluster.sh`, and start etcd again.
+  stop etcd on every member that belongs to that cluster, remove each member's `./.runtime/etcd/data`, rerun `init-etcd-cluster.sh` with the same cluster string on each host, and start them again.
 - Existing cluster, member data is corrupt or mismatched:
   restore from snapshot or remove/re-add the member with `etcdctl member remove` and `member add` before restarting it.
 - Peer connectivity failure:
   confirm both hosts can reach each other on `2380`; etcd peer traffic must work in both directions.
+
+Full rebuild note:
+
+- If `ai2` is part of the cluster, wiping only `ai1` and `ada2` is not a full rebuild.
+- A surviving `ai2` member will keep its old cluster ID, and the wiped members will fail to join it if they were bootstrapped as a different new cluster.
+- A true clean rebuild requires stopping and wiping all members that appear in `ETCD_INITIAL_CLUSTER`.
 
 Ownership note:
 
