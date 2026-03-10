@@ -241,13 +241,20 @@ Register a service manually:
 List registered services:
 
 ```bash
+./deploy/scripts/list-services.sh
+```
+
+By default the script reads Nexus env config and targets the local host-mapped etcd port, typically `http://localhost:${ETCD_PORT}`.
+Pass an explicit URL only when you want to query a different member.
+
+```bash
 ./deploy/scripts/list-services.sh http://ai1:2379
 ```
 
 Use raw decoded JSON instead of the default table view:
 
 ```bash
-./deploy/scripts/list-services.sh --json http://ai1:2379
+./deploy/scripts/list-services.sh --json
 ```
 
 ## Operational Guidance

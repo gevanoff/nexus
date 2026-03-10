@@ -14,18 +14,56 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 NS_AUTO_YES="false"
 NS_OUTPUT_FORMAT="table"
+DEFAULT_ETCD_URL=""
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/list-services.sh [--yes] [--json] <etcd-url>
+Usage: deploy/scripts/list-services.sh [--yes] [--json] [etcd-url]
 
 Example:
-  deploy/scripts/list-services.sh http://etcd:2379
+  deploy/scripts/list-services.sh
+  deploy/scripts/list-services.sh http://ai1:2379
 
 Options:
   --yes    Non-interactive mode (assume "yes" for install prompts)
   --json   Print decoded service records as JSON
 EOF
+}
+
+resolve_default_etcd_url() {
+  local env_file
+  env_file="$(ns_guess_env_file "$ROOT_DIR")"
+
+  local etcd_port
+  etcd_port="$(ns_env_get "$env_file" ETCD_PORT "2379")"
+  if ! ns_is_valid_port "$etcd_port"; then
+    etcd_port="2379"
+  fi
+
+  local configured_url
+  configured_url="$(ns_env_get "$env_file" ETCD_URL "http://localhost:${etcd_port}")"
+  if [[ -z "$configured_url" ]]; then
+    echo "http://localhost:${etcd_port}"
+    return 0
+  fi
+
+  local host_part
+  host_part="$($PYTHON - "$configured_url" <<'PY'
+from urllib.parse import urlparse
+import sys
+parsed = urlparse(sys.argv[1])
+print((parsed.hostname or "").strip().lower())
+PY
+)"
+
+  case "$host_part" in
+    ""|0.0.0.0|127.0.0.1|localhost|etcd)
+      echo "http://localhost:${etcd_port}"
+      ;;
+    *)
+      echo "$configured_url"
+      ;;
+  esac
 }
 
 parse_args() {
@@ -58,15 +96,17 @@ parse_args() {
     esac
   done
 
-  if [[ $# -lt 1 ]]; then
+  if [[ $# -gt 1 ]]; then
     usage >&2
     exit 1
   fi
 
-  etcd_url="$1"
+  if [[ $# -eq 1 ]]; then
+    etcd_url="$1"
+  else
+    etcd_url="$DEFAULT_ETCD_URL"
+  fi
 }
-
-parse_args "$@"
 
 ns_print_header "Ensuring prerequisites"
 ns_ensure_prereqs false true false false true false || true
@@ -78,6 +118,10 @@ if [[ -z "$PYTHON" ]]; then
   ns_print_error "python3/python is required but not installed."
   exit 1
 fi
+
+DEFAULT_ETCD_URL="$(resolve_default_etcd_url)"
+
+parse_args "$@"
 
 payload=$($PYTHON - <<'PY'
 import base64, json
@@ -94,9 +138,10 @@ response="$(curl -fsS -X POST "${etcd_url%/}/v3/kv/range" \
   -H "Content-Type: application/json" \
   -d "$payload")"
 
-$PYTHON - "$NS_OUTPUT_FORMAT" <<'PY' <<<"$response"
+RESPONSE_JSON="$response" $PYTHON - "$NS_OUTPUT_FORMAT" <<'PY'
 import base64
 import json
+import os
 import sys
 
 
@@ -105,7 +150,7 @@ def decode(raw: str) -> str:
 
 
 output_format = sys.argv[1]
-raw = sys.stdin.read()
+raw = os.environ.get("RESPONSE_JSON", "")
 data = json.loads(raw) if raw.strip() else {}
 
 records = []
