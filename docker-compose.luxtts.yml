@@ -51,9 +51,9 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=luxtts
-      - NEXUS_SERVICE_BASE_URL=${LUXTTS_BASE_URL:-http://luxtts:9170}
+      - NEXUS_SERVICE_BASE_URL=${LUXTTS_ADVERTISE_BASE_URL:-${LUXTTS_BASE_URL:-http://luxtts:9170}}
       - NEXUS_SERVICE_HEALTH_URL=http://luxtts:9170/readyz
-      - NEXUS_SERVICE_METADATA_URL=${LUXTTS_BASE_URL:-http://luxtts:9170}/v1/metadata
+      - NEXUS_SERVICE_METADATA_URL=${LUXTTS_ADVERTISE_BASE_URL:-${LUXTTS_BASE_URL:-http://luxtts:9170}}/v1/metadata
       - NEXUS_SERVICE_BACKEND_CLASS=luxtts
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}

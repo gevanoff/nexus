@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=lighton-ocr
-      - NEXUS_SERVICE_BASE_URL=${LIGHTON_OCR_API_BASE_URL:-http://lighton-ocr:9155}
+      - NEXUS_SERVICE_BASE_URL=${LIGHTON_OCR_ADVERTISE_BASE_URL:-${LIGHTON_OCR_API_BASE_URL:-http://lighton-ocr:9155}}
       - NEXUS_SERVICE_HEALTH_URL=http://lighton-ocr:9155/readyz
       - NEXUS_SERVICE_BACKEND_CLASS=lighton_ocr
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}

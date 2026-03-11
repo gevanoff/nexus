@@ -38,7 +38,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=mlx
-      - NEXUS_SERVICE_BASE_URL=${MLX_BASE_URL:-http://mlx:10240/v1}
+      - NEXUS_SERVICE_BASE_URL=${MLX_ADVERTISE_BASE_URL:-${MLX_BASE_URL:-http://mlx:10240/v1}}
       - NEXUS_SERVICE_HEALTH_URL=http://mlx:10240/v1/models
       - NEXUS_SERVICE_BACKEND_CLASS=local_mlx
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}

@@ -43,9 +43,9 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=tts
-      - NEXUS_SERVICE_BASE_URL=${POCKET_TTS_BASE_URL:-http://tts:9940}
+      - NEXUS_SERVICE_BASE_URL=${POCKET_TTS_ADVERTISE_BASE_URL:-${POCKET_TTS_BASE_URL:-http://tts:9940}}
       - NEXUS_SERVICE_HEALTH_URL=http://tts:9940/readyz
-      - NEXUS_SERVICE_METADATA_URL=${POCKET_TTS_BASE_URL:-http://tts:9940}/v1/metadata
+      - NEXUS_SERVICE_METADATA_URL=${POCKET_TTS_ADVERTISE_BASE_URL:-${POCKET_TTS_BASE_URL:-http://tts:9940}}/v1/metadata
       - NEXUS_SERVICE_BACKEND_CLASS=pocket_tts
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}

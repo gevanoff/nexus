@@ -39,6 +39,7 @@ Important:
 - The gateway and etcd `images` service record must point to the images shim on port `7860`.
 - Raw InvokeAI on port `9090` is an upstream runtime for the shim and does not implement `POST /v1/images/generations`.
 - If the UI is hitting `http://<host>:9090/v1/images/generations`, `IMAGES_HTTP_BASE_URL` or the `images` etcd record is wrong.
+- In multi-host deployments, leave `INVOKEAI_BASE_URL` as the local upstream the shim should call, and set `IMAGES_ADVERTISE_BASE_URL` to the host-routable URL the gateway should call.
 
 ## Quick test
 

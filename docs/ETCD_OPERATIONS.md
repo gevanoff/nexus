@@ -228,6 +228,10 @@ When the service becomes healthy, the sidecar writes `/nexus/services/<name>` in
 If the service later fails its health check, or the stack is stopped cleanly, the sidecar revokes the lease immediately.
 If the service or registrar crashes uncleanly, the key will expire automatically once the lease TTL elapses without keepalives.
 
+In single-host compose setups, `*_BASE_URL` can be an internal Docker DNS name like `http://images:7860`.
+In multi-host rollouts, etcd should advertise host-routable URLs instead.
+Use `*_ADVERTISE_BASE_URL` to control what gets published into etcd without changing the service's own internal upstream URL wiring.
+
 Some compose stacks may also publish operational upstream runtimes that are not direct gateway backends, for example `invokeai-runtime`.
 Those records are useful for operator visibility and shim dependencies, but they do not automatically become gateway backends unless their service name or `backend_class` maps to one.
 

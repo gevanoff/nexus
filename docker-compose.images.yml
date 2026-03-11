@@ -35,9 +35,9 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=images
-      - NEXUS_SERVICE_BASE_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}
+      - NEXUS_SERVICE_BASE_URL=${IMAGES_ADVERTISE_BASE_URL:-${IMAGES_HTTP_BASE_URL:-http://images:7860}}
       - NEXUS_SERVICE_HEALTH_URL=http://images:7860/readyz
-      - NEXUS_SERVICE_METADATA_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}/v1/metadata
+      - NEXUS_SERVICE_METADATA_URL=${IMAGES_ADVERTISE_BASE_URL:-${IMAGES_HTTP_BASE_URL:-http://images:7860}}/v1/metadata
       - NEXUS_SERVICE_BACKEND_CLASS=gpu_heavy
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}

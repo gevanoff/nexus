@@ -26,7 +26,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=skyreels-v2
-      - NEXUS_SERVICE_BASE_URL=${SKYREELS_V2_BASE_URL:-http://skyreels-v2:9180}
+      - NEXUS_SERVICE_BASE_URL=${SKYREELS_V2_ADVERTISE_BASE_URL:-${SKYREELS_V2_BASE_URL:-http://skyreels-v2:9180}}
       - NEXUS_SERVICE_HEALTH_URL=http://skyreels-v2:9180/readyz
       - NEXUS_SERVICE_BACKEND_CLASS=skyreels_v2
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}

@@ -31,7 +31,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=ollama
-      - NEXUS_SERVICE_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - NEXUS_SERVICE_BASE_URL=${OLLAMA_ADVERTISE_BASE_URL:-${OLLAMA_BASE_URL:-http://ollama:11434}}
       - NEXUS_SERVICE_HEALTH_URL=http://ollama:11434/api/version
       - NEXUS_SERVICE_BACKEND_CLASS=ollama
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}

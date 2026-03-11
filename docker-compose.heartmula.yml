@@ -26,7 +26,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=heartmula
-      - NEXUS_SERVICE_BASE_URL=${HEARTMULA_BASE_URL:-http://heartmula:9185}
+      - NEXUS_SERVICE_BASE_URL=${HEARTMULA_ADVERTISE_BASE_URL:-${HEARTMULA_BASE_URL:-http://heartmula:9185}}
       - NEXUS_SERVICE_HEALTH_URL=http://heartmula:9185/readyz
       - NEXUS_SERVICE_BACKEND_CLASS=heartmula_music
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}

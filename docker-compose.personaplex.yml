@@ -29,7 +29,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=personaplex
-      - NEXUS_SERVICE_BASE_URL=${PERSONAPLEX_BASE_URL:-http://personaplex:9160}
+      - NEXUS_SERVICE_BASE_URL=${PERSONAPLEX_ADVERTISE_BASE_URL:-${PERSONAPLEX_BASE_URL:-http://personaplex:9160}}
       - NEXUS_SERVICE_HEALTH_URL=http://personaplex:9160/readyz
       - NEXUS_SERVICE_BACKEND_CLASS=personaplex
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}

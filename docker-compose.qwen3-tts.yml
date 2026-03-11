@@ -63,9 +63,9 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=qwen3-tts
-      - NEXUS_SERVICE_BASE_URL=${QWEN3_TTS_BASE_URL:-http://qwen3-tts:9175}
+      - NEXUS_SERVICE_BASE_URL=${QWEN3_TTS_ADVERTISE_BASE_URL:-${QWEN3_TTS_BASE_URL:-http://qwen3-tts:9175}}
       - NEXUS_SERVICE_HEALTH_URL=http://qwen3-tts:9175/readyz
-      - NEXUS_SERVICE_METADATA_URL=${QWEN3_TTS_BASE_URL:-http://qwen3-tts:9175}/v1/metadata
+      - NEXUS_SERVICE_METADATA_URL=${QWEN3_TTS_ADVERTISE_BASE_URL:-${QWEN3_TTS_BASE_URL:-http://qwen3-tts:9175}}/v1/metadata
       - NEXUS_SERVICE_BACKEND_CLASS=qwen3_tts
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}

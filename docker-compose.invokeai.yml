@@ -56,7 +56,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=invokeai-runtime
-      - NEXUS_SERVICE_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
+      - NEXUS_SERVICE_BASE_URL=${INVOKEAI_ADVERTISE_BASE_URL:-${INVOKEAI_BASE_URL:-http://invokeai:9090}}
       - NEXUS_SERVICE_HEALTH_URLS=http://invokeai:9090/api/v1/app/version,http://invokeai:9090/api/v1/version,http://invokeai:9090/api/v1/app
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}

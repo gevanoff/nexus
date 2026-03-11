@@ -30,7 +30,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - NEXUS_SERVICE_NAME=sdxl-turbo
-      - NEXUS_SERVICE_BASE_URL=${SDXL_TURBO_BASE_URL:-http://sdxl-turbo:9050}
+      - NEXUS_SERVICE_BASE_URL=${SDXL_TURBO_ADVERTISE_BASE_URL:-${SDXL_TURBO_BASE_URL:-http://sdxl-turbo:9050}}
       - NEXUS_SERVICE_HEALTH_URL=http://sdxl-turbo:9050/readyz
       - NEXUS_SERVICE_BACKEND_CLASS=gpu_fast
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
