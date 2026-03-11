@@ -1,0 +1,53 @@
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.11.3
+    container_name: nexus-mediamtx
+    ports:
+      - "${MEDIAMTX_RTMP_PORT:-1935}:1935"
+      - "${MEDIAMTX_HLS_PORT:-8888}:8888"
+      - "${MEDIAMTX_WEBRTC_PORT:-8889}:8889"
+      - "${MEDIAMTX_RTSP_PORT:-8554}:8554"
+      - "${MEDIAMTX_API_PORT:-9997}:9997"
+    environment:
+      - MTX_RTSP=yes
+      - MTX_RTMP=yes
+      - MTX_HLS=yes
+      - MTX_WEBRTC=yes
+      - MTX_API=yes
+      - MTX_METRICS=${MEDIAMTX_ENABLE_METRICS:-no}
+      - MTX_AUTHMETHOD=${MEDIAMTX_AUTH_METHOD:-internal}
+      - MTX_WEBRTCADDITIONALHOSTS=${MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS:-}
+    volumes:
+      - ./services/mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - ./.runtime/mediamtx/recordings:/recordings
+    networks:
+      - nexus
+    restart: unless-stopped
+
+  mediamtx-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=mediamtx
+      - NEXUS_SERVICE_BASE_URL=${MEDIAMTX_ADVERTISE_BASE_URL:-http://mediamtx:8888}
+      - NEXUS_SERVICE_HEALTH_URLS=http://mediamtx:9997/v3/config/get,http://mediamtx:8888/
+      - NEXUS_SERVICE_METADATA_URL=${MEDIAMTX_API_ADVERTISE_URL:-http://mediamtx:9997}/v3/config/get
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+      - NEXUS_REGISTRATION_LEASE_TTL_SEC=${NEXUS_REGISTRATION_LEASE_TTL_SEC:-90}
+    depends_on:
+      - mediamtx
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

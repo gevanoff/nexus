@@ -51,6 +51,12 @@ Example: deploy an NVIDIA image stack on Linux:
 ./deploy/scripts/deploy.sh --components invokeai,images,sdxl-turbo prod main
 ```
 
+Example: deploy the streaming stack on `ai1`:
+
+```bash
+./deploy/scripts/deploy.sh --components mediamtx prod main
+```
+
 Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:
 
 ```bash

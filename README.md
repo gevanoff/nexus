@@ -212,6 +212,7 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` from local audio files with content-hash dedup
 - `deploy/scripts/prewarm-models.sh`: prewarm Ollama models (container or host-native mode)
 - `deploy/scripts/prewarm-mlx.sh`: prewarm MLX model runtime (host-native recommended)
+- `docker-compose.mediamtx.yml`: RTMP ingest + HLS/WebRTC playback stack for multi-consumer streaming on `ai1`
 
 Alias-aware prewarm options:
 
@@ -346,6 +347,11 @@ Nexus includes the following services:
 - OpenAI-compatible Qwen3-TTS shim
 - Proxy/subprocess runtime modes
 - **Port**: 9175
+
+### MediaMTX (`services/mediamtx/`)
+- RTMP ingest with HLS/WebRTC/RTSP fan-out for multiple consumers
+- Intended for streaming workloads on `ai1`
+- **Ports**: 1935, 8888, 8889, 8554, 9997
 
 ### Telegram Bot (`services/telegram-bot/`)
 - Telegram chat bridge into Gateway endpoints

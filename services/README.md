@@ -100,6 +100,13 @@ Each service is:
 - **Status**: 🚧 Nexus-owned service with internal pipeline runtime and optional upstream bootstrap
 - **Documentation**: [heartmula/README.md](heartmula/README.md)
 
+#### MediaMTX (`mediamtx/`)
+- **Purpose**: RTMP ingest and multi-protocol stream fan-out
+- **Ports**: 1935 (RTMP), 8888 (HLS), 8889 (WebRTC), 8554 (RTSP), 9997 (API)
+- **Capabilities**: multi-consumer stream delivery for browser and non-browser clients
+- **Status**: ✅ Compose-managed operational streaming component
+- **Documentation**: [mediamtx/README.md](mediamtx/README.md)
+
 #### TTS (`tts/`)
 - **Purpose**: Text-to-speech synthesis
 - **Port**: 9940

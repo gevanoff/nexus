@@ -1,0 +1,25 @@
+logLevel: info
+
+api: yes
+apiAddress: :9997
+
+rtsp: yes
+rtspAddress: :8554
+
+rtmp: yes
+rtmpAddress: :1935
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsVariant: lowLatency
+
+webrtc: yes
+webrtcAddress: :8889
+
+record: no
+recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+
+paths:
+  ~^live/.+$:
+    source: publisher
