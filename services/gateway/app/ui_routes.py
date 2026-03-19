@@ -78,6 +78,16 @@ def _skyreels_base_url() -> str:
     )
 
 
+def _followyourcanvas_base_url() -> str:
+    return (
+        _backend_base_url("followyourcanvas")
+        or (getattr(S, "FOLLOWYOURCANVAS_BASE_URL", "") or getattr(S, "FYC_API_BASE_URL", "") or os.environ.get("FOLLOWYOURCANVAS_BASE_URL") or os.environ.get("FYC_API_BASE_URL") or "").strip().rstrip("/")
+    )
+
+
+_VIDEO_UI_COMPATIBLE_BACKENDS = {"skyreels_v2"}
+
+
 def _personaplex_base_url() -> str:
     return (
         _backend_base_url("personaplex")
@@ -503,6 +513,73 @@ def _image_backend_display_name(backend_class: str, description: str = "") -> st
     return (backend_class or "").strip() or "images"
 
 
+def _ui_backend_choices(
+    route_kind: Literal["music", "tts", "video", "ocr"],
+    default_backend_class: str,
+    *,
+    allowed_backend_classes: Optional[set[str]] = None,
+) -> Dict[str, Any]:
+    payload = _capability_availability(route_kind)
+    available = payload.get("available_backends") if isinstance(payload, dict) else []
+    if not isinstance(available, list):
+        available = []
+    if allowed_backend_classes is not None:
+        allowed = {
+            str(item).strip().lower()
+            for item in allowed_backend_classes
+            if str(item).strip()
+        }
+        available = [
+            item
+            for item in available
+            if isinstance(item, dict) and str(item.get("backend_class") or "").strip().lower() in allowed
+        ]
+        payload["available_backends"] = available
+        payload["available_count"] = len(available)
+    selected = (default_backend_class or "").strip()
+    if not any(isinstance(item, dict) and item.get("backend_class") == selected for item in available) and available:
+        first = available[0]
+        if isinstance(first, dict):
+            selected = str(first.get("backend_class") or "")
+    payload["default_backend_class"] = selected
+    return payload
+
+
+def _resolve_ui_backend_class(*, requested_backend_class: str, default_backend_class: str, route_kind: Literal["music", "tts", "video", "ocr"]) -> str:
+    backend_class = (requested_backend_class or "").strip() or (default_backend_class or "").strip()
+    reg = get_registry()
+    cfg = reg.get_backend(backend_class)
+    if not cfg or not cfg.supports(route_kind):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"{route_kind}_backend_unavailable",
+                "backend_class": backend_class,
+                **_capability_availability(route_kind),
+            },
+        )
+    return cfg.backend_class
+
+
+def _video_backend_request_settings(backend_class: str) -> Tuple[str, str, float]:
+    normalized = (backend_class or "").strip().lower()
+    if normalized == "followyourcanvas":
+        base = _followyourcanvas_base_url()
+        path = (getattr(S, "FYC_GENERATE_PATH", "") or "/v1/videos/generations").strip()
+        timeout = getattr(S, "FYC_TIMEOUT_SEC", 1800.0) or 1800.0
+    else:
+        base = _backend_base_url(backend_class) or _skyreels_base_url()
+        path = (getattr(S, "SKYREELS_GENERATE_PATH", "") or "/v1/videos/generations").strip()
+        timeout = getattr(S, "SKYREELS_TIMEOUT_SEC", 3600.0) or 3600.0
+    if not path.startswith("/"):
+        path = "/" + path
+    try:
+        timeout_f = float(timeout)
+    except Exception:
+        timeout_f = 3600.0
+    return base.rstrip("/"), path, timeout_f
+
+
 def _image_backend_option_profile(backend_class: str) -> Dict[str, Any]:
     common: Dict[str, Dict[str, Any]] = {
         "seed": {
@@ -573,18 +650,25 @@ def _image_backend_option_profile(backend_class: str) -> Dict[str, Any]:
     if backend == "gpu_fast":
         common["steps"].update({"default": 4, "max": 12, "help": "Turbo backends usually prefer low step counts for fast turnaround."})
         common["guidance_scale"].update({"default": 0.0, "help": "SDXL-Turbo commonly works best with guidance near 0."})
+        size_options = ["512x512", "768x768"]
+        default_size = "512x512"
     elif backend == "gpu_heavy":
         common["steps"].update({"default": 30})
         common["guidance_scale"].update({"default": 6.0})
         common["scheduler"]["enabled"] = True
         common["style"]["enabled"] = True
         common["quality"]["enabled"] = True
+        size_options = ["512x512", "768x768", "1024x1024"]
+        default_size = "1024x1024"
+    else:
+        size_options = ["512x512", "768x768", "1024x1024"]
+        default_size = "1024x1024"
 
     return {
         "fields": common,
-        "size_options": ["512x512", "768x768", "1024x1024"],
+        "size_options": size_options,
         "defaults": {
-            "size": "1024x1024",
+            "size": default_size,
             "n": 1,
             "steps": common["steps"].get("default"),
             "guidance_scale": common["guidance_scale"].get("default"),
@@ -1525,18 +1609,39 @@ async def ui_admin_users(req: Request) -> HTMLResponse:
 @router.post("/ui/api/music", include_in_schema=False)
 async def ui_api_music(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
-    user = _require_user(req)
+    _require_user(req)
     body = await req.json()
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be an object")
 
+    requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
+    if "backend_class" in body or "backend" in body:
+        body = dict(body)
+        body.pop("backend_class", None)
+        body.pop("backend", None)
+
+    backend_class = _resolve_ui_backend_class(
+        requested_backend_class=requested_backend_class,
+        default_backend_class=(getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "heartmula_music",
+        route_kind="music",
+    )
+    check_backend_ready(backend_class, route_kind="music")
+    await check_capability(backend_class, "music")
+
     # Best-effort: forward to music backend and return its normalized response.
     from app.music_backend import generate_music
 
+    admission = get_admission_controller()
+    acquired = False
     try:
-        out = await generate_music(backend_class=getattr(S, "MUSIC_BACKEND_CLASS", "heartmula_music"), body=body)
+        await admission.acquire(backend_class, "music")
+        acquired = True
+        out = await generate_music(backend_class=backend_class, body=body)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"music backend failed: {e}")
+    finally:
+        if acquired:
+            admission.release(backend_class, "music")
 
     return out
 
@@ -1549,25 +1654,27 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be an object")
 
+    requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
+    backend_class = _resolve_ui_backend_class(
+        requested_backend_class=requested_backend_class,
+        default_backend_class=(getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "skyreels_v2",
+        route_kind="video",
+    )
+    check_backend_ready(backend_class, route_kind="video")
+    await check_capability(backend_class, "video")
+
     request_id = getattr(req.state, "request_id", "")
-    base = _skyreels_base_url()
+    base, path, timeout = _video_backend_request_settings(backend_class)
     if not base:
-        raise HTTPException(status_code=404, detail="SkyReels base URL not configured")
-
-    path = (getattr(S, "SKYREELS_GENERATE_PATH", "") or "/v1/videos/generations").strip()
-    if not path.startswith("/"):
-        path = "/" + path
-
-    timeout = getattr(S, "SKYREELS_TIMEOUT_SEC", 3600.0) or 3600.0
-    try:
-        timeout = float(timeout)
-    except Exception:
-        timeout = 3600.0
+        raise HTTPException(status_code=404, detail=f"{backend_class} base URL not configured")
 
     payload = _normalize_skyreels_payload(body)
+    payload.pop("backend_class", None)
+    payload.pop("backend", None)
     logger.info(
-        "Video UI request forwarding request_id=%s base=%s path=%s payload_keys=%s",
+        "Video UI request forwarding request_id=%s backend_class=%s base=%s path=%s payload_keys=%s",
         request_id,
+        backend_class,
         base,
         path,
         sorted(payload.keys()),
@@ -1577,48 +1684,62 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
     if request_id:
         headers["X-Request-Id"] = request_id
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            resp = await client.post(f"{base}{path}", json=payload, headers=headers)
-        except httpx.RequestError as exc:
-            logger.warning(
-                "SkyReels request error request_id=%s base=%s path=%s error=%s",
-                request_id,
-                base,
-                path,
-                exc,
-            )
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "error": "skyreels_request_failed",
-                    "message": str(exc),
-                    "request_id": request_id,
-                },
-            )
+    admission = get_admission_controller()
+    acquired = False
+    try:
+        await admission.acquire(backend_class, "video")
+        acquired = True
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            try:
+                resp = await client.post(f"{base}{path}", json=payload, headers=headers)
+            except httpx.RequestError as exc:
+                logger.warning(
+                    "SkyReels request error request_id=%s base=%s path=%s error=%s",
+                    request_id,
+                    base,
+                    path,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "video_request_failed",
+                        "backend_class": backend_class,
+                        "message": str(exc),
+                        "request_id": request_id,
+                    },
+                )
 
-        try:
-            data = resp.json()
-        except Exception:
-            data = {"raw": resp.text}
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"raw": resp.text}
 
-        if resp.status_code >= 400:
-            logger.warning(
-                "SkyReels upstream error request_id=%s status=%s body=%s",
-                request_id,
-                resp.status_code,
-                data,
-            )
-            raise HTTPException(
-                status_code=resp.status_code,
-                detail={
-                    "error": "skyreels_upstream_error",
-                    "status_code": resp.status_code,
-                    "body": data,
-                    "request_id": request_id,
-                },
-            )
-        return data
+            if resp.status_code >= 400:
+                logger.warning(
+                    "SkyReels upstream error request_id=%s status=%s body=%s",
+                    request_id,
+                    resp.status_code,
+                    data,
+                )
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail={
+                        "error": "video_upstream_error",
+                        "backend_class": backend_class,
+                        "status_code": resp.status_code,
+                        "body": data,
+                        "request_id": request_id,
+                    },
+                )
+            if isinstance(data, dict):
+                gateway_meta = data.get("_gateway") if isinstance(data.get("_gateway"), dict) else {}
+                gateway_meta.update({"backend_class": backend_class, "base_url": base, "path": path})
+                data["_gateway"] = gateway_meta
+            return data
+    finally:
+        if acquired:
+            admission.release(backend_class, "video")
 
 
 def _normalize_skyreels_payload(body: Dict[str, Any]) -> Dict[str, Any]:
@@ -1716,6 +1837,31 @@ async def ui_api_tts_backends(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     _require_user(req)
     return _capability_availability("tts")
+
+
+@router.get("/ui/api/music/backends", include_in_schema=False)
+async def ui_api_music_backends(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    return _ui_backend_choices("music", (getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "heartmula_music")
+
+
+@router.get("/ui/api/video/backends", include_in_schema=False)
+async def ui_api_video_backends(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    return _ui_backend_choices(
+        "video",
+        (getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "skyreels_v2",
+        allowed_backend_classes=_VIDEO_UI_COMPATIBLE_BACKENDS,
+    )
+
+
+@router.get("/ui/api/ocr/backends", include_in_schema=False)
+async def ui_api_ocr_backends(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    return _ui_backend_choices("ocr", (getattr(S, "OCR_BACKEND_CLASS", "") or "").strip() or "lighton_ocr")
 
 
 @router.get("/ui/api/image/catalog", include_in_schema=False)
@@ -3376,7 +3522,7 @@ async def ui_chat_stream(req: Request):
             messages = [pmsg] + messages
     except Exception:
         pass
-    
+
     # Collect pre-stream events produced by server-side command handling.
     pre_events: list[dict] = []
 
@@ -3865,15 +4011,25 @@ async def ui_scan(req: Request) -> Dict[str, Any]:
     if not image_url:
         raise HTTPException(status_code=400, detail="image_url required")
 
+    requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
+    backend_class = _resolve_ui_backend_class(
+        requested_backend_class=requested_backend_class,
+        default_backend_class=(getattr(S, "OCR_BACKEND_CLASS", "") or "").strip() or "lighton_ocr",
+        route_kind="ocr",
+    )
+    check_backend_ready(backend_class, route_kind="ocr")
+    await check_capability(backend_class, "ocr")
+    admission = get_admission_controller()
+    await admission.acquire(backend_class, "ocr")
+
     try:
         import httpx
-        import os
 
-        base = _lighton_ocr_base_url()
+        base = _backend_base_url(backend_class) or _lighton_ocr_base_url()
         if not base:
             raise HTTPException(
                 status_code=503,
-                detail="LightOnOCR is not configured. Set LIGHTON_OCR_API_BASE_URL in the gateway env (not just in UI).",
+                detail=f"{backend_class} is not configured. Set its base_url in gateway config or env.",
             )
         timeout_sec = float(getattr(S, "LIGHTON_OCR_TIMEOUT_SEC", 120) or 120)
         timeout = httpx.Timeout(connect=10.0, read=timeout_sec, write=10.0, pool=10.0)
@@ -3886,10 +4042,17 @@ async def ui_scan(req: Request) -> Dict[str, Any]:
                     detail = resp.text
                 raise HTTPException(status_code=resp.status_code, detail=detail)
             try:
-                return resp.json()
+                data = resp.json()
+                if isinstance(data, dict):
+                    gateway_meta = data.get("_gateway") if isinstance(data.get("_gateway"), dict) else {}
+                    gateway_meta.update({"backend_class": backend_class, "base_url": base})
+                    data["_gateway"] = gateway_meta
+                return data
             except Exception:
                 raise HTTPException(status_code=502, detail=resp.text)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"ocr backend error: {type(e).__name__}: {e}")
+    finally:
+        admission.release(backend_class, "ocr")

@@ -1431,6 +1431,19 @@ def readyz() -> Dict[str, Any]:
     if last_exc is not None:
         raise last_exc
 
+    if not cfg.graph_template_path:
+        raise HTTPException(status_code=503, detail="SHIM_GRAPH_TEMPLATE_PATH is required for invokeai_queue mode")
+    if not os.path.isfile(cfg.graph_template_path):
+        raise HTTPException(status_code=503, detail=f"Graph template not found: {cfg.graph_template_path}")
+    try:
+        with open(cfg.graph_template_path, "r", encoding="utf-8") as f:
+            graph = json.load(f)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load graph template '{cfg.graph_template_path}': {exc}")
+    output_node_id = (cfg.output_node_id or "").strip() or _detect_output_node_id(graph)
+    if not output_node_id:
+        raise HTTPException(status_code=503, detail="SHIM_OUTPUT_NODE_ID not set and could not auto-detect output node")
+
     fmt = (cfg.graph_inputs_format or "auto").strip().lower()
     if fmt in {"flat", "inputs"}:
         effective_fmt = fmt
@@ -1449,6 +1462,8 @@ def readyz() -> Dict[str, Any]:
         "shim_model_input_mode": cfg.model_input_mode,
         "shim_graph_inputs_format": cfg.graph_inputs_format,
         "shim_graph_inputs_effective": effective_fmt,
+        "shim_graph_template_path": cfg.graph_template_path,
+        "shim_output_node_id": output_node_id,
         "shim_save_last_image_path": cfg.save_last_image_path,
         "invokeai_version": version,
     }

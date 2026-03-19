@@ -1,6 +1,8 @@
 (() => {
   const $ = (id) => document.getElementById(id);
 
+  const backendEl = $("backend");
+  const backendHintEl = $("backendHint");
   const styleEl = $("style");
   const lyricsEl = $("lyrics");
   const durationEl = $("duration");
@@ -16,6 +18,15 @@
   const metaEl = $("meta");
   const galleryEl = $("gallery");
   const debugEl = $("debug");
+
+  function handle401(resp) {
+    if (resp && resp.status === 401) {
+      const back = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/ui/login?next=${back}`;
+      return true;
+    }
+    return false;
+  }
 
   function setStatus(text, isError) {
     statusEl.textContent = text || "";
@@ -69,6 +80,9 @@
       duration: Math.max(1, Math.min(300, parseInt(String(durationEl.value || "15"), 10) || 15)),
     };
 
+    const backendClass = String(backendEl?.value || "").trim();
+    if (backendClass) body.backend_class = backendClass;
+
     if (style) body.style = style;
     if (lyrics) body.lyrics = lyrics;
 
@@ -104,6 +118,55 @@
     }
 
     return body;
+  }
+
+  async function loadBackends() {
+    if (!backendEl) return;
+    try {
+      const resp = await fetch("/ui/api/music/backends", { method: "GET", credentials: "same-origin" });
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        setStatus(`Failed to load music backends (HTTP ${resp.status}).`, true);
+        return;
+      }
+      const payload = await resp.json();
+      const list = Array.isArray(payload?.available_backends)
+        ? payload.available_backends
+        : Array.isArray(payload?.backends)
+          ? payload.backends
+          : [];
+      const defaultBackend = String(payload?.default_backend_class || "").trim();
+      backendEl.innerHTML = "";
+      for (const item of list) {
+        const backendClass = String(item?.backend_class || "").trim();
+        if (!backendClass) continue;
+        const opt = document.createElement("option");
+        opt.value = backendClass;
+        const health = item?.ready === false ? "not ready" : (item?.healthy === false ? "unhealthy" : "ready");
+        opt.textContent = item?.description ? `${backendClass} - ${item.description} (${health})` : `${backendClass} (${health})`;
+        backendEl.appendChild(opt);
+      }
+      if (defaultBackend) {
+        backendEl.value = defaultBackend;
+      } else if (backendEl.options.length > 0) {
+        backendEl.selectedIndex = 0;
+      }
+      if (backendHintEl) {
+        backendHintEl.textContent = list.length
+          ? `${list.length} music backend${list.length === 1 ? "" : "s"} available.`
+          : "No music backends are currently available.";
+      }
+      const details = document.querySelector("[data-backend-status]");
+      if (details instanceof HTMLElement) {
+        const values = list
+          .map((item) => String(item?.backend_class || "").trim())
+          .filter(Boolean)
+          .join(",");
+        if (values) details.setAttribute("data-backends", values);
+      }
+    } catch (e) {
+      setStatus(`Failed to load music backends: ${String(e?.message || e)}`, true);
+    }
   }
 
   function renderAudio(payload) {
@@ -157,14 +220,6 @@
     links.innerHTML = `
       <a href="${url}" target="_blank" rel="noreferrer">Open</a>
       <a href="#" data-copy="${url}">Copy URL</a>
-    div.innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:10px;">
-        <audio controls src="${url}"></audio>
-        <div style="display:flex; gap:12px; justify-content:flex-end;">
-          <a href="${url}" target="_blank" rel="noreferrer">Open</a>
-          <a href="#" data-copy="${url}">Copy URL</a>
-        </div>
-      </div>
     `;
 
     wrapper.appendChild(audio);
@@ -315,4 +370,5 @@
       // ignore
     }
   })();
+  void loadBackends();
 })();

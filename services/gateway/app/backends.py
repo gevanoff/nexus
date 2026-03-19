@@ -23,7 +23,7 @@ from app.config import S, logger
 from app.httpx_client import httpx_client as _httpx_client
 
 
-RouteKind = Literal["chat", "embeddings", "images", "music", "tts"]
+RouteKind = Literal["chat", "embeddings", "images", "music", "tts", "video", "ocr"]
 
 
 @dataclass(frozen=True)
@@ -341,7 +341,7 @@ def _capability_availability(route_kind: RouteKind) -> Dict[str, Any]:
 
 class AdmissionController:
     """Enforces concurrency limits with semaphore-based admission control.
-    
+
     Tracks inflight requests per (backend_class, route_kind) pair.
     Returns 429 immediately when limit is exceeded (no queueing).
     """
@@ -381,7 +381,7 @@ class AdmissionController:
 
     async def acquire(self, backend_class: str, route_kind: RouteKind):
         """Acquire a slot for the request. Raises HTTPException 429 if overloaded.
-        
+
         This is a non-blocking check - if the semaphore is at capacity,
         we immediately fail rather than waiting.
         """
@@ -566,7 +566,7 @@ async def check_capability(backend_class: str, route_kind: RouteKind):
     """Check if a backend supports a capability. Raises HTTPException if not."""
     registry = get_registry()
     backend = registry.get_backend(backend_class)
-    
+
     if backend is None:
         raise HTTPException(
             status_code=400,
@@ -577,7 +577,7 @@ async def check_capability(backend_class: str, route_kind: RouteKind):
                 **_capability_availability(route_kind),
             },
         )
-    
+
     if not backend.supports(route_kind):
         raise HTTPException(
             status_code=400,

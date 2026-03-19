@@ -187,7 +187,7 @@ async def generate_images(
             - mock: returns a placeholder SVG (always available)
             - http_a1111: proxies to an Automatic1111-compatible API (txt2img)
             - http_openai_images: proxies to an OpenAI-style images server (POST /v1/images/generations)
-        
+
         Response format:
             - url: Return URLs to stored images (default, enforces payload policy)
             - b64_json: Return base64-encoded images (only when explicitly requested)
@@ -325,7 +325,12 @@ async def generate_images(
 
         async with _httpx_client(timeout=timeout) as client:
             r = await client.post(f"{base}/sdapi/v1/txt2img", json=payload)
-            r.raise_for_status()
+            if r.status_code >= 400:
+                try:
+                    detail = r.json()
+                except Exception:
+                    detail = r.text
+                raise RuntimeError(f"image backend HTTP {r.status_code}: {detail}")
             out = r.json()
 
         images = out.get("images") if isinstance(out, dict) else None
@@ -335,11 +340,11 @@ async def generate_images(
         data = [{"b64_json": images[i]} for i in range(min(n, len(images)))]
         resp: Dict[str, Any] = {"created": int(time.time()), "data": data}
         resp["_gateway"] = {"backend": backend, "mime": "image/png"}
-        
+
         # Enforce response format policy
         if response_format == "url":
             resp = convert_response_to_urls(resp)
-        
+
         return resp
 
     if backend == "http_openai_images":
@@ -394,14 +399,24 @@ async def generate_images(
         try:
             async with _httpx_client(timeout=timeout) as client:
                 r = await client.post(f"{base}/v1/images/generations", json=payload)
-                r.raise_for_status()
+                if r.status_code >= 400:
+                    try:
+                        detail = r.json()
+                    except Exception:
+                        detail = r.text
+                    raise RuntimeError(f"image backend HTTP {r.status_code}: {detail}")
                 out = r.json()
         except httpx.ConnectError as e:
             if base == fallback_base:
                 raise RuntimeError(f"image backend connect error: {type(e).__name__}: {e}") from e
             async with _httpx_client(timeout=timeout) as client:
                 r = await client.post(f"{fallback_base}/v1/images/generations", json=payload)
-                r.raise_for_status()
+                if r.status_code >= 400:
+                    try:
+                        detail = r.json()
+                    except Exception:
+                        detail = r.text
+                    raise RuntimeError(f"image backend HTTP {r.status_code}: {detail}")
                 out = r.json()
 
         data = out.get("data") if isinstance(out, dict) else None
@@ -441,20 +456,20 @@ async def generate_images(
         upstream_meta = _extract_upstream_meta(out)
         if upstream_meta:
             resp2["_gateway"].update({"upstream": upstream_meta})
-        
+
         # Enforce response format policy
         if response_format == "url":
             resp2 = convert_response_to_urls(resp2)
-        
+
         return resp2
 
     # Default: mock
     svg_bytes = _mock_svg(prompt, width, height)
     data = [{"b64_json": _b64(svg_bytes)} for _ in range(n)]
     resp = {"created": int(time.time()), "data": data, "_gateway": {"backend": "mock", "mime": "image/svg+xml"}}
-    
+
     # Enforce response format policy
     if response_format == "url":
         resp = convert_response_to_urls(resp)
-    
+
     return resp

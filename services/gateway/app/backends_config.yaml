@@ -113,8 +113,10 @@ backends:
     class: skyreels_v2
     base_url: ${SKYREELS_V2_BASE_URL}
     description: SkyReels-V2 video shim
-    supported_capabilities: []
-    concurrency_limits: {}
+    supported_capabilities:
+      - video
+    concurrency_limits:
+      video: 1
     health:
       liveness: /healthz
       readiness: /readyz
@@ -124,8 +126,10 @@ backends:
     class: followyourcanvas
     base_url: ${FOLLOWYOURCANVAS_BASE_URL}
     description: FollowYourCanvas video shim
-    supported_capabilities: []
-    concurrency_limits: {}
+    supported_capabilities:
+      - video
+    concurrency_limits:
+      video: 1
     health:
       liveness: /healthz
       readiness: /readyz

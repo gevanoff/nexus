@@ -158,14 +158,18 @@ class Settings(BaseSettings):
     SKYREELS_BASE_URL: str = ""
     SKYREELS_TIMEOUT_SEC: float = 3600.0
     SKYREELS_GENERATE_PATH: str = "/v1/videos/generations"
+    VIDEO_BACKEND_CLASS: str = "skyreels_v2"
 
     # Optional: FollowYourCanvas video generation shim
     FOLLOWYOURCANVAS_BASE_URL: str = ""
     FYC_API_BASE_URL: str = ""
+    FYC_TIMEOUT_SEC: float = 1800.0
+    FYC_GENERATE_PATH: str = "/v1/videos/generations"
 
     # Optional: LightOnOCR shim
     LIGHTON_OCR_API_BASE_URL: str = ""
     LIGHTON_OCR_TIMEOUT_SEC: float = 120.0
+    OCR_BACKEND_CLASS: str = "lighton_ocr"
 
     # Optional: PersonaPlex chat shim (custom UI)
     PERSONAPLEX_BASE_URL: str = ""

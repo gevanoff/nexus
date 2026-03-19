@@ -27,7 +27,7 @@ if [[ -n "${REPO_URL}" ]]; then
     req_hash="$(sha256sum "${APP_DIR}/requirements.txt" | awk '{print $1}')"
     prev_hash="$(cat "${REQ_HASH_FILE}" 2>/dev/null || true)"
     if [[ "${req_hash}" != "${prev_hash}" ]]; then
-      pip install --no-cache-dir -r "${APP_DIR}/requirements.txt" || true
+      pip install --no-cache-dir -r "${APP_DIR}/requirements.txt"
       printf '%s' "${req_hash}" > "${REQ_HASH_FILE}"
     fi
   fi

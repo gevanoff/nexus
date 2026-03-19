@@ -76,7 +76,7 @@
       <header>
         <div>
           <h1>Gateway Video UI</h1>
-          <div class="hint">Generate videos via the SkyReels-V2 backend.</div>
+          <div class="hint">Generate videos via a compatible video backend exposed by the gateway.</div>
         </div>
         <div class="row">
           <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
@@ -92,6 +92,12 @@
         </div>
 
         <div class="row" style="margin-top:12px">
+          <label style="min-width: 280px; flex: 1 1 280px;">
+            <span>Backend</span>
+            <select id="backend"></select>
+            <span id="backendHint" class="hint"></span>
+          </label>
+
           <label>
             <span>Duration (sec)</span>
             <input id="duration" type="number" min="1" max="30" step="1" value="6" />
@@ -117,7 +123,7 @@
       </section>
 
       <section class="out" style="margin-top:12px">
-        <details class="card" data-backend-status data-backends="followyourcanvas,skyreels_v2">
+        <details class="card" data-backend-status data-backends="skyreels_v2">
           <summary>Relevant backend status</summary>
           <div style="margin-top:8px">
             <div class="row" style="justify-content:space-between">

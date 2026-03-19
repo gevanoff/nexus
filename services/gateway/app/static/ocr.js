@@ -1,8 +1,19 @@
 const imageUrlInput = document.getElementById("imageUrl");
+const backendEl = document.getElementById("backend");
+const backendHintEl = document.getElementById("backendHint");
 const runButton = document.getElementById("run");
 const statusEl = document.getElementById("status");
 const outputEl = document.getElementById("output");
 const debugEl = document.getElementById("debug");
+
+function handle401(resp) {
+  if (resp && resp.status === 401) {
+    const back = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/ui/login?next=${back}`;
+    return true;
+  }
+  return false;
+}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -25,14 +36,18 @@ async function runScan() {
   setOutput("Working…");
 
   const payload = { image_url: imageUrl };
+  const backendClass = String(backendEl?.value || "").trim();
+  if (backendClass) payload.backend_class = backendClass;
   debugEl.textContent = JSON.stringify({ request: payload }, null, 2);
 
   try {
     const resp = await fetch("/ui/api/scan", {
       method: "POST",
+      credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (handle401(resp)) return;
 
     const text = await resp.text();
     let data;
@@ -71,6 +86,55 @@ async function runScan() {
   }
 }
 
+async function loadBackends() {
+  if (!backendEl) return;
+  try {
+    const resp = await fetch("/ui/api/ocr/backends", { method: "GET", credentials: "same-origin" });
+    if (handle401(resp)) return;
+    if (!resp.ok) {
+      setStatus(`Failed to load OCR backends (HTTP ${resp.status}).`, true);
+      return;
+    }
+    const payload = await resp.json();
+    const list = Array.isArray(payload?.available_backends)
+      ? payload.available_backends
+      : Array.isArray(payload?.backends)
+        ? payload.backends
+        : [];
+    const defaultBackend = String(payload?.default_backend_class || "").trim();
+    backendEl.innerHTML = "";
+    for (const item of list) {
+      const backendClass = String(item?.backend_class || "").trim();
+      if (!backendClass) continue;
+      const opt = document.createElement("option");
+      opt.value = backendClass;
+      const health = item?.ready === false ? "not ready" : (item?.healthy === false ? "unhealthy" : "ready");
+      opt.textContent = item?.description ? `${backendClass} - ${item.description} (${health})` : `${backendClass} (${health})`;
+      backendEl.appendChild(opt);
+    }
+    if (defaultBackend) {
+      backendEl.value = defaultBackend;
+    } else if (backendEl.options.length > 0) {
+      backendEl.selectedIndex = 0;
+    }
+    if (backendHintEl) {
+      backendHintEl.textContent = list.length
+        ? `${list.length} OCR backend${list.length === 1 ? "" : "s"} available.`
+        : "No OCR backends are currently available.";
+    }
+    const details = document.querySelector("[data-backend-status]");
+    if (details instanceof HTMLElement) {
+      const values = list
+        .map((item) => String(item?.backend_class || "").trim())
+        .filter(Boolean)
+        .join(",");
+      if (values) details.setAttribute("data-backends", values);
+    }
+  } catch (err) {
+    setStatus(`Failed to load OCR backends: ${err}`, true);
+  }
+}
+
 runButton.addEventListener("click", runScan);
 imageUrlInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -78,3 +142,4 @@ imageUrlInput.addEventListener("keydown", (event) => {
     runScan();
   }
 });
+void loadBackends();

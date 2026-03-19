@@ -1,2 +1,4 @@
 fastapi==0.110.3
 uvicorn[standard]==0.29.0
+imageio
+imageio-ffmpeg

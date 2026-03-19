@@ -2,12 +2,23 @@
   const $ = (id) => document.getElementById(id);
 
   const promptEl = $("prompt");
+  const backendEl = $("backend");
+  const backendHintEl = $("backendHint");
   const durationEl = $("duration");
   const resolutionEl = $("resolution");
   const generateEl = $("generate");
   const statusEl = $("status");
   const metaEl = $("meta");
   const previewEl = $("preview");
+
+  function handle401(resp) {
+    if (resp && resp.status === 401) {
+      const back = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/ui/login?next=${back}`;
+      return true;
+    }
+    return false;
+  }
 
   function setStatus(text, isError) {
     statusEl.textContent = text || "";
@@ -29,7 +40,59 @@
 
     const duration = Math.max(1, Math.min(30, parseInt(String(durationEl.value || "6"), 10) || 6));
     const resolution = String(resolutionEl.value || "720p").trim();
-    return { prompt, duration, resolution };
+    const body = { prompt, duration, resolution };
+    const backendClass = String(backendEl?.value || "").trim();
+    if (backendClass) body.backend_class = backendClass;
+    return body;
+  }
+
+  async function loadBackends() {
+    if (!backendEl) return;
+    try {
+      const resp = await fetch("/ui/api/video/backends", { method: "GET", credentials: "same-origin" });
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        setStatus(`Failed to load video backends (HTTP ${resp.status}).`, true);
+        return;
+      }
+      const payload = await resp.json();
+      const list = Array.isArray(payload?.available_backends)
+        ? payload.available_backends
+        : Array.isArray(payload?.backends)
+          ? payload.backends
+          : [];
+      const defaultBackend = String(payload?.default_backend_class || "").trim();
+      backendEl.innerHTML = "";
+      for (const item of list) {
+        const backendClass = String(item?.backend_class || "").trim();
+        if (!backendClass) continue;
+        const opt = document.createElement("option");
+        opt.value = backendClass;
+        const health = item?.ready === false ? "not ready" : (item?.healthy === false ? "unhealthy" : "ready");
+        opt.textContent = item?.description ? `${backendClass} - ${item.description} (${health})` : `${backendClass} (${health})`;
+        backendEl.appendChild(opt);
+      }
+      if (defaultBackend) {
+        backendEl.value = defaultBackend;
+      } else if (backendEl.options.length > 0) {
+        backendEl.selectedIndex = 0;
+      }
+      if (backendHintEl) {
+        backendHintEl.textContent = list.length
+          ? `${list.length} compatible video backend${list.length === 1 ? "" : "s"} available.`
+          : "No compatible video backends are currently available.";
+      }
+      const details = document.querySelector("[data-backend-status]");
+      if (details instanceof HTMLElement) {
+        const values = list
+          .map((item) => String(item?.backend_class || "").trim())
+          .filter(Boolean)
+          .join(",");
+        if (values) details.setAttribute("data-backends", values);
+      }
+    } catch (e) {
+      setStatus(`Failed to load video backends: ${String(e?.message || e)}`, true);
+    }
   }
 
   async function handleGenerate() {
@@ -78,12 +141,14 @@
       }
 
       const url = payload?.url || payload?.video_url || payload?.data?.[0]?.url;
+      const gatewayMeta = payload?._gateway || {};
       if (url && typeof url === "string") {
         setPreview(`<video controls style="max-width:100%" src="${url}"></video>`);
       } else {
         setPreview(`<pre>${JSON.stringify(payload, null, 2)}</pre>`);
       }
       const metaBits = [`Status: ${payload?.status || "ok"}`];
+      if (gatewayMeta.backend_class) metaBits.push(`Backend: ${gatewayMeta.backend_class}`);
       if (requestId) metaBits.push(`Request ID: ${requestId}`);
       setMeta(metaBits.join(" · "));
       setStatus("Done.", false);
@@ -95,4 +160,5 @@
   }
 
   generateEl.addEventListener("click", handleGenerate);
+  void loadBackends();
 })();
