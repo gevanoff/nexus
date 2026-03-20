@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth import require_bearer
 from app.config import S, logger
-from app.backends import get_admission_controller, check_capability, get_registry
+from app.backends import backend_provider_name, check_capability, get_admission_controller, get_registry, llm_backends
 from app.health_checker import check_backend_ready
 from app.models import (
     ChatCompletionRequest,
@@ -27,12 +27,10 @@ from app.router_cfg import router_cfg
 from app.tool_loop import tool_loop
 from app.tools_bus import allowed_tool_names_for_policy
 from app.upstreams import (
-    call_mlx_openai,
-    call_ollama,
-    embed_mlx,
-    embed_ollama,
-    stream_mlx_openai_chat,
-    stream_ollama_chat_as_openai,
+    backend_model_id,
+    call_backend_chat,
+    embed_backend,
+    stream_backend_chat_as_openai,
 )
 from app.memory_routes import inject_memory
 from app import memory_v2
@@ -91,6 +89,29 @@ def _apply_alias_constraints(cc: ChatCompletionRequest, *, alias_name: Optional[
     )
 
 
+async def _probe_models_for_backend(client: httpx.AsyncClient, backend_name: str, base_url: str, now: int) -> list[dict[str, Any]]:
+    provider = backend_provider_name(backend_name)
+    items: list[dict[str, Any]] = []
+    if provider == "ollama":
+        r = await client.get(f"{base_url.rstrip('/')}/api/tags")
+        r.raise_for_status()
+        models = r.json().get("models", [])
+        for m in models:
+            name = m.get("name")
+            if name:
+                items.append({"id": f"{backend_name}:{name}", "object": "model", "created": now, "owned_by": "local"})
+        return items
+
+    r = await client.get(f"{base_url.rstrip('/')}/models")
+    r.raise_for_status()
+    models = r.json().get("data", [])
+    for m in models:
+        mid = m.get("id")
+        if mid:
+            items.append({"id": f"{backend_name}:{mid}", "object": "model", "created": now, "owned_by": "local"})
+    return items
+
+
 @router.get("/v1/models")
 async def list_models(req: Request):
     require_bearer(req)
@@ -99,31 +120,22 @@ async def list_models(req: Request):
     data: Dict[str, Any] = {"object": "list", "data": []}
 
     async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            r = await client.get(f"{S.OLLAMA_BASE_URL}/api/tags")
-            r.raise_for_status()
-            models = r.json().get("models", [])
-            for m in models:
-                name = m.get("name")
-                if name:
-                    data["data"].append({"id": f"ollama:{name}", "object": "model", "created": now, "owned_by": "local"})
-        except Exception:
-            pass
-
-        try:
-            r = await client.get(f"{S.MLX_BASE_URL}/models")
-            r.raise_for_status()
-            models = r.json().get("data", [])
-            for m in models:
-                mid = m.get("id")
-                if mid:
-                    data["data"].append({"id": f"mlx:{mid}", "object": "model", "created": now, "owned_by": "local"})
-        except Exception:
-            pass
+        for backend_name, cfg in llm_backends():
+            try:
+                data["data"].extend(await _probe_models_for_backend(client, backend_name, cfg.base_url, now))
+            except Exception:
+                pass
 
     data["data"].append({"id": "auto", "object": "model", "created": now, "owned_by": "gateway"})
-    data["data"].append({"id": "ollama", "object": "model", "created": now, "owned_by": "gateway"})
-    data["data"].append({"id": "mlx", "object": "model", "created": now, "owned_by": "gateway"})
+    registry = get_registry()
+    ollama_backend = registry.get_backend(registry.resolve_backend_class("ollama"))
+    if ollama_backend is not None and (ollama_backend.base_url or "").strip():
+        data["data"].append({"id": "ollama", "object": "model", "created": now, "owned_by": "gateway"})
+    mlx_backend = registry.get_backend(registry.resolve_backend_class("mlx"))
+    if mlx_backend is not None and (mlx_backend.base_url or "").strip():
+        data["data"].append({"id": "mlx", "object": "model", "created": now, "owned_by": "gateway"})
+    for backend_name, _cfg in llm_backends():
+        data["data"].append({"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"})
 
     # Add configured aliases so clients can discover stable names.
     aliases = get_aliases()
@@ -177,7 +189,7 @@ async def chat_completions(req: Request):
         enable_policy=S.ROUTER_ENABLE_POLICY,
         enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
     )
-    backend: Literal["ollama", "mlx"] = route.backend
+    backend = route.backend
     model_name = route.model
     
     # Resolve to backend_class for capability gating and admission control
@@ -230,24 +242,8 @@ async def chat_completions(req: Request):
         if cc.stream and cc.tools:
             raise HTTPException(status_code=400, detail="stream=true not supported when tools are provided")
 
-        cc_routed = ChatCompletionRequest(
-            model=model_name if backend == "mlx" else cc.model,
-            messages=cc.messages,
-            tools=cc.tools,
-            tool_choice=cc.tool_choice,
-            temperature=cc.temperature,
-            max_tokens=cc.max_tokens,
-            stream=False,
-        )
-
         if cc.stream:
-            if backend == "mlx":
-                payload = cc_routed.model_dump(exclude_none=True)
-                payload["stream"] = True
-                gen = stream_mlx_openai_chat(payload)
-            else:
-                gen = stream_ollama_chat_as_openai(cc, model_name)
-
+            gen = stream_backend_chat_as_openai(cc, backend, model_name)
             out = StreamingResponse(gen, media_type="text/event-stream")
             out.headers["X-Backend-Used"] = backend
             out.headers["X-Model-Used"] = model_name
@@ -258,7 +254,7 @@ async def chat_completions(req: Request):
         if cc.tools:
             resp = await tool_loop(cc, backend, model_name, allowed_tools=allowed_tools)
         else:
-            resp = await (call_mlx_openai(cc_routed) if backend == "mlx" else call_ollama(cc, model_name))
+            resp = await call_backend_chat(cc, backend, model_name)
         try:
             inst = getattr(req.state, "instrument", None)
             if isinstance(inst, dict):
@@ -306,7 +302,7 @@ async def completions(req: Request):
         has_tools=False,
         enable_policy=S.ROUTER_ENABLE_POLICY,
     )
-    backend: Literal["ollama", "mlx"] = route.backend
+    backend = route.backend
     model_name = route.model
 
     # Apply caps/constraints based on the chosen alias (if any).
@@ -316,53 +312,30 @@ async def completions(req: Request):
     if cc.stream:
         stream_id = new_id("cmpl")
         created = now_unix()
-        enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
+        used_model_id = backend_model_id(backend, model_name)
 
         async def gen() -> AsyncIterator[bytes]:
-            if backend == "mlx":
-                payload = cc.model_dump(exclude_none=True)
-                payload["model"] = model_name
-                payload["stream"] = True
-                async for chunk in stream_mlx_openai_chat(payload):
-                    for line in chunk.splitlines():
-                        if not line.startswith(b"data:"):
-                            continue
-                        data = line[len(b"data:") :].strip()
-                        if data == b"[DONE]":
-                            yield sse_done()
-                            return
-                        try:
-                            j = json.loads(data)
-                        except Exception:
-                            continue
-                        delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
-                        text = delta.get("content")
-                        if isinstance(text, str) and text:
-                            yield (
-                                f"data: {json.dumps({'id': stream_id, 'object': 'text_completion', 'created': created, 'model': model_name, 'choices': [{'index': 0, 'text': text, 'finish_reason': None}]}, separators=(',', ':'))}\n\n"
-                            ).encode("utf-8")
-            else:
-                async for sse_bytes in stream_ollama_chat_as_openai(cc, model_name):
-                    for line in sse_bytes.splitlines():
-                        if not line.startswith(b"data:"):
-                            continue
-                        data = line[len(b"data:") :].strip()
-                        if data == b"[DONE]":
-                            yield sse_done()
-                            return
-                        try:
-                            j = json.loads(data)
-                        except Exception:
-                            continue
-                        delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
-                        text = delta.get("content")
-                        if isinstance(text, str) and text:
-                            yield (
-                                f"data: {json.dumps({'id': stream_id, 'object': 'text_completion', 'created': created, 'model': model_name, 'choices': [{'index': 0, 'text': text, 'finish_reason': None}]}, separators=(',', ':'))}\n\n"
-                            ).encode("utf-8")
+            async for sse_bytes in stream_backend_chat_as_openai(cc, backend, model_name):
+                for line in sse_bytes.splitlines():
+                    if not line.startswith(b"data:"):
+                        continue
+                    data = line[len(b"data:") :].strip()
+                    if data == b"[DONE]":
+                        yield sse_done()
+                        return
+                    try:
+                        j = json.loads(data)
+                    except Exception:
+                        continue
+                    delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
+                    text = delta.get("content")
+                    if isinstance(text, str) and text:
+                        yield (
+                            f"data: {json.dumps({'id': stream_id, 'object': 'text_completion', 'created': created, 'model': used_model_id, 'choices': [{'index': 0, 'text': text, 'finish_reason': None}]}, separators=(',', ':'))}\n\n"
+                        ).encode("utf-8")
 
             yield (
-                f"data: {json.dumps({'id': stream_id, 'object': 'text_completion', 'created': created, 'model': model_name, 'choices': [{'index': 0, 'text': '', 'finish_reason': 'stop'}]}, separators=(',', ':'))}\n\n"
+                f"data: {json.dumps({'id': stream_id, 'object': 'text_completion', 'created': created, 'model': used_model_id, 'choices': [{'index': 0, 'text': '', 'finish_reason': 'stop'}]}, separators=(',', ':'))}\n\n"
             ).encode("utf-8")
             yield sse_done()
 
@@ -372,17 +345,7 @@ async def completions(req: Request):
         out.headers["X-Router-Reason"] = route.reason
         return out
 
-    if backend == "mlx":
-        cc_routed = ChatCompletionRequest(
-            model=model_name,
-            messages=cc.messages,
-            temperature=cc.temperature,
-            max_tokens=cc.max_tokens,
-            stream=False,
-        )
-        chat_resp = await call_mlx_openai(cc_routed)
-    else:
-        chat_resp = await call_ollama(cc, model_name)
+    chat_resp = await call_backend_chat(cc, backend, model_name)
 
     msg = ((chat_resp.get("choices") or [{}])[0].get("message") or {})
     text = msg.get("content")
@@ -393,7 +356,7 @@ async def completions(req: Request):
         "id": new_id("cmpl"),
         "object": "text_completion",
         "created": now_unix(),
-        "model": model_name,
+        "model": backend_model_id(backend, model_name),
         "choices": [{"index": 0, "text": text, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
@@ -425,12 +388,8 @@ async def rerank(req: Request):
     model_used = rr.model or S.EMBEDDINGS_MODEL
 
     try:
-        if backend == "ollama":
-            q_emb = (await embed_ollama([rr.query], model_used))[0]
-            doc_embs = await embed_ollama(rr.documents, model_used)
-        else:
-            q_emb = (await embed_mlx([rr.query], model_used))[0]
-            doc_embs = await embed_mlx(rr.documents, model_used)
+        q_emb = (await embed_backend([rr.query], backend, model_used))[0]
+        doc_embs = await embed_backend(rr.documents, backend, model_used)
     except httpx.HTTPStatusError as e:
         detail = {"upstream": backend, "status": e.response.status_code, "body": e.response.text[:5000]}
         logger.warning("/v1/rerank upstream HTTP error: %s", detail)
@@ -470,10 +429,7 @@ async def embeddings(req: Request):
     model = er.model if er.model not in {"default", "", None} else S.EMBEDDINGS_MODEL
 
     try:
-        if backend == "ollama":
-            embs = await embed_ollama(texts, model)
-        else:
-            embs = await embed_mlx(texts, model)
+        embs = await embed_backend(texts, backend, model)
     except httpx.HTTPStatusError as e:
         detail = {"upstream": backend, "status": e.response.status_code, "body": e.response.text[:5000]}
         logger.warning("/v1/embeddings upstream HTTP error: %s", detail)
@@ -555,7 +511,7 @@ async def responses(req: Request):
         has_tools=bool(cc.tools),
         enable_policy=S.ROUTER_ENABLE_POLICY,
     )
-    backend: Literal["ollama", "mlx"] = route.backend
+    backend = route.backend
     model_name = route.model
 
     alias_name = _selected_alias_name(cc.model, route.reason)
@@ -564,20 +520,14 @@ async def responses(req: Request):
     if stream:
         response_id = new_id("resp")
         created = now_unix()
+        used_model_id = backend_model_id(backend, model_name)
 
-        if backend == "mlx":
-            payload = cc.model_dump(exclude_none=True)
-            payload["model"] = model_name
-            payload["stream"] = True
-            upstream_gen = stream_mlx_openai_chat(payload)
-        else:
-            # Uses the existing OpenAI-ish chat SSE stream.
-            upstream_gen = stream_ollama_chat_as_openai(cc, model_name)
+        upstream_gen = stream_backend_chat_as_openai(cc, backend, model_name)
 
         async def gen() -> AsyncIterator[bytes]:
             # Best-effort Responses API SSE.
             yield (
-                f"data: {json.dumps({'type':'response.created','response':{'id':response_id,'object':'response','created':created,'model':model_name}}, separators=(',', ':'))}\n\n"
+                f"data: {json.dumps({'type':'response.created','response':{'id':response_id,'object':'response','created':created,'model':used_model_id}}, separators=(',', ':'))}\n\n"
             ).encode("utf-8")
 
             async for chunk in upstream_gen:
@@ -623,16 +573,7 @@ async def responses(req: Request):
             allowed_tools = None
         chat_resp = await tool_loop(cc, backend, model_name, allowed_tools=allowed_tools)
     else:
-        cc_routed = ChatCompletionRequest(
-            model=model_name if backend == "mlx" else cc.model,
-            messages=cc.messages,
-            tools=cc.tools,
-            tool_choice=cc.tool_choice,
-            temperature=cc.temperature,
-            max_tokens=cc.max_tokens,
-            stream=False,
-        )
-        chat_resp = await (call_mlx_openai(cc_routed) if backend == "mlx" else call_ollama(cc, model_name))
+        chat_resp = await call_backend_chat(cc, backend, model_name)
 
     msg = ((chat_resp.get("choices") or [{}])[0].get("message") or {})
     text = msg.get("content")
@@ -643,7 +584,7 @@ async def responses(req: Request):
         "id": new_id("resp"),
         "object": "response",
         "created": now_unix(),
-        "model": model_name,
+        "model": backend_model_id(backend, model_name),
         "output": [
             {
                 "type": "message",

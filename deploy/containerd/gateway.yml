@@ -18,10 +18,12 @@ services:
       - ETCD_PREFIX=${ETCD_PREFIX:-/nexus/services/}
       - ETCD_POLL_INTERVAL=${ETCD_POLL_INTERVAL:-15}
       - ETCD_SEED_FROM_ENV=${ETCD_SEED_FROM_ENV:-true}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - MLX_BASE_URL=${MLX_BASE_URL:-http://mlx:10240/v1}
       - IMAGES_HTTP_BASE_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}
       - AUDIO_BACKEND_URL=${AUDIO_BACKEND_URL:-http://tts:9940}
-      - DEFAULT_BACKEND=${DEFAULT_BACKEND:-ollama}
+      - DEFAULT_BACKEND=${DEFAULT_BACKEND:-local_mlx}
+      - EMBEDDINGS_BACKEND=${EMBEDDINGS_BACKEND:-local_mlx}
       - MAX_REQUEST_BYTES=${MAX_REQUEST_BYTES:-104857600}
       - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
       - USER_DB_PATH=/var/lib/gateway/data/users.sqlite

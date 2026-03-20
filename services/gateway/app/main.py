@@ -33,29 +33,45 @@ async def _startup_check_models() -> None:
 
     # Warn if Ollama-backed aliases point at model tags that aren't present.
     try:
+        from app.backends import backend_provider_name, get_registry
+
         aliases = get_aliases()
-        wanted = sorted({a.upstream_model for a in aliases.values() if a.backend == "ollama" and a.upstream_model})
-        if not wanted:
+        registry = get_registry()
+        wanted_by_backend: dict[str, set[str]] = {}
+        for a in aliases.values():
+            if backend_provider_name(a.backend) != "ollama" or not a.upstream_model:
+                continue
+            backend_name = registry.resolve_backend_class(a.backend)
+            wanted_by_backend.setdefault(backend_name, set()).add(a.upstream_model)
+        if not wanted_by_backend:
             return
 
         async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{S.OLLAMA_BASE_URL}/api/tags")
-            # If Ollama isn't reachable, don't spam logs; this can happen on cold boot.
-            if r.status_code != 200:
-                logger.info("startup: ollama /api/tags status=%s (skipping model check)", r.status_code)
-                return
+            for backend_name, wanted in wanted_by_backend.items():
+                cfg = registry.get_backend(backend_name)
+                if cfg is None or not cfg.base_url:
+                    continue
+                r = await client.get(f"{cfg.base_url.rstrip('/')}/api/tags")
+                if r.status_code != 200:
+                    logger.info("startup: %s /api/tags status=%s (skipping model check)", backend_name, r.status_code)
+                    continue
 
-            payload = r.json()
-            models = payload.get("models") if isinstance(payload, dict) else None
-            present = set()
-            if isinstance(models, list):
-                for m in models:
-                    if isinstance(m, dict) and isinstance(m.get("name"), str):
-                        present.add(m["name"])
+                payload = r.json()
+                models = payload.get("models") if isinstance(payload, dict) else None
+                present = set()
+                if isinstance(models, list):
+                    for m in models:
+                        if isinstance(m, dict) and isinstance(m.get("name"), str):
+                            present.add(m["name"])
 
-        missing = [m for m in wanted if m not in present]
-        for m in missing:
-            logger.warning("startup: ollama model missing: %s (check model_aliases.json or run 'ollama pull %s')", m, m)
+                missing = [m for m in sorted(wanted) if m not in present]
+                for m in missing:
+                    logger.warning(
+                        "startup: ollama model missing backend=%s model=%s (check model_aliases.json or run 'ollama pull %s')",
+                        backend_name,
+                        m,
+                        m,
+                    )
     except Exception as e:
         logger.info("startup: model availability check skipped (%s: %s)", type(e).__name__, e)
 

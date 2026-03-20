@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 import re
-from typing import Any, Dict, Iterable, Literal, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional
 
+from app.backends import backend_provider_name, get_registry
 from app.model_aliases import get_alias, get_aliases
 
-Backend = Literal["ollama", "mlx"]
+Backend = str
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class RouteDecision:
 class RouterConfig:
     default_backend: Backend
 
-    # Model choices per backend
+    # Model choices per provider family
     ollama_strong_model: str
     ollama_fast_model: str
     mlx_strong_model: str
@@ -47,40 +48,86 @@ def _approx_text_size(messages: Iterable[Dict[str, Any]]) -> int:
     return n
 
 
+def _resolved_backend_name(name: str) -> str:
+    registry = get_registry()
+    return registry.resolve_backend_class((name or "").strip())
+
+
+def _known_backend_name(name: str) -> Optional[str]:
+    registry = get_registry()
+    resolved = registry.resolve_backend_class((name or "").strip())
+    if resolved and registry.get_backend(resolved) is not None:
+        return resolved
+    return None
+
+
+def _provider_default_backend(provider: str) -> str:
+    registry = get_registry()
+    if provider == "mlx":
+        resolved = registry.resolve_backend_class("mlx")
+        return resolved or "local_mlx"
+    if provider == "ollama":
+        resolved = registry.resolve_backend_class("ollama")
+        return resolved or "ollama"
+    return provider
+
+
+def _backend_prefixes(backend: str) -> list[str]:
+    resolved = _resolved_backend_name(backend)
+    provider = backend_provider_name(resolved or backend)
+    prefixes = {
+        backend,
+        resolved,
+        (backend or "").replace("_", "-"),
+        (backend or "").replace("-", "_"),
+        (resolved or "").replace("_", "-"),
+        (resolved or "").replace("-", "_"),
+    }
+    if provider == "mlx":
+        prefixes.update({"mlx", "local_mlx", "local-mlx", _provider_default_backend("mlx")})
+    elif provider == "ollama":
+        prefixes.update({"ollama", _provider_default_backend("ollama")})
+    return [p for p in prefixes if isinstance(p, str) and p]
+
+
+def _backend_from_model_prefix(model: str) -> Optional[str]:
+    m = (model or "").strip()
+    if ":" not in m:
+        return None
+    prefix, _rest = m.split(":", 1)
+    return _known_backend_name(prefix.strip())
+
+
 def _choose_backend_by_model(model: str, default_backend: Backend) -> Backend:
     m = (model or "").strip().lower()
 
-    if m.startswith("ollama:"):
-        return "ollama"
-    if m.startswith("mlx:"):
-        return "mlx"
+    explicit = _backend_from_model_prefix(model)
+    if explicit:
+        return explicit
 
     if m in {"ollama", "ollama-default"}:
-        return "ollama"
-    if m in {"mlx", "mlx-default"}:
-        return "mlx"
+        return _provider_default_backend("ollama")
+    if m in {"mlx", "mlx-default", "local_mlx", "local-mlx"}:
+        return _provider_default_backend("mlx")
 
-    return default_backend
+    return _resolved_backend_name(default_backend) or default_backend
 
 
 def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
     m = (model or "").strip()
+    for prefix in _backend_prefixes(backend):
+        if m.lower().startswith(prefix.lower() + ":"):
+            m = m[len(prefix) + 1 :]
+            break
 
-    if backend == "ollama":
-        if m.startswith("ollama:"):
-            m = m[len("ollama:") :]
-        m_key = m.lower()
-        # Treat various sentinel/default selectors as the configured default.
-        # Note: some clients send X-Backend with model="auto"; we must not
-        # forward the sentinel upstream.
+    provider = backend_provider_name(backend)
+    m_key = m.lower()
+    if provider == "ollama":
         if m_key in {"default", "ollama", "ollama-default", "auto", ""}:
             return cfg.ollama_strong_model
         return m
 
-    if m.startswith("mlx:"):
-        m = m[len("mlx:") :]
-    m_key = m.lower()
-    if m_key in {"default", "mlx", "mlx-default", "auto", ""}:
+    if m_key in {"default", "mlx", "mlx-default", "local_mlx", "local-mlx", "auto", ""}:
         return cfg.mlx_strong_model
     return m
 
@@ -119,7 +166,6 @@ def _last_user_text(messages: Iterable[Dict[str, Any]]) -> str:
 
 
 def _is_probably_coding_request(messages: Iterable[Dict[str, Any]]) -> bool:
-    # Deterministic, conservative heuristic. Only used when request-type routing is enabled.
     text = (_last_user_text(messages) or "").strip()
     if not text:
         return False
@@ -146,26 +192,13 @@ def decide_route(
     enable_policy: bool = False,
     enable_request_type: bool = False,
 ) -> RouteDecision:
-    """Select {backend, model} with simple, stable heuristics.
+    """Select {backend, model} with simple, stable heuristics."""
 
-    Overrides:
-    - header x-backend: ollama|mlx
-    - model prefix: ollama:... or mlx:...
-    - explicit model name: passes through
+    hdr_backend = _known_backend_name((headers.get("x-backend") or "").strip())
+    if hdr_backend:
+        normalized = _normalize_model(request_model, hdr_backend, cfg)
+        return RouteDecision(backend=hdr_backend, model=normalized, reason="override:x-backend")
 
-    Policy:
-    - tool-heavy/agentic => strong model
-    - long context => prefer mlx strong (if configured) else default strong
-    - otherwise => fast/cheap model on chosen backend
-    """
-
-    hdr_backend = (headers.get("x-backend") or "").strip().lower()
-    if hdr_backend in {"ollama", "mlx"}:
-        backend: Backend = hdr_backend  # type: ignore[assignment]
-        normalized = _normalize_model(request_model, backend, cfg)
-        return RouteDecision(backend=backend, model=normalized, reason="override:x-backend")
-
-    # Special request model: "auto" means "let policy pick".
     request_model_norm = (request_model or "").strip()
     request_model_key = request_model_norm.lower()
     if request_model_key in {"auto"}:
@@ -174,68 +207,60 @@ def decide_route(
 
     aliases = get_aliases()
 
-    # Model aliases: if request_model is an alias key (coder/fast/default/long/etc),
-    # resolve directly to a stable backend + upstream model.
     alias_key = request_model_key
     if alias_key and alias_key in aliases:
         a = aliases[alias_key]
-        backend = a.backend  # type: ignore[assignment]
+        backend = _resolved_backend_name(a.backend) or a.backend
         normalized = _normalize_model(a.upstream_model, backend, cfg)
         return RouteDecision(backend=backend, model=normalized, reason="alias:model")
 
     backend = _choose_backend_by_model(request_model_norm, cfg.default_backend)
 
-    explicitly_pinned = request_model_key.startswith(("ollama:", "mlx:")) or request_model_key in {
-        "ollama",
-        "mlx",
-        "ollama-default",
-        "mlx-default",
-    }
+    explicitly_pinned = _backend_from_model_prefix(request_model_norm) is not None
+    if not explicitly_pinned:
+        pinned_backend = _known_backend_name(request_model_norm)
+        explicitly_pinned = pinned_backend is not None and request_model_key not in aliases
 
-    # If explicitly pinned, honor it and only normalize aliases/defaults.
     if explicitly_pinned:
         normalized = _normalize_model(request_model_norm, backend, cfg)
         return RouteDecision(backend=backend, model=normalized, reason="pinned:model")
 
-    # If policy is disabled, do not apply tiering heuristics.
     if not enable_policy:
         normalized = _normalize_model(request_model_norm, backend, cfg)
         return RouteDecision(backend=backend, model=normalized, reason="direct:model")
 
     size = _approx_text_size(messages or [])
 
-    # If aliases declare a context window, prefer it for thresholding.
     long_alias = get_alias("long")
     long_threshold = int(long_alias.context_window) if (long_alias and long_alias.context_window) else cfg.long_context_chars_threshold
 
+    provider = backend_provider_name(backend)
+
     if has_tools:
-        # Deterministic rule: tools -> strongest tool-capable model.
         a = get_alias("default")
         if a and a.tools is not False:
-            b = a.backend  # type: ignore[assignment]
+            b = _resolved_backend_name(a.backend) or a.backend
             return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:default")
-        # If default explicitly doesn't support tools, prefer coder if it does.
         a = get_alias("coder")
         if a and a.tools is not False:
-            b = a.backend  # type: ignore[assignment]
+            b = _resolved_backend_name(a.backend) or a.backend
             return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:coder")
-        if backend == "ollama":
+        if provider == "ollama":
             return RouteDecision(backend=backend, model=cfg.ollama_strong_model, reason="policy:tools->strong")
         return RouteDecision(backend=backend, model=cfg.mlx_strong_model, reason="policy:tools->strong")
 
     if size >= long_threshold:
-        # Prefer MLX for long-context if available, otherwise keep backend but use strong model.
         a = get_alias("long")
         if a:
-            b = a.backend  # type: ignore[assignment]
+            b = _resolved_backend_name(a.backend) or a.backend
             return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:long_context->alias:long")
+        mlx_backend = _provider_default_backend("mlx")
         if cfg.mlx_strong_model:
-            return RouteDecision(backend="mlx", model=cfg.mlx_strong_model, reason="policy:long_context->mlx")
-        if backend == "ollama":
+            return RouteDecision(backend=mlx_backend, model=cfg.mlx_strong_model, reason="policy:long_context->mlx")
+        if provider == "ollama":
             return RouteDecision(backend=backend, model=cfg.ollama_strong_model, reason="policy:long_context->strong")
         return RouteDecision(backend=backend, model=cfg.mlx_strong_model, reason="policy:long_context->strong")
 
-    # Request-type heuristic (opt-in): prefer coder model for code-heavy requests.
     hdr_req_type = (headers.get("x-request-type") or "").strip().lower()
     is_coding = False
     if enable_request_type:
@@ -249,18 +274,17 @@ def decide_route(
     if is_coding:
         a = get_alias("coder")
         if a:
-            b = a.backend  # type: ignore[assignment]
+            b = _resolved_backend_name(a.backend) or a.backend
             return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:coding->alias:coder")
-        if backend == "ollama":
+        if provider == "ollama":
             return RouteDecision(backend=backend, model=cfg.ollama_strong_model, reason="policy:coding->strong")
         return RouteDecision(backend=backend, model=cfg.mlx_strong_model, reason="policy:coding->strong")
 
-    # Default: fast/cheap on chosen backend
     a = get_alias("fast")
     if a:
-        b = a.backend  # type: ignore[assignment]
+        b = _resolved_backend_name(a.backend) or a.backend
         return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:fast->alias:fast")
 
-    if backend == "ollama":
+    if provider == "ollama":
         return RouteDecision(backend=backend, model=cfg.ollama_fast_model, reason="policy:fast")
     return RouteDecision(backend=backend, model=cfg.mlx_fast_model, reason="policy:fast")

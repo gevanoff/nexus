@@ -119,7 +119,7 @@ class AgentRunResponse(BaseModel):
     run_id: str
     request_hash: str
     agent: str
-    backend: Literal["ollama", "mlx"]
+    backend: str
     upstream_model: str
     tier: int
     ok: bool

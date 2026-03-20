@@ -6,6 +6,7 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from app.backends import backend_provider_name, llm_backends
 from app.config import S
 from app.metrics import render_prometheus_text
 
@@ -59,21 +60,16 @@ async def health_upstreams():
     results: Dict[str, Any] = {"ok": True, "upstreams": {}}
 
     async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            r = await client.get(f"{S.OLLAMA_BASE_URL}/api/tags")
-            r.raise_for_status()
-            results["upstreams"]["ollama"] = {"ok": True, "status": r.status_code}
-        except Exception as e:
-            results["ok"] = False
-            results["upstreams"]["ollama"] = {"ok": False, "error": str(e)}
-
-        try:
-            r = await client.get(f"{S.MLX_BASE_URL}/models")
-            r.raise_for_status()
-            results["upstreams"]["mlx"] = {"ok": True, "status": r.status_code}
-        except Exception as e:
-            results["ok"] = False
-            results["upstreams"]["mlx"] = {"ok": False, "error": str(e)}
+        for backend_name, cfg in llm_backends():
+            provider = backend_provider_name(backend_name)
+            try:
+                url = f"{cfg.base_url.rstrip('/')}/api/tags" if provider == "ollama" else f"{cfg.base_url.rstrip('/')}/models"
+                r = await client.get(url)
+                r.raise_for_status()
+                results["upstreams"][backend_name] = {"ok": True, "status": r.status_code, "provider": provider}
+            except Exception as e:
+                results["ok"] = False
+                results["upstreams"][backend_name] = {"ok": False, "provider": provider, "error": str(e)}
 
     return results
 

@@ -27,6 +27,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from app.auth import require_bearer
+from app.backends import backend_provider_name, llm_backends
 from app.config import S
 from app.models import ToolExecRequest
 from app.openai_utils import new_id, now_unix
@@ -836,19 +837,23 @@ def tool_models_refresh(args: Dict[str, Any]) -> Dict[str, Any]:
     timeout = float(getattr(S, "TOOLS_HTTP_TIMEOUT_SEC", 10))
     try:
         with httpx.Client(timeout=timeout) as client:
-            try:
-                r = client.get(f"{S.OLLAMA_BASE_URL}/api/tags")
-                out["upstreams"]["ollama"] = {"ok": r.status_code == 200, "status": r.status_code}
-            except Exception as e:
-                out["ok"] = False
-                out["upstreams"]["ollama"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-
-            try:
-                r = client.get(f"{S.MLX_BASE_URL}/models")
-                out["upstreams"]["mlx"] = {"ok": r.status_code == 200, "status": r.status_code}
-            except Exception as e:
-                out["ok"] = False
-                out["upstreams"]["mlx"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            for backend_name, cfg in llm_backends():
+                provider = backend_provider_name(backend_name)
+                try:
+                    url = f"{cfg.base_url.rstrip('/')}/api/tags" if provider == "ollama" else f"{cfg.base_url.rstrip('/')}/models"
+                    r = client.get(url)
+                    out["upstreams"][backend_name] = {
+                        "ok": r.status_code == 200,
+                        "status": r.status_code,
+                        "provider": provider,
+                    }
+                except Exception as e:
+                    out["ok"] = False
+                    out["upstreams"][backend_name] = {
+                        "ok": False,
+                        "provider": provider,
+                        "error": f"{type(e).__name__}: {e}",
+                    }
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     return out

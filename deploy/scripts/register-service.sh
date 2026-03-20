@@ -16,19 +16,25 @@ NS_AUTO_YES="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/register-service.sh [--yes] <service-name> <base-url> <etcd-url>
+Usage: deploy/scripts/register-service.sh [--yes] [--backend-class CLASS] <service-name> <base-url> <etcd-url>
 
 Example:
-  deploy/scripts/register-service.sh ollama http://ollama:11434 http://etcd:2379
+  deploy/scripts/register-service.sh --backend-class ollama ollama-ai1 http://ai1:11434 http://etcd:2379
 
 Options:
-  --yes   Non-interactive mode (assume "yes" for install prompts)
+  --backend-class CLASS  Canonical backend class (for example: ollama, local_mlx, gpu_heavy)
+  --yes                  Non-interactive mode (assume "yes" for install prompts)
 EOF
 }
 
 parse_args() {
+  backend_class=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --backend-class)
+        backend_class="${2:-}"
+        shift 2
+        ;;
       --yes)
         NS_AUTO_YES="true"
         shift
@@ -79,18 +85,25 @@ metadata_url="${base_url%/}/v1/metadata"
 
 payload=$($PYTHON - <<PY
 import base64, json, sys
-name, base_url, metadata_url = sys.argv[1:4]
+name, base_url, metadata_url, backend_class = sys.argv[1:5]
 key = f"/nexus/services/{name}"
-value = json.dumps({"name": name, "base_url": base_url, "metadata_url": metadata_url})
+payload = {"name": name, "base_url": base_url, "metadata_url": metadata_url}
+if backend_class:
+  payload["backend_class"] = backend_class
+value = json.dumps(payload)
 print(json.dumps({
   "key": base64.b64encode(key.encode()).decode(),
   "value": base64.b64encode(value.encode()).decode()
 }))
 PY
-"$name" "$base_url" "$metadata_url")
+"$name" "$base_url" "$metadata_url" "$backend_class")
 
 curl -fsS -X POST "${etcd_url%/}/v3/kv/put" \
   -H "Content-Type: application/json" \
   -d "$payload"
 
-ns_print_ok "Registered $name at $base_url"
+if [[ -n "$backend_class" ]]; then
+  ns_print_ok "Registered $name at $base_url (backend_class=$backend_class)"
+else
+  ns_print_ok "Registered $name at $base_url"
+fi

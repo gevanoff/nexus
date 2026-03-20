@@ -4,6 +4,7 @@
 backends:
   local_mlx:
     class: local_mlx
+    provider: mlx
     base_url: ${MLX_BASE_URL}
     description: macOS Nexa (MLX) - local inference
     supported_capabilities:
@@ -39,6 +40,7 @@ backends:
 
   ollama:
     class: ollama
+    provider: ollama
     base_url: ${OLLAMA_BASE_URL}
     description: localhost Ollama
     supported_capabilities:

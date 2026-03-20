@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 
-from app.backends import check_capability, get_admission_controller, get_registry, _capability_availability
+from app.backends import _capability_availability, backend_provider_name, check_capability, get_admission_controller, get_registry, llm_backends
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases
@@ -33,7 +33,7 @@ from app.models import ChatCompletionRequest, ChatMessage
 from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
 from app.router_cfg import router_cfg
-from app.upstreams import call_mlx_openai, call_ollama, stream_mlx_openai_chat, stream_ollama_chat_as_openai
+from app.upstreams import call_backend_chat, stream_backend_chat_as_openai
 from app.images_backend import generate_images, resolve_images_backend_class
 from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
@@ -301,43 +301,36 @@ def _clone_ui_models_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-async def _probe_ollama_models(client: httpx.AsyncClient, now: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    url = f"{S.OLLAMA_BASE_URL.rstrip('/')}/api/tags"
+async def _probe_models_for_backend(
+    client: httpx.AsyncClient,
+    backend_name: str,
+    base_url: str,
+    now: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    provider = backend_provider_name(backend_name)
+    if provider == "ollama":
+        url = f"{base_url.rstrip('/')}/api/tags"
+    else:
+        url = f"{base_url.rstrip('/')}/models"
     started = time.perf_counter()
-    diag: Dict[str, Any] = {"url": url, "ok": False}
+    diag: Dict[str, Any] = {"url": url, "ok": False, "backend": backend_name, "provider": provider}
     items: list[dict[str, Any]] = []
     try:
         r = await client.get(url)
         diag["status"] = r.status_code
         r.raise_for_status()
-        models = r.json().get("models", [])
-        for m in models:
-            name = m.get("name")
-            if name:
-                items.append({"id": f"ollama:{name}", "object": "model", "created": now, "owned_by": "local"})
-        diag["ok"] = True
-        diag["count"] = len(items)
-    except Exception as exc:
-        diag["error"] = str(exc)
-    finally:
-        diag["duration_ms"] = int((time.perf_counter() - started) * 1000)
-    return items, diag
-
-
-async def _probe_mlx_models(client: httpx.AsyncClient, now: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    url = f"{S.MLX_BASE_URL.rstrip('/')}/models"
-    started = time.perf_counter()
-    diag: Dict[str, Any] = {"url": url, "ok": False}
-    items: list[dict[str, Any]] = []
-    try:
-        r = await client.get(url)
-        diag["status"] = r.status_code
-        r.raise_for_status()
-        models = r.json().get("data", [])
-        for m in models:
-            mid = m.get("id")
-            if mid:
-                items.append({"id": f"mlx:{mid}", "object": "model", "created": now, "owned_by": "local"})
+        if provider == "ollama":
+            models = r.json().get("models", [])
+            for m in models:
+                name = m.get("name")
+                if name:
+                    items.append({"id": f"{backend_name}:{name}", "object": "model", "created": now, "owned_by": "local"})
+        else:
+            models = r.json().get("data", [])
+            for m in models:
+                mid = m.get("id")
+                if mid:
+                    items.append({"id": f"{backend_name}:{mid}", "object": "model", "created": now, "owned_by": "local"})
         diag["ok"] = True
         diag["count"] = len(items)
     except Exception as exc:
@@ -2821,16 +2814,30 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             return cached
 
         async with _httpx_client(timeout=probe_timeout_sec) as client:
-            (ollama_items, ollama_diag), (mlx_items, mlx_diag) = await asyncio.gather(
-                _probe_ollama_models(client, now),
-                _probe_mlx_models(client, now),
+            probe_defs = [(backend_name, cfg.base_url) for backend_name, cfg in llm_backends()]
+            probe_results = await asyncio.gather(
+                *[_probe_models_for_backend(client, backend_name, base_url, now) for backend_name, base_url in probe_defs],
+                return_exceptions=True,
             )
-        data["data"].extend(ollama_items)
-        data["data"].extend(mlx_items)
+        source_diags: Dict[str, Any] = {}
+        for (backend_name, _base_url), result in zip(probe_defs, probe_results):
+            if isinstance(result, Exception):
+                source_diags[backend_name] = {"backend": backend_name, "ok": False, "error": str(result)}
+                continue
+            items, diag = result
+            data["data"].extend(items)
+            source_diags[backend_name] = diag
 
     # Add convenience backend pseudo-models.
-    data["data"].append({"id": "ollama", "object": "model", "created": now, "owned_by": "gateway"})
-    data["data"].append({"id": "mlx", "object": "model", "created": now, "owned_by": "gateway"})
+    registry = get_registry()
+    ollama_backend = registry.get_backend(registry.resolve_backend_class("ollama"))
+    if ollama_backend is not None and (ollama_backend.base_url or "").strip():
+        data["data"].append({"id": "ollama", "object": "model", "created": now, "owned_by": "gateway"})
+    mlx_backend = registry.get_backend(registry.resolve_backend_class("mlx"))
+    if mlx_backend is not None and (mlx_backend.base_url or "").strip():
+        data["data"].append({"id": "mlx", "object": "model", "created": now, "owned_by": "gateway"})
+    for backend_name, _cfg in llm_backends():
+        data["data"].append({"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"})
 
     # Add configured aliases so the UI can select stable names (fast/coder/etc).
     aliases = get_aliases()
@@ -2849,37 +2856,38 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             item["temperature_cap"] = a.temperature_cap
         data["data"].append(item)
 
-        diagnostics: Dict[str, Any] = {
-            "probe_timeout_sec": probe_timeout_sec,
-            "sources": {
-                "ollama": ollama_diag,
-                "mlx": mlx_diag,
-            },
-            "cache": {
-                "hit": False,
-                "ttl_sec": cache_ttl_sec,
-            },
-        }
+    diagnostics: Dict[str, Any] = {
+        "probe_timeout_sec": probe_timeout_sec,
+        "sources": source_diags,
+        "cache": {
+            "hit": False,
+            "ttl_sec": cache_ttl_sec,
+        },
+    }
 
-        try:
-            mlx_health = get_health_checker().get_status("local_mlx")
-            if mlx_health is not None:
-                diagnostics["health_checker"] = {
-                    "local_mlx": {
-                        "healthy": mlx_health.is_healthy,
-                        "ready": mlx_health.is_ready,
-                        "error": mlx_health.error,
-                        "last_check": mlx_health.last_check,
-                    }
-                }
-        except Exception:
-            pass
+    try:
+        checker = get_health_checker()
+        health_diags: Dict[str, Any] = {}
+        for backend_name, _cfg in llm_backends():
+            status = checker.get_status(backend_name)
+            if status is None:
+                continue
+            health_diags[backend_name] = {
+                "healthy": status.is_healthy,
+                "ready": status.is_ready,
+                "error": status.error,
+                "last_check": status.last_check,
+            }
+        if health_diags:
+            diagnostics["health_checker"] = health_diags
+    except Exception:
+        pass
 
-        data["diagnostics"] = diagnostics
+    data["diagnostics"] = diagnostics
 
-        if cache_ttl_sec > 0:
-            _UI_MODELS_CACHE_VALUE = _clone_ui_models_payload(data)
-            _UI_MODELS_CACHE_EXPIRES_AT = time.time() + cache_ttl_sec
+    if cache_ttl_sec > 0:
+        _UI_MODELS_CACHE_VALUE = _clone_ui_models_payload(data)
+        _UI_MODELS_CACHE_EXPIRES_AT = time.time() + cache_ttl_sec
 
         return data
 
@@ -2919,7 +2927,7 @@ async def ui_chat(req: Request) -> Dict[str, Any]:
         enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
     )
 
-    backend: Literal["ollama", "mlx"] = route.backend
+    backend = route.backend
     upstream_model = route.model
 
     registry = get_registry()
@@ -2929,18 +2937,8 @@ async def ui_chat(req: Request) -> Dict[str, Any]:
     admission = get_admission_controller()
     await admission.acquire(backend_class, "chat")
 
-    cc_routed = ChatCompletionRequest(
-        model=upstream_model if backend == "mlx" else cc.model,
-        messages=cc.messages,
-        tools=None,
-        tool_choice=None,
-        temperature=cc.temperature,
-        max_tokens=cc.max_tokens,
-        stream=False,
-    )
-
     try:
-        resp = await (call_mlx_openai(cc_routed) if backend == "mlx" else call_ollama(cc, upstream_model))
+        resp = await call_backend_chat(cc, backend, upstream_model)
     finally:
         admission.release(backend_class, "chat")
 
@@ -3407,7 +3405,7 @@ async def _summarize_if_needed(convo: ui_conversations.Conversation) -> ui_conve
         enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
     )
 
-    backend: Literal["ollama", "mlx"] = route.backend
+    backend = route.backend
     upstream_model = route.model
 
     registry = get_registry()
@@ -3416,13 +3414,8 @@ async def _summarize_if_needed(convo: ui_conversations.Conversation) -> ui_conve
     await check_capability(backend_class, "chat")
     admission = get_admission_controller()
     await admission.acquire(backend_class, "chat")
-    cc_sum_routed = ChatCompletionRequest(
-        model=upstream_model if backend == "mlx" else cc_sum.model,
-        messages=cc_sum.messages,
-        stream=False,
-    )
     try:
-        resp = await (call_mlx_openai(cc_sum_routed) if backend == "mlx" else call_ollama(cc_sum, upstream_model))
+        resp = await call_backend_chat(cc_sum, backend, upstream_model)
     finally:
         admission.release(backend_class, "chat")
     text = (((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
@@ -3765,7 +3758,7 @@ async def ui_chat_stream(req: Request):
         enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
     )
 
-    backend: Literal["ollama", "mlx"] = route.backend
+    backend = route.backend
     upstream_model = route.model
 
     registry = get_registry()
@@ -3776,23 +3769,7 @@ async def ui_chat_stream(req: Request):
     await admission.acquire(backend_class, "chat")
 
     try:
-        cc_routed = ChatCompletionRequest(
-            model=upstream_model if backend == "mlx" else cc.model,
-            messages=cc.messages,
-            tools=None,
-            tool_choice=None,
-            temperature=cc.temperature,
-            max_tokens=cc.max_tokens,
-            stream=True,
-        )
-
-        if backend == "mlx":
-            payload = cc_routed.model_dump(exclude_none=True)
-            payload["model"] = upstream_model
-            payload["stream"] = True
-            upstream_gen = stream_mlx_openai_chat(payload)
-        else:
-            upstream_gen = stream_ollama_chat_as_openai(cc_routed, upstream_model)
+        upstream_gen = stream_backend_chat_as_openai(cc, backend, upstream_model)
     except Exception:
         admission.release(backend_class, "chat")
         raise

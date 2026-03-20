@@ -176,7 +176,7 @@ class Settings(BaseSettings):
     PERSONAPLEX_TIMEOUT_SEC: float = 120.0
     PERSONAPLEX_UI_URL: str = "https://localhost:8998"
 
-    DEFAULT_BACKEND: Literal["ollama", "mlx"] = "ollama"
+    DEFAULT_BACKEND: str = "local_mlx"
 
     # Service discovery (etcd)
     ETCD_ENABLED: bool = True
@@ -283,7 +283,7 @@ class Settings(BaseSettings):
     TOOLS_GIT_CWD: str = "/var/lib/gateway"
     TOOLS_GIT_TIMEOUT_SEC: int = 20
 
-    EMBEDDINGS_BACKEND: Literal["ollama", "mlx"] = "ollama"
+    EMBEDDINGS_BACKEND: str = "local_mlx"
     EMBEDDINGS_MODEL: str = "nomic-embed-text"
 
     MEMORY_ENABLED: bool = True

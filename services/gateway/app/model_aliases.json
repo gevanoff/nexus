@@ -1,0 +1,45 @@
+{
+  "aliases": {
+    "fast": {
+      "backend": "local_mlx",
+      "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "tools": false
+    },
+    "default": {
+      "backend": "local_mlx",
+      "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+      "tools": true
+    },
+    "coder": {
+      "backend": "ollama-ai1",
+      "model": "qwen2.5-coder:32b",
+      "tools": true
+    },
+    "coder-ai1": {
+      "backend": "ollama-ai1",
+      "model": "qwen2.5-coder:32b",
+      "tools": true
+    },
+    "coder-ada2": {
+      "backend": "ollama-ada2",
+      "model": "qwen2.5-coder:32b",
+      "tools": true
+    },
+    "reasoner-ai1": {
+      "backend": "ollama-ai1",
+      "model": "qwen2.5:32b",
+      "tools": true
+    },
+    "reasoner-ada2": {
+      "backend": "ollama-ada2",
+      "model": "qwen2.5:32b",
+      "tools": true
+    },
+    "long": {
+      "backend": "local_mlx",
+      "model": "mlx-community/Qwen2.5-14B-Instruct-4bit",
+      "context_window": 65536,
+      "tools": false
+    }
+  }
+}

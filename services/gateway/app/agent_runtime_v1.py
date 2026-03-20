@@ -7,19 +7,20 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, Request
 
+from app.backends import backend_provider_name
 from app.config import S, logger
 from app.models import AgentRunRequest, AgentSpecModel, ChatCompletionRequest, ChatMessage, ToolFunction, ToolSpec
 from app.openai_utils import new_id, now_unix
 from app.router import decide_route
 from app.router_cfg import router_cfg
 from app.tools_bus import TOOL_SCHEMAS, run_tool_call
-from app.upstreams import call_mlx_openai, call_ollama
+from app.upstreams import call_backend_chat
 
-Backend = Literal["ollama", "mlx"]
+Backend = str
 
 
 def _canonical_json(obj: Any) -> str:
@@ -160,10 +161,10 @@ class DeterministicAdmissionControl:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._sem: dict[Backend, asyncio.Semaphore] = {}
-        self._waiters: dict[Backend, int] = {"ollama": 0, "mlx": 0}
+        self._waiters: dict[Backend, int] = {}
 
     def _profile(self, backend: Backend) -> AdmissionProfile:
-        if backend == "mlx":
+        if backend_provider_name(backend) == "mlx":
             conc = int(getattr(S, "AGENT_BACKEND_CONCURRENCY_MLX", 2) or 2)
         else:
             conc = int(getattr(S, "AGENT_BACKEND_CONCURRENCY_OLLAMA", 4) or 4)
@@ -392,12 +393,12 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
 
                 # PLAN step: no tools.
                 plan_req = ChatCompletionRequest(
-                    model=upstream_model if backend == "mlx" else spec.model,
+                    model=spec.model,
                     messages=[system_plan, *messages],
                     stream=False,
                 )
 
-                plan_resp = await (call_mlx_openai(plan_req) if backend == "mlx" else call_ollama(plan_req, upstream_model))
+                plan_resp = await call_backend_chat(plan_req, backend, upstream_model)
                 plan_msg = _extract_assistant_message(plan_resp)
                 _emit(
                     {
@@ -411,15 +412,13 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
 
                 # ACTION step: tools enabled.
                 action_req = ChatCompletionRequest(
-                    model=upstream_model if backend == "mlx" else spec.model,
+                    model=spec.model,
                     messages=messages,
                     tools=tools,
                     stream=False,
                 )
 
-                action_resp = await (
-                    call_mlx_openai(action_req) if backend == "mlx" else call_ollama(action_req, upstream_model)
-                )
+                action_resp = await call_backend_chat(action_req, backend, upstream_model)
 
                 action_msg = _extract_assistant_message(action_resp)
                 _emit(

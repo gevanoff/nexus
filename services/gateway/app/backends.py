@@ -31,6 +31,7 @@ class BackendConfig:
     """Configuration for a single backend class."""
 
     backend_class: str
+    provider: str
     base_url: str
     description: str
     supported_capabilities: List[RouteKind]
@@ -70,13 +71,29 @@ class BackendRegistry:
 
     def get_backend(self, backend_class: str) -> Optional[BackendConfig]:
         """Get backend config by class name."""
-        # Check legacy mapping first
-        actual_class = self.legacy_mapping.get(backend_class, backend_class)
+        actual_class = self.resolve_backend_class(backend_class)
         return self.backends.get(actual_class)
 
     def resolve_backend_class(self, backend_name: str) -> str:
         """Resolve a backend name (including legacy names) to its canonical class."""
-        return self.legacy_mapping.get(backend_name, backend_name)
+        raw = (backend_name or "").strip()
+        if not raw:
+            return raw
+        if raw in self.backends:
+            return raw
+        lowered = raw.lower()
+        if lowered in self.backends:
+            return lowered
+        mapped = self.legacy_mapping.get(raw, self.legacy_mapping.get(lowered, raw))
+        if mapped in self.backends:
+            return mapped
+        normalized = lowered.replace("_", "-")
+        for candidate in self.backends.keys():
+            if candidate.lower().replace("_", "-") == normalized:
+                return candidate
+        if mapped != raw:
+            return mapped
+        return raw
 
 
 def _backend_host(base_url: str) -> Optional[str]:
@@ -139,6 +156,9 @@ def _service_name_to_backend_class(service_name: str, registry: BackendRegistry)
     mapped = _SERVICE_NAME_TO_BACKEND_CLASS.get(normalized)
     if mapped:
         return mapped
+    for prefix, mapped in _SERVICE_NAME_TO_BACKEND_CLASS.items():
+        if normalized.startswith(prefix + "-") or normalized.startswith(prefix + "_"):
+            return mapped
     normalized = normalized.replace("-", "_")
     if normalized in registry.static_backends:
         return normalized
@@ -160,6 +180,41 @@ def _normalize_backend_class(backend_class: str, registry: BackendRegistry) -> O
 
 def _backend_class_to_service_name(backend_class: str) -> str:
     return _BACKEND_CLASS_TO_SERVICE_NAME.get(backend_class, backend_class)
+
+
+def _normalize_backend_name(name: str) -> str:
+    return (name or "").strip().lower()
+
+
+def backend_provider_name(backend_name: str) -> str:
+    registry = get_registry()
+    resolved = registry.resolve_backend_class(backend_name)
+    cfg = registry.get_backend(resolved)
+    provider = (cfg.provider if cfg else "").strip().lower()
+    if provider:
+        return provider
+
+    normalized = _normalize_backend_name(resolved or backend_name).replace("_", "-")
+    if normalized in {"mlx", "local-mlx"} or normalized.startswith("mlx-") or normalized.endswith("-mlx"):
+        return "mlx"
+    if normalized == "ollama" or normalized.startswith("ollama-") or normalized.endswith("-ollama"):
+        return "ollama"
+    return normalized
+
+
+def llm_backends() -> list[tuple[str, BackendConfig]]:
+    registry = get_registry()
+    out: list[tuple[str, BackendConfig]] = []
+    for backend_name, cfg in registry.backends.items():
+        if "chat" not in cfg.supported_capabilities:
+            continue
+        if not (cfg.base_url or "").strip():
+            continue
+        if backend_provider_name(backend_name) not in {"ollama", "mlx"}:
+            continue
+        out.append((backend_name, cfg))
+    out.sort(key=lambda item: item[0])
+    return out
 
 
 def _prefix_range_end(prefix: str) -> str:
@@ -237,11 +292,20 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
             backend_class = _service_name_to_backend_class(record.name, registry)
         if not backend_class:
             continue
-        config = effective.get(backend_class)
+        config = registry.static_backends.get(backend_class)
         if config is None:
             continue
-        effective[backend_class] = replace(config, base_url=record.base_url)
-        bound_records[record.name] = replace(record, backend_class=backend_class)
+        record_name = _normalize_backend_name(record.name)
+        canonical_service_name = _normalize_backend_name(_backend_class_to_service_name(backend_class))
+        backend_key = backend_class if record_name in {"", canonical_service_name, _normalize_backend_name(backend_class)} else record_name
+        description = config.description if backend_key == backend_class else f"{config.description} ({record.name})"
+        effective[backend_key] = replace(
+            config,
+            backend_class=backend_key,
+            base_url=record.base_url,
+            description=description,
+        )
+        bound_records[record.name] = replace(record, backend_class=backend_key)
     registry.backends = effective
     registry.service_records = bound_records
 
@@ -256,6 +320,8 @@ async def refresh_registry_from_etcd() -> None:
         except Exception as exc:
             logger.warning("etcd registry refresh failed: %s: %s", type(exc).__name__, exc)
     _apply_service_records(registry, service_records)
+    if _admission is not None:
+        _admission.sync_registry(registry)
 
 
 _registry_sync_task: Optional[asyncio.Task] = None
@@ -361,10 +427,29 @@ class AdmissionController:
                 limit = config.get_limit(route_kind)
                 key = (backend_class, route_kind)
                 self._semaphores[key] = asyncio.Semaphore(limit)
+                setattr(self._semaphores[key], "_initial_value", limit)  # type: ignore[attr-defined]
                 self._locks[key] = asyncio.Lock()
                 logger.info(
                     f"Admission control: {backend_class}.{route_kind} limit={limit}"
                 )
+
+    def sync_registry(self, registry: BackendRegistry) -> None:
+        self.registry = registry
+        next_semaphores: Dict[tuple[str, RouteKind], asyncio.Semaphore] = {}
+        next_locks: Dict[tuple[str, RouteKind], asyncio.Lock] = {}
+        for backend_class, config in self.registry.backends.items():
+            for route_kind in config.supported_capabilities:
+                key = (backend_class, route_kind)
+                limit = max(1, config.get_limit(route_kind))
+                sem = self._semaphores.get(key)
+                current_limit = getattr(sem, "_initial_value", None) if sem is not None else None  # type: ignore[attr-defined]
+                if sem is None or current_limit != limit:
+                    sem = asyncio.Semaphore(limit)
+                    setattr(sem, "_initial_value", limit)  # type: ignore[attr-defined]
+                next_semaphores[key] = sem
+                next_locks[key] = self._locks.get(key) or asyncio.Lock()
+        self._semaphores = next_semaphores
+        self._locks = next_locks
 
     def _get_semaphore(
         self, backend_class: str, route_kind: RouteKind
@@ -487,6 +572,7 @@ def load_backends_config(path: Optional[Path] = None) -> BackendRegistry:
 
         backends[name] = BackendConfig(
             backend_class=cfg.get("class", name),
+            provider=str(cfg.get("provider", cfg.get("class", name)) or cfg.get("class", name) or name),
             base_url=_sanitize_base_url(base_url),
             description=cfg.get("description", ""),
             supported_capabilities=cfg.get("supported_capabilities", []),
@@ -511,6 +597,7 @@ def _default_registry() -> BackendRegistry:
     backends = {
         "ollama": BackendConfig(
             backend_class="ollama",
+            provider="ollama",
             base_url=S.OLLAMA_BASE_URL,
             description="Default Ollama backend",
             supported_capabilities=["chat", "embeddings"],
@@ -519,8 +606,9 @@ def _default_registry() -> BackendRegistry:
             health_readiness="/readyz",
             payload_policy={},
         ),
-        "mlx": BackendConfig(
-            backend_class="mlx",
+        "local_mlx": BackendConfig(
+            backend_class="local_mlx",
+            provider="mlx",
             base_url=S.MLX_BASE_URL,
             description="Default MLX backend",
             supported_capabilities=["chat", "embeddings"],
@@ -530,7 +618,11 @@ def _default_registry() -> BackendRegistry:
             payload_policy={},
         ),
     }
-    return BackendRegistry(backends=dict(backends), legacy_mapping={}, static_backends=dict(backends))
+    return BackendRegistry(
+        backends=dict(backends),
+        legacy_mapping={"mlx": "local_mlx"},
+        static_backends=dict(backends),
+    )
 
 
 # Global registry and admission controller

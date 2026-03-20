@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from app.backends import backend_provider_name
 from app.config import S
 
 
 @dataclass(frozen=True)
 class ModelAlias:
-    backend: str  # "ollama" | "mlx"
+    backend: str
     upstream_model: str
     context_window: Optional[int] = None
     tools: Optional[bool] = None
@@ -23,10 +25,10 @@ def _default_aliases() -> Dict[str, ModelAlias]:
     default_backend = S.DEFAULT_BACKEND
 
     def strong_for(backend: str) -> str:
-        return S.OLLAMA_MODEL_STRONG if backend == "ollama" else S.MLX_MODEL_STRONG
+        return S.OLLAMA_MODEL_STRONG if backend_provider_name(backend) == "ollama" else S.MLX_MODEL_STRONG
 
     def fast_for(backend: str) -> str:
-        return S.OLLAMA_MODEL_FAST if backend == "ollama" else S.MLX_MODEL_FAST
+        return S.OLLAMA_MODEL_FAST if backend_provider_name(backend) == "ollama" else S.MLX_MODEL_FAST
 
     return {
         # These four are the canonical policy surface.
@@ -57,9 +59,9 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         return None
 
     if isinstance(v, dict):
-        backend = (v.get("backend") or "").strip().lower()
+        backend = (v.get("backend") or "").strip()
         model = (v.get("model") or v.get("upstream_model") or "").strip()
-        if backend not in {"ollama", "mlx"} or not model:
+        if not backend or not model:
             return None
         if model.startswith("ollama:"):
             model = model[len("ollama:") :]
@@ -102,6 +104,7 @@ def load_aliases() -> Dict[str, ModelAlias]:
 
     raw_json = (S.MODEL_ALIASES_JSON or "").strip()
     path = (S.MODEL_ALIASES_PATH or "").strip()
+    fallback_path = Path(__file__).with_name("model_aliases.json")
 
     payload: Any = None
     if raw_json:
@@ -109,12 +112,20 @@ def load_aliases() -> Dict[str, ModelAlias]:
             payload = json.loads(raw_json)
         except Exception:
             payload = None
-    elif path and os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-        except Exception:
-            payload = None
+    else:
+        candidate_paths = []
+        if path:
+            candidate_paths.append(Path(path))
+        candidate_paths.append(fallback_path)
+        for candidate in candidate_paths:
+            if not candidate.exists():
+                continue
+            try:
+                with candidate.open("r", encoding="utf-8") as f:
+                    payload = json.load(f)
+                break
+            except Exception:
+                payload = None
 
     if isinstance(payload, dict) and isinstance(payload.get("aliases"), dict):
         payload = payload["aliases"]

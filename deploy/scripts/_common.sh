@@ -406,6 +406,7 @@ ns_seed_gateway_config_files() {
   # (it may contain secrets on some hosts) and does not exist in a clean checkout.
   # Use tracked defaults from services/gateway/app/ instead.
   local tools_registry_template="${repo_root}/services/gateway/app/tools_registry.json"
+  local model_aliases_template="${repo_root}/services/gateway/app/model_aliases.json"
 
   local tools_registry_dst="${repo_root}/.runtime/gateway/config/tools_registry.json"
   local model_aliases_dst="${repo_root}/.runtime/gateway/config/model_aliases.json"
@@ -443,9 +444,18 @@ ns_seed_gateway_config_files() {
   # to built-in defaults. We seed minimal JSON so operators have a stable place
   # to edit without modifying the container image.
   if [[ ! -f "$model_aliases_dst" ]]; then
-    printf '%s\n' '{"aliases":{}}' >"$model_aliases_dst" 2>/dev/null || true
-    chmod 600 "$model_aliases_dst" 2>/dev/null || true
-    [[ -f "$model_aliases_dst" ]] && ns_print_ok "Seeded model aliases: $model_aliases_dst"
+    if [[ -f "$model_aliases_template" ]]; then
+      cp "$model_aliases_template" "$model_aliases_dst" 2>/dev/null || {
+        ns_print_error "Failed to seed model aliases: $model_aliases_dst"
+        return 1
+      }
+      chmod 600 "$model_aliases_dst" 2>/dev/null || true
+      ns_print_ok "Seeded model aliases: $model_aliases_dst"
+    else
+      printf '%s\n' '{"aliases":{}}' >"$model_aliases_dst" 2>/dev/null || true
+      chmod 600 "$model_aliases_dst" 2>/dev/null || true
+      [[ -f "$model_aliases_dst" ]] && ns_print_ok "Seeded model aliases: $model_aliases_dst"
+    fi
   fi
 
   if [[ ! -f "$agent_specs_dst" ]]; then

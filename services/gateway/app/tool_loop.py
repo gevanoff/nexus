@@ -1,28 +1,25 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 from fastapi import HTTPException
 
 from app.models import ChatCompletionRequest, ChatMessage
 from app.tools_bus import run_tool_call
-from app.upstreams import call_mlx_openai, call_ollama
+from app.upstreams import call_backend_chat
 
 
 async def tool_loop(
     initial_req: ChatCompletionRequest,
-    backend: Literal["ollama", "mlx"],
+    backend: str,
     model_name: str,
     max_steps: int = 8,
     allowed_tools: set[str] | None = None,
 ) -> Dict[str, Any]:
     req = initial_req
     for _ in range(max_steps):
-        if backend == "mlx":
-            resp = await call_mlx_openai(req)
-        else:
-            resp = await call_ollama(req, model_name)
+        resp = await call_backend_chat(req, backend, model_name)
 
         choice = resp.get("choices", [{}])[0]
         msg = choice.get("message", {}) or {}

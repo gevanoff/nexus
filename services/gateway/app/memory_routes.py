@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from typing import Any, Dict, List, Literal, Optional, Mapping
+from typing import Any, Dict, List, Optional, Mapping
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -21,7 +21,7 @@ from app.models import (
 from app.router import decide_route
 from app.router_cfg import router_cfg
 from app import memory_v2
-from app.upstreams import call_mlx_openai, call_ollama, embed_text_for_memory
+from app.upstreams import call_backend_chat, embed_text_for_memory
 from app.memory_legacy import memory_search as memory_search_v1, memory_upsert_async
 
 
@@ -379,7 +379,7 @@ async def v1_memory_search(req: Request):
     return {"ok": True, "results": out}
 
 
-async def _summarize_for_compaction(items: list[dict], backend: Literal["ollama", "mlx"], model_name: str) -> str:
+async def _summarize_for_compaction(items: list[dict], backend: str, model_name: str) -> str:
     lines = []
     for it in items:
         t = it.get("type")
@@ -406,7 +406,7 @@ async def _summarize_for_compaction(items: list[dict], backend: Literal["ollama"
         stream=False,
     )
 
-    resp = await (call_mlx_openai(cc) if backend == "mlx" else call_ollama(cc, model_name))
+    resp = await call_backend_chat(cc, backend, model_name)
     msg = ((resp.get("choices") or [{}])[0].get("message") or {})
     content = msg.get("content")
     return content if isinstance(content, str) else ""
@@ -464,7 +464,7 @@ async def v1_memory_compact(req: Request):
         messages=[{"role": "user", "content": "\n".join([it["text"] for it in items if isinstance(it.get("text"), str)])}],
         has_tools=True,
     )
-    backend: Literal["ollama", "mlx"] = route.backend
+    backend = route.backend
     model_name = route.model
 
     summary = await _summarize_for_compaction(items, backend, model_name)
