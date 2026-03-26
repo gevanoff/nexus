@@ -35,6 +35,26 @@ See `env/mlx.env.example` for primary variables:
 - `MLX_PORT` (default `10240`)
 - `MLX_MODEL_PATH` (default `mlx-community/gemma-2-2b-it-8bit`)
 - `MLX_MODEL_TYPE` (default `lm`)
+- `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
+
+### Config Mode
+
+Nexus now supports MLX config-mode launch via `MLX_CONFIG_PATH`.
+
+- Single-model mode:
+  - uses `MLX_MODEL_PATH` + `MLX_MODEL_TYPE`
+- Config mode:
+  - uses `MLX_CONFIG_PATH`
+  - lets one MLX server expose multiple model ids and types, such as `lm`, `embeddings`, and `multimodal`
+
+Example config template:
+
+- `services/mlx/config/config.example.yaml`
+
+Recommended host/runtime path for operators:
+
+- copy the example to `nexus/.runtime/mlx/config/config.yaml`
+- set `MLX_CONFIG_PATH=/var/lib/mlx/config/config.yaml`
 
 ## Compose usage
 
@@ -66,6 +86,7 @@ sudo launchctl kickstart -k system/com.nexus.mlx.openai.server
 ```
 
 You can also change `MLX_MODEL_TYPE`, `MLX_HOST`, and `MLX_PORT` in the same file.
+If `MLX_CONFIG_PATH` is set in `/var/lib/mlx/mlx.env`, the launcher uses config mode instead.
 
 Installer prerequisites:
 
@@ -97,16 +118,18 @@ Prewarm from Gateway alias config (`.runtime/gateway/config/model_aliases.json`)
 
 Notes:
 
-- `prewarm-mlx.sh --from-aliases` warms every unique alias with `"backend": "mlx"`.
+- `prewarm-mlx.sh --from-aliases` warms every unique alias with `"backend": "mlx"` or `"backend": "local_mlx"`.
 - `prewarm-models.sh --from-aliases` checks/pulls every unique alias with `"backend": "ollama"`.
 - Both scripts also support `--aliases-file <path>` to point at a non-default alias file.
 - `prewarm-mlx.sh` uses `--timeout-sec 0` by default (no timeout), which is recommended for large model first-run warmups.
+- When `MLX_CONFIG_PATH` is set, use `--model` and/or `--from-aliases` with `prewarm-mlx.sh` for deterministic warmup.
 
 Gateway integration pattern:
 
 - Run MLX host-native on Apple Silicon (`127.0.0.1:10240/v1` on the MLX host).
 - Set `MLX_BASE_URL` in `nexus/.env` to the host URL that Gateway containers can reach (for same-machine Docker Desktop, `http://host.docker.internal:10240/v1`).
 - Gateway uses this backend for chat/embeddings when routing selects backend class `local_mlx`.
+- Multimodal chat requests are passed through when message content uses structured OpenAI-style arrays/objects.
 
 ## Recommended Model Strategy for `ai2` (512GB)
 

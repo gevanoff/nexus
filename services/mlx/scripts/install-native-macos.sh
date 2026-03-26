@@ -62,6 +62,7 @@ MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-10240}"
 MLX_MODEL_PATH="${MLX_MODEL_PATH:-mlx-community/gemma-2-2b-it-8bit}"
 MLX_MODEL_TYPE="${MLX_MODEL_TYPE:-lm}"
+MLX_CONFIG_PATH="${MLX_CONFIG_PATH:-}"
 MLX_HOME="${MLX_HOME:-/var/lib/mlx}"
 MLX_VENV="${MLX_VENV:-/var/lib/mlx/env}"
 MLX_LOG_DIR="${MLX_LOG_DIR:-/var/log/mlx}"
@@ -76,26 +77,30 @@ HOST_FROM_SHELL="false"
 PORT_FROM_SHELL="false"
 MODEL_PATH_FROM_SHELL="false"
 MODEL_TYPE_FROM_SHELL="false"
+CONFIG_PATH_FROM_SHELL="false"
 
 has_shell_override MLX_HOST && HOST_FROM_SHELL="true"
 has_shell_override MLX_PORT && PORT_FROM_SHELL="true"
 has_shell_override MLX_MODEL_PATH && MODEL_PATH_FROM_SHELL="true"
 has_shell_override MLX_MODEL_TYPE && MODEL_TYPE_FROM_SHELL="true"
+has_shell_override MLX_CONFIG_PATH && CONFIG_PATH_FROM_SHELL="true"
 
 HOST_FROM_CLI="false"
 PORT_FROM_CLI="false"
 MODEL_PATH_FROM_CLI="false"
 MODEL_TYPE_FROM_CLI="false"
+CONFIG_PATH_FROM_CLI="false"
 
 usage() {
   cat <<'EOF'
-Usage: services/mlx/scripts/install-native-macos.sh [--model-path PATH] [--model-type TYPE] [--port PORT]
+Usage: services/mlx/scripts/install-native-macos.sh [--model-path PATH] [--model-type TYPE] [--config PATH] [--port PORT]
 
 Installs/starts MLX OpenAI server as a launchd service under an unprivileged user.
 
 Options:
   --model-path PATH   Model path/repo id (default: mlx-community/gemma-2-2b-it-8bit)
   --model-type TYPE   Model type (default: lm)
+  --config PATH       Optional mlx-openai-server config YAML. When set, overrides --model-path/--model-type launch mode.
   --host HOST         Listen host (default: 127.0.0.1)
   --port PORT         Listen port (default: 10240)
   --user USER         Service user (default: mlx)
@@ -112,6 +117,11 @@ while [[ $# -gt 0 ]]; do
     --model-type)
       MLX_MODEL_TYPE="${2:-}"
       MODEL_TYPE_FROM_CLI="true"
+      shift 2
+      ;;
+    --config)
+      MLX_CONFIG_PATH="${2:-}"
+      CONFIG_PATH_FROM_CLI="true"
       shift 2
       ;;
     --host)
@@ -152,10 +162,18 @@ if [[ -f "$MLX_ENV_FILE" ]]; then
   if [[ "$MODEL_TYPE_FROM_SHELL" != "true" && "$MODEL_TYPE_FROM_CLI" != "true" ]]; then
     MLX_MODEL_TYPE="$(env_file_get "$MLX_ENV_FILE" MLX_MODEL_TYPE "$MLX_MODEL_TYPE")"
   fi
+  if [[ "$CONFIG_PATH_FROM_SHELL" != "true" && "$CONFIG_PATH_FROM_CLI" != "true" ]]; then
+    MLX_CONFIG_PATH="$(env_file_get "$MLX_ENV_FILE" MLX_CONFIG_PATH "$MLX_CONFIG_PATH")"
+  fi
 fi
 
 if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid --port value: ${MLX_PORT}" >&2
+  exit 2
+fi
+
+if [[ -n "$MLX_CONFIG_PATH" && ! -f "$MLX_CONFIG_PATH" ]]; then
+  echo "ERROR: MLX config file not found: ${MLX_CONFIG_PATH}" >&2
   exit 2
 fi
 
@@ -237,6 +255,7 @@ MLX_HOST=${MLX_HOST}
 MLX_PORT=${MLX_PORT}
 MLX_MODEL_PATH=${MLX_MODEL_PATH}
 MLX_MODEL_TYPE=${MLX_MODEL_TYPE}
+MLX_CONFIG_PATH=${MLX_CONFIG_PATH}
 EOF
 sudo chown root:wheel "${MLX_ENV_FILE}"
 sudo chmod 644 "${MLX_ENV_FILE}"

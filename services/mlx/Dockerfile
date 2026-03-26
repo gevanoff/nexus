@@ -21,4 +21,4 @@ EXPOSE 10240
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
   CMD curl -fsS http://localhost:10240/v1/models >/dev/null || exit 1
 
-CMD ["sh", "-lc", "mlx-openai-server launch --model-path \"${MLX_MODEL_PATH:-mlx-community/gemma-2-2b-it-8bit}\" --model-type \"${MLX_MODEL_TYPE:-lm}\" --host \"${MLX_HOST:-0.0.0.0}\" --port \"${MLX_PORT:-10240}\""]
+CMD ["sh", "-lc", "if [ -n \"${MLX_CONFIG_PATH:-}\" ]; then mlx-openai-server launch --config \"${MLX_CONFIG_PATH}\"; else mlx-openai-server launch --model-path \"${MLX_MODEL_PATH:-mlx-community/gemma-2-2b-it-8bit}\" --model-type \"${MLX_MODEL_TYPE:-lm}\" --host \"${MLX_HOST:-0.0.0.0}\" --port \"${MLX_PORT:-10240}\"; fi"]

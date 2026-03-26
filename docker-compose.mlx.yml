@@ -16,10 +16,12 @@ services:
       - MLX_PORT=10240
       - MLX_MODEL_PATH=${MLX_MODEL_PATH:-mlx-community/gemma-2-2b-it-8bit}
       - MLX_MODEL_TYPE=${MLX_MODEL_TYPE:-lm}
+      - MLX_CONFIG_PATH=${MLX_CONFIG_PATH:-}
       - HF_HOME=/var/lib/mlx/cache/huggingface
       - XDG_CACHE_HOME=/var/lib/mlx/cache
     volumes:
       - ./.runtime/mlx/cache:/var/lib/mlx/cache
+      - ./.runtime/mlx/config:/var/lib/mlx/config:ro
     networks:
       - nexus
     # MLX runtime is Apple-Silicon/macOS specific; this Linux container may exit

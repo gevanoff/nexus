@@ -97,11 +97,27 @@ TOKEN="${GATEWAY_BEARER_TOKEN:-}"
 if [[ -z "${TOKEN}" && -f "${ENV_FILE}" ]]; then
   TOKEN="$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")"
 fi
+embeddings_backend="${EMBEDDINGS_BACKEND:-}"
+if [[ -z "${embeddings_backend}" && -f "${ENV_FILE}" ]]; then
+  embeddings_backend="$(ns_env_get "${ENV_FILE}" EMBEDDINGS_BACKEND "local_mlx")"
+fi
+embeddings_backend="${embeddings_backend:-local_mlx}"
+
 embeddings_model="${EMBEDDINGS_MODEL:-}"
 if [[ -z "${embeddings_model}" && -f "${ENV_FILE}" ]]; then
-  embeddings_model="$(ns_env_get "${ENV_FILE}" EMBEDDINGS_MODEL "nomic-embed-text")"
+  embeddings_model="$(ns_env_get "${ENV_FILE}" EMBEDDINGS_MODEL "")"
 fi
-embeddings_model="${embeddings_model:-nomic-embed-text}"
+if [[ -z "${embeddings_model}" || ( "${embeddings_backend}" != ollama* && "${embeddings_model}" == "nomic-embed-text" ) ]]; then
+  if [[ "${embeddings_backend}" == ollama* ]]; then
+    embeddings_model="nomic-embed-text"
+  else
+    embeddings_model="${MLX_MODEL_STRONG:-}"
+    if [[ -z "${embeddings_model}" && -f "${ENV_FILE}" ]]; then
+      embeddings_model="$(ns_env_get "${ENV_FILE}" MLX_MODEL_STRONG "mlx-community/gemma-2-2b-it-8bit")"
+    fi
+    embeddings_model="${embeddings_model:-mlx-community/gemma-2-2b-it-8bit}"
+  fi
+fi
 
 ollama_model_fast="${OLLAMA_MODEL_FAST:-}"
 if [[ -z "${ollama_model_fast}" && -f "${ENV_FILE}" ]]; then
@@ -387,15 +403,20 @@ else
   mark_fail
 fi
 
-print_step "Ollama embeddings model readiness"
+print_step "Embeddings backend readiness"
+echo "Embeddings backend: ${embeddings_backend}"
 echo "Expected embeddings model: ${embeddings_model}"
-if ollama_model_present "$embeddings_model"; then
-  ns_print_ok "Embeddings model is present in Ollama"
+if [[ "${embeddings_backend}" == ollama* ]]; then
+  if ollama_model_present "$embeddings_model"; then
+    ns_print_ok "Embeddings model is present in Ollama"
+  else
+    ns_print_error "Embeddings model not present in Ollama: ${embeddings_model}"
+    ns_print_warn "Pull it with:"
+    ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${embeddings_model}"
+    mark_fail
+  fi
 else
-  ns_print_error "Embeddings model not present in Ollama: ${embeddings_model}"
-  ns_print_warn "Pull it with:"
-  ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${embeddings_model}"
-  mark_fail
+  ns_print_ok "MLX embeddings use the configured/default MLX model path"
 fi
 
 print_step "Ollama chat model readiness"

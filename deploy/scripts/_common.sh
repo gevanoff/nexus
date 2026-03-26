@@ -511,6 +511,7 @@ ns_ensure_mlx_runtime_dirs() {
   # Usage: ns_ensure_mlx_runtime_dirs <repo_root>
   local repo_root="$1"
   ns_mkdir_p "${repo_root}/.runtime/mlx/cache"
+  ns_mkdir_p "${repo_root}/.runtime/mlx/config"
 }
 
 ns_ensure_runtime_dirs() {

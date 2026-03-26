@@ -23,7 +23,7 @@ Usage: deploy/scripts/prewarm-models.sh [--env-file PATH] [--check-only] [--exte
 
 Idempotently checks required Ollama models and pulls only missing ones.
 Required models are derived from env (or defaults):
-  - EMBEDDINGS_MODEL (default: nomic-embed-text)
+  - EMBEDDINGS_MODEL when EMBEDDINGS_BACKEND uses Ollama (default: nomic-embed-text)
   - OLLAMA_MODEL_FAST (default: qwen2.5:7b)
   - OLLAMA_MODEL_STRONG (default: qwen2.5:32b)
 
@@ -157,7 +157,8 @@ if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
   ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" up -d ollama >/dev/null
 fi
 
-embeddings_model="${EMBEDDINGS_MODEL:-$(ns_env_get "$ENV_FILE" EMBEDDINGS_MODEL "nomic-embed-text")}"
+embeddings_backend="${EMBEDDINGS_BACKEND:-$(ns_env_get "$ENV_FILE" EMBEDDINGS_BACKEND "local_mlx")}"
+embeddings_model="${EMBEDDINGS_MODEL:-$(ns_env_get "$ENV_FILE" EMBEDDINGS_MODEL "")}"
 ollama_model_fast="${OLLAMA_MODEL_FAST:-$(ns_env_get "$ENV_FILE" OLLAMA_MODEL_FAST "qwen2.5:7b")}"
 ollama_model_strong="${OLLAMA_MODEL_STRONG:-$(ns_env_get "$ENV_FILE" OLLAMA_MODEL_STRONG "qwen2.5:32b")}"
 
@@ -174,7 +175,9 @@ add_unique_model() {
   required_models+=("$candidate")
 }
 
-add_unique_model "$embeddings_model"
+if [[ "${embeddings_backend}" == ollama* ]]; then
+  add_unique_model "${embeddings_model:-nomic-embed-text}"
+fi
 add_unique_model "$ollama_model_fast"
 add_unique_model "$ollama_model_strong"
 

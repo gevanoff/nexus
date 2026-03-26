@@ -211,7 +211,7 @@ class Settings(BaseSettings):
     # Example env:
     #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"ollama","model":"deepseek-coder:33b"}}}'
     MODEL_ALIASES_JSON: str = ""
-    MODEL_ALIASES_PATH: str = "/var/lib/gateway/app/model_aliases.json"
+    MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 
     TOOLS_ALLOW_SHELL: bool = False
     TOOLS_ALLOW_FS: bool = False
@@ -278,13 +278,13 @@ class Settings(BaseSettings):
 
     # Optional infra-owned tool registry (explicit tool declarations).
     # When present, tools can be declared with version + JSON schema + subprocess exec spec.
-    TOOLS_REGISTRY_PATH: str = "/var/lib/gateway/app/tools_registry.json"
+    TOOLS_REGISTRY_PATH: str = "/var/lib/gateway/config/tools_registry.json"
 
     TOOLS_GIT_CWD: str = "/var/lib/gateway"
     TOOLS_GIT_TIMEOUT_SEC: int = 20
 
     EMBEDDINGS_BACKEND: str = "local_mlx"
-    EMBEDDINGS_MODEL: str = "nomic-embed-text"
+    EMBEDDINGS_MODEL: str = ""
 
     MEMORY_ENABLED: bool = True
     MEMORY_DB_PATH: str = "/var/lib/gateway/data/memory.sqlite"
@@ -301,7 +301,7 @@ class Settings(BaseSettings):
     REQUEST_LOG_PATH: str = "/var/lib/gateway/data/requests.jsonl"
 
     # Agent runtime v1 (single-process, deterministic)
-    AGENT_SPECS_PATH: str = "/var/lib/gateway/app/agent_specs.json"
+    AGENT_SPECS_PATH: str = "/var/lib/gateway/config/agent_specs.json"
     AGENT_RUNS_LOG_PATH: str = "/var/lib/gateway/data/agent/runs.jsonl"
     AGENT_RUNS_LOG_DIR: str = "/var/lib/gateway/data/agent"
     AGENT_RUNS_LOG_MODE: Literal["ndjson", "per_run", "both"] = "per_run"

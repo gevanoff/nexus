@@ -24,7 +24,7 @@ Usage: deploy/scripts/prewarm-mlx.sh [--env-file PATH] [--check-only] [--mlx-bas
 Checks MLX availability and optionally sends a minimal warmup generation request.
 Defaults are derived from env:
   - MLX_BASE_URL (default: http://mlx:10240/v1)
-  - MLX_MODEL_PATH (default: mlx-community/gemma-2-2b-it-8bit)
+  - MLX_MODEL_PATH (default: mlx-community/gemma-2-2b-it-8bit) when MLX_CONFIG_PATH is not set
 
 Options:
   --env-file PATH     Env file path (default: ./.env)
@@ -32,7 +32,7 @@ Options:
   --mlx-base-url URL  Explicit MLX URL (overrides MLX_BASE_URL);
                       also supported via PREWARM_MLX_BASE_URL env var.
   --model MODEL       Explicit model id/path for warmup request (repeatable)
-  --from-aliases      Include all backend=mlx models from model_aliases.json
+  --from-aliases      Include all backend=mlx/local_mlx models from model_aliases.json
   --aliases-file PATH Alias config path (default: ./.runtime/gateway/config/model_aliases.json)
   --timeout-sec N     Curl timeout in seconds for each warmup request.
                     Use 0 for no timeout (default: 0)
@@ -110,6 +110,7 @@ else
   mlx_base_url="${MLX_BASE_URL:-$(ns_env_get "$ENV_FILE" MLX_BASE_URL "http://mlx:10240/v1")}"
 fi
 mlx_base_url="${mlx_base_url%/}"
+mlx_config_path="${MLX_CONFIG_PATH:-$(ns_env_get "$ENV_FILE" MLX_CONFIG_PATH "")}"
 
 declare -a models_to_warm=()
 
@@ -117,7 +118,7 @@ if [[ "${#MLX_MODEL_OVERRIDES[@]}" -gt 0 ]]; then
   for explicit_model in "${MLX_MODEL_OVERRIDES[@]}"; do
     add_unique_model "$explicit_model"
   done
-else
+elif [[ -z "${mlx_config_path:-}" ]]; then
   add_unique_model "${MLX_MODEL_PATH:-$(ns_env_get "$ENV_FILE" MLX_MODEL_PATH "mlx-community/gemma-2-2b-it-8bit")}"
 fi
 
@@ -138,17 +139,14 @@ with open(path, "r", encoding="utf-8") as handle:
 for alias in payload.get("aliases", {}).values():
     if not isinstance(alias, dict):
         continue
-    if alias.get("backend") != "mlx":
+    backend = str(alias.get("backend", "")).strip().lower().replace("-", "_")
+    if backend not in {"mlx", "local_mlx"} and not backend.startswith("mlx_") and not backend.startswith("local_mlx_"):
         continue
     model = str(alias.get("model", "")).strip()
     if model:
         print(model)
 PY
 )
-fi
-
-if [[ "${#models_to_warm[@]}" -eq 0 ]]; then
-  ns_die "No MLX models resolved from options, aliases, or environment"
 fi
 
 models_url="${mlx_base_url}/models"
@@ -173,6 +171,15 @@ fi
 
 if [[ -z "$models_json" ]]; then
   ns_die "Could not reach MLX models endpoint at ${models_url}"
+fi
+
+if [[ "${#models_to_warm[@]}" -eq 0 ]]; then
+  if [[ "$CHECK_ONLY" == "true" ]]; then
+    ns_print_warn "No explicit MLX warmup models resolved; config mode usually requires --model and/or --from-aliases."
+    ns_print_ok "Check-only mode complete"
+    exit 0
+  fi
+  ns_die "No MLX models resolved from options, aliases, or environment (use --model or --from-aliases when MLX_CONFIG_PATH is set)"
 fi
 
 model_present() {

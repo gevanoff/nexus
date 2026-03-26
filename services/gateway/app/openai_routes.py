@@ -29,6 +29,7 @@ from app.tools_bus import allowed_tool_names_for_policy
 from app.upstreams import (
     backend_model_id,
     call_backend_chat,
+    default_embeddings_model_for_backend,
     embed_backend,
     stream_backend_chat_as_openai,
 )
@@ -385,7 +386,7 @@ async def rerank(req: Request):
     top_n = min(top_n, len(rr.documents))
 
     backend = S.EMBEDDINGS_BACKEND
-    model_used = rr.model or S.EMBEDDINGS_MODEL
+    model_used = rr.model if rr.model not in {"default", "", None} else default_embeddings_model_for_backend(backend)
 
     try:
         q_emb = (await embed_backend([rr.query], backend, model_used))[0]
@@ -426,7 +427,7 @@ async def embeddings(req: Request):
         raise HTTPException(status_code=400, detail="input must be a string or list of strings")
 
     backend = S.EMBEDDINGS_BACKEND
-    model = er.model if er.model not in {"default", "", None} else S.EMBEDDINGS_MODEL
+    model = er.model if er.model not in {"default", "", None} else default_embeddings_model_for_backend(backend)
 
     try:
         embs = await embed_backend(texts, backend, model)

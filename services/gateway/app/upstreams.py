@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from app.backends import backend_provider_name, get_registry
 from app.config import S, logger
 from app.httpx_client import httpx_client as _httpx_client
+from app.model_aliases import get_alias
 from app.models import ChatCompletionRequest
 from app.openai_utils import new_id, now_unix, sse, sse_done
 from app.streaming import ollama_ndjson_to_openai_sse, passthrough_sse
@@ -25,26 +26,27 @@ def _normalize_messages_for_mlx(msgs: List[Dict[str, Any]]) -> List[Dict[str, An
 
         content = m.get("content")
         if content is None:
-            content_str = ""
+            normalized_content: Any = ""
         elif isinstance(content, str):
-            content_str = content
+            normalized_content = content
+        elif isinstance(content, (list, dict)):
+            normalized_content = content
         else:
             try:
-                content_str = json.dumps(content, ensure_ascii=False)
+                normalized_content = json.dumps(content, ensure_ascii=False)
             except Exception:
-                content_str = str(content)
+                normalized_content = str(content)
 
         if last_role is not None and last_role == role and out:
             prev = out[-1]
             prev_content = prev.get("content") or ""
-            if not isinstance(prev_content, str):
-                try:
-                    prev_content = json.dumps(prev_content, ensure_ascii=False)
-                except Exception:
-                    prev_content = str(prev_content)
-            prev["content"] = prev_content + "\n" + content_str
+            if isinstance(prev_content, str) and isinstance(normalized_content, str):
+                prev["content"] = prev_content + "\n" + normalized_content
+            else:
+                out.append({"role": role, "content": normalized_content})
+                last_role = role
         else:
-            out.append({"role": role, "content": content_str})
+            out.append({"role": role, "content": normalized_content})
             last_role = role
     return out
 
@@ -70,6 +72,27 @@ def _resolve_backend_target(backend_name: str) -> tuple[str, str, str]:
 def backend_model_id(backend_name: str, model_name: str) -> str:
     resolved, _provider, _base_url = _resolve_backend_target(backend_name)
     return f"{resolved}:{model_name}"
+
+
+def default_embeddings_model_for_backend(backend_name: str) -> str:
+    configured = (S.EMBEDDINGS_MODEL or "").strip()
+    provider = backend_provider_name(backend_name)
+
+    if configured and configured.lower() not in {"default", "auto"}:
+        if not (provider == "mlx" and configured == "nomic-embed-text"):
+            return configured
+
+    if provider == "ollama":
+        return configured or "nomic-embed-text"
+
+    for alias_name in ("default", "fast"):
+        alias = get_alias(alias_name)
+        if not alias or not (alias.upstream_model or "").strip():
+            continue
+        if backend_provider_name(alias.backend) == provider:
+            return alias.upstream_model
+
+    return (S.MLX_MODEL_STRONG or S.MLX_MODEL_DEFAULT or "mlx-community/gemma-2-2b-it-8bit").strip()
 
 
 def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, model_name: str) -> ChatCompletionRequest:
@@ -234,7 +257,7 @@ async def embed_backend(texts: List[str], backend_name: str, model: str) -> List
 
 async def embed_text_for_memory(text: str) -> list[float]:
     backend = (S.EMBEDDINGS_BACKEND or S.DEFAULT_BACKEND or "local_mlx").strip()
-    model = S.EMBEDDINGS_MODEL
+    model = default_embeddings_model_for_backend(backend)
     return (await embed_backend([text], backend, model))[0]
 
 

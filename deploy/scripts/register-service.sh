@@ -83,7 +83,7 @@ fi
 
 metadata_url="${base_url%/}/v1/metadata"
 
-payload=$($PYTHON - <<PY
+payload=$($PYTHON - "$name" "$base_url" "$metadata_url" "$backend_class" <<'PY'
 import base64, json, sys
 name, base_url, metadata_url, backend_class = sys.argv[1:5]
 key = f"/nexus/services/{name}"
@@ -96,7 +96,7 @@ print(json.dumps({
   "value": base64.b64encode(value.encode()).decode()
 }))
 PY
-"$name" "$base_url" "$metadata_url" "$backend_class")
+)
 
 curl -fsS -X POST "${etcd_url%/}/v3/kv/put" \
   -H "Content-Type: application/json" \

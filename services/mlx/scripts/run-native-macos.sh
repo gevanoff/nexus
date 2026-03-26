@@ -15,6 +15,12 @@ MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-10240}"
 MLX_MODEL_PATH="${MLX_MODEL_PATH:-mlx-community/gemma-2-2b-it-8bit}"
 MLX_MODEL_TYPE="${MLX_MODEL_TYPE:-lm}"
+MLX_CONFIG_PATH="${MLX_CONFIG_PATH:-}"
+
+if [[ -n "$MLX_CONFIG_PATH" ]]; then
+  exec "${MLX_VENV}/bin/mlx-openai-server" launch \
+    --config "$MLX_CONFIG_PATH"
+fi
 
 exec "${MLX_VENV}/bin/mlx-openai-server" launch \
   --model-path "$MLX_MODEL_PATH" \
