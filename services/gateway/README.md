@@ -70,7 +70,7 @@ OBSERVABILITY_PORT=8801
 
 # Backend services
 OLLAMA_BASE_URL=
-MLX_BASE_URL=http://mlx:10240/v1
+MLX_BASE_URL=http://host.docker.internal:10240/v1
 SDXL_TURBO_BASE_URL=http://sdxl-turbo:9050
 INVOKEAI_BASE_URL=http://invokeai:9090
 LIGHTON_OCR_API_BASE_URL=http://lighton-ocr:9155
@@ -126,7 +126,7 @@ docker build -f nexus/services/gateway/Dockerfile -t nexus-gateway .
 docker run -p 8800:8800 -p 8801:8801 \
   -e GATEWAY_BEARER_TOKEN=secret \
   -e OLLAMA_BASE_URL=http://ollama:11434 \
-  -e MLX_BASE_URL=http://mlx:10240/v1 \
+  -e MLX_BASE_URL=http://host.docker.internal:10240/v1 \
   -e DEFAULT_BACKEND=local_mlx \
   nexus-gateway
 ```

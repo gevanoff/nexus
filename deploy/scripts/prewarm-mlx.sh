@@ -23,7 +23,7 @@ Usage: deploy/scripts/prewarm-mlx.sh [--env-file PATH] [--check-only] [--mlx-bas
 
 Checks MLX availability and optionally sends a minimal warmup generation request.
 Defaults are derived from env:
-  - MLX_BASE_URL (default: http://mlx:10240/v1)
+  - MLX_BASE_URL (default host-native probe: http://127.0.0.1:10240/v1)
   - MLX_MODEL_PATH (default: mlx-community/gemma-2-2b-it-8bit) when MLX_CONFIG_PATH is not set
 
 Options:
@@ -107,7 +107,12 @@ ns_require_cmd python3 || exit 1
 if [[ -n "${MLX_BASE_URL_OVERRIDE:-}" ]]; then
   mlx_base_url="$MLX_BASE_URL_OVERRIDE"
 else
-  mlx_base_url="${MLX_BASE_URL:-$(ns_env_get "$ENV_FILE" MLX_BASE_URL "http://mlx:10240/v1")}"
+  mlx_base_url="${MLX_BASE_URL:-$(ns_env_get "$ENV_FILE" MLX_BASE_URL "")}"
+  if [[ -z "${mlx_base_url:-}" ]]; then
+    mlx_base_url="http://127.0.0.1:10240/v1"
+  elif [[ "$mlx_base_url" == "http://host.docker.internal:10240/v1" ]]; then
+    mlx_base_url="http://127.0.0.1:10240/v1"
+  fi
 fi
 mlx_base_url="${mlx_base_url%/}"
 mlx_config_path="${MLX_CONFIG_PATH:-$(ns_env_get "$ENV_FILE" MLX_CONFIG_PATH "")}"

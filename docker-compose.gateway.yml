@@ -30,9 +30,9 @@ services:
       - OBSERVABILITY_PORT=8801
       - METRICS_ENABLED=true
 
-      # Upstream services (using Docker service names)
+      # Upstream services
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
-      - MLX_BASE_URL=${MLX_BASE_URL:-http://mlx:10240/v1}
+      - MLX_BASE_URL=${MLX_BASE_URL:-http://host.docker.internal:10240/v1}
       - IMAGES_BACKEND=${IMAGES_BACKEND:-http_openai_images}
       - IMAGES_HTTP_BASE_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}
       - AUDIO_BACKEND_URL=http://tts:9940

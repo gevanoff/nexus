@@ -29,7 +29,7 @@ Run in-container gateway contract verification.
 
 Options:
   --env-file PATH   Env file path (default: ./.env)
-  --with-mlx        Include MLX component (docker-compose.mlx.yml) in compose checks
+  --with-mlx        Include legacy MLX compose component (docker-compose.mlx.yml) in compose checks
   --external-ollama Use external/native Ollama (do not include docker-compose.ollama.yml).
                      If not set explicitly, auto-detected from OLLAMA_BASE_URL.
   --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml).
@@ -81,7 +81,7 @@ if [[ "$EXTERNAL_OLLAMA_SET" != "true" ]]; then
 fi
 
 if [[ "$EXTERNAL_MLX_SET" != "true" ]]; then
-  mlx_base_url="$(ns_env_get "${ENV_FILE}" MLX_BASE_URL "http://mlx:10240/v1")"
+  mlx_base_url="$(ns_env_get "${ENV_FILE}" MLX_BASE_URL "http://host.docker.internal:10240/v1")"
   mlx_base_url="${mlx_base_url%/}"
   if [[ "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
     EXTERNAL_MLX="true"

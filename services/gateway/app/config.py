@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file="/var/lib/gateway/app/.env", extra="ignore")
 
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
-    MLX_BASE_URL: str = "http://mlx:10240/v1"
+    MLX_BASE_URL: str = "http://127.0.0.1:10240/v1"
 
     GATEWAY_HOST: str = "0.0.0.0"
     GATEWAY_PORT: int = 8800

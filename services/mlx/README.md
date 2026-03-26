@@ -1,6 +1,6 @@
 # MLX Service
 
-Containerized MLX OpenAI-compatible server component for Nexus.
+Host-native MLX OpenAI-compatible service integration for Nexus.
 
 ## Placement Policy
 
@@ -24,9 +24,8 @@ If you see restart-loop behavior for `nexus-mlx`, this is usually a runtime/plat
 
 ## Status
 
-⚠️ Initial Nexus port scaffold (migration in progress).
-
-This component ports MLX service execution into Nexus compose/component patterns so Gateway can target `http://mlx:10240/v1` on the internal network.
+MLX should be treated as a host-native service on `ai2`, not as a regular Docker workload.
+Nexus Gateway reaches it over HTTP via `MLX_BASE_URL`.
 
 ## Configuration
 
@@ -53,29 +52,22 @@ Example config template:
 
 Recommended host/runtime path for operators:
 
-- copy the example to `nexus/.runtime/mlx/config/config.yaml`
-- set `MLX_CONFIG_PATH=/var/lib/mlx/config/config.yaml`
+- copy the example to `/var/lib/mlx/config/config.yaml` on the MLX host
+- set `MLX_CONFIG_PATH=/var/lib/mlx/config/config.yaml` in `/var/lib/mlx/mlx.env`
 
-## Compose usage
-
-```bash
-# Start with core stack + MLX component
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.mlx.yml up -d
-
-# Check health
-curl -sS http://localhost:10240/v1/models
-```
-
-## Notes
-
-- Gateway should use `MLX_BASE_URL=http://mlx:10240/v1` when the MLX component is enabled.
-- MLX model/runtime compatibility depends on host/container environment and chosen model.
+## Native usage
 
 Install host-native MLX on macOS with:
 
 ```bash
 ./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
 ```
+
+## Notes
+
+- Gateway containers on the same Mac should use `MLX_BASE_URL=http://host.docker.internal:10240/v1`.
+- Remote Gateway hosts should use the MLX host IP/DNS name instead.
+- MLX model/runtime compatibility depends on host-native environment and chosen model.
 
 After first install, the native launchd job reads runtime settings from `/var/lib/mlx/mlx.env`.
 To change models later, update that file and restart the service without rewriting the plist:
@@ -263,11 +255,11 @@ Usage via OpenAI-compatible API:
 - `model: "coder"` routes to Ollama coding model
 - `model: "long"` routes to MLX long-context profile
 
-## Troubleshooting Restart Loops
+## Native MLX Checklist
 
-1. Remove `-f docker-compose.mlx.yml` from your compose invocation on Linux/Windows hosts.
-2. Run MLX natively on an Apple Silicon macOS host.
-3. Point Gateway at that host by setting `MLX_BASE_URL` in `nexus/.env`.
+1. Run MLX natively on an Apple Silicon macOS host.
+2. Point Gateway at that host by setting `MLX_BASE_URL` in `nexus/.env`.
+3. Use `--external-mlx` for Gateway verification/diagnostics.
 
 Example:
 
@@ -275,7 +267,7 @@ Example:
 MLX_BASE_URL=http://<mac-host-or-ip>:10240/v1
 ```
 
-Container-to-native migration quick path:
+Native MLX quick path:
 
 ```bash
 # 1) Install/start native MLX on macOS
@@ -291,8 +283,10 @@ curl -fsS http://127.0.0.1:10240/v1/models
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d --build
 
 # 5) Verify gateway contract using external/native MLX
-./deploy/scripts/verify-gateway.sh --with-mlx --external-mlx
+./deploy/scripts/verify-gateway.sh --external-mlx
 ```
+
+`docker-compose.mlx.yml` remains in the repo as a legacy scaffold, but it is not the recommended path for `ai2`.
 
 ## Security Baseline (Native MLX Host)
 
