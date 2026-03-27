@@ -336,15 +336,18 @@ async def run_coordinator_v1(*, req: Request, run_req: CoordinatorRunRequest) ->
             else:
                 specialist_blocks.append(f"[{tag}] ERROR: {item.get('error') or 'unknown error'}")
 
+        specialist_text = "\n\n".join(specialist_blocks)
+        request_text = _messages_to_text(_text_only_messages(messages))
+
         synth_messages = [
             ChatMessage(role="system", content=_synthesis_instruction(run_req.synthesis_prompt)),
             ChatMessage(
                 role="user",
                 content=(
                     "Original request:\n"
-                    f"{_messages_to_text(_text_only_messages(messages))}\n\n"
+                    f"{request_text}\n\n"
                     "Specialist outputs:\n"
-                    f"{'\n\n'.join(specialist_blocks)}"
+                    f"{specialist_text}"
                 ),
             ),
         ]
