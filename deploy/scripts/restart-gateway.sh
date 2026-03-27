@@ -20,7 +20,7 @@ so Gateway picks up updated code and runtime config (e.g. model_aliases.json).
 
 Options:
   --env-file PATH   Env file path (default: ./.env)
-  --no-build        Skip image rebuild (use compose up -d gateway)
+  --no-build        Skip image rebuild (recreate gateway from the existing image)
 EOF
 }
 
@@ -67,9 +67,9 @@ if ! ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-c
 fi
 
 if [[ "$NO_BUILD" == "true" ]]; then
-  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d gateway
+  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --force-recreate gateway
 else
-  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build gateway
+  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build --force-recreate gateway
 fi
 
 ns_print_header "Waiting for Gateway health"
