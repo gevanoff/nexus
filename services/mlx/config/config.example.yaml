@@ -17,3 +17,22 @@ models:
   - served_model_name: mlx-community/Qwen2-VL-7B-Instruct-4bit
     model_path: mlx-community/Qwen2-VL-7B-Instruct-4bit
     model_type: multimodal
+
+  # Optional image generation model. Uncomment after installing the image extras
+  # for mlx-openai-server and selecting a config_name supported by that model.
+  # - served_model_name: flux2-klein-4b
+  #   model_path: black-forest-labs/FLUX.2-klein-4B
+  #   model_type: image-generation
+  #   config_name: flux2-klein-4b
+  #   quantize: 4
+
+  # Optional image editing model.
+  # - served_model_name: qwen-image-edit
+  #   model_path: mlx-community/Qwen-Image-Edit-4bit
+  #   model_type: image-edit
+  #   config_name: qwen-image-edit
+
+  # Optional Whisper transcription model (requires ffmpeg on the host).
+  # - served_model_name: mlx-community/whisper-large-v3-mlx
+  #   model_path: mlx-community/whisper-large-v3-mlx
+  #   model_type: whisper

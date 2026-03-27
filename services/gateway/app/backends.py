@@ -23,7 +23,7 @@ from app.config import S, logger
 from app.httpx_client import httpx_client as _httpx_client
 
 
-RouteKind = Literal["chat", "embeddings", "images", "music", "tts", "video", "ocr"]
+RouteKind = Literal["chat", "embeddings", "images", "music", "tts", "video", "ocr", "transcription"]
 
 
 @dataclass(frozen=True)
@@ -611,8 +611,8 @@ def _default_registry() -> BackendRegistry:
             provider="mlx",
             base_url=S.MLX_BASE_URL,
             description="Default MLX backend",
-            supported_capabilities=["chat", "embeddings"],
-            concurrency_limits={"chat": 2, "embeddings": 2},
+            supported_capabilities=["chat", "embeddings", "images", "transcription"],
+            concurrency_limits={"chat": 2, "embeddings": 2, "images": 1, "transcription": 1},
             health_liveness="/healthz",
             health_readiness="/readyz",
             payload_policy={},

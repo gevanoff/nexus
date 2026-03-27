@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     LUXTTS_CLONE_PATH: str = "/luxtts/clone"
     QWEN3_TTS_CLONE_PATH: str = "/qwen3-tts/clone"
 
+    # Audio transcription (Whisper/OpenAI-compatible)
+    TRANSCRIPTION_BACKEND_CLASS: str = "local_mlx"
+    TRANSCRIPTION_TIMEOUT_SEC: float = 600.0
+    TRANSCRIPTION_MODEL: str = ""
+
     # Voice library for cloned voices
     VOICE_LIBRARY_DIR: str = "/var/lib/gateway/data/voice_library"
     VOICE_LIBRARY_MAX_BYTES: int = 50_000_000
@@ -312,6 +317,14 @@ class Settings(BaseSettings):
     AGENT_QUEUE_MAX: int = 32
     AGENT_QUEUE_TIMEOUT_SEC: float = 2.0
     AGENT_SHED_HEAVY: bool = True
+
+    # Multi-backend coordinator
+    COORDINATOR_DEFAULT_PARTICIPANTS: str = "default,reasoner-ai1,reasoner-ada2"
+    COORDINATOR_DEFAULT_SYNTHESIZER: str = "default"
+    COORDINATOR_INCLUDE_VISION_ON_MEDIA: bool = True
+    COORDINATOR_INCLUDE_CODER_ON_CODE: bool = True
+    COORDINATOR_MAX_PARTICIPANTS: int = 6
+    COORDINATOR_PARALLEL_TIMEOUT_SEC: float = 300.0
 
 
 S = Settings()

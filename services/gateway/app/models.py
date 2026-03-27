@@ -125,3 +125,23 @@ class AgentRunResponse(BaseModel):
     ok: bool
     output_text: str = ""
     events: List[Dict[str, Any]]
+
+
+class CoordinatorRunRequest(BaseModel):
+    input: Optional[str] = None
+    messages: Optional[List[ChatMessage]] = None
+    participants: Optional[List[str]] = None
+    synthesizer: Optional[str] = "default"
+    participant_prompt: Optional[str] = None
+    synthesis_prompt: Optional[str] = None
+
+
+class CoordinatorRunResponse(BaseModel):
+    run_id: str
+    request_hash: str
+    ok: bool
+    output_text: str = ""
+    error: Optional[str] = None
+    participants: List[Dict[str, Any]]
+    synthesis: Dict[str, Any]
+    events: List[Dict[str, Any]]

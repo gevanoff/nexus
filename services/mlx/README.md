@@ -44,7 +44,7 @@ Nexus now supports MLX config-mode launch via `MLX_CONFIG_PATH`.
   - uses `MLX_MODEL_PATH` + `MLX_MODEL_TYPE`
 - Config mode:
   - uses `MLX_CONFIG_PATH`
-  - lets one MLX server expose multiple model ids and types, such as `lm`, `embeddings`, and `multimodal`
+  - lets one MLX server expose multiple model ids and types, such as `lm`, `embeddings`, `multimodal`, `image-generation`, `image-edit`, and `whisper`
 
 Example config template:
 
@@ -54,6 +54,19 @@ Recommended host/runtime path for operators:
 
 - copy the example to `/var/lib/mlx/config/config.yaml` on the MLX host
 - set `MLX_CONFIG_PATH=/var/lib/mlx/config/config.yaml` in `/var/lib/mlx/mlx.env`
+
+Optional MLX-native media surfaces now supported by Nexus Gateway:
+
+- `POST /v1/images/generations`
+- `POST /v1/images/edits`
+- `POST /v1/audio/transcriptions`
+
+To use them, add matching model entries to the MLX config and point Gateway at `local_mlx`.
+The provided `services/mlx/config/config.example.yaml` includes commented examples for:
+
+- `image-generation`
+- `image-edit`
+- `whisper`
 
 ## Native usage
 
@@ -121,6 +134,7 @@ Gateway integration pattern:
 - Run MLX host-native on Apple Silicon (`127.0.0.1:10240/v1` on the MLX host).
 - Set `MLX_BASE_URL` in `nexus/.env` to the host URL that Gateway containers can reach (for same-machine Docker Desktop, `http://host.docker.internal:10240/v1`).
 - Gateway uses this backend for chat/embeddings when routing selects backend class `local_mlx`.
+- Gateway can also proxy MLX image generation, image editing, and Whisper transcription when those model types are present in the MLX config.
 - Multimodal chat requests are passed through when message content uses structured OpenAI-style arrays/objects.
 
 ## Recommended Model Strategy for `ai2` (512GB)

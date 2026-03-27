@@ -261,6 +261,42 @@ async def embed_text_for_memory(text: str) -> list[float]:
     return (await embed_backend([text], backend, model))[0]
 
 
+async def transcribe_openai_audio(
+    *,
+    backend_name: str,
+    file_name: str,
+    file_bytes: bytes,
+    content_type: str,
+    form_fields: Dict[str, Any] | None = None,
+) -> tuple[str, Any, str]:
+    resolved, _provider, base_url = _resolve_backend_target(backend_name)
+    timeout = float(getattr(S, "TRANSCRIPTION_TIMEOUT_SEC", 600.0) or 600.0)
+    data: Dict[str, Any] = {}
+    if isinstance(form_fields, dict):
+        for k, v in form_fields.items():
+            if v is None:
+                continue
+            data[str(k)] = v
+
+    async with _httpx_client(timeout=timeout) as client:
+        try:
+            r = await client.post(
+                f"{base_url}/audio/transcriptions",
+                data=data,
+                files={"file": (file_name, file_bytes, content_type or "application/octet-stream")},
+            )
+            r.raise_for_status()
+            response_type = (r.headers.get("content-type") or "").lower()
+            if "json" in response_type:
+                return "json", r.json(), response_type
+            return "text", r.text, response_type or "text/plain; charset=utf-8"
+        except httpx.HTTPStatusError as e:
+            detail = {"upstream": resolved, "status": e.response.status_code, "body": e.response.text[:5000]}
+            raise HTTPException(status_code=502, detail=detail)
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail={"upstream": resolved, "error": str(e)})
+
+
 async def stream_mlx_openai_chat(
     payload: Dict[str, Any],
     *,

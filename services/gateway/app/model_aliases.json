@@ -40,6 +40,16 @@
       "model": "mlx-community/Qwen2.5-14B-Instruct-4bit",
       "context_window": 65536,
       "tools": false
+    },
+    "multimodal": {
+      "backend": "local_mlx",
+      "model": "mlx-community/Qwen2-VL-7B-Instruct-4bit",
+      "tools": false
+    },
+    "vision": {
+      "backend": "local_mlx",
+      "model": "mlx-community/Qwen2-VL-7B-Instruct-4bit",
+      "tools": false
     }
   }
 }

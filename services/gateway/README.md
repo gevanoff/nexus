@@ -97,6 +97,8 @@ USER_DB_PATH=/var/lib/gateway/data/users.sqlite
 MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
 AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
 TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
+TRANSCRIPTION_BACKEND_CLASS=local_mlx
+TRANSCRIPTION_MODEL=
 ```
 
 ### Persistence Layout (Host ↔ Container)
@@ -178,6 +180,60 @@ curl -X POST http://localhost:8800/v1/chat/completions \
       {"role": "user", "content": "Tell me a story"}
     ],
     "stream": true
+  }'
+```
+
+### MLX Image Generation
+
+Use `backend_class: "local_mlx"` plus an image-generation model ID exposed by your
+native MLX config.
+
+```bash
+curl -X POST http://localhost:8800/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "backend_class": "local_mlx",
+    "model": "flux2-klein-4b",
+    "prompt": "A blueprint-style schematic of a compact weather station",
+    "size": "1024x1024"
+  }'
+```
+
+### MLX Image Editing
+
+```bash
+curl -X POST http://localhost:8800/v1/images/edits \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F backend_class=local_mlx \
+  -F model=qwen-image-edit \
+  -F prompt='Replace the cloudy sky with a sunset' \
+  -F image=@./input.png
+```
+
+### MLX Whisper Transcription
+
+```bash
+curl -X POST http://localhost:8800/v1/audio/transcriptions \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F backend_class=local_mlx \
+  -F model=mlx-community/whisper-large-v3-mlx \
+  -F file=@./sample.wav
+```
+
+### Multi-Backend Coordinator
+
+The coordinator fans a request out to multiple aliases/backends, then synthesizes
+the result with a chosen model.
+
+```bash
+curl -X POST http://localhost:8800/v1/agent/coordinate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "input": "Compare three approaches for a resilient service registry rollout.",
+    "participants": ["default", "reasoner-ai1", "reasoner-ada2"],
+    "synthesizer": "default"
   }'
 ```
 
