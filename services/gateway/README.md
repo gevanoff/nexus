@@ -231,13 +231,18 @@ curl -X POST http://localhost:8800/v1/audio/transcriptions \
 The coordinator fans a request out to multiple aliases/backends, then synthesizes
 the result with a chosen model.
 
+For coding requests, the recommended pattern is:
+- primary `coder` on the local MLX host
+- secondary `coder-ai1` / `coder-ada2` as independent cross-checks
+- synthesis back onto `default` or `coder`
+
 ```bash
 curl -X POST http://localhost:8800/v1/agent/coordinate \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
-    "input": "Compare three approaches for a resilient service registry rollout.",
-    "participants": ["default", "reasoner-ai1", "reasoner-ada2"],
+    "input": "Review this migration plan and identify bugs or rollback risks.",
+    "participants": ["coder", "coder-ai1", "coder-ada2"],
     "synthesizer": "default"
   }'
 ```

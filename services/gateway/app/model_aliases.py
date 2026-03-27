@@ -45,7 +45,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         # These four are the canonical policy surface.
         "default": ModelAlias(backend=default_backend, upstream_model=strong_for(default_backend), tools=True),
         "fast": ModelAlias(backend=default_backend, upstream_model=fast_for(default_backend), tools=False),
-        "coder": ModelAlias(backend="ollama", upstream_model=S.OLLAMA_MODEL_STRONG, tools=True),
+        "coder": ModelAlias(backend=default_backend, upstream_model=strong_for(default_backend), tools=True),
         "long": ModelAlias(
             backend="mlx",
             upstream_model=S.MLX_MODEL_STRONG,

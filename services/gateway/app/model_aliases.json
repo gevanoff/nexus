@@ -11,8 +11,8 @@
       "tools": true
     },
     "coder": {
-      "backend": "ollama-ai1",
-      "model": "qwen2.5-coder:32b",
+      "backend": "local_mlx",
+      "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
       "tools": true
     },
     "coder-ai1": {

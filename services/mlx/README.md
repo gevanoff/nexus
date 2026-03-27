@@ -176,8 +176,8 @@ Recommended `ai2` alias-to-model mapping (starting point):
 			"tools": true
 		},
 		"coder": {
-			"backend": "ollama",
-			"model": "qwen2.5-coder:32b",
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
 			"tools": true
 		},
 		"long": {
@@ -206,8 +206,8 @@ Recommended `ai2` alias-to-model mapping (starting point):
 			"tools": true
 		},
 		"coder": {
-			"backend": "ollama",
-			"model": "qwen2.5-coder:32b",
+			"backend": "mlx",
+			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
 			"tools": true
 		},
 		"long": {
@@ -229,8 +229,9 @@ Alias-by-alias alternatives (if available and validated in your environment):
 	- Primary: `mlx-community/Qwen2.5-32B-Instruct-4bit`
 	- Alternatives: `mlx-community/Qwen2.5-72B-Instruct-4bit` (higher quality, higher latency), `mlx-community/Llama-3.3-70B-Instruct-4bit`
 - `coder` (code + tools):
-	- Primary: `qwen2.5-coder:32b` (Ollama)
-	- MLX candidate if preferred: `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` or `mlx-community/Qwen2.5-Coder-32B-Instruct-4bit`
+	- Primary: local MLX on `ai2` (either the same strong instruct model as `default`, or a dedicated MLX coder model if you load one)
+	- Secondary checks: remote Ollama aliases such as `coder-ai1` and `coder-ada2`
+	- Dedicated MLX candidates if preferred: `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` or `mlx-community/Qwen2.5-Coder-32B-Instruct-4bit`
 - `long` (extended context):
 	- Primary: `mlx-community/Qwen2.5-14B-Instruct-4bit` with `context_window` `65536`
 	- Alternatives: use the same family as `default` with reduced concurrency, or lower-parameter instruct model for higher sustained throughput.
@@ -256,7 +257,7 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-72B-Instruct-4bit
 ```
 
-- Prewarm Ollama aliases/models:
+- Prewarm remote Ollama checker models:
 
 ```bash
 ./deploy/scripts/prewarm-models.sh --external-ollama --model qwen2.5-coder:32b
@@ -268,7 +269,7 @@ Why keep Ollama alongside MLX (even on `ai2`):
 
 - Ollama gives broader one-command model availability and easier fallback coverage.
 - MLX gives top Apple Silicon efficiency and excellent low-latency local inference.
-- Running both lets Gateway route by workload instead of forcing one runtime for all requests.
+- Running both lets Gateway keep MLX as the primary local path while still using remote Ollama models as independent checks or fallback reviewers.
 
 Then restart Gateway so aliases are reloaded:
 
@@ -280,7 +281,7 @@ Usage via OpenAI-compatible API:
 
 - `model: "fast"` routes to MLX (low-latency interactive prompts)
 - `model: "default"` routes to Ollama strong model
-- `model: "coder"` routes to Ollama coding model
+- `model: "coder"` routes to the primary local MLX coding path
 - `model: "long"` routes to MLX long-context profile
 
 ## Native MLX Checklist

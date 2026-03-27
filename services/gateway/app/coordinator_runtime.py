@@ -121,7 +121,7 @@ def _default_participants(messages: Sequence[ChatMessage]) -> list[str]:
 
     raw_messages = [m.model_dump(exclude_none=True) for m in messages]
     if bool(getattr(S, "COORDINATOR_INCLUDE_CODER_ON_CODE", True)) and _is_probably_coding_request(raw_messages):
-        for candidate in ("coder-ai1", "coder-ada2"):
+        for candidate in ("coder", "coder-ai1", "coder-ada2"):
             if candidate in aliases:
                 selected.append(candidate)
 
@@ -135,8 +135,10 @@ def _participant_instruction(alias_name: str, extra_prompt: str | None) -> str:
     focus = "Focus on the core answer, constraints, risks, and next steps."
     if alias_key.startswith("reasoner"):
         focus = "Focus on independent reasoning, assumptions, edge cases, and conflict detection."
-    elif alias_key.startswith("coder"):
+    elif alias_key == "coder":
         focus = "Focus on implementation details, failure modes, debugging clues, and concrete technical recommendations."
+    elif alias_key.startswith("coder"):
+        focus = "Act as an independent technical check on the primary implementation. Focus on disagreements, failure modes, debugging clues, and concrete corrective recommendations."
     elif _is_vision_alias(alias_key):
         focus = "Focus on extracting and reasoning over the visual evidence in the provided media."
 
