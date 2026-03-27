@@ -16,7 +16,7 @@ from app.health_routes import router as health_router
 from app.memory_legacy import memory_init
 from app.memory_routes import router as memory_router
 from app.openai_routes import router as openai_router
-from app.model_aliases import get_aliases
+from app.model_aliases import get_aliases, get_aliases_state
 from app.tools_bus import router as tools_router
 from app.agent_routes import router as agent_router
 from app.ui_routes import router as ui_router
@@ -30,6 +30,24 @@ from app.observability_server import ObservabilityServer
 
 async def _startup_check_models() -> None:
     """Non-fatal checks to catch common misconfigurations early."""
+
+    try:
+        alias_state = get_aliases_state()
+        if alias_state.error:
+            logger.warning(
+                "startup: model aliases loaded with fallback/defaults source=%s configured_path=%s error=%s",
+                alias_state.source,
+                alias_state.configured_path or "-",
+                alias_state.error,
+            )
+        else:
+            logger.info(
+                "startup: model aliases source=%s configured_path=%s",
+                alias_state.source,
+                alias_state.configured_path or "-",
+            )
+    except Exception as e:
+        logger.info("startup: alias source check skipped (%s: %s)", type(e).__name__, e)
 
     # Warn if Ollama-backed aliases point at model tags that aren't present.
     try:

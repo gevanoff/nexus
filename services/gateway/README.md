@@ -113,6 +113,11 @@ Config files are seeded (once) by the setup scripts:
 - `model_aliases.json`
 - `agent_specs.json`
 
+Alias precedence note:
+- If `MODEL_ALIASES_PATH` is set, that file is authoritative.
+- The packaged `services/gateway/app/model_aliases.json` is only used as a fallback when no explicit `MODEL_ALIASES_PATH` is configured.
+- If the explicit runtime file is missing or unreadable, Gateway now logs that condition and reports it via `/ui/api/backend_status` instead of silently using the packaged file.
+
 ## Usage
 
 ### Docker

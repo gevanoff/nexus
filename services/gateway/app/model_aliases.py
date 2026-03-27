@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from app.backends import backend_provider_name
 from app.config import S
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -18,6 +22,13 @@ class ModelAlias:
     tools: Optional[bool] = None
     max_tokens_cap: Optional[int] = None
     temperature_cap: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class AliasLoadState:
+    source: str
+    configured_path: str = ""
+    error: str = ""
 
 
 def _default_aliases() -> Dict[str, ModelAlias]:
@@ -100,6 +111,8 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
 
 
 def load_aliases() -> Dict[str, ModelAlias]:
+    global _ALIASES_STATE
+
     aliases: Dict[str, ModelAlias] = dict(_default_aliases())
 
     raw_json = (S.MODEL_ALIASES_JSON or "").strip()
@@ -107,25 +120,36 @@ def load_aliases() -> Dict[str, ModelAlias]:
     fallback_path = Path(__file__).with_name("model_aliases.json")
 
     payload: Any = None
+    source = "defaults"
+    error = ""
     if raw_json:
         try:
             payload = json.loads(raw_json)
+            source = "env:MODEL_ALIASES_JSON"
         except Exception:
             payload = None
+            error = "MODEL_ALIASES_JSON could not be parsed"
     else:
-        candidate_paths = []
         if path:
-            candidate_paths.append(Path(path))
-        candidate_paths.append(fallback_path)
-        for candidate in candidate_paths:
-            if not candidate.exists():
-                continue
+            candidate = Path(path)
+            if candidate.exists():
+                try:
+                    with candidate.open("r", encoding="utf-8") as f:
+                        payload = json.load(f)
+                    source = f"path:{candidate}"
+                except Exception as exc:
+                    payload = None
+                    error = f"MODEL_ALIASES_PATH unreadable: {candidate} ({type(exc).__name__}: {exc})"
+            else:
+                error = f"MODEL_ALIASES_PATH not found: {candidate}"
+        elif fallback_path.exists():
             try:
-                with candidate.open("r", encoding="utf-8") as f:
+                with fallback_path.open("r", encoding="utf-8") as f:
                     payload = json.load(f)
-                break
-            except Exception:
+                source = f"path:{fallback_path}"
+            except Exception as exc:
                 payload = None
+                error = f"fallback aliases unreadable: {fallback_path} ({type(exc).__name__}: {exc})"
 
     if isinstance(payload, dict) and isinstance(payload.get("aliases"), dict):
         payload = payload["aliases"]
@@ -138,10 +162,17 @@ def load_aliases() -> Dict[str, ModelAlias]:
             if parsed:
                 aliases[k.strip().lower()] = parsed
 
+    _ALIASES_STATE = AliasLoadState(source=source, configured_path=path, error=error)
+    if error:
+        logger.warning("model aliases: source=%s configured_path=%s error=%s", source, path or "-", error)
+    else:
+        logger.info("model aliases: source=%s configured_path=%s count=%d", source, path or "-", len(aliases))
+
     return aliases
 
 
 _ALIASES_CACHE: Optional[Dict[str, ModelAlias]] = None
+_ALIASES_STATE: AliasLoadState = AliasLoadState(source="defaults")
 
 
 def get_aliases() -> Dict[str, ModelAlias]:
@@ -155,6 +186,12 @@ def get_aliases() -> Dict[str, ModelAlias]:
     if _ALIASES_CACHE is None:
         _ALIASES_CACHE = load_aliases()
     return _ALIASES_CACHE
+
+
+def get_aliases_state() -> AliasLoadState:
+    if _ALIASES_CACHE is None:
+        get_aliases()
+    return _ALIASES_STATE
 
 
 def resolve_alias(model: str) -> Optional[Tuple[str, str]]:

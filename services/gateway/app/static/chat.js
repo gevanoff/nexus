@@ -43,6 +43,7 @@
     const backendStatusError = $("backendStatusError");
     const backendStatusRefresh = $("backendStatusRefresh");
     const backendStatusSpinner = $("backendStatusSpinner");
+    let backendStatusMeta = $("backendStatusMeta");
 
     /** @type {{role:'user'|'assistant'|'system', content:string}[]} */
     let history = [];
@@ -122,6 +123,25 @@
         empty.textContent = "No backend status available.";
         backendStatusList.appendChild(empty);
         return;
+      }
+
+      const aliasConfig = data?.alias_config || {};
+      if (!backendStatusMeta && backendStatusList?.parentNode) {
+        backendStatusMeta = document.createElement("div");
+        backendStatusMeta.id = "backendStatusMeta";
+        backendStatusMeta.className = "status-detail";
+        backendStatusMeta.style.marginBottom = "8px";
+        backendStatusList.parentNode.insertBefore(backendStatusMeta, backendStatusList);
+      }
+      if (backendStatusMeta) {
+        const source = String(aliasConfig.source || "defaults");
+        const configuredPath = String(aliasConfig.configured_path || "");
+        const err = String(aliasConfig.error || "");
+        backendStatusMeta.textContent = err
+          ? `Alias config: ${source} • ${configuredPath || "no explicit path"} • ${err}`
+          : `Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ""}`;
+        backendStatusMeta.className = err ? "status-error" : "status-detail";
+        backendStatusMeta.style.marginBottom = "8px";
       }
 
       const backendGroups = [
@@ -294,6 +314,11 @@
           empty.className = "status-empty";
           empty.textContent = "Unable to load backend status.";
           backendStatusList.appendChild(empty);
+        }
+        if (backendStatusMeta) {
+          backendStatusMeta.textContent = "";
+          backendStatusMeta.className = "status-detail";
+          backendStatusMeta.style.marginBottom = "8px";
         }
       } finally {
         if (backendStatusRefresh) backendStatusRefresh.disabled = false;

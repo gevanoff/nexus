@@ -28,7 +28,7 @@ from fastapi.responses import StreamingResponse
 from app.backends import _capability_availability, backend_provider_name, check_capability, get_admission_controller, get_registry, llm_backends
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
-from app.model_aliases import get_aliases
+from app.model_aliases import get_aliases, get_aliases_state
 from app.models import ChatCompletionRequest, ChatMessage
 from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
@@ -3800,6 +3800,7 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     registry = get_registry()
     checker = get_health_checker()
     aliases = get_aliases()
+    alias_state = get_aliases_state()
     alias_map: Dict[str, List[Dict[str, str]]] = {}
     for alias_name, target_backend in registry.legacy_mapping.items():
         if not isinstance(alias_name, str) or not isinstance(target_backend, str):
@@ -3878,7 +3879,15 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     backends.append(telegram_entry)
 
     backends.sort(key=lambda item: item.get("backend_class") or "")
-    return {"generated_at": time.time(), "backends": backends}
+    return {
+        "generated_at": time.time(),
+        "alias_config": {
+            "source": alias_state.source,
+            "configured_path": alias_state.configured_path,
+            "error": alias_state.error,
+        },
+        "backends": backends,
+    }
 
 
 @router.post("/ui/api/image", include_in_schema=False)

@@ -21,6 +21,7 @@
       .status-badge.warn { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
       .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
       .status-detail { font-size: 12px; color: #a9b4c3; }
+      .status-meta { font-size: 12px; color: #a9b4c3; margin-bottom: 8px; }
       .status-aliases { font-size: 12px; color: #b7c4d6; }
       .status-error { font-size: 12px; color: #ffb6b6; }
       .status-empty { font-size: 12px; color: #93a4ba; }
@@ -166,9 +167,15 @@
     const errorEl = panel.querySelector('.backend-status-error');
     const refreshEl = panel.querySelector('.backend-status-refresh');
     const listEl = panel.querySelector('.backend-status-list');
+    let metaEl = panel.querySelector('.backend-status-meta');
 
     if (listEl) {
       listEl.classList.add('status-list');
+    }
+    if (!metaEl && listEl) {
+      metaEl = document.createElement('div');
+      metaEl.className = 'backend-status-meta';
+      listEl.parentNode.insertBefore(metaEl, listEl);
     }
     if (spinnerEl) {
       spinnerEl.classList.remove('hint');
@@ -220,11 +227,21 @@
         }
 
         const payload = await resp.json();
+        const aliasConfig = payload?.alias_config || {};
         const allBackends = Array.isArray(payload?.backends) ? payload.backends : [];
         const filtered = classes.length
           ? allBackends.filter((item) => classes.includes(String(item?.backend_class || '').trim()))
           : allBackends;
 
+        if (metaEl) {
+          const source = String(aliasConfig.source || 'defaults');
+          const configuredPath = String(aliasConfig.configured_path || '');
+          const err = String(aliasConfig.error || '');
+          metaEl.textContent = err
+            ? `Alias config: ${source} • ${configuredPath || 'no explicit path'} • ${err}`
+            : `Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ''}`;
+          metaEl.className = `backend-status-meta${err ? ' status-error' : ''}`;
+        }
         renderRows(filtered);
         if (updatedEl) {
           updatedEl.textContent = `Last updated: ${formatTimestamp(Number(payload?.generated_at || 0))}`;
@@ -240,6 +257,10 @@
           empty.className = 'status-empty';
           empty.textContent = 'Unable to load backend status.';
           listEl.appendChild(empty);
+        }
+        if (metaEl) {
+          metaEl.textContent = '';
+          metaEl.className = 'backend-status-meta';
         }
       } finally {
         if (refreshEl) refreshEl.disabled = false;
