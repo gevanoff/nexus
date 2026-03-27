@@ -50,6 +50,13 @@ Example config template:
 
 - `services/mlx/config/config.example.yaml`
 
+Operational note:
+
+- `mlx-openai-server` multi-handler mode eagerly initializes every model listed in the config during server startup.
+- If any configured model is extremely large, slow to download, or incompatible, the whole MLX service can fail startup even if the other models are valid.
+- Add optional models incrementally and keep a known-good minimal config available for rollback.
+- In practice, start with one `lm` model plus `embeddings`, then add `multimodal`, then add image/transcription models one at a time.
+
 Recommended host/runtime path for operators:
 
 - copy the example to `/var/lib/mlx/config/config.yaml` on the MLX host
@@ -67,6 +74,13 @@ The provided `services/mlx/config/config.example.yaml` includes commented exampl
 - `image-generation`
 - `image-edit`
 - `whisper`
+
+Startup troubleshooting notes:
+
+- Warnings like `Class AVFFrameReceiver is implemented in both .../site-packages/av/... and .../site-packages/cv2/...` come from PyAV/OpenCV shipping overlapping macOS video dylibs. They are noisy, but they are not usually the root cause of MLX startup failure.
+- A message like `Handler process for '<model>' did not become ready within 300 s` is the important failure signal. That means one configured model did not finish initializing in time, and MLX may exit before binding the HTTP port.
+- If you hit that condition, reduce the config to a minimal known-good set first, verify `curl -fsS http://127.0.0.1:10240/v1/models`, then re-add models one by one.
+- For very large first-time downloads, set `HF_TOKEN` in `/var/lib/mlx/mlx.env` to avoid Hugging Face anonymous rate limits.
 
 ## Native usage
 

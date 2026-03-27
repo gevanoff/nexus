@@ -18,6 +18,10 @@ models:
     model_path: mlx-community/Qwen2-VL-7B-Instruct-4bit
     model_type: multimodal
 
+  # Add large optional models incrementally. Multi-handler mode loads every
+  # configured model during startup, so one slow or incompatible model can keep
+  # the whole service from binding its port.
+
   # Optional image generation model. Uncomment after installing the image extras
   # for mlx-openai-server and selecting a config_name supported by that model.
   # - served_model_name: flux2-klein-4b
