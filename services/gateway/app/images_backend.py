@@ -58,6 +58,8 @@ def _effective_images_http_base_url(backend_class: str | None = None) -> str:
 
     raw = (getattr(S, "IMAGES_HTTP_BASE_URL", "") or "").strip().rstrip("/")
     images_backend = (getattr(S, "IMAGES_BACKEND", "") or "mock").strip().lower()
+    if images_backend in {"local_mlx", "mlx"}:
+        images_backend = "http_openai_images"
     resolved_backend_class = (backend_class or "").strip() or (getattr(S, "IMAGES_BACKEND_CLASS", "") or "").strip() or "gpu_heavy"
 
     registry_base = _get_image_backend_base_url(resolved_backend_class)
@@ -487,6 +489,8 @@ async def generate_images(
     width, height = _parse_size(size)
 
     backend: str = (getattr(S, "IMAGES_BACKEND", "mock") or "mock").strip().lower()
+    if backend in {"local_mlx", "mlx"}:
+        backend = "http_openai_images"
 
     def _filtered_options(opts: Dict[str, Any] | None) -> Dict[str, Any]:
         if not isinstance(opts, dict) or not opts:

@@ -107,7 +107,8 @@ class Settings(BaseSettings):
     # Set IMAGES_BACKEND=http_a1111 and IMAGES_HTTP_BASE_URL=http://127.0.0.1:7860 to use Automatic1111's API.
     # Set IMAGES_BACKEND=http_openai_images and IMAGES_HTTP_BASE_URL=http://127.0.0.1:18181 to use an OpenAI-style
     # image server (e.g., Nexa exposing POST /v1/images/generations).
-    IMAGES_BACKEND: Literal["mock", "http_a1111", "http_openai_images"] = "mock"
+    # IMAGES_BACKEND=local_mlx is also accepted as an alias for the direct MLX/OpenAI-compatible image path.
+    IMAGES_BACKEND: Literal["mock", "http_a1111", "http_openai_images", "local_mlx", "mlx"] = "mock"
     IMAGES_BACKEND_CLASS: str = "gpu_heavy"  # Backend class for routing/admission control
     IMAGES_HTTP_BASE_URL: str = "http://images:7860"
     IMAGES_HTTP_TIMEOUT_SEC: float = 120.0
