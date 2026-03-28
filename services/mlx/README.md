@@ -35,6 +35,7 @@ See `env/mlx.env.example` for primary variables:
 - `MLX_MODEL_PATH` (default `mlx-community/gemma-2-2b-it-8bit`)
 - `MLX_MODEL_TYPE` (default `lm`)
 - `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
+- `XDG_CACHE_HOME` / `HF_HOME` (optional; move MLX/Hugging Face caches to a larger volume)
 
 ### Config Mode
 
@@ -81,6 +82,7 @@ Startup troubleshooting notes:
 - A message like `Handler process for '<model>' did not become ready within 300 s` is the important failure signal. That means one configured model did not finish initializing in time, and MLX may exit before binding the HTTP port.
 - If you hit that condition, reduce the config to a minimal known-good set first, verify `curl -fsS http://127.0.0.1:10240/v1/models`, then re-add models one by one.
 - For very large first-time downloads, set `HF_TOKEN` in `/var/lib/mlx/mlx.env` to avoid Hugging Face anonymous rate limits.
+- If prefetch fails with `No space left on device`, move `XDG_CACHE_HOME` and `HF_HOME` in `/var/lib/mlx/mlx.env` to a larger disk, rerun the installer once, then prefetch again.
 - Prefetching large model repos before starting launchd is now supported with `services/mlx/scripts/prefetch-models.sh`.
 - When `PREFETCH_BEFORE_START=1` is set in `/var/lib/mlx/mlx.env`, the native MLX launcher also runs that prefetch step before every service start, including plain `launchctl kickstart` restarts.
 - `install-native-macos.sh` wires this in by default and preserves existing extra keys in `/var/lib/mlx/mlx.env` such as `HF_TOKEN`.
@@ -124,6 +126,7 @@ sudo launchctl kickstart -k system/com.nexus.mlx.openai.server
 You can also change `MLX_MODEL_TYPE`, `MLX_HOST`, and `MLX_PORT` in the same file.
 If `MLX_CONFIG_PATH` is set in `/var/lib/mlx/mlx.env`, the launcher uses config mode instead.
 `PREFETCH_BEFORE_START=1` tells the native launcher to prefetch model repos before each service start, including `launchctl kickstart` restarts.
+If local system storage is too small for model caches, set `XDG_CACHE_HOME` and `HF_HOME` to a larger mounted volume before rerunning the installer.
 
 Installer prerequisites:
 

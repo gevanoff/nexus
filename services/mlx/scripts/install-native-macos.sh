@@ -70,6 +70,8 @@ MLX_CONFIG_PATH="${MLX_CONFIG_PATH:-}"
 MLX_HOME="${MLX_HOME:-/var/lib/mlx}"
 MLX_VENV="${MLX_VENV:-/var/lib/mlx/env}"
 MLX_LOG_DIR="${MLX_LOG_DIR:-/var/log/mlx}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${MLX_HOME}/cache}"
+HF_HOME="${HF_HOME:-${XDG_CACHE_HOME}/huggingface}"
 MLX_PIP_PACKAGES="${MLX_PIP_PACKAGES:-mlx-openai-server}"
 LAUNCHD_LABEL="${LAUNCHD_LABEL:-com.nexus.mlx.openai.server}"
 PLIST_PATH="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
@@ -87,18 +89,24 @@ MODEL_PATH_FROM_SHELL="false"
 MODEL_TYPE_FROM_SHELL="false"
 CONFIG_PATH_FROM_SHELL="false"
 PREFETCH_FROM_CLI="false"
+CACHE_HOME_FROM_SHELL="false"
+HF_HOME_FROM_SHELL="false"
 
 has_shell_override MLX_HOST && HOST_FROM_SHELL="true"
 has_shell_override MLX_PORT && PORT_FROM_SHELL="true"
 has_shell_override MLX_MODEL_PATH && MODEL_PATH_FROM_SHELL="true"
 has_shell_override MLX_MODEL_TYPE && MODEL_TYPE_FROM_SHELL="true"
 has_shell_override MLX_CONFIG_PATH && CONFIG_PATH_FROM_SHELL="true"
+has_shell_override XDG_CACHE_HOME && CACHE_HOME_FROM_SHELL="true"
+has_shell_override HF_HOME && HF_HOME_FROM_SHELL="true"
 
 HOST_FROM_CLI="false"
 PORT_FROM_CLI="false"
 MODEL_PATH_FROM_CLI="false"
 MODEL_TYPE_FROM_CLI="false"
 CONFIG_PATH_FROM_CLI="false"
+CACHE_HOME_FROM_CLI="false"
+HF_HOME_FROM_CLI="false"
 
 usage() {
   cat <<'EOF'
@@ -112,6 +120,8 @@ Options:
   --config PATH       Optional mlx-openai-server config YAML. When set, overrides --model-path/--model-type launch mode.
   --host HOST         Listen host (default: 127.0.0.1)
   --port PORT         Listen port (default: 10240)
+  --cache-dir PATH    Cache root for MLX/Hugging Face artifacts (default: /var/lib/mlx/cache)
+  --hf-home PATH      Hugging Face cache dir (default: <cache-dir>/huggingface)
   --user USER         Service user (default: mlx)
   --skip-prefetch     Do not prefetch model repos before starting the service
   --prefetch-only     Prefetch model repos and exit without restarting launchd
@@ -143,6 +153,16 @@ while [[ $# -gt 0 ]]; do
     --port)
       MLX_PORT="${2:-}"
       PORT_FROM_CLI="true"
+      shift 2
+      ;;
+    --cache-dir)
+      XDG_CACHE_HOME="${2:-}"
+      CACHE_HOME_FROM_CLI="true"
+      shift 2
+      ;;
+    --hf-home)
+      HF_HOME="${2:-}"
+      HF_HOME_FROM_CLI="true"
       shift 2
       ;;
     --user)
@@ -186,6 +206,12 @@ if [[ -f "$MLX_ENV_FILE" ]]; then
   if [[ "$CONFIG_PATH_FROM_SHELL" != "true" && "$CONFIG_PATH_FROM_CLI" != "true" ]]; then
     MLX_CONFIG_PATH="$(env_file_get "$MLX_ENV_FILE" MLX_CONFIG_PATH "$MLX_CONFIG_PATH")"
   fi
+  if [[ "$CACHE_HOME_FROM_SHELL" != "true" && "$CACHE_HOME_FROM_CLI" != "true" ]]; then
+    XDG_CACHE_HOME="$(env_file_get "$MLX_ENV_FILE" XDG_CACHE_HOME "$XDG_CACHE_HOME")"
+  fi
+  if [[ "$HF_HOME_FROM_SHELL" != "true" && "$HF_HOME_FROM_CLI" != "true" ]]; then
+    HF_HOME="$(env_file_get "$MLX_ENV_FILE" HF_HOME "$HF_HOME")"
+  fi
   if [[ "$PREFETCH_FROM_CLI" != "true" && "$PREFETCH_FROM_CLI" != "prefetch_only" ]]; then
     PREFETCH_BEFORE_START="$(env_file_get "$MLX_ENV_FILE" PREFETCH_BEFORE_START "$PREFETCH_BEFORE_START")"
   fi
@@ -207,6 +233,16 @@ esac
 
 if [[ -n "$MLX_CONFIG_PATH" && ! -f "$MLX_CONFIG_PATH" ]]; then
   echo "ERROR: MLX config file not found: ${MLX_CONFIG_PATH}" >&2
+  exit 2
+fi
+
+if [[ -z "${XDG_CACHE_HOME:-}" ]]; then
+  echo "ERROR: XDG_CACHE_HOME must not be empty" >&2
+  exit 2
+fi
+
+if [[ -z "${HF_HOME:-}" ]]; then
+  echo "ERROR: HF_HOME must not be empty" >&2
   exit 2
 fi
 
@@ -248,9 +284,9 @@ if ! id -u "${MLX_USER}" >/dev/null 2>&1; then
   sudo dscl . -create "/Users/${MLX_USER}" NFSHomeDirectory "${MLX_HOME}"
 fi
 
-sudo mkdir -p "${MLX_HOME}/cache" "${MLX_HOME}/run" "${MLX_LOG_DIR}"
-sudo chown -R "${MLX_USER}:staff" "${MLX_HOME}" "${MLX_LOG_DIR}"
-sudo chmod 750 "${MLX_HOME}" "${MLX_HOME}/cache" "${MLX_HOME}/run" "${MLX_LOG_DIR}"
+sudo mkdir -p "${MLX_HOME}" "${MLX_HOME}/run" "${MLX_LOG_DIR}" "${XDG_CACHE_HOME}" "${HF_HOME}"
+sudo chown -R "${MLX_USER}:staff" "${MLX_HOME}" "${MLX_LOG_DIR}" "${XDG_CACHE_HOME}" "${HF_HOME}"
+sudo chmod 750 "${MLX_HOME}" "${MLX_HOME}/run" "${MLX_LOG_DIR}" "${XDG_CACHE_HOME}" "${HF_HOME}"
 
 if [[ -x "${MLX_VENV}/bin/python" ]]; then
   if ! ns_python_is_at_least "${MLX_VENV}/bin/python" 3 11; then
@@ -307,14 +343,16 @@ update_env_file_key "${MLX_ENV_FILE}" MLX_PORT "${MLX_PORT}"
 update_env_file_key "${MLX_ENV_FILE}" MLX_MODEL_PATH "${MLX_MODEL_PATH}"
 update_env_file_key "${MLX_ENV_FILE}" MLX_MODEL_TYPE "${MLX_MODEL_TYPE}"
 update_env_file_key "${MLX_ENV_FILE}" MLX_CONFIG_PATH "${MLX_CONFIG_PATH}"
+update_env_file_key "${MLX_ENV_FILE}" XDG_CACHE_HOME "${XDG_CACHE_HOME}"
+update_env_file_key "${MLX_ENV_FILE}" HF_HOME "${HF_HOME}"
 update_env_file_key "${MLX_ENV_FILE}" PREFETCH_BEFORE_START "${PREFETCH_BEFORE_START}"
 
 if [[ "$PREFETCH_BEFORE_START" == "1" ]]; then
   echo "Prefetching MLX model repositories before starting launchd service..." >&2
   sudo -H -u "${MLX_USER}" env \
     HOME="${MLX_HOME}" \
-    HF_HOME="${MLX_HOME}/cache/huggingface" \
-    XDG_CACHE_HOME="${MLX_HOME}/cache" \
+    HF_HOME="${HF_HOME}" \
+    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
     MLX_ENV_FILE="${MLX_ENV_FILE}" \
     MLX_VENV="${MLX_VENV}" \
     "${MLX_PREFETCHER}"
@@ -354,9 +392,9 @@ sudo tee "${PLIST_PATH}" >/dev/null <<EOF
       <key>HOME</key>
       <string>${MLX_HOME}</string>
       <key>HF_HOME</key>
-      <string>${MLX_HOME}/cache/huggingface</string>
+      <string>${HF_HOME}</string>
       <key>XDG_CACHE_HOME</key>
-      <string>${MLX_HOME}/cache</string>
+      <string>${XDG_CACHE_HOME}</string>
       <key>MLX_ENV_FILE</key>
       <string>${MLX_ENV_FILE}</string>
       <key>MLX_VENV</key>
