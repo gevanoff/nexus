@@ -49,10 +49,22 @@ done
 
 if [[ "$has_explicit_source" != "true" ]]; then
   if [[ -n "${MLX_CONFIG_PATH:-}" ]]; then
-    forward_args=(--config "$MLX_CONFIG_PATH" "${forward_args[@]}")
+    if [[ ${#forward_args[@]} -gt 0 ]]; then
+      forward_args=(--config "$MLX_CONFIG_PATH" "${forward_args[@]}")
+    else
+      forward_args=(--config "$MLX_CONFIG_PATH")
+    fi
   elif [[ -n "${MLX_MODEL_PATH:-}" ]]; then
-    forward_args=(--model "$MLX_MODEL_PATH" "${forward_args[@]}")
+    if [[ ${#forward_args[@]} -gt 0 ]]; then
+      forward_args=(--model "$MLX_MODEL_PATH" "${forward_args[@]}")
+    else
+      forward_args=(--model "$MLX_MODEL_PATH")
+    fi
   fi
 fi
 
-exec "$PY_BIN" "$HELPER_PY" "${forward_args[@]}"
+if [[ ${#forward_args[@]} -gt 0 ]]; then
+  exec "$PY_BIN" "$HELPER_PY" "${forward_args[@]}"
+fi
+
+exec "$PY_BIN" "$HELPER_PY"
