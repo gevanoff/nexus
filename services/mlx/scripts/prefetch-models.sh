@@ -13,6 +13,9 @@ fi
 
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_PY="${THIS_DIR}/prefetch_models.py"
+if [[ ! -f "$HELPER_PY" ]]; then
+  HELPER_PY="${THIS_DIR}/mlx-prefetch-models.py"
+fi
 
 if [[ ! -f "$HELPER_PY" ]]; then
   echo "ERROR: helper script not found: ${HELPER_PY}" >&2

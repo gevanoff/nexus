@@ -105,6 +105,8 @@ After installation, the same helper is copied into the native MLX venv:
 sudo -u mlx env MLX_ENV_FILE=/var/lib/mlx/mlx.env MLX_VENV=/var/lib/mlx/env /var/lib/mlx/env/bin/mlx-prefetch-models
 ```
 
+`install-native-macos.sh` installs both the wrapper and its Python helper into `/var/lib/mlx/env/bin`, so a plain `launchctl kickstart` path can use the same prefetch mechanism without relying on the repo checkout at runtime.
+
 ## Notes
 
 - Gateway containers on the same Mac should use `MLX_BASE_URL=http://host.docker.internal:10240/v1`.
