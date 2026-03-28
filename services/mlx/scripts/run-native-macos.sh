@@ -19,7 +19,11 @@ MLX_CONFIG_PATH="${MLX_CONFIG_PATH:-}"
 PREFETCH_BEFORE_START="${PREFETCH_BEFORE_START:-0}"
 MLX_PREFETCHER="${MLX_VENV}/bin/mlx-prefetch-models"
 
-case "${PREFETCH_BEFORE_START,,}" in
+lowercase_value() {
+  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+}
+
+case "$(lowercase_value "$PREFETCH_BEFORE_START")" in
   1|true|yes|on)
     if [[ -x "$MLX_PREFETCHER" ]]; then
       "$MLX_PREFETCHER"

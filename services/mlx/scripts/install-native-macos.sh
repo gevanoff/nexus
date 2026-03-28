@@ -21,6 +21,10 @@ choose_python_for_mlx() {
   ns_python_choose_at_least 3 11 "${MLX_PYTHON:-}" python3.12 python3.11 python3
 }
 
+lowercase_value() {
+  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+}
+
 env_file_get() {
   local env_file="$1"
   local key="$2"
@@ -190,7 +194,7 @@ if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-case "${PREFETCH_BEFORE_START,,}" in
+case "$(lowercase_value "$PREFETCH_BEFORE_START")" in
   1|true|yes|on) PREFETCH_BEFORE_START="1" ;;
   0|false|no|off) PREFETCH_BEFORE_START="0" ;;
   *)
