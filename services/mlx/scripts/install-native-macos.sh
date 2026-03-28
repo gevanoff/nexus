@@ -72,12 +72,15 @@ PLIST_PATH="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
 CREATE_USER="${CREATE_USER:-1}"
 MLX_ENV_FILE="${MLX_ENV_FILE:-${MLX_HOME}/mlx.env}"
 MLX_LAUNCHER="${MLX_VENV}/bin/mlx-openai-launch"
+MLX_PREFETCHER="${MLX_VENV}/bin/mlx-prefetch-models"
+PREFETCH_BEFORE_START="${PREFETCH_BEFORE_START:-1}"
 
 HOST_FROM_SHELL="false"
 PORT_FROM_SHELL="false"
 MODEL_PATH_FROM_SHELL="false"
 MODEL_TYPE_FROM_SHELL="false"
 CONFIG_PATH_FROM_SHELL="false"
+PREFETCH_FROM_CLI="false"
 
 has_shell_override MLX_HOST && HOST_FROM_SHELL="true"
 has_shell_override MLX_PORT && PORT_FROM_SHELL="true"
@@ -104,6 +107,8 @@ Options:
   --host HOST         Listen host (default: 127.0.0.1)
   --port PORT         Listen port (default: 10240)
   --user USER         Service user (default: mlx)
+  --skip-prefetch     Do not prefetch model repos before starting the service
+  --prefetch-only     Prefetch model repos and exit without restarting launchd
 EOF
 }
 
@@ -138,6 +143,16 @@ while [[ $# -gt 0 ]]; do
       MLX_USER="${2:-}"
       shift 2
       ;;
+    --skip-prefetch)
+      PREFETCH_BEFORE_START="0"
+      PREFETCH_FROM_CLI="true"
+      shift
+      ;;
+    --prefetch-only)
+      PREFETCH_BEFORE_START="1"
+      PREFETCH_FROM_CLI="prefetch_only"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -165,12 +180,24 @@ if [[ -f "$MLX_ENV_FILE" ]]; then
   if [[ "$CONFIG_PATH_FROM_SHELL" != "true" && "$CONFIG_PATH_FROM_CLI" != "true" ]]; then
     MLX_CONFIG_PATH="$(env_file_get "$MLX_ENV_FILE" MLX_CONFIG_PATH "$MLX_CONFIG_PATH")"
   fi
+  if [[ "$PREFETCH_FROM_CLI" != "true" && "$PREFETCH_FROM_CLI" != "prefetch_only" ]]; then
+    PREFETCH_BEFORE_START="$(env_file_get "$MLX_ENV_FILE" PREFETCH_BEFORE_START "$PREFETCH_BEFORE_START")"
+  fi
 fi
 
 if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid --port value: ${MLX_PORT}" >&2
   exit 2
 fi
+
+case "${PREFETCH_BEFORE_START,,}" in
+  1|true|yes|on) PREFETCH_BEFORE_START="1" ;;
+  0|false|no|off) PREFETCH_BEFORE_START="0" ;;
+  *)
+    echo "ERROR: invalid PREFETCH_BEFORE_START value: ${PREFETCH_BEFORE_START}" >&2
+    exit 2
+    ;;
+esac
 
 if [[ -n "$MLX_CONFIG_PATH" && ! -f "$MLX_CONFIG_PATH" ]]; then
   echo "ERROR: MLX config file not found: ${MLX_CONFIG_PATH}" >&2
@@ -236,7 +263,7 @@ fi
 
 sudo -H "${MLX_VENV}/bin/python" -m pip install --upgrade --no-cache-dir pip setuptools wheel
 # shellcheck disable=SC2086
-sudo -H "${MLX_VENV}/bin/python" -m pip install --upgrade --no-cache-dir ${MLX_PIP_PACKAGES}
+sudo -H "${MLX_VENV}/bin/python" -m pip install --upgrade --no-cache-dir ${MLX_PIP_PACKAGES} huggingface_hub
 
 if [[ ! -x "${MLX_VENV}/bin/mlx-openai-server" ]]; then
   echo "ERROR: mlx-openai-server executable was not installed into ${MLX_VENV}/bin" >&2
@@ -249,16 +276,47 @@ sudo chmod 755 "${MLX_VENV}/bin/mlx-openai-server" 2>/dev/null || true
 sudo cp "${ROOT_DIR}/services/mlx/scripts/run-native-macos.sh" "${MLX_LAUNCHER}"
 sudo chown root:wheel "${MLX_LAUNCHER}"
 sudo chmod 755 "${MLX_LAUNCHER}"
+sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch-models.sh" "${MLX_PREFETCHER}"
+sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch_models.py" "${MLX_VENV}/bin/mlx-prefetch-models.py"
+sudo chown root:wheel "${MLX_PREFETCHER}" "${MLX_VENV}/bin/mlx-prefetch-models.py"
+sudo chmod 755 "${MLX_PREFETCHER}" "${MLX_VENV}/bin/mlx-prefetch-models.py"
 
-sudo tee "${MLX_ENV_FILE}" >/dev/null <<EOF
-MLX_HOST=${MLX_HOST}
-MLX_PORT=${MLX_PORT}
-MLX_MODEL_PATH=${MLX_MODEL_PATH}
-MLX_MODEL_TYPE=${MLX_MODEL_TYPE}
-MLX_CONFIG_PATH=${MLX_CONFIG_PATH}
-EOF
-sudo chown root:wheel "${MLX_ENV_FILE}"
-sudo chmod 644 "${MLX_ENV_FILE}"
+update_env_file_key() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -f "$file" ]]; then
+    grep -v -E "^[[:space:]]*${key}=" "$file" >"$tmp" || true
+  fi
+  printf '%s=%s\n' "$key" "$value" >>"$tmp"
+  sudo install -o root -g wheel -m 644 "$tmp" "$file"
+  rm -f "$tmp"
+}
+
+update_env_file_key "${MLX_ENV_FILE}" MLX_HOST "${MLX_HOST}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_PORT "${MLX_PORT}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_MODEL_PATH "${MLX_MODEL_PATH}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_MODEL_TYPE "${MLX_MODEL_TYPE}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_CONFIG_PATH "${MLX_CONFIG_PATH}"
+update_env_file_key "${MLX_ENV_FILE}" PREFETCH_BEFORE_START "${PREFETCH_BEFORE_START}"
+
+if [[ "$PREFETCH_BEFORE_START" == "1" ]]; then
+  echo "Prefetching MLX model repositories before starting launchd service..." >&2
+  sudo -H -u "${MLX_USER}" env \
+    HOME="${MLX_HOME}" \
+    HF_HOME="${MLX_HOME}/cache/huggingface" \
+    XDG_CACHE_HOME="${MLX_HOME}/cache" \
+    MLX_ENV_FILE="${MLX_ENV_FILE}" \
+    MLX_VENV="${MLX_VENV}" \
+    "${MLX_PREFETCHER}"
+fi
+
+if [[ "$PREFETCH_FROM_CLI" == "prefetch_only" ]]; then
+  echo "Prefetch complete; skipping launchd restart because --prefetch-only was requested." >&2
+  exit 0
+fi
 
 sudo tee "${PLIST_PATH}" >/dev/null <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

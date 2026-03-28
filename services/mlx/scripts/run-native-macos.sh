@@ -16,6 +16,24 @@ MLX_PORT="${MLX_PORT:-10240}"
 MLX_MODEL_PATH="${MLX_MODEL_PATH:-mlx-community/gemma-2-2b-it-8bit}"
 MLX_MODEL_TYPE="${MLX_MODEL_TYPE:-lm}"
 MLX_CONFIG_PATH="${MLX_CONFIG_PATH:-}"
+PREFETCH_BEFORE_START="${PREFETCH_BEFORE_START:-0}"
+MLX_PREFETCHER="${MLX_VENV}/bin/mlx-prefetch-models"
+
+case "${PREFETCH_BEFORE_START,,}" in
+  1|true|yes|on)
+    if [[ -x "$MLX_PREFETCHER" ]]; then
+      "$MLX_PREFETCHER"
+    else
+      echo "WARNING: PREFETCH_BEFORE_START is enabled but prefetch helper is missing: ${MLX_PREFETCHER}" >&2
+    fi
+    ;;
+  0|false|no|off)
+    ;;
+  *)
+    echo "ERROR: invalid PREFETCH_BEFORE_START value: ${PREFETCH_BEFORE_START}" >&2
+    exit 2
+    ;;
+esac
 
 if [[ -n "$MLX_CONFIG_PATH" ]]; then
   exec "${MLX_VENV}/bin/mlx-openai-server" launch \

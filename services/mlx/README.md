@@ -81,6 +81,9 @@ Startup troubleshooting notes:
 - A message like `Handler process for '<model>' did not become ready within 300 s` is the important failure signal. That means one configured model did not finish initializing in time, and MLX may exit before binding the HTTP port.
 - If you hit that condition, reduce the config to a minimal known-good set first, verify `curl -fsS http://127.0.0.1:10240/v1/models`, then re-add models one by one.
 - For very large first-time downloads, set `HF_TOKEN` in `/var/lib/mlx/mlx.env` to avoid Hugging Face anonymous rate limits.
+- Prefetching large model repos before starting launchd is now supported with `services/mlx/scripts/prefetch-models.sh`.
+- When `PREFETCH_BEFORE_START=1` is set in `/var/lib/mlx/mlx.env`, the native MLX launcher also runs that prefetch step before every service start, including plain `launchctl kickstart` restarts.
+- `install-native-macos.sh` wires this in by default and preserves existing extra keys in `/var/lib/mlx/mlx.env` such as `HF_TOKEN`.
 
 ## Native usage
 
@@ -88,6 +91,18 @@ Install host-native MLX on macOS with:
 
 ```bash
 ./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
+```
+
+To download model repos before the MLX server starts:
+
+```bash
+./services/mlx/scripts/prefetch-models.sh --config /var/lib/mlx/config/config.yaml
+```
+
+After installation, the same helper is copied into the native MLX venv:
+
+```bash
+sudo -u mlx env MLX_ENV_FILE=/var/lib/mlx/mlx.env MLX_VENV=/var/lib/mlx/env /var/lib/mlx/env/bin/mlx-prefetch-models
 ```
 
 ## Notes
@@ -106,6 +121,7 @@ sudo launchctl kickstart -k system/com.nexus.mlx.openai.server
 
 You can also change `MLX_MODEL_TYPE`, `MLX_HOST`, and `MLX_PORT` in the same file.
 If `MLX_CONFIG_PATH` is set in `/var/lib/mlx/mlx.env`, the launcher uses config mode instead.
+`PREFETCH_BEFORE_START=1` tells the native launcher to prefetch model repos before each service start, including `launchctl kickstart` restarts.
 
 Installer prerequisites:
 
@@ -142,6 +158,7 @@ Notes:
 - Both scripts also support `--aliases-file <path>` to point at a non-default alias file.
 - `prewarm-mlx.sh` uses `--timeout-sec 0` by default (no timeout), which is recommended for large model first-run warmups.
 - When `MLX_CONFIG_PATH` is set, use `--model` and/or `--from-aliases` with `prewarm-mlx.sh` for deterministic warmup.
+- `prewarm-mlx.sh` assumes the MLX HTTP server is already up. Use `prefetch-models.sh` first when a new config prevents MLX from binding its port.
 
 Gateway integration pattern:
 

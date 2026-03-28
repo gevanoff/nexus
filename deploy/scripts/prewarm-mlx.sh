@@ -175,6 +175,9 @@ if [[ -z "$models_json" ]]; then
 fi
 
 if [[ -z "$models_json" ]]; then
+  if [[ -n "${mlx_config_path:-}" ]]; then
+    ns_die "Could not reach MLX models endpoint at ${models_url}. If native MLX has not started yet, prefetch model repos first with services/mlx/scripts/prefetch-models.sh (or /var/lib/mlx/env/bin/mlx-prefetch-models on the MLX host)."
+  fi
   ns_die "Could not reach MLX models endpoint at ${models_url}"
 fi
 
