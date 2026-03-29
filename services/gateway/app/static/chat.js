@@ -145,7 +145,7 @@
       }
 
       const backendGroups = [
-        { title: "Core", backends: ["ollama", "local_mlx"] },
+        { title: "Core", backends: ["local_mlx", "ollama-ai1", "ollama-ada2", "telegram_bot"] },
         { title: "Images", backends: ["gpu_fast", "gpu_heavy"] },
         { title: "TTS", backends: ["pocket_tts", "luxtts", "qwen3_tts"] },
         { title: "Music", backends: ["heartmula_music"] },
@@ -154,6 +154,10 @@
       ];
 
       const backendLabels = {
+        local_mlx: "MLX",
+        "ollama-ai1": "Ollama AI1",
+        "ollama-ada2": "Ollama ADA2",
+        telegram_bot: "Telegram Bot",
         gpu_fast: "SDXL-Turbo",
         gpu_heavy: "InvokeAI",
         lighton_ocr: "LightOnOCR",
@@ -161,8 +165,19 @@
         skyreels_v2: "SkyReels-V2",
       };
 
+      const shouldHideBackend = (backend) => {
+        if (!backend || typeof backend !== "object") return false;
+        const backendClass = String(backend.backend_class || "").trim();
+        const error = String(backend.error || "").trim();
+        const aliasEntries = Array.isArray(backend.aliases) ? backend.aliases : [];
+        return backendClass === "ollama" && aliasEntries.length === 0 && error === "base_url not configured";
+      };
+
       const backendMap = new Map();
-      data.backends.forEach((backend) => {
+      const visibleBackends = (Array.isArray(data.backends) ? data.backends : []).filter(
+        (backend) => !shouldHideBackend(backend),
+      );
+      visibleBackends.forEach((backend) => {
         backendMap.set(backend.backend_class, backend);
       });
 
@@ -278,7 +293,7 @@
         renderGroup(group.title, group.backends);
       });
 
-      const extraBackends = data.backends
+      const extraBackends = visibleBackends
         .map((backend) => backend.backend_class)
         .filter((backendClass) => backendClass && !used.has(backendClass));
       if (extraBackends.length > 0) {
