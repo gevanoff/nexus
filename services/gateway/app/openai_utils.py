@@ -25,10 +25,24 @@ def sse_done() -> bytes:
 class ThinkTagStreamParser:
     _START = "<think>"
     _END = "</think>"
+    _LEADING_REASONING_HINTS = (
+        "the user",
+        "**analysis",
+        "analysis:",
+        "my task",
+        "response strategy",
+        "drafting response",
+        "refining",
+        "final output",
+        "let's go with",
+        "i should",
+        "i need to",
+    )
 
     def __init__(self) -> None:
         self._inside = False
         self._buffer = ""
+        self._emitted_visible = False
 
     @classmethod
     def _partial_suffix_len(cls, text: str) -> int:
@@ -41,6 +55,18 @@ class ThinkTagStreamParser:
                     best = max(best, size)
                     break
         return best
+
+    @classmethod
+    def _looks_like_reasoning_prefix(cls, text: str) -> bool:
+        trimmed = str(text or "").lstrip().lower()
+        if not trimmed:
+            return False
+        return any(trimmed.startswith(prefix) for prefix in cls._LEADING_REASONING_HINTS)
+
+    def _append_visible(self, visible_parts: list[str], text: str) -> None:
+        if text:
+            visible_parts.append(text)
+            self._emitted_visible = True
 
     def feed(self, text: str) -> tuple[str, str]:
         if not isinstance(text, str) or not text:
@@ -73,20 +99,25 @@ class ThinkTagStreamParser:
 
             if end_idx != -1 and (start_idx == -1 or end_idx < start_idx):
                 if end_idx > 0:
-                    visible_parts.append(self._buffer[:end_idx])
+                    prefix = self._buffer[:end_idx]
+                    if self._emitted_visible:
+                        self._append_visible(visible_parts, prefix)
+                    else:
+                        thinking_parts.append(prefix)
                 self._buffer = self._buffer[end_idx + len(self._END) :]
                 continue
 
             if start_idx == -1:
                 keep = self._partial_suffix_len(self._buffer)
                 visible = self._buffer[:-keep] if keep else self._buffer
-                if visible:
-                    visible_parts.append(visible)
+                if visible and not self._emitted_visible and self._looks_like_reasoning_prefix(visible):
+                    break
+                self._append_visible(visible_parts, visible)
                 self._buffer = self._buffer[-keep:] if keep else ""
                 break
 
             if start_idx > 0:
-                visible_parts.append(self._buffer[:start_idx])
+                self._append_visible(visible_parts, self._buffer[:start_idx])
             self._buffer = self._buffer[start_idx + len(self._START) :]
             self._inside = True
 
