@@ -84,7 +84,7 @@ Startup troubleshooting notes:
 - For very large first-time downloads, set `HF_TOKEN` in `/var/lib/mlx/mlx.env` to avoid Hugging Face anonymous rate limits.
 - If prefetch fails with `No space left on device`, move `XDG_CACHE_HOME` and `HF_HOME` in `/var/lib/mlx/mlx.env` to a larger disk, rerun the installer once, then prefetch again.
 - Prefetching large model repos before starting launchd is now supported with `services/mlx/scripts/prefetch-models.sh`.
-- When `PREFETCH_BEFORE_START=1` is set in `/var/lib/mlx/mlx.env`, the native MLX launcher also runs that prefetch step before every service start, including plain `launchctl kickstart` restarts.
+- When `PREFETCH_BEFORE_START=1` is set in `/var/lib/mlx/mlx.env`, the native MLX launcher also runs that prefetch step before every service start, including `deploy/scripts/restart-mlx.sh` and plain `launchctl kickstart` restarts.
 - `install-native-macos.sh` wires this in by default and preserves existing extra keys in `/var/lib/mlx/mlx.env` such as `HF_TOKEN`.
 
 ## Native usage
@@ -107,7 +107,7 @@ After installation, the same helper is copied into the native MLX venv:
 sudo -u mlx env MLX_ENV_FILE=/var/lib/mlx/mlx.env MLX_VENV=/var/lib/mlx/env /var/lib/mlx/env/bin/mlx-prefetch-models
 ```
 
-`install-native-macos.sh` installs both the wrapper and its Python helper into `/var/lib/mlx/env/bin`, so a plain `launchctl kickstart` path can use the same prefetch mechanism without relying on the repo checkout at runtime.
+`install-native-macos.sh` installs both the wrapper and its Python helper into `/var/lib/mlx/env/bin`, so `deploy/scripts/restart-mlx.sh` and plain `launchctl kickstart` can use the same prefetch mechanism without relying on the repo checkout at runtime.
 
 ## Notes
 
@@ -120,12 +120,12 @@ To change models later, update that file and restart the service without rewriti
 
 ```bash
 sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/Qwen2.5-32B-Instruct-4bit#' /var/lib/mlx/mlx.env
-sudo launchctl kickstart -k system/com.nexus.mlx.openai.server
+./deploy/scripts/restart-mlx.sh
 ```
 
 You can also change `MLX_MODEL_TYPE`, `MLX_HOST`, and `MLX_PORT` in the same file.
 If `MLX_CONFIG_PATH` is set in `/var/lib/mlx/mlx.env`, the launcher uses config mode instead.
-`PREFETCH_BEFORE_START=1` tells the native launcher to prefetch model repos before each service start, including `launchctl kickstart` restarts.
+`PREFETCH_BEFORE_START=1` tells the native launcher to prefetch model repos before each service start, including `deploy/scripts/restart-mlx.sh` and `launchctl kickstart` restarts.
 If local system storage is too small for model caches, set `XDG_CACHE_HOME` and `HF_HOME` to a larger mounted volume before rerunning the installer.
 
 Installer prerequisites:
