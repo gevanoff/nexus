@@ -1357,6 +1357,13 @@
                 continue;
               }
 
+              if (evt.type === "thinking_reset") {
+                thinkingBuffer = "";
+                thinkingShown = false;
+                setThinking("");
+                continue;
+              }
+
               if (evt.type === "delta" && typeof evt.delta === "string") {
                 if (!hasContent) hasContent = true;
                 full += evt.delta;

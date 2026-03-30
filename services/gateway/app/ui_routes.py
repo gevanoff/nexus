@@ -3174,9 +3174,14 @@ async def _stream_ui_chat(
                     delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
                     text = delta.get("content")
                     thinking = delta.get("thinking")
+                    thinking_reset = bool(delta.get("thinking_reset"))
                 except Exception:
                     text = None
                     thinking = None
+                    thinking_reset = False
+
+                if thinking_reset:
+                    yield sse({"type": "thinking_reset"})
 
                 if isinstance(thinking, str) and thinking:
                     yield sse({"type": "thinking", "thinking": thinking})

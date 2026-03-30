@@ -43,6 +43,8 @@ class ThinkTagStreamParser:
         self._inside = False
         self._buffer = ""
         self._emitted_visible = False
+        self._leading_thinking = ""
+        self._reset_thinking = False
 
     @classmethod
     def _partial_suffix_len(cls, text: str) -> int:
@@ -67,6 +69,16 @@ class ThinkTagStreamParser:
         if text:
             visible_parts.append(text)
             self._emitted_visible = True
+
+    def _append_leading_thinking(self, thinking_parts: list[str], text: str) -> None:
+        if text:
+            thinking_parts.append(text)
+            self._leading_thinking += text
+
+    def drain_reset(self) -> bool:
+        reset = self._reset_thinking
+        self._reset_thinking = False
+        return reset
 
     def feed(self, text: str) -> tuple[str, str]:
         if not isinstance(text, str) or not text:
@@ -103,21 +115,30 @@ class ThinkTagStreamParser:
                     if self._emitted_visible:
                         self._append_visible(visible_parts, prefix)
                     else:
-                        thinking_parts.append(prefix)
+                        self._append_leading_thinking(thinking_parts, prefix)
+                self._leading_thinking = ""
                 self._buffer = self._buffer[end_idx + len(self._END) :]
                 continue
 
             if start_idx == -1:
                 keep = self._partial_suffix_len(self._buffer)
                 visible = self._buffer[:-keep] if keep else self._buffer
-                if visible and not self._emitted_visible and self._looks_like_reasoning_prefix(visible):
+                if not self._emitted_visible and (
+                    self._leading_thinking or (visible and self._looks_like_reasoning_prefix(visible))
+                ):
+                    self._append_leading_thinking(thinking_parts, visible)
+                    self._buffer = self._buffer[-keep:] if keep else ""
                     break
                 self._append_visible(visible_parts, visible)
                 self._buffer = self._buffer[-keep:] if keep else ""
                 break
 
             if start_idx > 0:
-                self._append_visible(visible_parts, self._buffer[:start_idx])
+                prefix = self._buffer[:start_idx]
+                if not self._emitted_visible and self._leading_thinking:
+                    self._append_leading_thinking(thinking_parts, prefix)
+                else:
+                    self._append_visible(visible_parts, prefix)
             self._buffer = self._buffer[start_idx + len(self._START) :]
             self._inside = True
 
@@ -128,7 +149,16 @@ class ThinkTagStreamParser:
             thought = self._buffer
             self._buffer = ""
             self._inside = False
+            self._leading_thinking = ""
             return "", thought
+        if self._leading_thinking:
+            tail = self._buffer.replace(self._START, "").replace(self._END, "")
+            visible = self._leading_thinking + tail
+            self._buffer = ""
+            self._leading_thinking = ""
+            self._reset_thinking = True
+            self._emitted_visible = True
+            return visible, ""
         tail = self._buffer.replace(self._START, "").replace(self._END, "")
         self._buffer = ""
         return tail, ""
@@ -167,6 +197,8 @@ def sanitize_chat_choices(payload: Any, *, stream_parser: ThinkTagStreamParser |
                         delta["thinking"] = existing + thinking
                     else:
                         delta["thinking"] = thinking
+                if stream_parser and stream_parser.drain_reset():
+                    delta["thinking_reset"] = True
 
         message = choice.get("message")
         if isinstance(message, dict):

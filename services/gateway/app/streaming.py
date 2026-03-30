@@ -34,6 +34,8 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
                         delta["content"] = tail_visible
                     if tail_thinking:
                         delta["thinking"] = tail_thinking
+                    if parser.drain_reset():
+                        delta["thinking_reset"] = True
                     yield sse(
                         {
                             "id": new_id("chatcmpl"),
@@ -64,6 +66,8 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
             delta["content"] = tail_visible
         if tail_thinking:
             delta["thinking"] = tail_thinking
+        if parser.drain_reset():
+            delta["thinking_reset"] = True
         yield sse(
             {
                 "id": new_id("chatcmpl"),
@@ -218,13 +222,16 @@ async def ollama_ndjson_to_openai_sse(
                     )
                 if tail_visible:
                     content_emitted = True
+                    delta: Dict[str, Any] = {"content": tail_visible}
+                    if parser.drain_reset():
+                        delta["thinking_reset"] = True
                     yield sse(
                         {
                             "id": chunk_id,
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model_name,
-                            "choices": [{"index": 0, "delta": {"content": tail_visible}, "finish_reason": None}],
+                            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
                         }
                     )
                 if not content_emitted:
@@ -263,13 +270,16 @@ async def ollama_ndjson_to_openai_sse(
             }
         )
     if tail_visible:
+        delta: Dict[str, Any] = {"content": tail_visible}
+        if parser.drain_reset():
+            delta["thinking_reset"] = True
         yield sse(
             {
                 "id": chunk_id,
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model_name,
-                "choices": [{"index": 0, "delta": {"content": tail_visible}, "finish_reason": None}],
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
             }
         )
     yield sse(
