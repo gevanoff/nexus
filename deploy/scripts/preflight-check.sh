@@ -155,7 +155,13 @@ for service in images tts; do
   fi
 done
 
-for script in deploy/scripts/deploy.sh deploy/scripts/remote-deploy.sh deploy/scripts/register-service.sh deploy/scripts/list-services.sh quickstart.sh; do
+script_checks=()
+while IFS= read -r script; do
+  [[ -n "${script:-}" ]] && script_checks+=("$script")
+done < <(find deploy/scripts services -type f \( -path '*/scripts/*.sh' -o -name 'docker-entrypoint.sh' \) | LC_ALL=C sort)
+script_checks+=("quickstart.sh")
+
+for script in "${script_checks[@]}"; do
   if [[ -x "$script" ]]; then
     ok "Executable bit set: $script"
   else

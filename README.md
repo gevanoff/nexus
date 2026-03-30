@@ -64,6 +64,11 @@ chmod +x quickstart.sh deploy/scripts/*.sh
 ./quickstart.sh
 ```
 
+Contributor note:
+- Shell scripts that are meant to be run directly should be committed with the executable bit set.
+- This applies to `deploy/scripts/*.sh`, `services/*/scripts/*.sh`, and service `docker-entrypoint.sh` files.
+- `./deploy/scripts/preflight-check.sh` validates those execute bits before rollout.
+
 - `install-host-deps.sh` is interactive and installs Docker/Docker Compose (+ optional NVIDIA runtime).
 - `quickstart.sh` runs preflight checks, creates `.env`, starts services, and verifies readiness.
 

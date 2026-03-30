@@ -64,6 +64,12 @@ chmod +x quickstart.sh deploy/scripts/*.sh
 ./quickstart.sh
 ```
 
+Repository script policy:
+
+- Any shell script intended to be run directly must be committed with the executable bit set.
+- This applies to `deploy/scripts/*.sh`, `services/*/scripts/*.sh`, and service `docker-entrypoint.sh` files.
+- Run `./deploy/scripts/preflight-check.sh` before shipping changes; it now validates script execute bits across those paths.
+
 Or manually:
 
 ```bash
@@ -89,6 +95,7 @@ docker compose up -d
    - Update README if needed
    - Add/update docstrings
    - Update relevant guides
+   - If you add a runnable shell script, make sure it is committed as executable (`100755`)
 
 4. **Commit your changes**
 
