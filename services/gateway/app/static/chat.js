@@ -1253,6 +1253,25 @@
         let hasContent = false;
         let thinkingShown = false;
         let thinkingBuffer = "";
+        let thinkingResetPending = false;
+
+        const normalizeThinkingText = (text) =>
+          String(text || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+
+        const shouldClearResetThinking = (thinkingText, visibleText) => {
+          const thinkingNorm = normalizeThinkingText(thinkingText);
+          const visibleNorm = normalizeThinkingText(visibleText);
+          if (!thinkingNorm) return true;
+          if (!visibleNorm) return false;
+          return (
+            thinkingNorm === visibleNorm ||
+            thinkingNorm.startsWith(visibleNorm) ||
+            visibleNorm.startsWith(thinkingNorm)
+          );
+        };
 
         if (!resp.ok) {
           const text = await resp.text();
@@ -1354,19 +1373,26 @@
                 thinkingBuffer += evt.thinking;
                 setThinking(thinkingBuffer);
                 thinkingShown = true;
+                thinkingResetPending = false;
                 continue;
               }
 
               if (evt.type === "thinking_reset") {
-                thinkingBuffer = "";
-                thinkingShown = false;
-                setThinking("");
+                thinkingResetPending = true;
                 continue;
               }
 
               if (evt.type === "delta" && typeof evt.delta === "string") {
                 if (!hasContent) hasContent = true;
                 full += evt.delta;
+                if (thinkingResetPending) {
+                  if (shouldClearResetThinking(thinkingBuffer, full)) {
+                    thinkingBuffer = "";
+                    thinkingShown = false;
+                    setThinking("");
+                  }
+                  thinkingResetPending = false;
+                }
                 contentText.textContent = full;
                 scrollToBottom();
                 continue;
@@ -1379,6 +1405,14 @@
               }
 
               if (evt.type === "done") {
+                if (thinkingResetPending) {
+                  if (shouldClearResetThinking(thinkingBuffer, full)) {
+                    thinkingBuffer = "";
+                    thinkingShown = false;
+                    setThinking("");
+                  }
+                  thinkingResetPending = false;
+                }
                 if (thinkingShown) {
                   setThinking(thinkingBuffer, { done: true });
                 }
