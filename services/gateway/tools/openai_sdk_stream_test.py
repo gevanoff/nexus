@@ -133,6 +133,16 @@ def main(argv: List[str]) -> int:
     p.add_argument("--max-chunks", type=int, default=10_000)
     p.add_argument("--debug-http", action="store_true", help="If set, also print raw HTTP/SSE details.")
     p.add_argument(
+        "--show-thinking",
+        action="store_true",
+        help="Print streamed reasoning/thinking chunks to stderr when the gateway exposes them separately.",
+    )
+    p.add_argument(
+        "--show-events",
+        action="store_true",
+        help="Print each streamed delta payload to stderr for debugging.",
+    )
+    p.add_argument(
         "--insecure",
         action="store_true",
         help="Disable TLS certificate verification (useful for self-signed local certs).",
@@ -224,6 +234,18 @@ def main(argv: List[str]) -> int:
 
             delta: Any = getattr(choice, "delta", None)
             if delta is not None:
+                if ns.show_events:
+                    print(f"[event] delta={delta!r}", file=sys.stderr)
+
+                thinking = None
+                for attr in ("thinking", "reasoning", "thoughts"):
+                    value = getattr(delta, attr, None)
+                    if isinstance(value, str) and value:
+                        thinking = value
+                        break
+                if thinking and ns.show_thinking:
+                    print(f"[thinking] {thinking}", file=sys.stderr, end="")
+
                 content = getattr(delta, "content", None)
                 if isinstance(content, str) and content:
                     text_out.append(content)
