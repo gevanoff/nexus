@@ -144,15 +144,6 @@
         backendStatusMeta.style.marginBottom = "8px";
       }
 
-      const backendGroups = [
-        { title: "Core", backends: ["local_mlx", "ollama-ai1", "ollama-ada2", "telegram_bot"] },
-        { title: "Images", backends: ["gpu_fast", "gpu_heavy"] },
-        { title: "TTS", backends: ["pocket_tts", "luxtts", "qwen3_tts"] },
-        { title: "Music", backends: ["heartmula_music"] },
-        { title: "OCR", backends: ["lighton_ocr"] },
-        { title: "Video", backends: ["followyourcanvas", "skyreels_v2"] },
-      ];
-
       const backendLabels = {
         local_mlx: "MLX",
         "ollama-ai1": "Ollama AI1",
@@ -168,9 +159,31 @@
       const shouldHideBackend = (backend) => {
         if (!backend || typeof backend !== "object") return false;
         const backendClass = String(backend.backend_class || "").trim();
-        const error = String(backend.error || "").trim();
-        const aliasEntries = Array.isArray(backend.aliases) ? backend.aliases : [];
-        return backendClass === "ollama" && aliasEntries.length === 0 && error === "base_url not configured";
+        return backendClass === "ollama";
+      };
+
+      const capabilityGroupOrder = [
+        { title: "Core", capability: "core" },
+        { title: "Images", capability: "images" },
+        { title: "TTS", capability: "tts" },
+        { title: "Music", capability: "music" },
+        { title: "OCR", capability: "ocr" },
+        { title: "Video", capability: "video" },
+        { title: "Transcription", capability: "transcription" },
+      ];
+
+      const classifyBackendGroup = (backend) => {
+        const capabilities = new Set(Array.isArray(backend?.capabilities) ? backend.capabilities : []);
+        if (capabilities.has("chat") || capabilities.has("embeddings") || capabilities.has("bridge")) {
+          return "core";
+        }
+        if (capabilities.has("images")) return "images";
+        if (capabilities.has("tts")) return "tts";
+        if (capabilities.has("music")) return "music";
+        if (capabilities.has("ocr")) return "ocr";
+        if (capabilities.has("video")) return "video";
+        if (capabilities.has("transcription")) return "transcription";
+        return "other";
       };
 
       const backendMap = new Map();
@@ -180,8 +193,6 @@
       visibleBackends.forEach((backend) => {
         backendMap.set(backend.backend_class, backend);
       });
-
-      const used = new Set();
 
       const renderBackendRow = (backend, { displayName, missing } = {}) => {
         const row = document.createElement("div");
@@ -270,6 +281,7 @@
       };
 
       const renderGroup = (title, backendKeys) => {
+        if (!Array.isArray(backendKeys) || backendKeys.length === 0) return;
         const group = document.createElement("div");
         group.className = "status-group";
         const heading = document.createElement("div");
@@ -283,19 +295,28 @@
           const backend = backendMap.get(backendKey);
           const displayName = backendLabels[backendKey] || backendKey;
           list.appendChild(renderBackendRow(backend || { backend_class: backendKey }, { displayName, missing: !backend }));
-          if (backend) used.add(backendKey);
         });
         group.appendChild(list);
         backendStatusList.appendChild(group);
       };
 
-      backendGroups.forEach((group) => {
-        renderGroup(group.title, group.backends);
+      const groupedBackends = new Map();
+      capabilityGroupOrder.forEach((group) => groupedBackends.set(group.capability, []));
+      groupedBackends.set("other", []);
+
+      visibleBackends.forEach((backend) => {
+        const backendClass = String(backend.backend_class || "").trim();
+        if (!backendClass) return;
+        const groupKey = classifyBackendGroup(backend);
+        groupedBackends.get(groupKey).push(backendClass);
       });
 
-      const extraBackends = visibleBackends
-        .map((backend) => backend.backend_class)
-        .filter((backendClass) => backendClass && !used.has(backendClass));
+      capabilityGroupOrder.forEach((group) => {
+        const groupBackends = groupedBackends.get(group.capability) || [];
+        renderGroup(group.title, groupBackends);
+      });
+
+      const extraBackends = groupedBackends.get("other") || [];
       if (extraBackends.length > 0) {
         renderGroup("Other", extraBackends);
       }
