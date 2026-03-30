@@ -1213,12 +1213,19 @@
 
       const assistant = addMessage({ role: "assistant", content: "", meta: "Assistant" });
       assistant.contentEl.textContent = "";
-      const thinkingLine = document.createElement("div");
-      thinkingLine.className = "thinking-line";
-      thinkingLine.style.display = "none";
+      const thinkingPanel = document.createElement("details");
+      thinkingPanel.className = "thinking-panel";
+      thinkingPanel.style.display = "none";
+      const thinkingSummary = document.createElement("summary");
+      thinkingSummary.className = "thinking-summary";
+      thinkingSummary.textContent = "Thinking...";
+      const thinkingBody = document.createElement("div");
+      thinkingBody.className = "thinking-body";
+      thinkingPanel.appendChild(thinkingSummary);
+      thinkingPanel.appendChild(thinkingBody);
       const contentText = document.createElement("div");
       contentText.className = "content-text";
-      assistant.contentEl.appendChild(thinkingLine);
+      assistant.contentEl.appendChild(thinkingPanel);
       assistant.contentEl.appendChild(contentText);
 
       setBusy(true);
@@ -1246,7 +1253,6 @@
         let hasContent = false;
         let thinkingShown = false;
         let thinkingBuffer = "";
-        let isOllama = backend === "ollama";
 
         if (!resp.ok) {
           const text = await resp.text();
@@ -1255,21 +1261,26 @@
           return;
         }
 
-        const setThinking = (text) => {
-          if (!text) {
-            thinkingLine.textContent = "";
-            thinkingLine.style.display = "none";
-            return;
-          }
-          thinkingLine.textContent = text;
-          thinkingLine.style.display = "block";
-          scrollToBottom();
+        const summarizeThinking = (text, { done = false } = {}) => {
+          const compact = String(text || "").replace(/\s+/g, " ").trim();
+          if (!compact) return done ? "Thought process" : "Thinking...";
+          const preview = compact.length > 96 ? `${compact.slice(0, 96)}...` : compact;
+          return done ? `Thought process: ${preview}` : `Thinking... ${preview}`;
         };
 
-        const showThinking = () => {
-          if (hasContent || thinkingShown || !isOllama) return;
-          setThinking("Thinking…");
-          thinkingShown = true;
+        const setThinking = (text, { done = false } = {}) => {
+          if (!text) {
+            thinkingBody.textContent = "";
+            thinkingSummary.textContent = "Thinking...";
+            thinkingPanel.open = false;
+            thinkingPanel.style.display = "none";
+            return;
+          }
+          thinkingBody.textContent = text;
+          thinkingSummary.textContent = summarizeThinking(text, { done });
+          thinkingPanel.style.display = "block";
+          thinkingPanel.open = !done;
+          scrollToBottom();
         };
 
         const reader = resp.body.getReader();
@@ -1287,7 +1298,6 @@
         }
 
         updateMeta("streaming");
-        showThinking();
 
         while (true) {
           const { value, done } = await reader.read();
@@ -1325,10 +1335,6 @@
                 if (evt.model) bits.push(`model=${evt.model}`);
                 if (evt.reason) bits.push(`reason=${evt.reason}`);
                 assistant.metaEl.textContent = bits.join(" • ") || assistant.metaEl.textContent;
-                if (evt.backend) {
-                  isOllama = evt.backend === "ollama";
-                  showThinking();
-                }
                 continue;
               }
 
@@ -1346,16 +1352,13 @@
 
               if (evt.type === "thinking" && typeof evt.thinking === "string") {
                 thinkingBuffer += evt.thinking;
-                setThinking(`Thinking: ${thinkingBuffer}`);
+                setThinking(thinkingBuffer);
                 thinkingShown = true;
                 continue;
               }
 
               if (evt.type === "delta" && typeof evt.delta === "string") {
-                if (!hasContent) {
-                  hasContent = true;
-                  if (thinkingShown) setThinking("");
-                }
+                if (!hasContent) hasContent = true;
                 full += evt.delta;
                 contentText.textContent = full;
                 scrollToBottom();
@@ -1369,8 +1372,8 @@
               }
 
               if (evt.type === "done") {
-                if (!hasContent && thinkingShown) {
-                  setThinking("");
+                if (thinkingShown) {
+                  setThinking(thinkingBuffer, { done: true });
                 }
                 updateMeta("done");
                 continue;

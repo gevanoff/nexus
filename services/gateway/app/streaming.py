@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, Dict
 import httpx
 
 from app.config import logger
-from app.openai_utils import new_id, now_unix, sse, sse_done
+from app.openai_utils import ThinkTagStreamParser, new_id, now_unix, sanitize_chat_choices, sse, sse_done
 
 
 async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
@@ -15,23 +15,64 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
     Pass-through upstream SSE (already 'data: ...\n\n') from MLX-style OpenAI servers.
     """
     done_seen = False
-    tail = b""
+    parser = ThinkTagStreamParser()
     try:
-        async for chunk in resp.aiter_bytes():
-            if not chunk:
+        async for line in resp.aiter_lines():
+            if not line:
                 continue
 
-            # Detect [DONE] across chunk boundaries.
-            hay = tail + chunk
-            if b"data: [DONE]" in hay:
-                done_seen = True
-            tail = hay[-64:]
+            if not line.startswith("data:"):
+                continue
 
-            yield chunk
+            data = line[len("data:") :].strip()
+            if data == "[DONE]":
+                done_seen = True
+                tail_visible, tail_thinking = parser.flush()
+                if tail_visible or tail_thinking:
+                    delta: Dict[str, Any] = {}
+                    if tail_visible:
+                        delta["content"] = tail_visible
+                    if tail_thinking:
+                        delta["thinking"] = tail_thinking
+                    yield sse(
+                        {
+                            "id": new_id("chatcmpl"),
+                            "object": "chat.completion.chunk",
+                            "created": now_unix(),
+                            "model": "",
+                            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                        }
+                    )
+                yield sse_done()
+                return
+
+            try:
+                obj = json.loads(data)
+            except Exception:
+                yield f"{line}\n\n".encode("utf-8")
+                continue
+
+            yield sse(sanitize_chat_choices(obj, stream_parser=parser))
     except asyncio.CancelledError:
         return
 
     # If upstream ends without a done marker, still end cleanly.
+    tail_visible, tail_thinking = parser.flush()
+    if tail_visible or tail_thinking:
+        delta: Dict[str, Any] = {}
+        if tail_visible:
+            delta["content"] = tail_visible
+        if tail_thinking:
+            delta["thinking"] = tail_thinking
+        yield sse(
+            {
+                "id": new_id("chatcmpl"),
+                "object": "chat.completion.chunk",
+                "created": now_unix(),
+                "model": "",
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+            }
+        )
     if not done_seen:
         yield sse_done()
 
@@ -52,6 +93,7 @@ async def ollama_ndjson_to_openai_sse(
 
     sent_role = not emit_role_chunk
     content_emitted = False
+    parser = ThinkTagStreamParser()
     if emit_role_chunk:
         # First chunk: announce assistant role (common expectation)
         yield sse(
@@ -121,7 +163,17 @@ async def ollama_ndjson_to_openai_sse(
                 content = obj.get("response")
 
             if isinstance(thinking, str) and thinking:
-                delta: Dict[str, Any] = {"thinking": thinking}
+                explicit_thinking = thinking
+            else:
+                explicit_thinking = ""
+            if content:
+                visible, tag_thinking = parser.feed(content)
+            else:
+                visible, tag_thinking = "", ""
+
+            combined_thinking = explicit_thinking + tag_thinking
+            if combined_thinking:
+                delta: Dict[str, Any] = {"thinking": combined_thinking}
                 if not sent_role:
                     delta["role"] = "assistant"
                     sent_role = True
@@ -135,9 +187,9 @@ async def ollama_ndjson_to_openai_sse(
                     }
                 )
 
-            if content:
+            if visible:
                 content_emitted = True
-                delta: Dict[str, Any] = {"content": content}
+                delta = {"content": visible}
                 if not sent_role:
                     delta["role"] = "assistant"
                     sent_role = True
@@ -153,6 +205,28 @@ async def ollama_ndjson_to_openai_sse(
 
             if done:
                 finish_reason = obj.get("done_reason") or "stop"
+                tail_visible, tail_thinking = parser.flush()
+                if tail_thinking:
+                    yield sse(
+                        {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": model_name,
+                            "choices": [{"index": 0, "delta": {"thinking": tail_thinking}, "finish_reason": None}],
+                        }
+                    )
+                if tail_visible:
+                    content_emitted = True
+                    yield sse(
+                        {
+                            "id": chunk_id,
+                            "object": "chat.completion.chunk",
+                            "created": created,
+                            "model": model_name,
+                            "choices": [{"index": 0, "delta": {"content": tail_visible}, "finish_reason": None}],
+                        }
+                    )
                 if not content_emitted:
                     # Useful for diagnosing alias models that immediately end without output.
                     logger.warning(
@@ -177,6 +251,27 @@ async def ollama_ndjson_to_openai_sse(
         return
 
     # If upstream ends without a done marker, still end cleanly.
+    tail_visible, tail_thinking = parser.flush()
+    if tail_thinking:
+        yield sse(
+            {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [{"index": 0, "delta": {"thinking": tail_thinking}, "finish_reason": None}],
+            }
+        )
+    if tail_visible:
+        yield sse(
+            {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model_name,
+                "choices": [{"index": 0, "delta": {"content": tail_visible}, "finish_reason": None}],
+            }
+        )
     yield sse(
         {
             "id": chunk_id,

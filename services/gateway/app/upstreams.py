@@ -12,7 +12,7 @@ from app.config import S, logger
 from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias
 from app.models import ChatCompletionRequest
-from app.openai_utils import new_id, now_unix, sse, sse_done
+from app.openai_utils import new_id, now_unix, sanitize_chat_choices, sse, sse_done
 from app.streaming import ollama_ndjson_to_openai_sse, passthrough_sse
 
 
@@ -123,6 +123,7 @@ async def call_mlx_openai(req: ChatCompletionRequest, *, base_url: str | None = 
             r.raise_for_status()
             out = r.json()
             if isinstance(out, dict):
+                sanitize_chat_choices(out)
                 out["model"] = backend_model_id(backend_name, req.model)
             return out
         except httpx.HTTPStatusError as e:
@@ -165,6 +166,8 @@ async def call_ollama(
             raise HTTPException(status_code=502, detail={"upstream": backend_name, "error": str(e)})
 
     msg = out.get("message", {})
+    if isinstance(msg, dict):
+        sanitize_chat_choices({"choices": [{"message": msg}]})
     return {
         "id": new_id("chatcmpl"),
         "object": "chat.completion",

@@ -78,6 +78,47 @@
       .meta { font-size: 12px; color: var(--muted); }
       .content { white-space: pre-wrap; line-height: 1.5; }
       .thinking-line { font-size: 12px; color: #93a4ba; font-style: italic; margin-bottom: 6px; }
+      .thinking-panel {
+        display: none;
+        margin-bottom: 8px;
+        border: 1px solid rgba(231,237,246,0.08);
+        border-radius: 10px;
+        background: rgba(10, 14, 20, 0.55);
+        overflow: hidden;
+      }
+      .thinking-panel[open] {
+        background: rgba(10, 14, 20, 0.72);
+      }
+      .thinking-summary {
+        cursor: pointer;
+        list-style: none;
+        font-size: 11px;
+        line-height: 1.4;
+        letter-spacing: 0.02em;
+        color: #9db0c8;
+        padding: 8px 10px;
+        user-select: none;
+      }
+      .thinking-summary::-webkit-details-marker { display: none; }
+      .thinking-summary::before {
+        content: ">";
+        display: inline-block;
+        margin-right: 8px;
+        transform: rotate(0deg);
+        transition: transform 0.14s ease;
+      }
+      .thinking-panel[open] .thinking-summary::before {
+        transform: rotate(90deg);
+      }
+      .thinking-body {
+        white-space: pre-wrap;
+        font-size: 11px;
+        line-height: 1.45;
+        color: #8e9fb5;
+        padding: 0 10px 10px;
+        border-top: 1px solid rgba(231,237,246,0.06);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
       .composer { margin-top: 12px; display:flex; gap:10px; }
       .composer textarea { flex: 1; min-height: 64px; resize: vertical; }
       .right { display:flex; flex-direction:column; gap:10px; }
@@ -430,6 +471,6 @@
     </div>
 
     <script src="/static/auth_client.js?v=1"></script>
-    <script src="/static/chat.js?v=1"></script>
+    <script src="/static/chat.js?v=2"></script>
   </body>
 </html>
