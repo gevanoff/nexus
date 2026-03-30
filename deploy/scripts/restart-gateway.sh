@@ -21,6 +21,9 @@ so Gateway picks up updated code and runtime config (e.g. model_aliases.json).
 Options:
   --env-file PATH   Env file path (default: ./.env)
   --no-build        Skip image rebuild (recreate gateway from the existing image)
+
+If the optional nginx TLS proxy is running, this script also refreshes nginx
+after recreating gateway so proxying does not keep a stale container IP.
 EOF
 }
 
@@ -70,6 +73,13 @@ if [[ "$NO_BUILD" == "true" ]]; then
   ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --force-recreate gateway
 else
   ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build --force-recreate gateway
+fi
+
+if [[ -f "$ROOT_DIR/docker-compose.nginx.yml" ]]; then
+  if ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.nginx.yml ps nginx >/dev/null 2>&1; then
+    ns_print_header "Refreshing nginx proxy"
+    ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.nginx.yml up -d --force-recreate nginx
+  fi
 fi
 
 ns_print_header "Waiting for Gateway health"
