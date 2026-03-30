@@ -25,19 +25,6 @@ def sse_done() -> bytes:
 class ThinkTagStreamParser:
     _START = "<think>"
     _END = "</think>"
-    _LEADING_REASONING_HINTS = (
-        "the user",
-        "**analysis",
-        "analysis:",
-        "my task",
-        "response strategy",
-        "drafting response",
-        "refining",
-        "final output",
-        "let's go with",
-        "i should",
-        "i need to",
-    )
 
     def __init__(self) -> None:
         self._inside = False
@@ -57,13 +44,6 @@ class ThinkTagStreamParser:
                     best = max(best, size)
                     break
         return best
-
-    @classmethod
-    def _looks_like_reasoning_prefix(cls, text: str) -> bool:
-        trimmed = str(text or "").lstrip().lower()
-        if not trimmed:
-            return False
-        return any(trimmed.startswith(prefix) for prefix in cls._LEADING_REASONING_HINTS)
 
     def _append_visible(self, visible_parts: list[str], text: str) -> None:
         if text:
@@ -123,9 +103,11 @@ class ThinkTagStreamParser:
             if start_idx == -1:
                 keep = self._partial_suffix_len(self._buffer)
                 visible = self._buffer[:-keep] if keep else self._buffer
-                if not self._emitted_visible and (
-                    self._leading_thinking or (visible and self._looks_like_reasoning_prefix(visible))
-                ):
+                if not self._emitted_visible:
+                    # Before the first confirmed visible answer token, treat
+                    # all leading text as provisional thinking. If no closing
+                    # think tag ever arrives, flush() converts it back into
+                    # visible assistant content and signals a thinking reset.
                     self._append_leading_thinking(thinking_parts, visible)
                     self._buffer = self._buffer[-keep:] if keep else ""
                     break

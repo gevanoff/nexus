@@ -21,8 +21,6 @@ def _normalize_messages_for_mlx(msgs: List[Dict[str, Any]]) -> List[Dict[str, An
     last_role: str | None = None
     for m in msgs:
         role = (m.get("role") or "").strip()
-        if role == "system":
-            role = "user"
 
         content = m.get("content")
         if content is None:
