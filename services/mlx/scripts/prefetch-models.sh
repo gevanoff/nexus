@@ -3,6 +3,7 @@ set -euo pipefail
 
 MLX_ENV_FILE="${MLX_ENV_FILE:-/var/lib/mlx/mlx.env}"
 MLX_VENV="${MLX_VENV:-/var/lib/mlx/env}"
+MLX_HOME="${MLX_HOME:-/var/lib/mlx}"
 
 if [[ -f "$MLX_ENV_FILE" ]]; then
   set -a
@@ -10,6 +11,11 @@ if [[ -f "$MLX_ENV_FILE" ]]; then
   . "$MLX_ENV_FILE"
   set +a
 fi
+
+HOME="${HOME:-$MLX_HOME}"
+XDG_CACHE_HOME="${XDG_CACHE_HOME:-${MLX_HOME}/cache}"
+HF_HOME="${HF_HOME:-${XDG_CACHE_HOME}/huggingface}"
+export HOME XDG_CACHE_HOME HF_HOME
 
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_PY="${THIS_DIR}/prefetch_models.py"
