@@ -20,7 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python deps (pinned)
 COPY app/requirements.freeze.txt /tmp/requirements.freeze.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.freeze.txt
+COPY tools/requirements.txt /tmp/tools.requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.freeze.txt \
+    && pip install --no-cache-dir -r /tmp/tools.requirements.txt
 
 # App code
 COPY app/ /var/lib/gateway/app/
