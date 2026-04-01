@@ -12,30 +12,31 @@ if [[ "$(ns_detect_platform)" != "macos" ]]; then
   ns_die "This installer is macOS-only"
 fi
 
-if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-  ns_die "Install the Colima launch agent as your normal macOS user, not as root"
-fi
-
 PROFILE="default"
 VM_TYPE=""
 START_INTERVAL="60"
 SANITIZED_PROFILE="default"
+TARGET_USER=""
+TARGET_HOME=""
+SANITIZED_USER=""
 LABEL=""
-APP_SUPPORT_ROOT="${APP_SUPPORT_ROOT:-${HOME}/Library/Application Support/Nexus}"
-LOG_DIR="${HOME}/Library/Logs/Nexus"
+COLIMA_RUNTIME_ROOT="${COLIMA_RUNTIME_ROOT:-/var/lib/nexus-colima}"
+COLIMA_LOG_DIR="${COLIMA_LOG_DIR:-/var/log/nexus-colima}"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--label LABEL]
+Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--label LABEL]
 
-Install/reload a per-user macOS LaunchAgent that ensures Colima starts after
-login/reboot and periodically checks that the selected profile remains up.
+Install/reload a macOS LaunchDaemon that starts Colima at boot and runs it
+under the selected unprivileged user account.
 
 Options:
   --profile NAME        Colima profile name (default: default)
   --vm-type TYPE        Optional Colima vm-type override (for example: qemu)
   --start-interval SEC  Relaunch check interval in seconds (default: 60)
-  --label LABEL         LaunchAgent label (default: com.nexus.colima.<profile>)
+  --user USER           User account that should own/run Colima (default: current user)
+  --home PATH           Home directory for the selected user (default: detected from dscl/$HOME)
+  --label LABEL         LaunchDaemon label (default: com.nexus.colima.<user>.<profile>)
 EOF
 }
 
@@ -43,14 +44,71 @@ sanitize_profile() {
   printf '%s' "${1:-default}" | tr -c 'A-Za-z0-9._-' '_'
 }
 
-launchd_domain_for_user() {
-  local uid
-  uid="$(id -u)"
-  if launchctl print "gui/${uid}" >/dev/null 2>&1; then
-    echo "gui/${uid}"
-  else
-    echo "user/${uid}"
+resolve_target_user() {
+  if [[ -n "${TARGET_USER:-}" ]]; then
+    printf '%s\n' "$TARGET_USER"
+    return 0
   fi
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+      printf '%s\n' "$SUDO_USER"
+      return 0
+    fi
+    ns_die "When running as root, pass --user USER (or invoke the script via sudo from your normal account)"
+  fi
+
+  id -un
+}
+
+resolve_home_for_user() {
+  local user_name="$1"
+  local home_dir=""
+
+  if [[ -n "${TARGET_HOME:-}" ]]; then
+    printf '%s\n' "$TARGET_HOME"
+    return 0
+  fi
+
+  if [[ "${user_name}" == "$(id -un)" && -n "${HOME:-}" ]]; then
+    printf '%s\n' "$HOME"
+    return 0
+  fi
+
+  home_dir="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' | tail -n 1 || true)"
+  if [[ -n "${home_dir:-}" ]]; then
+    printf '%s\n' "$home_dir"
+    return 0
+  fi
+
+  ns_die "Could not determine home directory for user '${user_name}'"
+}
+
+run_docker_for_target() {
+  if [[ -z "${DOCKER_BIN:-}" ]]; then
+    return 1
+  fi
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    sudo -H -u "${TARGET_USER}" HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+  else
+    HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+  fi
+}
+
+wait_for_docker_as_target() {
+  local timeout_sec="$1"
+  local elapsed=0
+
+  while [[ "$elapsed" -lt "$timeout_sec" ]]; do
+    if run_docker_for_target info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -65,6 +123,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --start-interval)
       START_INTERVAL="${2:-}"
+      shift 2
+      ;;
+    --user)
+      TARGET_USER="${2:-}"
+      shift 2
+      ;;
+    --home)
+      TARGET_HOME="${2:-}"
       shift 2
       ;;
     --label)
@@ -87,39 +153,47 @@ done
 ns_require_cmd colima "colima" || exit 1
 ns_require_cmd launchctl "launchctl" || exit 1
 ns_require_cmd plutil "plutil" || exit 1
+ns_require_cmd dscl "dscl" || exit 1
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  ns_require_cmd sudo "sudo" || exit 1
+fi
 
 COLIMA_BIN="$(command -v colima)"
 DOCKER_BIN="$(command -v docker || true)"
+TARGET_USER="$(resolve_target_user)"
+[[ "${TARGET_USER}" != "root" ]] || ns_die "Colima target user must not be root"
+TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
 SANITIZED_PROFILE="$(sanitize_profile "$PROFILE")"
+SANITIZED_USER="$(sanitize_profile "$TARGET_USER")"
 if [[ -z "${LABEL:-}" ]]; then
-  LABEL="com.nexus.colima.${SANITIZED_PROFILE}"
+  LABEL="com.nexus.colima.${SANITIZED_USER}.${SANITIZED_PROFILE}"
 fi
 
-LAUNCH_AGENT_DIR="${HOME}/Library/LaunchAgents"
-COLIMA_RUNTIME_DIR="${APP_SUPPORT_ROOT}/colima"
-LAUNCHER_DST="${COLIMA_RUNTIME_DIR}/bin/nexus-colima-launch"
-ENV_FILE="${COLIMA_RUNTIME_DIR}/${SANITIZED_PROFILE}.env"
-PLIST_PATH="${LAUNCH_AGENT_DIR}/${LABEL}.plist"
-OUT_LOG="${LOG_DIR}/${LABEL}.out.log"
-ERR_LOG="${LOG_DIR}/${LABEL}.err.log"
-LAUNCHD_DOMAIN="$(launchd_domain_for_user)"
+LAUNCHER_DST="${COLIMA_RUNTIME_ROOT}/bin/nexus-colima-launch"
+ENV_FILE="${COLIMA_RUNTIME_ROOT}/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
+PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
+OUT_LOG="${COLIMA_LOG_DIR}/${LABEL}.out.log"
+ERR_LOG="${COLIMA_LOG_DIR}/${LABEL}.err.log"
 
-ns_mkdir_p "$LAUNCH_AGENT_DIR"
-ns_mkdir_p "${COLIMA_RUNTIME_DIR}/bin"
-ns_mkdir_p "$LOG_DIR"
+sudo install -d -o root -g wheel -m 755 "${COLIMA_RUNTIME_ROOT}"
+sudo install -d -o root -g wheel -m 755 "${COLIMA_RUNTIME_ROOT}/bin"
+sudo install -d -o "${TARGET_USER}" -g staff -m 750 "${COLIMA_LOG_DIR}"
 
-cp "${ROOT_DIR}/deploy/scripts/colima-launch-agent.sh" "$LAUNCHER_DST"
-chmod 755 "$LAUNCHER_DST"
+sudo install -o root -g wheel -m 755 "${ROOT_DIR}/deploy/scripts/colima-launch-agent.sh" "$LAUNCHER_DST"
 
-cat >"$ENV_FILE" <<EOF
+tmp_env_file="$(mktemp)"
+cat >"$tmp_env_file" <<EOF
 COLIMA_BIN=${COLIMA_BIN}
 DOCKER_BIN=${DOCKER_BIN}
 COLIMA_PROFILE=${PROFILE}
 COLIMA_VM_TYPE=${VM_TYPE}
+COLIMA_USER_HOME=${TARGET_HOME}
 EOF
-chmod 600 "$ENV_FILE"
+sudo install -o root -g wheel -m 644 "$tmp_env_file" "$ENV_FILE"
+rm -f "$tmp_env_file"
 
-cat >"$PLIST_PATH" <<EOF
+tmp_plist="$(mktemp)"
+cat >"$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -127,8 +201,14 @@ cat >"$PLIST_PATH" <<EOF
     <key>Label</key>
     <string>${LABEL}</string>
 
+    <key>UserName</key>
+    <string>${TARGET_USER}</string>
+    <key>WorkingDirectory</key>
+    <string>${TARGET_HOME}</string>
+
     <key>ProgramArguments</key>
     <array>
+      <string>/bin/bash</string>
       <string>${LAUNCHER_DST}</string>
     </array>
 
@@ -145,6 +225,8 @@ cat >"$PLIST_PATH" <<EOF
     <dict>
       <key>PATH</key>
       <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+      <key>HOME</key>
+      <string>${TARGET_HOME}</string>
       <key>NEXUS_COLIMA_ENV_FILE</key>
       <string>${ENV_FILE}</string>
     </dict>
@@ -157,24 +239,42 @@ cat >"$PLIST_PATH" <<EOF
 </plist>
 EOF
 
-chmod 644 "$PLIST_PATH"
-plutil -lint "$PLIST_PATH" >/dev/null
+sudo install -o root -g wheel -m 644 "$tmp_plist" "$PLIST_PATH"
+rm -f "$tmp_plist"
+sudo plutil -lint "$PLIST_PATH" >/dev/null
 
-launchctl bootout "${LAUNCHD_DOMAIN}/${LABEL}" >/dev/null 2>&1 || true
-launchctl bootstrap "$LAUNCHD_DOMAIN" "$PLIST_PATH"
-launchctl kickstart -k "${LAUNCHD_DOMAIN}/${LABEL}"
+sudo launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+sudo launchctl remove "${LABEL}" >/dev/null 2>&1 || true
+
+bootstrap_err="$(mktemp)"
+if ! sudo launchctl bootstrap system "$PLIST_PATH" 2>"$bootstrap_err"; then
+  ns_print_error "launchctl bootstrap failed for ${LABEL}"
+  if [[ -s "$bootstrap_err" ]]; then
+    cat "$bootstrap_err" >&2
+  fi
+  rm -f "$bootstrap_err"
+  ns_print_warn "Diagnostics:"
+  ns_print_warn "  sudo plutil -lint '${PLIST_PATH}'"
+  ns_print_warn "  sudo launchctl print system/${LABEL}"
+  ns_print_warn "  sudo tail -n 120 '${ERR_LOG}'"
+  ns_print_warn "  sudo tail -n 120 '${OUT_LOG}'"
+  exit 1
+fi
+rm -f "$bootstrap_err"
+
+sudo launchctl kickstart -k "system/${LABEL}"
 
 ns_print_header "Waiting for Colima / Docker"
-docker context use colima >/dev/null 2>&1 || true
-if ns_wait_for_docker_daemon 75; then
-  ns_print_ok "Colima launch agent is active (${LABEL})"
+run_docker_for_target context use colima >/dev/null 2>&1 || true
+if wait_for_docker_as_target 75; then
+  ns_print_ok "Colima launch daemon is active (${LABEL})"
   ns_print_ok "Docker daemon is reachable via the Colima context"
 else
-  ns_print_warn "LaunchAgent was installed, but Docker is not reachable yet"
+  ns_print_warn "LaunchDaemon was installed, but Docker is not reachable yet"
   ns_print_warn "Inspect logs:"
-  ns_print_warn "  tail -n 120 '${OUT_LOG}'"
-  ns_print_warn "  tail -n 120 '${ERR_LOG}'"
+  ns_print_warn "  sudo tail -n 120 '${OUT_LOG}'"
+  ns_print_warn "  sudo tail -n 120 '${ERR_LOG}'"
 fi
 
-echo "LaunchAgent: ${PLIST_PATH}"
+echo "LaunchDaemon: ${PLIST_PATH}"
 echo "Restart helper: ./deploy/scripts/restart-colima.sh --profile ${PROFILE}"

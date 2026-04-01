@@ -14,6 +14,12 @@ COLIMA_BIN="${COLIMA_BIN:-$(command -v colima || true)}"
 DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || true)}"
 COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 COLIMA_VM_TYPE="${COLIMA_VM_TYPE:-}"
+COLIMA_USER_HOME="${COLIMA_USER_HOME:-${HOME:-}}"
+
+if [[ -n "${COLIMA_USER_HOME:-}" ]]; then
+  HOME="${COLIMA_USER_HOME}"
+  export HOME
+fi
 
 timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
@@ -57,4 +63,4 @@ if [[ -n "${DOCKER_BIN:-}" ]]; then
   "$DOCKER_BIN" context use colima >/dev/null 2>&1 || true
 fi
 
-log "Colima launch agent check completed"
+log "Colima launchd check completed"

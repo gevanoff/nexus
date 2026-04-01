@@ -12,23 +12,23 @@ if [[ "$(ns_detect_platform)" != "macos" ]]; then
   ns_die "This helper is macOS-only"
 fi
 
-if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-  ns_die "Restart the Colima launch agent as your normal macOS user, not as root"
-fi
-
 PROFILE="default"
+TARGET_USER=""
+TARGET_HOME=""
 LABEL=""
 TIMEOUT_SEC="75"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/restart-colima.sh [--profile NAME] [--label LABEL] [--timeout-sec N]
+Usage: deploy/scripts/restart-colima.sh [--profile NAME] [--user USER] [--home PATH] [--label LABEL] [--timeout-sec N]
 
-Restart the per-user Colima LaunchAgent and wait for Docker to become reachable.
+Restart the Colima LaunchDaemon and wait for Docker to become reachable.
 
 Options:
   --profile NAME     Colima profile name (default: default)
-  --label LABEL      LaunchAgent label (default: com.nexus.colima.<profile>)
+  --user USER        User account that owns/runs Colima (default: current user)
+  --home PATH        Home directory for the selected user (default: detected from dscl/$HOME)
+  --label LABEL      LaunchDaemon label (default: com.nexus.colima.<user>.<profile>)
   --timeout-sec N    Wait time for Docker daemon health (default: 75)
 EOF
 }
@@ -37,20 +37,85 @@ sanitize_profile() {
   printf '%s' "${1:-default}" | tr -c 'A-Za-z0-9._-' '_'
 }
 
-launchd_domain_for_user() {
-  local uid
-  uid="$(id -u)"
-  if launchctl print "gui/${uid}" >/dev/null 2>&1; then
-    echo "gui/${uid}"
-  else
-    echo "user/${uid}"
+resolve_target_user() {
+  if [[ -n "${TARGET_USER:-}" ]]; then
+    printf '%s\n' "$TARGET_USER"
+    return 0
   fi
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+      printf '%s\n' "$SUDO_USER"
+      return 0
+    fi
+    ns_die "When running as root, pass --user USER (or invoke the script via sudo from your normal account)"
+  fi
+
+  id -un
+}
+
+resolve_home_for_user() {
+  local user_name="$1"
+  local home_dir=""
+
+  if [[ -n "${TARGET_HOME:-}" ]]; then
+    printf '%s\n' "$TARGET_HOME"
+    return 0
+  fi
+
+  if [[ "${user_name}" == "$(id -un)" && -n "${HOME:-}" ]]; then
+    printf '%s\n' "$HOME"
+    return 0
+  fi
+
+  home_dir="$(dscl . -read "/Users/${user_name}" NFSHomeDirectory 2>/dev/null | awk '{print $2}' | tail -n 1 || true)"
+  if [[ -n "${home_dir:-}" ]]; then
+    printf '%s\n' "$home_dir"
+    return 0
+  fi
+
+  ns_die "Could not determine home directory for user '${user_name}'"
+}
+
+run_docker_for_target() {
+  if [[ -z "${DOCKER_BIN:-}" ]]; then
+    return 1
+  fi
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    sudo -H -u "${TARGET_USER}" HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+  else
+    HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+  fi
+}
+
+wait_for_docker_as_target() {
+  local timeout_sec="$1"
+  local elapsed=0
+
+  while [[ "$elapsed" -lt "$timeout_sec" ]]; do
+    if run_docker_for_target info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
       PROFILE="${2:-}"
+      shift 2
+      ;;
+    --user)
+      TARGET_USER="${2:-}"
+      shift 2
+      ;;
+    --home)
+      TARGET_HOME="${2:-}"
       shift 2
       ;;
     --label)
@@ -74,38 +139,48 @@ done
 [[ -n "${PROFILE:-}" ]] || ns_die "--profile must not be empty"
 [[ "$TIMEOUT_SEC" =~ ^[0-9]+$ ]] || ns_die "--timeout-sec must be an integer"
 
-SANITIZED_PROFILE="$(sanitize_profile "$PROFILE")"
-if [[ -z "${LABEL:-}" ]]; then
-  LABEL="com.nexus.colima.${SANITIZED_PROFILE}"
+ns_require_cmd launchctl "launchctl" || exit 1
+ns_require_cmd dscl "dscl" || exit 1
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  ns_require_cmd sudo "sudo" || exit 1
 fi
 
-PLIST_PATH="${HOME}/Library/LaunchAgents/${LABEL}.plist"
-LAUNCHD_DOMAIN="$(launchd_domain_for_user)"
+DOCKER_BIN="$(command -v docker || true)"
+TARGET_USER="$(resolve_target_user)"
+[[ "${TARGET_USER}" != "root" ]] || ns_die "Colima target user must not be root"
+TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
+SANITIZED_PROFILE="$(sanitize_profile "$PROFILE")"
+SANITIZED_USER="$(sanitize_profile "$TARGET_USER")"
+if [[ -z "${LABEL:-}" ]]; then
+  LABEL="com.nexus.colima.${SANITIZED_USER}.${SANITIZED_PROFILE}"
+fi
 
-ns_print_header "Restarting Colima LaunchAgent"
+PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
 
-if launchctl print "${LAUNCHD_DOMAIN}/${LABEL}" >/dev/null 2>&1; then
-  ns_print_ok "LaunchAgent is loaded: ${LABEL}"
+ns_print_header "Restarting Colima LaunchDaemon"
+
+if sudo launchctl print "system/${LABEL}" >/dev/null 2>&1; then
+  ns_print_ok "LaunchDaemon is loaded: ${LABEL}"
 else
   if [[ ! -f "$PLIST_PATH" ]]; then
-    ns_print_error "Colima LaunchAgent not found: ${PLIST_PATH}"
+    ns_print_error "Colima LaunchDaemon not found: ${PLIST_PATH}"
     ns_print_warn "Install it first:"
-    ns_print_warn "  ./deploy/scripts/install-colima-launchd.sh --profile ${PROFILE}"
+    ns_print_warn "  ./deploy/scripts/install-colima-launchd.sh --profile ${PROFILE} --user ${TARGET_USER}"
     exit 1
   fi
-  ns_print_warn "LaunchAgent is not loaded; bootstrapping ${PLIST_PATH}"
-  launchctl bootstrap "$LAUNCHD_DOMAIN" "$PLIST_PATH"
+  ns_print_warn "LaunchDaemon is not loaded; bootstrapping ${PLIST_PATH}"
+  sudo launchctl bootstrap system "$PLIST_PATH"
 fi
 
-launchctl kickstart -k "${LAUNCHD_DOMAIN}/${LABEL}"
+sudo launchctl kickstart -k "system/${LABEL}"
 
 ns_print_header "Waiting for Docker via Colima"
-docker context use colima >/dev/null 2>&1 || true
-if ns_wait_for_docker_daemon "$TIMEOUT_SEC"; then
+run_docker_for_target context use colima >/dev/null 2>&1 || true
+if wait_for_docker_as_target "$TIMEOUT_SEC"; then
   ns_print_ok "Docker daemon is reachable via Colima"
   exit 0
 fi
 
 ns_print_error "Docker daemon did not become reachable within ${TIMEOUT_SEC}s"
-launchctl print "${LAUNCHD_DOMAIN}/${LABEL}" || true
+sudo launchctl print "system/${LABEL}" || true
 exit 1

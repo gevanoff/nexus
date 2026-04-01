@@ -209,8 +209,8 @@ These scripts are the current supported setup/install and deployment entrypoints
 
 - `quickstart.sh`: interactive local bootstrap (recommended for first run)
 - `deploy/scripts/preflight-check.sh`: dependency + permission checks
-- `deploy/scripts/install-colima-launchd.sh`: install a per-user macOS LaunchAgent that auto-starts Colima after login/reboot
-- `deploy/scripts/restart-colima.sh`: restart/verify the Colima LaunchAgent on macOS
+- `deploy/scripts/install-colima-launchd.sh`: install a macOS LaunchDaemon that auto-starts Colima at boot under your user account
+- `deploy/scripts/restart-colima.sh`: restart/verify the Colima LaunchDaemon on macOS
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: host-local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)

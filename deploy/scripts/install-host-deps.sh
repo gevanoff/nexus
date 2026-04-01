@@ -169,17 +169,17 @@ install_macos_docker() {
     if confirm "Start Colima now (recommended)?"; then
       if colima start; then
         green "Colima started. 'docker info' should work now."
-        yellow "Optional autostart after login/reboot: ./deploy/scripts/install-colima-launchd.sh"
+        yellow "Optional autostart at boot: ./deploy/scripts/install-colima-launchd.sh"
       else
         yellow "Colima default start failed; trying qemu fallback..."
         colima start --vm-type qemu
         green "Colima started with qemu fallback. 'docker info' should work now."
-        yellow "Optional autostart after login/reboot: ./deploy/scripts/install-colima-launchd.sh --vm-type qemu"
+        yellow "Optional autostart at boot: ./deploy/scripts/install-colima-launchd.sh --vm-type qemu"
       fi
     else
       yellow "Start Colima later with: colima start"
       yellow "If VZ startup fails, use: colima start --vm-type qemu"
-      yellow "Optional autostart after login/reboot: ./deploy/scripts/install-colima-launchd.sh"
+      yellow "Optional autostart at boot: ./deploy/scripts/install-colima-launchd.sh"
     fi
     return
   fi
