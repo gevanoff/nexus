@@ -34,16 +34,19 @@ if [[ -z "${COLIMA_BIN:-}" ]]; then
   exit 1
 fi
 
-profile_args=()
+status_cmd=("$COLIMA_BIN" status)
+start_cmd=("$COLIMA_BIN" start)
+retry_cmd=("$COLIMA_BIN" start)
 if [[ -n "${COLIMA_PROFILE:-}" && "${COLIMA_PROFILE}" != "default" ]]; then
-  profile_args+=("${COLIMA_PROFILE}")
+  status_cmd+=("${COLIMA_PROFILE}")
+  start_cmd+=("${COLIMA_PROFILE}")
+  retry_cmd+=("${COLIMA_PROFILE}")
 fi
 
-if "$COLIMA_BIN" status "${profile_args[@]}" >/dev/null 2>&1; then
+if "${status_cmd[@]}" >/dev/null 2>&1; then
   log "Colima profile '${COLIMA_PROFILE}' already running"
 else
   log "Starting Colima profile '${COLIMA_PROFILE}'"
-  start_cmd=("$COLIMA_BIN" start "${profile_args[@]}")
   if [[ -n "${COLIMA_VM_TYPE:-}" ]]; then
     start_cmd+=("--vm-type" "${COLIMA_VM_TYPE}")
   fi
@@ -51,7 +54,8 @@ else
   if ! "${start_cmd[@]}"; then
     if [[ -z "${COLIMA_VM_TYPE:-}" ]]; then
       log "Default Colima start failed; retrying with qemu fallback"
-      "$COLIMA_BIN" start "${profile_args[@]}" --vm-type qemu
+      retry_cmd+=("--vm-type" "qemu")
+      "${retry_cmd[@]}"
     else
       log "ERROR: Colima start failed with vm-type '${COLIMA_VM_TYPE}'"
       exit 1
