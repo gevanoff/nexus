@@ -68,6 +68,9 @@ Contributor note:
 - Shell scripts that are meant to be run directly should be committed with the executable bit set.
 - This applies to `deploy/scripts/*.sh`, `services/*/scripts/*.sh`, and service `docker-entrypoint.sh` files.
 - `./deploy/scripts/preflight-check.sh` validates those execute bits before rollout.
+- macOS operators should assume repo shell scripts run under Apple’s system `/bin/bash`, which is often Bash `3.2`, not a modern Bash 5.x shell.
+- That means repo scripts should avoid Bash 4+ syntax on macOS-facing paths, especially `${var,,}`, associative arrays, `mapfile`, and fragile empty-array expansions under `set -u`.
+- For macOS scripting, prefer portable Bash patterns and only use zsh for one-off local operator commands, not shared repo automation.
 
 - `install-host-deps.sh` is interactive and installs Docker/Docker Compose (+ optional NVIDIA runtime).
 - `quickstart.sh` runs preflight checks, creates `.env`, starts services, and verifies readiness.

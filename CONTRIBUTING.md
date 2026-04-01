@@ -69,6 +69,12 @@ Repository script policy:
 - Any shell script intended to be run directly must be committed with the executable bit set.
 - This applies to `deploy/scripts/*.sh`, `services/*/scripts/*.sh`, and service `docker-entrypoint.sh` files.
 - Run `./deploy/scripts/preflight-check.sh` before shipping changes; it now validates script execute bits across those paths.
+- macOS-targeted shell scripts must remain compatible with the system `/bin/bash` shipped by Apple, which is still Bash `3.2` on many hosts.
+- Do not use Bash 4+/5+ features in repo scripts unless the script explicitly installs and invokes a newer Bash itself.
+- In practice, avoid `${var,,}` / `${var^^}`, associative arrays, `mapfile`, and other Bash 4+ syntax in shared or macOS-facing scripts.
+- Under macOS Bash `3.2`, empty array expansions can also break under `set -u`; guard array use carefully or assemble commands without relying on empty `"${array[@]}"` expansions.
+- Prefer portable patterns such as `tr '[:upper:]' '[:lower:]'` for case folding and explicit command construction for optional arguments.
+- If you touch macOS shell scripts, test them with the host `bash` interpreter, not only a newer Homebrew or Linux Bash.
 
 Or manually:
 
@@ -96,6 +102,7 @@ docker compose up -d
    - Add/update docstrings
    - Update relevant guides
    - If you add a runnable shell script, make sure it is committed as executable (`100755`)
+   - If you change a macOS-targeted shell script, verify it still works with `/bin/bash` 3.2 semantics
 
 4. **Commit your changes**
 
