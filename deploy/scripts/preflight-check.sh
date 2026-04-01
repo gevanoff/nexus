@@ -109,6 +109,7 @@ else
   if [[ "$platform" == "macos" ]]; then
     if ns_have_cmd colima; then
       warn "macOS: if using Colima, start it with: colima start"
+      warn "macOS: for automatic startup after login/reboot, install the LaunchAgent with: ./deploy/scripts/install-colima-launchd.sh"
     else
       warn "macOS: start your Docker backend (Colima or Docker Desktop)"
     fi
