@@ -3045,9 +3045,17 @@ def _attachments_to_lines(attachments: list[Dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _normalize_chat_role(raw_role: Any) -> str:
+    role = str(raw_role or "").strip().lower()
+    if role in {"user", "assistant"}:
+        return role
+    return "user"
+
+
 def _conversation_to_chat_messages(convo: ui_conversations.Conversation) -> list[ChatMessage]:
     msgs: list[ChatMessage] = []
-    if convo.summary:
+    include_prior_context = bool(getattr(S, "UI_CHAT_INCLUDE_PRIOR_CONTEXT", False))
+    if include_prior_context and convo.summary:
         msgs.append(ChatMessage(role="system", content=f"Conversation summary:\n{convo.summary.strip()}"))
 
     # Collect textual messages (skip images) and preserve only the last user
@@ -3060,7 +3068,7 @@ def _conversation_to_chat_messages(convo: ui_conversations.Conversation) -> list
             continue
         if str(item.get("type") or "") == "image":
             continue
-        role = str(item.get("role") or "").strip() or "user"
+        role = _normalize_chat_role(item.get("role"))
         content = item.get("content")
         if not isinstance(content, str) or not content.strip():
             content = ""
@@ -3077,30 +3085,31 @@ def _conversation_to_chat_messages(convo: ui_conversations.Conversation) -> list
             last_user_idx = i
             break
 
-    # Build context lines from all messages except the chosen last user prompt.
-    context_lines: list[str] = []
-    for i, item in enumerate(items):
-        if i == last_user_idx:
-            continue
-        role = item["role"]
-        content = item["content"]
-        if content:
-            context_lines.append(f"{role}: {content}")
-        attachment_lines = _attachments_to_lines(item.get("attachments") or [])
-        if attachment_lines:
-            context_lines.append(f"{role} attached files:\n" + "\n".join(attachment_lines))
+    if include_prior_context:
+        # Build context lines from all messages except the chosen last user prompt.
+        context_lines: list[str] = []
+        for i, item in enumerate(items):
+            if i == last_user_idx:
+                continue
+            role = item["role"]
+            content = item["content"]
+            if content:
+                context_lines.append(f"{role}: {content}")
+            attachment_lines = _attachments_to_lines(item.get("attachments") or [])
+            if attachment_lines:
+                context_lines.append(f"{role} attached files:\n" + "\n".join(attachment_lines))
 
-    # Truncate context lines to configured keep size to bound upstream tokens.
-    try:
-        keep_n = _summary_keep_last_messages()
-    except Exception:
-        keep_n = 12
-    if len(context_lines) > keep_n:
-        context_lines = context_lines[-keep_n:]
+        # Truncate context lines to configured keep size to bound upstream tokens.
+        try:
+            keep_n = _summary_keep_last_messages()
+        except Exception:
+            keep_n = 12
+        if len(context_lines) > keep_n:
+            context_lines = context_lines[-keep_n:]
 
-    if context_lines:
-        ctx = "Previous messages (for context only). Do NOT answer these directly:\n" + "\n".join(context_lines)
-        msgs.append(ChatMessage(role="system", content=ctx))
+        if context_lines:
+            ctx = "Previous messages (for context only). Do NOT answer these directly:\n" + "\n".join(context_lines)
+            msgs.append(ChatMessage(role="system", content=ctx))
 
     # Append the most recent user message as the sole user prompt the model
     # should answer to. If no user message exists, fall back to the last
@@ -3230,40 +3239,14 @@ async def _stream_ui_chat(
 
 def _conversation_payload_to_chat_messages(convo: Dict[str, Any]) -> list[ChatMessage]:
     msgs: list[ChatMessage] = []
+    include_prior_context = bool(getattr(S, "UI_CHAT_INCLUDE_PRIOR_CONTEXT", False))
     summary = str(convo.get("summary") or "").strip()
-    if summary:
+    if include_prior_context and summary:
         msgs.append(ChatMessage(role="system", content=f"Conversation summary:\n{summary}"))
 
     raw_messages = convo.get("messages")
     if not isinstance(raw_messages, list):
         return msgs
-
-    # Merge consecutive messages of the same role so upstreams see alternating
-    # turns rather than many discrete same-role items.
-    last_role: str | None = None
-    for item in raw_messages:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip() or "user"
-        if str(item.get("type") or "") == "image":
-            continue
-        content = item.get("content")
-        if not isinstance(content, str):
-            content = ""
-        attachments = _coerce_attachments(item.get("attachments"))
-        attachment_lines = _attachments_to_lines(attachments)
-        if attachment_lines:
-            attachment_block = "Attached files:\n" + "\n".join(attachment_lines)
-            content = f"{content}\n\n{attachment_block}".strip()
-        if not content:
-            continue
-
-        if last_role is not None and last_role == role and msgs:
-            prev = msgs[-1]
-            prev.content = (prev.content or "") + "\n" + content
-        else:
-            msgs.append(ChatMessage(role=role, content=content))
-            last_role = role
 
     # Fold prior messages into a single system context message and present
     # only the last user message as the user prompt to ensure the model directs
@@ -3275,7 +3258,7 @@ def _conversation_payload_to_chat_messages(convo: Dict[str, Any]) -> list[ChatMe
             continue
         if str(item.get("type") or "") == "image":
             continue
-        role = str(item.get("role") or "").strip() or "user"
+        role = _normalize_chat_role(item.get("role"))
         content = item.get("content")
         if not isinstance(content, str):
             content = ""
@@ -3309,7 +3292,7 @@ def _conversation_payload_to_chat_messages(convo: Dict[str, Any]) -> list[ChatMe
     if len(context_lines) > keep_n:
         context_lines = context_lines[-keep_n:]
 
-    if context_lines:
+    if include_prior_context and context_lines:
         ctx = "Previous messages (for context only). Do NOT answer these directly:\n" + "\n".join(context_lines)
         msgs.append(ChatMessage(role="system", content=ctx))
 

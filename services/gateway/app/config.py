@@ -95,6 +95,11 @@ class Settings(BaseSettings):
     UI_CHAT_MAX_BYTES: int = 2_000_000  # hard cap per conversation file
     UI_CHAT_SUMMARY_TRIGGER_BYTES: int = 250_000  # summarize when history grows beyond this
     UI_CHAT_SUMMARY_KEEP_LAST_MESSAGES: int = 12  # keep tail messages after summarizing
+    # Chat context shaping for the UI chat endpoint.
+    # Default is strict single-turn mode: only the newest user message is sent
+    # upstream to avoid leaking prior turns into model context unexpectedly.
+    # Set true to include prior turns as folded system context.
+    UI_CHAT_INCLUDE_PRIOR_CONTEXT: bool = False
 
     # User authentication + storage
     USER_AUTH_ENABLED: bool = True
