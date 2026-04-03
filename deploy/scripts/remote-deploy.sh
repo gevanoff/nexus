@@ -14,18 +14,24 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 NS_AUTO_YES="false"
 DEPLOY_OPTIONS=()
+TOPOLOGY_FILE="${ROOT_DIR}/deploy/topology/production.json"
+TOPOLOGY_HOST=""
+REMOTE_REPO_DIR=""
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/remote-deploy.sh [--yes] [--component NAME] [--components LIST] <environment> <branch> <host>
+Usage: deploy/scripts/remote-deploy.sh [--yes] [--component NAME] [--components LIST]
+                                       [--topology-host NAME] [--topology-file PATH]
+                                       [--repo-dir PATH]
+                                       <environment> <branch> [host]
 
 Suggested order (typical):
-  1) On the remote host, ensure /Users/ai/nexus exists and is writable by the deploy user
+  1) On the remote host, ensure /opt/nexus exists and is writable by the deploy user
      - Standard deploy user: ai
      - Standard ownership:
        - macOS:  ai:staff
        - Linux:  ai:ai
-  2) On the remote host, clone Nexus into /Users/ai/nexus
+  2) On the remote host, clone Nexus into /opt/nexus
   3) On the remote host: ./deploy/scripts/install-host-deps.sh
   4) On the remote host: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
   5) On the remote host: ./deploy/scripts/preflight-check.sh --mode deploy
@@ -34,7 +40,7 @@ Suggested order (typical):
 Arguments:
   environment: dev | prod
   branch: git branch to deploy (e.g., dev or main)
-  host: user@hostname (SSH target)
+  host: user@hostname (SSH target). Optional when --topology-host is set.
 
 Options:
   --yes   Non-interactive mode (assume "yes" for install prompts)
@@ -42,6 +48,12 @@ Options:
           Forward a single component selection to deploy.sh (repeatable)
   --components LIST
           Forward a comma-separated component list to deploy.sh
+  --topology-host NAME
+          Forward a topology host profile to deploy.sh on the remote host
+  --topology-file PATH
+          Forward an explicit topology file path to deploy.sh on the remote host
+  --repo-dir PATH
+          Override the remote Nexus checkout path (default: topology repo_dir or /opt/nexus)
 EOF
 }
 
@@ -58,6 +70,20 @@ parse_args() {
         ;;
       --components)
         DEPLOY_OPTIONS+=("--components" "${2:-}")
+        shift 2
+        ;;
+      --topology-host)
+        TOPOLOGY_HOST="${2:-}"
+        DEPLOY_OPTIONS+=("--topology-host" "${2:-}")
+        shift 2
+        ;;
+      --topology-file)
+        TOPOLOGY_FILE="${2:-}"
+        DEPLOY_OPTIONS+=("--topology-file" "${2:-}")
+        shift 2
+        ;;
+      --repo-dir)
+        REMOTE_REPO_DIR="${2:-}"
         shift 2
         ;;
       -h|--help)
@@ -79,21 +105,48 @@ parse_args() {
     esac
   done
 
-  if [[ $# -lt 3 ]]; then
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
     usage >&2
     exit 1
   fi
 
   environment="$1"
   branch="$2"
-  host="$3"
+  host="${3:-}"
+}
+
+resolve_topology_target() {
+  local python_bin
+  python_bin="$(ns_pick_python || true)"
+  [[ -n "${python_bin:-}" ]] || ns_die "python3/python is required when --topology-host is used."
+
+  local resolved_host
+  resolved_host="$("$python_bin" "$ROOT_DIR/deploy/scripts/topology_tool.py" ssh-target \
+    --topology-file "$TOPOLOGY_FILE" \
+    --host "$TOPOLOGY_HOST")"
+  [[ -n "${resolved_host:-}" ]] || ns_die "Failed to resolve ssh target for topology host ${TOPOLOGY_HOST}."
+
+  local resolved_repo_dir
+  resolved_repo_dir="$("$python_bin" "$ROOT_DIR/deploy/scripts/topology_tool.py" repo-dir \
+    --topology-file "$TOPOLOGY_FILE" \
+    --host "$TOPOLOGY_HOST")"
+  [[ -n "${resolved_repo_dir:-}" ]] || ns_die "Failed to resolve repo_dir for topology host ${TOPOLOGY_HOST}."
+
+  if [[ -n "${host:-}" && "$host" != "$resolved_host" ]]; then
+    ns_die "Host argument ${host} does not match topology host ${TOPOLOGY_HOST} (${resolved_host}). Omit the host argument or use the topology target."
+  fi
+
+  host="$resolved_host"
+  if [[ -z "${REMOTE_REPO_DIR:-}" ]]; then
+    REMOTE_REPO_DIR="$resolved_repo_dir"
+  fi
 }
 
 parse_args "$@"
 
-ssh_user="${host%@*}"
-if [[ "$ssh_user" != "ai" ]]; then
-  ns_print_warn "Standard deploy user is 'ai' (you passed '$ssh_user'). Continuing anyway."
+if [[ -z "${host:-}" && -z "${TOPOLOGY_HOST:-}" ]]; then
+  usage >&2
+  exit 1
 fi
 
 case "$environment" in
@@ -109,16 +162,33 @@ if [[ ! "$branch" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
   exit 1
 fi
 
-if [[ ! "$host" =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$ ]]; then
-  ns_print_error "Invalid host format: $host (expected user@hostname)"
-  exit 1
-fi
-
 ns_print_header "Ensuring prerequisites"
-ns_ensure_prereqs false false false false false true || true
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  ns_ensure_prereqs false false false false true true || true
+else
+  ns_ensure_prereqs false false false false false true || true
+fi
 
 if ! ns_have_cmd ssh; then
   ns_print_error "ssh is required but not installed."
+  exit 1
+fi
+
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  resolve_topology_target
+fi
+
+if [[ -z "${REMOTE_REPO_DIR:-}" ]]; then
+  REMOTE_REPO_DIR="/opt/nexus"
+fi
+
+ssh_user="${host%@*}"
+if [[ "$ssh_user" != "ai" ]]; then
+  ns_print_warn "Standard deploy user is 'ai' (you passed '$ssh_user'). Continuing anyway."
+fi
+
+if [[ ! "$host" =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$ ]]; then
+  ns_print_error "Invalid host format: $host (expected user@hostname)"
   exit 1
 fi
 
@@ -131,7 +201,7 @@ fi
 
 remote_cmd=$(cat <<'EOS'
 set -euo pipefail
-repo_dir="${NEXUS_REMOTE_DIR:-/Users/ai/nexus}"
+repo_dir="$3"
 desired_user="ai"
 desired_group="ai"
 if [[ "$(uname -s 2>/dev/null || echo unknown)" == "Darwin" ]]; then
@@ -158,13 +228,17 @@ fi
 
 cd "$repo_dir"
 env_file="${repo_dir}/.env"
+topology_host="${4:-}"
 candidate="${repo_dir}/deploy/env/.env.$1"
+if [[ -n "$topology_host" ]]; then
+  candidate="${repo_dir}/deploy/env/.env.$1.$topology_host"
+fi
 if [[ -f "$candidate" ]]; then
   env_file="$candidate"
 fi
 ./deploy/scripts/preflight-check.sh --mode deploy --env-file "$env_file" || true
-./deploy/scripts/deploy.sh "${@:3}" "$1" "$2"
+./deploy/scripts/deploy.sh "${@:5}" "$1" "$2"
 EOS
 )
 
-ssh "${ssh_opts[@]}" "$host" bash -lc "${remote_cmd}" -- "$environment" "$branch" "${DEPLOY_OPTIONS[@]}"
+ssh "${ssh_opts[@]}" "$host" bash -lc "${remote_cmd}" -- "$environment" "$branch" "$REMOTE_REPO_DIR" "$TOPOLOGY_HOST" "${DEPLOY_OPTIONS[@]}"

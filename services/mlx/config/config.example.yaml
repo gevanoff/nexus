@@ -3,6 +3,11 @@ server:
   port: 10240
 
 models:
+  # Fast chat tier
+  - served_model_name: mlx-community/Qwen2.5-7B-Instruct-4bit
+    model_path: mlx-community/Qwen2.5-7B-Instruct-4bit
+    model_type: lm
+
   # Default text/chat model
   - served_model_name: mlx-community/Qwen2.5-32B-Instruct-4bit
     model_path: mlx-community/Qwen2.5-32B-Instruct-4bit

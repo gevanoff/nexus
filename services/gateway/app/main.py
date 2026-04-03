@@ -49,15 +49,15 @@ async def _startup_check_models() -> None:
     except Exception as e:
         logger.info("startup: alias source check skipped (%s: %s)", type(e).__name__, e)
 
-    # Warn if Ollama-backed aliases point at model tags that aren't present.
+    # Warn if configured aliases point at models that are not advertised upstream.
     try:
-        from app.backends import backend_provider_name, get_registry
+        from app.backends import get_registry, llm_backends
 
         aliases = get_aliases()
         registry = get_registry()
         wanted_by_backend: dict[str, set[str]] = {}
         for a in aliases.values():
-            if backend_provider_name(a.backend) != "ollama" or not a.upstream_model:
+            if not a.upstream_model:
                 continue
             backend_name = registry.resolve_backend_class(a.backend)
             wanted_by_backend.setdefault(backend_name, set()).add(a.upstream_model)
@@ -65,29 +65,28 @@ async def _startup_check_models() -> None:
             return
 
         async with httpx.AsyncClient(timeout=2.0) as client:
-            for backend_name, wanted in wanted_by_backend.items():
-                cfg = registry.get_backend(backend_name)
-                if cfg is None or not cfg.base_url:
+            for backend_name, cfg in llm_backends():
+                wanted = wanted_by_backend.get(backend_name)
+                if not wanted or not cfg.base_url:
                     continue
-                r = await client.get(f"{cfg.base_url.rstrip('/')}/api/tags")
+                r = await client.get(f"{cfg.base_url.rstrip('/')}/models")
                 if r.status_code != 200:
-                    logger.info("startup: %s /api/tags status=%s (skipping model check)", backend_name, r.status_code)
+                    logger.info("startup: %s /models status=%s (skipping model check)", backend_name, r.status_code)
                     continue
 
                 payload = r.json()
-                models = payload.get("models") if isinstance(payload, dict) else None
+                models = payload.get("data") if isinstance(payload, dict) else None
                 present = set()
                 if isinstance(models, list):
                     for m in models:
-                        if isinstance(m, dict) and isinstance(m.get("name"), str):
-                            present.add(m["name"])
+                        if isinstance(m, dict) and isinstance(m.get("id"), str):
+                            present.add(m["id"])
 
                 missing = [m for m in sorted(wanted) if m not in present]
                 for m in missing:
                     logger.warning(
-                        "startup: ollama model missing backend=%s model=%s (check model_aliases.json or run 'ollama pull %s')",
+                        "startup: advertised model missing backend=%s model=%s (check model_aliases.json and upstream /models output)",
                         backend_name,
-                        m,
                         m,
                     )
     except Exception as e:

@@ -16,10 +16,14 @@ NS_AUTO_YES="false"
 ENV_FILE=""
 SELECTED_COMPONENTS=()
 COMPONENTS_SET="false"
+TOPOLOGY_FILE=""
+TOPOLOGY_HOST=""
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/deploy.sh [--yes] [--env-file PATH] [--component NAME] [--components LIST] <environment> <branch>
+Usage: deploy/scripts/deploy.sh [--yes] [--env-file PATH] [--component NAME] [--components LIST]
+                                [--topology-host NAME] [--topology-file PATH]
+                                <environment> <branch>
 
 Suggested order (typical):
   1) ./deploy/scripts/install-host-deps.sh
@@ -38,18 +42,23 @@ Options:
   --component NAME Deploy a single component (repeatable)
   --components LIST
                    Deploy a comma-separated set of components
+  --topology-host NAME
+                   Materialize env and default components from a tracked topology host profile
+  --topology-file PATH
+                   Topology JSON file (default: deploy/topology/production.json when --topology-host is set)
 
 Components:
-  gateway, ollama, ollama-linux-nvidia, etcd, images, invokeai, sdxl-turbo,
+  gateway, vllm, etcd, images, invokeai, sdxl-turbo,
   lighton-ocr, personaplex, followyourcanvas, skyreels-v2, heartmula,
   mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
 
 Special component groups:
-  core             gateway + ollama + etcd
+  core             gateway + vllm + etcd
   all              every available component compose file
 
 Examples:
   ./deploy/scripts/deploy.sh prod main
+  ./deploy/scripts/deploy.sh --topology-host ai2 prod main
   ./deploy/scripts/deploy.sh --components images prod main
   ./deploy/scripts/deploy.sh --component gateway --component etcd prod main
 EOF
@@ -57,7 +66,7 @@ EOF
 
 is_valid_component() {
   case "$1" in
-    gateway|ollama|ollama-linux-nvidia|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    gateway|vllm|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -93,13 +102,13 @@ add_component_selection() {
     case "$normalized" in
       core)
         append_component_unique gateway
-        append_component_unique ollama
+        append_component_unique vllm
         append_component_unique etcd
         ;;
       all)
         append_component_unique gateway
-        append_component_unique ollama
-        append_component_unique ollama-linux-nvidia
+        append_component_unique vllm
+        append_component_unique mlx
         append_component_unique etcd
         append_component_unique images
         append_component_unique invokeai
@@ -127,8 +136,7 @@ add_component_selection() {
 component_base_compose_file() {
   case "$1" in
     gateway) echo "docker-compose.gateway.yml" ;;
-    ollama) echo "docker-compose.ollama.yml" ;;
-    ollama-linux-nvidia) echo "docker-compose.ollama.yml" ;;
+    vllm) echo "docker-compose.vllm.yml" ;;
     etcd) echo "docker-compose.etcd.yml" ;;
     images) echo "docker-compose.images.yml" ;;
     invokeai) echo "docker-compose.invokeai.yml" ;;
@@ -152,7 +160,6 @@ component_base_compose_file() {
 component_dev_compose_file() {
   case "$1" in
     gateway) echo "docker-compose.gateway.dev.yml" ;;
-    ollama) echo "docker-compose.ollama.dev.yml" ;;
     etcd) echo "docker-compose.etcd.dev.yml" ;;
     images) echo "docker-compose.images.dev.yml" ;;
     tts) echo "docker-compose.tts.dev.yml" ;;
@@ -162,7 +169,6 @@ component_dev_compose_file() {
 
 component_extra_compose_file() {
   case "$1" in
-    ollama-linux-nvidia) echo "docker-compose.ollama.linux-nvidia.yml" ;;
     *) echo "" ;;
   esac
 }
@@ -203,6 +209,14 @@ parse_args() {
         add_component_selection "${2:-}"
         shift 2
         ;;
+      --topology-host)
+        TOPOLOGY_HOST="${2:-}"
+        shift 2
+        ;;
+      --topology-file)
+        TOPOLOGY_FILE="${2:-}"
+        shift 2
+        ;;
       -h|--help)
         usage
         exit 0
@@ -231,6 +245,14 @@ parse_args() {
   branch="$2"
 }
 
+resolve_topology_file() {
+  if [[ -n "${TOPOLOGY_FILE:-}" ]]; then
+    echo "$TOPOLOGY_FILE"
+    return 0
+  fi
+  echo "$ROOT_DIR/deploy/topology/production.json"
+}
+
 parse_args "$@"
 
 if [[ ! "$branch" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
@@ -247,12 +269,32 @@ case "$environment" in
     ;;
 esac
 
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  topology_file="$(resolve_topology_file)"
+  if [[ ! -f "$topology_file" ]]; then
+    ns_print_error "Topology file not found: $topology_file"
+    exit 1
+  fi
+  topology_python="$(ns_pick_python || true)"
+  if [[ -z "${topology_python:-}" ]]; then
+    ns_print_error "python3/python is required to consume topology manifests."
+    exit 1
+  fi
+  if [[ "$COMPONENTS_SET" != "true" ]]; then
+    while IFS= read -r topology_component; do
+      [[ -n "${topology_component:-}" ]] || continue
+      append_component_unique "$topology_component"
+    done < <("$topology_python" "$ROOT_DIR/deploy/scripts/topology_tool.py" components --topology-file "$topology_file" --host "$TOPOLOGY_HOST")
+    COMPONENTS_SET="true"
+  fi
+fi
+
 if [[ "$COMPONENTS_SET" != "true" ]]; then
-  SELECTED_COMPONENTS=("gateway")
+  SELECTED_COMPONENTS=("gateway" "vllm" "etcd")
 fi
 
 compose_files=()
-ordered_components=(gateway ollama ollama-linux-nvidia etcd images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas skyreels-v2 heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx mlx)
+ordered_components=(gateway vllm mlx etcd images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas skyreels-v2 heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
 for component in "${ordered_components[@]}"; do
   include_component="false"
   for selected in "${SELECTED_COMPONENTS[@]}"; do
@@ -277,13 +319,17 @@ fi
 env_file="${ENV_FILE:-$ROOT_DIR/.env}"
 
 if [[ -z "${ENV_FILE:-}" ]]; then
-  candidate="$ROOT_DIR/deploy/env/.env.$environment"
-  if [[ -f "$candidate" ]]; then
-    env_file="$candidate"
-  elif [[ -f "$ROOT_DIR/.env" ]]; then
-    env_file="$ROOT_DIR/.env"
+  if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+    env_file="$ROOT_DIR/deploy/env/.env.$environment.$TOPOLOGY_HOST"
   else
-    env_file="$candidate"
+    candidate="$ROOT_DIR/deploy/env/.env.$environment"
+    if [[ -f "$candidate" ]]; then
+      env_file="$candidate"
+    elif [[ -f "$ROOT_DIR/.env" ]]; then
+      env_file="$ROOT_DIR/.env"
+    else
+      env_file="$candidate"
+    fi
   fi
 fi
 
@@ -313,6 +359,14 @@ git checkout "$branch"
 git pull --ff-only origin "$branch"
 
 ns_print_header "Ensuring configuration"
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  topology_file="$(resolve_topology_file)"
+  "$ROOT_DIR/deploy/scripts/render-topology-env.sh" \
+    --topology-file "$topology_file" \
+    --topology-host "$TOPOLOGY_HOST" \
+    --environment "$environment" \
+    --env-file "$env_file"
+fi
 ns_ensure_env_file "$env_file" "$ROOT_DIR"
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file"
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import List
 
-from app.backends import backend_provider_name, get_registry
+from app.backends import get_registry
 from app.config import S
 from app.models import ChatMessage
 
@@ -18,8 +18,8 @@ def choose_backend(model: str) -> str:
             return resolved
 
     lowered = m.lower()
-    if lowered in {"ollama", "ollama-default"}:
-        return registry.resolve_backend_class("ollama")
+    if lowered in {"ollama", "ollama-default", "vllm", "vllm-default", "local_vllm", "local-vllm"}:
+        return registry.resolve_backend_class("vllm")
     if lowered in {"mlx", "mlx-default", "local_mlx", "local-mlx"}:
         return registry.resolve_backend_class("mlx")
 
@@ -32,22 +32,21 @@ def normalize_model(model: str, backend: str) -> str:
         backend,
         backend.replace("_", "-"),
         backend.replace("-", "_"),
-        "ollama",
+        "vllm",
+        "local_vllm",
+        "local-vllm",
         "mlx",
         "local_mlx",
         "local-mlx",
+        "ollama",
     }:
         if prefix and m.lower().startswith(prefix.lower() + ":"):
             m = m[len(prefix) + 1 :]
             break
 
-    provider = backend_provider_name(backend)
-    if provider == "ollama":
-        if m in {"default", "ollama", ""}:
-            return S.OLLAMA_MODEL_DEFAULT
-        return m
-
-    if m in {"default", "mlx", "local_mlx", "local-mlx", ""}:
+    if m in {"default", "vllm", "vllm-default", "local_vllm", "local-vllm", "ollama", "ollama-default", ""}:
+        return S.VLLM_MODEL_DEFAULT
+    if m in {"mlx", "local_mlx", "local-mlx"}:
         return S.MLX_MODEL_DEFAULT
     return m
 

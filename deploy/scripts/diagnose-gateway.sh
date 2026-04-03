@@ -8,25 +8,25 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
+EXTERNAL_VLLM="false"
+EXTERNAL_VLLM_SET="false"
 WITH_MLX="false"
-EXTERNAL_OLLAMA="false"
 EXTERNAL_MLX="false"
-EXTERNAL_OLLAMA_SET="false"
 EXTERNAL_MLX_SET="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/diagnose-gateway.sh [--env-file PATH] [--with-mlx] [--external-ollama] [--external-mlx]
+Usage: deploy/scripts/diagnose-gateway.sh [--env-file PATH] [--external-vllm] [--with-mlx] [--external-mlx]
 
-Diagnostics for Nexus gateway stack.
+Diagnostics for the Nexus gateway stack.
 
 Options:
   --env-file PATH   Env file path (default: ./.env)
-  --with-mlx        Include legacy MLX compose component (docker-compose.mlx.yml) in compose checks
-  --external-ollama Use external/native Ollama (do not include docker-compose.ollama.yml).
-                     If not set explicitly, auto-detected from OLLAMA_BASE_URL.
+  --external-vllm   Use external/native vLLM (do not include docker-compose.vllm.yml).
+                    If not set explicitly, auto-detected from VLLM_BASE_URL.
+  --with-mlx        Include optional MLX compose component (docker-compose.mlx.yml)
   --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml).
-                     If not set explicitly, auto-detected from MLX_BASE_URL.
+                    If not set explicitly, auto-detected from MLX_BASE_URL.
 EOF
 }
 
@@ -36,13 +36,13 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="${2:-}"
       shift 2
       ;;
-    --with-mlx)
-      WITH_MLX="true"
+    --external-vllm)
+      EXTERNAL_VLLM="true"
+      EXTERNAL_VLLM_SET="true"
       shift
       ;;
-    --external-ollama)
-      EXTERNAL_OLLAMA="true"
-      EXTERNAL_OLLAMA_SET="true"
+    --with-mlx)
+      WITH_MLX="true"
       shift
       ;;
     --external-mlx)
@@ -65,92 +65,60 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   ns_ensure_env_file "${ENV_FILE}" "$ROOT_DIR"
 fi
 
-if [[ "$EXTERNAL_OLLAMA_SET" != "true" ]]; then
-  ollama_base_url="$(ns_env_get "${ENV_FILE}" OLLAMA_BASE_URL "http://ollama:11434")"
-  ollama_base_url="${ollama_base_url%/}"
-  if [[ "$ollama_base_url" != "http://ollama:11434" ]]; then
-    EXTERNAL_OLLAMA="true"
+resolve_base_url() {
+  local env_key="$1"
+  local fallback="$2"
+  local value
+  value="${!env_key:-$(ns_env_get "${ENV_FILE}" "$env_key" "$fallback")}"
+  value="${value%/}"
+  if [[ "$value" == "http://host.docker.internal"* ]]; then
+    value="${value/host.docker.internal/127.0.0.1}"
+  fi
+  echo "$value"
+}
+
+vllm_base_url="$(resolve_base_url VLLM_BASE_URL "http://127.0.0.1:8000/v1")"
+vllm_fast_base_url="$(resolve_base_url VLLM_FAST_BASE_URL "http://127.0.0.1:8001/v1")"
+vllm_embeddings_base_url="$(resolve_base_url VLLM_EMBEDDINGS_BASE_URL "http://127.0.0.1:8002/v1")"
+mlx_base_url="$(resolve_base_url MLX_BASE_URL "")"
+
+if [[ "$EXTERNAL_VLLM_SET" != "true" ]]; then
+  if [[ "$vllm_base_url" != "http://vllm:8000/v1" ]]; then
+    EXTERNAL_VLLM="true"
   fi
 fi
 
 if [[ "$EXTERNAL_MLX_SET" != "true" ]]; then
-  mlx_base_url="$(ns_env_get "${ENV_FILE}" MLX_BASE_URL "http://host.docker.internal:10240/v1")"
-  mlx_base_url="${mlx_base_url%/}"
-  if [[ "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
+  if [[ -n "$mlx_base_url" && "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
     EXTERNAL_MLX="true"
   fi
 fi
 
-gateway_port="${GATEWAY_PORT:-}"
-obs_port="${OBSERVABILITY_PORT:-}"
-if [[ -f "${ENV_FILE}" ]]; then
-  gateway_port="${gateway_port:-$(ns_env_get "${ENV_FILE}" GATEWAY_PORT 8800)}"
-  obs_port="${obs_port:-$(ns_env_get "${ENV_FILE}" OBSERVABILITY_PORT 8801)}"
-fi
-
-gateway_port="${gateway_port:-8800}"
-obs_port="${obs_port:-8801}"
-
+gateway_port="${GATEWAY_PORT:-$(ns_env_get "${ENV_FILE}" GATEWAY_PORT 8800)}"
+obs_port="${OBSERVABILITY_PORT:-$(ns_env_get "${ENV_FILE}" OBSERVABILITY_PORT 8801)}"
 BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:${gateway_port}}"
 OBS_URL="${GATEWAY_OBS_URL:-http://127.0.0.1:${obs_port}}"
-TOKEN="${GATEWAY_BEARER_TOKEN:-}"
-if [[ -z "${TOKEN}" && -f "${ENV_FILE}" ]]; then
-  TOKEN="$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")"
-fi
-embeddings_backend="${EMBEDDINGS_BACKEND:-}"
-if [[ -z "${embeddings_backend}" && -f "${ENV_FILE}" ]]; then
-  embeddings_backend="$(ns_env_get "${ENV_FILE}" EMBEDDINGS_BACKEND "local_mlx")"
-fi
-embeddings_backend="${embeddings_backend:-local_mlx}"
+TOKEN="${GATEWAY_BEARER_TOKEN:-$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")}"
+strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_STRONG "Qwen/Qwen2.5-32B-Instruct")}"
+fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_FAST "Qwen/Qwen2.5-7B-Instruct")}"
+embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_EMBEDDINGS "BAAI/bge-small-en-v1.5")}"
 
-embeddings_model="${EMBEDDINGS_MODEL:-}"
-if [[ -z "${embeddings_model}" && -f "${ENV_FILE}" ]]; then
-  embeddings_model="$(ns_env_get "${ENV_FILE}" EMBEDDINGS_MODEL "")"
-fi
-if [[ -z "${embeddings_model}" || ( "${embeddings_backend}" != ollama* && "${embeddings_model}" == "nomic-embed-text" ) ]]; then
-  if [[ "${embeddings_backend}" == ollama* ]]; then
-    embeddings_model="nomic-embed-text"
-  else
-    embeddings_model="${MLX_MODEL_STRONG:-}"
-    if [[ -z "${embeddings_model}" && -f "${ENV_FILE}" ]]; then
-      embeddings_model="$(ns_env_get "${ENV_FILE}" MLX_MODEL_STRONG "mlx-community/gemma-2-2b-it-8bit")"
-    fi
-    embeddings_model="${embeddings_model:-mlx-community/gemma-2-2b-it-8bit}"
-  fi
-fi
-
-ollama_model_fast="${OLLAMA_MODEL_FAST:-}"
-if [[ -z "${ollama_model_fast}" && -f "${ENV_FILE}" ]]; then
-  ollama_model_fast="$(ns_env_get "${ENV_FILE}" OLLAMA_MODEL_FAST "qwen2.5:7b")"
-fi
-ollama_model_fast="${ollama_model_fast:-qwen2.5:7b}"
-
-ollama_model_strong="${OLLAMA_MODEL_STRONG:-}"
-if [[ -z "${ollama_model_strong}" && -f "${ENV_FILE}" ]]; then
-  ollama_model_strong="$(ns_env_get "${ENV_FILE}" OLLAMA_MODEL_STRONG "qwen2.5:32b")"
-fi
-ollama_model_strong="${ollama_model_strong:-qwen2.5:32b}"
-
-# SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
 COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.etcd.yml)
-if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
-  COMPOSE_ARGS+=(-f docker-compose.ollama.yml)
-  COMPOSE_FILES+=(docker-compose.ollama.yml)
+if [[ "$EXTERNAL_VLLM" != "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.vllm.yml)
+  COMPOSE_FILES+=(docker-compose.vllm.yml)
 fi
 if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" == "true" ]]; then
-  ns_die "Use either --with-mlx (containerized MLX) or --external-mlx (host-native MLX), not both."
+  ns_die "Use either --with-mlx or --external-mlx, not both."
 fi
-if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" != "true" ]]; then
+if [[ "$WITH_MLX" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
   COMPOSE_FILES+=(docker-compose.mlx.yml)
 fi
 
 rc=0
-
-mark_fail() {
-  rc=1
-}
+mark_fail() { rc=1; }
 
 print_step() {
   echo
@@ -158,18 +126,14 @@ print_step() {
 }
 
 http_check() {
-  # Usage: http_check <label> <method> <url> <auth:true|false> [json_payload]
   local label="$1"
   local method="$2"
   local url="$3"
   local with_auth="$4"
   local payload="${5:-}"
-  local tmp
-  local status
-  local body_preview
+  local tmp status
 
   tmp="$(mktemp)"
-
   if [[ "$method" == "GET" ]]; then
     if [[ "$with_auth" == "true" ]]; then
       status="$(curl -sS -o "$tmp" -w "%{http_code}" "$url" -H "Authorization: Bearer ${TOKEN}" || true)"
@@ -192,63 +156,86 @@ http_check() {
 
   ns_print_error "$label -> HTTP $status"
   if [[ -s "$tmp" ]]; then
-    body_preview="$(head -c 600 "$tmp" 2>/dev/null || true)"
     ns_print_warn "Body (first 600 chars):"
-    echo "$body_preview"
+    head -c 600 "$tmp" 2>/dev/null || true
     echo
   fi
   rm -f "$tmp"
-
-  if [[ "$status" == "403" && "${body_preview:-}" == *"Client IP not allowed"* ]]; then
-    ns_print_warn "IP allowlist rejection detected."
-    ns_print_warn "Set IP_ALLOWLIST in ${ENV_FILE} to include your client IP/CIDR, then restart stack."
-    ns_print_warn "Common Docker bridge peer for this stack: 172.28.0.1"
-  elif [[ "$status" == "401" || "$status" == "403" ]]; then
-    ns_print_warn "Auth failure: token may be wrong for the running gateway instance."
-    ns_print_warn "Token source: ${ENV_FILE} (or GATEWAY_BEARER_TOKEN env var)."
-  fi
-
   mark_fail
   return 1
 }
 
-ollama_model_present() {
-  # Usage: ollama_model_present <model>
+model_present() {
   local model="$1"
-  local escaped
-  escaped="$(printf '%s' "$model" | sed 's/[][(){}.^$*+?|\\/]/\\&/g')"
-  # Accept exact model name with either explicit tag suffix or bare name column.
-  ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T ollama ollama list 2>/dev/null |
-    grep -E "^${escaped}(:[^[:space:]]+)?[[:space:]]" >/dev/null 2>&1
+  local json_payload="$2"
+  python3 - "$model" "$json_payload" <<'PY'
+import json
+import sys
+
+target = sys.argv[1]
+payload = sys.argv[2]
+
+try:
+    data = json.loads(payload)
+except Exception:
+    sys.exit(1)
+
+for item in data.get("data", []):
+    if str((item or {}).get("id", "")).strip() == target:
+        sys.exit(0)
+
+sys.exit(1)
+PY
 }
 
-print_step "Gateway Diagnostics"
+probe_models() {
+  local label="$1"
+  local base_url="$2"
+  local expected_model="$3"
+  local models_json
+
+  models_json="$(curl -fsS "${base_url%/}/models" 2>/dev/null || true)"
+  if [[ -z "$models_json" ]]; then
+    ns_print_error "${label} /models probe failed: ${base_url%/}/models"
+    mark_fail
+    return
+  fi
+
+  ns_print_ok "${label} /models probe succeeded"
+  if model_present "$expected_model" "$models_json"; then
+    ns_print_ok "${label} model is advertised: ${expected_model}"
+  else
+    ns_print_error "${label} model not advertised: ${expected_model}"
+    mark_fail
+  fi
+}
+
+print_step "Gateway diagnostics"
 echo "Repo root: ${ROOT_DIR}"
 echo "Env file: ${ENV_FILE}"
 echo "Base URL: ${BASE_URL}"
 echo "Observability URL: ${OBS_URL}"
 
 print_step "Host prerequisites"
-if ! ns_have_cmd docker; then
+if ns_have_cmd docker; then
+  ns_print_ok "docker CLI found"
+else
   ns_print_error "docker CLI not found"
   mark_fail
-else
-  ns_print_ok "docker CLI found"
 fi
 
-if ! ns_compose_available; then
+if ns_compose_available; then
+  ns_print_ok "Docker Compose available: $(ns_compose_cmd_string)"
+else
   ns_print_error "Docker Compose not available"
   mark_fail
-else
-  ns_print_ok "Docker Compose available: $(ns_compose_cmd_string)"
 fi
 
-if ! docker info >/dev/null 2>&1; then
-  ns_print_error "Docker daemon not reachable"
-  ns_print_warn "Try: ./deploy/scripts/ops-stack.sh"
-  mark_fail
-else
+if docker info >/dev/null 2>&1; then
   ns_print_ok "Docker daemon reachable"
+else
+  ns_print_error "Docker daemon not reachable"
+  mark_fail
 fi
 
 print_step "Compose files and stack state"
@@ -265,207 +252,44 @@ if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" config >/dev/null 2>&1
   ns_print_ok "Compose config resolves"
 else
   ns_print_error "Compose config resolution failed"
-  ns_print_warn "Check ENV_FILE (${ENV_FILE}) and compose file references"
   mark_fail
 fi
 
 ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" ps || mark_fail
 
-print_step "HTTP endpoint checks"
+print_step "Gateway HTTP checks"
 http_check "GET ${OBS_URL}/health" "GET" "${OBS_URL}/health" "false"
-
 if [[ -z "${TOKEN}" ]]; then
-  ns_print_error "GATEWAY_BEARER_TOKEN not found in env or ${ENV_FILE}"
+  ns_print_error "GATEWAY_BEARER_TOKEN not found"
   mark_fail
 else
   ns_print_ok "Bearer token present"
 fi
-
 http_check "GET ${BASE_URL}/v1/models" "GET" "${BASE_URL}/v1/models" "true"
 http_check "GET ${BASE_URL}/v1/gateway/status" "GET" "${BASE_URL}/v1/gateway/status" "true"
-http_check "POST ${BASE_URL}/v1/embeddings" "POST" "${BASE_URL}/v1/embeddings" "true" '{"model":"default","input":"diagnose"}'
+http_check "GET ${OBS_URL}/health/upstreams" "GET" "${OBS_URL}/health/upstreams" "false"
+http_check "POST ${BASE_URL}/v1/embeddings" "POST" "${BASE_URL}/v1/embeddings" "true" '{"model":"embeddings","input":"diagnose"}'
 
-print_step "MLX readiness (from gateway container)"
-if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T gateway python3 - <<'PY'
-import json
-import os
-import sys
-import time
-import urllib.error
-import urllib.request
+print_step "vLLM upstream checks"
+probe_models "strong vLLM" "${vllm_base_url}" "${strong_model}"
+probe_models "fast vLLM" "${vllm_fast_base_url}" "${fast_model}"
+probe_models "embeddings vLLM" "${vllm_embeddings_base_url}" "${embeddings_model}"
 
-base = (os.getenv("MLX_BASE_URL") or "http://host.docker.internal:10240/v1").rstrip("/")
-url = f"{base}/models"
-start = time.time()
-try:
-  req = urllib.request.Request(url, method="GET")
-  with urllib.request.urlopen(req, timeout=5) as resp:
-    status = int(resp.getcode() or 0)
-    body = resp.read().decode("utf-8", errors="replace")
-
-  model_count = 0
-  try:
-    payload = json.loads(body)
-    data = payload.get("data")
-    if isinstance(data, list):
-      model_count = len(data)
-  except Exception:
-    pass
-
-  elapsed_ms = int((time.time() - start) * 1000)
-  print(f"mlx_url={url}")
-  print(f"mlx_status={status}")
-  print(f"mlx_model_count={model_count}")
-  print(f"mlx_probe_ms={elapsed_ms}")
-  sys.exit(0 if status == 200 else 1)
-except Exception as exc:
-  elapsed_ms = int((time.time() - start) * 1000)
-  print(f"mlx_url={url}")
-  print(f"mlx_probe_ms={elapsed_ms}")
-  print(f"mlx_error={exc}")
-  sys.exit(1)
-PY
-then
-  ns_print_ok "MLX /models probe from gateway container succeeded"
-else
-  ns_print_error "MLX /models probe from gateway container failed"
-  ns_print_warn "Check native MLX service availability and MLX_BASE_URL in ${ENV_FILE}."
-  mark_fail
-fi
-
-print_step "Backend access matrix (from gateway container)"
-if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T gateway python3 - <<'PY'
-import sys
-import time
-import urllib.request
-
-from app.backends import get_registry
-from app.health_checker import get_health_checker
-
-
-def probe(url: str, timeout: float = 5.0) -> tuple[int, str, int]:
-  started = time.time()
-  status = 0
-  err = ""
-  try:
-    req = urllib.request.Request(url, method="GET")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-      status = int(resp.getcode() or 0)
-  except Exception as exc:
-    err = f"{type(exc).__name__}: {exc}"
-  elapsed_ms = int((time.time() - started) * 1000)
-  return status, err, elapsed_ms
-
-
-registry = get_registry()
-checker = get_health_checker()
-
-print("backend_access_header=backend|liveness|readyz|checker|base_url")
-failures = 0
-
-for backend_class, cfg in sorted(registry.backends.items(), key=lambda kv: kv[0]):
-  base = (cfg.base_url or "").rstrip("/")
-  checker_state = checker.get_status(backend_class)
-  checker_repr = "unknown"
-  if checker_state is not None:
-    checker_repr = f"healthy={checker_state.is_healthy},ready={checker_state.is_ready}"
-    if checker_state.error:
-      checker_repr += f",error={checker_state.error}"
-
-  if not base or not (base.startswith("http://") or base.startswith("https://")):
-    print(f"backend_access={backend_class}|skip(base_url_unset)|skip(base_url_unset)|{checker_repr}|{base}")
-    continue
-
-  live_url = f"{base}{cfg.health_liveness}"
-  ready_url = f"{base}{cfg.health_readiness}"
-  live_status, live_err, live_ms = probe(live_url)
-  ready_status, ready_err, ready_ms = probe(ready_url)
-
-  live_repr = f"{live_status}({live_ms}ms)" if not live_err else f"err({live_ms}ms):{live_err}"
-  ready_repr = f"{ready_status}({ready_ms}ms)" if not ready_err else f"err({ready_ms}ms):{ready_err}"
-
-  print(f"backend_access={backend_class}|{live_repr}|{ready_repr}|{checker_repr}|{base}")
-
-  if live_status != 200 or ready_status != 200 or live_err or ready_err:
-    failures += 1
-
-if failures:
-  print(f"backend_access_failures={failures}")
-  sys.exit(1)
-
-print("backend_access_failures=0")
-PY
-then
-  ns_print_ok "Configured backend probes succeeded"
-else
-  ns_print_error "One or more configured backend probes failed"
-  ns_print_warn "Review backend_access lines above to identify failing backend class and endpoint"
-  mark_fail
-fi
-
-print_step "Embeddings backend readiness"
-echo "Embeddings backend: ${embeddings_backend}"
-echo "Expected embeddings model: ${embeddings_model}"
-if [[ "${embeddings_backend}" == ollama* ]]; then
-  if ollama_model_present "$embeddings_model"; then
-    ns_print_ok "Embeddings model is present in Ollama"
+if [[ "$WITH_MLX" == "true" || -n "$mlx_base_url" ]]; then
+  print_step "Optional MLX upstream check"
+  mlx_models_json="$(curl -fsS "${mlx_base_url%/}/models" 2>/dev/null || true)"
+  if [[ -n "$mlx_models_json" ]]; then
+    ns_print_ok "MLX /models probe succeeded"
   else
-    ns_print_error "Embeddings model not present in Ollama: ${embeddings_model}"
-    ns_print_warn "Pull it with:"
-    ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${embeddings_model}"
-    mark_fail
+    ns_print_warn "MLX /models probe failed (${mlx_base_url%/}/models)"
   fi
-else
-  ns_print_ok "MLX embeddings use the configured/default MLX model path"
 fi
-
-print_step "Ollama chat model readiness"
-echo "Expected chat models:"
-echo "  fast=${ollama_model_fast}"
-echo "  strong=${ollama_model_strong}"
-
-if ollama_model_present "$ollama_model_fast"; then
-  ns_print_ok "Fast chat model is present"
-else
-  ns_print_error "Fast chat model not present: ${ollama_model_fast}"
-  ns_print_warn "Pull it with:"
-  ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${ollama_model_fast}"
-  mark_fail
-fi
-
-if ollama_model_present "$ollama_model_strong"; then
-  ns_print_ok "Strong chat model is present"
-else
-  ns_print_error "Strong chat model not present: ${ollama_model_strong}"
-  ns_print_warn "Pull it with:"
-  ns_print_warn "  docker-compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml exec -T ollama ollama pull ${ollama_model_strong}"
-  mark_fail
-fi
-
-print_step "Verifier run (in-container)"
-if [[ -n "${TOKEN}" ]]; then
-  if ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" exec -T gateway \
-    python3 /var/lib/gateway/tools/verify_gateway.py \
-    --skip-pytest \
-    --base-url "http://127.0.0.1:${gateway_port}" \
-    --obs-url "http://127.0.0.1:${obs_port}" \
-    --token "${TOKEN}"; then
-    ns_print_ok "In-container verifier passed"
-  else
-    ns_print_error "In-container verifier failed"
-    mark_fail
-  fi
-else
-  ns_print_warn "Skipping in-container verifier (missing token)"
-fi
-
-print_step "Gateway logs (tail 120)"
-ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" logs --tail=120 gateway || true
 
 echo
 if [[ "$rc" -eq 0 ]]; then
-  ns_print_ok "Gateway diagnostics completed without detected issues"
+  ns_print_ok "Gateway diagnostics passed"
 else
   ns_print_error "Gateway diagnostics found issues"
-  exit 1
 fi
+
+exit "$rc"

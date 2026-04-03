@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "name": "nexus-production",
+  "description": "Canonical multi-host production placement for ai1, ai2, and ada2.",
+  "defaults": {
+    "repo_dir": "/opt/nexus",
+    "env": {
+      "VLLM_MODEL_STRONG": "Qwen/Qwen2.5-7B-Instruct",
+      "VLLM_MODEL_FAST": "Qwen/Qwen2.5-3B-Instruct",
+      "VLLM_MODEL_DEFAULT": "Qwen/Qwen2.5-7B-Instruct",
+      "VLLM_MODEL_EMBEDDINGS": "BAAI/bge-small-en-v1.5",
+      "MLX_MODEL_PATH": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+      "MLX_MODEL_TYPE": "lm",
+      "MLX_BASE_URL": "http://ai2:10240/v1",
+      "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
+      "VLLM_BASE_URL": "http://ai1:8000/v1",
+      "VLLM_ADVERTISE_BASE_URL": "http://ai1:8000/v1",
+      "VLLM_FAST_BASE_URL": "http://ai1:8001/v1",
+      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ai1:8001/v1",
+      "VLLM_EMBEDDINGS_BASE_URL": "http://ai1:8002/v1",
+      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ai1:8002/v1",
+      "IMAGES_BACKEND": "http_openai_images",
+      "IMAGES_BACKEND_CLASS": "gpu_heavy",
+      "IMAGES_HTTP_BASE_URL": "http://ada2:7860",
+      "IMAGES_ADVERTISE_BASE_URL": "http://ada2:7860",
+      "INVOKEAI_BASE_URL": "http://ada2:9090",
+      "INVOKEAI_ADVERTISE_BASE_URL": "http://ada2:9090",
+      "SDXL_TURBO_BASE_URL": "http://ada2:9050",
+      "SDXL_TURBO_ADVERTISE_BASE_URL": "http://ada2:9050",
+      "LIGHTON_OCR_API_BASE_URL": "http://ada2:9155",
+      "LIGHTON_OCR_ADVERTISE_BASE_URL": "http://ada2:9155",
+      "PERSONAPLEX_BASE_URL": "http://ada2:9160",
+      "PERSONAPLEX_ADVERTISE_BASE_URL": "http://ada2:9160",
+      "FOLLOWYOURCANVAS_BASE_URL": "http://ada2:9165",
+      "FOLLOWYOURCANVAS_ADVERTISE_BASE_URL": "http://ada2:9165",
+      "SKYREELS_V2_BASE_URL": "http://ada2:9180",
+      "SKYREELS_V2_ADVERTISE_BASE_URL": "http://ada2:9180",
+      "HEARTMULA_BASE_URL": "http://ada2:9185",
+      "HEARTMULA_ADVERTISE_BASE_URL": "http://ada2:9185",
+      "POCKET_TTS_BASE_URL": "http://ai1:9940",
+      "POCKET_TTS_ADVERTISE_BASE_URL": "http://ai1:9940",
+      "LUXTTS_BASE_URL": "http://ai1:9170",
+      "LUXTTS_ADVERTISE_BASE_URL": "http://ai1:9170",
+      "QWEN3_TTS_BASE_URL": "http://ai1:9175",
+      "QWEN3_TTS_ADVERTISE_BASE_URL": "http://ai1:9175",
+      "MEDIAMTX_ADVERTISE_BASE_URL": "http://ai1:8888",
+      "MEDIAMTX_API_ADVERTISE_URL": "http://ai1:9997",
+      "MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS": "ai1",
+      "DEFAULT_BACKEND": "local_mlx",
+      "EMBEDDINGS_BACKEND": "local_vllm_embeddings",
+      "TRANSCRIPTION_BACKEND_CLASS": "local_mlx",
+      "ROUTER_ENABLE_POLICY": "true",
+      "ETCD_PREFIX": "/nexus/services/",
+      "NEXUS_REGISTRATION_INTERVAL_SEC": "30",
+      "NEXUS_REGISTRATION_TIMEOUT_SEC": "5",
+      "NEXUS_REGISTRATION_LEASE_TTL_SEC": "90"
+    }
+  },
+  "hosts": {
+    "ai1": {
+      "description": "Fast inference, embeddings, speech, and media ingress.",
+      "ssh_target": "ai@ai1",
+      "components": [
+        "vllm",
+        "mediamtx",
+        "tts",
+        "luxtts",
+        "qwen3-tts"
+      ],
+      "env": {
+        "ETCD_URL": "http://ai2:2379",
+        "DEFAULT_BACKEND": "local_vllm"
+      }
+    },
+    "ai2": {
+      "description": "Gateway and control plane, backed by host-native MLX reasoning.",
+      "ssh_target": "ai@ai2",
+      "components": [
+        "gateway",
+        "etcd"
+      ],
+      "native_services": [
+        "mlx"
+      ],
+      "env": {
+        "ETCD_URL": "http://etcd:2379",
+        "MLX_BASE_URL": "http://ai2:10240/v1",
+        "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
+        "DEFAULT_BACKEND": "local_mlx"
+      }
+    },
+    "ada2": {
+      "description": "Heavy image and video generation services.",
+      "ssh_target": "ai@ada2",
+      "components": [
+        "images",
+        "invokeai",
+        "sdxl-turbo",
+        "lighton-ocr",
+        "personaplex",
+        "followyourcanvas",
+        "skyreels-v2",
+        "heartmula"
+      ],
+      "env": {
+        "ETCD_URL": "http://ai2:2379"
+      }
+    }
+  }
+}

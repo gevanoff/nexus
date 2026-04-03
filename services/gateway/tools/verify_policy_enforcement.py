@@ -21,6 +21,7 @@ async def test_backends_module():
     backends = {
         "test": BackendConfig(
             backend_class="test",
+            provider="test",
             base_url="http://localhost",
             description="Test",
             supported_capabilities=["chat"],
@@ -98,7 +99,7 @@ async def test_config_loading():
     if config_path.exists():
         registry = load_backends_config(config_path)
         assert len(registry.backends) > 0
-        assert "local_mlx" in registry.backends or "ollama" in registry.backends
+        assert "local_vllm" in registry.backends or "local_mlx" in registry.backends or "ollama" in registry.backends
         print(f"  Loaded {len(registry.backends)} backends")
     else:
         print(f"  Config not found at {config_path}, using defaults")
@@ -116,6 +117,7 @@ async def test_admission_control_limits():
     backends = {
         "test": BackendConfig(
             backend_class="test",
+            provider="test",
             base_url="http://localhost",
             description="Test",
             supported_capabilities=["chat"],

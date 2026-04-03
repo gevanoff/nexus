@@ -108,9 +108,17 @@ def _backend_host(base_url: str) -> Optional[str]:
 
 
 _SERVICE_NAME_TO_BACKEND_CLASS: Dict[str, str] = {
+    "ollama": "local_vllm",
+    "vllm": "local_vllm",
+    "local_vllm": "local_vllm",
+    "vllm-fast": "local_vllm_fast",
+    "vllm_fast": "local_vllm_fast",
+    "local_vllm_fast": "local_vllm_fast",
+    "vllm-embeddings": "local_vllm_embeddings",
+    "vllm_embeddings": "local_vllm_embeddings",
+    "local_vllm_embeddings": "local_vllm_embeddings",
     "mlx": "local_mlx",
     "local_mlx": "local_mlx",
-    "ollama": "ollama",
     "invokeai": "gpu_heavy",
     "images": "gpu_heavy",
     "gpu_heavy": "gpu_heavy",
@@ -134,8 +142,10 @@ _SERVICE_NAME_TO_BACKEND_CLASS: Dict[str, str] = {
 }
 
 _BACKEND_CLASS_TO_SERVICE_NAME: Dict[str, str] = {
+    "local_vllm": "vllm",
+    "local_vllm_fast": "vllm-fast",
+    "local_vllm_embeddings": "vllm-embeddings",
     "local_mlx": "mlx",
-    "ollama": "ollama",
     "gpu_heavy": "images",
     "gpu_fast": "sdxl-turbo",
     "heartmula_music": "heartmula",
@@ -195,10 +205,10 @@ def backend_provider_name(backend_name: str) -> str:
         return provider
 
     normalized = _normalize_backend_name(resolved or backend_name).replace("_", "-")
+    if normalized in {"vllm", "local-vllm"} or normalized.startswith("vllm-") or normalized.endswith("-vllm"):
+        return "vllm"
     if normalized in {"mlx", "local-mlx"} or normalized.startswith("mlx-") or normalized.endswith("-mlx"):
         return "mlx"
-    if normalized == "ollama" or normalized.startswith("ollama-") or normalized.endswith("-ollama"):
-        return "ollama"
     return normalized
 
 
@@ -210,7 +220,7 @@ def llm_backends() -> list[tuple[str, BackendConfig]]:
             continue
         if not (cfg.base_url or "").strip():
             continue
-        if backend_provider_name(backend_name) not in {"ollama", "mlx"}:
+        if backend_provider_name(backend_name) not in {"vllm", "mlx"}:
             continue
         out.append((backend_name, cfg))
     out.sort(key=lambda item: item[0])
@@ -595,32 +605,60 @@ def load_backends_config(path: Optional[Path] = None) -> BackendRegistry:
 def _default_registry() -> BackendRegistry:
     """Create a minimal default registry for backward compatibility."""
     backends = {
-        "ollama": BackendConfig(
-            backend_class="ollama",
-            provider="ollama",
-            base_url=S.OLLAMA_BASE_URL,
-            description="Default Ollama backend",
-            supported_capabilities=["chat", "embeddings"],
-            concurrency_limits={"chat": 4, "embeddings": 4},
-            health_liveness="/healthz",
-            health_readiness="/readyz",
+        "local_vllm": BackendConfig(
+            backend_class="local_vllm",
+            provider="vllm",
+            base_url=S.VLLM_BASE_URL,
+            description="Default vLLM backend",
+            supported_capabilities=["chat"],
+            concurrency_limits={"chat": 8},
+            health_liveness="/models",
+            health_readiness="/models",
+            payload_policy={},
+        ),
+        "local_vllm_fast": BackendConfig(
+            backend_class="local_vllm_fast",
+            provider="vllm",
+            base_url=S.VLLM_FAST_BASE_URL,
+            description="Fast vLLM backend",
+            supported_capabilities=["chat"],
+            concurrency_limits={"chat": 8},
+            health_liveness="/models",
+            health_readiness="/models",
+            payload_policy={},
+        ),
+        "local_vllm_embeddings": BackendConfig(
+            backend_class="local_vllm_embeddings",
+            provider="vllm",
+            base_url=S.VLLM_EMBEDDINGS_BASE_URL,
+            description="vLLM embeddings backend",
+            supported_capabilities=["embeddings"],
+            concurrency_limits={"embeddings": 8},
+            health_liveness="/models",
+            health_readiness="/models",
             payload_policy={},
         ),
         "local_mlx": BackendConfig(
             backend_class="local_mlx",
             provider="mlx",
             base_url=S.MLX_BASE_URL,
-            description="Default MLX backend",
+            description="Optional MLX backend",
             supported_capabilities=["chat", "embeddings", "images", "transcription"],
             concurrency_limits={"chat": 2, "embeddings": 2, "images": 1, "transcription": 1},
-            health_liveness="/healthz",
-            health_readiness="/readyz",
+            health_liveness="/models",
+            health_readiness="/models",
             payload_policy={},
         ),
     }
     return BackendRegistry(
         backends=dict(backends),
-        legacy_mapping={"mlx": "local_mlx"},
+        legacy_mapping={
+            "vllm": "local_vllm",
+            "vllm_fast": "local_vllm_fast",
+            "vllm_embeddings": "local_vllm_embeddings",
+            "mlx": "local_mlx",
+            "ollama": "local_vllm",
+        },
         static_backends=dict(backends),
     )
 

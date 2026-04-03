@@ -1,0 +1,44 @@
+- name: Ensure a Python interpreter is available for Ansible modules
+  ansible.builtin.raw: |
+    set -e
+    if command -v python3 >/dev/null 2>&1; then
+      exit 0
+    fi
+    if command -v python >/dev/null 2>&1; then
+      exit 0
+    fi
+    if command -v apt-get >/dev/null 2>&1; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y python3 python3-apt
+      exit 0
+    fi
+    if command -v dnf >/dev/null 2>&1; then
+      dnf install -y python3
+      exit 0
+    fi
+    if command -v yum >/dev/null 2>&1; then
+      yum install -y python3
+      exit 0
+    fi
+    if command -v zypper >/dev/null 2>&1; then
+      zypper --non-interactive install python3
+      exit 0
+    fi
+    if [ -x /usr/bin/python3 ]; then
+      exit 0
+    fi
+    echo "python3/python not found and no supported bootstrap path is available" >&2
+    exit 1
+  become: true
+  register: nexus_bootstrap_python_raw
+  changed_when: false
+
+- name: Discover the Python interpreter path
+  ansible.builtin.raw: "command -v python3 || command -v python"
+  register: nexus_bootstrap_python_path
+  changed_when: false
+
+- name: Set ansible_python_interpreter for this host
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: "{{ nexus_bootstrap_python_path.stdout_lines[0] | trim }}"

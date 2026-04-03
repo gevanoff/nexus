@@ -19,10 +19,10 @@ usage() {
 Usage: deploy/scripts/register-service.sh [--yes] [--backend-class CLASS] <service-name> <base-url> <etcd-url>
 
 Example:
-  deploy/scripts/register-service.sh --backend-class ollama ollama-ai1 http://ai1:11434 http://etcd:2379
+  deploy/scripts/register-service.sh --backend-class local_vllm vllm http://vllm:8000/v1 http://etcd:2379
 
 Options:
-  --backend-class CLASS  Canonical backend class (for example: ollama, local_mlx, gpu_heavy)
+  --backend-class CLASS  Canonical backend class (for example: local_vllm, gpu_heavy)
   --yes                  Non-interactive mode (assume "yes" for install prompts)
 EOF
 }

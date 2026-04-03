@@ -465,13 +465,6 @@ ns_seed_gateway_config_files() {
   fi
 }
 
-ns_ensure_ollama_runtime_dirs() {
-  # Persist large model blobs and metadata on the host filesystem.
-  # Usage: ns_ensure_ollama_runtime_dirs <repo_root>
-  local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/ollama"
-}
-
 ns_ensure_images_runtime_dirs() {
   # Images service persistence (outputs, caches) and optional model storage.
   # Usage: ns_ensure_images_runtime_dirs <repo_root>
@@ -514,16 +507,23 @@ ns_ensure_mlx_runtime_dirs() {
   ns_mkdir_p "${repo_root}/.runtime/mlx/config"
 }
 
+ns_ensure_vllm_runtime_dirs() {
+  # vLLM service persistence (downloaded model/cache artifacts).
+  # Usage: ns_ensure_vllm_runtime_dirs <repo_root>
+  local repo_root="$1"
+  ns_mkdir_p "${repo_root}/.runtime/vllm/cache"
+}
+
 ns_ensure_runtime_dirs() {
   # Create all repo-local runtime dirs.
   # Usage: ns_ensure_runtime_dirs <repo_root>
   local repo_root="$1"
   ns_ensure_gateway_runtime_dirs "$repo_root"
-  ns_ensure_ollama_runtime_dirs "$repo_root"
   ns_ensure_images_runtime_dirs "$repo_root"
   ns_ensure_tts_runtime_dirs "$repo_root"
   ns_ensure_nginx_runtime_dirs "$repo_root"
   ns_ensure_etcd_runtime_dirs "$repo_root"
+  ns_ensure_vllm_runtime_dirs "$repo_root"
   ns_ensure_mlx_runtime_dirs "$repo_root"
 }
 

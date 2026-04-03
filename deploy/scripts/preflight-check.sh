@@ -354,10 +354,13 @@ check_port_optional() {
 # Core services (started by default)
 check_port_required GATEWAY_PORT 8800 "Gateway API"
 check_port_required OBSERVABILITY_PORT 8801 "Gateway observability"
-check_port_required OLLAMA_PORT 11434 "Ollama"
+check_port_required VLLM_PORT 8000 "vLLM strong"
+check_port_required VLLM_FAST_PORT 8001 "vLLM fast"
+check_port_required VLLM_EMBEDDINGS_PORT 8002 "vLLM embeddings"
 check_port_required ETCD_PORT 2379 "etcd"
 
 # Optional services (separate compose files)
+check_port_optional MLX_PORT 10240 "MLX"
 check_port_optional IMAGES_PORT 7860 "Images service"
 check_port_optional TTS_PORT 9940 "TTS service"
 

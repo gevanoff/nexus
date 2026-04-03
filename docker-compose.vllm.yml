@@ -1,0 +1,157 @@
+services:
+  # vLLM services: strong chat, fast chat, and embeddings.
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: nexus-vllm
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-32B-Instruct}
+      - --served-model-name
+      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-32B-Instruct}
+      - --generation-config
+      - vllm
+    volumes:
+      - ./.runtime/vllm/cache:/root/.cache/huggingface
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  vllm-fast:
+    image: vllm/vllm-openai:latest
+    container_name: nexus-vllm-fast
+    ports:
+      - "${VLLM_FAST_PORT:-8001}:8000"
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - ${VLLM_MODEL_FAST:-Qwen/Qwen2.5-7B-Instruct}
+      - --served-model-name
+      - ${VLLM_MODEL_FAST:-Qwen/Qwen2.5-7B-Instruct}
+      - --generation-config
+      - vllm
+    volumes:
+      - ./.runtime/vllm/cache:/root/.cache/huggingface
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  vllm-embeddings:
+    image: vllm/vllm-openai:latest
+    container_name: nexus-vllm-embeddings
+    ports:
+      - "${VLLM_EMBEDDINGS_PORT:-8002}:8000"
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - ${VLLM_MODEL_EMBEDDINGS:-BAAI/bge-small-en-v1.5}
+      - --served-model-name
+      - ${VLLM_MODEL_EMBEDDINGS:-BAAI/bge-small-en-v1.5}
+      - --generation-config
+      - vllm
+    volumes:
+      - ./.runtime/vllm/cache:/root/.cache/huggingface
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  vllm-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=vllm
+      - NEXUS_SERVICE_BASE_URL=${VLLM_ADVERTISE_BASE_URL:-${VLLM_BASE_URL:-http://vllm:8000/v1}}
+      - NEXUS_SERVICE_HEALTH_URL=http://vllm:8000/v1/models
+      - NEXUS_SERVICE_BACKEND_CLASS=local_vllm
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - vllm
+    networks:
+      - nexus
+    restart: unless-stopped
+
+  vllm-fast-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=vllm-fast
+      - NEXUS_SERVICE_BASE_URL=${VLLM_FAST_ADVERTISE_BASE_URL:-${VLLM_FAST_BASE_URL:-http://vllm-fast:8000/v1}}
+      - NEXUS_SERVICE_HEALTH_URL=http://vllm-fast:8000/v1/models
+      - NEXUS_SERVICE_BACKEND_CLASS=local_vllm_fast
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - vllm-fast
+    networks:
+      - nexus
+    restart: unless-stopped
+
+  vllm-embeddings-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=vllm-embeddings
+      - NEXUS_SERVICE_BASE_URL=${VLLM_EMBEDDINGS_ADVERTISE_BASE_URL:-${VLLM_EMBEDDINGS_BASE_URL:-http://vllm-embeddings:8000/v1}}
+      - NEXUS_SERVICE_HEALTH_URL=http://vllm-embeddings:8000/v1/models
+      - NEXUS_SERVICE_BACKEND_CLASS=local_vllm_embeddings
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - vllm-embeddings
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

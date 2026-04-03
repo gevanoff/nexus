@@ -121,7 +121,7 @@ def _default_participants(messages: Sequence[ChatMessage]) -> list[str]:
 
     raw_messages = [m.model_dump(exclude_none=True) for m in messages]
     if bool(getattr(S, "COORDINATOR_INCLUDE_CODER_ON_CODE", True)) and _is_probably_coding_request(raw_messages):
-        for candidate in ("coder", "coder-ai1", "coder-ada2"):
+        for candidate in ("coder",):
             if candidate in aliases:
                 selected.append(candidate)
 

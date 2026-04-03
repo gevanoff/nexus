@@ -63,7 +63,7 @@ async def health_upstreams():
         for backend_name, cfg in llm_backends():
             provider = backend_provider_name(backend_name)
             try:
-                url = f"{cfg.base_url.rstrip('/')}/api/tags" if provider == "ollama" else f"{cfg.base_url.rstrip('/')}/models"
+                url = f"{cfg.base_url.rstrip('/')}/models"
                 r = await client.get(url)
                 r.raise_for_status()
                 results["upstreams"][backend_name] = {"ok": True, "status": r.status_code, "provider": provider}

@@ -145,9 +145,10 @@
       }
 
       const backendLabels = {
+        local_vllm: "vLLM",
+        local_vllm_fast: "vLLM Fast",
+        local_vllm_embeddings: "vLLM Embeddings",
         local_mlx: "MLX",
-        "ollama-ai1": "Ollama AI1",
-        "ollama-ada2": "Ollama ADA2",
         telegram_bot: "Telegram Bot",
         gpu_fast: "SDXL-Turbo",
         gpu_heavy: "InvokeAI",
@@ -158,8 +159,7 @@
 
       const shouldHideBackend = (backend) => {
         if (!backend || typeof backend !== "object") return false;
-        const backendClass = String(backend.backend_class || "").trim();
-        return backendClass === "ollama";
+        return false;
       };
 
       const capabilityGroupOrder = [

@@ -156,22 +156,33 @@ def _deployed_commit_stamps(app_dir: str) -> dict[str, Optional[str]]:
     }
 
 
-def _collect_upstream_versions(*, ollama_base_url: str, mlx_base_url: str) -> dict[str, Any]:
-    out: dict[str, Any] = {"ollama": {}, "mlx": {}}
+def _collect_upstream_versions(
+    *,
+    vllm_base_url: str,
+    vllm_fast_base_url: str,
+    vllm_embeddings_base_url: str,
+    mlx_base_url: str,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {"vllm": {}, "vllm_fast": {}, "vllm_embeddings": {}, "mlx": {}}
 
-    # Ollama: /api/version and /api/tags (models list)
-    if ollama_base_url:
-        st, j, err = _http_json("GET", ollama_base_url.rstrip("/") + "/api/version", timeout_sec=2.5)
-        out["ollama"]["api_version_status"] = st
-        out["ollama"]["api_version"] = j
-        out["ollama"]["api_version_error"] = err
+    if vllm_base_url:
+        st, j, err = _http_json("GET", vllm_base_url.rstrip("/") + "/models", timeout_sec=5.0)
+        out["vllm"]["models_status"] = st
+        out["vllm"]["models"] = j
+        out["vllm"]["models_error"] = err
 
-        st, j, err = _http_json("GET", ollama_base_url.rstrip("/") + "/api/tags", timeout_sec=5.0)
-        out["ollama"]["api_tags_status"] = st
-        out["ollama"]["api_tags"] = j
-        out["ollama"]["api_tags_error"] = err
+    if vllm_fast_base_url:
+        st, j, err = _http_json("GET", vllm_fast_base_url.rstrip("/") + "/models", timeout_sec=5.0)
+        out["vllm_fast"]["models_status"] = st
+        out["vllm_fast"]["models"] = j
+        out["vllm_fast"]["models_error"] = err
 
-    # MLX server (OpenAI-ish): /models if present
+    if vllm_embeddings_base_url:
+        st, j, err = _http_json("GET", vllm_embeddings_base_url.rstrip("/") + "/models", timeout_sec=5.0)
+        out["vllm_embeddings"]["models_status"] = st
+        out["vllm_embeddings"]["models"] = j
+        out["vllm_embeddings"]["models_error"] = err
+
     if mlx_base_url:
         st, j, err = _http_json("GET", mlx_base_url.rstrip("/") + "/models", timeout_sec=5.0)
         out["mlx"]["models_status"] = st
@@ -210,9 +221,19 @@ def main(argv: list[str]) -> int:
         help="Bearer token for gateway queries (default: $GATEWAY_BEARER_TOKEN or first of $GATEWAY_BEARER_TOKENS).",
     )
     p.add_argument(
-        "--ollama-base-url",
-        default=os.getenv("OLLAMA_BASE_URL") or "",
-        help="Optional direct Ollama base URL (for version + model tags).",
+        "--vllm-base-url",
+        default=os.getenv("VLLM_BASE_URL") or "",
+        help="Optional direct vLLM strong-chat base URL (for model list).",
+    )
+    p.add_argument(
+        "--vllm-fast-base-url",
+        default=os.getenv("VLLM_FAST_BASE_URL") or "",
+        help="Optional direct vLLM fast-chat base URL (for model list).",
+    )
+    p.add_argument(
+        "--vllm-embeddings-base-url",
+        default=os.getenv("VLLM_EMBEDDINGS_BASE_URL") or "",
+        help="Optional direct vLLM embeddings base URL (for model list).",
     )
     p.add_argument(
         "--mlx-base-url",
@@ -255,10 +276,10 @@ def main(argv: list[str]) -> int:
     models = _best_effort(_http_json, "GET", ns.base_url.rstrip("/") + "/v1/models", headers=bearer, timeout_sec=10.0)
 
     # CLI versions
-    ollama_cli = None
-    if shutil.which("ollama"):
-        rc, out = _run_cmd(["ollama", "--version"], timeout_sec=2.0)
-        ollama_cli = {"rc": rc, "output": out}
+    vllm_cli = None
+    if shutil.which("vllm"):
+        rc, out = _run_cmd(["vllm", "--version"], timeout_sec=2.0)
+        vllm_cli = {"rc": rc, "output": out}
 
     # Deployed stamp files written by deploy.sh (best-effort)
     stamps = _deployed_commit_stamps(app_dir)
@@ -266,7 +287,9 @@ def main(argv: list[str]) -> int:
     # Optional direct upstream inspection
     upstream_details = _best_effort(
         _collect_upstream_versions,
-        ollama_base_url=ns.ollama_base_url.strip(),
+        vllm_base_url=ns.vllm_base_url.strip(),
+        vllm_fast_base_url=ns.vllm_fast_base_url.strip(),
+        vllm_embeddings_base_url=ns.vllm_embeddings_base_url.strip(),
         mlx_base_url=ns.mlx_base_url.strip(),
     )
 
@@ -296,8 +319,10 @@ def main(argv: list[str]) -> int:
             "v1_models": {"value": models.value, "error": models.error},
         },
         "backends": {
-            "ollama_cli": ollama_cli,
-            "ollama_base_url": ns.ollama_base_url or None,
+            "vllm_cli": vllm_cli,
+            "vllm_base_url": ns.vllm_base_url or None,
+            "vllm_fast_base_url": ns.vllm_fast_base_url or None,
+            "vllm_embeddings_base_url": ns.vllm_embeddings_base_url or None,
             "mlx_base_url": ns.mlx_base_url or None,
             "upstream_details": {"value": upstream_details.value, "error": upstream_details.error},
         },

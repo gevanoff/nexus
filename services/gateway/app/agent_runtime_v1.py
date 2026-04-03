@@ -164,10 +164,11 @@ class DeterministicAdmissionControl:
         self._waiters: dict[Backend, int] = {}
 
     def _profile(self, backend: Backend) -> AdmissionProfile:
-        if backend_provider_name(backend) == "mlx":
-            conc = int(getattr(S, "AGENT_BACKEND_CONCURRENCY_MLX", 2) or 2)
+        provider = backend_provider_name(backend)
+        if provider == "vllm":
+            conc = int(getattr(S, "AGENT_BACKEND_CONCURRENCY_VLLM", 4) or 4)
         else:
-            conc = int(getattr(S, "AGENT_BACKEND_CONCURRENCY_OLLAMA", 4) or 4)
+            conc = int(getattr(S, "AGENT_BACKEND_CONCURRENCY_MLX", 2) or 2)
         queue_max = int(getattr(S, "AGENT_QUEUE_MAX", 32) or 32)
         timeout_sec = float(getattr(S, "AGENT_QUEUE_TIMEOUT_SEC", 2.0) or 2.0)
         return AdmissionProfile(concurrency=max(1, conc), queue_max=max(0, queue_max), queue_timeout_sec=max(0.0, timeout_sec))

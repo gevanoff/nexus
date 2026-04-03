@@ -308,10 +308,7 @@ async def _probe_models_for_backend(
     now: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     provider = backend_provider_name(backend_name)
-    if provider == "ollama":
-        url = f"{base_url.rstrip('/')}/api/tags"
-    else:
-        url = f"{base_url.rstrip('/')}/models"
+    url = f"{base_url.rstrip('/')}/models"
     started = time.perf_counter()
     diag: Dict[str, Any] = {"url": url, "ok": False, "backend": backend_name, "provider": provider}
     items: list[dict[str, Any]] = []
@@ -319,18 +316,11 @@ async def _probe_models_for_backend(
         r = await client.get(url)
         diag["status"] = r.status_code
         r.raise_for_status()
-        if provider == "ollama":
-            models = r.json().get("models", [])
-            for m in models:
-                name = m.get("name")
-                if name:
-                    items.append({"id": f"{backend_name}:{name}", "object": "model", "created": now, "owned_by": "local"})
-        else:
-            models = r.json().get("data", [])
-            for m in models:
-                mid = m.get("id")
-                if mid:
-                    items.append({"id": f"{backend_name}:{mid}", "object": "model", "created": now, "owned_by": "local"})
+        models = r.json().get("data", [])
+        for m in models:
+            mid = m.get("id")
+            if mid:
+                items.append({"id": f"{backend_name}:{mid}", "object": "model", "created": now, "owned_by": "local"})
         diag["ok"] = True
         diag["count"] = len(items)
     except Exception as exc:
@@ -2830,12 +2820,10 @@ async def ui_models(req: Request) -> Dict[str, Any]:
 
     # Add convenience backend pseudo-models.
     registry = get_registry()
-    ollama_backend = registry.get_backend(registry.resolve_backend_class("ollama"))
-    if ollama_backend is not None and (ollama_backend.base_url or "").strip():
-        data["data"].append({"id": "ollama", "object": "model", "created": now, "owned_by": "gateway"})
-    mlx_backend = registry.get_backend(registry.resolve_backend_class("mlx"))
-    if mlx_backend is not None and (mlx_backend.base_url or "").strip():
-        data["data"].append({"id": "mlx", "object": "model", "created": now, "owned_by": "gateway"})
+    for provider_name in ("vllm", "mlx"):
+        provider_backend = registry.get_backend(registry.resolve_backend_class(provider_name))
+        if provider_backend is not None and (provider_backend.base_url or "").strip():
+            data["data"].append({"id": provider_name, "object": "model", "created": now, "owned_by": "gateway"})
     for backend_name, _cfg in llm_backends():
         data["data"].append({"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"})
 

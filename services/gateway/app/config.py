@@ -10,7 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file="/var/lib/gateway/app/.env", extra="ignore")
 
-    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    VLLM_BASE_URL: str = "http://127.0.0.1:8000/v1"
+    VLLM_FAST_BASE_URL: str = "http://127.0.0.1:8001/v1"
+    VLLM_EMBEDDINGS_BASE_URL: str = "http://127.0.0.1:8002/v1"
     MLX_BASE_URL: str = "http://127.0.0.1:10240/v1"
 
     GATEWAY_HOST: str = "0.0.0.0"
@@ -197,15 +199,16 @@ class Settings(BaseSettings):
     ETCD_SEED_FROM_ENV: bool = True
     ETCD_TIMEOUT_SEC: float = 5.0
 
-    # Backends can each have "strong" and "fast" model choices.
-    OLLAMA_MODEL_STRONG: str = "qwen2.5:32b"
-    OLLAMA_MODEL_FAST: str = "qwen2.5:7b"
-    MLX_MODEL_STRONG: str = "mlx-community/gemma-2-2b-it-8bit"
-    MLX_MODEL_FAST: str = "mlx-community/gemma-2-2b-it-8bit"
+    # vLLM-backed lightweight/utility models, typically hosted on ai1.
+    VLLM_MODEL_STRONG: str = "Qwen/Qwen2.5-7B-Instruct"
+    VLLM_MODEL_FAST: str = "Qwen/Qwen2.5-3B-Instruct"
+    VLLM_MODEL_DEFAULT: str = "Qwen/Qwen2.5-7B-Instruct"
+    VLLM_MODEL_EMBEDDINGS: str = "BAAI/bge-small-en-v1.5"
 
-    # Legacy aliases kept for backward compatibility
-    OLLAMA_MODEL_DEFAULT: str = "qwen2.5:32b"
-    MLX_MODEL_DEFAULT: str = "mlx-community/gemma-2-2b-it-8bit"
+    # MLX-hosted reasoning models, typically on ai2.
+    MLX_MODEL_STRONG: str = "mlx-community/Qwen2.5-32B-Instruct-4bit"
+    MLX_MODEL_FAST: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    MLX_MODEL_DEFAULT: str = "mlx-community/Qwen2.5-32B-Instruct-4bit"
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 
@@ -220,7 +223,7 @@ class Settings(BaseSettings):
 
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
-    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"ollama","model":"deepseek-coder:33b"}}}'
+    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/Qwen2.5-32B-Instruct-4bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 
@@ -294,7 +297,7 @@ class Settings(BaseSettings):
     TOOLS_GIT_CWD: str = "/var/lib/gateway"
     TOOLS_GIT_TIMEOUT_SEC: int = 20
 
-    EMBEDDINGS_BACKEND: str = "local_mlx"
+    EMBEDDINGS_BACKEND: str = "local_vllm_embeddings"
     EMBEDDINGS_MODEL: str = ""
 
     MEMORY_ENABLED: bool = True
@@ -318,14 +321,14 @@ class Settings(BaseSettings):
     AGENT_RUNS_LOG_MODE: Literal["ndjson", "per_run", "both"] = "per_run"
 
     # Admission control / load shedding
-    AGENT_BACKEND_CONCURRENCY_OLLAMA: int = 4
+    AGENT_BACKEND_CONCURRENCY_VLLM: int = 4
     AGENT_BACKEND_CONCURRENCY_MLX: int = 2
     AGENT_QUEUE_MAX: int = 32
     AGENT_QUEUE_TIMEOUT_SEC: float = 2.0
     AGENT_SHED_HEAVY: bool = True
 
     # Multi-backend coordinator
-    COORDINATOR_DEFAULT_PARTICIPANTS: str = "default,reasoner-ai1,reasoner-ada2"
+    COORDINATOR_DEFAULT_PARTICIPANTS: str = "default"
     COORDINATOR_DEFAULT_SYNTHESIZER: str = "default"
     COORDINATOR_INCLUDE_VISION_ON_MEDIA: bool = True
     COORDINATOR_INCLUDE_CODER_ON_CODE: bool = True

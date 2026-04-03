@@ -14,9 +14,9 @@ services:
     environment:
       - MLX_HOST=0.0.0.0
       - MLX_PORT=10240
-      - MLX_MODEL_PATH=${MLX_MODEL_PATH:-mlx-community/gemma-2-2b-it-8bit}
+      - MLX_MODEL_PATH=${MLX_MODEL_PATH:-mlx-community/Qwen2.5-32B-Instruct-4bit}
       - MLX_MODEL_TYPE=${MLX_MODEL_TYPE:-lm}
-      - MLX_CONFIG_PATH=${MLX_CONFIG_PATH:-}
+      - MLX_CONFIG_PATH=${MLX_CONFIG_PATH:-/var/lib/mlx/config/config.yaml}
       - HF_HOME=/var/lib/mlx/cache/huggingface
       - XDG_CACHE_HOME=/var/lib/mlx/cache
     volumes:

@@ -10,7 +10,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 NEXUS_DIR="${NEXUS_DIR:-$ROOT_DIR}"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/gateway-backups}"
-COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml)
+COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.vllm.yml -f docker-compose.etcd.yml)
 WITH_MLX="false"
 
 if [[ "$(ns_detect_platform)" == "macos" ]] && [[ "${EUID:-$(id -u)}" -eq 0 ]] && ns_have_cmd colima; then
@@ -28,7 +28,7 @@ Env vars (optional):
   BACKUP_DIR   Where to write legacy gateway data backups
 
 Options:
-  --with-mlx   Include MLX component (docker-compose.mlx.yml) during cutover
+  --with-mlx   Include optional containerized MLX component (docker-compose.mlx.yml) during cutover
 EOF
 }
 

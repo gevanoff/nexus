@@ -1,7 +1,7 @@
 # Environment configuration
 .env
-deploy/env/.env.dev
-deploy/env/.env.prod
+deploy/env/.env.*
+!deploy/env/.env.*.example
 
 # Python
 __pycache__/

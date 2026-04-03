@@ -138,13 +138,35 @@ setup_config() {
 
     # Generate random token (shared helper)
     RANDOM_TOKEN="$(ns_generate_token | tr -d '\r\n')"
+    LOCAL_QUICKSTART_MODEL_ALIASES_JSON='{"aliases":{"default":{"backend":"local_vllm","model":"Qwen/Qwen2.5-7B-Instruct","tools":true},"fast":{"backend":"local_vllm_fast","model":"Qwen/Qwen2.5-3B-Instruct","tools":false},"coder":{"backend":"local_vllm","model":"Qwen/Qwen2.5-7B-Instruct","tools":true},"long":{"backend":"local_vllm","model":"Qwen/Qwen2.5-7B-Instruct","context_window":65536,"tools":false},"embeddings":{"backend":"local_vllm_embeddings","model":"BAAI/bge-small-en-v1.5","tools":false}}}'
+    platform="$(ns_detect_platform)"
 
-    # Update token in .env
-    if [[ "$(ns_detect_platform)" == "macos" ]]; then
-        sed -i '' "s/GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$RANDOM_TOKEN/" .env
-    else
-        sed -i "s/GATEWAY_BEARER_TOKEN=.*/GATEWAY_BEARER_TOKEN=$RANDOM_TOKEN/" .env
-    fi
+    upsert_env_value() {
+        local key="$1"
+        local value="$2"
+        if grep -q "^${key}=" .env; then
+            if [[ "$platform" == "macos" ]]; then
+                sed -i '' "s#^${key}=.*#${key}=${value}#" .env
+            else
+                sed -i "s#^${key}=.*#${key}=${value}#" .env
+            fi
+        else
+            printf '%s=%s\n' "$key" "$value" >> .env
+        fi
+    }
+
+    # Quickstart is intentionally self-contained: keep local dev on the bundled
+    # vLLM services even though the repo's production topology is MLX-first.
+    upsert_env_value "GATEWAY_BEARER_TOKEN" "$RANDOM_TOKEN"
+    upsert_env_value "VLLM_BASE_URL" "http://vllm:8000/v1"
+    upsert_env_value "VLLM_ADVERTISE_BASE_URL" "http://vllm:8000/v1"
+    upsert_env_value "VLLM_FAST_BASE_URL" "http://vllm-fast:8000/v1"
+    upsert_env_value "VLLM_FAST_ADVERTISE_BASE_URL" "http://vllm-fast:8000/v1"
+    upsert_env_value "VLLM_EMBEDDINGS_BASE_URL" "http://vllm-embeddings:8000/v1"
+    upsert_env_value "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL" "http://vllm-embeddings:8000/v1"
+    upsert_env_value "DEFAULT_BACKEND" "local_vllm"
+    upsert_env_value "EMBEDDINGS_BACKEND" "local_vllm_embeddings"
+    upsert_env_value "MODEL_ALIASES_JSON" "$LOCAL_QUICKSTART_MODEL_ALIASES_JSON"
 
     ns_print_ok "Configuration created"
     ns_print_ok "Bearer token: $RANDOM_TOKEN"
@@ -152,51 +174,48 @@ setup_config() {
     echo
 }
 
-# Pull models for Ollama
+# Warm configured vLLM models
 setup_models() {
     ns_print_header "Setting Up Models"
 
-    echo "Which model would you like to install?"
-    echo "1) llama3.1:8b (Recommended - Fast, good quality)"
-    echo "2) llama3.1:3b (Faster, lighter)"
-    echo "3) qwen2.5:14b (Better quality, slower)"
-    echo "4) Skip for now"
-    REPLY="$(ns_read_choice_char "Choice (1-4): " "4" '^[1-4]$')"
+    echo "Which vLLM warmup would you like to run?"
+    echo "1) Warm strong, fast, and embeddings endpoints"
+    echo "2) Check endpoint/model availability only (Recommended)"
+    echo "3) Skip for now"
+    REPLY="$(ns_read_choice_char "Choice (1-3): " "2" '^[1-3]$')"
 
     case $REPLY in
-        1) MODEL="llama3.1:8b" ;;
-        2) MODEL="llama3.1:3b" ;;
-        3) MODEL="qwen2.5:14b" ;;
-        4)
-            ns_print_warn "Skipping model installation"
-            return
+        1)
+            if bash deploy/scripts/prewarm-vllm.sh; then
+                ns_print_ok "vLLM warmup complete"
+            else
+                ns_print_error "vLLM warmup failed"
+            fi
+            ;;
+        2)
+            if bash deploy/scripts/prewarm-vllm.sh --check-only; then
+                ns_print_ok "vLLM availability check complete"
+            else
+                ns_print_error "vLLM availability check failed"
+            fi
+            ;;
+        3)
+            ns_print_warn "Skipping vLLM warmup"
             ;;
         *)
-            ns_print_warn "Invalid choice, skipping model installation"
-            return
+            ns_print_warn "Invalid choice, skipping vLLM warmup"
             ;;
     esac
-
-    ns_print_header "Pulling model: $MODEL"
-    echo "This may take a few minutes..."
-
-    if ns_compose "${COMPOSE_ARGS[@]}" exec -T ollama ollama pull "$MODEL"; then
-        ns_print_ok "Model $MODEL installed"
-    else
-        ns_print_error "Failed to install model $MODEL"
-        ns_print_warn "You can install it later with:"
-        echo "  $(ns_compose_cmd_string) ${COMPOSE_ARGS[*]} exec ollama ollama pull $MODEL"
-    fi
 }
 
 # Start services
 start_services() {
     ns_print_header "Starting Services"
 
-    # Minimal stack: gateway + ollama + etcd
+    # Minimal stack: gateway + vllm + etcd
     COMPOSE_ARGS=(
         -f docker-compose.gateway.yml
-        -f docker-compose.ollama.yml
+        -f docker-compose.vllm.yml
         -f docker-compose.etcd.yml
     )
 
@@ -208,9 +227,9 @@ start_services() {
     fi
 
     echo "Which services would you like to start?"
-    echo "1) Minimal (Gateway + Ollama + Etcd)"
+    echo "1) Core (Gateway + vLLM + Etcd)"
     if [[ "$full_available" == "true" ]]; then
-        echo "2) Full (All services)"
+        echo "2) Full (Core + Images + TTS)"
     else
         echo "2) Full (unavailable in current repo state)"
     fi
@@ -241,7 +260,6 @@ verify_deployment() {
     ns_print_header "Verifying Deployment"
 
     if ! ns_compose "${COMPOSE_ARGS[@]}" ps | grep -q "running"; then
-    ensure_runtime_layout
         ns_print_error "Services are not running"
         echo "Check logs with: $(ns_compose_cmd_string) ${COMPOSE_ARGS[*]} logs"
         exit 1
@@ -292,7 +310,7 @@ show_next_steps() {
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer YOUR_TOKEN" \
     -d '{
-      "model": "llama3.1:8b",
+      "model": "default",
       "messages": [{"role": "user", "content": "Hello!"}]
     }'
 EOS
@@ -320,14 +338,15 @@ main() {
     ensure_prerequisites
     check_prerequisites
     setup_config
+    ensure_runtime_layout
     start_services
 
     echo
-    if ns_confirm_default_yes "Would you like to install a model now?"; then
+    if ns_confirm_default_yes "Would you like to warm vLLM models now?"; then
         sleep 5
         setup_models
     else
-        ns_print_warn "Skipping model installation"
+        ns_print_warn "Skipping vLLM warmup"
     fi
 
     verify_deployment

@@ -25,13 +25,16 @@ services:
       - METRICS_ENABLED=true
 
       # Upstream services (using Docker service names)
-      - OLLAMA_BASE_URL=http://ollama:11434
+      - VLLM_BASE_URL=http://vllm:8000/v1
+      - VLLM_FAST_BASE_URL=http://vllm-fast:8000/v1
+      - VLLM_EMBEDDINGS_BASE_URL=http://vllm-embeddings:8000/v1
       - IMAGES_BACKEND=${IMAGES_BACKEND:-http_openai_images}
       - IMAGES_HTTP_BASE_URL=http://images:7860
       - AUDIO_BACKEND_URL=http://tts:9940
 
       # Routing configuration
-      - DEFAULT_BACKEND=ollama
+      - DEFAULT_BACKEND=local_vllm
+      - EMBEDDINGS_BACKEND=local_vllm_embeddings
       - ROUTER_ENABLE_POLICY=true
 
       # Request limits

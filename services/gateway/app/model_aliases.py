@@ -33,22 +33,21 @@ class AliasLoadState:
 
 def _default_aliases() -> Dict[str, ModelAlias]:
     # Sensible defaults if no explicit config is provided.
-    default_backend = S.DEFAULT_BACKEND
-
-    def strong_for(backend: str) -> str:
-        return S.OLLAMA_MODEL_STRONG if backend_provider_name(backend) == "ollama" else S.MLX_MODEL_STRONG
-
-    def fast_for(backend: str) -> str:
-        return S.OLLAMA_MODEL_FAST if backend_provider_name(backend) == "ollama" else S.MLX_MODEL_FAST
+    default_backend = S.DEFAULT_BACKEND or "local_mlx"
+    default_provider = backend_provider_name(default_backend)
+    if default_provider == "vllm":
+        default_strong_model = S.VLLM_MODEL_STRONG
+    else:
+        default_strong_model = S.MLX_MODEL_STRONG
 
     return {
         # These four are the canonical policy surface.
-        "default": ModelAlias(backend=default_backend, upstream_model=strong_for(default_backend), tools=True),
-        "fast": ModelAlias(backend=default_backend, upstream_model=fast_for(default_backend), tools=False),
-        "coder": ModelAlias(backend=default_backend, upstream_model=strong_for(default_backend), tools=True),
+        "default": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True),
+        "fast": ModelAlias(backend="local_vllm_fast", upstream_model=S.VLLM_MODEL_FAST, tools=False),
+        "coder": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True),
         "long": ModelAlias(
-            backend="mlx",
-            upstream_model=S.MLX_MODEL_STRONG,
+            backend=default_backend,
+            upstream_model=default_strong_model,
             context_window=S.ROUTER_LONG_CONTEXT_CHARS,
             tools=False,
         ),
@@ -57,16 +56,20 @@ def _default_aliases() -> Dict[str, ModelAlias]:
 
 def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
     # Accept either:
-    # - "ollama:qwen3:30b" / "mlx:..."
-    # - {"backend": "ollama", "model": "qwen3:30b", "context": 8192}
+    # - "vllm:..."
+    # - "mlx:..."
+    # - legacy "ollama:..." values, normalized onto local_vllm
+    # - {"backend": "local_vllm", "model": "...", "context": 8192}
     if isinstance(v, str):
         s = v.strip()
         if not s:
             return None
         if s.startswith("ollama:"):
-            return ModelAlias(backend="ollama", upstream_model=s[len("ollama:") :])
+            return ModelAlias(backend="local_vllm", upstream_model=s[len("ollama:") :])
+        if s.startswith("vllm:"):
+            return ModelAlias(backend="local_vllm", upstream_model=s[len("vllm:") :])
         if s.startswith("mlx:"):
-            return ModelAlias(backend="mlx", upstream_model=s[len("mlx:") :])
+            return ModelAlias(backend="local_mlx", upstream_model=s[len("mlx:") :])
         return None
 
     if isinstance(v, dict):
@@ -74,8 +77,15 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         model = (v.get("model") or v.get("upstream_model") or "").strip()
         if not backend or not model:
             return None
+        backend_key = backend.lower().replace("-", "_")
+        if backend_key == "vllm" or backend_key.startswith("local_vllm") or backend_key.startswith("ollama"):
+            backend = "local_vllm"
+        elif backend_key == "mlx" or backend_key.startswith("local_mlx"):
+            backend = "local_mlx"
         if model.startswith("ollama:"):
             model = model[len("ollama:") :]
+        elif model.startswith("vllm:"):
+            model = model[len("vllm:") :]
         elif model.startswith("mlx:"):
             model = model[len("mlx:") :]
 

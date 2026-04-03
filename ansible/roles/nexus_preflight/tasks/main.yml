@@ -1,0 +1,11 @@
+- name: Run Nexus deploy preflight checks
+  ansible.builtin.command:
+    argv:
+      - ./deploy/scripts/preflight-check.sh
+      - --mode
+      - deploy
+      - --env-file
+      - "{{ nexus_env_file }}"
+  args:
+    chdir: "{{ nexus_repo_dir }}"
+  changed_when: false

@@ -13,10 +13,10 @@ BRANCH=""
 NO_PULL="false"
 NO_BUILD="false"
 WITH_TELEGRAM="false"
+EXTERNAL_VLLM="false"
+EXTERNAL_VLLM_SET="false"
 WITH_MLX="false"
-EXTERNAL_OLLAMA="false"
 EXTERNAL_MLX="false"
-EXTERNAL_OLLAMA_SET="false"
 EXTERNAL_MLX_SET="false"
 
 usage() {
@@ -26,7 +26,7 @@ Usage: deploy/scripts/ops-stack.sh [--env-file PATH] [--branch BRANCH] [--no-pul
 Host-local daily operations helper for Nexus core stack:
   1) (optional) git pull
   2) ensure Docker daemon
-  3) restart core containers (gateway + ollama + etcd)
+  3) restart core containers (gateway + vllm + etcd, plus optional mlx)
   4) run gateway verifier
 
 Options:
@@ -34,10 +34,10 @@ Options:
   --branch BRANCH   If set, checkout+pull this branch before restart
   --no-pull         Skip git fetch/pull
   --no-build        Skip image rebuild (use compose up -d without --build)
+  --external-vllm   Use external/native vLLM (do not include docker-compose.vllm.yml).
+                    If not set explicitly, auto-detected from VLLM_BASE_URL.
   --with-telegram   Include telegram-bot component (docker-compose.telegram-bot.yml)
   --with-mlx        Include legacy MLX compose component (docker-compose.mlx.yml)
-  --external-ollama Use external/native Ollama (do not include docker-compose.ollama.yml).
-                     If not set explicitly, auto-detected from OLLAMA_BASE_URL.
   --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml).
                      If not set explicitly, auto-detected from MLX_BASE_URL.
 EOF
@@ -61,17 +61,17 @@ while [[ $# -gt 0 ]]; do
       NO_BUILD="true"
       shift
       ;;
+    --external-vllm)
+      EXTERNAL_VLLM="true"
+      EXTERNAL_VLLM_SET="true"
+      shift
+      ;;
     --with-telegram)
       WITH_TELEGRAM="true"
       shift
       ;;
     --with-mlx)
       WITH_MLX="true"
-      shift
-      ;;
-    --external-ollama)
-      EXTERNAL_OLLAMA="true"
-      EXTERNAL_OLLAMA_SET="true"
       shift
       ;;
     --external-mlx)
@@ -94,25 +94,25 @@ if [[ ! -f "$ENV_FILE" ]]; then
   ns_ensure_env_file "$ENV_FILE" "$ROOT_DIR"
 fi
 
-if [[ "$EXTERNAL_OLLAMA_SET" != "true" ]]; then
-  ollama_base_url="$(ns_env_get "$ENV_FILE" OLLAMA_BASE_URL "http://ollama:11434")"
-  ollama_base_url="${ollama_base_url%/}"
-  if [[ "$ollama_base_url" != "http://ollama:11434" ]]; then
-    EXTERNAL_OLLAMA="true"
+if [[ "$EXTERNAL_VLLM_SET" != "true" ]]; then
+  vllm_base_url="$(ns_env_get "$ENV_FILE" VLLM_BASE_URL "http://host.docker.internal:8000/v1")"
+  vllm_base_url="${vllm_base_url%/}"
+  if [[ "$vllm_base_url" != "http://vllm:8000/v1" ]]; then
+    EXTERNAL_VLLM="true"
   fi
 fi
 
 if [[ "$EXTERNAL_MLX_SET" != "true" ]]; then
-  mlx_base_url="$(ns_env_get "$ENV_FILE" MLX_BASE_URL "http://host.docker.internal:10240/v1")"
+  mlx_base_url="$(ns_env_get "$ENV_FILE" MLX_BASE_URL "")"
   mlx_base_url="${mlx_base_url%/}"
-  if [[ "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
+  if [[ -n "$mlx_base_url" && "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
     EXTERNAL_MLX="true"
   fi
 fi
 
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
-if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
-  COMPOSE_ARGS+=(-f docker-compose.ollama.yml)
+if [[ "$EXTERNAL_VLLM" != "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.vllm.yml)
 fi
 if [[ "$WITH_TELEGRAM" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker-compose.telegram-bot.yml)
@@ -197,22 +197,16 @@ for i in {1..60}; do
 done
 
 ns_print_header "Running verifier"
-if [[ "$WITH_MLX" == "true" ]]; then
-  if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
-    ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" --with-mlx --external-ollama
-  else
-    ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" --with-mlx
-  fi
-else
-  verify_args=()
-  if [[ "$EXTERNAL_OLLAMA" == "true" ]]; then
-    verify_args+=(--external-ollama)
-  fi
-  if [[ "$EXTERNAL_MLX" == "true" ]]; then
-    verify_args+=(--external-mlx)
-  fi
-  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" "${verify_args[@]}"
+verify_args=()
+if [[ "$EXTERNAL_VLLM" == "true" ]]; then
+  verify_args+=(--external-vllm)
 fi
+if [[ "$WITH_MLX" == "true" ]]; then
+  verify_args+=(--with-mlx)
+elif [[ "$EXTERNAL_MLX" == "true" ]]; then
+  verify_args+=(--external-mlx)
+fi
+ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" "${verify_args[@]}"
 
 ns_print_header "Ops complete"
 ns_compose "${COMPOSE_ARGS[@]}" ps

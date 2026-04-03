@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth import require_bearer
 from app.config import S, logger
-from app.backends import backend_provider_name, check_capability, get_admission_controller, get_registry, llm_backends
+from app.backends import check_capability, get_admission_controller, get_registry, llm_backends
 from app.health_checker import check_backend_ready
 from app.models import (
     ChatCompletionRequest,
@@ -91,18 +91,7 @@ def _apply_alias_constraints(cc: ChatCompletionRequest, *, alias_name: Optional[
 
 
 async def _probe_models_for_backend(client: httpx.AsyncClient, backend_name: str, base_url: str, now: int) -> list[dict[str, Any]]:
-    provider = backend_provider_name(backend_name)
     items: list[dict[str, Any]] = []
-    if provider == "ollama":
-        r = await client.get(f"{base_url.rstrip('/')}/api/tags")
-        r.raise_for_status()
-        models = r.json().get("models", [])
-        for m in models:
-            name = m.get("name")
-            if name:
-                items.append({"id": f"{backend_name}:{name}", "object": "model", "created": now, "owned_by": "local"})
-        return items
-
     r = await client.get(f"{base_url.rstrip('/')}/models")
     r.raise_for_status()
     models = r.json().get("data", [])
@@ -129,12 +118,10 @@ async def list_models(req: Request):
 
     data["data"].append({"id": "auto", "object": "model", "created": now, "owned_by": "gateway"})
     registry = get_registry()
-    ollama_backend = registry.get_backend(registry.resolve_backend_class("ollama"))
-    if ollama_backend is not None and (ollama_backend.base_url or "").strip():
-        data["data"].append({"id": "ollama", "object": "model", "created": now, "owned_by": "gateway"})
-    mlx_backend = registry.get_backend(registry.resolve_backend_class("mlx"))
-    if mlx_backend is not None and (mlx_backend.base_url or "").strip():
-        data["data"].append({"id": "mlx", "object": "model", "created": now, "owned_by": "gateway"})
+    for provider_name in ("vllm", "mlx"):
+        provider_backend = registry.get_backend(registry.resolve_backend_class(provider_name))
+        if provider_backend is not None and (provider_backend.base_url or "").strip():
+            data["data"].append({"id": provider_name, "object": "model", "created": now, "owned_by": "gateway"})
     for backend_name, _cfg in llm_backends():
         data["data"].append({"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"})
 

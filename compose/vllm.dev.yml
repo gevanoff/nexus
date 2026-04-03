@@ -1,0 +1,13 @@
+services:
+  vllm:
+    container_name: nexus-vllm-dev
+    ports:
+      - "${DEV_VLLM_PORT:-18000}:8000"
+    volumes:
+      - ../.runtime/vllm-dev/cache:/root/.cache/huggingface
+
+networks:
+  nexus:
+    name: nexus-dev
+
+volumes: {}

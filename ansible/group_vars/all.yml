@@ -1,0 +1,49 @@
+nexus_environment: prod
+nexus_branch: main
+nexus_repo_dir: /opt/nexus
+nexus_repo_url: ""
+nexus_manage_checkout: false
+nexus_manage_host_prereqs: true
+nexus_manage_docker_runtime: true
+nexus_manage_mlx_host_prep: true
+nexus_runtime_user: "{{ ansible_user | default('ai') }}"
+nexus_user_home: "{{ ansible_user_dir | default('/Users/' ~ nexus_runtime_user) }}"
+nexus_verify_gateway: true
+nexus_deploy_serial: 1
+nexus_extra_deploy_args: []
+nexus_topology_file: "{{ lookup('env', 'NEXUS_TOPOLOGY_FILE') | default(playbook_dir ~ '/../../deploy/topology/production.json', true) }}"
+nexus_env_file: "{{ nexus_repo_dir }}/deploy/env/.env.{{ nexus_environment }}.{{ nexus_topology_host }}"
+nexus_linux_common_packages:
+  - git
+  - curl
+  - lsof
+  - ca-certificates
+  - python3
+nexus_linux_docker_engine_packages:
+  Debian:
+    - docker.io
+  RedHat:
+    - docker
+  Suse:
+    - docker
+nexus_macos_common_packages:
+  - git
+  - curl
+  - lsof
+nexus_macos_docker_packages:
+  - colima
+  - docker
+  - docker-compose
+  - qemu
+nexus_colima_profile: default
+nexus_colima_vm_type: ""
+nexus_colima_start_interval: 60
+nexus_colima_launchd_enabled: true
+nexus_colima_timeout_sec: 75
+nexus_mlx_pf_allowlist_enabled: false
+nexus_mlx_pf_allowlist_sources:
+  - 10.10.22.156
+  - 172.28.0.0/16
+  - 127.0.0.1
+  - 192.168.65.0/24
+nexus_mlx_port: 10240

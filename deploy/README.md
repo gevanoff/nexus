@@ -33,7 +33,8 @@ Script entrypoints (all invoked from repo root):
 - `./quickstart.sh`: interactive local bootstrap (preflight + `.env` + startup)
 - `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
 - `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: deploy selected components on a host
-- `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] <dev|prod> <branch> <user@host>`: deploy selected components over SSH
+- `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <dev|prod> <branch> [user@host]`: deploy selected components over SSH
+- `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
@@ -55,6 +56,18 @@ Example: deploy the streaming stack on `ai1`:
 
 ```bash
 ./deploy/scripts/deploy.sh --components mediamtx prod main
+```
+
+Example: deploy the explicit `ai1` topology profile:
+
+```bash
+./deploy/scripts/deploy.sh --topology-host ai1 prod main
+```
+
+Example: deploy the explicit `ai1` topology profile over SSH without repeating the host target:
+
+```bash
+./deploy/scripts/remote-deploy.sh --topology-host ai1 prod main
 ```
 
 Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:
@@ -90,6 +103,7 @@ Remote host deploy:
 		 - Linux: `ai:ai`
 2. Clone this repo to `/opt/nexus` on the remote host (as the `ai` user)
 3. Run `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>` from your local machine
+4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <ai1|ai2|ada2> <dev|prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
 
 ## Windows development note
 
@@ -98,8 +112,9 @@ Nexus is deployed/operated from macOS/Linux hosts. If you develop on Windows, ru
 ## Notes
 
 - These manifests assume a shared `nexus` network for multi-host deployments.
-- For named multi-host LLM routing, register explicit service names like `ollama-ai1`, `ollama-ada2`, and `mlx-ai2` with `--backend-class ollama|local_mlx`.
-- Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the host-local default runtime; on `ai2`, prefer `local_mlx`.
+- `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `ai1`/`ai2`/`ada2` cluster.
+- etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
+- Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
 - Persistence uses host bind mounts under `./.runtime/` (including gateway RO config at `./.runtime/gateway/config`).
 - The UI is intentionally separated from the gateway for production deployments; keep it as a standalone container when it is implemented.
 - For branch-based deploys, see `./deploy/scripts/deploy.sh` and `./deploy/scripts/remote-deploy.sh` (invoked from repo root).

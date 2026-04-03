@@ -840,7 +840,7 @@ def tool_models_refresh(args: Dict[str, Any]) -> Dict[str, Any]:
             for backend_name, cfg in llm_backends():
                 provider = backend_provider_name(backend_name)
                 try:
-                    url = f"{cfg.base_url.rstrip('/')}/api/tags" if provider == "ollama" else f"{cfg.base_url.rstrip('/')}/models"
+                    url = f"{cfg.base_url.rstrip('/')}/models"
                     r = client.get(url)
                     out["upstreams"][backend_name] = {
                         "ok": r.status_code == 200,

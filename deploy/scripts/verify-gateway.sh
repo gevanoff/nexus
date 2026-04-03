@@ -15,23 +15,23 @@ ns_require_cmd docker
 
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 TOKEN="${GATEWAY_BEARER_TOKEN:-}"
+EXTERNAL_VLLM="false"
+EXTERNAL_VLLM_SET="false"
 WITH_MLX="false"
-EXTERNAL_OLLAMA="false"
 EXTERNAL_MLX="false"
-EXTERNAL_OLLAMA_SET="false"
 EXTERNAL_MLX_SET="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/verify-gateway.sh [--env-file PATH] [--with-mlx] [--external-ollama] [--external-mlx]
+Usage: deploy/scripts/verify-gateway.sh [--env-file PATH] [--external-vllm] [--with-mlx] [--external-mlx]
 
 Run in-container gateway contract verification.
 
 Options:
   --env-file PATH   Env file path (default: ./.env)
+  --external-vllm   Use external/native vLLM (do not include docker-compose.vllm.yml).
+                    If not set explicitly, auto-detected from VLLM_BASE_URL.
   --with-mlx        Include legacy MLX compose component (docker-compose.mlx.yml) in compose checks
-  --external-ollama Use external/native Ollama (do not include docker-compose.ollama.yml).
-                     If not set explicitly, auto-detected from OLLAMA_BASE_URL.
   --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml).
                      If not set explicitly, auto-detected from MLX_BASE_URL.
 EOF
@@ -43,13 +43,13 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="${2:-}"
       shift 2
       ;;
-    --with-mlx)
-      WITH_MLX="true"
+    --external-vllm)
+      EXTERNAL_VLLM="true"
+      EXTERNAL_VLLM_SET="true"
       shift
       ;;
-    --external-ollama)
-      EXTERNAL_OLLAMA="true"
-      EXTERNAL_OLLAMA_SET="true"
+    --with-mlx)
+      WITH_MLX="true"
       shift
       ;;
     --external-mlx)
@@ -72,18 +72,18 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   ns_ensure_env_file "${ENV_FILE}" "$ROOT_DIR"
 fi
 
-if [[ "$EXTERNAL_OLLAMA_SET" != "true" ]]; then
-  ollama_base_url="$(ns_env_get "${ENV_FILE}" OLLAMA_BASE_URL "http://ollama:11434")"
-  ollama_base_url="${ollama_base_url%/}"
-  if [[ "$ollama_base_url" != "http://ollama:11434" ]]; then
-    EXTERNAL_OLLAMA="true"
+if [[ "$EXTERNAL_VLLM_SET" != "true" ]]; then
+  vllm_base_url="$(ns_env_get "${ENV_FILE}" VLLM_BASE_URL "http://host.docker.internal:8000/v1")"
+  vllm_base_url="${vllm_base_url%/}"
+  if [[ "$vllm_base_url" != "http://vllm:8000/v1" ]]; then
+    EXTERNAL_VLLM="true"
   fi
 fi
 
 if [[ "$EXTERNAL_MLX_SET" != "true" ]]; then
-  mlx_base_url="$(ns_env_get "${ENV_FILE}" MLX_BASE_URL "http://host.docker.internal:10240/v1")"
+  mlx_base_url="$(ns_env_get "${ENV_FILE}" MLX_BASE_URL "")"
   mlx_base_url="${mlx_base_url%/}"
-  if [[ "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
+  if [[ -n "$mlx_base_url" && "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
     EXTERNAL_MLX="true"
   fi
 fi
@@ -95,9 +95,9 @@ fi
 # SYNC-CHECK(core-compose-files): keep aligned with ops-stack.sh and cutover-one-way.sh.
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
 COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.etcd.yml)
-if [[ "$EXTERNAL_OLLAMA" != "true" ]]; then
-  COMPOSE_ARGS+=(-f docker-compose.ollama.yml)
-  COMPOSE_FILES+=(docker-compose.ollama.yml)
+if [[ "$EXTERNAL_VLLM" != "true" ]]; then
+  COMPOSE_ARGS+=(-f docker-compose.vllm.yml)
+  COMPOSE_FILES+=(docker-compose.vllm.yml)
 fi
 if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" == "true" ]]; then
   ns_die "Use either --with-mlx (containerized MLX) or --external-mlx (host-native MLX), not both."

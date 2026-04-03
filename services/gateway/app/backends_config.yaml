@@ -2,11 +2,53 @@
 # This is the single source of truth for routing, admission control, and payload policies
 
 backends:
+  local_vllm:
+    class: local_vllm
+    provider: vllm
+    base_url: ${VLLM_BASE_URL}
+    description: vLLM strong chat backend
+    supported_capabilities:
+      - chat
+    concurrency_limits:
+      chat: 8
+    health:
+      liveness: /models
+      readiness: /models
+    payload_policy: {}
+
+  local_vllm_fast:
+    class: local_vllm_fast
+    provider: vllm
+    base_url: ${VLLM_FAST_BASE_URL}
+    description: vLLM fast chat backend
+    supported_capabilities:
+      - chat
+    concurrency_limits:
+      chat: 8
+    health:
+      liveness: /models
+      readiness: /models
+    payload_policy: {}
+
+  local_vllm_embeddings:
+    class: local_vllm_embeddings
+    provider: vllm
+    base_url: ${VLLM_EMBEDDINGS_BASE_URL}
+    description: vLLM embeddings backend
+    supported_capabilities:
+      - embeddings
+    concurrency_limits:
+      embeddings: 8
+    health:
+      liveness: /models
+      readiness: /models
+    payload_policy: {}
+
   local_mlx:
     class: local_mlx
     provider: mlx
     base_url: ${MLX_BASE_URL}
-    description: macOS Nexa (MLX) - local inference
+    description: Optional MLX accelerator backend
     supported_capabilities:
       - chat
       - embeddings
@@ -41,23 +83,6 @@ backends:
       images_format: url
       images_allow_base64: true
       images_max_bytes: 50000000
-
-  ollama:
-    class: ollama
-    provider: ollama
-    base_url: ${OLLAMA_BASE_URL}
-    description: localhost Ollama
-    supported_capabilities:
-      - chat
-      - embeddings
-    concurrency_limits:
-      chat: 4
-      embeddings: 4
-    health:
-      liveness: /api/version
-      readiness: /api/version
-    payload_policy:
-      images_format: null
 
   gpu_heavy:
     class: gpu_heavy
@@ -180,4 +205,8 @@ backends:
 
 # Legacy backend names map to backend classes
 legacy_mapping:
+  vllm: local_vllm
+  vllm_fast: local_vllm_fast
+  vllm_embeddings: local_vllm_embeddings
   mlx: local_mlx
+  ollama: local_vllm

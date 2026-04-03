@@ -1,0 +1,12 @@
+- name: Verify the gateway after deploy
+  ansible.builtin.command:
+    argv:
+      - ./deploy/scripts/verify-gateway.sh
+      - --env-file
+      - "{{ nexus_env_file }}"
+  args:
+    chdir: "{{ nexus_repo_dir }}"
+  changed_when: false
+  when:
+    - nexus_verify_gateway | bool
+    - "'gateway' in nexus_components"

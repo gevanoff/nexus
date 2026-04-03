@@ -4,7 +4,7 @@ This folder is for **host-managed** environment files used by the deployment scr
 
 ## Why this exists
 
-- Keep secrets **out of git** (this repo ignores `deploy/env/.env.dev` and `deploy/env/.env.prod`).
+- Keep secrets **out of git** (this repo ignores `deploy/env/.env.*`).
 - Allow different configuration per host/environment.
 
 ## How to create env files
@@ -17,10 +17,13 @@ Then create one of:
 
 - `deploy/env/.env.dev` (for `deploy/scripts/deploy.sh dev ...`)
 - `deploy/env/.env.prod` (for `deploy/scripts/deploy.sh prod ...`)
+- `deploy/env/.env.prod.ai1`, `deploy/env/.env.prod.ai2`, `deploy/env/.env.prod.ada2` when using topology-driven multi-host deploys
 
 ## Auto-create behavior
 
 If you run `deploy/scripts/deploy.sh <dev|prod> <branch>` and it selects `deploy/env/.env.<environment>` (because you did not pass `--env-file` and there is no repo-root `.env`), it will create the file automatically from the repo-root `.env.example`.
+
+If you run `deploy/scripts/deploy.sh --topology-host <host> <dev|prod> <branch>`, it materializes `deploy/env/.env.<environment>.<host>` from the tracked topology manifest before deploy.
 
 This logic is implemented in `deploy/scripts/_common.sh` (`ns_ensure_env_file`).
 

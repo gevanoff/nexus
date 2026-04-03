@@ -22,11 +22,9 @@ class RouteDecision:
 class RouterConfig:
     default_backend: Backend
 
-    # Model choices per provider family
-    ollama_strong_model: str
-    ollama_fast_model: str
-    mlx_strong_model: str
-    mlx_fast_model: str
+    # Model choices for the primary OpenAI-compatible chat tier.
+    primary_strong_model: str
+    primary_fast_model: str
 
     # Heuristic thresholds
     long_context_chars_threshold: int = 40_000
@@ -63,12 +61,12 @@ def _known_backend_name(name: str) -> Optional[str]:
 
 def _provider_default_backend(provider: str) -> str:
     registry = get_registry()
+    if provider == "vllm":
+        resolved = registry.resolve_backend_class("vllm")
+        return resolved or "local_vllm"
     if provider == "mlx":
         resolved = registry.resolve_backend_class("mlx")
         return resolved or "local_mlx"
-    if provider == "ollama":
-        resolved = registry.resolve_backend_class("ollama")
-        return resolved or "ollama"
     return provider
 
 
@@ -83,10 +81,10 @@ def _backend_prefixes(backend: str) -> list[str]:
         (resolved or "").replace("_", "-"),
         (resolved or "").replace("-", "_"),
     }
+    if provider == "vllm":
+        prefixes.update({"vllm", "local_vllm", "local-vllm", _provider_default_backend("vllm")})
     if provider == "mlx":
         prefixes.update({"mlx", "local_mlx", "local-mlx", _provider_default_backend("mlx")})
-    elif provider == "ollama":
-        prefixes.update({"ollama", _provider_default_backend("ollama")})
     return [p for p in prefixes if isinstance(p, str) and p]
 
 
@@ -105,10 +103,12 @@ def _choose_backend_by_model(model: str, default_backend: Backend) -> Backend:
     if explicit:
         return explicit
 
-    if m in {"ollama", "ollama-default"}:
-        return _provider_default_backend("ollama")
+    if m in {"vllm", "vllm-default", "local_vllm", "local-vllm"}:
+        return _provider_default_backend("vllm")
     if m in {"mlx", "mlx-default", "local_mlx", "local-mlx"}:
         return _provider_default_backend("mlx")
+    if m in {"ollama", "ollama-default"}:
+        return _provider_default_backend("vllm")
 
     return _resolved_backend_name(default_backend) or default_backend
 
@@ -122,13 +122,30 @@ def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
 
     provider = backend_provider_name(backend)
     m_key = m.lower()
-    if provider == "ollama":
-        if m_key in {"default", "ollama", "ollama-default", "auto", ""}:
-            return cfg.ollama_strong_model
-        return m
-
-    if m_key in {"default", "mlx", "mlx-default", "local_mlx", "local-mlx", "auto", ""}:
-        return cfg.mlx_strong_model
+    if provider == "vllm" and m_key in {
+        "default",
+        "vllm",
+        "vllm-default",
+        "local_vllm",
+        "local-vllm",
+        "ollama",
+        "ollama-default",
+        "auto",
+        "",
+    }:
+        return cfg.primary_strong_model
+    if provider == "mlx" and m_key in {
+        "default",
+        "mlx",
+        "mlx-default",
+        "local_mlx",
+        "local-mlx",
+        "ollama",
+        "ollama-default",
+        "auto",
+        "",
+    }:
+        return cfg.primary_strong_model
     return m
 
 
@@ -245,21 +262,17 @@ def decide_route(
         if a and a.tools is not False:
             b = _resolved_backend_name(a.backend) or a.backend
             return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:coder")
-        if provider == "ollama":
-            return RouteDecision(backend=backend, model=cfg.ollama_strong_model, reason="policy:tools->strong")
-        return RouteDecision(backend=backend, model=cfg.mlx_strong_model, reason="policy:tools->strong")
+        return RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:tools->strong")
 
     if size >= long_threshold:
         a = get_alias("long")
         if a:
             b = _resolved_backend_name(a.backend) or a.backend
             return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:long_context->alias:long")
-        mlx_backend = _provider_default_backend("mlx")
-        if cfg.mlx_strong_model:
-            return RouteDecision(backend=mlx_backend, model=cfg.mlx_strong_model, reason="policy:long_context->mlx")
-        if provider == "ollama":
-            return RouteDecision(backend=backend, model=cfg.ollama_strong_model, reason="policy:long_context->strong")
-        return RouteDecision(backend=backend, model=cfg.mlx_strong_model, reason="policy:long_context->strong")
+        primary_backend = _provider_default_backend("mlx")
+        if cfg.primary_strong_model:
+            return RouteDecision(backend=primary_backend, model=cfg.primary_strong_model, reason="policy:long_context->primary")
+        return RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:long_context->strong")
 
     hdr_req_type = (headers.get("x-request-type") or "").strip().lower()
     is_coding = False
@@ -276,15 +289,11 @@ def decide_route(
         if a:
             b = _resolved_backend_name(a.backend) or a.backend
             return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:coding->alias:coder")
-        if provider == "ollama":
-            return RouteDecision(backend=backend, model=cfg.ollama_strong_model, reason="policy:coding->strong")
-        return RouteDecision(backend=backend, model=cfg.mlx_strong_model, reason="policy:coding->strong")
+        return RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:coding->strong")
 
     a = get_alias("fast")
     if a:
         b = _resolved_backend_name(a.backend) or a.backend
         return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:fast->alias:fast")
 
-    if provider == "ollama":
-        return RouteDecision(backend=backend, model=cfg.ollama_fast_model, reason="policy:fast")
-    return RouteDecision(backend=backend, model=cfg.mlx_fast_model, reason="policy:fast")
+    return RouteDecision(backend=backend, model=cfg.primary_fast_model, reason="policy:fast")

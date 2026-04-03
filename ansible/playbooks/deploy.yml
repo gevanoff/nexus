@@ -1,0 +1,17 @@
+- name: Deploy Nexus topology host profiles
+  hosts: nexus
+  gather_facts: false
+  serial: "{{ nexus_deploy_serial }}"
+  pre_tasks:
+    - name: Bootstrap Python for Ansible modules
+      ansible.builtin.include_role:
+        name: nexus_bootstrap_python
+
+    - name: Gather facts after Python bootstrap
+      ansible.builtin.setup:
+  roles:
+    - role: nexus_repo
+    - role: nexus_topology_env
+    - role: nexus_preflight
+    - role: nexus_deploy
+    - role: nexus_verify

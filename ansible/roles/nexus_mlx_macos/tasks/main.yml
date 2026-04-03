@@ -1,0 +1,14 @@
+- name: Configure the macOS MLX firewall allowlist when enabled
+  ansible.builtin.shell: |
+    set -euo pipefail
+    /bin/bash ./deploy/scripts/allowlist-mlx-macos.sh --port {{ nexus_mlx_port | quote }}{% for source in nexus_mlx_pf_allowlist_sources %} --allow {{ source | quote }}{% endfor %}
+  args:
+    chdir: "{{ nexus_repo_dir }}"
+    executable: /bin/bash
+  become: true
+  changed_when: true
+  when:
+    - nexus_manage_mlx_host_prep | bool
+    - ansible_system == "Darwin"
+    - "'mlx' in nexus_native_services"
+    - nexus_mlx_pf_allowlist_enabled | bool

@@ -1,0 +1,35 @@
+- name: Ensure nexus_repo_url is set when checkout management is enabled
+  ansible.builtin.assert:
+    that:
+      - nexus_repo_url | length > 0
+    fail_msg: "Set nexus_repo_url when nexus_manage_checkout=true."
+  when: nexus_manage_checkout | bool
+
+- name: Ensure the parent directory for the Nexus checkout exists
+  ansible.builtin.file:
+    path: "{{ nexus_repo_dir | dirname }}"
+    state: directory
+    mode: "0755"
+  when: nexus_manage_checkout | bool
+
+- name: Manage the Nexus checkout when checkout management is enabled
+  ansible.builtin.git:
+    repo: "{{ nexus_repo_url }}"
+    dest: "{{ nexus_repo_dir }}"
+    version: "{{ nexus_branch }}"
+    update: true
+    force: false
+  when: nexus_manage_checkout | bool
+
+- name: Check for an existing Nexus checkout
+  ansible.builtin.stat:
+    path: "{{ nexus_repo_dir }}/.git"
+  register: nexus_repo_git_dir
+
+- name: Assert that the Nexus checkout exists
+  ansible.builtin.assert:
+    that:
+      - nexus_repo_git_dir.stat.exists
+    fail_msg: >-
+      Nexus repo not found at {{ nexus_repo_dir }}.
+      Provision the checkout manually or set nexus_manage_checkout=true with nexus_repo_url.

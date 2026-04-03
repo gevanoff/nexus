@@ -1,0 +1,9 @@
+services:
+  vllm:
+    gpus: all
+
+  vllm-fast:
+    gpus: all
+
+  vllm-embeddings:
+    gpus: all

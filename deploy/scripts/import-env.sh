@@ -75,7 +75,7 @@ find_source_env() {
   local candidates=()
   candidates+=("/var/lib/gateway/app/.env")
 
-  local services=(gateway nexus ollama mlx images tts etcd observability)
+  local services=(gateway nexus vllm mlx images tts etcd observability)
   local svc
   for svc in "${services[@]}"; do
     candidates+=("/etc/${svc}/.env")
