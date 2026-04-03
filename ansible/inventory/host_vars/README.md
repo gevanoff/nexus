@@ -4,11 +4,11 @@ Use this directory for host-specific Ansible overrides that should not live in t
 
 Typical examples:
 
-- `ansible/host_vars/ai2.yml`
-- `ansible/host_vars/ai1.yml`
-- `ansible/host_vars/ada2.yml`
+- `ansible/inventory/host_vars/ai2.yml`
+- `ansible/inventory/host_vars/ai1.yml`
+- `ansible/inventory/host_vars/ada2.yml`
 
-Example `ansible/host_vars/ai2.yml`:
+Example `ansible/inventory/host_vars/ai2.yml`:
 
 ```yaml
 nexus_repo_dir: /Users/ai/nexus

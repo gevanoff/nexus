@@ -13,8 +13,8 @@ Design boundaries:
 
 - `ansible.cfg`: local Ansible defaults
 - `inventory/topology_inventory.py`: dynamic inventory generated from `deploy/topology/production.json`
-- `group_vars/all.yml`: common Nexus deployment defaults
-- `host_vars/README.md`: host-specific override guidance
+- `inventory/group_vars/all.yml`: common Nexus deployment defaults
+- `inventory/host_vars/README.md`: host-specific override guidance
 - `playbooks/bootstrap.yml`: bootstrap Python, install host prerequisites, prepare Docker, and verify repo presence
 - `playbooks/deploy.yml`: render topology env, run preflight, deploy, and verify
 - `playbooks/site.yml`: import bootstrap then deploy
@@ -50,7 +50,7 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/topolog
 
 ## Important variables
 
-Defaults live in `group_vars/all.yml`.
+Defaults live in `inventory/group_vars/all.yml`.
 
 Common overrides:
 
@@ -66,7 +66,7 @@ Common overrides:
 - `nexus_verify_gateway`
 - `nexus_extra_deploy_args`
 
-Use `host_vars/<host>.yml` for host-specific overrides such as a different repo path on `ai2`.
+Use `inventory/host_vars/<host>.yml` for host-specific overrides such as a different repo path on `ai2`.
 
 ## Notes
 
