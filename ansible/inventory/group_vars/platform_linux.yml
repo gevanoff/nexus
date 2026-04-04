@@ -1,0 +1,4 @@
+nexus_host_platform: linux
+nexus_user_home: "{{ ansible_user_dir | default('/home/' ~ nexus_runtime_user) }}"
+nexus_workspace_root: "{{ nexus_user_home }}/ai"
+nexus_repo_dir: "{{ nexus_workspace_root }}/nexus"

@@ -26,12 +26,15 @@ Usage: deploy/scripts/remote-deploy.sh [--yes] [--component NAME] [--components 
                                        <environment> <branch> [host]
 
 Suggested order (typical):
-  1) On the remote host, ensure /opt/nexus exists and is writable by the deploy user
+  1) On the remote host, ensure the standard repo path exists and is writable by the deploy user
      - Standard deploy user: ai
+     - Standard repo path:
+       - macOS:  /Users/ai/ai/nexus
+       - Linux:  /home/ai/ai/nexus
      - Standard ownership:
        - macOS:  ai:staff
        - Linux:  ai:ai
-  2) On the remote host, clone Nexus into /opt/nexus
+  2) On the remote host, clone Nexus into the platform-specific standard repo path
   3) On the remote host: ./deploy/scripts/install-host-deps.sh
   4) On the remote host: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
   5) On the remote host: ./deploy/scripts/preflight-check.sh --mode deploy
@@ -53,7 +56,7 @@ Options:
   --topology-file PATH
           Forward an explicit topology file path to deploy.sh on the remote host
   --repo-dir PATH
-          Override the remote Nexus checkout path (default: topology repo_dir or /opt/nexus)
+          Override the remote Nexus checkout path (default: topology repo_dir or fallback /opt/nexus)
 EOF
 }
 

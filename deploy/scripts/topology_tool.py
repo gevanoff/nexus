@@ -76,6 +76,26 @@ def _validate_repo_dir(raw: Any, *, label: str) -> str:
     return raw.strip()
 
 
+def _validate_platform(raw: Any, *, label: str) -> str:
+    if raw is None:
+        return ""
+    if not isinstance(raw, str) or not raw.strip():
+        die(f"{label} must be a non-empty string when set")
+    return raw.strip().lower()
+
+
+def _validate_repo_dir_map(raw: Any, *, label: str) -> dict[str, str]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        die(f"{label} must be an object")
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        platform = _validate_platform(key, label=f"{label}.<key>")
+        out[platform] = _validate_repo_dir(value, label=f"{label}.{key}")
+    return out
+
+
 def load_host(topology_path: Path, host_name: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     payload = _read_json(topology_path)
     defaults = payload.get("defaults") or {}
@@ -105,10 +125,22 @@ def merged_env(defaults: dict[str, Any], host: dict[str, Any]) -> dict[str, str]
     return env
 
 
+def merged_platform(defaults: dict[str, Any], host: dict[str, Any]) -> str:
+    host_platform = _validate_platform(host.get("platform"), label="host.platform")
+    if host_platform:
+        return host_platform
+    default_platform = _validate_platform(defaults.get("platform"), label="defaults.platform")
+    return default_platform
+
+
 def merged_repo_dir(defaults: dict[str, Any], host: dict[str, Any]) -> str:
     host_repo_dir = _validate_repo_dir(host.get("repo_dir"), label="host.repo_dir")
     if host_repo_dir:
         return host_repo_dir
+    platform = merged_platform(defaults, host)
+    repo_dir_by_platform = _validate_repo_dir_map(defaults.get("repo_dir_by_platform"), label="defaults.repo_dir_by_platform")
+    if platform and platform in repo_dir_by_platform:
+        return repo_dir_by_platform[platform]
     default_repo_dir = _validate_repo_dir(defaults.get("repo_dir"), label="defaults.repo_dir")
     if default_repo_dir:
         return default_repo_dir

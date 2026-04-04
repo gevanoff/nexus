@@ -97,11 +97,13 @@ Remote host deploy:
 
 1. Standardize the remote host layout:
 	 - Deploy user: `ai`
-	 - Repo location: `/opt/nexus`
+	 - Repo location:
+		 - macOS: `/Users/ai/ai/nexus`
+		 - Linux: `/home/ai/ai/nexus`
 	 - Ownership:
 		 - macOS: `ai:staff`
 		 - Linux: `ai:ai`
-2. Clone this repo to `/opt/nexus` on the remote host (as the `ai` user)
+2. Clone this repo to the platform-specific repo path on the remote host (as the `ai` user)
 3. Run `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>` from your local machine
 4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <ai1|ai2|ada2> <dev|prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
 

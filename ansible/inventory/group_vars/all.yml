@@ -1,13 +1,11 @@
 nexus_environment: prod
 nexus_branch: main
-nexus_repo_dir: /opt/nexus
 nexus_repo_url: ""
 nexus_manage_checkout: false
 nexus_manage_host_prereqs: true
 nexus_manage_docker_runtime: true
 nexus_manage_mlx_host_prep: true
 nexus_runtime_user: "{{ ansible_user | default('ai') }}"
-nexus_user_home: "{{ ansible_user_dir | default('/Users/' ~ nexus_runtime_user) }}"
 nexus_verify_gateway: true
 nexus_deploy_serial: 1
 nexus_extra_deploy_args: []

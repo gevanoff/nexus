@@ -51,7 +51,17 @@ def _merged_env(defaults: dict[str, Any], host: dict[str, Any]) -> dict[str, Any
     return out
 
 
-def _merged_repo_dir(defaults: dict[str, Any], host: dict[str, Any]) -> str:
+def _merged_platform(defaults: dict[str, Any], host: dict[str, Any]) -> str:
+    host_platform = host.get("platform")
+    if isinstance(host_platform, str) and host_platform.strip():
+        return host_platform.strip().lower()
+    default_platform = defaults.get("platform")
+    if isinstance(default_platform, str) and default_platform.strip():
+        return default_platform.strip().lower()
+    return ""
+
+
+def _explicit_repo_dir(defaults: dict[str, Any], host: dict[str, Any]) -> str:
     host_repo_dir = host.get("repo_dir")
     if isinstance(host_repo_dir, str) and host_repo_dir.strip():
         return host_repo_dir.strip()
@@ -80,7 +90,8 @@ def _build_inventory(topology_file: Path, payload: dict[str, Any]) -> dict[str, 
         components = [item for item in raw_host.get("components", []) if isinstance(item, str) and item.strip()]
         native_services = [item for item in raw_host.get("native_services", []) if isinstance(item, str) and item.strip()]
         merged_env = _merged_env(defaults, raw_host)
-        repo_dir = _merged_repo_dir(defaults, raw_host)
+        platform = _merged_platform(defaults, raw_host)
+        explicit_repo_dir = _explicit_repo_dir(defaults, raw_host)
 
         hostvars: dict[str, Any] = {
             "ansible_host": ssh_host,
@@ -93,8 +104,10 @@ def _build_inventory(topology_file: Path, payload: dict[str, Any]) -> dict[str, 
         }
         if ssh_user:
             hostvars["ansible_user"] = ssh_user
-        if repo_dir:
-            hostvars["nexus_repo_dir"] = repo_dir
+        if platform:
+            hostvars["nexus_host_platform"] = platform
+        if explicit_repo_dir:
+            hostvars["nexus_repo_dir"] = explicit_repo_dir
 
         inventory["_meta"]["hostvars"][host_name] = hostvars
         inventory["nexus"]["hosts"].append(host_name)
@@ -110,6 +123,11 @@ def _build_inventory(topology_file: Path, payload: dict[str, Any]) -> dict[str, 
 
         for service in native_services:
             group_name = _safe_group_name("native", service)
+            inventory.setdefault(group_name, {"hosts": []})
+            inventory[group_name]["hosts"].append(host_name)
+
+        if platform:
+            group_name = _safe_group_name("platform", platform)
             inventory.setdefault(group_name, {"hosts": []})
             inventory[group_name]["hosts"].append(host_name)
 

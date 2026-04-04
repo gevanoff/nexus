@@ -3,7 +3,10 @@
   "name": "nexus-production",
   "description": "Canonical multi-host production placement for ai1, ai2, and ada2.",
   "defaults": {
-    "repo_dir": "/opt/nexus",
+    "repo_dir_by_platform": {
+      "macos": "/Users/ai/ai/nexus",
+      "linux": "/home/ai/ai/nexus"
+    },
     "env": {
       "VLLM_MODEL_STRONG": "Qwen/Qwen2.5-7B-Instruct",
       "VLLM_MODEL_FAST": "Qwen/Qwen2.5-3B-Instruct",
@@ -59,6 +62,7 @@
   "hosts": {
     "ai1": {
       "description": "Fast inference, embeddings, speech, and media ingress.",
+      "platform": "linux",
       "ssh_target": "ai@ai1",
       "components": [
         "vllm",
@@ -74,6 +78,7 @@
     },
     "ai2": {
       "description": "Gateway and control plane, backed by host-native MLX reasoning.",
+      "platform": "macos",
       "ssh_target": "ai@ai2",
       "components": [
         "gateway",
@@ -91,6 +96,7 @@
     },
     "ada2": {
       "description": "Heavy image and video generation services.",
+      "platform": "linux",
       "ssh_target": "ai@ada2",
       "components": [
         "images",

@@ -8,6 +8,7 @@ Use topology manifests for:
 - which host-specific env overrides should be materialized
 - which host is expected to run native services outside Compose
 - which SSH target and checkout path are canonical for a host profile
+- which host platform groups should drive per-hosttype defaults
 
 Do not treat etcd as the deployment plan. etcd is the live runtime registry:
 
