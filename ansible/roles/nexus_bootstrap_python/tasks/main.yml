@@ -1,3 +1,9 @@
+- name: Probe for an existing Python interpreter
+  ansible.builtin.raw: "command -v python3 || command -v python || true"
+  register: nexus_bootstrap_python_probe
+  changed_when: false
+  check_mode: false
+
 - name: Ensure a Python interpreter is available for Ansible modules
   ansible.builtin.raw: |
     set -e
@@ -32,13 +38,29 @@
     exit 1
   become: true
   register: nexus_bootstrap_python_raw
-  changed_when: false
+  changed_when: true
+  when:
+    - (nexus_bootstrap_python_probe.stdout | trim) == ""
+    - not ansible_check_mode
+
+- name: Fail fast in check mode when Python is missing
+  ansible.builtin.fail:
+    msg: >-
+      No Python interpreter was detected on {{ inventory_hostname }}.
+      Run the bootstrap playbook once without --check so the host can be prepared for Ansible modules.
+  when:
+    - (nexus_bootstrap_python_probe.stdout | trim) == ""
+    - ansible_check_mode
 
 - name: Discover the Python interpreter path
   ansible.builtin.raw: "command -v python3 || command -v python"
   register: nexus_bootstrap_python_path
   changed_when: false
+  check_mode: false
 
 - name: Set ansible_python_interpreter for this host
   ansible.builtin.set_fact:
     ansible_python_interpreter: "{{ nexus_bootstrap_python_path.stdout_lines[0] | trim }}"
+  when:
+    - nexus_bootstrap_python_path.stdout_lines is defined
+    - nexus_bootstrap_python_path.stdout_lines | length > 0
