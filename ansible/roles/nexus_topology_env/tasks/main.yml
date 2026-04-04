@@ -1,6 +1,7 @@
 - name: Materialize the topology-derived env file
   ansible.builtin.command:
     argv:
+      - /bin/bash
       - ./deploy/scripts/render-topology-env.sh
       - --topology-file
       - "{{ nexus_topology_file }}"

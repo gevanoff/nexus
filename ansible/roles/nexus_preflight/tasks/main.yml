@@ -1,6 +1,7 @@
 - name: Run Nexus deploy preflight checks
   ansible.builtin.command:
     argv:
+      - /bin/bash
       - ./deploy/scripts/preflight-check.sh
       - --mode
       - deploy

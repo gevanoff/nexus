@@ -1,6 +1,7 @@
 - name: Verify the gateway after deploy
   ansible.builtin.command:
     argv:
+      - /bin/bash
       - ./deploy/scripts/verify-gateway.sh
       - --env-file
       - "{{ nexus_env_file }}"
