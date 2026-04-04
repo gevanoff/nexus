@@ -64,6 +64,7 @@ Common overrides:
 - `nexus_sync_existing_checkout`
 - `nexus_manage_host_prereqs`
 - `nexus_manage_docker_runtime`
+- `nexus_topology_file`
 - `nexus_colima_launchd_enabled`
 - `nexus_mlx_pf_allowlist_enabled`
 - `nexus_verify_gateway`

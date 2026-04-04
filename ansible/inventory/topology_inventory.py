@@ -78,7 +78,7 @@ def _build_inventory(topology_file: Path, payload: dict[str, Any]) -> dict[str, 
     inventory: dict[str, Any] = {
         "_meta": {"hostvars": {}},
         "all": {"children": ["nexus"]},
-        "nexus": {"hosts": [], "vars": {"nexus_topology_file": str(topology_file)}},
+        "nexus": {"hosts": []},
     }
 
     for host_name, raw_host in sorted(hosts.items()):

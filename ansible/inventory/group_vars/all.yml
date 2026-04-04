@@ -10,7 +10,7 @@ nexus_runtime_user: "{{ ansible_user | default('ai') }}"
 nexus_verify_gateway: true
 nexus_deploy_serial: 1
 nexus_extra_deploy_args: []
-nexus_topology_file: "{{ lookup('env', 'NEXUS_TOPOLOGY_FILE') | default(playbook_dir ~ '/../../deploy/topology/production.json', true) }}"
+nexus_topology_file: "{{ nexus_repo_dir }}/deploy/topology/production.json"
 nexus_env_file: "{{ nexus_repo_dir }}/deploy/env/.env.{{ nexus_environment }}.{{ nexus_topology_host }}"
 nexus_linux_common_packages:
   - git
