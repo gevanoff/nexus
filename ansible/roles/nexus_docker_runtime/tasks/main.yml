@@ -1,3 +1,52 @@
+- name: Probe for an existing Docker CLI on Linux
+  ansible.builtin.raw: "command -v docker || true"
+  register: nexus_linux_docker_cli_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - ansible_system == "Linux"
+
+- name: Probe for Docker Compose availability on Linux
+  ansible.builtin.raw: |
+    if docker compose version >/dev/null 2>&1 || docker-compose version >/dev/null 2>&1; then
+      echo present
+    fi
+  register: nexus_linux_docker_compose_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - ansible_system == "Linux"
+
+- name: Probe for a Docker service definition on Linux
+  ansible.builtin.raw: |
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files docker.service >/dev/null 2>&1; then
+      echo present
+      exit 0
+    fi
+    if [ -f /etc/init.d/docker ]; then
+      echo present
+    fi
+  register: nexus_linux_docker_service_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - ansible_system == "Linux"
+
+- name: Probe for the docker group on Linux
+  ansible.builtin.raw: |
+    if command -v getent >/dev/null 2>&1 && getent group docker >/dev/null 2>&1; then
+      echo present
+    fi
+  register: nexus_linux_docker_group_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - ansible_system == "Linux"
+
 - name: Install Docker engine packages on Linux
   ansible.builtin.package:
     name: "{{ nexus_linux_docker_engine_packages.get(ansible_os_family, nexus_linux_docker_engine_packages.get('Debian', [])) }}"
@@ -6,6 +55,7 @@
   when:
     - nexus_manage_docker_runtime | bool
     - ansible_system == "Linux"
+    - (nexus_linux_docker_cli_probe.stdout | trim) == ""
 
 - name: Ensure Docker Compose is available on Linux
   ansible.builtin.shell: |
@@ -40,6 +90,7 @@
   when:
     - nexus_manage_docker_runtime | bool
     - ansible_system == "Linux"
+    - (nexus_linux_docker_compose_probe.stdout | trim) == ""
 
 - name: Ensure the Docker service is enabled and started
   ansible.builtin.service:
@@ -50,6 +101,7 @@
   when:
     - nexus_manage_docker_runtime | bool
     - ansible_system == "Linux"
+    - not ansible_check_mode or (nexus_linux_docker_service_probe.stdout | trim) != ""
 
 - name: Ensure the runtime user is in the docker group
   ansible.builtin.user:
@@ -60,6 +112,7 @@
   when:
     - nexus_manage_docker_runtime | bool
     - ansible_system == "Linux"
+    - not ansible_check_mode or (nexus_linux_docker_group_probe.stdout | trim) != ""
 
 - name: Assert Homebrew is available for macOS Docker setup
   ansible.builtin.assert:
