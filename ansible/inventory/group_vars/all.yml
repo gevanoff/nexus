@@ -2,6 +2,7 @@ nexus_environment: prod
 nexus_branch: main
 nexus_repo_url: ""
 nexus_manage_checkout: false
+nexus_sync_existing_checkout: true
 nexus_manage_host_prereqs: true
 nexus_manage_docker_runtime: true
 nexus_manage_mlx_host_prep: true

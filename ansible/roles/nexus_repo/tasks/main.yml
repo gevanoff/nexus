@@ -33,3 +33,29 @@
     fail_msg: >-
       Nexus repo not found at {{ nexus_repo_dir }}.
       Provision the checkout manually or set nexus_manage_checkout=true with nexus_repo_url.
+
+- name: Synchronize the existing Nexus checkout to the requested branch
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if ! git diff --quiet --ignore-submodules -- || ! git diff --cached --quiet --ignore-submodules --; then
+      echo "Refusing to update {{ nexus_repo_dir }} because tracked local changes are present." >&2
+      exit 1
+    fi
+    git fetch --prune origin
+    current_branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [[ "$current_branch" != "{{ nexus_branch }}" ]]; then
+      if git show-ref --verify --quiet "refs/heads/{{ nexus_branch }}"; then
+        git checkout "{{ nexus_branch }}"
+      else
+        git checkout -b "{{ nexus_branch }}" --track "origin/{{ nexus_branch }}"
+      fi
+    fi
+    git pull --ff-only origin "{{ nexus_branch }}"
+  args:
+    chdir: "{{ nexus_repo_dir }}"
+    executable: /bin/bash
+  when:
+    - nexus_sync_existing_checkout | bool
+    - not nexus_manage_checkout | bool
+    - nexus_repo_git_dir.stat.exists
+    - not ansible_check_mode
