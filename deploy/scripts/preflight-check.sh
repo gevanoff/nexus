@@ -23,6 +23,99 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 mode="default"
 env_file_arg=""
+SELECTED_COMPONENTS=()
+COMPONENTS_SET="false"
+TOPOLOGY_HOST=""
+TOPOLOGY_FILE=""
+
+is_valid_component() {
+  case "$1" in
+    gateway|vllm|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+append_component_unique() {
+  local component="$1"
+  local existing
+  for existing in "${SELECTED_COMPONENTS[@]:-}"; do
+    if [[ "$existing" == "$component" ]]; then
+      return 0
+    fi
+  done
+  SELECTED_COMPONENTS+=("$component")
+}
+
+add_component_selection() {
+  local raw="$1"
+  local item normalized
+  IFS=',' read -r -a items <<< "$raw"
+  for item in "${items[@]}"; do
+    normalized="$(echo "$item" | tr -d '[:space:]')"
+    [[ -n "$normalized" ]] || continue
+    if ! is_valid_component "$normalized"; then
+      fail "Unknown component: $normalized"
+      exit 2
+    fi
+    COMPONENTS_SET="true"
+    case "$normalized" in
+      core)
+        append_component_unique gateway
+        append_component_unique vllm
+        append_component_unique etcd
+        ;;
+      all)
+        append_component_unique gateway
+        append_component_unique vllm
+        append_component_unique mlx
+        append_component_unique etcd
+        append_component_unique images
+        append_component_unique invokeai
+        append_component_unique sdxl-turbo
+        append_component_unique lighton-ocr
+        append_component_unique personaplex
+        append_component_unique followyourcanvas
+        append_component_unique skyreels-v2
+        append_component_unique heartmula
+        append_component_unique mediamtx
+        append_component_unique tts
+        append_component_unique luxtts
+        append_component_unique qwen3-tts
+        append_component_unique telegram-bot
+        append_component_unique nginx
+        ;;
+      *)
+        append_component_unique "$normalized"
+        ;;
+    esac
+  done
+}
+
+component_selected() {
+  local wanted="$1"
+  local selected
+  if [[ "$COMPONENTS_SET" != "true" ]]; then
+    return 0
+  fi
+  for selected in "${SELECTED_COMPONENTS[@]:-}"; do
+    if [[ "$selected" == "$wanted" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+resolve_topology_file() {
+  if [[ -n "${TOPOLOGY_FILE:-}" ]]; then
+    echo "$TOPOLOGY_FILE"
+    return 0
+  fi
+  echo "$ROOT_DIR/deploy/topology/production.json"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,8 +127,24 @@ while [[ $# -gt 0 ]]; do
       env_file_arg="${2:-}"
       shift 2 || true
       ;;
+    --component)
+      add_component_selection "${2:-}"
+      shift 2 || true
+      ;;
+    --components)
+      add_component_selection "${2:-}"
+      shift 2 || true
+      ;;
+    --topology-host)
+      TOPOLOGY_HOST="${2:-}"
+      shift 2 || true
+      ;;
+    --topology-file)
+      TOPOLOGY_FILE="${2:-}"
+      shift 2 || true
+      ;;
     -h|--help)
-      echo "Usage: deploy/scripts/preflight-check.sh [--mode <default|quickstart|deploy>] [--env-file PATH]"
+      echo "Usage: deploy/scripts/preflight-check.sh [--mode <default|quickstart|deploy>] [--env-file PATH] [--component NAME|--components LIST] [--topology-host NAME] [--topology-file PATH]"
       exit 0
       ;;
     *)
@@ -43,6 +152,21 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "${TOPOLOGY_HOST:-}" && "$COMPONENTS_SET" != "true" ]]; then
+  topology_file="$(resolve_topology_file)"
+  topology_python="$(ns_pick_python || true)"
+  [[ -n "${topology_python:-}" ]] || fail "python3/python is required to consume topology manifests."
+  if [[ ! -f "$topology_file" ]]; then
+    fail "Topology file not found: $topology_file"
+    exit 1
+  fi
+  while IFS= read -r topology_component; do
+    [[ -n "${topology_component:-}" ]] || continue
+    append_component_unique "$topology_component"
+  done < <("$topology_python" "$ROOT_DIR/deploy/scripts/topology_tool.py" components --topology-file "$topology_file" --host "$TOPOLOGY_HOST")
+  COMPONENTS_SET="true"
+fi
 
 failures=0
 warnings=0
@@ -351,18 +475,82 @@ check_port_optional() {
   fi
 }
 
-# Core services (started by default)
-check_port_required GATEWAY_PORT 8800 "Gateway API"
-check_port_required OBSERVABILITY_PORT 8801 "Gateway observability"
-check_port_required VLLM_PORT 8000 "vLLM strong"
-check_port_required VLLM_FAST_PORT 8001 "vLLM fast"
-check_port_required VLLM_EMBEDDINGS_PORT 8002 "vLLM embeddings"
-check_port_required ETCD_PORT 2379 "etcd"
+# Port checks default to the broad stack when no components are specified.
+if component_selected gateway; then
+  check_port_required GATEWAY_PORT 8800 "Gateway API"
+  check_port_required OBSERVABILITY_PORT 8801 "Gateway observability"
+fi
 
-# Optional services (separate compose files)
-check_port_optional MLX_PORT 10240 "MLX"
-check_port_optional IMAGES_PORT 7860 "Images service"
-check_port_optional TTS_PORT 9940 "TTS service"
+if component_selected vllm; then
+  check_port_required VLLM_PORT 8000 "vLLM strong"
+  check_port_required VLLM_FAST_PORT 8001 "vLLM fast"
+  check_port_required VLLM_EMBEDDINGS_PORT 8002 "vLLM embeddings"
+fi
+
+if component_selected etcd; then
+  check_port_required ETCD_PORT 2379 "etcd"
+fi
+
+if component_selected mlx; then
+  check_port_required MLX_PORT 10240 "MLX"
+fi
+
+if component_selected images; then
+  check_port_required IMAGES_PORT 7860 "Images service"
+fi
+
+if component_selected invokeai; then
+  check_port_required INVOKEAI_PORT 9090 "InvokeAI"
+fi
+
+if component_selected sdxl-turbo; then
+  check_port_required SDXL_TURBO_PORT 9050 "SDXL Turbo"
+fi
+
+if component_selected lighton-ocr; then
+  check_port_required LIGHTON_OCR_PORT 9155 "LightOn OCR"
+fi
+
+if component_selected personaplex; then
+  check_port_required PERSONAPLEX_PORT 9160 "Personaplex"
+fi
+
+if component_selected followyourcanvas; then
+  check_port_required FYC_PORT 9165 "FollowYourCanvas"
+fi
+
+if component_selected skyreels-v2; then
+  check_port_required SKYREELS_PORT 9180 "SkyReels V2"
+fi
+
+if component_selected heartmula; then
+  check_port_required HEARTMULA_PORT 9185 "HeartMuLa"
+fi
+
+if component_selected mediamtx; then
+  check_port_required MEDIAMTX_RTSP_PORT 8554 "MediaMTX RTSP"
+  check_port_required MEDIAMTX_RTMP_PORT 1935 "MediaMTX RTMP"
+  check_port_required MEDIAMTX_HLS_PORT 8888 "MediaMTX HLS"
+  check_port_required MEDIAMTX_WEBRTC_PORT 8889 "MediaMTX WebRTC"
+  check_port_required MEDIAMTX_API_PORT 9997 "MediaMTX API"
+fi
+
+if component_selected tts; then
+  check_port_required TTS_PORT 9940 "TTS service"
+fi
+
+if component_selected luxtts; then
+  check_port_required LUXTTS_PORT 9170 "LuxTTS"
+fi
+
+if component_selected qwen3-tts; then
+  check_port_required QWEN3_TTS_PORT 9175 "Qwen3 TTS"
+fi
+
+if component_selected nginx; then
+  check_port_required PROXY_HTTP_PORT 8080 "Nginx HTTP"
+  check_port_required PROXY_HTTPS_PORT 443 "Nginx HTTPS"
+fi
 
 echo
 echo "Next steps (suggested order)"

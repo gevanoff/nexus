@@ -384,7 +384,13 @@ fi
 
 ns_print_header "Running preflight checks"
 if [[ -x "$ROOT_DIR/deploy/scripts/preflight-check.sh" ]]; then
-  "$ROOT_DIR/deploy/scripts/preflight-check.sh" --mode deploy --env-file "$env_file"
+  preflight_args=(--mode deploy --env-file "$env_file")
+  if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+    preflight_args+=(--topology-host "$TOPOLOGY_HOST" --topology-file "$topology_file")
+  elif [[ ${#SELECTED_COMPONENTS[@]} -gt 0 ]]; then
+    preflight_args+=(--components "$(IFS=,; echo "${SELECTED_COMPONENTS[*]}")")
+  fi
+  "$ROOT_DIR/deploy/scripts/preflight-check.sh" "${preflight_args[@]}"
 else
   ns_print_warn "Preflight checker not executable: deploy/scripts/preflight-check.sh"
 fi
