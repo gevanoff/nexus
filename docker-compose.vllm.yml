@@ -3,6 +3,7 @@ services:
   vllm:
     image: vllm/vllm-openai:latest
     container_name: nexus-vllm
+    gpus: all
     ports:
       - "${VLLM_PORT:-8000}:8000"
     environment:
@@ -34,6 +35,7 @@ services:
   vllm-fast:
     image: vllm/vllm-openai:latest
     container_name: nexus-vllm-fast
+    gpus: all
     ports:
       - "${VLLM_FAST_PORT:-8001}:8000"
     environment:
@@ -65,6 +67,7 @@ services:
   vllm-embeddings:
     image: vllm/vllm-openai:latest
     container_name: nexus-vllm-embeddings
+    gpus: all
     ports:
       - "${VLLM_EMBEDDINGS_PORT:-8002}:8000"
     environment:
