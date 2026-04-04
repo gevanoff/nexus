@@ -1,0 +1,3 @@
+- name: Fail because nexus_docker_runtime does not support this platform
+  ansible.builtin.fail:
+    msg: "nexus_docker_runtime only supports Linux and macOS hosts (got {{ ansible_system }})."

@@ -1,0 +1,3 @@
+- name: Fail because nexus_host_prereqs does not support this platform
+  ansible.builtin.fail:
+    msg: "nexus_host_prereqs only supports Linux and macOS hosts (got {{ ansible_system }})."

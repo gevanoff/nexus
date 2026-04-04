@@ -1,0 +1,6 @@
+- name: Install common Linux packages for Nexus hosts
+  ansible.builtin.package:
+    name: "{{ nexus_linux_common_packages }}"
+    state: present
+  become: true
+  when: nexus_manage_host_prereqs | bool

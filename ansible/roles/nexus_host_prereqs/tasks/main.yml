@@ -1,67 +1,11 @@
-- name: Install common Linux packages for Nexus hosts
-  ansible.builtin.package:
-    name: "{{ nexus_linux_common_packages }}"
-    state: present
-  become: true
-  when:
-    - nexus_manage_host_prereqs | bool
-    - ansible_system == "Linux"
+- name: Run Linux host prerequisite tasks
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_system == "Linux"
 
-- name: Locate Homebrew on macOS hosts
-  ansible.builtin.shell: |
-    set -euo pipefail
-    if command -v brew >/dev/null 2>&1; then
-      command -v brew
-      exit 0
-    fi
-    for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-      if [[ -x "$candidate" ]]; then
-        printf '%s\n' "$candidate"
-        exit 0
-      fi
-    done
-    exit 1
-  args:
-    executable: /bin/bash
-  register: nexus_brew_path
-  changed_when: false
-  check_mode: false
-  when:
-    - nexus_manage_host_prereqs | bool
-    - ansible_system == "Darwin"
+- name: Run macOS host prerequisite tasks
+  ansible.builtin.include_tasks: macos.yml
+  when: ansible_system == "Darwin"
 
-- name: Cache the Homebrew executable path
-  ansible.builtin.set_fact:
-    nexus_brew_bin: "{{ nexus_brew_path.stdout | trim }}"
-  when:
-    - nexus_manage_host_prereqs | bool
-    - ansible_system == "Darwin"
-    - (nexus_brew_path.stdout | trim) | length > 0
-
-- name: Check installed Homebrew packages
-  ansible.builtin.command:
-    argv:
-      - "{{ nexus_brew_bin }}"
-      - list
-      - --versions
-      - "{{ item }}"
-  register: nexus_macos_common_package_checks
-  changed_when: false
-  failed_when: false
-  check_mode: false
-  loop: "{{ nexus_macos_common_packages }}"
-  when:
-    - nexus_manage_host_prereqs | bool
-    - ansible_system == "Darwin"
-
-- name: Install missing Homebrew packages
-  ansible.builtin.command:
-    argv:
-      - "{{ nexus_brew_bin }}"
-      - install
-      - "{{ item.item }}"
-  loop: "{{ nexus_macos_common_package_checks.results }}"
-  when:
-    - nexus_manage_host_prereqs | bool
-    - ansible_system == "Darwin"
-    - item.rc != 0
+- name: Fail for unsupported host prerequisite platforms
+  ansible.builtin.include_tasks: unsupported.yml
+  when: ansible_system not in ["Linux", "Darwin"]
