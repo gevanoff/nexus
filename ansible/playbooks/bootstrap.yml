@@ -1,7 +1,7 @@
 - name: Bootstrap Nexus hosts for scripted deploy orchestration
   hosts: nexus
   gather_facts: false
-  serial: "{{ nexus_deploy_serial }}"
+  serial: "{{ nexus_deploy_serial | default(1) }}"
   pre_tasks:
     - name: Bootstrap Python for Ansible modules
       ansible.builtin.include_role:
