@@ -403,4 +403,9 @@ done
 ns_print_header "Selected components"
 printf 'Compose files: %s\n' "${compose_files[*]}"
 
-ns_compose --env-file "$env_file" "${compose_args[@]}" up -d --build
+up_args=(up -d --build)
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  up_args+=(--remove-orphans)
+fi
+
+ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}"
