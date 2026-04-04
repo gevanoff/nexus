@@ -25,6 +25,7 @@
     executable: /bin/bash
   register: nexus_brew_path
   changed_when: false
+  check_mode: false
   when:
     - nexus_manage_host_prereqs | bool
     - ansible_system == "Darwin"
@@ -35,6 +36,7 @@
   when:
     - nexus_manage_host_prereqs | bool
     - ansible_system == "Darwin"
+    - (nexus_brew_path.stdout | trim) | length > 0
 
 - name: Check installed Homebrew packages
   ansible.builtin.command:
@@ -46,6 +48,7 @@
   register: nexus_macos_common_package_checks
   changed_when: false
   failed_when: false
+  check_mode: false
   loop: "{{ nexus_macos_common_packages }}"
   when:
     - nexus_manage_host_prereqs | bool

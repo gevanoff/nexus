@@ -81,6 +81,7 @@
   register: nexus_macos_docker_package_checks
   changed_when: false
   failed_when: false
+  check_mode: false
   loop: "{{ nexus_macos_docker_packages }}"
   when:
     - nexus_manage_docker_runtime | bool
@@ -105,6 +106,7 @@
       - --prefix
   register: nexus_brew_prefix
   changed_when: false
+  check_mode: false
   when:
     - nexus_manage_docker_runtime | bool
     - ansible_system == "Darwin"
