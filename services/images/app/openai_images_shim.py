@@ -1143,7 +1143,7 @@ def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) ->
     scheduler = (req.scheduler or "").strip() or ((preset.get("scheduler") or "").strip() if preset else "")
     scheduler = scheduler or None
 
-    model_info = _resolve_model_info(model_name, cfg=cfg) if model_name else None
+    model_info = _resolve_model_info(model_name, cfg=cfg)
 
     graph = _load_graph_from_template(
         cfg.graph_template_path,
