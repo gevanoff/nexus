@@ -31,6 +31,7 @@ See `env/images.env.example`.
 Key env vars:
 
 - `SHIM_MODE=stub|invokeai_queue`
+- `SHIM_GRAPH_TEMPLATE_PATH=/app/shim/graph_template.json`
 - `IMAGES_SHIM_INVOKEAI_BASE_URL=http://invokeai:9090`
 - `IMAGES_HTTP_BASE_URL=http://images:7860` for local compose or `http://<host>:7860` for multi-host gateway routing
 
