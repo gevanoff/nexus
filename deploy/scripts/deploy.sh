@@ -368,6 +368,7 @@ if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
     --env-file "$env_file"
 fi
 ns_ensure_env_file "$env_file" "$ROOT_DIR"
+ns_apply_env_overlay_file "$env_file" "${env_file}.local"
 bind_env_sync_mode="preserve"
 if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   bind_env_sync_mode="refresh"

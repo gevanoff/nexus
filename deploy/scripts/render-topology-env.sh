@@ -107,5 +107,7 @@ if [[ -z "${token:-}" || "$token" == "change-me-in-production" || "$token" == "y
   ns_print_ok "Generated GATEWAY_BEARER_TOKEN in ${ENV_FILE}"
 fi
 
+ns_apply_env_overlay_file "$ENV_FILE" "${ENV_FILE}.local"
+
 chmod 600 "$ENV_FILE" 2>/dev/null || true
 ns_print_ok "Topology env materialized"

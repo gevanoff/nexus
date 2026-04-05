@@ -74,6 +74,12 @@ Example: deploy the explicit `ai1` topology profile over SSH without repeating t
 ./deploy/scripts/topology-ssh.sh ai1 docker ps
 ```
 
+Host-local secret overlays:
+
+- For any selected env file, you can add a sibling `.local` file such as `deploy/env/.env.prod.ai2.local`.
+- The deploy scripts merge that overlay after rendering the tracked env file and before preflight/compose.
+- Keep tokens, IP allowlists, reference-audio paths, and other host-only values there instead of in `production.json`.
+
 Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:
 
 ```bash

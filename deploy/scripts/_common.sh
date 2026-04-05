@@ -100,6 +100,76 @@ ns_env_get() {
   echo "$value"
 }
 
+ns_apply_env_overlay_file() {
+  # Merge a sibling dotenv overlay into a materialized env file.
+  # Usage: ns_apply_env_overlay_file <env_file> [overlay_file]
+  local env_file="$1"
+  local overlay_file="${2:-${env_file}.local}"
+  local python_bin=""
+
+  [[ -n "${env_file:-}" && -f "$env_file" ]] || return 0
+  [[ -n "${overlay_file:-}" && -f "$overlay_file" ]] || return 0
+
+  python_bin="$(ns_pick_python || true)"
+  [[ -n "${python_bin:-}" ]] || {
+    ns_print_warn "Skipping env overlay merge because python3/python is unavailable: ${overlay_file}"
+    return 0
+  }
+
+  "$python_bin" - "$env_file" "$overlay_file" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+env_path = Path(sys.argv[1])
+overlay_path = Path(sys.argv[2])
+pattern = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+base_lines = env_path.read_text(encoding="utf-8").splitlines()
+overlay_lines = overlay_path.read_text(encoding="utf-8").splitlines()
+
+overlay_entries = []
+for raw in overlay_lines:
+    stripped = raw.strip()
+    if not stripped or stripped.startswith("#"):
+        continue
+    match = pattern.match(raw)
+    if not match:
+        continue
+    key = match.group(1)
+    value = match.group(2)
+    overlay_entries.append((key, f"{key}={value}"))
+
+if not overlay_entries:
+    raise SystemExit(0)
+
+base_index = {}
+for idx, raw in enumerate(base_lines):
+    match = pattern.match(raw)
+    if not match:
+        continue
+    base_index[match.group(1)] = idx
+
+for key, line in overlay_entries:
+    idx = base_index.get(key)
+    if idx is None:
+        base_index[key] = len(base_lines)
+        base_lines.append(line)
+    else:
+        base_lines[idx] = line
+
+payload = "\n".join(base_lines)
+if payload:
+    payload += "\n"
+env_path.write_text(payload, encoding="utf-8")
+PY
+
+  chmod 600 "$env_file" 2>/dev/null || true
+  ns_print_ok "Applied local env overlay from ${overlay_file}"
+}
+
 ns_guess_env_file() {
   # Best-effort env file selection for tools like preflight that may not know
   # the exact deploy environment.

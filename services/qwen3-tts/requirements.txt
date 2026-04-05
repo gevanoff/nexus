@@ -6,6 +6,7 @@ librosa>=0.10,<1
 transformers>=4.52,<5
 accelerate>=0.33,<1
 huggingface_hub>=0.23,<1
+qwen-tts
 numpy>=1.26,<3
 onnxruntime>=1.18,<2
 safetensors>=0.4,<1

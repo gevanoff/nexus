@@ -32,6 +32,7 @@
       "IMAGES_BACKEND_CLASS": "gpu_heavy",
       "IMAGES_HTTP_BASE_URL": "http://ada2:7860",
       "IMAGES_ADVERTISE_BASE_URL": "http://ada2:7860",
+      "IMAGES_SHIM_INVOKEAI_BASE_URL": "http://invokeai:9090",
       "INVOKEAI_BASE_URL": "http://ada2:9090",
       "INVOKEAI_ADVERTISE_BASE_URL": "http://ada2:9090",
       "SDXL_TURBO_BASE_URL": "http://ada2:9050",
@@ -117,7 +118,8 @@
         "heartmula"
       ],
       "env": {
-        "ETCD_URL": "http://ai2:2379"
+        "ETCD_URL": "http://ai2:2379",
+        "IMAGES_SHIM_MODE": "invokeai_queue"
       }
     }
   }

@@ -14,7 +14,7 @@ services:
       - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
       - SHIM_PORT=7860
       # Optional: only used when SHIM_MODE=invokeai_queue
-      - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
+      - INVOKEAI_BASE_URL=${IMAGES_SHIM_INVOKEAI_BASE_URL:-${INVOKEAI_BASE_URL:-http://invokeai:9090}}
     volumes:
       - ./.runtime/images/data:/data
       - ./.runtime/images/models:/data/models
