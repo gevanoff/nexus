@@ -8,6 +8,7 @@ This server exposes a minimal OpenAI-compatible endpoint for text-to-speech:
 from __future__ import annotations
 
 import base64
+import json
 import os
 import shlex
 import subprocess
@@ -21,8 +22,49 @@ from pydantic import BaseModel, Field
 app = FastAPI(title="Pocket TTS")
 
 
+_DEFAULT_VOICE_ALIASES = {
+    "alloy": "alba",
+    "ash": "marius",
+    "ballad": "fantine",
+    "coral": "cosette",
+    "echo": "jean",
+    "fable": "fantine",
+    "nova": "alba",
+    "onyx": "javert",
+    "sage": "marius",
+    "shimmer": "eponine",
+    "verse": "azelma",
+}
+
+
 def _refs_dir() -> str:
     return (os.getenv("POCKET_TTS_REFS_DIR") or "/var/lib/tts_refs").strip()
+
+
+def _voice_alias_map() -> dict[str, str]:
+    mapping = dict(_DEFAULT_VOICE_ALIASES)
+    raw = (os.getenv("POCKET_TTS_VOICE_MAP_JSON") or "").strip()
+    if not raw:
+        return mapping
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return mapping
+    if not isinstance(parsed, dict):
+        return mapping
+    for key, value in parsed.items():
+        k = str(key or "").strip().lower()
+        v = str(value or "").strip()
+        if k and v:
+            mapping[k] = v
+    return mapping
+
+
+def _normalize_voice_name(voice: str) -> str:
+    raw = str(voice or "").strip()
+    if not raw:
+        return raw
+    return _voice_alias_map().get(raw.lower(), raw)
 
 
 def _discover_ref_voices() -> list[str]:
@@ -52,7 +94,7 @@ def _discover_ref_voices() -> list[str]:
 
 
 def _resolve_ref_voice_input(voice: str) -> str:
-    raw = str(voice or "").strip()
+    raw = _normalize_voice_name(voice)
     if not raw:
         return raw
     if os.path.isfile(raw):
