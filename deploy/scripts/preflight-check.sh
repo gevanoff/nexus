@@ -419,6 +419,17 @@ check_port_required() {
   local find_cmd
   find_cmd="$(ns_port_find_listener_cmd "$port")"
 
+  local existing_nexus_container=""
+  if [[ "$mode" == "deploy" ]] && ns_have_cmd docker; then
+    existing_nexus_container="$(docker ps --format '{{.Names}}' 2>/dev/null | while IFS= read -r container_name; do
+      [[ "${container_name:-}" == nexus-* ]] || continue
+      if docker port "$container_name" 2>/dev/null | grep -Eq "[:.]${port}\$"; then
+        printf '%s\n' "$container_name"
+        break
+      fi
+    done)"
+  fi
+
   local rc
   if ns_port_in_use "$port"; then
     rc=0
@@ -426,6 +437,10 @@ check_port_required() {
     rc=$?
   fi
   if [[ $rc -eq 0 ]]; then
+    if [[ -n "${existing_nexus_container:-}" ]]; then
+      ok "${label}: port ${port} already published by ${existing_nexus_container} (in-place Nexus deploy)"
+      return 0
+    fi
     fail "${label}: port ${port} is already in use"
     if [[ -n "${find_cmd:-}" ]]; then
       warn "Find the listener with: ${find_cmd}"
