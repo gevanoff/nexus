@@ -184,7 +184,7 @@ def _is_probe_miss(exc: HTTPException) -> bool:
     # Treat 404/405 as "keep trying" when probing candidate endpoints.
     try:
         s = str(exc.detail)
-        return ("HTTP error 404" in s) or ("HTTP error 405" in s) or ("Not Found" in s)
+        return ("HTTP error 404" in s) or ("HTTP error 405" in s) or ("Not Found" in s) or ("non-JSON response" in s)
     except Exception:
         return False
 
@@ -371,7 +371,11 @@ def _http_json(method: str, url: str, payload: Optional[dict] = None, timeout: f
             body = resp.read()
             if not body:
                 return None
-            return json.loads(body)
+            try:
+                return json.loads(body)
+            except json.JSONDecodeError as exc:
+                snippet = body[:400].decode("utf-8", errors="replace")
+                raise HTTPException(status_code=502, detail=f"Upstream non-JSON response calling {url}: {snippet}") from exc
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
         raise HTTPException(status_code=502, detail=f"Upstream HTTP error {e.code} calling {url}: {raw}")
@@ -464,6 +468,8 @@ def _list_invokeai_models(*, cfg: ShimConfig) -> Tuple[Optional[str], List[dict]
     """
 
     models_urls = (
+        f"{cfg.invokeai_base_url}/api/v2/models/",
+        f"{cfg.invokeai_base_url}/api/v2/models",
         f"{cfg.invokeai_base_url}/api/v1/models",
         f"{cfg.invokeai_base_url}/api/v1/model/list",
         f"{cfg.invokeai_base_url}/api/v1/model",
@@ -550,13 +556,6 @@ def _list_invokeai_models(*, cfg: ShimConfig) -> Tuple[Optional[str], List[dict]
 
 
 def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[dict]:
-    if not model:
-        return None
-
-    model = model.strip()
-    if not model:
-        return None
-
     candidates: List[dict] = []
     last_error: Optional[HTTPException] = None
     try:
@@ -569,12 +568,38 @@ def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[di
 
     if not candidates:
         # If model listing is unavailable, leave the graph template's model as-is.
-        # Some InvokeAI deployments do not expose /api/v1/models.
         if last_error is not None:
             logger.warning("InvokeAI model list unavailable; proceeding with template model (%s)", last_error.detail)
         else:
             logger.warning("InvokeAI model list unavailable; proceeding with template model")
         return None
+
+    model = (model or "").strip()
+    if not model:
+        match = candidates[0]
+        normalized: Dict[str, Any] = {}
+        normalized_key = match.get("key") or match.get("model_key") or match.get("id")
+        if isinstance(normalized_key, str) and normalized_key.strip():
+            normalized["key"] = normalized_key.strip()
+        for src, dst in (
+            ("hash", "hash"),
+            ("name", "name"),
+            ("model_name", "name"),
+            ("model", "name"),
+            ("base", "base"),
+            ("base_model", "base"),
+            ("type", "type"),
+            ("model_type", "type"),
+        ):
+            v = match.get(src)
+            if dst not in normalized and isinstance(v, str) and v.strip():
+                normalized[dst] = v.strip()
+        logger.info(
+            "Auto-selected InvokeAI model key=%r name=%r",
+            normalized.get("key"),
+            normalized.get("name"),
+        )
+        return normalized or match
 
     needle = model.strip()
     needle_l = needle.lower()
