@@ -90,6 +90,32 @@ def _apply_alias_constraints(cc: ChatCompletionRequest, *, alias_name: Optional[
     )
 
 
+def _normalize_embeddings_request_model(request_model: Optional[str], backend: str) -> str:
+    resolved_backend = get_registry().resolve_backend_class(backend) or backend
+    model = (request_model or "").strip()
+    if not model or model.lower() == "default":
+        return default_embeddings_model_for_backend(resolved_backend)
+
+    aliases = get_aliases()
+    alias = aliases.get(model.lower())
+    if alias:
+        alias_backend = get_registry().resolve_backend_class(alias.backend) or alias.backend
+        if alias_backend == resolved_backend and (alias.upstream_model or "").strip():
+            return alias.upstream_model
+
+    if ":" in model:
+        prefix, upstream_model = model.split(":", 1)
+        prefix_backend = get_registry().resolve_backend_class(prefix.strip()) or prefix.strip()
+        if prefix_backend == resolved_backend and upstream_model.strip():
+            return upstream_model.strip()
+
+    requested_backend = get_registry().resolve_backend_class(model) or model
+    if requested_backend == resolved_backend:
+        return default_embeddings_model_for_backend(resolved_backend)
+
+    return model
+
+
 async def _probe_models_for_backend(client: httpx.AsyncClient, backend_name: str, base_url: str, now: int) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     r = await client.get(f"{base_url.rstrip('/')}/models")
@@ -373,7 +399,7 @@ async def rerank(req: Request):
     top_n = min(top_n, len(rr.documents))
 
     backend = S.EMBEDDINGS_BACKEND
-    model_used = rr.model if rr.model not in {"default", "", None} else default_embeddings_model_for_backend(backend)
+    model_used = _normalize_embeddings_request_model(rr.model, backend)
 
     try:
         q_emb = (await embed_backend([rr.query], backend, model_used))[0]
@@ -414,7 +440,7 @@ async def embeddings(req: Request):
         raise HTTPException(status_code=400, detail="input must be a string or list of strings")
 
     backend = S.EMBEDDINGS_BACKEND
-    model = er.model if er.model not in {"default", "", None} else default_embeddings_model_for_backend(backend)
+    model = _normalize_embeddings_request_model(er.model, backend)
 
     try:
         embs = await embed_backend(texts, backend, model)

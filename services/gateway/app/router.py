@@ -123,6 +123,10 @@ def _choose_backend_by_model(model: str, default_backend: Backend) -> Backend:
     if explicit:
         return explicit
 
+    pinned = _known_backend_name(model)
+    if pinned:
+        return pinned
+
     if m in {"vllm", "vllm-default", "local_vllm", "local-vllm"}:
         return _provider_default_backend("vllm")
     if m in {"mlx", "mlx-default", "local_mlx", "local-mlx"}:

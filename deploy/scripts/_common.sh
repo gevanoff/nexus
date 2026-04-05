@@ -605,8 +605,9 @@ ns_ensure_gateway_runtime_dirs() {
 
 ns_seed_gateway_config_files() {
   # Seed operator-edited gateway config into .runtime so it survives upgrades.
-  # Usage: ns_seed_gateway_config_files <repo_root>
+  # Usage: ns_seed_gateway_config_files <repo_root> [preserve|refresh]
   local repo_root="$1"
+  local sync_mode="${2:-preserve}"
   ns_ensure_gateway_runtime_dirs "$repo_root"
 
   # NOTE: Do not rely on services/gateway/env/* here. That directory is gitignored
@@ -634,7 +635,14 @@ ns_seed_gateway_config_files() {
     cp "$legacy_agent_specs" "$agent_specs_dst" 2>/dev/null || true
   fi
 
-  if [[ ! -f "$tools_registry_dst" ]]; then
+  if [[ "$sync_mode" == "refresh" && -f "$tools_registry_template" ]]; then
+    cp "$tools_registry_template" "$tools_registry_dst" 2>/dev/null || {
+      ns_print_error "Failed to refresh tools registry: $tools_registry_dst"
+      return 1
+    }
+    chmod 600 "$tools_registry_dst" 2>/dev/null || true
+    ns_print_ok "Refreshed tools registry: $tools_registry_dst"
+  elif [[ ! -f "$tools_registry_dst" ]]; then
     if [[ -f "$tools_registry_template" ]]; then
       cp "$tools_registry_template" "$tools_registry_dst" 2>/dev/null || {
         ns_print_error "Failed to seed tools registry: $tools_registry_dst"
@@ -650,7 +658,14 @@ ns_seed_gateway_config_files() {
   # Optional operator config: if these files don't exist, the gateway falls back
   # to built-in defaults. We seed minimal JSON so operators have a stable place
   # to edit without modifying the container image.
-  if [[ ! -f "$model_aliases_dst" ]]; then
+  if [[ "$sync_mode" == "refresh" && -f "$model_aliases_template" ]]; then
+    cp "$model_aliases_template" "$model_aliases_dst" 2>/dev/null || {
+      ns_print_error "Failed to refresh model aliases: $model_aliases_dst"
+      return 1
+    }
+    chmod 600 "$model_aliases_dst" 2>/dev/null || true
+    ns_print_ok "Refreshed model aliases: $model_aliases_dst"
+  elif [[ ! -f "$model_aliases_dst" ]]; then
     if [[ -f "$model_aliases_template" ]]; then
       cp "$model_aliases_template" "$model_aliases_dst" 2>/dev/null || {
         ns_print_error "Failed to seed model aliases: $model_aliases_dst"

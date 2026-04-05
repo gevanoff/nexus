@@ -380,7 +380,11 @@ ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file" "$bind_env_sync_mode"
 
 ns_print_header "Preparing runtime directories"
 ns_ensure_runtime_dirs "$ROOT_DIR"
-ns_seed_gateway_config_files "$ROOT_DIR"
+gateway_config_sync_mode="preserve"
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  gateway_config_sync_mode="refresh"
+fi
+ns_seed_gateway_config_files "$ROOT_DIR" "$gateway_config_sync_mode"
 ns_verify_docker_bind_source "$ROOT_DIR"
 ns_verify_docker_bind_source "$ROOT_DIR/.env"
 
