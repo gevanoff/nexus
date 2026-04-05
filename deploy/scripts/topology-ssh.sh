@@ -106,8 +106,18 @@ else
   ssh_opts+=("-o" "BatchMode=no")
 fi
 
+remote_env_prefix='export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-};'
+
 if [[ $# -eq 0 ]]; then
-  exec ssh "${ssh_opts[@]}" -t "$ssh_target"
+  exec ssh "${ssh_opts[@]}" -t "$ssh_target" "${remote_env_prefix} exec \${SHELL:-/bin/bash} -l"
 fi
 
-exec ssh "${ssh_opts[@]}" "$ssh_target" "$@"
+if [[ $# -eq 1 ]]; then
+  remote_command="$1"
+else
+  printf -v remote_command '%q ' "$@"
+  remote_command="${remote_command% }"
+fi
+
+printf -v remote_shell_command '%s exec /bin/bash -lc %q' "$remote_env_prefix" "$remote_command"
+exec ssh "${ssh_opts[@]}" "$ssh_target" "$remote_shell_command"

@@ -23,6 +23,48 @@ ns_print_ok() { echo -e "${_GREEN}✓ $1${_NC}"; }
 
 ns_have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+ns_append_path_dir() {
+  local dir="$1"
+  [[ -n "${dir:-}" && -d "$dir" ]] || return 0
+  case ":${PATH:-}:" in
+    *":$dir:"*) ;;
+    *)
+      if [[ -n "${PATH:-}" ]]; then
+        PATH="${PATH}:$dir"
+      else
+        PATH="$dir"
+      fi
+      ;;
+  esac
+}
+
+ns_bootstrap_path() {
+  # Non-interactive SSH/Ansible shells on macOS may start with an empty PATH.
+  # Normalize a conservative command path so Homebrew, system tools, and user
+  # utilities remain discoverable for headless deploy scripts.
+  PATH="${PATH:-}"
+
+  if [[ -x /usr/libexec/path_helper ]]; then
+    eval "$(/usr/libexec/path_helper -s 2>/dev/null)" || true
+  fi
+
+  ns_append_path_dir "/opt/homebrew/bin"
+  ns_append_path_dir "/usr/local/bin"
+  ns_append_path_dir "/usr/bin"
+  ns_append_path_dir "/bin"
+  ns_append_path_dir "/usr/sbin"
+  ns_append_path_dir "/sbin"
+
+  if [[ -n "${HOME:-}" ]]; then
+    ns_append_path_dir "$HOME/.local/bin"
+    ns_append_path_dir "$HOME/bin"
+  fi
+
+  export PATH
+}
+
+ns_bootstrap_path
+
 ns_env_get() {
   # Read a single KEY=value from a dotenv-style file.
   # Usage: ns_env_get <env_file> <key> [default]
