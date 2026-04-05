@@ -962,14 +962,12 @@ TOOL_IMPL = {
 
 def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
     pol = policy if isinstance(policy, dict) else {}
+    allowed: set[str] = {"noop"}
 
     raw = (pol.get("tools_allowlist") or S.TOOLS_ALLOWLIST or "").strip()
     if raw:
-        return {p.strip() for p in raw.split(",") if p.strip()}
-
-    allowed: set[str] = set()
-    # Always-available safe tool for verification.
-    allowed.add("noop")
+        allowed.update({p.strip() for p in raw.split(",") if p.strip()})
+        return allowed
 
     allow_shell = bool(pol.get("tools_allow_shell", S.TOOLS_ALLOW_SHELL))
     allow_fs = bool(pol.get("tools_allow_fs", S.TOOLS_ALLOW_FS))
