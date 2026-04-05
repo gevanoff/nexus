@@ -105,7 +105,7 @@
         "MLX_BASE_URL": "http://ai2:10240/v1",
         "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
         "UI_IP_ALLOWLIST": "127.0.0.1,172.28.0.1,10.10.22.0/24",
-        "DISABLED_BACKEND_CLASSES": "heartmula_music,personaplex",
+        "DISABLED_BACKEND_CLASSES": "followyourcanvas,heartmula_music,personaplex",
         "DEFAULT_BACKEND": "local_mlx"
       }
     },
@@ -118,7 +118,6 @@
         "invokeai",
         "sdxl-turbo",
         "lighton-ocr",
-        "followyourcanvas",
         "skyreels-v2"
       ],
       "env": {

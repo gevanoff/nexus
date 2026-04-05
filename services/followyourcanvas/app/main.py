@@ -5,11 +5,13 @@ import sys
 import tempfile
 import time
 import uuid
+import importlib
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+import yaml
 
 
 app = FastAPI(title="FollowYourCanvas Shim", version="0.1")
@@ -53,6 +55,82 @@ def _model_id() -> str:
     return _env("FYC_MODEL_ID", "FollowYourCanvas") or "FollowYourCanvas"
 
 
+def _default_config_path() -> Optional[Path]:
+    raw = _env("FYC_DEFAULT_CONFIG")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(_workdir()) / path
+    return path
+
+
+def _runtime_error() -> Optional[Dict[str, str]]:
+    runner = _runner_script()
+    workdir = Path(_workdir())
+    if not runner.exists() or not workdir.exists():
+        return {
+            "reason": "missing_configuration",
+            "detail": "FollowYourCanvas runner or workdir is missing inside the container.",
+        }
+
+    required_modules = ("torch", "diffusers", "transformers", "omegaconf", "decord", "segment_anything")
+    for module_name in required_modules:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            return {
+                "reason": "missing_dependency",
+                "detail": f"Required Python module {module_name!r} is unavailable: {type(exc).__name__}: {exc}",
+            }
+
+    config_path = _default_config_path()
+    if config_path is None:
+        return {
+            "reason": "missing_default_config",
+            "detail": "FYC_DEFAULT_CONFIG is not set; the service is not provisioned for prompt-only requests.",
+        }
+    if not config_path.exists():
+        return {
+            "reason": "missing_default_config",
+            "detail": f"Configured FollowYourCanvas config is missing: {config_path}",
+        }
+
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return {
+            "reason": "invalid_default_config",
+            "detail": f"Failed to parse {config_path}: {type(exc).__name__}: {exc}",
+        }
+
+    required_paths = [
+        ("pretrained_model_path", False),
+        ("motion_pretrained_model_path", False),
+        ("lmm_path", False),
+        ("image_pretrained_model_path", False),
+        ("video_dir", False),
+    ]
+    for key, _allow_missing in required_paths:
+        value = config.get(key)
+        if not isinstance(value, str) or not value.strip():
+            return {
+                "reason": "invalid_default_config",
+                "detail": f"Config {config_path} is missing required path setting {key!r}.",
+            }
+        if "YOUR_PATH" in value:
+            return {
+                "reason": "invalid_default_config",
+                "detail": f"Config {config_path} still contains placeholder path for {key!r}.",
+            }
+        if not Path(value).exists():
+            return {
+                "reason": "missing_model_asset",
+                "detail": f"Required FollowYourCanvas asset for {key!r} is missing: {value}",
+            }
+    return None
+
+
 @app.get("/healthz")
 def healthz() -> Dict[str, Any]:
     return {"ok": True, "time": _now(), "service": "followyourcanvas-shim"}
@@ -60,14 +138,14 @@ def healthz() -> Dict[str, Any]:
 
 @app.get("/readyz")
 def readyz() -> JSONResponse:
-    if _runner_script().exists() and Path(_workdir()).exists():
+    error = _runtime_error()
+    if error is None:
         return JSONResponse(status_code=200, content={"ok": True})
     return JSONResponse(
         status_code=503,
         content={
             "ok": False,
-            "reason": "missing_configuration",
-            "detail": "FollowYourCanvas runner or workdir is missing inside the container.",
+            **error,
         },
     )
 
@@ -79,6 +157,9 @@ def models() -> Dict[str, Any]:
 
 @app.post("/v1/videos/generations")
 async def generate_video(payload: Dict[str, Any]) -> Any:
+    error = _runtime_error()
+    if error is not None:
+        raise HTTPException(status_code=503, detail=error)
     runner = _runner_script()
     if not runner.exists():
         raise HTTPException(status_code=501, detail="FollowYourCanvas runner is not available in the container.")

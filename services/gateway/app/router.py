@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, Iterable, Optional
 
 from app.backends import backend_provider_name, get_registry
+from app.config import S
 from app.model_aliases import get_alias, get_aliases
 
 Backend = str
@@ -88,6 +89,25 @@ def _backend_prefixes(backend: str) -> list[str]:
     return [p for p in prefixes if isinstance(p, str) and p]
 
 
+def _default_model_for_backend(backend: str, cfg: RouterConfig) -> str:
+    resolved = _resolved_backend_name(backend) or backend
+    if resolved == "local_vllm_fast":
+        return (getattr(S, "VLLM_MODEL_FAST", "") or "").strip() or cfg.primary_fast_model
+    if resolved == "local_vllm_embeddings":
+        return (getattr(S, "VLLM_MODEL_EMBEDDINGS", "") or "").strip() or cfg.primary_fast_model
+    if resolved == "local_vllm":
+        return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
+    if resolved == "local_mlx":
+        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+
+    provider = backend_provider_name(resolved)
+    if provider == "mlx":
+        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+    if provider == "vllm":
+        return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
+    return cfg.primary_strong_model
+
+
 def _backend_from_model_prefix(model: str) -> Optional[str]:
     m = (model or "").strip()
     if ":" not in m:
@@ -122,6 +142,8 @@ def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
 
     provider = backend_provider_name(backend)
     m_key = m.lower()
+    if m_key in {prefix.lower() for prefix in _backend_prefixes(backend)}:
+        return _default_model_for_backend(backend, cfg)
     if provider == "vllm" and m_key in {
         "default",
         "vllm",
@@ -133,7 +155,7 @@ def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
         "auto",
         "",
     }:
-        return cfg.primary_strong_model
+        return _default_model_for_backend(backend, cfg)
     if provider == "mlx" and m_key in {
         "default",
         "mlx",
@@ -145,7 +167,7 @@ def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
         "auto",
         "",
     }:
-        return cfg.primary_strong_model
+        return _default_model_for_backend(backend, cfg)
     return m
 
 

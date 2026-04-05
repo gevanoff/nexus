@@ -83,6 +83,37 @@ def _normalize_resolution(value: Any) -> Any:
     return value
 
 
+def _normalize_resolution_from_dimensions(width: Any, height: Any) -> Optional[str]:
+    w = _as_int(width)
+    h = _as_int(height)
+    if not w or not h:
+        return None
+    longest = max(w, h)
+    if longest >= 1280:
+        return "720P"
+    return "540P"
+
+
+def _default_model_id(mode: str, payload: Dict[str, Any]) -> str:
+    if mode == "df":
+        return "Skywork/SkyReels-V2-DF-1.3B-540P"
+    if payload.get("image") or payload.get("image_path") or payload.get("start_image"):
+        return "Skywork/SkyReels-V2-I2V-1.3B-540P"
+    return "Skywork/SkyReels-V2-T2V-14B-540P"
+
+
+def _normalize_num_frames(payload: Dict[str, Any]) -> Optional[int]:
+    num_frames = _as_int(payload.get("num_frames"))
+    if num_frames is not None and num_frames > 0:
+        return num_frames
+
+    duration_seconds = _as_int(payload.get("duration_seconds"))
+    fps = _as_int(payload.get("fps")) or 8
+    if duration_seconds is None or duration_seconds <= 0:
+        return None
+    return max(1, duration_seconds * fps)
+
+
 def _build_args(payload: Dict[str, Any], outdir: Path) -> List[str]:
     workdir = Path(_env("SKYREELS_WORKDIR", "/data/app"))
     mode = _infer_mode(payload)
@@ -98,8 +129,14 @@ def _build_args(payload: Dict[str, Any], outdir: Path) -> List[str]:
             return
         args.extend([flag, str(value)])
 
-    add_flag("--model_id", payload.get("model_id"))
-    add_flag("--resolution", _normalize_resolution(payload.get("resolution")))
+    resolution = (
+        _normalize_resolution(payload.get("resolution"))
+        or _normalize_resolution_from_dimensions(payload.get("width"), payload.get("height"))
+        or "540P"
+    )
+    normalized_num_frames = _normalize_num_frames(payload)
+    add_flag("--model_id", payload.get("model_id") or _default_model_id(mode, payload))
+    add_flag("--resolution", resolution)
     add_flag("--prompt", payload.get("prompt"))
 
     image = payload.get("image") or payload.get("image_path") or payload.get("start_image")
@@ -114,15 +151,20 @@ def _build_args(payload: Dict[str, Any], outdir: Path) -> List[str]:
 
     if mode == "df":
         add_flag("--ar_step", payload.get("ar_step"))
-        add_flag("--base_num_frames", payload.get("base_num_frames"))
-        add_flag("--num_frames", payload.get("num_frames"))
+        add_flag("--base_num_frames", payload.get("base_num_frames") or normalized_num_frames)
+        add_flag("--num_frames", normalized_num_frames)
         add_flag("--overlap_history", payload.get("overlap_history"))
         add_flag("--addnoise_condition", payload.get("addnoise_condition"))
+        add_flag("--guidance_scale", payload.get("guidance_scale"))
+        add_flag("--shift", payload.get("shift"))
+        add_flag("--fps", payload.get("fps"))
+        add_flag("--seed", payload.get("seed"))
+        add_flag("--outdir", str(outdir))
         ar_step = _as_int(payload.get("ar_step"))
         if ar_step and ar_step > 0:
             add_flag("--causal_block_size", payload.get("causal_block_size"))
     else:
-        add_flag("--num_frames", payload.get("num_frames"))
+        add_flag("--num_frames", normalized_num_frames)
         add_flag("--guidance_scale", payload.get("guidance_scale"))
         add_flag("--shift", payload.get("shift"))
         add_flag("--fps", payload.get("fps"))

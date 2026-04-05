@@ -413,6 +413,7 @@ printf 'Compose files: %s\n' "${compose_files[*]}"
 
 up_args=(up -d --build)
 if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  up_args+=(--force-recreate)
   up_args+=(--remove-orphans)
 fi
 

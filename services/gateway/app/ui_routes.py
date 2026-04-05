@@ -1736,12 +1736,17 @@ def _normalize_skyreels_payload(body: Dict[str, Any]) -> Dict[str, Any]:
         duration = body.get("duration")
         if duration is not None:
             try:
-                payload["duration_seconds"] = max(1, int(duration))
+                duration_seconds = max(1, int(duration))
+                payload["duration_seconds"] = duration_seconds
+                payload["fps"] = 8
+                payload["num_frames"] = min(max(17, duration_seconds * 8), 49)
+                payload["base_num_frames"] = payload["num_frames"]
             except Exception:
                 pass
-        width_height = _parse_resolution(body.get("resolution"))
-        if width_height:
-            payload["width"], payload["height"] = width_height
+        payload["resolution"] = "540P"
+        payload["mode"] = "df"
+        payload["model_id"] = "Skywork/SkyReels-V2-DF-1.3B-540P"
+        payload["offload"] = True
         return payload
 
     payload = dict(body)

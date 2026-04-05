@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import uuid
+import importlib
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -53,6 +54,33 @@ def _model_id() -> str:
     return _env("SKYREELS_MODEL_ID", "SkyReels-V2") or "SkyReels-V2"
 
 
+def _runtime_error() -> Optional[Dict[str, str]]:
+    runner = _runner_script()
+    workdir = Path(_workdir())
+    if not runner.exists() or not workdir.exists():
+        return {
+            "reason": "missing_configuration",
+            "detail": "SkyReels runner or workdir is missing inside the container.",
+        }
+
+    required_modules = ("torch", "diffusers", "transformers", "decord", "einops", "moviepy", "safetensors")
+    for module_name in required_modules:
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            return {
+                "reason": "missing_dependency",
+                "detail": f"Required Python module {module_name!r} is unavailable: {type(exc).__name__}: {exc}",
+            }
+
+    if not (workdir / "generate_video.py").exists():
+        return {
+            "reason": "missing_upstream_clone",
+            "detail": "SkyReels upstream sources are missing from the configured workdir.",
+        }
+    return None
+
+
 @app.get("/healthz")
 def healthz() -> Dict[str, Any]:
     return {"ok": True, "time": _now(), "service": "skyreels-v2-shim"}
@@ -60,14 +88,14 @@ def healthz() -> Dict[str, Any]:
 
 @app.get("/readyz")
 def readyz() -> JSONResponse:
-    if _runner_script().exists() and Path(_workdir()).exists():
+    error = _runtime_error()
+    if error is None:
         return JSONResponse(status_code=200, content={"ok": True})
     return JSONResponse(
         status_code=503,
         content={
             "ok": False,
-            "reason": "missing_configuration",
-            "detail": "SkyReels runner or workdir is missing inside the container.",
+            **error,
         },
     )
 
@@ -79,6 +107,9 @@ def models() -> Dict[str, Any]:
 
 @app.post("/v1/videos/generations")
 async def generate_video(payload: Dict[str, Any]) -> Any:
+    error = _runtime_error()
+    if error is not None:
+        raise HTTPException(status_code=503, detail=error)
     runner = _runner_script()
     if not runner.exists():
         raise HTTPException(status_code=501, detail="SkyReels runner is not available in the container.")
