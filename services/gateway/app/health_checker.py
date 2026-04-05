@@ -183,10 +183,10 @@ class HealthChecker:
 _health_checker: Optional[HealthChecker] = None
 
 
-def init_health_checker():
+def init_health_checker(*, check_interval: float = 30.0, timeout: float = 5.0):
     """Initialize the global health checker. Call at startup."""
     global _health_checker
-    _health_checker = HealthChecker()
+    _health_checker = HealthChecker(check_interval=check_interval, timeout=timeout)
     logger.info("Health checker initialized")
 
 

@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     OBSERVABILITY_ENABLED: bool = True
     OBSERVABILITY_HOST: str = "127.0.0.1"
     OBSERVABILITY_PORT: int = 8801
+    HEALTH_CHECK_INTERVAL_SEC: float = 30.0
+    HEALTH_CHECK_TIMEOUT_SEC: float = 10.0
 
     # TLS for incoming connections (gateway server)
     # When both are set, the gateway (uvicorn) can be started with these files

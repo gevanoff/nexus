@@ -101,7 +101,10 @@ async def lifespan(_app: FastAPI):
     
     init_backends()
     await start_registry_sync()
-    init_health_checker()
+    init_health_checker(
+        check_interval=S.HEALTH_CHECK_INTERVAL_SEC,
+        timeout=S.HEALTH_CHECK_TIMEOUT_SEC,
+    )
     observability = ObservabilityServer()
     observability.start()
     try:
