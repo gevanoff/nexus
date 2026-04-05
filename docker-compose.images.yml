@@ -23,7 +23,7 @@ services:
     restart: unless-stopped
     # Note: GPU is only required if/when you run a real image backend.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/health', timeout=3).read(); print('ok')"]
       interval: 30s
       timeout: 10s
       retries: 3

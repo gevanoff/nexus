@@ -8,9 +8,9 @@
       "linux": "/home/ai/ai/nexus"
     },
     "env": {
-      "VLLM_MODEL_STRONG": "Qwen/Qwen2.5-7B-Instruct",
-      "VLLM_MODEL_FAST": "Qwen/Qwen2.5-3B-Instruct",
-      "VLLM_MODEL_DEFAULT": "Qwen/Qwen2.5-7B-Instruct",
+      "VLLM_MODEL_STRONG": "Qwen/Qwen2.5-3B-Instruct",
+      "VLLM_MODEL_FAST": "Qwen/Qwen2.5-1.5B-Instruct",
+      "VLLM_MODEL_DEFAULT": "Qwen/Qwen2.5-3B-Instruct",
       "VLLM_MODEL_EMBEDDINGS": "BAAI/bge-small-en-v1.5",
       "MLX_MODEL_PATH": "mlx-community/Qwen2.5-32B-Instruct-4bit",
       "MLX_MODEL_TYPE": "lm",

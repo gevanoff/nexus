@@ -139,6 +139,7 @@ def _align_tensors_to_device(obj: Any, device: torch.device, target_dtype: Optio
 def _load_pipeline() -> bool:
     global pipeline, pipeline_device, pipeline_dtype
     if HeartMuLaGenPipeline is None:
+        logging.error("HeartMula pipeline import failed: heartlib is unavailable")
         return False
     try:
         version = _env("HEARTMULA_VERSION", "3B") or "3B"
@@ -166,6 +167,7 @@ def _load_pipeline() -> bool:
             pipeline.lazy_load = True
         return True
     except Exception:
+        logging.exception("Failed to initialize HeartMula pipeline")
         pipeline = None
         pipeline_device = None
         pipeline_dtype = None
@@ -175,7 +177,7 @@ def _load_pipeline() -> bool:
 @app.on_event("startup")
 async def startup_event() -> None:
     if not _load_pipeline():
-        raise RuntimeError("Failed to load HeartMula pipeline on startup")
+        logging.error("HeartMula pipeline is unavailable; service will remain unready until startup issues are resolved")
 
 
 @app.get("/health")
