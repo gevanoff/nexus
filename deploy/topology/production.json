@@ -98,6 +98,7 @@
         "ETCD_URL": "http://etcd:2379",
         "MLX_BASE_URL": "http://ai2:10240/v1",
         "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
+        "UI_IP_ALLOWLIST": "127.0.0.1,10.10.22.0/24",
         "DEFAULT_BACKEND": "local_mlx"
       }
     },
