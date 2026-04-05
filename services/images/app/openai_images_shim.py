@@ -575,8 +575,7 @@ def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[di
         return None
 
     model = (model or "").strip()
-    if not model:
-        match = candidates[0]
+    def _normalize_candidate(match: dict) -> dict:
         normalized: Dict[str, Any] = {}
         normalized_key = match.get("key") or match.get("model_key") or match.get("id")
         if isinstance(normalized_key, str) and normalized_key.strip():
@@ -594,12 +593,20 @@ def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[di
             v = match.get(src)
             if dst not in normalized and isinstance(v, str) and v.strip():
                 normalized[dst] = v.strip()
+        return normalized or match
+
+    def _first_candidate() -> dict:
+        match = candidates[0]
+        normalized = _normalize_candidate(match)
         logger.info(
             "Auto-selected InvokeAI model key=%r name=%r",
             normalized.get("key"),
             normalized.get("name"),
         )
-        return normalized or match
+        return normalized
+
+    if not model:
+        return _first_candidate()
 
     needle = model.strip()
     needle_l = needle.lower()
@@ -648,37 +655,18 @@ def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[di
 
     if not match:
         # In practice, callers (e.g. the gateway) may send a model name that doesn't match
-        # InvokeAI's internal registry keys. Default behavior is best-effort: keep the
-        # template's model unchanged.
+        # InvokeAI's internal registry keys. Default behavior is best-effort: use a live
+        # installed generation model rather than leaving a stale template UUID in place.
         if cfg.strict_model:
             raise HTTPException(
                 status_code=400,
                 detail=f"Model '{model}' not found in InvokeAI /api/v1/models",
             )
-        logger.warning("Requested model %r not found in InvokeAI model list; proceeding with template model", model)
-        return None
+        logger.warning("Requested model %r not found in InvokeAI model list; auto-selecting installed model", model)
+        return _first_candidate()
 
     # Normalize to the minimal shape used by workflow exports.
-    normalized: Dict[str, Any] = {}
-    # Prefer a stable key/id.
-    normalized_key = match.get("key") or match.get("model_key") or match.get("id")
-    if isinstance(normalized_key, str) and normalized_key.strip():
-        normalized["key"] = normalized_key.strip()
-    # Common descriptive fields (best-effort; InvokeAI ignores extras in most shapes).
-    for src, dst in (
-        ("hash", "hash"),
-        ("name", "name"),
-        ("model_name", "name"),
-        ("model", "name"),
-        ("base", "base"),
-        ("base_model", "base"),
-        ("type", "type"),
-        ("model_type", "type"),
-    ):
-        v = match.get(src)
-        if dst not in normalized and isinstance(v, str) and v.strip():
-            normalized[dst] = v.strip()
-
+    normalized = _normalize_candidate(match)
     logger.info("Resolved InvokeAI model %r -> key=%r", model, normalized.get("key"))
     return normalized or match
 
