@@ -20,6 +20,8 @@ services:
       - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-32B-Instruct}
       - --generation-config
       - vllm
+      - --gpu-memory-utilization
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
     volumes:
       - ./.runtime/vllm/cache:/root/.cache/huggingface
     networks:
@@ -52,6 +54,8 @@ services:
       - ${VLLM_MODEL_FAST:-Qwen/Qwen2.5-7B-Instruct}
       - --generation-config
       - vllm
+      - --gpu-memory-utilization
+      - "${VLLM_FAST_GPU_MEMORY_UTILIZATION:-0.90}"
     volumes:
       - ./.runtime/vllm/cache:/root/.cache/huggingface
     networks:
@@ -84,6 +88,8 @@ services:
       - ${VLLM_MODEL_EMBEDDINGS:-BAAI/bge-small-en-v1.5}
       - --generation-config
       - vllm
+      - --gpu-memory-utilization
+      - "${VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION:-0.90}"
     volumes:
       - ./.runtime/vllm/cache:/root/.cache/huggingface
     networks:
