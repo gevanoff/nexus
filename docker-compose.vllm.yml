@@ -22,6 +22,8 @@ services:
       - vllm
       - --gpu-memory-utilization
       - "${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-32768}"
     volumes:
       - ./.runtime/vllm/cache:/root/.cache/huggingface
     networks:

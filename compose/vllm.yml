@@ -18,6 +18,8 @@ services:
       - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-32B-Instruct}
       - --generation-config
       - vllm
+      - --max-model-len
+      - ${VLLM_MAX_MODEL_LEN:-32768}
     volumes:
       - ../.runtime/vllm/cache:/root/.cache/huggingface
     networks:
