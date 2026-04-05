@@ -941,12 +941,20 @@ ns_ensure_env_file() {
 ns_ensure_project_env_bind_source() {
   # Ensure compose bind source <root>/.env exists, even when using --env-file
   # with another path (e.g., deploy/env/.env.dev).
-  # Usage: ns_ensure_project_env_bind_source <root_dir> <selected_env_file>
+  # Usage: ns_ensure_project_env_bind_source <root_dir> <selected_env_file> [preserve|refresh]
   local root_dir="$1"
   local selected_env_file="$2"
+  local sync_mode="${3:-preserve}"
   local root_env="${root_dir}/.env"
 
   if [[ -f "$root_env" ]]; then
+    if [[ "$sync_mode" == "refresh" && -n "$selected_env_file" && -f "$selected_env_file" && "$selected_env_file" != "$root_env" ]]; then
+      if ! cmp -s "$selected_env_file" "$root_env"; then
+        cp "$selected_env_file" "$root_env"
+        chmod 600 "$root_env" 2>/dev/null || true
+        ns_print_warn "Refreshed ${root_env} from ${selected_env_file} for compose bind mount compatibility."
+      fi
+    fi
     return 0
   fi
 

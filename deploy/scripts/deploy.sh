@@ -368,7 +368,11 @@ if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
     --env-file "$env_file"
 fi
 ns_ensure_env_file "$env_file" "$ROOT_DIR"
-ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file"
+bind_env_sync_mode="preserve"
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  bind_env_sync_mode="refresh"
+fi
+ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file" "$bind_env_sync_mode"
 
 ns_print_header "Preparing runtime directories"
 ns_ensure_runtime_dirs "$ROOT_DIR"
