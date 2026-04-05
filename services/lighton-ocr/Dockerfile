@@ -6,13 +6,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 ARG AI_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
+ARG AI_TORCH_VERSION=2.5.1
+ARG AI_TORCHVISION_VERSION=0.20.1
+ARG AI_TORCHAUDIO_VERSION=2.5.1
 
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends bash ca-certificates curl git build-essential \
   && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-  && pip install --no-cache-dir --index-url ${AI_TORCH_INDEX_URL} --extra-index-url https://pypi.org/simple torch torchvision torchaudio
+  && pip install --no-cache-dir --index-url ${AI_TORCH_INDEX_URL} --extra-index-url https://pypi.org/simple \
+       torch==${AI_TORCH_VERSION} \
+       torchvision==${AI_TORCHVISION_VERSION} \
+       torchaudio==${AI_TORCHAUDIO_VERSION}
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
