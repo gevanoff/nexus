@@ -552,8 +552,18 @@ def load_backends_config(path: Optional[Path] = None) -> BackendRegistry:
     with open(path, "r") as f:
         data = yaml.safe_load(f)
 
+    disabled_classes = {
+        item.strip().lower()
+        for item in str(getattr(S, "DISABLED_BACKEND_CLASSES", "") or "").split(",")
+        if item.strip()
+    }
+
     backends = {}
     for name, cfg in data.get("backends", {}).items():
+        backend_class = str(cfg.get("class", name) or name).strip()
+        if backend_class.lower() in disabled_classes or name.strip().lower() in disabled_classes:
+            logger.info("Skipping disabled backend class %s from %s", backend_class, path)
+            continue
         health = cfg.get("health", {})
 
         # Allow env var substitution in YAML values (e.g. "${HEARTMULA_BASE_URL}").
@@ -581,8 +591,8 @@ def load_backends_config(path: Optional[Path] = None) -> BackendRegistry:
             pass
 
         backends[name] = BackendConfig(
-            backend_class=cfg.get("class", name),
-            provider=str(cfg.get("provider", cfg.get("class", name)) or cfg.get("class", name) or name),
+            backend_class=backend_class,
+            provider=str(cfg.get("provider", backend_class) or backend_class or name),
             base_url=_sanitize_base_url(base_url),
             description=cfg.get("description", ""),
             supported_capabilities=cfg.get("supported_capabilities", []),

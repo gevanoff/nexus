@@ -191,6 +191,11 @@ class Settings(BaseSettings):
     PERSONAPLEX_TIMEOUT_SEC: float = 120.0
     PERSONAPLEX_UI_URL: str = "https://localhost:8998"
 
+    # Optional comma-separated backend classes to omit from the active registry.
+    # Useful when a backend exists in static config but is intentionally not
+    # provisioned on the current cluster.
+    DISABLED_BACKEND_CLASSES: str = ""
+
     DEFAULT_BACKEND: str = "local_mlx"
 
     # Service discovery (etcd)
