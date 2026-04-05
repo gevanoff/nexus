@@ -194,7 +194,8 @@ def render_env_file(template_path: Path, output_path: Path, env_values: dict[str
             output_lines.append(f"{key}={existing_values[key]}\n")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text("".join(output_lines), encoding="utf-8", newline="\n")
+    with output_path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("".join(output_lines))
     return len(known_keys), len(topology_only_keys)
 
 
