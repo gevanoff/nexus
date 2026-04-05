@@ -91,6 +91,16 @@ def _effective_images_http_base_url(backend_class: str | None = None) -> str:
     return raw
 
 
+def _openai_images_endpoint(base_url: str, path: str) -> str:
+    base = (base_url or "").strip().rstrip("/")
+    suffix = "/" + (path or "").strip().lstrip("/")
+    if not base:
+        return suffix
+    if base.endswith("/v1"):
+        return f"{base}{suffix}"
+    return f"{base}/v1{suffix}"
+
+
 def _parse_size(size: str) -> Tuple[int, int]:
     s = (size or "").strip().lower()
     if not s:
@@ -349,7 +359,7 @@ async def generate_openai_images(
                 break
 
     async with _httpx_client(timeout=timeout) as client:
-        r = await client.post(f"{base_url.rstrip('/')}/images/generations", json=payload)
+        r = await client.post(_openai_images_endpoint(base_url, "/images/generations"), json=payload)
         if r.status_code >= 400:
             try:
                 detail = r.json()
@@ -409,7 +419,7 @@ async def edit_openai_images(
         files["mask"] = mask
 
     async with _httpx_client(timeout=timeout) as client:
-        r = await client.post(f"{base_url.rstrip('/')}/images/edits", data=data, files=files)
+        r = await client.post(_openai_images_endpoint(base_url, "/images/edits"), data=data, files=files)
         if r.status_code >= 400:
             try:
                 detail = r.json()

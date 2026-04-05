@@ -52,21 +52,16 @@ backends:
     supported_capabilities:
       - chat
       - embeddings
-      - images
-      - transcription
     concurrency_limits:
       chat: 2
       embeddings: 2
-      images: 1
-      transcription: 1
     health:
       # OpenAI-style servers commonly expose /models but not /healthz.
       # Use /models as a lightweight liveness/readiness signal.
       liveness: /models
       readiness: /models
     payload_policy:
-      # MLX media behavior depends on the configured model set.
-      images_format: null
+      {}
 
   gpu_fast:
     class: gpu_fast

@@ -297,7 +297,8 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
     effective = dict(registry.static_backends)
     bound_records: Dict[str, ServiceRecord] = {}
     for record in service_records.values():
-        backend_class = _normalize_backend_class(record.backend_class, registry)
+        explicit_backend_class = _normalize_backend_class(record.backend_class, registry)
+        backend_class = explicit_backend_class
         if not backend_class:
             backend_class = _service_name_to_backend_class(record.name, registry)
         if not backend_class:
@@ -307,6 +308,13 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
             continue
         record_name = _normalize_backend_name(record.name)
         canonical_service_name = _normalize_backend_name(_backend_class_to_service_name(backend_class))
+        if explicit_backend_class is None and record_name not in {"", canonical_service_name, _normalize_backend_name(backend_class)}:
+            logger.info(
+                "Skipping non-canonical service record %s for backend %s because it did not declare an explicit backend_class",
+                record.name,
+                backend_class,
+            )
+            continue
         backend_key = backend_class if record_name in {"", canonical_service_name, _normalize_backend_name(backend_class)} else record_name
         description = config.description if backend_key == backend_class else f"{config.description} ({record.name})"
         effective[backend_key] = replace(
@@ -653,8 +661,8 @@ def _default_registry() -> BackendRegistry:
             provider="mlx",
             base_url=S.MLX_BASE_URL,
             description="Optional MLX backend",
-            supported_capabilities=["chat", "embeddings", "images", "transcription"],
-            concurrency_limits={"chat": 2, "embeddings": 2, "images": 1, "transcription": 1},
+            supported_capabilities=["chat", "embeddings"],
+            concurrency_limits={"chat": 2, "embeddings": 2},
             health_liveness="/models",
             health_readiness="/models",
             payload_policy={},
