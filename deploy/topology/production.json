@@ -81,7 +81,11 @@
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
-        "DEFAULT_BACKEND": "local_vllm"
+        "DEFAULT_BACKEND": "local_vllm",
+        "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",
+        "QWEN3_TTS_DEVICE_MAP": "auto",
+        "QWEN3_TTS_DTYPE": "float16",
+        "QWEN3_TTS_ATTN_IMPL": "sdpa"
       }
     },
     "ai2": {

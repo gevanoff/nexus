@@ -7,6 +7,7 @@ services:
       context: ./services/qwen3-tts
       dockerfile: Dockerfile
     container_name: nexus-qwen3-tts
+    gpus: all
     ports:
       - "${QWEN3_TTS_PORT:-9175}:9175"
     environment:
