@@ -34,6 +34,8 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
 - `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: deploy selected components on a host
 - `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <dev|prod> <branch> [user@host]`: deploy selected components over SSH
+- `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
+- `./deploy/scripts/topology-ssh.sh [--print-target] <ai1|ai2|ada2> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
@@ -68,6 +70,8 @@ Example: deploy the explicit `ai1` topology profile over SSH without repeating t
 
 ```bash
 ./deploy/scripts/remote-deploy.sh --topology-host ai1 prod main
+./deploy/scripts/ansible-topology.sh deploy ai1
+./deploy/scripts/topology-ssh.sh ai1 docker ps
 ```
 
 Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:

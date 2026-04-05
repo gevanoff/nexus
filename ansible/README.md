@@ -25,6 +25,16 @@ Design boundaries:
 
 The examples below assume you run them from the repo root and point Ansible at `ansible/ansible.cfg`.
 
+Short wrappers for the most common flows live in `deploy/scripts/`:
+
+```bash
+./deploy/scripts/ansible-topology.sh inventory
+./deploy/scripts/ansible-topology.sh bootstrap ai1 -- --check
+./deploy/scripts/ansible-topology.sh deploy ada2
+./deploy/scripts/topology-ssh.sh ai2
+./deploy/scripts/topology-ssh.sh ai1 docker ps
+```
+
 Inspect inventory derived from topology:
 
 ```bash
