@@ -501,8 +501,7 @@ def _list_invokeai_models(*, cfg: ShimConfig) -> Tuple[Optional[str], List[dict]
         if not candidates:
             candidates = _collect_model_candidates(out)
         if candidates:
-            filtered = [m for m in candidates if _is_generation_model_candidate(m)]
-            return (models_url, filtered)
+            return (models_url, candidates)
 
     schema = _fetch_openapi_schema(cfg.invokeai_base_url)
     if not isinstance(schema, dict):
@@ -547,15 +546,59 @@ def _list_invokeai_models(*, cfg: ShimConfig) -> Tuple[Optional[str], List[dict]
         candidates = _collect_model_candidates(out)
         if candidates:
             logger.info("Discovered InvokeAI model list via %s", url)
-            filtered = [m for m in candidates if _is_generation_model_candidate(m)]
-            return (url, filtered)
+            return (url, candidates)
 
     if last_error is not None:
         raise last_error
     return (None, [])
 
 
-def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[dict]:
+def _normalize_invokeai_candidate(match: dict) -> dict:
+    normalized: Dict[str, Any] = {}
+    normalized_key = match.get("key") or match.get("model_key") or match.get("id")
+    if isinstance(normalized_key, str) and normalized_key.strip():
+        normalized["key"] = normalized_key.strip()
+    for src, dst in (
+        ("hash", "hash"),
+        ("name", "name"),
+        ("model_name", "name"),
+        ("model", "name"),
+        ("base", "base"),
+        ("base_model", "base"),
+        ("type", "type"),
+        ("model_type", "type"),
+    ):
+        v = match.get(src)
+        if dst not in normalized and isinstance(v, str) and v.strip():
+            normalized[dst] = v.strip()
+    return normalized or match
+
+
+def _candidate_strings(item: dict) -> List[str]:
+    vals: List[str] = []
+    for k in (
+        "key",
+        "id",
+        "model_key",
+        "name",
+        "model",
+        "model_name",
+        "modelName",
+        "hash",
+    ):
+        v = item.get(k)
+        if isinstance(v, str) and v.strip():
+            vals.append(v.strip())
+    return vals
+
+
+def _resolve_invokeai_model_info(
+    model: Optional[str],
+    *,
+    cfg: ShimConfig,
+    allowed_types: Optional[set[str]] = None,
+    description: str = "model",
+) -> Optional[dict]:
     candidates: List[dict] = []
     last_error: Optional[HTTPException] = None
     try:
@@ -564,71 +607,42 @@ def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[di
         last_error = exc
         candidates = []
 
-    candidates = [m for m in candidates if _is_generation_model_candidate(m)]
+    if allowed_types is None:
+        candidates = [m for m in candidates if _is_generation_model_candidate(m)]
+    else:
+        candidates = [
+            m
+            for m in candidates
+            if isinstance(m, dict) and str(m.get("type") or m.get("model_type") or "").strip().lower() in allowed_types
+        ]
 
     if not candidates:
-        # If model listing is unavailable, leave the graph template's model as-is.
         if last_error is not None:
-            logger.warning("InvokeAI model list unavailable; proceeding with template model (%s)", last_error.detail)
+            logger.warning("InvokeAI %s list unavailable; proceeding with template value (%s)", description, last_error.detail)
         else:
-            logger.warning("InvokeAI model list unavailable; proceeding with template model")
+            logger.warning("InvokeAI %s list unavailable; proceeding with template value", description)
         return None
-
-    model = (model or "").strip()
-    def _normalize_candidate(match: dict) -> dict:
-        normalized: Dict[str, Any] = {}
-        normalized_key = match.get("key") or match.get("model_key") or match.get("id")
-        if isinstance(normalized_key, str) and normalized_key.strip():
-            normalized["key"] = normalized_key.strip()
-        for src, dst in (
-            ("hash", "hash"),
-            ("name", "name"),
-            ("model_name", "name"),
-            ("model", "name"),
-            ("base", "base"),
-            ("base_model", "base"),
-            ("type", "type"),
-            ("model_type", "type"),
-        ):
-            v = match.get(src)
-            if dst not in normalized and isinstance(v, str) and v.strip():
-                normalized[dst] = v.strip()
-        return normalized or match
 
     def _first_candidate() -> dict:
         match = candidates[0]
-        normalized = _normalize_candidate(match)
+        normalized = _normalize_invokeai_candidate(match)
         logger.info(
-            "Auto-selected InvokeAI model key=%r name=%r",
+            "Auto-selected InvokeAI %s key=%r name=%r",
+            description,
             normalized.get("key"),
             normalized.get("name"),
         )
         return normalized
 
+    model = (model or "").strip()
     if not model:
         return _first_candidate()
 
-    needle = model.strip()
+    needle = model
     needle_l = needle.lower()
 
-    def _strings(item: dict) -> List[str]:
-        vals: List[str] = []
-        for k in (
-            "key",
-            "id",
-            "model_key",
-            "name",
-            "model",
-            "model_name",
-            "modelName",
-        ):
-            v = item.get(k)
-            if isinstance(v, str) and v.strip():
-                vals.append(v.strip())
-        return vals
-
     def _score(item: dict) -> int:
-        svals = _strings(item)
+        svals = _candidate_strings(item)
         best = 0
         for v in svals:
             if v == needle:
@@ -654,21 +668,46 @@ def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[di
         match = None
 
     if not match:
-        # In practice, callers (e.g. the gateway) may send a model name that doesn't match
-        # InvokeAI's internal registry keys. Default behavior is best-effort: use a live
-        # installed generation model rather than leaving a stale template UUID in place.
         if cfg.strict_model:
             raise HTTPException(
                 status_code=400,
-                detail=f"Model '{model}' not found in InvokeAI /api/v1/models",
+                detail=f"{description.title()} '{model}' not found in InvokeAI /api/v1/models",
             )
-        logger.warning("Requested model %r not found in InvokeAI model list; auto-selecting installed model", model)
+        logger.warning("Requested %s %r not found in InvokeAI model list; auto-selecting installed value", description, model)
         return _first_candidate()
 
-    # Normalize to the minimal shape used by workflow exports.
-    normalized = _normalize_candidate(match)
-    logger.info("Resolved InvokeAI model %r -> key=%r", model, normalized.get("key"))
+    normalized = _normalize_invokeai_candidate(match)
+    logger.info("Resolved InvokeAI %s %r -> key=%r", description, model, normalized.get("key"))
     return normalized or match
+
+
+def _resolve_model_info(model: Optional[str], *, cfg: ShimConfig) -> Optional[dict]:
+    return _resolve_invokeai_model_info(model, cfg=cfg, description="model")
+
+
+def _resolve_vae_model_info(value: Any, *, cfg: ShimConfig) -> Optional[dict]:
+    candidates: List[str] = []
+    if isinstance(value, dict):
+        candidates.extend(_candidate_strings(value))
+    elif isinstance(value, str) and value.strip():
+        candidates.append(value.strip())
+
+    for candidate in candidates:
+        resolved = _resolve_invokeai_model_info(
+            candidate,
+            cfg=cfg,
+            allowed_types={"vae"},
+            description="vae",
+        )
+        if isinstance(resolved, dict):
+            return resolved
+
+    return _resolve_invokeai_model_info(
+        None,
+        cfg=cfg,
+        allowed_types={"vae"},
+        description="vae",
+    )
 
 
 def _deep_replace_placeholders(value: Any, mapping: Dict[str, str]) -> Any:
@@ -692,6 +731,7 @@ def _load_graph_from_template(
     seed: Optional[int],
     model_info: Optional[dict],
     model_input_mode: str = "dict",
+    cfg: Optional[ShimConfig] = None,
 ) -> dict:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -714,6 +754,7 @@ def _load_graph_from_template(
         seed=seed,
         model_info=model_info,
         model_input_mode=model_input_mode,
+        cfg=cfg,
     )
     return out
 
@@ -766,6 +807,7 @@ def _apply_invokeai_workflow_overrides(
     scheduler: Optional[str] = None,
     model_info: Optional[dict] = None,
     model_input_mode: str = "dict",
+    cfg: Optional[ShimConfig] = None,
 ) -> None:
     nodes = graph.get("nodes")
     if not isinstance(nodes, list):
@@ -879,13 +921,10 @@ def _apply_invokeai_workflow_overrides(
 
         # The VAE loader has the same model-selection shape as the main model loader.
         if ntype == "vae_loader":
-            if isinstance(model_info, dict):
-                # Do not override the VAE model based on the requested main model.
-                # Only normalize the existing template value.
-                pass
             vae_field = inputs.get("vae_model") if isinstance(inputs, dict) else None
             if isinstance(vae_field, dict) and "value" in vae_field:
-                normalized = _normalize_model_value(vae_field.get("value"))
+                resolved_vae = _resolve_vae_model_info(vae_field.get("value"), cfg=cfg) if cfg is not None else None
+                normalized = _normalize_model_value(resolved_vae if isinstance(resolved_vae, dict) else vae_field.get("value"))
                 if normalized is not None:
                     _set_input_value(inputs, "vae_model", normalized)
             continue
@@ -1153,6 +1192,7 @@ def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) ->
         seed=req.seed,
         model_info=model_info,
         model_input_mode=cfg.model_input_mode,
+        cfg=cfg,
     )
     _apply_invokeai_workflow_overrides(
         graph,
@@ -1166,6 +1206,7 @@ def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) ->
         scheduler=scheduler,
         model_info=model_info,
         model_input_mode=cfg.model_input_mode,
+        cfg=cfg,
     )
 
     output_node_id = (cfg.output_node_id or "").strip() or _detect_output_node_id(graph)
