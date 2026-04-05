@@ -122,7 +122,8 @@
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
-        "IMAGES_SHIM_MODE": "invokeai_queue"
+        "IMAGES_SHIM_MODE": "invokeai_queue",
+        "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true"
       }
     }
   }

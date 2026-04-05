@@ -143,13 +143,21 @@ def _ensure_pipeline() -> StableDiffusionXLPipeline:
         kwargs["variant"] = variant
 
     pipeline = StableDiffusionXLPipeline.from_pretrained(model_id, **kwargs)
-    pipeline.to(device)
     pipeline.set_progress_bar_config(disable=True)
 
     if _bool_env("SDXL_TURBO_ENABLE_ATTENTION_SLICING", False):
         pipeline.enable_attention_slicing()
     if _bool_env("SDXL_TURBO_ENABLE_XFORMERS", False):
         pipeline.enable_xformers_memory_efficient_attention()
+    if _bool_env("SDXL_TURBO_ENABLE_VAE_SLICING", False):
+        pipeline.enable_vae_slicing()
+
+    if device == "cuda" and _bool_env("SDXL_TURBO_ENABLE_SEQUENTIAL_CPU_OFFLOAD", False):
+        pipeline.enable_sequential_cpu_offload()
+    elif device == "cuda" and _bool_env("SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD", False):
+        pipeline.enable_model_cpu_offload()
+    else:
+        pipeline.to(device)
 
     _PIPELINE = pipeline
     _PIPELINE_DEVICE = device
