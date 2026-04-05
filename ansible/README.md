@@ -72,9 +72,11 @@ Common overrides:
 - `nexus_repo_url`
 - `nexus_manage_checkout`
 - `nexus_sync_existing_checkout`
+- `nexus_manage_sops_secrets`
 - `nexus_manage_host_prereqs`
 - `nexus_manage_docker_runtime`
 - `nexus_topology_file`
+- `nexus_sops_age_key_file`
 - `nexus_colima_launchd_enabled`
 - `nexus_mlx_pf_allowlist_enabled`
 - `nexus_verify_gateway`
@@ -87,6 +89,7 @@ Use `inventory/group_vars/platform_macos.yml` and `inventory/group_vars/platform
 
 - This scaffold now covers the main non-interactive host bootstrap path. `deploy/scripts/install-host-deps.sh` remains available as a manual fallback for one-off host prep.
 - The deploy role delegates to `deploy/scripts/deploy.sh --topology-host ...` so there is still one deploy implementation path.
+- The deploy playbook now includes `nexus_secret_overlay`, which decrypts tracked SOPS secret files on the control node and syncs the generated `*.sops.local` overlays to the remote host before preflight/deploy.
 - Inventory exposes `platform_macos` and `platform_linux` groups from the topology manifest so repo layout and other hosttype defaults can live in group vars.
 - Mixed Linux/macOS roles dispatch into platform-specific task files (`linux.yml`, `macos.yml`) from a shared entrypoint and fail clearly on unsupported platforms.
 - The bootstrap playbook now covers the main non-interactive host setup path: Python bootstrap, common packages, Linux Docker engine setup, macOS Colima setup, and optional MLX pf allowlisting.

@@ -12,6 +12,7 @@
   roles:
     - role: nexus_repo
     - role: nexus_topology_env
+    - role: nexus_secret_overlay
     - role: nexus_preflight
     - role: nexus_deploy
     - role: nexus_verify

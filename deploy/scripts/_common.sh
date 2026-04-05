@@ -170,6 +170,101 @@ PY
   ns_print_ok "Applied local env overlay from ${overlay_file}"
 }
 
+ns_sops_secret_common_file() {
+  # Usage: ns_sops_secret_common_file <repo_root> <environment>
+  local repo_root="$1"
+  local environment="$2"
+  echo "${repo_root}/deploy/secrets/${environment}/common.env.sops"
+}
+
+ns_sops_secret_specific_file() {
+  # Usage: ns_sops_secret_specific_file <repo_root> <environment> [topology_host]
+  local repo_root="$1"
+  local environment="$2"
+  local topology_host="${3:-}"
+  if [[ -n "${topology_host:-}" ]]; then
+    echo "${repo_root}/deploy/secrets/${environment}/${topology_host}.env.sops"
+    return 0
+  fi
+  echo "${repo_root}/deploy/secrets/${environment}/default.env.sops"
+}
+
+ns_sops_generated_common_overlay() {
+  # Usage: ns_sops_generated_common_overlay <env_file>
+  local env_file="$1"
+  echo "${env_file}.sops.common.local"
+}
+
+ns_sops_generated_specific_overlay() {
+  # Usage: ns_sops_generated_specific_overlay <env_file>
+  local env_file="$1"
+  echo "${env_file}.sops.local"
+}
+
+ns_materialize_sops_overlay_file() {
+  # Decrypt a tracked SOPS dotenv file into a generated local overlay.
+  # Usage: ns_materialize_sops_overlay_file <secret_file> <output_file>
+  local secret_file="$1"
+  local output_file="$2"
+  local sops_bin="${NEXUS_SOPS_BIN:-sops}"
+
+  if [[ -z "${secret_file:-}" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$secret_file" ]]; then
+    if [[ -n "${output_file:-}" && -f "$output_file" ]]; then
+      rm -f "$output_file"
+      ns_print_warn "Removed stale generated SOPS overlay ${output_file}"
+    fi
+    return 0
+  fi
+
+  if ! ns_have_cmd "$sops_bin"; then
+    if [[ -f "$output_file" && "$secret_file" -ot "$output_file" ]]; then
+      ns_print_warn "Reusing existing generated SOPS overlay ${output_file} because ${sops_bin} is unavailable."
+      return 0
+    fi
+    ns_print_error "Encrypted secret file exists but ${sops_bin} is unavailable: ${secret_file}"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$output_file")" 2>/dev/null || true
+  local tmp_output
+  tmp_output="$(mktemp "${output_file}.tmp.XXXXXX")"
+
+  if ! "$sops_bin" --decrypt --input-type dotenv --output-type dotenv "$secret_file" >"$tmp_output"; then
+    rm -f "$tmp_output"
+    ns_print_error "Failed to decrypt SOPS secret file: ${secret_file}"
+    return 1
+  fi
+
+  chmod 600 "$tmp_output" 2>/dev/null || true
+  mv "$tmp_output" "$output_file"
+  chmod 600 "$output_file" 2>/dev/null || true
+  ns_print_ok "Materialized generated SOPS overlay ${output_file}"
+}
+
+ns_prepare_sops_env_overlays() {
+  # Materialize tracked encrypted secret overlays for a selected env file.
+  # Usage: ns_prepare_sops_env_overlays <repo_root> <environment> <env_file> [topology_host]
+  local repo_root="$1"
+  local environment="$2"
+  local env_file="$3"
+  local topology_host="${4:-}"
+
+  [[ -n "${repo_root:-}" && -n "${environment:-}" && -n "${env_file:-}" ]] || return 0
+
+  local common_secret specific_secret common_output specific_output
+  common_secret="$(ns_sops_secret_common_file "$repo_root" "$environment")"
+  specific_secret="$(ns_sops_secret_specific_file "$repo_root" "$environment" "$topology_host")"
+  common_output="$(ns_sops_generated_common_overlay "$env_file")"
+  specific_output="$(ns_sops_generated_specific_overlay "$env_file")"
+
+  ns_materialize_sops_overlay_file "$common_secret" "$common_output" || return 1
+  ns_materialize_sops_overlay_file "$specific_secret" "$specific_output" || return 1
+}
+
 ns_guess_env_file() {
   # Best-effort env file selection for tools like preflight that may not know
   # the exact deploy environment.

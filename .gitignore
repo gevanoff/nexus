@@ -2,6 +2,9 @@
 .env
 deploy/env/.env.*
 !deploy/env/.env.*.example
+deploy/secrets/**/*.env
+!deploy/secrets/**/*.env.sops
+!deploy/secrets/**/.gitkeep
 
 # Python
 __pycache__/

@@ -1,17 +1,21 @@
 nexus_environment: prod
 nexus_branch: main
+nexus_controller_repo_dir: "{{ playbook_dir }}/../.."
 nexus_repo_url: ""
 nexus_manage_checkout: false
 nexus_sync_existing_checkout: true
+nexus_manage_sops_secrets: true
 nexus_manage_host_prereqs: true
 nexus_manage_docker_runtime: true
 nexus_manage_mlx_host_prep: true
+nexus_sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') | default('', true) }}"
 nexus_runtime_user: "{{ ansible_user | default('ai') }}"
 nexus_verify_gateway: true
 nexus_deploy_serial: 1
 nexus_extra_deploy_args: []
 nexus_topology_file: "{{ nexus_repo_dir }}/deploy/topology/production.json"
 nexus_env_file: "{{ nexus_repo_dir }}/deploy/env/.env.{{ nexus_environment }}.{{ nexus_topology_host }}"
+nexus_controller_env_file: "{{ nexus_controller_repo_dir }}/deploy/env/.env.{{ nexus_environment }}.{{ nexus_topology_host }}"
 nexus_linux_common_packages:
   - git
   - curl

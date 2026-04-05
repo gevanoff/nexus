@@ -37,6 +37,8 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
 - `./deploy/scripts/topology-ssh.sh [--print-target] <ai1|ai2|ada2> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
+- `./deploy/scripts/materialize-sops-env.sh --environment <dev|prod> [--topology-host <host>]`: materialize tracked SOPS secret files into generated `*.sops.local` overlays
+- `./deploy/scripts/sops-secrets.sh <keygen|import-dotenv|edit|decrypt|materialize> ...`: manage SOPS+age secret files under `deploy/secrets/`
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
@@ -79,6 +81,20 @@ Host-local secret overlays:
 - For any selected env file, you can add a sibling `.local` file such as `deploy/env/.env.prod.ai2.local`.
 - The deploy scripts merge that overlay after rendering the tracked env file and before preflight/compose.
 - Keep tokens, IP allowlists, reference-audio paths, and other host-only values there instead of in `production.json`.
+
+Tracked encrypted host secrets:
+
+- Store versioned secret sources in `deploy/secrets/<environment>/common.env.sops` and `deploy/secrets/<environment>/<host>.env.sops`.
+- The controller-side deploy wrappers materialize those files into generated `deploy/env/.env.*.sops*.local` overlays before syncing them to the target host.
+- Manual `.local` overlays still work and override the generated SOPS overlays when both are present.
+
+Recommended SOPS bootstrap on the control node:
+
+```bash
+./deploy/scripts/sops-secrets.sh keygen
+./deploy/scripts/sops-secrets.sh import-dotenv --input deploy/env/.env.prod.ai2.local --environment prod --host ai2
+./deploy/scripts/sops-secrets.sh edit --environment prod --host ai2
+```
 
 Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:
 

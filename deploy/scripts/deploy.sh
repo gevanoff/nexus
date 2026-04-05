@@ -368,6 +368,9 @@ if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
     --env-file "$env_file"
 fi
 ns_ensure_env_file "$env_file" "$ROOT_DIR"
+ns_prepare_sops_env_overlays "$ROOT_DIR" "$environment" "$env_file" "${TOPOLOGY_HOST:-}"
+ns_apply_env_overlay_file "$env_file" "$(ns_sops_generated_common_overlay "$env_file")"
+ns_apply_env_overlay_file "$env_file" "$(ns_sops_generated_specific_overlay "$env_file")"
 ns_apply_env_overlay_file "$env_file" "${env_file}.local"
 bind_env_sync_mode="preserve"
 if [[ -n "${TOPOLOGY_HOST:-}" ]]; then

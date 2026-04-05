@@ -1,0 +1,71 @@
+- name: Materialize controller-side SOPS overlays for the selected host env
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - ./deploy/scripts/materialize-sops-env.sh
+      - --environment
+      - "{{ nexus_environment }}"
+      - --topology-host
+      - "{{ nexus_topology_host }}"
+      - --env-file
+      - "{{ nexus_controller_env_file }}"
+  args:
+    chdir: "{{ nexus_controller_repo_dir }}"
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  environment: "{{ {'SOPS_AGE_KEY_FILE': nexus_sops_age_key_file} if (nexus_sops_age_key_file | default('') | length) > 0 else {} }}"
+  when: nexus_manage_sops_secrets | bool
+
+- name: Check for generated common SOPS overlay on the controller
+  ansible.builtin.stat:
+    path: "{{ nexus_controller_env_file }}.sops.common.local"
+  delegate_to: localhost
+  become: false
+  register: nexus_controller_common_sops_overlay
+  changed_when: false
+  when: nexus_manage_sops_secrets | bool
+
+- name: Check for generated host SOPS overlay on the controller
+  ansible.builtin.stat:
+    path: "{{ nexus_controller_env_file }}.sops.local"
+  delegate_to: localhost
+  become: false
+  register: nexus_controller_host_sops_overlay
+  changed_when: false
+  when: nexus_manage_sops_secrets | bool
+
+- name: Sync generated common SOPS overlay to the remote host
+  ansible.builtin.copy:
+    src: "{{ nexus_controller_env_file }}.sops.common.local"
+    dest: "{{ nexus_env_file }}.sops.common.local"
+    mode: "0600"
+  when:
+    - nexus_manage_sops_secrets | bool
+    - nexus_controller_common_sops_overlay.stat.exists | default(false)
+
+- name: Remove stale generated common SOPS overlay from the remote host
+  ansible.builtin.file:
+    path: "{{ nexus_env_file }}.sops.common.local"
+    state: absent
+  when:
+    - nexus_manage_sops_secrets | bool
+    - not (nexus_controller_common_sops_overlay.stat.exists | default(false))
+
+- name: Sync generated host SOPS overlay to the remote host
+  ansible.builtin.copy:
+    src: "{{ nexus_controller_env_file }}.sops.local"
+    dest: "{{ nexus_env_file }}.sops.local"
+    mode: "0600"
+  when:
+    - nexus_manage_sops_secrets | bool
+    - nexus_controller_host_sops_overlay.stat.exists | default(false)
+
+- name: Remove stale generated host SOPS overlay from the remote host
+  ansible.builtin.file:
+    path: "{{ nexus_env_file }}.sops.local"
+    state: absent
+  when:
+    - nexus_manage_sops_secrets | bool
+    - not (nexus_controller_host_sops_overlay.stat.exists | default(false))

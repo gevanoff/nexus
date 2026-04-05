@@ -202,6 +202,35 @@ else
   ssh_opts+=("-o" "BatchMode=no")
 fi
 
+controller_env_file="${ROOT_DIR}/deploy/env/.env.${environment}"
+remote_env_file="${REMOTE_REPO_DIR}/deploy/env/.env.${environment}"
+if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+  controller_env_file="${controller_env_file}.${TOPOLOGY_HOST}"
+  remote_env_file="${remote_env_file}.${TOPOLOGY_HOST}"
+fi
+
+sync_remote_generated_overlay() {
+  local local_file="$1"
+  local remote_file="$2"
+  if [[ -f "$local_file" ]]; then
+    ssh "${ssh_opts[@]}" "$host" "mkdir -p '$(dirname "$remote_file")'"
+    ssh "${ssh_opts[@]}" "$host" "cat > '$remote_file' && chmod 600 '$remote_file'" <"$local_file"
+    ns_print_ok "Synced generated SOPS overlay to ${host}:${remote_file}"
+  else
+    ssh "${ssh_opts[@]}" "$host" "rm -f '$remote_file'" >/dev/null 2>&1 || true
+  fi
+}
+
+if [[ -x "$ROOT_DIR/deploy/scripts/materialize-sops-env.sh" ]]; then
+  materialize_args=(--environment "$environment" --env-file "$controller_env_file")
+  if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
+    materialize_args+=(--topology-host "$TOPOLOGY_HOST")
+  fi
+  "$ROOT_DIR/deploy/scripts/materialize-sops-env.sh" "${materialize_args[@]}"
+  sync_remote_generated_overlay "$(ns_sops_generated_common_overlay "$controller_env_file")" "$(ns_sops_generated_common_overlay "$remote_env_file")"
+  sync_remote_generated_overlay "$(ns_sops_generated_specific_overlay "$controller_env_file")" "$(ns_sops_generated_specific_overlay "$remote_env_file")"
+fi
+
 remote_cmd=$(cat <<'EOS'
 set -euo pipefail
 repo_dir="$3"
