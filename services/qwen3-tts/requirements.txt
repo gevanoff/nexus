@@ -3,14 +3,6 @@ uvicorn[standard]>=0.27,<1
 httpx>=0.27,<1
 soundfile>=0.12,<1
 librosa>=0.10,<1
-transformers>=4.52,<5
-accelerate>=0.33,<1
-huggingface_hub>=0.23,<1
 qwen-tts
-numpy>=1.26,<3
 onnxruntime>=1.18,<2
-safetensors>=0.4,<1
 sox>=1.4,<2
-einops>=0.7,<1
-torchaudio>=2.3,<3
-torch>=2.3,<3
