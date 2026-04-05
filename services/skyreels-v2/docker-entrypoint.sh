@@ -35,6 +35,80 @@ skyreels_install_runtime() {
   python3 -m pip install --no-cache-dir -r "$FALLBACK_REQ_FILE"
 }
 
+skyreels_patch_attention_fallback() {
+  local attention_file="${APP_DIR}/skyreels_v2_infer/modules/attention.py"
+  [[ -f "$attention_file" ]] || return 0
+
+  python3 - "$attention_file" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+if "Flash attention 2 is not available, falling back to scaled_dot_product_attention." in text:
+    raise SystemExit(0)
+
+needle = """    else:
+        assert FLASH_ATTN_2_AVAILABLE
+        x = flash_attn.flash_attn_varlen_func(
+            q=q,
+            k=k,
+            v=v,
+            cu_seqlens_q=torch.cat([q_lens.new_zeros([1]), q_lens])
+            .cumsum(0, dtype=torch.int32)
+            .to(q.device, non_blocking=True),
+            cu_seqlens_k=torch.cat([k_lens.new_zeros([1]), k_lens])
+            .cumsum(0, dtype=torch.int32)
+            .to(q.device, non_blocking=True),
+            max_seqlen_q=lq,
+            max_seqlen_k=lk,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            window_size=window_size,
+            deterministic=deterministic,
+        ).unflatten(0, (b, lq))
+"""
+
+replacement = """    else:
+        if FLASH_ATTN_2_AVAILABLE:
+            x = flash_attn.flash_attn_varlen_func(
+                q=q,
+                k=k,
+                v=v,
+                cu_seqlens_q=torch.cat([q_lens.new_zeros([1]), q_lens])
+                .cumsum(0, dtype=torch.int32)
+                .to(q.device, non_blocking=True),
+                cu_seqlens_k=torch.cat([k_lens.new_zeros([1]), k_lens])
+                .cumsum(0, dtype=torch.int32)
+                .to(k.device, non_blocking=True),
+                max_seqlen_q=lq,
+                max_seqlen_k=lk,
+                dropout_p=dropout_p,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                window_size=window_size,
+                deterministic=deterministic,
+            ).unflatten(0, (b, lq))
+        else:
+            warnings.warn(\"Flash attention 2 is not available, falling back to scaled_dot_product_attention.\")
+            q = q.unflatten(0, (b, lq)).transpose(1, 2).to(dtype)
+            k = k.unflatten(0, (b, lk)).transpose(1, 2).to(dtype)
+            v = v.unflatten(0, (b, lk)).transpose(1, 2).to(dtype)
+            x = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, attn_mask=None, is_causal=causal, dropout_p=dropout_p
+            ).transpose(1, 2).contiguous()
+"""
+
+if needle not in text:
+    print(f"SkyReels attention patch skipped; expected block not found in {path}", file=sys.stderr)
+    raise SystemExit(0)
+
+path.write_text(text.replace(needle, replacement), encoding="utf-8")
+PY
+}
+
 mkdir -p "${DATA_DIR}" "${DATA_DIR}/logs"
 
 if [[ -n "${REPO_URL}" ]]; then
@@ -59,6 +133,8 @@ if [[ -n "${REPO_URL}" ]]; then
     fi
   fi
 fi
+
+skyreels_patch_attention_fallback
 
 export SKYREELS_WORKDIR="${SKYREELS_WORKDIR:-${APP_DIR}}"
 exec uvicorn app.main:app --host 0.0.0.0 --port "${SKYREELS_PORT:-9180}"
