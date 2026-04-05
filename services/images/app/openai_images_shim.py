@@ -1332,7 +1332,7 @@ def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) ->
                 break
             except HTTPException as exc:
                 last_exc = exc
-                if _is_not_found(exc):
+                if _is_probe_miss(exc):
                     continue
                 raise
         if last_exc is not None:
