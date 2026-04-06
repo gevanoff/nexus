@@ -165,44 +165,26 @@ To add a new service to Nexus:
 1. **Create service directory**
 
 ```bash
-mkdir services/my-service
-cd services/my-service
+python services/template/scaffold_service.py \
+  --name my-service \
+  --route-kind images \
+  --port 9190
 ```
 
-2. **Copy template**
-
-```bash
-cp ../template/example-service.py app/main.py
-```
-
-3. **Implement required endpoints**
+2. **Implement required endpoints**
    - `/health` - Liveness check
    - `/readyz` - Readiness check
-   - `/v1/metadata` - Service metadata
+   - `/v1/models` - Model discovery
+   - capability route for the selected modality
 
-4. **Create Dockerfile**
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY app/ ./app/
-EXPOSE 9000
-HEALTHCHECK CMD curl -f http://localhost:9000/health || exit 1
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
-```
-
-5. **Add a per-component compose file** (create `docker-compose.<service>.yml`)
-
-6. **Add documentation**
+3. **Add documentation**
    - Service README.md
    - Update main README.md
    - Update services/README.md
 
-7. **Add tests**
+4. **Add tests**
 
-8. **Submit PR**
+5. **Submit PR**
 
 See [Template Service](services/template/README.md) for detailed guide.
 

@@ -1,0 +1,45 @@
+services:
+  __SERVICE_NAME__:
+    build:
+      context: ./services/__SERVICE_NAME__
+    container_name: nexus-__SERVICE_NAME__
+    env_file:
+      - ./services/__SERVICE_NAME__/.env.example
+    ports:
+      - "__PORT__:__PORT__"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; port=os.environ.get('NEXUS_SERVICE_PORT', '__PORT__'); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3).read(); print('ok')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - nexus
+    # Add GPU reservations here if the backend requires NVIDIA hardware.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           capabilities: [gpu]
+
+  __SERVICE_NAME___registrar:
+    build:
+      context: ./services/service-registrar
+    container_name: nexus-__SERVICE_NAME__-registrar
+    depends_on:
+      - __SERVICE_NAME__
+    environment:
+      ETCD_URL: ${ETCD_URL:-http://etcd:2379}
+      NEXUS_SERVICE_NAME: __SERVICE_NAME__
+      NEXUS_SERVICE_BASE_URL: http://__SERVICE_NAME__:__PORT__
+      NEXUS_SERVICE_BACKEND_CLASS: __SERVICE_NAME__
+      NEXUS_SERVICE_METADATA_URL: http://__SERVICE_NAME__:__PORT__/v1/metadata
+      NEXUS_SERVICE_HEALTH_URLS: http://__SERVICE_NAME__:__PORT__/readyz,http://__SERVICE_NAME__:__PORT__/health
+    restart: unless-stopped
+    networks:
+      - nexus
+
+networks:
+  nexus:
+    external: true

@@ -12,7 +12,7 @@ This directory contains all containerized services in the Nexus infrastructure.
 
 Each service is:
 - **Independent**: Can be built and run standalone
-- **Discoverable**: Exposes `/v1/metadata` for capability advertisement
+- **Discoverable**: Exposes `GET /v1/models` and usually `GET /v1/metadata`
 - **Observable**: Provides `/health` and `/readyz` endpoints
 - **Standardized**: Follows OpenAI API conventions where applicable
 - **Registrable**: Base URLs are published to etcd for multi-host discovery
@@ -137,8 +137,8 @@ Each service is:
 ### Development
 
 #### Template (`template/`)
-- **Purpose**: Starting point for new services
-- **Status**: 📚 Reference implementation
+- **Purpose**: Runnable skeleton and scaffolder for new model containers
+- **Status**: ✅ Concrete template with upstream-proxy and local-runner modes
 - **Documentation**: [template/README.md](template/README.md)
 
 ## Service Architecture
@@ -168,7 +168,7 @@ For multi-host rollouts, use the per-service manifests in `deploy/` to run indiv
 
 ## Required Endpoints
 
-All services MUST implement these endpoints:
+All containerized model services should implement this minimum contract:
 
 1. **`GET /health`**
    - Liveness check
@@ -180,84 +180,59 @@ All services MUST implement these endpoints:
    - Returns 200 if service can handle requests
    - Should check critical dependencies
 
-3. **`GET /v1/metadata`**
-   - Service discovery
-   - Returns capabilities, endpoints, configuration options
-   - Follows standardized schema (see SERVICE_API_SPECIFICATION.md)
+3. **`GET /v1/models`**
+   - Minimal model discovery
+   - Returns the default model id exposed by the service
+
+4. **Capability route**
+   - One primary OpenAI-style route, for example:
+     - `/v1/chat/completions`
+     - `/v1/embeddings`
+     - `/v1/images/generations`
+     - `/v1/audio/speech`
+     - `/v1/ocr`
+     - `/v1/videos/generations`
+
+5. **`GET /v1/metadata`** (recommended)
+   - Human-readable service discovery
+   - Returns endpoints, route kind, and runtime mode
 
 See [../SERVICE_API_SPECIFICATION.md](../SERVICE_API_SPECIFICATION.md) for complete specification.
 
 ## Adding a New Service
 
-### 1. Create Service Directory
+### 1. Scaffold From Template
+
+Use the template scaffolder instead of copying files manually:
 
 ```bash
-mkdir services/my-service
-cd services/my-service
+python services/template/scaffold_service.py \
+  --name my-service \
+  --route-kind images \
+  --port 9190
 ```
 
-### 2. Copy Template Files
+### 2. Choose Execution Mode
 
-```bash
-cp ../template/example-service.py app/main.py
-cp ../template/.env.example .env.example
-```
+- `upstream`: wrap an existing HTTP model server
+- `command`: run a local inference command that reads request and output files
 
-### 3. Create Dockerfile
+### 3. Add Service-Specific Dependencies
 
-```dockerfile
-FROM python:3.11-slim
+- Python packages in `requirements.txt`
+- system packages in `Dockerfile`
+- helper scripts or model adapters under `app/`
 
-WORKDIR /app
+### 4. Bring It Up With The Generated Compose Fragment
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+Each generated service includes its own `docker-compose.<service>.yml` and etcd registrar sidecar.
 
-# Copy application
-COPY app/ ./app/
+### 5. Implement Or Wire The Capability Route
 
-# Expose port
-EXPOSE 9000
+The generated shim already exposes the right route shape. Most new services only need:
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s \
-    CMD curl -f http://localhost:9000/health || exit 1
-
-# Run
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
-```
-
-### 4. Add to Docker Compose
-
-Create a new per-component compose file (policy: one file per service), e.g. `docker-compose.my-service.yml`:
-
-```yaml
-my-service:
-  build:
-    context: ./services/my-service
-  container_name: nexus-my-service
-  ports:
-    - "9000:9000"
-  environment:
-    - SERVICE_NAME=my-service
-  networks:
-    - nexus
-  restart: unless-stopped
-```
-
-### 5. Implement Required Endpoints
-
-Edit `app/main.py` to implement:
-- `/health` - Liveness check
-- `/readyz` - Readiness check  
-- `/v1/metadata` - Service metadata
-
-### 6. Add Service-Specific Endpoints
-
-Implement your service's functionality following OpenAI conventions:
-- `/v1/chat/completions` for chat
-- `/v1/images/generations` for images
+- `NEXUS_UPSTREAM_BASE_URL` for proxy mode
+- or `NEXUS_RUN_COMMAND` for local runner mode
 - `/v1/audio/speech` for TTS
 - etc.
 
@@ -541,7 +516,7 @@ curl http://localhost:9000/metrics
 
 See these services for reference:
 
-- **Minimal service**: `template/example-service.py`
+- **Template skeleton**: `template/skeleton/app/nexus_model_service.py`
 - **Full gateway**: `gateway/app/main.py`
 - **Service wrapper**: `ollama/` (wraps existing service)
 

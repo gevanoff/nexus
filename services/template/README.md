@@ -1,217 +1,169 @@
-# Service Template
+# Nexus Model Service Template
 
-This template provides a starting point for creating new Nexus services.
+This directory contains a real, reusable template for containerized Nexus model services.
 
-## Required Files
+The point of the template is to let an unfamiliar AI add a new model backend by following
+one stable contract:
 
-- `Dockerfile` - Container definition
-- `app/main.py` - Service implementation with required endpoints
-- `requirements.txt` - Python dependencies (if Python-based)
-- `.env.example` - Configuration template
-- `README.md` - Service documentation
+- same container shape
+- same liveness and readiness endpoints
+- same `GET /v1/models` discovery endpoint
+- same modality route pattern
+- same two execution modes
+  - proxy to an upstream API
+  - run a local command that reads a request JSON file and writes an output file
 
-## Required Endpoints
+## What Can Be Standardized
 
-Every service must implement:
+Across the current model containers, these elements can and should be standardized:
 
-1. `GET /health` - Liveness check (200 = alive)
-2. `GET /readyz` - Readiness check (200 = ready, 503 = not ready)
-3. `GET /v1/metadata` - Service discovery (capabilities, endpoints, etc.)
+1. Files
+   - `Dockerfile`
+   - `requirements.txt`
+   - `.env.example`
+   - `app/main.py`
+   - `README.md`
+   - optional `docker-compose.<service>.yml`
 
-See [SERVICE_API_SPECIFICATION.md](../../SERVICE_API_SPECIFICATION.md) for details.
+2. HTTP contract
+   - `GET /health`
+   - `GET /healthz`
+   - `GET /readyz`
+   - `GET /v1/models`
+   - `GET /v1/metadata`
+   - one capability route such as:
+     - `/v1/chat/completions`
+     - `/v1/embeddings`
+     - `/v1/images/generations`
+     - `/v1/audio/speech`
+     - `/v1/ocr`
+     - `/v1/videos/generations`
+     - `/v1/music/generations`
 
-## Template Structure
+3. Runtime modes
+   - `upstream`: wrap an existing HTTP model server
+   - `command`: execute a local inference runner
 
+4. Local runner contract
+   - request JSON path
+   - output JSON path
+   - output media path
+   - output directory
+   - job id and route kind
+
+5. Compose shape
+   - model service
+   - optional etcd registrar sidecar
+   - standard healthcheck
+   - placeholder for GPU reservations
+
+## Layout
+
+The copyable service skeleton lives under [skeleton](/c:/Users/paper/Code/nexus/services/template/skeleton).
+
+```text
+services/template/
+├── README.md
+├── scaffold_service.py
+└── skeleton/
+    ├── .env.example
+    ├── Dockerfile
+    ├── README.md
+    ├── docker-compose.service.yml
+    ├── requirements.txt
+    └── app/
+        ├── __init__.py
+        ├── main.py
+        └── nexus_model_service.py
 ```
-services/my-service/
-├── Dockerfile              # Container build definition
-├── docker-compose.<service>.yml  # Optional: standalone testing
-├── requirements.txt        # Python dependencies
-├── .env.example           # Configuration template
-├── README.md              # Service documentation
-└── app/
-    ├── __init__.py        # Python package marker
-    └── main.py            # Service implementation
-```
 
-## Example Service
+## Quick Start
 
-See `example-service.py` for a minimal Python FastAPI service that implements all required endpoints.
+Use the scaffolder instead of copying files by hand.
 
-## Creating a New Service
-
-### 1. Copy Template
+Directory: repo root
 
 ```bash
-cp -r services/template services/my-service
-cd services/my-service
+python services/template/scaffold_service.py \
+  --name my-new-model \
+  --route-kind images \
+  --port 9190
 ```
 
-### 2. Update Configuration
+That creates `services/my-new-model/` with:
 
-Edit `.env.example` with service-specific settings:
+- a runnable FastAPI shim
+- an env template
+- a compose fragment with a registrar sidecar
+- a README with the service defaults already filled in
+
+## Execution Modes
+
+### Upstream proxy mode
+
+Use this when the model already exposes a compatible HTTP API.
+
+Set:
+
+- `NEXUS_EXECUTION_MODE=upstream`
+- `NEXUS_UPSTREAM_BASE_URL=http://host:port`
+- optionally `NEXUS_UPSTREAM_ENDPOINT`
+- optionally `NEXUS_UPSTREAM_READY_PATHS`
+
+### Local command mode
+
+Use this when the model needs a custom runner script or CLI.
+
+Set:
+
+- `NEXUS_EXECUTION_MODE=command`
+- `NEXUS_RUN_COMMAND=python app/run_model.py`
+- optionally `NEXUS_RUN_READY_COMMAND=python app/check_assets.py`
+
+For each request, the shim exports:
+
+- `NEXUS_JOB_ID`
+- `NEXUS_ROUTE_KIND`
+- `NEXUS_REQUEST_JSON`
+- `NEXUS_OUTPUT_JSON`
+- `NEXUS_OUTPUT_MEDIA_PATH`
+- `NEXUS_OUTPUT_DIR`
+
+## Runner Output Contract
+
+For `chat`, `embeddings`, `images`, `ocr`, `video`, `music`, and `json`, the
+runner writes a JSON response to `NEXUS_OUTPUT_JSON`.
+
+For `tts`, the runner can either:
+
+1. write JSON containing `audio_path` or `audio_base64`
+2. write raw bytes to `NEXUS_OUTPUT_MEDIA_PATH`
+
+## When To Use This Template
+
+Use the template when:
+
+- the backend is request/response shaped
+- the backend is already OpenAI-compatible or easy to wrap
+- you want it to fit the Nexus health and registry model immediately
+
+Fork a more specialized service instead when:
+
+- the backend needs multipart uploads
+- the backend requires substantial runtime provisioning at container start
+- the backend needs long-lived worker orchestration that does not fit a simple runner
+
+## Validation
+
+Directory: repo root
 
 ```bash
-SERVICE_NAME=my-service
-SERVICE_VERSION=1.0.0
-SERVICE_PORT=9000
+python -m compileall services/template
+python services/template/scaffold_service.py --name template-check --route-kind tts --port 9199 --dry-run
 ```
 
-### 3. Implement Endpoints
+## Related Files
 
-Edit `app/main.py` to implement:
-- Health checks
-- Metadata endpoint
-- Your service-specific endpoints
-
-### 4. Create Dockerfile
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app/ ./app/
-
-EXPOSE 9000
-
-HEALTHCHECK --interval=30s --timeout=10s \
-    CMD curl -f http://localhost:9000/health || exit 1
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
-```
-
-### 5. Add to Docker Compose
-
-Create a `docker-compose.<service>.yml` file:
-
-```yaml
-my-service:
-  build:
-    context: ./services/my-service
-  container_name: nexus-my-service
-  ports:
-    - "9000:9000"
-  environment:
-    - SERVICE_NAME=my-service
-    - SERVICE_VERSION=1.0.0
-  networks:
-    - nexus
-  restart: unless-stopped
-  healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
-```
-
-### 6. Update Gateway
-
-The gateway will auto-discover your service via `/v1/metadata` if configured properly.
-
-For multi-host deployments, register the service in etcd:
-
-```bash
-curl -X POST http://etcd:2379/v3/kv/put \
-  -H "Content-Type: application/json" \
-  -d '{
-    "key": "L25leHVzL3NlcnZpY2VzL215LXNlcnZpY2U=",
-    "value": "eyJuYW1lIjoibXktc2VydmljZSIsImJhc2VfdXJsIjoiaHR0cDovL215LXNlcnZpY2U6OTAwMCIsIm1ldGFkYXRhX3VybCI6Imh0dHA6Ly9teS1zZXJ2aWNlOjkwMDAvdjEvbWV0YWRhdGEifQ=="
-  }'
-```
-
-Add backend URL to gateway environment:
-
-```yaml
-environment:
-  - MY_SERVICE_BASE_URL=http://my-service:9000
-```
-
-### 7. Test
-
-```bash
-# Build and start
-docker compose up -d my-service
-
-# Test health
-curl http://localhost:9000/health
-
-# Test readiness
-curl http://localhost:9000/readyz
-
-# Test metadata
-curl http://localhost:9000/v1/metadata
-```
-
-## Service Development Checklist
-
-- [ ] Implements `/health` endpoint
-- [ ] Implements `/readyz` endpoint with backend checks
-- [ ] Implements `/v1/metadata` with complete schema
-- [ ] Follows OpenAI API conventions (where applicable)
-- [ ] Includes proper error handling
-- [ ] Has structured logging
-- [ ] Has health check in Dockerfile
-- [ ] Has resource limits defined
-- [ ] Has security best practices (non-root user, etc.)
-- [ ] Has comprehensive README
-- [ ] Has configuration examples
-- [ ] Has tests
-
-## Best Practices
-
-### Configuration
-- Use environment variables for all config
-- Provide sensible defaults
-- Validate configuration on startup
-- Document all variables in `.env.example`
-
-### Logging
-- Use structured logging (JSON)
-- Include correlation IDs
-- Log errors with stack traces
-- Don't log sensitive data
-
-### Error Handling
-- Use standard HTTP status codes
-- Return error details in response body
-- Handle timeouts gracefully
-- Fail fast when appropriate
-
-### Security
-- Run as non-root user
-- Use minimal base images
-- Don't expose unnecessary ports
-- Validate all inputs
-- Sanitize outputs
-
-### Performance
-- Implement request timeouts
-- Handle backpressure
-- Clean up resources
-- Use connection pooling
-
-### Testing
-- Unit tests for business logic
-- Integration tests with real backends
-- Health endpoint tests
-- Load tests for production readiness
-
-## Examples
-
-See these services for reference implementations:
-
-- `services/gateway/` - Full-featured gateway
-- `services/ollama/` - Wrapping an existing service
-- `services/images/` - GPU-accelerated service
-- `services/tts/` - Audio processing service
-
-## Resources
-
-- [SERVICE_API_SPECIFICATION.md](../../SERVICE_API_SPECIFICATION.md) - API requirements
-- [ARCHITECTURE.md](../../ARCHITECTURE.md) - System design
-- [Docker Compose docs](https://docs.docker.com/compose/)
-- [FastAPI docs](https://fastapi.tiangolo.com/)
+- [services/README.md](/c:/Users/paper/Code/nexus/services/README.md)
+- [services/template/scaffold_service.py](/c:/Users/paper/Code/nexus/services/template/scaffold_service.py)
+- [services/template/skeleton/app/nexus_model_service.py](/c:/Users/paper/Code/nexus/services/template/skeleton/app/nexus_model_service.py)

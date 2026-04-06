@@ -189,7 +189,8 @@ nexus/
     │   └── README.md                  # TTS service (planned)
     └── template/
         ├── README.md                  # Template guide
-        └── example-service.py         # Example implementation
+        ├── scaffold_service.py        # Service scaffolder
+        └── skeleton/                  # Copyable runnable template
 ```
 
 ## Implementation Status
