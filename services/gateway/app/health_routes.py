@@ -54,6 +54,7 @@ async def gateway_registry(req: Request):
                 "backend_class": record.backend_class,
                 "base_url": record.base_url,
                 "metadata_url": record.metadata_url,
+                "hostname": record.hostname,
                 "source": record.source,
             }
         )

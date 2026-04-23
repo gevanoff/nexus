@@ -16,23 +16,29 @@ NS_AUTO_YES="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/register-service.sh [--yes] [--backend-class CLASS] <service-name> <base-url> <etcd-url>
+Usage: deploy/scripts/register-service.sh [--yes] [--backend-class CLASS] [--hostname HOSTNAME] <service-name> <base-url> <etcd-url>
 
 Example:
-  deploy/scripts/register-service.sh --backend-class local_vllm vllm http://vllm:8000/v1 http://etcd:2379
+  deploy/scripts/register-service.sh --backend-class local_vllm --hostname ai1 vllm http://ai1:8000/v1 http://etcd:2379
 
 Options:
   --backend-class CLASS  Canonical backend class (for example: local_vllm, gpu_heavy)
+  --hostname HOSTNAME    Hostname where the service is running (defaults to the base URL host)
   --yes                  Non-interactive mode (assume "yes" for install prompts)
 EOF
 }
 
 parse_args() {
   backend_class=""
+  hostname=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --backend-class)
         backend_class="${2:-}"
+        shift 2
+        ;;
+      --hostname)
+        hostname="${2:-}"
         shift 2
         ;;
       --yes)
@@ -83,13 +89,22 @@ fi
 
 metadata_url="${base_url%/}/v1/metadata"
 
-payload=$($PYTHON - "$name" "$base_url" "$metadata_url" "$backend_class" <<'PY'
+payload=$($PYTHON - "$name" "$base_url" "$metadata_url" "$backend_class" "$hostname" <<'PY'
 import base64, json, sys
-name, base_url, metadata_url, backend_class = sys.argv[1:5]
+from urllib.parse import urlparse
+
+name, base_url, metadata_url, backend_class, hostname = sys.argv[1:6]
 key = f"/nexus/services/{name}"
+if not hostname:
+  try:
+    hostname = (urlparse(base_url).hostname or "").strip()
+  except Exception:
+    hostname = ""
 payload = {"name": name, "base_url": base_url, "metadata_url": metadata_url}
 if backend_class:
   payload["backend_class"] = backend_class
+if hostname:
+  payload["hostname"] = hostname
 value = json.dumps(payload)
 print(json.dumps({
   "key": base64.b64encode(key.encode()).decode(),
@@ -102,8 +117,18 @@ curl -fsS -X POST "${etcd_url%/}/v3/kv/put" \
   -H "Content-Type: application/json" \
   -d "$payload"
 
+extra_info=""
 if [[ -n "$backend_class" ]]; then
-  ns_print_ok "Registered $name at $base_url (backend_class=$backend_class)"
+  extra_info="backend_class=$backend_class"
+fi
+if [[ -n "$hostname" ]]; then
+  if [[ -n "$extra_info" ]]; then
+    extra_info="$extra_info, "
+  fi
+  extra_info="${extra_info}hostname=$hostname"
+fi
+if [[ -n "$extra_info" ]]; then
+  ns_print_ok "Registered $name at $base_url ($extra_info)"
 else
   ns_print_ok "Registered $name at $base_url"
 fi

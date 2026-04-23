@@ -169,6 +169,7 @@ for item in data.get("kvs", []) if isinstance(data, dict) else []:
       "base_url": str(value.get("base_url") or ""),
       "metadata_url": str(value.get("metadata_url") or ""),
       "backend_class": str(value.get("backend_class") or ""),
+      "hostname": str(value.get("hostname") or ""),
     }
   )
 
@@ -182,10 +183,11 @@ if not records:
   print("No service registrations found.")
   raise SystemExit(0)
 
-headers = ["NAME", "BASE URL", "BACKEND CLASS", "METADATA URL"]
+headers = ["NAME", "HOSTNAME", "BASE URL", "BACKEND CLASS", "METADATA URL"]
 rows = [
   [
     record["name"],
+    record["hostname"] or "-",
     record["base_url"] or "-",
     record["backend_class"] or "-",
     record["metadata_url"] or "-",

@@ -54,6 +54,7 @@
     let conversationResetting = false;
     let pendingAttachments = [];
     let modelOptionsCache = [];
+    let modelOptionLabels = new Map();
 
     function handle401(resp) {
       if (resp && resp.status === 401) {
@@ -201,6 +202,7 @@
         const header = document.createElement("div");
         header.className = "status-row-header";
 
+        const nameContainer = document.createElement("div");
         const name = document.createElement("div");
         name.className = "status-name";
         const resolvedName = displayName || backend.backend_class || "unknown";
@@ -211,7 +213,18 @@
           alias.textContent = ` (${backend.backend_class})`;
           name.appendChild(alias);
         }
-        header.appendChild(name);
+        nameContainer.appendChild(name);
+
+        if (backend.hostname) {
+          const hostEl = document.createElement("div");
+          hostEl.style.fontSize = "12px";
+          hostEl.style.fontWeight = "600";
+          hostEl.style.color = "#6fb8ff";
+          hostEl.style.marginTop = "2px";
+          hostEl.textContent = `on ${backend.hostname}`;
+          nameContainer.appendChild(hostEl);
+        }
+        header.appendChild(nameContainer);
 
         const badges = document.createElement("div");
         badges.className = "status-badges";
@@ -1025,13 +1038,40 @@
       return unique;
     }
 
+    function buildModelOptionLabel(item) {
+      const id = typeof item?.id === "string" ? item.id.trim() : "";
+      if (!id) return "";
+      const explicitLabel = typeof item?.label === "string" ? item.label.trim() : "";
+      if (explicitLabel) return explicitLabel;
+      const host = typeof item?.hostname === "string" && item.hostname.trim()
+        ? item.hostname.trim()
+        : typeof item?.host === "string" && item.host.trim()
+          ? item.host.trim()
+          : "";
+      return host ? `${id} @ ${host}` : id;
+    }
+
+    function setModelOptionLabels(items) {
+      modelOptionLabels = new Map();
+      if (!Array.isArray(items)) return;
+      for (const item of items) {
+        const id = typeof item?.id === "string" ? item.id.trim() : "";
+        if (!id) continue;
+        modelOptionLabels.set(id, buildModelOptionLabel(item) || id);
+      }
+      if (!modelOptionLabels.has("default")) {
+        modelOptionLabels.set("default", "default");
+      }
+    }
+
     function populateModelSelect(selectEl, options) {
       if (!selectEl) return;
       selectEl.innerHTML = "";
       for (const id of options) {
         const opt = document.createElement("option");
         opt.value = id;
-        opt.textContent = id;
+        opt.textContent = modelOptionLabels.get(id) || id;
+        opt.title = opt.textContent;
         selectEl.appendChild(opt);
       }
     }
@@ -1074,6 +1114,7 @@
         const text = await resp.text();
         if (handle401(resp)) return;
         if (!resp.ok) {
+          setModelOptionLabels([]);
           _setModelOptions(["default"], userSettings.preferredModel || "default");
           addMessage({ role: "system", content: text, meta: `Models HTTP ${resp.status}` });
           return;
@@ -1083,15 +1124,18 @@
         try {
           payload = JSON.parse(text);
         } catch {
+          setModelOptionLabels([]);
           _setModelOptions(["default"], userSettings.preferredModel || "default");
           addMessage({ role: "system", content: "Models: invalid JSON" });
           return;
         }
 
         const data = payload && Array.isArray(payload.data) ? payload.data : [];
+        setModelOptionLabels(data);
         const ids = data.map((m) => m && m.id).filter((x) => typeof x === "string");
         _setModelOptions(ids, userSettings.preferredModel || "default");
       } catch (e) {
+        setModelOptionLabels([]);
         _setModelOptions(["default"], userSettings.preferredModel || "default");
         addMessage({ role: "system", content: `Models error: ${String(e)}` });
       }

@@ -5,6 +5,7 @@ import signal
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -64,6 +65,13 @@ def _parse_health_urls() -> list[str]:
         return [item for item in urls if item]
     single = _env("NEXUS_SERVICE_HEALTH_URL")
     return [single] if single else []
+
+
+def _hostname_from_url(url: str) -> str:
+    try:
+        return (urllib.parse.urlparse(url).hostname or "").strip()
+    except Exception:
+        return ""
 
 
 def _is_service_healthy(urls: list[str], timeout: float) -> bool:
@@ -164,6 +172,7 @@ def main() -> int:
     service_health_urls = _parse_health_urls()
     service_metadata_url = _env("NEXUS_SERVICE_METADATA_URL")
     service_backend_class = _env("NEXUS_SERVICE_BACKEND_CLASS")
+    service_hostname = _env("NEXUS_SERVICE_HOSTNAME") or _hostname_from_url(service_base_url)
     prefix = _env("NEXUS_REGISTRY_PREFIX", "/nexus/services/") or "/nexus/services/"
     interval_sec = _env_float("NEXUS_REGISTRATION_INTERVAL_SEC", 30.0)
     timeout_sec = _env_float("NEXUS_REGISTRATION_TIMEOUT_SEC", 5.0)
@@ -187,6 +196,8 @@ def main() -> int:
         value["metadata_url"] = service_metadata_url
     if service_backend_class:
         value["backend_class"] = service_backend_class
+    if service_hostname:
+        value["hostname"] = service_hostname
 
     is_registered = False
     lease_id = ""

@@ -73,6 +73,7 @@
     const header = document.createElement('div');
     header.className = 'status-row-header';
 
+    const nameContainer = document.createElement('div');
     const name = document.createElement('div');
     name.className = 'status-name';
     const resolvedName = displayName || backend.backend_class || 'unknown';
@@ -83,7 +84,19 @@
       alias.textContent = ` (${backend.backend_class})`;
       name.appendChild(alias);
     }
-    header.appendChild(name);
+    nameContainer.appendChild(name);
+
+    if (backend.hostname) {
+      const hostEl = document.createElement('div');
+      hostEl.className = 'status-host';
+      hostEl.textContent = `on ${backend.hostname}`;
+      hostEl.style.fontSize = '13px';
+      hostEl.style.fontWeight = '600';
+      hostEl.style.color = '#6fb8ff';
+      hostEl.style.marginTop = '2px';
+      nameContainer.appendChild(hostEl);
+    }
+    header.appendChild(nameContainer);
 
     const badges = document.createElement('div');
     badges.className = 'status-badges';

@@ -57,6 +57,7 @@ class ServiceRecord:
     base_url: str
     metadata_url: str = ""
     backend_class: str = ""
+    hostname: str = ""
     source: str = "unknown"
 
 
@@ -227,6 +228,39 @@ def llm_backends() -> list[tuple[str, BackendConfig]]:
     return out
 
 
+def get_service_record_for_backend(
+    backend_name: str,
+    *,
+    registry: Optional[BackendRegistry] = None,
+) -> Optional[ServiceRecord]:
+    reg = registry or get_registry()
+    resolved = reg.resolve_backend_class(backend_name)
+    for candidate in (backend_name, resolved):
+        if not candidate:
+            continue
+        record = reg.service_records.get(candidate)
+        if record is not None:
+            return record
+    for record in reg.service_records.values():
+        if record.backend_class in {backend_name, resolved}:
+            return record
+    return None
+
+
+def backend_hostname(
+    backend_name: str,
+    *,
+    registry: Optional[BackendRegistry] = None,
+    fallback_base_url: str = "",
+) -> str:
+    record = get_service_record_for_backend(backend_name, registry=registry)
+    hostname = (record.hostname if record is not None else "").strip()
+    if hostname:
+        return hostname
+    base_url = (fallback_base_url or (record.base_url if record is not None else "")).strip()
+    return _backend_host(base_url) or ""
+
+
 def _prefix_range_end(prefix: str) -> str:
     if not prefix:
         return "\0"
@@ -269,6 +303,7 @@ async def _fetch_etcd_service_records() -> Dict[str, ServiceRecord]:
             base_url=base_url,
             metadata_url=metadata_url,
             backend_class=str(value.get("backend_class") or "").strip(),
+            hostname=str(value.get("hostname") or "").strip(),
             source="etcd",
         )
     return records
@@ -288,6 +323,7 @@ def _build_seed_records(registry: BackendRegistry) -> Dict[str, ServiceRecord]:
             base_url=base_url,
             metadata_url=f"{base_url.rstrip('/')}/v1/metadata",
             backend_class=backend_class,
+            hostname="",
             source="env",
         )
     return seeded
@@ -396,12 +432,15 @@ def _capability_availability(route_kind: RouteKind) -> Dict[str, Any]:
     for backend_class, config in registry.backends.items():
         if not config.supports(route_kind):
             continue
+        hostname = backend_hostname(backend_class, registry=registry, fallback_base_url=config.base_url)
         entry: Dict[str, Any] = {
             "backend_class": backend_class,
             "base_url": config.base_url,
             "host": _backend_host(config.base_url),
             "description": config.description,
         }
+        if hostname:
+            entry["hostname"] = hostname
         try:
             from app.health_checker import get_health_checker
 

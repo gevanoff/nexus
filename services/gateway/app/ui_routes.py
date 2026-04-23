@@ -25,7 +25,16 @@ from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 
-from app.backends import _capability_availability, backend_provider_name, check_capability, get_admission_controller, get_registry, llm_backends
+from app.backends import (
+    _capability_availability,
+    backend_hostname,
+    backend_provider_name,
+    check_capability,
+    get_admission_controller,
+    get_registry,
+    get_service_record_for_backend,
+    llm_backends,
+)
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
@@ -62,6 +71,28 @@ def _backend_base_url(backend_class: str) -> str:
     except Exception:
         pass
     return ""
+
+
+def _backend_location_details(registry: Any, backend_name: str, *, base_url: str = "") -> Dict[str, str]:
+    record = get_service_record_for_backend(backend_name, registry=registry)
+    effective_base_url = ((record.base_url if record is not None else "") or base_url).strip()
+    host = backend_hostname(backend_name, registry=registry, fallback_base_url=effective_base_url)
+    details: Dict[str, str] = {}
+    if effective_base_url:
+        details["base_url"] = effective_base_url
+    if host:
+        details["host"] = host
+        details["hostname"] = host
+    return details
+
+
+def _apply_model_location(item: Dict[str, Any], location: Dict[str, str]) -> Dict[str, Any]:
+    if location:
+        item.update(location)
+    host = str(location.get("hostname") or location.get("host") or "").strip()
+    if host and not item.get("label"):
+        item["label"] = f"{item['id']} @ {host}"
+    return item
 
 
 def _lighton_ocr_base_url() -> str:
@@ -303,6 +334,7 @@ def _clone_ui_models_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _probe_models_for_backend(
     client: httpx.AsyncClient,
+    registry: Any,
     backend_name: str,
     base_url: str,
     now: int,
@@ -310,7 +342,10 @@ async def _probe_models_for_backend(
     provider = backend_provider_name(backend_name)
     url = f"{base_url.rstrip('/')}/models"
     started = time.perf_counter()
+    location = _backend_location_details(registry, backend_name, base_url=base_url)
     diag: Dict[str, Any] = {"url": url, "ok": False, "backend": backend_name, "provider": provider}
+    if location:
+        diag.update(location)
     items: list[dict[str, Any]] = []
     try:
         r = await client.get(url)
@@ -320,7 +355,15 @@ async def _probe_models_for_backend(
         for m in models:
             mid = m.get("id")
             if mid:
-                items.append({"id": f"{backend_name}:{mid}", "object": "model", "created": now, "owned_by": "local"})
+                item: Dict[str, Any] = {
+                    "id": f"{backend_name}:{mid}",
+                    "object": "model",
+                    "created": now,
+                    "owned_by": "local",
+                    "backend": backend_name,
+                    "upstream_model": str(mid),
+                }
+                items.append(_apply_model_location(item, location))
         diag["ok"] = True
         diag["count"] = len(items)
     except Exception as exc:
@@ -2808,14 +2851,15 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             cached["diagnostics"] = diagnostics
             return cached
 
+        registry = get_registry()
         async with _httpx_client(timeout=probe_timeout_sec) as client:
-            probe_defs = [(backend_name, cfg.base_url) for backend_name, cfg in llm_backends()]
+            probe_defs = [(backend_name, cfg) for backend_name, cfg in llm_backends()]
             probe_results = await asyncio.gather(
-                *[_probe_models_for_backend(client, backend_name, base_url, now) for backend_name, base_url in probe_defs],
+                *[_probe_models_for_backend(client, registry, backend_name, cfg.base_url, now) for backend_name, cfg in probe_defs],
                 return_exceptions=True,
             )
         source_diags: Dict[str, Any] = {}
-        for (backend_name, _base_url), result in zip(probe_defs, probe_results):
+        for (backend_name, _cfg), result in zip(probe_defs, probe_results):
             if isinstance(result, Exception):
                 source_diags[backend_name] = {"backend": backend_name, "ok": False, "error": str(result)}
                 continue
@@ -2824,13 +2868,19 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             source_diags[backend_name] = diag
 
     # Add convenience backend pseudo-models.
-    registry = get_registry()
     for provider_name in ("vllm", "mlx"):
         provider_backend = registry.get_backend(registry.resolve_backend_class(provider_name))
         if provider_backend is not None and (provider_backend.base_url or "").strip():
-            data["data"].append({"id": provider_name, "object": "model", "created": now, "owned_by": "gateway"})
-    for backend_name, _cfg in llm_backends():
-        data["data"].append({"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"})
+            item: Dict[str, Any] = {"id": provider_name, "object": "model", "created": now, "owned_by": "gateway"}
+            data["data"].append(
+                _apply_model_location(
+                    item,
+                    _backend_location_details(registry, provider_backend.backend_class, base_url=provider_backend.base_url),
+                )
+            )
+    for backend_name, cfg in llm_backends():
+        item = {"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"}
+        data["data"].append(_apply_model_location(item, _backend_location_details(registry, backend_name, base_url=cfg.base_url)))
 
     # Add configured aliases so the UI can select stable names (fast/coder/etc).
     aliases = get_aliases()
@@ -2847,7 +2897,17 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             item["max_tokens_cap"] = a.max_tokens_cap
         if a.temperature_cap is not None:
             item["temperature_cap"] = a.temperature_cap
-        data["data"].append(item)
+        backend_cfg = registry.get_backend(a.backend)
+        data["data"].append(
+            _apply_model_location(
+                item,
+                _backend_location_details(
+                    registry,
+                    a.backend,
+                    base_url=(backend_cfg.base_url if backend_cfg is not None else ""),
+                ),
+            )
+        )
 
     diagnostics: Dict[str, Any] = {
         "probe_timeout_sec": probe_timeout_sec,
@@ -2882,7 +2942,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         _UI_MODELS_CACHE_VALUE = _clone_ui_models_payload(data)
         _UI_MODELS_CACHE_EXPIRES_AT = time.time() + cache_ttl_sec
 
-        return data
+    return data
 
 
 @router.post("/ui/api/chat", include_in_schema=False)
@@ -3807,6 +3867,11 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
         alias_entries = alias_map.get(backend_class)
         if alias_entries:
             entry["aliases"] = sorted(alias_entries, key=lambda item: item.get("name") or "")
+        location = _backend_location_details(registry, backend_class, base_url=config.base_url)
+        if location.get("host"):
+            entry["host"] = location["host"]
+        if location.get("hostname"):
+            entry["hostname"] = location["hostname"]
         status = checker.get_status(backend_class)
         if status is not None:
             entry.update(
