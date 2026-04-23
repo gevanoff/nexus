@@ -15,9 +15,9 @@ services:
       - --port
       - "8000"
       - --model
-      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-32B-Instruct}
+      - ${VLLM_MODEL_STRONG:-google/gemma-3-4b-it}
       - --served-model-name
-      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-32B-Instruct}
+      - ${VLLM_MODEL_STRONG:-google/gemma-3-4b-it}
       - --generation-config
       - vllm
       - --gpu-memory-utilization
@@ -51,9 +51,9 @@ services:
       - --port
       - "8000"
       - --model
-      - ${VLLM_MODEL_FAST:-Qwen/Qwen2.5-7B-Instruct}
+      - ${VLLM_MODEL_FAST:-google/gemma-3-1b-it}
       - --served-model-name
-      - ${VLLM_MODEL_FAST:-Qwen/Qwen2.5-7B-Instruct}
+      - ${VLLM_MODEL_FAST:-google/gemma-3-1b-it}
       - --generation-config
       - vllm
       - --gpu-memory-utilization

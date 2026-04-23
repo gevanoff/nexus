@@ -207,15 +207,15 @@ class Settings(BaseSettings):
     ETCD_TIMEOUT_SEC: float = 5.0
 
     # vLLM-backed lightweight/utility models, typically hosted on ai1.
-    VLLM_MODEL_STRONG: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    VLLM_MODEL_FAST: str = "Qwen/Qwen2.5-0.5B-Instruct"
-    VLLM_MODEL_DEFAULT: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    VLLM_MODEL_STRONG: str = "google/gemma-3-4b-it"
+    VLLM_MODEL_FAST: str = "google/gemma-3-1b-it"
+    VLLM_MODEL_DEFAULT: str = "google/gemma-3-4b-it"
     VLLM_MODEL_EMBEDDINGS: str = "BAAI/bge-small-en-v1.5"
 
     # MLX-hosted reasoning models, typically on ai2.
-    MLX_MODEL_STRONG: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
-    MLX_MODEL_FAST: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
-    MLX_MODEL_DEFAULT: str = "mlx-community/Qwen2.5-7B-Instruct-4bit"
+    MLX_MODEL_STRONG: str = "mlx-community/gemma-3-4b-it-qat-4bit"
+    MLX_MODEL_FAST: str = "mlx-community/gemma-3-4b-it-qat-4bit"
+    MLX_MODEL_DEFAULT: str = "mlx-community/gemma-3-4b-it-qat-4bit"
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 
@@ -230,7 +230,7 @@ class Settings(BaseSettings):
 
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
-    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/Qwen2.5-7B-Instruct-4bit"}}}'
+    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/gemma-3-4b-it-qat-4bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 

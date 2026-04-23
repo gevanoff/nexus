@@ -2,22 +2,22 @@
   "aliases": {
     "fast": {
       "backend": "local_vllm_fast",
-      "model": "Qwen/Qwen2.5-0.5B-Instruct",
+      "model": "google/gemma-3-1b-it",
       "tools": false
     },
     "default": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "model": "mlx-community/gemma-3-4b-it-qat-4bit",
       "tools": true
     },
     "coder": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "model": "mlx-community/gemma-3-4b-it-qat-4bit",
       "tools": true
     },
     "long": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "model": "mlx-community/gemma-3-4b-it-qat-4bit",
       "context_window": 65536,
       "tools": false
     },

@@ -138,7 +138,7 @@ setup_config() {
 
     # Generate random token (shared helper)
     RANDOM_TOKEN="$(ns_generate_token | tr -d '\r\n')"
-    LOCAL_QUICKSTART_MODEL_ALIASES_JSON='{"aliases":{"default":{"backend":"local_vllm","model":"Qwen/Qwen2.5-7B-Instruct","tools":true},"fast":{"backend":"local_vllm_fast","model":"Qwen/Qwen2.5-3B-Instruct","tools":false},"coder":{"backend":"local_vllm","model":"Qwen/Qwen2.5-7B-Instruct","tools":true},"long":{"backend":"local_vllm","model":"Qwen/Qwen2.5-7B-Instruct","context_window":65536,"tools":false},"embeddings":{"backend":"local_vllm_embeddings","model":"BAAI/bge-small-en-v1.5","tools":false}}}'
+    LOCAL_QUICKSTART_MODEL_ALIASES_JSON='{"aliases":{"default":{"backend":"local_vllm","model":"google/gemma-3-4b-it","tools":true},"fast":{"backend":"local_vllm_fast","model":"google/gemma-3-1b-it","tools":false},"coder":{"backend":"local_vllm","model":"google/gemma-3-4b-it","tools":true},"long":{"backend":"local_vllm","model":"google/gemma-3-4b-it","context_window":65536,"tools":false},"embeddings":{"backend":"local_vllm_embeddings","model":"BAAI/bge-small-en-v1.5","tools":false}}}'
     platform="$(ns_detect_platform)"
 
     upsert_env_value() {

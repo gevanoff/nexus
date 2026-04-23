@@ -99,8 +99,8 @@ obs_port="${OBSERVABILITY_PORT:-$(ns_env_get "${ENV_FILE}" OBSERVABILITY_PORT 88
 BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:${gateway_port}}"
 OBS_URL="${GATEWAY_OBS_URL:-http://127.0.0.1:${obs_port}}"
 TOKEN="${GATEWAY_BEARER_TOKEN:-$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")}"
-strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_STRONG "Qwen/Qwen2.5-32B-Instruct")}"
-fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_FAST "Qwen/Qwen2.5-7B-Instruct")}"
+strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_STRONG "google/gemma-3-4b-it")}"
+fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_FAST "google/gemma-3-1b-it")}"
 embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_EMBEDDINGS "BAAI/bge-small-en-v1.5")}"
 
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
