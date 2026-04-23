@@ -15,6 +15,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 NS_AUTO_YES="false"
 NS_OUTPUT_FORMAT="table"
 DEFAULT_ETCD_URL=""
+NS_WANTS_JSON="false"
 
 usage() {
   cat <<'EOF'
@@ -108,7 +109,18 @@ parse_args() {
   fi
 }
 
-ns_print_header "Ensuring prerequisites"
+for arg in "$@"; do
+  if [[ "$arg" == "--json" ]]; then
+    NS_WANTS_JSON="true"
+    break
+  fi
+done
+
+if [[ "$NS_WANTS_JSON" == "true" ]]; then
+  ns_print_header "Ensuring prerequisites" >&2
+else
+  ns_print_header "Ensuring prerequisites"
+fi
 ns_ensure_prereqs false true false false true false || true
 
 ns_require_cmd curl "curl" || exit 1

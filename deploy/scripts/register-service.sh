@@ -91,10 +91,13 @@ metadata_url="${base_url%/}/v1/metadata"
 
 payload=$($PYTHON - "$name" "$base_url" "$metadata_url" "$backend_class" "$hostname" <<'PY'
 import base64, json, sys
-from urllib.parse import urlparse
+try:
+  from urllib.parse import urlparse
+except ImportError:
+  from urlparse import urlparse
 
 name, base_url, metadata_url, backend_class, hostname = sys.argv[1:6]
-key = f"/nexus/services/{name}"
+key = "/nexus/services/{}".format(name)
 if not hostname:
   try:
     hostname = (urlparse(base_url).hostname or "").strip()
