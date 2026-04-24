@@ -3,4 +3,6 @@
     argv: "{{ ['/bin/bash', './deploy/scripts/deploy.sh', '--yes', '--topology-host', nexus_topology_host, '--topology-file', nexus_topology_file, '--env-file', nexus_env_file] + nexus_extra_deploy_args + [nexus_environment, nexus_branch] }}"
   args:
     chdir: "{{ nexus_repo_dir }}"
+  environment:
+    NEXUS_TRUST_GENERATED_SOPS_OVERLAYS: "{{ 'true' if (nexus_manage_sops_secrets | bool) else 'false' }}"
   changed_when: true

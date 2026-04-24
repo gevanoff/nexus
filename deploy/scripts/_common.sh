@@ -207,6 +207,7 @@ ns_materialize_sops_overlay_file() {
   local secret_file="$1"
   local output_file="$2"
   local sops_bin="${NEXUS_SOPS_BIN:-sops}"
+  local trust_generated_overlays="${NEXUS_TRUST_GENERATED_SOPS_OVERLAYS:-false}"
 
   if [[ -z "${secret_file:-}" ]]; then
     return 0
@@ -221,6 +222,10 @@ ns_materialize_sops_overlay_file() {
   fi
 
   if ! ns_have_cmd "$sops_bin"; then
+    if [[ -f "$output_file" && "$trust_generated_overlays" == "true" ]]; then
+      ns_print_warn "Reusing existing generated SOPS overlay ${output_file} because ${sops_bin} is unavailable and NEXUS_TRUST_GENERATED_SOPS_OVERLAYS=true."
+      return 0
+    fi
     if [[ -f "$output_file" && "$secret_file" -ot "$output_file" ]]; then
       ns_print_warn "Reusing existing generated SOPS overlay ${output_file} because ${sops_bin} is unavailable."
       return 0
