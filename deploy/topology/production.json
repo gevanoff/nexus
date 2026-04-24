@@ -83,16 +83,14 @@
       }
     },
     "ai2": {
-      "description": "Gateway, control plane, text/audio inference, and host-native MLX reasoning.",
+      "description": "Gateway, control plane, text/audio endpoints, and host-native MLX reasoning.",
       "platform": "macos",
       "ssh_target": "ai@ai2",
       "components": [
         "gateway",
-        "vllm",
         "etcd",
         "tts",
-        "luxtts",
-        "qwen3-tts"
+        "luxtts"
       ],
       "native_services": [
         "mlx"

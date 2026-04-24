@@ -38,12 +38,12 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 
 ### Current Host Inventory (2026-03-02 snapshot)
 
-- `ai2` (macOS Apple Silicon): **512GB unified memory**. Primary control-plane host, host-native accelerator target for `ollama` + `mlx`, and current home for `vllm` + TTS services in the tracked topology.
+- `ai2` (macOS Apple Silicon): **512GB unified memory**. Primary control-plane host, host-native accelerator target for `ollama` + `mlx`, and current home for the cluster's text/audio endpoints in the tracked topology.
 - `ada2` (Linux/NVIDIA): ~31GiB RAM, NVIDIA RTX 6000 Ada (46GB VRAM), currently running heavy CUDA workloads (`heartmula`, `invokeai`).
 - `ai1` (Linux/NVIDIA): ~15GiB RAM, NVIDIA RTX 5060 Ti (16GB VRAM), currently reserved for media ingress and rebuild/overflow work.
 
 Operational implication:
-- Keep gateway, default MLX routing, `vllm`, and TTS traffic concentrated on `ai2`.
+- Keep gateway, default MLX routing, and the cluster's text/audio endpoints concentrated on `ai2`.
 - Keep heavy image/vision/CUDA services on `ada2`.
 - Treat `ai1` as media ingress and spare Linux/NVIDIA capacity unless the topology is reassigned again.
 
