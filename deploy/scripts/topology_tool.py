@@ -7,10 +7,62 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_LINE_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+
+FAMILY_SPECS: dict[str, dict[str, list[str]]] = {
+    "vllm": {
+        "components": ["vllm"],
+        "default_env_keys": [
+            "VLLM_BASE_URL",
+            "VLLM_ADVERTISE_BASE_URL",
+            "VLLM_FAST_BASE_URL",
+            "VLLM_FAST_ADVERTISE_BASE_URL",
+            "VLLM_EMBEDDINGS_BASE_URL",
+            "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL",
+        ],
+        "host_env_keys": [],
+    },
+    "tts": {
+        "components": ["tts", "luxtts"],
+        "default_env_keys": [
+            "POCKET_TTS_BASE_URL",
+            "POCKET_TTS_ADVERTISE_BASE_URL",
+            "LUXTTS_BASE_URL",
+            "LUXTTS_ADVERTISE_BASE_URL",
+        ],
+        "host_env_keys": [
+            "LUXTTS_UPSTREAM_BASE_URL",
+            "LUXTTS_PROMPT_AUDIO",
+        ],
+    },
+    "qwen3-tts": {
+        "components": ["qwen3-tts"],
+        "default_env_keys": [
+            "QWEN3_TTS_BASE_URL",
+            "QWEN3_TTS_ADVERTISE_BASE_URL",
+        ],
+        "host_env_keys": [
+            "QWEN3_TTS_DEVICE_MAP",
+            "QWEN3_TTS_DTYPE",
+            "QWEN3_TTS_ATTN_IMPL",
+            "QWEN3_TTS_MODEL_ID",
+            "QWEN3_TTS_TASK",
+            "QWEN3_TTS_LANGUAGE",
+            "QWEN3_TTS_SPEAKER",
+            "QWEN3_TTS_VOICE_MAP_JSON",
+            "QWEN3_TTS_REF_MAP_JSON",
+            "QWEN3_TTS_INSTRUCT",
+            "QWEN3_TTS_REF_AUDIO",
+            "QWEN3_TTS_REF_TEXT",
+            "QWEN3_TTS_REFS_REF_TEXT",
+        ],
+    },
+}
 
 
 def die(message: str) -> "NoReturn":
@@ -159,6 +211,37 @@ def parse_env_values(path: Path) -> dict[str, str]:
     return values
 
 
+def _replace_url_host(raw_value: str, host_name: str) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return value
+    parsed = urlsplit(value)
+    if not parsed.scheme or not parsed.netloc:
+        return value
+    netloc = host_name
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
+def _validated_components_for_host(host: dict[str, Any], *, label: str) -> list[str]:
+    items = _validate_components(host.get("components"), label=label)
+    host["components"] = list(items)
+    return host["components"]
+
+
+def _validated_env_for_scope(container: dict[str, Any], *, key: str, label: str) -> dict[str, Any]:
+    current = container.get(key)
+    if current is None:
+        container[key] = {}
+        return container[key]
+    if not isinstance(current, dict):
+        die(f"{label} must be an object")
+    validated = _validate_env_map(current, label=label)
+    container[key] = dict(validated)
+    return container[key]
+
+
 def render_env_file(template_path: Path, output_path: Path, env_values: dict[str, str]) -> tuple[int, int]:
     try:
         template_lines = template_path.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -238,6 +321,109 @@ def cmd_render_env(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_families(_args: argparse.Namespace) -> int:
+    for family_name in sorted(FAMILY_SPECS):
+        print(family_name)
+    return 0
+
+
+def cmd_move_family(args: argparse.Namespace) -> int:
+    topology_path = Path(args.topology_file)
+    payload = _read_json(topology_path)
+    defaults = payload.get("defaults")
+    if defaults is None:
+        defaults = {}
+        payload["defaults"] = defaults
+    if not isinstance(defaults, dict):
+        die("topology.defaults must be an object")
+
+    hosts = payload.get("hosts")
+    if not isinstance(hosts, dict):
+        die("topology.hosts must be an object")
+
+    from_host_name = str(args.from_host).strip()
+    to_host_name = str(args.to_host).strip()
+    if not from_host_name or not to_host_name:
+        die("--from-host and --to-host are required")
+    if from_host_name == to_host_name:
+        die("--from-host and --to-host must be different")
+
+    from_host = hosts.get(from_host_name)
+    if not isinstance(from_host, dict):
+        die(f"unknown topology host: {from_host_name}")
+    to_host = hosts.get(to_host_name)
+    if not isinstance(to_host, dict):
+        die(f"unknown topology host: {to_host_name}")
+
+    family_name = str(args.family).strip()
+    family_spec = FAMILY_SPECS.get(family_name)
+    if family_spec is None:
+        die(f"unknown family: {family_name}")
+
+    family_components = list(family_spec.get("components") or [])
+    family_default_env_keys = list(family_spec.get("default_env_keys") or [])
+    family_host_env_keys = list(family_spec.get("host_env_keys") or [])
+
+    defaults_env = _validated_env_for_scope(defaults, key="env", label="defaults.env")
+    from_components = _validated_components_for_host(from_host, label=f"hosts.{from_host_name}.components")
+    to_components = _validated_components_for_host(to_host, label=f"hosts.{to_host_name}.components")
+    from_env = _validated_env_for_scope(from_host, key="env", label=f"hosts.{from_host_name}.env")
+    to_env = _validated_env_for_scope(to_host, key="env", label=f"hosts.{to_host_name}.env")
+
+    moved_components: list[str] = []
+    added_destination_components: list[str] = []
+    updated_default_env_keys: list[str] = []
+    moved_host_env_keys: list[str] = []
+
+    if args.components_mode == "move":
+        next_from_components = [item for item in from_components if item not in family_components]
+        next_to_components = list(to_components)
+        for component in family_components:
+            if component in from_components:
+                moved_components.append(component)
+            if component not in next_to_components:
+                next_to_components.append(component)
+                added_destination_components.append(component)
+        from_host["components"] = next_from_components
+        to_host["components"] = next_to_components
+
+    for key in family_default_env_keys:
+        if key not in defaults_env:
+            continue
+        new_value = _replace_url_host(str(defaults_env.get(key) or ""), to_host_name)
+        if defaults_env.get(key) != new_value:
+            defaults_env[key] = new_value
+            updated_default_env_keys.append(key)
+
+    if args.host_env_mode == "move":
+        for key in family_host_env_keys:
+            if key not in from_env:
+                continue
+            to_env[key] = from_env.pop(key)
+            moved_host_env_keys.append(key)
+
+    summary = {
+        "family": family_name,
+        "from_host": from_host_name,
+        "to_host": to_host_name,
+        "components_mode": args.components_mode,
+        "host_env_mode": args.host_env_mode,
+        "components": family_components,
+        "moved_components": moved_components,
+        "added_destination_components": added_destination_components,
+        "updated_default_env_keys": updated_default_env_keys,
+        "moved_host_env_keys": moved_host_env_keys,
+        "topology_file": str(topology_path),
+    }
+
+    if args.write:
+        with topology_path.open("w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(payload, indent=2) + "\n")
+
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Read and materialize Nexus topology manifests.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -263,6 +449,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser_render.add_argument("--template", required=True)
     parser_render.add_argument("--out", required=True)
     parser_render.set_defaults(func=cmd_render_env)
+
+    parser_families = subparsers.add_parser("families", help="List supported topology backend families.")
+    parser_families.set_defaults(func=cmd_families)
+
+    parser_move = subparsers.add_parser("move-family", help="Move a backend family between topology hosts.")
+    parser_move.add_argument("--topology-file", required=True)
+    parser_move.add_argument("--family", required=True)
+    parser_move.add_argument("--from-host", required=True)
+    parser_move.add_argument("--to-host", required=True)
+    parser_move.add_argument("--components-mode", choices=["move", "ignore"], default="move")
+    parser_move.add_argument("--host-env-mode", choices=["move", "ignore"], default="move")
+    parser_move.add_argument("--write", action="store_true")
+    parser_move.set_defaults(func=cmd_move_family)
 
     return parser
 

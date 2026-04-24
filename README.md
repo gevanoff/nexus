@@ -34,17 +34,18 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 
 - Backends that can use Apple Silicon acceleration must run on macOS bare metal (host-native), not in Linux containers.
 - Backends that are CPU-only and do not benefit from NVIDIA acceleration should run in containers on a Mac (currently only `ai2`).
+- The current `vllm` compose profile is GPU-bound (`gpus: all`) and should only be assigned to GPU-capable hosts.
 - NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
 
 ### Current Host Inventory (2026-03-02 snapshot)
 
-- `ai2` (macOS Apple Silicon): **512GB unified memory**. Primary control-plane host, host-native accelerator target for `ollama` + `mlx`, and current home for the cluster's text/audio endpoints in the tracked topology.
-- `ada2` (Linux/NVIDIA): ~31GiB RAM, NVIDIA RTX 6000 Ada (46GB VRAM), currently running heavy CUDA workloads (`heartmula`, `invokeai`).
+- `ai2` (macOS Apple Silicon): **512GB unified memory**. Primary control-plane host, host-native accelerator target for `ollama` + `mlx`, and current home for the containerized TTS stack.
+- `ada2` (Linux/NVIDIA): ~31GiB RAM, NVIDIA RTX 6000 Ada (46GB VRAM), currently running heavy CUDA workloads (`heartmula`, `invokeai`) and the temporary `vllm` placement in the tracked topology.
 - `ai1` (Linux/NVIDIA): ~15GiB RAM, NVIDIA RTX 5060 Ti (16GB VRAM), currently reserved for media ingress and rebuild/overflow work.
 
 Operational implication:
-- Keep gateway, default MLX routing, and the cluster's text/audio endpoints concentrated on `ai2`.
-- Keep heavy image/vision/CUDA services on `ada2`.
+- Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
+- Keep GPU-bound `vllm` and heavy image/vision/CUDA services on `ada2`.
 - Treat `ai1` as media ingress and spare Linux/NVIDIA capacity unless the topology is reassigned again.
 
 ### Prerequisites
@@ -219,6 +220,7 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
 - `deploy/scripts/restart-gateway.sh`: restart/rebuild only Gateway so code/config updates are picked up quickly
 - `deploy/scripts/redeploy-tts-shims.sh`: redeploy containerized `pocket_tts` + `luxtts` + `qwen3-tts` and optionally restart Gateway
+- `deploy/scripts/reassign-topology-family.sh`: move a tracked backend family between topology hosts and print the rollout order
 - `deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` from local audio files with content-hash dedup
 - `deploy/scripts/prewarm-models.sh`: prewarm Ollama models (container or host-native mode)
 - `deploy/scripts/prewarm-mlx.sh`: prewarm MLX model runtime (host-native recommended)

@@ -24,12 +24,12 @@
       "MLX_MODEL_DEFAULT": "mlx-community/gemma-3-4b-it-qat-4bit",
       "MLX_BASE_URL": "http://ai2:10240/v1",
       "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
-      "VLLM_BASE_URL": "http://ai2:8003/v1",
-      "VLLM_ADVERTISE_BASE_URL": "http://ai2:8003/v1",
-      "VLLM_FAST_BASE_URL": "http://ai2:8001/v1",
-      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ai2:8001/v1",
-      "VLLM_EMBEDDINGS_BASE_URL": "http://ai2:8002/v1",
-      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ai2:8002/v1",
+      "VLLM_BASE_URL": "http://ada2:8003/v1",
+      "VLLM_ADVERTISE_BASE_URL": "http://ada2:8003/v1",
+      "VLLM_FAST_BASE_URL": "http://ada2:8001/v1",
+      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ada2:8001/v1",
+      "VLLM_EMBEDDINGS_BASE_URL": "http://ada2:8002/v1",
+      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ada2:8002/v1",
       "VLLM_PORT": "8003",
       "IMAGES_BACKEND": "http_openai_images",
       "IMAGES_BACKEND_CLASS": "gpu_heavy",
@@ -83,7 +83,7 @@
       }
     },
     "ai2": {
-      "description": "Gateway, control plane, text/audio endpoints, and host-native MLX reasoning.",
+      "description": "Gateway, control plane, containerized TTS, and host-native MLX reasoning.",
       "platform": "macos",
       "ssh_target": "ai@ai2",
       "components": [
@@ -110,7 +110,7 @@
       }
     },
     "ada2": {
-      "description": "Heavy image and video generation services.",
+      "description": "GPU-bound vLLM plus heavy image and video generation services.",
       "platform": "linux",
       "ssh_target": "ai@ada2",
       "components": [
@@ -118,7 +118,8 @@
         "invokeai",
         "sdxl-turbo",
         "lighton-ocr",
-        "skyreels-v2"
+        "skyreels-v2",
+        "vllm"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",

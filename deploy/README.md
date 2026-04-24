@@ -37,6 +37,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
 - `./deploy/scripts/topology-ssh.sh [--print-target] <ai1|ai2|ada2> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
+- `./deploy/scripts/reassign-topology-family.sh --family <name> --from <host> --to <host> [--write]`: move a tracked backend family between topology hosts
 - `./deploy/scripts/materialize-sops-env.sh --environment <dev|prod> [--topology-host <host>]`: materialize tracked SOPS secret files into generated `*.sops.local` overlays
 - `./deploy/scripts/sops-secrets.sh <keygen|import-dotenv|edit|decrypt|materialize> ...`: manage SOPS+age secret files under `deploy/secrets/`
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
@@ -75,6 +76,19 @@ Example: deploy the explicit `ai1` topology profile over SSH without repeating t
 ./deploy/scripts/ansible-topology.sh deploy ai1
 ./deploy/scripts/topology-ssh.sh ai1 docker ps
 ```
+
+Backend-family reassignment routine:
+
+```bash
+./deploy/scripts/reassign-topology-family.sh --family vllm --from ai2 --to ada2 --write
+```
+
+Recommended rollout order after changing topology:
+
+1. Deploy the destination host first so the service family comes up on the new node.
+2. Deploy any gateway host next so rendered env files pick up the new backend URLs.
+3. Deploy the source host last so old components are removed.
+4. Verify gateway health/smoke and re-register services if registry drift remains.
 
 Host-local secret overlays:
 
