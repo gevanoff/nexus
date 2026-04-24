@@ -114,4 +114,9 @@ Next steps:
   4) Verify gateway/upstreams: ./deploy/scripts/verify-gateway.sh && ./deploy/scripts/smoke-test-gateway.sh
   5) If registry drift remains, re-register services from the gateway host.
 EOF
+  if [[ "$FAMILY" == "vllm" ]]; then
+    cat <<'EOF'
+  6) For Gemma-backed vLLM moves, make sure the destination host has HUGGING_FACE_HUB_TOKEN with access to the gated models before deploy.
+EOF
+  fi
 fi

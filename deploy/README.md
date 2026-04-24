@@ -90,6 +90,8 @@ Recommended rollout order after changing topology:
 3. Deploy the source host last so old components are removed.
 4. Verify gateway health/smoke and re-register services if registry drift remains.
 
+When moving `vllm`, also make sure the destination host has `HUGGING_FACE_HUB_TOKEN` with access to the tracked Gemma repositories before deploying.
+
 Host-local secret overlays:
 
 - For any selected env file, you can add a sibling `.local` file such as `deploy/env/.env.prod.ai2.local`.
