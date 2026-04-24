@@ -24,12 +24,12 @@
       "MLX_MODEL_DEFAULT": "mlx-community/gemma-3-4b-it-qat-4bit",
       "MLX_BASE_URL": "http://ai2:10240/v1",
       "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
-      "VLLM_BASE_URL": "http://ai1:8003/v1",
-      "VLLM_ADVERTISE_BASE_URL": "http://ai1:8003/v1",
-      "VLLM_FAST_BASE_URL": "http://ai1:8001/v1",
-      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ai1:8001/v1",
-      "VLLM_EMBEDDINGS_BASE_URL": "http://ai1:8002/v1",
-      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ai1:8002/v1",
+      "VLLM_BASE_URL": "http://ai2:8003/v1",
+      "VLLM_ADVERTISE_BASE_URL": "http://ai2:8003/v1",
+      "VLLM_FAST_BASE_URL": "http://ai2:8001/v1",
+      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ai2:8001/v1",
+      "VLLM_EMBEDDINGS_BASE_URL": "http://ai2:8002/v1",
+      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ai2:8002/v1",
       "VLLM_PORT": "8003",
       "IMAGES_BACKEND": "http_openai_images",
       "IMAGES_BACKEND_CLASS": "gpu_heavy",
@@ -50,12 +50,12 @@
       "SKYREELS_V2_ADVERTISE_BASE_URL": "http://ada2:9180",
       "HEARTMULA_BASE_URL": "http://ada2:9185",
       "HEARTMULA_ADVERTISE_BASE_URL": "http://ada2:9185",
-      "POCKET_TTS_BASE_URL": "http://ai1:9940",
-      "POCKET_TTS_ADVERTISE_BASE_URL": "http://ai1:9940",
-      "LUXTTS_BASE_URL": "http://ai1:9170",
-      "LUXTTS_ADVERTISE_BASE_URL": "http://ai1:9170",
-      "QWEN3_TTS_BASE_URL": "http://ai1:9175",
-      "QWEN3_TTS_ADVERTISE_BASE_URL": "http://ai1:9175",
+      "POCKET_TTS_BASE_URL": "http://ai2:9940",
+      "POCKET_TTS_ADVERTISE_BASE_URL": "http://ai2:9940",
+      "LUXTTS_BASE_URL": "http://ai2:9170",
+      "LUXTTS_ADVERTISE_BASE_URL": "http://ai2:9170",
+      "QWEN3_TTS_BASE_URL": "http://ai2:9175",
+      "QWEN3_TTS_ADVERTISE_BASE_URL": "http://ai2:9175",
       "MEDIAMTX_HLS_PORT": "8891",
       "MEDIAMTX_ADVERTISE_BASE_URL": "http://ai1:8891",
       "MEDIAMTX_API_ADVERTISE_URL": "http://ai1:9997",
@@ -72,33 +72,27 @@
   },
   "hosts": {
     "ai1": {
-      "description": "Fast inference, embeddings, speech, and media ingress.",
+      "description": "Media ingress and spare Linux/NVIDIA capacity.",
       "platform": "linux",
       "ssh_target": "ai@ai1",
       "components": [
-        "vllm",
-        "mediamtx",
-        "tts",
-        "luxtts",
-        "qwen3-tts"
+        "mediamtx"
       ],
       "env": {
-        "ETCD_URL": "http://ai2:2379",
-        "DEFAULT_BACKEND": "local_vllm",
-        "LUXTTS_UPSTREAM_BASE_URL": "http://qwen3-tts:9175",
-        "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",
-        "QWEN3_TTS_DEVICE_MAP": "auto",
-        "QWEN3_TTS_DTYPE": "float16",
-        "QWEN3_TTS_ATTN_IMPL": "sdpa"
+        "ETCD_URL": "http://ai2:2379"
       }
     },
     "ai2": {
-      "description": "Gateway and control plane, backed by host-native MLX reasoning.",
+      "description": "Gateway, control plane, text/audio inference, and host-native MLX reasoning.",
       "platform": "macos",
       "ssh_target": "ai@ai2",
       "components": [
         "gateway",
-        "etcd"
+        "vllm",
+        "etcd",
+        "tts",
+        "luxtts",
+        "qwen3-tts"
       ],
       "native_services": [
         "mlx"
@@ -107,6 +101,11 @@
         "ETCD_URL": "http://etcd:2379",
         "MLX_BASE_URL": "http://ai2:10240/v1",
         "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
+        "LUXTTS_UPSTREAM_BASE_URL": "http://qwen3-tts:9175",
+        "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",
+        "QWEN3_TTS_DEVICE_MAP": "auto",
+        "QWEN3_TTS_DTYPE": "float16",
+        "QWEN3_TTS_ATTN_IMPL": "sdpa",
         "UI_IP_ALLOWLIST": "127.0.0.1,172.28.0.1,10.10.22.0/24",
         "DISABLED_BACKEND_CLASSES": "followyourcanvas,heartmula_music,personaplex",
         "DEFAULT_BACKEND": "local_mlx"
