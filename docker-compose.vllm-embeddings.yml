@@ -21,8 +21,6 @@ services:
       - ${VLLM_EMBEDDINGS_SERVED_MODEL_NAME:-${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}}
       - --tokenizer
       - ${VLLM_EMBEDDINGS_TOKENIZER:-${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}}
-      - --task
-      - "${VLLM_EMBEDDINGS_TASK:-embed}"
       - --generation-config
       - vllm
       - --tensor-parallel-size

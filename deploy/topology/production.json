@@ -85,10 +85,11 @@
         "VLLM_FAST_SERVICE_NAME": "vllm-fast",
         "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
         "VLLM_FAST_TOKENIZER": "Qwen/Qwen3-30B-A3B",
+        "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.75",
+        "VLLM_FAST_MAX_MODEL_LEN": "4096",
         "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0",
         "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings",
         "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
-        "VLLM_EMBEDDINGS_TASK": "embed",
         "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "1"
       }
     },
@@ -145,7 +146,6 @@
         "VLLM_EMBEDDINGS_SERVED_MODEL_NAME": "unsloth/Qwen3-Embedding-8B",
         "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings-ada2",
         "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
-        "VLLM_EMBEDDINGS_TASK": "embed",
         "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "0"
       }
     }
