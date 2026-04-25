@@ -1134,11 +1134,9 @@ ns_ensure_project_env_bind_source() {
 
   if [[ -f "$root_env" ]]; then
     if [[ "$sync_mode" == "refresh" && -n "$selected_env_file" && -f "$selected_env_file" && "$selected_env_file" != "$root_env" ]]; then
-      if ! cmp -s "$selected_env_file" "$root_env"; then
-        cp "$selected_env_file" "$root_env"
-        chmod 600 "$root_env" 2>/dev/null || true
-        ns_print_warn "Refreshed ${root_env} from ${selected_env_file} for compose bind mount compatibility."
-      fi
+      cp "$selected_env_file" "$root_env"
+      chmod 600 "$root_env" 2>/dev/null || true
+      ns_print_warn "Refreshed ${root_env} from ${selected_env_file} for compose bind mount compatibility."
     fi
     return 0
   fi
