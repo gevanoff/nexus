@@ -72,7 +72,7 @@
   },
   "hosts": {
     "ai1": {
-      "description": "Media ingress and spare Linux/NVIDIA capacity.",
+      "description": "Dual-GPU Linux/NVIDIA node (RTX 3090 24GB + RTX 5060 Ti 16GB) for media ingress plus secondary vLLM/CUDA capacity.",
       "platform": "linux",
       "ssh_target": "ai@ai1",
       "components": [
@@ -83,7 +83,7 @@
       }
     },
     "ai2": {
-      "description": "Gateway, control plane, containerized TTS, and host-native MLX reasoning.",
+      "description": "Mac M3 Ultra with 512GB unified memory for gateway/control plane, containerized TTS, and host-native MLX reasoning.",
       "platform": "macos",
       "ssh_target": "ai@ai2",
       "components": [
@@ -110,7 +110,7 @@
       }
     },
     "ada2": {
-      "description": "GPU-bound vLLM plus heavy image and video generation services.",
+      "description": "Linux/NVIDIA node with an RTX 6000 Ada 48GB for primary heavy vLLM plus image and video generation services.",
       "platform": "linux",
       "ssh_target": "ai@ada2",
       "components": [

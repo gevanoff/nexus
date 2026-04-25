@@ -206,7 +206,8 @@ class Settings(BaseSettings):
     ETCD_SEED_FROM_ENV: bool = True
     ETCD_TIMEOUT_SEC: float = 5.0
 
-    # vLLM-backed lightweight/utility models, typically hosted on ai1.
+    # vLLM-backed lightweight/utility models, typically hosted on Linux/NVIDIA
+    # nodes such as ai1 or ada2.
     VLLM_MODEL_STRONG: str = "Qwen/Qwen2.5-7B-Instruct"
     VLLM_MODEL_FAST: str = "Qwen/Qwen2.5-3B-Instruct"
     VLLM_MODEL_DEFAULT: str = "Qwen/Qwen2.5-7B-Instruct"

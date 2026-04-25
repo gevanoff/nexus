@@ -6,7 +6,8 @@ This is the Nexus replacement for the legacy `ai-infra/services/sdxl-turbo` syst
 
 ## Runtime
 
-- Recommended host: `ai1`
+- Recommended host: `ada2`
+- Possible host: `ai1` when you intentionally shift image workloads onto the secondary Linux/NVIDIA node
 - Default port: `9050`
 - GPU runtime: NVIDIA container runtime required
 
@@ -23,4 +24,4 @@ Use [docker-compose.sdxl-turbo.yml](../../docker-compose.sdxl-turbo.yml).
 
 ## Gateway integration
 
-Set `SDXL_TURBO_BASE_URL` in the gateway env to the reachable host URL for this service, for example `http://ai1:9050`.
+Set `SDXL_TURBO_BASE_URL` in the gateway env to the reachable host URL for this service, for example `http://ada2:9050`.

@@ -8,13 +8,13 @@ Host-native MLX OpenAI-compatible service integration for Nexus.
 - CPU-only backends that do not benefit from NVIDIA acceleration should run as containers on a Mac (currently only `ai2`).
 - NVIDIA-accelerated workloads should run on Linux/NVIDIA hosts.
 
-## Current Host Profile Guidance (2026-03-02)
+## Current Host Profile Guidance (2026-04-24)
 
-- `ai2` (macOS Apple Silicon, 512GB unified memory): primary host for host-native `mlx` and `ollama`.
-- `ada2` (Linux, RTX 6000 Ada 46GB VRAM, ~31GiB RAM): keep focused on CUDA-heavy workloads (currently occupied by `heartmula` + `invokeai`).
-- `ai1` (Linux, RTX 5060 Ti 16GB VRAM, ~15GiB RAM): keep focused on smaller CUDA image workloads (currently SDXL Turbo active).
+- `ai2` (Mac M3 Ultra, 512GB unified memory): primary host for host-native `mlx` and the Apple Silicon reasoning path.
+- `ai1` (Ubuntu Linux, Intel Core Ultra 5 250K, 64GB RAM, GeForce RTX 3090 24GB + RTX 5060 Ti 16GB): secondary Linux/NVIDIA node suitable for `vllm` and overflow CUDA workloads when the topology assigns them there.
+- `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, 32GB RAM, RTX 6000 Ada 48GB): primary Linux/NVIDIA node for the heaviest CUDA workloads and the largest `vllm`/image/video profiles.
 
-Use this split to avoid cross-host contention: LLM chat/coding/default aliases on `ai2`, image/CUDA pipelines on `ada2`/`ai1`.
+Use this split to avoid cross-host contention: Apple Silicon-native `mlx` on `ai2`, Linux/NVIDIA `vllm` and CUDA workloads on `ai1`/`ada2`, and exact live placement tracked in `deploy/topology/production.json`.
 
 ## Platform Compatibility
 
@@ -299,12 +299,12 @@ Then restart Gateway so aliases are reloaded:
 docker-compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build gateway
 ```
 
-Usage via OpenAI-compatible API:
+Usage via OpenAI-compatible API with the example alias profiles above:
 
-- `model: "fast"` routes to MLX (low-latency interactive prompts)
-- `model: "default"` routes to Ollama strong model
+- `model: "fast"` routes to the low-latency alias tier
+- `model: "default"` routes to the primary local MLX reasoning model
 - `model: "coder"` routes to the primary local MLX coding path
-- `model: "long"` routes to MLX long-context profile
+- `model: "long"` routes to the MLX long-context profile
 
 ## Native MLX Checklist
 

@@ -37,16 +37,16 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - The current `vllm` compose profile is GPU-bound (`gpus: all`) and should only be assigned to GPU-capable hosts.
 - NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
 
-### Current Host Inventory (2026-03-02 snapshot)
+### Current Host Inventory (2026-04-24)
 
-- `ai2` (macOS Apple Silicon): **512GB unified memory**. Primary control-plane host, host-native accelerator target for `ollama` + `mlx`, and current home for the containerized TTS stack.
-- `ada2` (Linux/NVIDIA): ~31GiB RAM, NVIDIA RTX 6000 Ada (46GB VRAM), currently running heavy CUDA workloads (`heartmula`, `invokeai`) and the temporary `vllm` placement in the tracked topology.
-- `ai1` (Linux/NVIDIA): ~15GiB RAM, NVIDIA RTX 5060 Ti (16GB VRAM), currently reserved for media ingress and rebuild/overflow work.
+- `ai2` (Mac M3 Ultra, 512GB unified memory): primary control-plane host, host-native `mlx` node, and current home for the containerized TTS stack.
+- `ai1` (Ubuntu Linux, Intel Core Ultra 5 250K, 64GB RAM, NVIDIA GeForce RTX 3090 24GB in the PCIe x16 slot plus NVIDIA GeForce RTX 5060 Ti 16GB in the PCIe x4 slot): dual-GPU Linux/NVIDIA node used for media ingress and secondary `vllm`/CUDA capacity.
+- `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, 32GB RAM, NVIDIA RTX 6000 Ada 48GB): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
 
 Operational implication:
 - Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
-- Keep GPU-bound `vllm` and heavy image/vision/CUDA services on `ada2`.
-- Treat `ai1` as media ingress and spare Linux/NVIDIA capacity unless the topology is reassigned again.
+- Treat `ai1` and `ada2` as the Linux/NVIDIA `vllm` hosts; use `deploy/topology/production.json` to decide the active live placement.
+- Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `ai1` for media ingress, secondary `vllm` capacity, and overflow CUDA work.
 
 ### Prerequisites
 
