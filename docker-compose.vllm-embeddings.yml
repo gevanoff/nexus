@@ -30,6 +30,8 @@ services:
       - "${VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION:-0.90}"
       - --max-model-len
       - "${VLLM_EMBEDDINGS_MAX_MODEL_LEN:-2048}"
+      - --cpu-offload-gb
+      - "${VLLM_EMBEDDINGS_CPU_OFFLOAD_GB:-0}"
     volumes:
       - ./.runtime/vllm/cache:/root/.cache/huggingface
     networks:
