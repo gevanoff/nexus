@@ -122,22 +122,25 @@ class HealthChecker:
 
                 # Check readiness (only if healthy)
                 if is_healthy:
-                    try:
-                        ready_resp = await client.get(f"{base_url}{config.health_readiness}")
-                        is_ready = ready_resp.status_code == 200
-                        if not is_ready:
-                            detail = ""
-                            try:
-                                detail = (ready_resp.text or "").strip()
-                            except Exception:
+                    if config.health_readiness == config.health_liveness:
+                        is_ready = True
+                    else:
+                        try:
+                            ready_resp = await client.get(f"{base_url}{config.health_readiness}")
+                            is_ready = ready_resp.status_code == 200
+                            if not is_ready:
                                 detail = ""
-                            if detail:
-                                detail = detail.replace("\n", " ")[:600]
-                                error = f"readiness returned HTTP {ready_resp.status_code}: {detail}"
-                            else:
-                                error = f"readiness returned HTTP {ready_resp.status_code}"
-                    except Exception as e:
-                        error = f"readiness check failed: {e}"
+                                try:
+                                    detail = (ready_resp.text or "").strip()
+                                except Exception:
+                                    detail = ""
+                                if detail:
+                                    detail = detail.replace("\n", " ")[:600]
+                                    error = f"readiness returned HTTP {ready_resp.status_code}: {detail}"
+                                else:
+                                    error = f"readiness returned HTTP {ready_resp.status_code}"
+                        except Exception as e:
+                            error = f"readiness check failed: {e}"
         except Exception as e:
             error = f"health check error: {e}"
         

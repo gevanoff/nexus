@@ -132,7 +132,7 @@ backends:
       tts: 2
     health:
       liveness: /health
-      readiness: /readyz
+      readiness: /health
     payload_policy: {}
 
   skyreels_v2:

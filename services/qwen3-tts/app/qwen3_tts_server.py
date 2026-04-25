@@ -83,6 +83,30 @@ def _resolve_workdir() -> str:
     return "/"
 
 
+async def _spawn_run_command(cmd: str, env: dict[str, str], cwd: str) -> asyncio.subprocess.Process:
+    try:
+        return await asyncio.create_subprocess_exec(
+            _shell_bin(),
+            "-c",
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        # launchd + uvloop on macOS can fail to exec the explicit shell path even when
+        # the same command works interactively; retry through subprocess_shell.
+        return await asyncio.create_subprocess_shell(
+            cmd,
+            executable=_shell_bin(),
+            cwd=cwd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+
 def _model_id() -> str:
     return _env("QWEN3_TTS_MODEL", "qwen3-tts") or "qwen3-tts"
 
@@ -300,15 +324,7 @@ async def audio_speech(payload: Dict[str, Any]) -> Any:
 
         resolved_cwd = _resolve_workdir()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                _shell_bin(),
-                "-c",
-                cmd,
-                cwd=resolved_cwd,
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            proc = await _spawn_run_command(cmd, env, resolved_cwd)
         except Exception as e:
             raise HTTPException(
                 status_code=502,
@@ -412,15 +428,7 @@ async def readyz() -> JSONResponse:
 
             resolved_cwd = _resolve_workdir()
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    _shell_bin(),
-                    "-c",
-                    cmd,
-                    cwd=resolved_cwd,
-                    env=env,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+                proc = await _spawn_run_command(cmd, env, resolved_cwd)
             except Exception as e:
                 return JSONResponse(
                     status_code=503,
