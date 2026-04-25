@@ -15,9 +15,9 @@ services:
       - --port
       - "8000"
       - --model
-      - ${VLLM_MODEL_STRONG:-google/gemma-3-4b-it}
+      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-7B-Instruct}
       - --served-model-name
-      - ${VLLM_MODEL_STRONG:-google/gemma-3-4b-it}
+      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-7B-Instruct}
       - --generation-config
       - vllm
     volumes:

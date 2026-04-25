@@ -32,7 +32,7 @@ Nexus Gateway reaches it over HTTP via `MLX_BASE_URL`.
 See `env/mlx.env.example` for primary variables:
 
 - `MLX_PORT` (default `10240`)
-- `MLX_MODEL_PATH` (default `mlx-community/gemma-2-2b-it-8bit`)
+- `MLX_MODEL_PATH` (default `mlx-community/Qwen2.5-7B-Instruct-4bit`)
 - `MLX_MODEL_TYPE` (default `lm`)
 - `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
 - `XDG_CACHE_HOME` / `HF_HOME` (optional; move MLX/Hugging Face caches to a larger volume)

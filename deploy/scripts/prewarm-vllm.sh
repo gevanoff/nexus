@@ -102,8 +102,8 @@ strong_base_url="$(resolve_base_url "$STRONG_BASE_URL_OVERRIDE" VLLM_BASE_URL "h
 fast_base_url="$(resolve_base_url "$FAST_BASE_URL_OVERRIDE" VLLM_FAST_BASE_URL "http://127.0.0.1:8001/v1")"
 embeddings_base_url="$(resolve_base_url "$EMBEDDINGS_BASE_URL_OVERRIDE" VLLM_EMBEDDINGS_BASE_URL "http://127.0.0.1:8002/v1")"
 
-strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_STRONG "google/gemma-3-4b-it")}"
-fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_FAST "google/gemma-3-1b-it")}"
+strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_STRONG "Qwen/Qwen2.5-7B-Instruct")}"
+fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_FAST "Qwen/Qwen2.5-3B-Instruct")}"
 embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_EMBEDDINGS "BAAI/bge-small-en-v1.5")}"
 
 model_present() {

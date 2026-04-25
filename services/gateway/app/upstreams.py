@@ -96,7 +96,7 @@ def default_embeddings_model_for_backend(backend_name: str) -> str:
     if provider == "vllm":
         return S.VLLM_MODEL_EMBEDDINGS
 
-    return "mlx-community/embeddinggemma-300m-4bit"
+    return S.VLLM_MODEL_EMBEDDINGS
 
 
 def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, model_name: str) -> ChatCompletionRequest:

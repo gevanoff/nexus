@@ -278,7 +278,7 @@ def main(argv: List[str]) -> int:
         _raw_sse_debug(ns.base_url, ns.api_key, ns.model, ns.prompt, insecure=insecure)
 
         print(
-            "Hint: try an explicit vLLM backend selection like --model local_vllm:google/gemma-3-4b-it (or a stable alias such as --model coder).",
+            "Hint: try an explicit vLLM backend selection like --model local_vllm:Qwen/Qwen2.5-7B-Instruct (or a stable alias such as --model coder).",
             file=sys.stderr,
         )
         if http_client is not None:

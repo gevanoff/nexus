@@ -90,7 +90,7 @@ Recommended rollout order after changing topology:
 3. Deploy the source host last so old components are removed.
 4. Verify gateway health/smoke and re-register services if registry drift remains.
 
-When moving `vllm`, also make sure the destination host has `HUGGING_FACE_HUB_TOKEN` with access to the tracked Gemma repositories before deploying.
+When moving `vllm`, also make sure the destination host has `HUGGING_FACE_HUB_TOKEN` when the tracked model family requires Hugging Face auth or higher rate limits.
 
 Host-local secret overlays:
 

@@ -116,7 +116,7 @@ Next steps:
 EOF
   if [[ "$FAMILY" == "vllm" ]]; then
     cat <<'EOF'
-  6) For Gemma-backed vLLM moves, make sure the destination host has HUGGING_FACE_HUB_TOKEN with access to the gated models before deploy.
+  6) For any gated or rate-limited vLLM model family, make sure the destination host has the required Hugging Face token before deploy.
 EOF
   fi
 fi

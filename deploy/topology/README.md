@@ -53,4 +53,4 @@ Recommended rollout order after a topology move:
 Compatibility note:
 
 - The current `vllm` compose profile is GPU-bound (`docker-compose.vllm.yml` uses `gpus: all`), so it should only be assigned to GPU-capable hosts.
-- The tracked `vllm` defaults currently point at gated Gemma models, so the destination host also needs `HUGGING_FACE_HUB_TOKEN` with access to those repositories.
+- The tracked `vllm` defaults may require Hugging Face auth or higher rate limits, so set `HUGGING_FACE_HUB_TOKEN` on the destination host when needed.
