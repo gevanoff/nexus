@@ -8,11 +8,6 @@ models:
     model_path: mlx-community/Qwen3-30B-A3B-4bit
     model_type: lm
 
-  # Dedicated coder model
-  - served_model_name: mlx-community/Qwen3-Coder-Next-8bit
-    model_path: mlx-community/Qwen3-Coder-Next-8bit
-    model_type: lm
-
   # Dedicated embeddings model
   - served_model_name: mlx-community/bge-small-en-v1.5-8bit
     model_path: mlx-community/bge-small-en-v1.5-8bit
@@ -31,6 +26,12 @@ models:
   # - served_model_name: mlx-community/Qwen3-4B-8bit
   #   model_path: mlx-community/Qwen3-4B-8bit
   #   model_type: lm
+
+  # Dedicated coder note:
+  # Qwen3-Coder-Next-8bit is usually better as a second native MLX service on
+  # its own port instead of a third entry in this multi-handler config. That
+  # keeps the primary 30B chat service stable and lets Gateway route the
+  # `coder` alias to a separate `mlx-coder` backend.
 
   # Optional image generation model. Uncomment after installing the image extras
   # for mlx-openai-server and selecting a config_name supported by that model.

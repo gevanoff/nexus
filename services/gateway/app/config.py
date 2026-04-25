@@ -231,7 +231,7 @@ class Settings(BaseSettings):
 
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
-    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/Qwen3-Coder-Next-8bit"}}}'
+    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"mlx-coder","model":"mlx-community/Qwen3-Coder-Next-8bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 

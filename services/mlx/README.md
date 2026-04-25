@@ -198,7 +198,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 			"tools": true
 		},
 		"coder": {
-			"backend": "mlx",
+			"backend": "mlx-coder",
 			"model": "mlx-community/Qwen3-Coder-Next-8bit",
 			"tools": true
 		},
@@ -228,7 +228,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 			"tools": true
 		},
 		"coder": {
-			"backend": "mlx",
+			"backend": "mlx-coder",
 			"model": "mlx-community/Qwen3-Coder-Next-8bit",
 			"tools": true
 		},
@@ -251,7 +251,7 @@ Alias-by-alias alternatives (if available and validated in your environment):
 	- Primary: `mlx-community/Qwen3-30B-A3B-4bit`
 	- Alternatives: `mlx-community/Qwen3-32B-8bit`, `mlx-community/Llama-3.3-70B-Instruct-4bit`
 - `coder` (code + tools):
-	- Primary: `mlx-community/Qwen3-Coder-Next-8bit`
+	- Primary: dedicated `mlx-coder` backend on `ai2` serving `mlx-community/Qwen3-Coder-Next-8bit`
 	- Secondary checks: remote Ollama aliases such as `coder-ai1` and `coder-ada2`
 	- Dedicated MLX candidates if preferred: `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit`
 - `long` (extended context):
@@ -259,6 +259,11 @@ Alias-by-alias alternatives (if available and validated in your environment):
 	- Alternatives: use the same family as `default` with reduced concurrency, or a lower-parameter instruct model for higher sustained throughput.
 
 If a specific MLX model identifier is unavailable, keep alias names and routing shape, then swap only `model` values.
+
+Operational note for `ai2`:
+
+- `mlx-community/Qwen3-Coder-Next-8bit` is currently more reliable as a second native MLX service on its own port than as another entry in the same multi-handler config as `mlx-community/Qwen3-30B-A3B-4bit`.
+- In that layout, keep the main `/var/lib/mlx/config/config.yaml` focused on the general 30B chat model plus embeddings, run the coder model as a second native launchd-backed MLX instance, register it into etcd as `mlx-coder`, and point the `coder` alias at backend `mlx-coder`.
 
 ## Are these models already configured?
 
