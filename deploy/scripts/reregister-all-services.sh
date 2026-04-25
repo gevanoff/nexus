@@ -20,7 +20,10 @@ fi
 echo "Re-registering all discovered services with canonical metadata..."
 
 services_json="$("$SCRIPT_DIR/list-services.sh" --yes --json "$ETCD_URL")"
-mapfile -t registrations < <(
+registrations=()
+while IFS= read -r row; do
+  registrations+=("$row")
+done < <(
   SERVICES_JSON="$services_json" "$PYTHON" - <<'PY'
 import json
 import os
