@@ -32,7 +32,7 @@ Nexus Gateway reaches it over HTTP via `MLX_BASE_URL`.
 See `env/mlx.env.example` for primary variables:
 
 - `MLX_PORT` (default `10240`)
-- `MLX_MODEL_PATH` (default `mlx-community/Qwen2.5-7B-Instruct-4bit`)
+- `MLX_MODEL_PATH` (default `mlx-community/Qwen3-30B-A3B-4bit`)
 - `MLX_MODEL_TYPE` (default `lm`)
 - `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
 - `XDG_CACHE_HOME` / `HF_HOME` (optional; move MLX/Hugging Face caches to a larger volume)
@@ -119,7 +119,7 @@ After first install, the native launchd job reads runtime settings from `/var/li
 To change models later, update that file and restart the service without rewriting the plist:
 
 ```bash
-sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/Qwen2.5-32B-Instruct-4bit#' /var/lib/mlx/mlx.env
+sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/Qwen3-30B-A3B-4bit#' /var/lib/mlx/mlx.env
 ./deploy/scripts/restart-mlx.sh
 ```
 
@@ -194,17 +194,17 @@ Recommended `ai2` alias-to-model mapping (starting point):
 		},
 		"default": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-30B-A3B-4bit",
 			"tools": true
 		},
 		"coder": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-30B-A3B-4bit",
 			"tools": true
 		},
 		"long": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-14B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-30B-A3B-4bit",
 			"context_window": 65536,
 			"tools": false
 		}
@@ -219,22 +219,22 @@ Recommended `ai2` alias-to-model mapping (starting point):
 	"aliases": {
 		"fast": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-14B-Instruct-4bit",
+			"model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
 			"tools": false
 		},
 		"default": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-72B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-30B-A3B-4bit",
 			"tools": true
 		},
 		"coder": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-30B-A3B-4bit",
 			"tools": true
 		},
 		"long": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-30B-A3B-4bit",
 			"context_window": 131072,
 			"tools": false
 		}
@@ -248,15 +248,15 @@ Alias-by-alias alternatives (if available and validated in your environment):
 	- Primary: `mlx-community/Qwen2.5-7B-Instruct-4bit`
 	- Alternatives: `mlx-community/Llama-3.1-8B-Instruct-4bit`, `mlx-community/Gemma-2-9B-it-4bit`
 - `default` (best overall quality):
-	- Primary: `mlx-community/Qwen2.5-32B-Instruct-4bit`
-	- Alternatives: `mlx-community/Qwen2.5-72B-Instruct-4bit` (higher quality, higher latency), `mlx-community/Llama-3.3-70B-Instruct-4bit`
+	- Primary: `mlx-community/Qwen3-30B-A3B-4bit`
+	- Alternatives: `mlx-community/Qwen2.5-32B-Instruct-4bit`, `mlx-community/Llama-3.3-70B-Instruct-4bit`
 - `coder` (code + tools):
-	- Primary: local MLX on `ai2` (either the same strong instruct model as `default`, or a dedicated MLX coder model if you load one)
+	- Primary: local MLX on `ai2` (the same `mlx-community/Qwen3-30B-A3B-4bit` strong model as `default`, or a dedicated MLX coder model if you load one)
 	- Secondary checks: remote Ollama aliases such as `coder-ai1` and `coder-ada2`
 	- Dedicated MLX candidates if preferred: `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` or `mlx-community/Qwen2.5-Coder-32B-Instruct-4bit`
 - `long` (extended context):
-	- Primary: `mlx-community/Qwen2.5-14B-Instruct-4bit` with `context_window` `65536`
-	- Alternatives: use the same family as `default` with reduced concurrency, or lower-parameter instruct model for higher sustained throughput.
+	- Primary: `mlx-community/Qwen3-30B-A3B-4bit` with `context_window` `65536`
+	- Alternatives: use the same family as `default` with reduced concurrency, or a lower-parameter instruct model for higher sustained throughput.
 
 If a specific MLX model identifier is unavailable, keep alias names and routing shape, then swap only `model` values.
 
@@ -274,9 +274,9 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 - Prewarm MLX aliases/models:
 
 ```bash
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-14B-Instruct-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-7B-Instruct-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen3-30B-A3B-4bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-32B-Instruct-4bit
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-72B-Instruct-4bit
 ```
 
 - Prewarm remote Ollama checker models:

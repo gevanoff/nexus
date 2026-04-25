@@ -24,7 +24,7 @@ Usage: deploy/scripts/prewarm-mlx.sh [--env-file PATH] [--check-only] [--mlx-bas
 Checks MLX availability and optionally sends a minimal warmup generation request.
 Defaults are derived from env:
   - MLX_BASE_URL (default host-native probe: http://127.0.0.1:10240/v1)
-  - MLX_MODEL_PATH (default: mlx-community/Qwen2.5-7B-Instruct-4bit) when MLX_CONFIG_PATH is not set
+  - MLX_MODEL_PATH (default: mlx-community/Qwen3-30B-A3B-4bit) when MLX_CONFIG_PATH is not set
 
 Options:
   --env-file PATH     Env file path (default: ./.env)
@@ -124,7 +124,7 @@ if [[ "${#MLX_MODEL_OVERRIDES[@]}" -gt 0 ]]; then
     add_unique_model "$explicit_model"
   done
 elif [[ -z "${mlx_config_path:-}" ]]; then
-  add_unique_model "${MLX_MODEL_PATH:-$(ns_env_get "$ENV_FILE" MLX_MODEL_PATH "mlx-community/Qwen2.5-7B-Instruct-4bit")}"
+  add_unique_model "${MLX_MODEL_PATH:-$(ns_env_get "$ENV_FILE" MLX_MODEL_PATH "mlx-community/Qwen3-30B-A3B-4bit")}"
 fi
 
 if [[ "$FROM_ALIASES" == "true" ]]; then

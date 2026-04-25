@@ -3,14 +3,9 @@ server:
   port: 10240
 
 models:
-  # Fast chat tier
-  - served_model_name: mlx-community/Qwen2.5-3B-Instruct-4bit
-    model_path: mlx-community/Qwen2.5-3B-Instruct-4bit
-    model_type: lm
-
-  # Default text/chat model
-  - served_model_name: mlx-community/Qwen2.5-7B-Instruct-4bit
-    model_path: mlx-community/Qwen2.5-7B-Instruct-4bit
+  # Primary text/chat model
+  - served_model_name: mlx-community/Qwen3-30B-A3B-4bit
+    model_path: mlx-community/Qwen3-30B-A3B-4bit
     model_type: lm
 
   # Dedicated embeddings model
@@ -19,13 +14,18 @@ models:
     model_type: embeddings
 
   # Optional multimodal model for image/audio-aware chat
-  - served_model_name: mlx-community/Qwen2-VL-7B-Instruct-4bit
-    model_path: mlx-community/Qwen2-VL-7B-Instruct-4bit
-    model_type: multimodal
+  # - served_model_name: mlx-community/Qwen2-VL-7B-Instruct-4bit
+  #   model_path: mlx-community/Qwen2-VL-7B-Instruct-4bit
+  #   model_type: multimodal
 
   # Add large optional models incrementally. Multi-handler mode loads every
   # configured model during startup, so one slow or incompatible model can keep
   # the whole service from binding its port.
+
+  # Optional lower-latency text tier if you want a second model on the same host.
+  # - served_model_name: mlx-community/Qwen2.5-7B-Instruct-4bit
+  #   model_path: mlx-community/Qwen2.5-7B-Instruct-4bit
+  #   model_type: lm
 
   # Optional image generation model. Uncomment after installing the image extras
   # for mlx-openai-server and selecting a config_name supported by that model.

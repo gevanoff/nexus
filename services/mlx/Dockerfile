@@ -21,4 +21,4 @@ EXPOSE 10240
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
   CMD curl -fsS http://localhost:10240/v1/models >/dev/null || exit 1
 
-CMD ["sh", "-lc", "if [ -n \"${MLX_CONFIG_PATH:-}\" ]; then mlx-openai-server launch --config \"${MLX_CONFIG_PATH}\"; else mlx-openai-server launch --model-path \"${MLX_MODEL_PATH:-mlx-community/Qwen2.5-7B-Instruct-4bit}\" --model-type \"${MLX_MODEL_TYPE:-lm}\" --host \"${MLX_HOST:-0.0.0.0}\" --port \"${MLX_PORT:-10240}\"; fi"]
+CMD ["sh", "-lc", "if [ -n \"${MLX_CONFIG_PATH:-}\" ]; then mlx-openai-server launch --config \"${MLX_CONFIG_PATH}\"; else mlx-openai-server launch --model-path \"${MLX_MODEL_PATH:-mlx-community/Qwen3-30B-A3B-4bit}\" --model-type \"${MLX_MODEL_TYPE:-lm}\" --host \"${MLX_HOST:-0.0.0.0}\" --port \"${MLX_PORT:-10240}\"; fi"]

@@ -7,17 +7,17 @@
     },
     "default": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "model": "mlx-community/Qwen3-30B-A3B-4bit",
       "tools": true
     },
     "coder": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "model": "mlx-community/Qwen3-30B-A3B-4bit",
       "tools": true
     },
     "long": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+      "model": "mlx-community/Qwen3-30B-A3B-4bit",
       "context_window": 65536,
       "tools": false
     },
