@@ -8,6 +8,7 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - NVIDIA_VISIBLE_DEVICES=${VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES:-all}
       - CUDA_VISIBLE_DEVICES=${VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES:-all}
     command:
@@ -27,6 +28,8 @@ services:
       - "${VLLM_EMBEDDINGS_TENSOR_PARALLEL_SIZE:-1}"
       - --gpu-memory-utilization
       - "${VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION:-0.90}"
+      - --max-model-len
+      - "${VLLM_EMBEDDINGS_MAX_MODEL_LEN:-2048}"
     volumes:
       - ./.runtime/vllm/cache:/root/.cache/huggingface
     networks:

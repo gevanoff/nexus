@@ -8,6 +8,7 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - NVIDIA_VISIBLE_DEVICES=${VLLM_CUDA_VISIBLE_DEVICES:-all}
       - CUDA_VISIBLE_DEVICES=${VLLM_CUDA_VISIBLE_DEVICES:-all}
     command:

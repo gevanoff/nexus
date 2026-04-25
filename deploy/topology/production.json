@@ -12,11 +12,12 @@
       "VLLM_MODEL_FAST": "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M",
       "VLLM_MODEL_DEFAULT": "unsloth/Qwen3-30B-A3B-FP8",
       "VLLM_MODEL_EMBEDDINGS": "unsloth/Qwen3-Embedding-4B",
-      "VLLM_GPU_MEMORY_UTILIZATION": "0.35",
+      "VLLM_GPU_MEMORY_UTILIZATION": "0.72",
       "VLLM_MAX_MODEL_LEN": "8192",
       "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.65",
       "VLLM_FAST_MAX_MODEL_LEN": "8192",
-      "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.20",
+      "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.70",
+      "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "2048",
       "MLX_MODEL_PATH": "mlx-community/Qwen3-30B-A3B-4bit",
       "MLX_MODEL_TYPE": "lm",
       "MLX_MODEL_STRONG": "mlx-community/Qwen3-30B-A3B-4bit",
@@ -85,11 +86,13 @@
         "VLLM_FAST_SERVICE_NAME": "vllm-fast",
         "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
         "VLLM_FAST_TOKENIZER": "Qwen/Qwen3-30B-A3B",
-        "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.75",
-        "VLLM_FAST_MAX_MODEL_LEN": "4096",
+        "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.82",
+        "VLLM_FAST_MAX_MODEL_LEN": "2048",
         "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0",
         "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings",
         "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
+        "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.72",
+        "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "2048",
         "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "1"
       }
     },
@@ -139,6 +142,8 @@
         "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
         "VLLM_SERVICE_NAME": "vllm",
         "VLLM_BACKEND_CLASS": "local_vllm",
+        "VLLM_GPU_MEMORY_UTILIZATION": "0.72",
+        "VLLM_MAX_MODEL_LEN": "4096",
         "VLLM_CUDA_VISIBLE_DEVICES": "0",
         "VLLM_EMBEDDINGS_BASE_URL": "http://ada2:8002/v1",
         "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ada2:8002/v1",
@@ -146,6 +151,8 @@
         "VLLM_EMBEDDINGS_SERVED_MODEL_NAME": "unsloth/Qwen3-Embedding-8B",
         "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings-ada2",
         "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
+        "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.36",
+        "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "1024",
         "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "0"
       }
     }
