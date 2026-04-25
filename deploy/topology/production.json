@@ -39,8 +39,8 @@
       "IMAGES_SHIM_INVOKEAI_BASE_URL": "http://invokeai:9090",
       "INVOKEAI_BASE_URL": "http://ada2:9090",
       "INVOKEAI_ADVERTISE_BASE_URL": "http://ada2:9090",
-      "SDXL_TURBO_BASE_URL": "http://ada2:9050",
-      "SDXL_TURBO_ADVERTISE_BASE_URL": "http://ada2:9050",
+      "SDXL_TURBO_BASE_URL": "http://ai1:9050",
+      "SDXL_TURBO_ADVERTISE_BASE_URL": "http://ai1:9050",
       "LIGHTON_OCR_API_BASE_URL": "http://ada2:9155",
       "LIGHTON_OCR_ADVERTISE_BASE_URL": "http://ada2:9155",
       "PERSONAPLEX_BASE_URL": "http://ada2:9160",
@@ -74,16 +74,20 @@
   },
   "hosts": {
     "ai1": {
-      "description": "Dual-GPU Linux/NVIDIA node (RTX 3090 24GB + RTX 5060 Ti 16GB) for media ingress plus secondary vLLM/CUDA capacity.",
+      "description": "Dual-GPU Linux/NVIDIA node (RTX 3090 24GB + RTX 5060 Ti 16GB) for media ingress, SDXL-Turbo, and secondary vLLM/CUDA capacity.",
       "platform": "linux",
       "ssh_target": "ai@ai1",
       "components": [
         "mediamtx",
+        "sdxl-turbo",
         "vllm-fast",
         "vllm-embeddings"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
+        "SDXL_TURBO_DEVICE": "cuda",
+        "SDXL_TURBO_CUDA_VISIBLE_DEVICES": "1",
+        "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
         "VLLM_FAST_SERVICE_NAME": "vllm-fast",
         "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
         "VLLM_FAST_TOKENIZER": "Qwen/Qwen3-30B-A3B",
@@ -131,7 +135,6 @@
       "components": [
         "images",
         "invokeai",
-        "sdxl-turbo",
         "lighton-ocr",
         "skyreels-v2",
         "vllm-strong"
