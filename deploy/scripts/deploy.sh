@@ -48,7 +48,7 @@ Options:
                    Topology JSON file (default: deploy/topology/production.json when --topology-host is set)
 
 Components:
-  gateway, vllm, etcd, images, invokeai, sdxl-turbo,
+  gateway, vllm, vllm-strong, vllm-fast, vllm-embeddings, etcd, images, invokeai, sdxl-turbo,
   lighton-ocr, personaplex, followyourcanvas, skyreels-v2, heartmula,
   mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
 
@@ -66,7 +66,7 @@ EOF
 
 is_valid_component() {
   case "$1" in
-    gateway|vllm|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -137,6 +137,9 @@ component_base_compose_file() {
   case "$1" in
     gateway) echo "docker-compose.gateway.yml" ;;
     vllm) echo "docker-compose.vllm.yml" ;;
+    vllm-strong) echo "docker-compose.vllm-strong.yml" ;;
+    vllm-fast) echo "docker-compose.vllm-fast.yml" ;;
+    vllm-embeddings) echo "docker-compose.vllm-embeddings.yml" ;;
     etcd) echo "docker-compose.etcd.yml" ;;
     images) echo "docker-compose.images.yml" ;;
     invokeai) echo "docker-compose.invokeai.yml" ;;
@@ -294,7 +297,7 @@ if [[ "$COMPONENTS_SET" != "true" ]]; then
 fi
 
 compose_files=()
-ordered_components=(gateway vllm mlx etcd images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas skyreels-v2 heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
+ordered_components=(gateway vllm vllm-strong vllm-fast vllm-embeddings mlx etcd images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas skyreels-v2 heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
 for component in "${ordered_components[@]}"; do
   include_component="false"
   for selected in "${SELECTED_COMPONENTS[@]}"; do

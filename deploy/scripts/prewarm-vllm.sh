@@ -102,9 +102,9 @@ strong_base_url="$(resolve_base_url "$STRONG_BASE_URL_OVERRIDE" VLLM_BASE_URL "h
 fast_base_url="$(resolve_base_url "$FAST_BASE_URL_OVERRIDE" VLLM_FAST_BASE_URL "http://127.0.0.1:8001/v1")"
 embeddings_base_url="$(resolve_base_url "$EMBEDDINGS_BASE_URL_OVERRIDE" VLLM_EMBEDDINGS_BASE_URL "http://127.0.0.1:8002/v1")"
 
-strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_STRONG "Qwen/Qwen2.5-7B-Instruct")}"
-fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_FAST "Qwen/Qwen2.5-3B-Instruct")}"
-embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_EMBEDDINGS "BAAI/bge-small-en-v1.5")}"
+strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_STRONG "unsloth/Qwen3-30B-A3B-FP8")}"
+fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_FAST "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M")}"
+embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "$ENV_FILE" VLLM_MODEL_EMBEDDINGS "unsloth/Qwen3-Embedding-4B")}"
 
 model_present() {
   local model="$1"

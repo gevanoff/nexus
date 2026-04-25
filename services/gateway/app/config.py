@@ -208,10 +208,10 @@ class Settings(BaseSettings):
 
     # vLLM-backed lightweight/utility models, typically hosted on Linux/NVIDIA
     # nodes such as ai1 or ada2.
-    VLLM_MODEL_STRONG: str = "Qwen/Qwen2.5-7B-Instruct"
-    VLLM_MODEL_FAST: str = "Qwen/Qwen2.5-3B-Instruct"
-    VLLM_MODEL_DEFAULT: str = "Qwen/Qwen2.5-7B-Instruct"
-    VLLM_MODEL_EMBEDDINGS: str = "BAAI/bge-small-en-v1.5"
+    VLLM_MODEL_STRONG: str = "unsloth/Qwen3-30B-A3B-FP8"
+    VLLM_MODEL_FAST: str = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
+    VLLM_MODEL_DEFAULT: str = "unsloth/Qwen3-30B-A3B-FP8"
+    VLLM_MODEL_EMBEDDINGS: str = "unsloth/Qwen3-Embedding-4B"
 
     # MLX-hosted reasoning models, typically on ai2.
     MLX_MODEL_STRONG: str = "mlx-community/Qwen3-30B-A3B-4bit"
@@ -231,7 +231,7 @@ class Settings(BaseSettings):
 
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
-    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/Qwen3-30B-A3B-4bit"}}}'
+    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/Qwen3-Coder-Next-8bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 

@@ -8,15 +8,15 @@
       "linux": "/home/ai/ai/nexus"
     },
     "env": {
-      "VLLM_MODEL_STRONG": "Qwen/Qwen2.5-7B-Instruct",
-      "VLLM_MODEL_FAST": "Qwen/Qwen2.5-3B-Instruct",
-      "VLLM_MODEL_DEFAULT": "Qwen/Qwen2.5-7B-Instruct",
-      "VLLM_MODEL_EMBEDDINGS": "BAAI/bge-small-en-v1.5",
+      "VLLM_MODEL_STRONG": "unsloth/Qwen3-30B-A3B-FP8",
+      "VLLM_MODEL_FAST": "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M",
+      "VLLM_MODEL_DEFAULT": "unsloth/Qwen3-30B-A3B-FP8",
+      "VLLM_MODEL_EMBEDDINGS": "unsloth/Qwen3-Embedding-4B",
       "VLLM_GPU_MEMORY_UTILIZATION": "0.35",
       "VLLM_MAX_MODEL_LEN": "8192",
-      "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.25",
+      "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.65",
       "VLLM_FAST_MAX_MODEL_LEN": "8192",
-      "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.10",
+      "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.20",
       "MLX_MODEL_PATH": "mlx-community/Qwen3-30B-A3B-4bit",
       "MLX_MODEL_TYPE": "lm",
       "MLX_MODEL_STRONG": "mlx-community/Qwen3-30B-A3B-4bit",
@@ -26,10 +26,10 @@
       "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
       "VLLM_BASE_URL": "http://ada2:8003/v1",
       "VLLM_ADVERTISE_BASE_URL": "http://ada2:8003/v1",
-      "VLLM_FAST_BASE_URL": "http://ada2:8001/v1",
-      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ada2:8001/v1",
-      "VLLM_EMBEDDINGS_BASE_URL": "http://ada2:8002/v1",
-      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ada2:8002/v1",
+      "VLLM_FAST_BASE_URL": "http://ai1:8001/v1",
+      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ai1:8001/v1",
+      "VLLM_EMBEDDINGS_BASE_URL": "http://ai1:8002/v1",
+      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ai1:8002/v1",
       "VLLM_PORT": "8003",
       "IMAGES_BACKEND": "http_openai_images",
       "IMAGES_BACKEND_CLASS": "gpu_heavy",
@@ -76,10 +76,20 @@
       "platform": "linux",
       "ssh_target": "ai@ai1",
       "components": [
-        "mediamtx"
+        "mediamtx",
+        "vllm-fast",
+        "vllm-embeddings"
       ],
       "env": {
-        "ETCD_URL": "http://ai2:2379"
+        "ETCD_URL": "http://ai2:2379",
+        "VLLM_FAST_SERVICE_NAME": "vllm-fast",
+        "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
+        "VLLM_FAST_TOKENIZER": "Qwen/Qwen3-30B-A3B",
+        "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0",
+        "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings",
+        "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
+        "VLLM_EMBEDDINGS_TASK": "embed",
+        "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "1"
       }
     },
     "ai2": {
@@ -119,12 +129,24 @@
         "sdxl-turbo",
         "lighton-ocr",
         "skyreels-v2",
-        "vllm"
+        "vllm-strong",
+        "vllm-embeddings"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
         "IMAGES_SHIM_MODE": "invokeai_queue",
-        "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true"
+        "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
+        "VLLM_SERVICE_NAME": "vllm",
+        "VLLM_BACKEND_CLASS": "local_vllm",
+        "VLLM_CUDA_VISIBLE_DEVICES": "0",
+        "VLLM_EMBEDDINGS_BASE_URL": "http://ada2:8002/v1",
+        "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ada2:8002/v1",
+        "VLLM_MODEL_EMBEDDINGS": "unsloth/Qwen3-Embedding-8B",
+        "VLLM_EMBEDDINGS_SERVED_MODEL_NAME": "unsloth/Qwen3-Embedding-8B",
+        "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings-ada2",
+        "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
+        "VLLM_EMBEDDINGS_TASK": "embed",
+        "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "0"
       }
     }
   }

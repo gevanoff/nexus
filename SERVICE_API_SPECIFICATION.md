@@ -268,7 +268,7 @@ curl http://service:8080/readyz
         "key": "model",
         "label": "Model",
         "type": "enum",
-        "values": ["llama3.1:8b", "llama3.1:70b", "qwen2.5:14b"],
+        "values": ["llama3.1:8b", "llama3.1:70b", "qwen3:14b"],
         "default": "llama3.1:8b",
         "description": "Which model to use for inference"
       },

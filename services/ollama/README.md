@@ -144,7 +144,7 @@ curl -X POST http://localhost:8800/v1/chat/completions \
 ### General Purpose
 - `llama3.1:8b` - Fast, good quality (8B parameters)
 - `llama3.1:70b` - High quality (70B parameters, requires 40GB+ VRAM)
-- `qwen2.5:14b` - Balanced performance (14B parameters)
+- `qwen3:14b` - Balanced performance (14B parameters)
 
 ### Specialized
 - `llama3.1:8b-instruct` - Instruction tuned

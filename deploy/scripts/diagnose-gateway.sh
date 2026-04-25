@@ -99,9 +99,9 @@ obs_port="${OBSERVABILITY_PORT:-$(ns_env_get "${ENV_FILE}" OBSERVABILITY_PORT 88
 BASE_URL="${GATEWAY_BASE_URL:-http://127.0.0.1:${gateway_port}}"
 OBS_URL="${GATEWAY_OBS_URL:-http://127.0.0.1:${obs_port}}"
 TOKEN="${GATEWAY_BEARER_TOKEN:-$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")}"
-strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_STRONG "Qwen/Qwen2.5-7B-Instruct")}"
-fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_FAST "Qwen/Qwen2.5-3B-Instruct")}"
-embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_EMBEDDINGS "BAAI/bge-small-en-v1.5")}"
+strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_STRONG "unsloth/Qwen3-30B-A3B-FP8")}"
+fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_FAST "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M")}"
+embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_EMBEDDINGS "unsloth/Qwen3-Embedding-4B")}"
 
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
 COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.etcd.yml)

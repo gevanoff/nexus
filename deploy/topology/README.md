@@ -52,5 +52,6 @@ Recommended rollout order after a topology move:
 
 Compatibility note:
 
-- The current `vllm` compose profile is GPU-bound (`docker-compose.vllm.yml` uses `gpus: all`), so it should only be assigned to GPU-capable hosts.
+- The current vLLM deploy path can be assigned either as the monolithic `vllm` profile or as split lanes: `vllm-strong`, `vllm-fast`, and `vllm-embeddings`.
+- All vLLM profiles are GPU-bound (`docker-compose.vllm*.yml` uses `gpus: all`), so they should only be assigned to GPU-capable hosts.
 - The tracked `vllm` defaults may require Hugging Face auth or higher rate limits, so set `HUGGING_FACE_HUB_TOKEN` on the destination host when needed.

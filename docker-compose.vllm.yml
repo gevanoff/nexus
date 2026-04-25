@@ -9,17 +9,23 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - NVIDIA_VISIBLE_DEVICES=${VLLM_CUDA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES=${VLLM_CUDA_VISIBLE_DEVICES:-all}
     command:
       - --host
       - 0.0.0.0
       - --port
       - "8000"
       - --model
-      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-7B-Instruct}
+      - ${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}
       - --served-model-name
-      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-7B-Instruct}
+      - ${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}}
+      - --tokenizer
+      - ${VLLM_TOKENIZER:-${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}}
       - --generation-config
       - vllm
+      - --tensor-parallel-size
+      - "${VLLM_TENSOR_PARALLEL_SIZE:-1}"
       - --gpu-memory-utilization
       - "${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
       - --max-model-len
@@ -45,17 +51,23 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - NVIDIA_VISIBLE_DEVICES=${VLLM_FAST_CUDA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES=${VLLM_FAST_CUDA_VISIBLE_DEVICES:-all}
     command:
       - --host
       - 0.0.0.0
       - --port
       - "8000"
       - --model
-      - ${VLLM_MODEL_FAST:-Qwen/Qwen2.5-3B-Instruct}
+      - ${VLLM_MODEL_FAST:-unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M}
       - --served-model-name
-      - ${VLLM_MODEL_FAST:-Qwen/Qwen2.5-3B-Instruct}
+      - ${VLLM_FAST_SERVED_MODEL_NAME:-${VLLM_MODEL_FAST:-unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M}}
+      - --tokenizer
+      - ${VLLM_FAST_TOKENIZER:-${VLLM_MODEL_FAST:-unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M}}
       - --generation-config
       - vllm
+      - --tensor-parallel-size
+      - "${VLLM_FAST_TENSOR_PARALLEL_SIZE:-1}"
       - --gpu-memory-utilization
       - "${VLLM_FAST_GPU_MEMORY_UTILIZATION:-0.90}"
       - --max-model-len
@@ -81,17 +93,25 @@ services:
     environment:
       - HF_HOME=/root/.cache/huggingface
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - NVIDIA_VISIBLE_DEVICES=${VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES=${VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES:-all}
     command:
       - --host
       - 0.0.0.0
       - --port
       - "8000"
       - --model
-      - ${VLLM_MODEL_EMBEDDINGS:-BAAI/bge-small-en-v1.5}
+      - ${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}
       - --served-model-name
-      - ${VLLM_MODEL_EMBEDDINGS:-BAAI/bge-small-en-v1.5}
+      - ${VLLM_EMBEDDINGS_SERVED_MODEL_NAME:-${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}}
+      - --tokenizer
+      - ${VLLM_EMBEDDINGS_TOKENIZER:-${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}}
+      - --task
+      - "${VLLM_EMBEDDINGS_TASK:-embed}"
       - --generation-config
       - vllm
+      - --tensor-parallel-size
+      - "${VLLM_EMBEDDINGS_TENSOR_PARALLEL_SIZE:-1}"
       - --gpu-memory-utilization
       - "${VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION:-0.90}"
     volumes:
@@ -111,10 +131,10 @@ services:
       context: ./services/service-registrar
       dockerfile: Dockerfile
     environment:
-      - NEXUS_SERVICE_NAME=vllm
+      - NEXUS_SERVICE_NAME=${VLLM_SERVICE_NAME:-vllm}
       - NEXUS_SERVICE_BASE_URL=${VLLM_ADVERTISE_BASE_URL:-${VLLM_BASE_URL:-http://vllm:8000/v1}}
       - NEXUS_SERVICE_HEALTH_URL=http://vllm:8000/v1/models
-      - NEXUS_SERVICE_BACKEND_CLASS=local_vllm
+      - NEXUS_SERVICE_BACKEND_CLASS=${VLLM_BACKEND_CLASS:-local_vllm}
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
       - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
@@ -129,10 +149,10 @@ services:
       context: ./services/service-registrar
       dockerfile: Dockerfile
     environment:
-      - NEXUS_SERVICE_NAME=vllm-fast
+      - NEXUS_SERVICE_NAME=${VLLM_FAST_SERVICE_NAME:-vllm-fast}
       - NEXUS_SERVICE_BASE_URL=${VLLM_FAST_ADVERTISE_BASE_URL:-${VLLM_FAST_BASE_URL:-http://vllm-fast:8000/v1}}
       - NEXUS_SERVICE_HEALTH_URL=http://vllm-fast:8000/v1/models
-      - NEXUS_SERVICE_BACKEND_CLASS=local_vllm_fast
+      - NEXUS_SERVICE_BACKEND_CLASS=${VLLM_FAST_BACKEND_CLASS:-local_vllm_fast}
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
       - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
@@ -147,10 +167,10 @@ services:
       context: ./services/service-registrar
       dockerfile: Dockerfile
     environment:
-      - NEXUS_SERVICE_NAME=vllm-embeddings
+      - NEXUS_SERVICE_NAME=${VLLM_EMBEDDINGS_SERVICE_NAME:-vllm-embeddings}
       - NEXUS_SERVICE_BASE_URL=${VLLM_EMBEDDINGS_ADVERTISE_BASE_URL:-${VLLM_EMBEDDINGS_BASE_URL:-http://vllm-embeddings:8000/v1}}
       - NEXUS_SERVICE_HEALTH_URL=http://vllm-embeddings:8000/v1/models
-      - NEXUS_SERVICE_BACKEND_CLASS=local_vllm_embeddings
+      - NEXUS_SERVICE_BACKEND_CLASS=${VLLM_EMBEDDINGS_BACKEND_CLASS:-local_vllm_embeddings}
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
       - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}

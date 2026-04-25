@@ -1,0 +1,69 @@
+services:
+  vllm-embeddings:
+    image: vllm/vllm-openai:latest
+    container_name: nexus-vllm-embeddings
+    gpus: all
+    ports:
+      - "${VLLM_EMBEDDINGS_PORT:-8002}:8000"
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - NVIDIA_VISIBLE_DEVICES=${VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES=${VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES:-all}
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --model
+      - ${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}
+      - --served-model-name
+      - ${VLLM_EMBEDDINGS_SERVED_MODEL_NAME:-${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}}
+      - --tokenizer
+      - ${VLLM_EMBEDDINGS_TOKENIZER:-${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}}
+      - --task
+      - "${VLLM_EMBEDDINGS_TASK:-embed}"
+      - --generation-config
+      - vllm
+      - --tensor-parallel-size
+      - "${VLLM_EMBEDDINGS_TENSOR_PARALLEL_SIZE:-1}"
+      - --gpu-memory-utilization
+      - "${VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION:-0.90}"
+    volumes:
+      - ./.runtime/vllm/cache:/root/.cache/huggingface
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/models', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  vllm-embeddings-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=${VLLM_EMBEDDINGS_SERVICE_NAME:-vllm-embeddings}
+      - NEXUS_SERVICE_BASE_URL=${VLLM_EMBEDDINGS_ADVERTISE_BASE_URL:-${VLLM_EMBEDDINGS_BASE_URL:-http://vllm-embeddings:8000/v1}}
+      - NEXUS_SERVICE_HEALTH_URL=http://vllm-embeddings:8000/v1/models
+      - NEXUS_SERVICE_BACKEND_CLASS=${VLLM_EMBEDDINGS_BACKEND_CLASS:-local_vllm_embeddings}
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - vllm-embeddings
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

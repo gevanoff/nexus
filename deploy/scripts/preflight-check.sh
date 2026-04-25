@@ -30,7 +30,7 @@ TOPOLOGY_FILE=""
 
 is_valid_component() {
   case "$1" in
-    gateway|vllm|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -499,6 +499,18 @@ fi
 if component_selected vllm; then
   check_port_required VLLM_PORT 8000 "vLLM strong"
   check_port_required VLLM_FAST_PORT 8001 "vLLM fast"
+  check_port_required VLLM_EMBEDDINGS_PORT 8002 "vLLM embeddings"
+fi
+
+if component_selected vllm-strong; then
+  check_port_required VLLM_PORT 8000 "vLLM strong"
+fi
+
+if component_selected vllm-fast; then
+  check_port_required VLLM_FAST_PORT 8001 "vLLM fast"
+fi
+
+if component_selected vllm-embeddings; then
   check_port_required VLLM_EMBEDDINGS_PORT 8002 "vLLM embeddings"
 fi
 

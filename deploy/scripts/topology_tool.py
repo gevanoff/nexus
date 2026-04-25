@@ -16,7 +16,7 @@ ENV_LINE_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
 FAMILY_SPECS: dict[str, dict[str, list[str]]] = {
     "vllm": {
-        "components": ["vllm"],
+        "components": ["vllm", "vllm-strong", "vllm-fast", "vllm-embeddings"],
         "default_env_keys": [
             "VLLM_BASE_URL",
             "VLLM_ADVERTISE_BASE_URL",

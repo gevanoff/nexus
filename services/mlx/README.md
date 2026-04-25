@@ -189,7 +189,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 	"aliases": {
 		"fast": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-4B-8bit",
 			"tools": false
 		},
 		"default": {
@@ -199,7 +199,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 		},
 		"coder": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen3-30B-A3B-4bit",
+			"model": "mlx-community/Qwen3-Coder-Next-8bit",
 			"tools": true
 		},
 		"long": {
@@ -219,7 +219,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 	"aliases": {
 		"fast": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen2.5-7B-Instruct-4bit",
+			"model": "mlx-community/Qwen3-4B-8bit",
 			"tools": false
 		},
 		"default": {
@@ -229,7 +229,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 		},
 		"coder": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen3-30B-A3B-4bit",
+			"model": "mlx-community/Qwen3-Coder-Next-8bit",
 			"tools": true
 		},
 		"long": {
@@ -245,15 +245,15 @@ Recommended `ai2` alias-to-model mapping (starting point):
 Alias-by-alias alternatives (if available and validated in your environment):
 
 - `fast` (lowest latency):
-	- Primary: `mlx-community/Qwen2.5-7B-Instruct-4bit`
+	- Primary: `mlx-community/Qwen3-4B-8bit`
 	- Alternatives: `mlx-community/Llama-3.1-8B-Instruct-4bit`, `mlx-community/Gemma-2-9B-it-4bit`
 - `default` (best overall quality):
 	- Primary: `mlx-community/Qwen3-30B-A3B-4bit`
-	- Alternatives: `mlx-community/Qwen2.5-32B-Instruct-4bit`, `mlx-community/Llama-3.3-70B-Instruct-4bit`
+	- Alternatives: `mlx-community/Qwen3-32B-8bit`, `mlx-community/Llama-3.3-70B-Instruct-4bit`
 - `coder` (code + tools):
-	- Primary: local MLX on `ai2` (the same `mlx-community/Qwen3-30B-A3B-4bit` strong model as `default`, or a dedicated MLX coder model if you load one)
+	- Primary: `mlx-community/Qwen3-Coder-Next-8bit`
 	- Secondary checks: remote Ollama aliases such as `coder-ai1` and `coder-ada2`
-	- Dedicated MLX candidates if preferred: `mlx-community/Qwen2.5-Coder-14B-Instruct-4bit` or `mlx-community/Qwen2.5-Coder-32B-Instruct-4bit`
+	- Dedicated MLX candidates if preferred: `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit`
 - `long` (extended context):
 	- Primary: `mlx-community/Qwen3-30B-A3B-4bit` with `context_window` `65536`
 	- Alternatives: use the same family as `default` with reduced concurrency, or a lower-parameter instruct model for higher sustained throughput.
@@ -274,15 +274,15 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 - Prewarm MLX aliases/models:
 
 ```bash
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-7B-Instruct-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen3-4B-8bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen3-30B-A3B-4bit
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen2.5-32B-Instruct-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen3-Coder-Next-8bit
 ```
 
 - Prewarm remote Ollama checker models:
 
 ```bash
-./deploy/scripts/prewarm-models.sh --external-ollama --model qwen2.5-coder:32b
+./deploy/scripts/prewarm-models.sh --external-ollama --model <your-coder-model>
 ```
 
 If models are not already present locally, first-request warmup may trigger a download/conversion step and take significantly longer.

@@ -15,9 +15,9 @@ services:
       - --port
       - "8000"
       - --model
-      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-7B-Instruct}
+      - ${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}
       - --served-model-name
-      - ${VLLM_MODEL_STRONG:-Qwen/Qwen2.5-7B-Instruct}
+      - ${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}}
       - --generation-config
       - vllm
     volumes:

@@ -63,6 +63,18 @@ Example: deploy the streaming stack on `ai1`:
 ./deploy/scripts/deploy.sh --components mediamtx prod main
 ```
 
+Example: deploy only the vLLM fast + embeddings lanes on `ai1`:
+
+```bash
+./deploy/scripts/deploy.sh --components vllm-fast,vllm-embeddings prod main
+```
+
+Example: deploy only the vLLM strong lane on `ada2`:
+
+```bash
+./deploy/scripts/deploy.sh --components vllm-strong prod main
+```
+
 Example: deploy the explicit `ai1` topology profile:
 
 ```bash
@@ -159,6 +171,7 @@ Nexus is deployed/operated from macOS/Linux hosts. If you develop on Windows, ru
 - `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `ai1`/`ai2`/`ada2` cluster.
 - etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
 - Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
+- `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, and `vllm-embeddings` when different hosts should own different inference lanes.
 - Persistence uses host bind mounts under `./.runtime/` (including gateway RO config at `./.runtime/gateway/config`).
 - The UI is intentionally separated from the gateway for production deployments; keep it as a standalone container when it is implemented.
 - For branch-based deploys, see `./deploy/scripts/deploy.sh` and `./deploy/scripts/remote-deploy.sh` (invoked from repo root).
