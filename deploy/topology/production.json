@@ -134,8 +134,7 @@
         "sdxl-turbo",
         "lighton-ocr",
         "skyreels-v2",
-        "vllm-strong",
-        "vllm-embeddings"
+        "vllm-strong"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
@@ -143,21 +142,9 @@
         "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
         "VLLM_SERVICE_NAME": "vllm",
         "VLLM_BACKEND_CLASS": "local_vllm",
-        "VLLM_CPU_OFFLOAD_GB": "4",
-        "VLLM_GPU_MEMORY_UTILIZATION": "0.72",
-        "VLLM_MAX_MODEL_LEN": "4096",
-        "VLLM_CUDA_VISIBLE_DEVICES": "0",
-        "VLLM_EMBEDDINGS_BASE_URL": "http://ada2:8002/v1",
-        "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ada2:8002/v1",
-        "VLLM_MODEL_EMBEDDINGS": "unsloth/Qwen3-Embedding-8B",
-        "VLLM_EMBEDDINGS_SERVED_MODEL_NAME": "unsloth/Qwen3-Embedding-8B",
-        "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings-ada2",
-        "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
-        "VLLM_EMBEDDINGS_CPU_OFFLOAD_GB": "12",
-        "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.10",
-        "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "512",
-        "VLLM_EMBEDDINGS_HEALTHCHECK_START_PERIOD": "180s",
-        "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "0"
+        "VLLM_CPU_OFFLOAD_GB": "8",
+        "VLLM_GPU_MEMORY_UTILIZATION": "0.55",
+        "VLLM_MAX_MODEL_LEN": "2048"
       }
     }
   }
