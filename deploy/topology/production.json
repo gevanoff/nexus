@@ -63,6 +63,7 @@
       "MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS": "ai1",
       "DEFAULT_BACKEND": "local_mlx",
       "EMBEDDINGS_BACKEND": "local_vllm_embeddings",
+      "EMBEDDINGS_MODEL": "unsloth/Qwen3-Embedding-4B",
       "TRANSCRIPTION_BACKEND_CLASS": "local_mlx",
       "ROUTER_ENABLE_POLICY": "true",
       "ETCD_PREFIX": "/nexus/services/",
