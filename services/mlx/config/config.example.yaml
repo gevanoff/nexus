@@ -13,8 +13,10 @@ models:
     model_path: mlx-community/Qwen2.5-7B-Instruct-4bit
     model_type: lm
 
-  # Keep embeddings on the dedicated vLLM BGE service by default. If you have a
-  # validated MLX embeddings model, add it explicitly here.
+  # Dedicated embeddings model
+  - served_model_name: mlx-community/bge-small-en-v1.5-8bit
+    model_path: mlx-community/bge-small-en-v1.5-8bit
+    model_type: embeddings
 
   # Optional multimodal model for image/audio-aware chat
   - served_model_name: mlx-community/Qwen2-VL-7B-Instruct-4bit
