@@ -12,7 +12,7 @@ The container is Nexus-owned. The upstream SkyReels-V2 repo is still cloned into
 
 ## Verification
 
-Run the user-facing smoke test from a gateway host:
+Run the smoke test:
 
 ```bash
 ./deploy/scripts/smoke-test-video.sh
