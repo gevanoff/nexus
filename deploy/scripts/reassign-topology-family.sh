@@ -112,11 +112,12 @@ Next steps:
   2) Deploy any gateway host so env URLs refresh: ./deploy/scripts/ansible-topology.sh deploy ai2
   3) Deploy source host last to remove old components: ./deploy/scripts/ansible-topology.sh deploy ${FROM_HOST}
   4) Verify gateway/upstreams: ./deploy/scripts/verify-gateway.sh && ./deploy/scripts/smoke-test-gateway.sh
-  5) If registry drift remains, re-register services from the gateway host.
+  5) If a video backend moved, run: ./deploy/scripts/smoke-test-video.sh
+  6) If registry drift remains, re-register services from the gateway host.
 EOF
   if [[ "$FAMILY" == "vllm" ]]; then
     cat <<'EOF'
-  6) For any gated or rate-limited vLLM model family, make sure the destination host has the required Hugging Face token before deploy.
+  7) For any gated or rate-limited vLLM model family, make sure the destination host has the required Hugging Face token before deploy.
 EOF
   fi
 fi

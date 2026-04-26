@@ -48,7 +48,7 @@ Recommended rollout order after a topology move:
 1. Deploy the destination host first.
 2. Deploy any gateway host next so backend URLs refresh in rendered env files.
 3. Deploy the source host last so old components are removed.
-4. Verify Gateway and upstream health, then re-register services if needed.
+4. Verify Gateway and upstream health, run `./deploy/scripts/smoke-test-video.sh` when video backends moved, then re-register services if needed.
 
 Compatibility note:
 

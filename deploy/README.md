@@ -43,6 +43,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
+- `./deploy/scripts/smoke-test-video.sh`: run a user-facing video generation smoke test through the gateway UI session flow
 - `./deploy/scripts/backup-and-deploy-parallel.sh`: backup legacy host data (best-effort) and deploy Nexus on parallel ports
 
 Example: deploy only the images component to a GPU host:
@@ -100,7 +101,7 @@ Recommended rollout order after changing topology:
 1. Deploy the destination host first so the service family comes up on the new node.
 2. Deploy any gateway host next so rendered env files pick up the new backend URLs.
 3. Deploy the source host last so old components are removed.
-4. Verify gateway health/smoke and re-register services if registry drift remains.
+4. Verify gateway health/smoke, run `./deploy/scripts/smoke-test-video.sh` when video backends changed, and re-register services if registry drift remains.
 
 When moving `vllm`, also make sure the destination host has `HUGGING_FACE_HUB_TOKEN` when the tracked model family requires Hugging Face auth or higher rate limits.
 

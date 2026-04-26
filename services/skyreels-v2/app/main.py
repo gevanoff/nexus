@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -14,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 
 app = FastAPI(title="SkyReels V2 Shim", version="0.1")
+logger = logging.getLogger(__name__)
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -151,19 +153,42 @@ async def generate_video(payload: Dict[str, Any]) -> Any:
                     proc.kill()
                 except ProcessLookupError:
                     pass
+            logger.warning(
+                "SkyReels job timed out job_id=%s timeout_sec=%s payload_keys=%s",
+                job_id,
+                _timeout_sec(),
+                sorted(str(key) for key in payload.keys()),
+            )
             raise HTTPException(status_code=504, detail={"error": "skyreels timed out", "job_id": job_id}) from exc
 
+        stdout_text = (stdout_bytes or b"").decode(errors="ignore")
+        stderr_text = (stderr_bytes or b"").decode(errors="ignore")
         if proc.returncode != 0:
+            logger.warning(
+                "SkyReels job failed job_id=%s returncode=%s stdout=%s stderr=%s",
+                job_id,
+                proc.returncode,
+                stdout_text[-2000:],
+                stderr_text[-2000:],
+            )
             raise HTTPException(
                 status_code=502,
                 detail={
                     "error": "skyreels failed",
                     "returncode": proc.returncode,
-                    "stdout": (stdout_bytes or b"").decode(errors="ignore")[-4000:],
-                    "stderr": (stderr_bytes or b"").decode(errors="ignore")[-4000:],
+                    "stdout": stdout_text[-4000:],
+                    "stderr": stderr_text[-4000:],
                 },
             )
 
         if output_json_path.exists():
-            return json.loads(output_json_path.read_text(encoding="utf-8"))
-        return {"job_id": job_id, "stdout": (stdout_bytes or b"").decode(errors="ignore")[-4000:]}
+            result = json.loads(output_json_path.read_text(encoding="utf-8"))
+            logger.info(
+                "SkyReels job completed job_id=%s status=%s videos=%s",
+                job_id,
+                result.get("status"),
+                result.get("videos"),
+            )
+            return result
+        logger.info("SkyReels job completed without output metadata job_id=%s", job_id)
+        return {"job_id": job_id, "stdout": stdout_text[-4000:]}

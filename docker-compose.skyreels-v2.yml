@@ -13,6 +13,11 @@ services:
       - SKYREELS_REPO_REF=${SKYREELS_REPO_REF:-}
       - SKYREELS_UPDATE_ON_START=${SKYREELS_UPDATE_ON_START:-false}
       - SKYREELS_TIMEOUT_SEC=${SKYREELS_TIMEOUT_SEC:-3600}
+      - HF_HOME=${SKYREELS_HF_HOME:-/data/cache/huggingface}
+      - HUGGINGFACE_HUB_CACHE=${SKYREELS_HUGGINGFACE_HUB_CACHE:-/data/cache/huggingface/hub}
+      - TRANSFORMERS_CACHE=${SKYREELS_TRANSFORMERS_CACHE:-/data/cache/huggingface/transformers}
+      - XDG_CACHE_HOME=${SKYREELS_XDG_CACHE_HOME:-/data/cache}
+      - TORCH_HOME=${SKYREELS_TORCH_HOME:-/data/cache/torch}
     volumes:
       - ./.runtime/skyreels-v2:/data
     gpus: all

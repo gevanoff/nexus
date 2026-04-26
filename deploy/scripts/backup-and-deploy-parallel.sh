@@ -24,6 +24,7 @@ Suggested order (typical):
   1) ./deploy/scripts/install-host-deps.sh
   2) ./deploy/scripts/backup-and-deploy-parallel.sh --yes
   3) ./deploy/scripts/smoke-test-gateway.sh
+  4) ./deploy/scripts/smoke-test-video.sh
 
 Options:
   --backup-dir <path>    Backup output directory (default: ./deploy/backups/<timestamp>)
