@@ -216,6 +216,10 @@
       .status-row.ok { background: rgba(62, 197, 126, 0.12); border-color: rgba(62, 197, 126, 0.28); }
       .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
       .status-row.bad { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.28); }
+      .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
+      .status-row.inactive-unhealthy { background: rgba(199,156,255,0.14); border-color: rgba(199,156,255,0.34); }
+      .status-row.inactive-unknown { background: rgba(169,180,195,0.08); border-color: rgba(169,180,195,0.18); }
+      .status-row.tier-crucial { box-shadow: inset 4px 0 0 rgba(111,184,255,0.92), 0 0 0 1px rgba(111,184,255,0.16); }
       .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
       .status-name { font-weight: 600; }
       .status-name-alias { font-weight: 400; color: #93a4ba; }
@@ -224,6 +228,13 @@
       .status-badge.ok { background: rgba(111,184,255,0.18); color: #cfe7ff; border-color: rgba(111,184,255,0.4); }
       .status-badge.warn { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
       .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-badge.green { background: rgba(111,221,168,0.12); color: #b9efd8; border-color: rgba(111,221,168,0.34); }
+      .status-badge.blue { background: rgba(111,184,255,0.16); color: #cfe7ff; border-color: rgba(111,184,255,0.42); }
+      .status-badge.purple { background: rgba(199,156,255,0.14); color: #decaff; border-color: rgba(199,156,255,0.42); }
+      .status-badge.grey { background: rgba(169,180,195,0.09); color: #c5cfdd; border-color: rgba(169,180,195,0.26); }
+      .status-badge.red { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-badge.yellow { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
+      .status-badge.crucial { background: rgba(111,184,255,0.16); color: #d7ecff; border-color: rgba(111,184,255,0.52); }
       .status-detail { font-size: 12px; color: var(--muted); }
       .status-aliases { font-size: 12px; color: #b7c4d6; }
       .status-error { font-size: 12px; color: #ffb6b6; }
@@ -326,6 +337,7 @@
               <a class="menu-item" href="/ui/tts">Text-to-speech</a>
               <a class="menu-item" href="/ui/voice-clone">Voice Clone</a>
               <a class="menu-item" href="/ui/ocr">OCR / Scan</a>
+              <a class="menu-item" href="/ui/resources">Resources</a>
               <div class="menu-sep"></div>
               <a id="adminUiLink" class="menu-item admin-only" href="/ui/admin/users" style="display:none">Admin UI</a>
             </div>
@@ -471,6 +483,6 @@
     </div>
 
     <script src="/static/auth_client.js?v=1"></script>
-    <script src="/static/chat.js?v=2"></script>
+    <script src="/static/chat.js?v=3"></script>
   </body>
 </html>

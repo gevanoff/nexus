@@ -55,3 +55,4 @@ Compatibility note:
 - The current vLLM deploy path can be assigned either as the monolithic `vllm` profile or as split lanes: `vllm-strong`, `vllm-fast`, and `vllm-embeddings`.
 - All vLLM profiles are GPU-bound (`docker-compose.vllm*.yml` uses `gpus: all`), so they should only be assigned to GPU-capable hosts.
 - The tracked `vllm` defaults may require Hugging Face auth or higher rate limits, so set `HUGGING_FACE_HUB_TOKEN` on the destination host when needed.
+- `ada2` has 128GB system RAM and a 48GB RTX 6000 Ada. Use the RAM for vLLM CPU offload and startup headroom, but continue to schedule CUDA services by VRAM pressure.

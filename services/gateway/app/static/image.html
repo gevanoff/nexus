@@ -218,7 +218,7 @@
       </section>
 
       <section class="out" style="margin-top:12px">
-        <details class="card" data-backend-status data-backends="gpu_fast,gpu_heavy">
+        <details class="card" data-backend-status data-lifecycle-ensure="gpu_heavy" data-lifecycle-route="images" data-backends="gpu_fast,gpu_heavy">
           <summary>Relevant backend status</summary>
           <div style="margin-top:8px">
             <div class="row" style="justify-content:space-between">
@@ -238,7 +238,8 @@
     </main>
 
     <script src="/static/auth_client.js?v=1"></script>
-    <script src="/static/backend_status_panel.js?v=2"></script>
+    <script src="/static/backend_status_panel.js?v=3"></script>
+    <script src="/static/lifecycle_client.js?v=1"></script>
     <script src="/static/image_catalog_ui.js?v=1"></script>
   </body>
 </html>

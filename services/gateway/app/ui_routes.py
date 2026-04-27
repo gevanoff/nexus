@@ -15,6 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from app.httpx_client import httpx_client as _httpx_client
@@ -122,8 +123,189 @@ _VIDEO_UI_COMPATIBLE_BACKENDS = {"skyreels_v2"}
 def _personaplex_base_url() -> str:
     return (
         _backend_base_url("personaplex")
-        or (getattr(S, "PERSONAPLEX_BASE_URL", "") or os.environ.get("PERSONAPLEX_BASE_URL") or "").strip().rstrip("/")
+        or (getattr(S, "PERSONAPLEX_BASE_URL", "") or os.environ.get("PERSONAPLEX_BASE_URL") or "")
+        .strip()
+        .rstrip("/")
     )
+
+
+def _request_url_scheme(req: Request) -> str:
+    forwarded_proto = (
+        (req.headers.get("x-forwarded-proto") or "")
+        .split(",", 1)[0]
+        .strip()
+        .lower()
+    )
+    if forwarded_proto in {"http", "https"}:
+        return forwarded_proto
+    try:
+        if req.url.scheme in {"http", "https"}:
+            return req.url.scheme
+    except Exception:
+        pass
+    return "https"
+
+
+def _request_url_hostname(req: Request) -> str:
+    host = (req.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
+    if not host:
+        host = (req.headers.get("host") or "").strip()
+    if host:
+        parsed = urlsplit(f"//{host}")
+        if parsed.hostname:
+            return parsed.hostname.strip("[]")
+    try:
+        return (req.url.hostname or "").strip("[]")
+    except Exception:
+        return ""
+
+
+def _url_hostname(raw_url: str) -> str:
+    value = (raw_url or "").strip()
+    if not value:
+        return ""
+    try:
+        return (urlsplit(value).hostname or "").strip("[]")
+    except Exception:
+        return ""
+
+
+def _is_internal_personaplex_host(hostname: str) -> bool:
+    host = (hostname or "").strip().strip("[]").lower()
+    if not host:
+        return True
+    return host in {
+        "0.0.0.0",
+        "127.0.0.1",
+        "::1",
+        "localhost",
+        "personaplex",
+        "host.docker.internal",
+    }
+
+
+def _format_host_port(hostname: str, port: int) -> str:
+    host = (hostname or "").strip().strip("[]")
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{host}:{port}"
+
+
+def _personaplex_ui_url(req: Request, *, base_url: str = "") -> str:
+    configured = (
+        getattr(S, "PERSONAPLEX_UI_URL", "")
+        or os.environ.get("PERSONAPLEX_UI_URL")
+        or ""
+    ).strip()
+    if configured:
+        return configured
+
+    scheme = (
+        getattr(S, "PERSONAPLEX_UI_SCHEME", "")
+        or os.environ.get("PERSONAPLEX_UI_SCHEME")
+        or "https"
+    ).strip().lower()
+    if scheme not in {"http", "https"}:
+        scheme = "https"
+
+    try:
+        port = int(
+            getattr(S, "PERSONAPLEX_UI_PORT", 8998)
+            or os.environ.get("PERSONAPLEX_UI_PORT")
+            or 8998
+        )
+    except Exception:
+        port = 8998
+    port = min(65535, max(1, port))
+
+    advertised = (
+        getattr(S, "PERSONAPLEX_ADVERTISE_BASE_URL", "")
+        or os.environ.get("PERSONAPLEX_ADVERTISE_BASE_URL")
+        or ""
+    ).strip()
+    candidates = [
+        base_url,
+        advertised,
+        getattr(S, "PERSONAPLEX_BASE_URL", "") or os.environ.get("PERSONAPLEX_BASE_URL") or "",
+    ]
+    hostname = ""
+    for candidate in candidates:
+        candidate_host = _url_hostname(candidate)
+        if candidate_host and not _is_internal_personaplex_host(candidate_host):
+            hostname = candidate_host
+            break
+    if not hostname:
+        hostname = _request_url_hostname(req)
+
+    if not hostname:
+        scheme = _request_url_scheme(req)
+        hostname = "localhost"
+
+    return urlunsplit((scheme, _format_host_port(hostname, port), "", "", ""))
+
+
+def _lifecycle_manager_base_url() -> str:
+    return (getattr(S, "LIFECYCLE_MANAGER_BASE_URL", "") or os.environ.get("LIFECYCLE_MANAGER_BASE_URL") or "").strip().rstrip("/")
+
+
+def _lifecycle_timeout() -> float:
+    try:
+        return float(getattr(S, "LIFECYCLE_MANAGER_TIMEOUT_SEC", 15.0) or 15.0)
+    except Exception:
+        return 15.0
+
+
+async def _call_lifecycle_manager(method: str, path: str, *, json_body: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None) -> Dict[str, Any]:
+    base = _lifecycle_manager_base_url()
+    if not base:
+        raise HTTPException(status_code=503, detail={"error": "lifecycle_manager_unconfigured"})
+    if not path.startswith("/"):
+        path = "/" + path
+    async with httpx.AsyncClient(timeout=timeout or _lifecycle_timeout()) as client:
+        try:
+            response = await client.request(method.upper(), f"{base}{path}", json=json_body)
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "lifecycle_manager_unreachable", "message": str(exc)},
+            ) from exc
+    if response.status_code >= 400:
+        detail: Any
+        try:
+            detail = response.json()
+        except Exception:
+            detail = response.text[:1000]
+        raise HTTPException(status_code=response.status_code, detail=detail)
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"error": "lifecycle_manager_bad_response"}) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail={"error": "lifecycle_manager_bad_response"})
+    return data
+
+
+async def _notify_lifecycle_manager(backend_class: str, event: str, route_kind: str) -> None:
+    if not _lifecycle_manager_base_url():
+        return
+    try:
+        await _call_lifecycle_manager(
+            "POST",
+            "/v1/lifecycle/notify",
+            json_body={"backend_class": backend_class, "event": event, "route_kind": route_kind},
+            timeout=2.0,
+        )
+    except Exception:
+        return
+
+
+def _schedule_lifecycle_notify(backend_class: str, event: str, route_kind: str) -> None:
+    if not backend_class or not _lifecycle_manager_base_url():
+        return
+    try:
+        asyncio.create_task(_notify_lifecycle_manager(backend_class, event, route_kind))
+    except RuntimeError:
+        return
 
 
 @router.get("/favicon.ico", include_in_schema=False)
@@ -604,6 +786,36 @@ def _video_backend_request_settings(backend_class: str) -> Tuple[str, str, float
     except Exception:
         timeout_f = 3600.0
     return base.rstrip("/"), path, timeout_f
+
+
+def _is_safe_video_artifact_name(name: str) -> bool:
+    value = str(name or "").strip()
+    if not value or "/" in value or "\\" in value:
+        return False
+    if value in {".", ".."}:
+        return False
+    return Path(value).name == value
+
+
+def _apply_video_artifact_proxy_urls(data: Dict[str, Any], backend_class: str) -> Dict[str, Any]:
+    job_id = str(data.get("job_id") or "").strip()
+    if not re.fullmatch(r"skyreels_[A-Fa-f0-9]{32}", job_id):
+        return data
+
+    videos = [str(item) for item in (data.get("videos") or []) if isinstance(item, str)]
+    urls = [
+        f"/ui/api/video/artifacts/{quote(backend_class, safe='')}/{quote(job_id, safe='')}/{quote(name, safe='')}"
+        for name in videos
+        if _is_safe_video_artifact_name(name)
+    ]
+    if not urls:
+        return data
+
+    data["urls"] = urls
+    data["url"] = urls[0]
+    data["video_url"] = urls[0]
+    data["data"] = [{"url": url} for url in urls]
+    return data
 
 
 def _image_backend_option_profile(backend_class: str) -> Dict[str, Any]:
@@ -1624,6 +1836,13 @@ async def ui_personaplex_frontend(req: Request) -> HTMLResponse:
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+@router.get("/ui/resources", include_in_schema=False)
+async def ui_resources_frontend(req: Request) -> HTMLResponse:
+    _require_ui_access(req)
+    html_path = Path(__file__).with_name("static").joinpath("resources.html")
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
 @router.get("/ui/admin/users", include_in_schema=False)
 async def ui_admin_users(req: Request) -> HTMLResponse:
     _require_ui_access(req)
@@ -1662,12 +1881,14 @@ async def ui_api_music(req: Request) -> Dict[str, Any]:
     try:
         await admission.acquire(backend_class, "music")
         acquired = True
+        _schedule_lifecycle_notify(backend_class, "start", "music")
         out = await generate_music(backend_class=backend_class, body=body)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"music backend failed: {e}")
     finally:
         if acquired:
             admission.release(backend_class, "music")
+            _schedule_lifecycle_notify(backend_class, "finish", "music")
 
     return out
 
@@ -1715,6 +1936,7 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
     try:
         await admission.acquire(backend_class, "video")
         acquired = True
+        _schedule_lifecycle_notify(backend_class, "start", "video")
         async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 resp = await client.post(f"{base}{path}", json=payload, headers=headers)
@@ -1759,6 +1981,7 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
                     },
                 )
             if isinstance(data, dict):
+                _apply_video_artifact_proxy_urls(data, backend_class)
                 gateway_meta = data.get("_gateway") if isinstance(data.get("_gateway"), dict) else {}
                 gateway_meta.update({"backend_class": backend_class, "base_url": base, "path": path})
                 data["_gateway"] = gateway_meta
@@ -1766,13 +1989,54 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
     finally:
         if acquired:
             admission.release(backend_class, "video")
+            _schedule_lifecycle_notify(backend_class, "finish", "video")
+
+
+@router.get("/ui/api/video/artifacts/{backend_class}/{job_id}/{name:path}", include_in_schema=False)
+async def ui_api_video_artifact(req: Request, backend_class: str, job_id: str, name: str):
+    _require_ui_access(req)
+    _require_user(req)
+
+    resolved_backend_class = _resolve_ui_backend_class(
+        requested_backend_class=backend_class,
+        default_backend_class=(getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "skyreels_v2",
+        route_kind="video",
+    )
+    check_backend_ready(resolved_backend_class, route_kind="video")
+    await check_capability(resolved_backend_class, "video")
+
+    if not re.fullmatch(r"skyreels_[A-Fa-f0-9]{32}", str(job_id or "").strip()):
+        raise HTTPException(status_code=404, detail="video artifact not found")
+    if not _is_safe_video_artifact_name(name):
+        raise HTTPException(status_code=404, detail="video artifact not found")
+
+    base, _path, _timeout = _video_backend_request_settings(resolved_backend_class)
+    if not base:
+        raise HTTPException(status_code=404, detail=f"{resolved_backend_class} base URL not configured")
+
+    artifact_url = f"{base}/outputs/{quote(job_id, safe='')}/{quote(name, safe='')}"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        try:
+            resp = await client.get(artifact_url)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail={"error": "video_artifact_fetch_failed", "message": str(exc)}) from exc
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="video artifact not found")
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail={"error": "video_artifact_upstream_error", "status_code": resp.status_code, "body": resp.text[:1000]},
+        )
+
+    content_type = resp.headers.get("content-type") or mimetypes.guess_type(name)[0] or "application/octet-stream"
+    return StreamingResponse(iter([resp.content]), media_type=content_type, headers={"Cache-Control": "no-store"})
 
 
 def _normalize_skyreels_payload(body: Dict[str, Any]) -> Dict[str, Any]:
-    ui_keys = {"prompt", "duration", "resolution"}
+    ui_keys = {"prompt", "duration", "resolution", "backend_class", "backend"}
     payload: Dict[str, Any]
     if set(body.keys()).issubset(ui_keys):
-        payload = dict(body)
+        payload = {key: value for key, value in body.items() if key not in {"backend_class", "backend"}}
         prompt = str(body.get("prompt", "") or "").strip()
         if prompt:
             payload["prompt"] = prompt
@@ -1834,7 +2098,7 @@ async def ui_api_personaplex_chat(req: Request) -> Dict[str, Any]:
 
     base = _personaplex_base_url()
     if not base:
-        ui_url = (getattr(S, "PERSONAPLEX_UI_URL", "") or "").strip() or "https://localhost:8998"
+        ui_url = _personaplex_ui_url(req, base_url=base)
         raise HTTPException(status_code=501, detail={"error": "personaplex_rest_unavailable", "ui_url": ui_url})
 
     timeout = getattr(S, "PERSONAPLEX_TIMEOUT_SEC", 120.0) or 120.0
@@ -1858,8 +2122,8 @@ async def ui_api_personaplex_chat(req: Request) -> Dict[str, Any]:
 async def ui_api_personaplex_info(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     _require_user(req)
-    ui_url = (getattr(S, "PERSONAPLEX_UI_URL", "") or "").strip() or "https://localhost:8998"
     base = _personaplex_base_url()
+    ui_url = _personaplex_ui_url(req, base_url=base)
     return {"ui_url": ui_url, "rest_enabled": bool(base)}
 
 
@@ -1964,6 +2228,7 @@ async def ui_api_tts(req: Request):
 
     admission = get_admission_controller()
     await admission.acquire(backend_class, "tts")
+    _schedule_lifecycle_notify(backend_class, "start", "tts")
     try:
         result = await generate_tts(backend_class=backend_class, body=body)
     except HTTPException:
@@ -1972,6 +2237,7 @@ async def ui_api_tts(req: Request):
         raise HTTPException(status_code=502, detail=f"tts backend error: {type(e).__name__}: {e}")
     finally:
         admission.release(backend_class, "tts")
+        _schedule_lifecycle_notify(backend_class, "finish", "tts")
 
     headers = _tts_gateway_headers(result.gateway)
     if result.kind == "json":
@@ -3858,6 +4124,20 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                 "kind": "model",
             }
         )
+    lifecycle_by_backend: Dict[str, Dict[str, Any]] = {}
+    try:
+        lifecycle_payload = await _call_lifecycle_manager("GET", "/v1/lifecycle/status", timeout=3.0)
+        lifecycle_backends = lifecycle_payload.get("backends") if isinstance(lifecycle_payload, dict) else None
+        if isinstance(lifecycle_backends, list):
+            for item in lifecycle_backends:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("backend_class") or "").strip()
+                if key:
+                    lifecycle_by_backend[key] = item
+    except Exception:
+        lifecycle_by_backend = {}
+
     backends = []
     for backend_class, config in registry.backends.items():
         entry: Dict[str, Any] = {
@@ -3882,6 +4162,40 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                     "error": status.error,
                 }
             )
+        lifecycle_entry = lifecycle_by_backend.get(backend_class)
+        if lifecycle_entry:
+            entry["lifecycle"] = lifecycle_entry
+            for key in (
+                "active",
+                "tier",
+                "tier_rank",
+                "display_name",
+                "estimated_vram_mb",
+                "auto_start",
+                "auto_stop",
+                "requires_confirmation",
+                "compose_managed",
+                "status",
+                "status_label",
+                "status_color",
+                "status_rank",
+                "health_error",
+                "last_checked_at",
+                "last_healthy_at",
+                "last_ready_at",
+                "last_confirmed_working_at",
+                "last_unhealthy_at",
+                "last_stopped_at",
+                "last_health_error",
+                "last_action",
+                "last_action_at",
+                "last_action_error",
+                "inflight",
+            ):
+                if key in lifecycle_entry:
+                    entry[key] = lifecycle_entry[key]
+            if lifecycle_entry.get("host"):
+                entry["lifecycle_host"] = lifecycle_entry.get("host")
         backends.append(entry)
 
     telegram_entry: Dict[str, Any] = {
@@ -3936,6 +4250,58 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     }
 
 
+@router.get("/ui/api/lifecycle/status", include_in_schema=False)
+async def ui_api_lifecycle_status(req: Request, refresh: bool = False) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    path = "/v1/lifecycle/status"
+    if refresh:
+        path += "?refresh=true"
+    return await _call_lifecycle_manager("GET", path, timeout=max(_lifecycle_timeout(), 30.0))
+
+
+@router.post("/ui/api/lifecycle/ensure", include_in_schema=False)
+async def ui_api_lifecycle_ensure(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
+    if not backend_class:
+        raise HTTPException(status_code=400, detail="backend_class required")
+    payload = {
+        "backend_class": backend_class,
+        "route_kind": str(body.get("route_kind") or "").strip(),
+        "reason": str(body.get("reason") or "ui").strip() or "ui",
+        "confirmed": bool(body.get("confirmed") is True),
+        "allow_disruptive": bool(body.get("allow_disruptive") is True),
+    }
+    return await _call_lifecycle_manager("POST", "/v1/lifecycle/ensure", json_body=payload, timeout=max(_lifecycle_timeout(), 120.0))
+
+
+@router.post("/ui/api/lifecycle/action", include_in_schema=False)
+async def ui_api_lifecycle_action(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_admin(req)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
+    action = str(body.get("action") or "").strip().lower()
+    if not backend_class:
+        raise HTTPException(status_code=400, detail="backend_class required")
+    if action not in {"activate", "start", "deactivate", "stop"}:
+        raise HTTPException(status_code=400, detail="action must be activate/start/deactivate/stop")
+    payload = {
+        "backend_class": backend_class,
+        "action": action,
+        "confirmed": bool(body.get("confirmed") is True),
+        "allow_disruptive": bool(body.get("allow_disruptive") is True),
+    }
+    return await _call_lifecycle_manager("POST", "/v1/lifecycle/action", json_body=payload, timeout=max(_lifecycle_timeout(), 300.0))
+
+
 @router.post("/ui/api/image", include_in_schema=False)
 async def ui_image(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
@@ -3981,6 +4347,7 @@ async def ui_image(req: Request) -> Dict[str, Any]:
         await check_capability(backend_class, "images")
         admission = get_admission_controller()
         await admission.acquire(backend_class, "images")
+        _schedule_lifecycle_notify(backend_class, "start", "images")
         try:
             resp = await generate_images(
                 prompt=prompt,
@@ -3992,6 +4359,7 @@ async def ui_image(req: Request) -> Dict[str, Any]:
             )
         finally:
             admission.release(backend_class, "images")
+            _schedule_lifecycle_notify(backend_class, "finish", "images")
 
         # Prefer short-lived URLs for the browser (avoids huge data: URIs and broken rendering).
         if isinstance(resp, dict) and isinstance(resp.get("data"), list):
@@ -4053,6 +4421,7 @@ async def ui_scan(req: Request) -> Dict[str, Any]:
     await check_capability(backend_class, "ocr")
     admission = get_admission_controller()
     await admission.acquire(backend_class, "ocr")
+    _schedule_lifecycle_notify(backend_class, "start", "ocr")
 
     try:
         import httpx
@@ -4088,3 +4457,4 @@ async def ui_scan(req: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=f"ocr backend error: {type(e).__name__}: {e}")
     finally:
         admission.release(backend_class, "ocr")
+        _schedule_lifecycle_notify(backend_class, "finish", "ocr")

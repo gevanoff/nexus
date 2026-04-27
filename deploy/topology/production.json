@@ -69,7 +69,10 @@
       "ETCD_PREFIX": "/nexus/services/",
       "NEXUS_REGISTRATION_INTERVAL_SEC": "30",
       "NEXUS_REGISTRATION_TIMEOUT_SEC": "5",
-      "NEXUS_REGISTRATION_LEASE_TTL_SEC": "90"
+      "NEXUS_REGISTRATION_LEASE_TTL_SEC": "90",
+      "LIFECYCLE_MANAGER_BASE_URL": "http://lifecycle-manager:9190",
+      "LIFECYCLE_MANAGER_ADVERTISE_BASE_URL": "http://ai2:9190",
+      "NEXUS_LIFECYCLE_MODE": "assisted"
     }
   },
   "hosts": {
@@ -108,6 +111,7 @@
       "components": [
         "gateway",
         "etcd",
+        "lifecycle-manager",
         "tts",
         "luxtts"
       ],
@@ -124,12 +128,12 @@
         "QWEN3_TTS_DTYPE": "float16",
         "QWEN3_TTS_ATTN_IMPL": "sdpa",
         "UI_IP_ALLOWLIST": "127.0.0.1,172.28.0.1,10.10.22.0/24",
-        "DISABLED_BACKEND_CLASSES": "followyourcanvas,heartmula_music,personaplex",
+        "DISABLED_BACKEND_CLASSES": "followyourcanvas,personaplex",
         "DEFAULT_BACKEND": "local_mlx"
       }
     },
     "ada2": {
-      "description": "Linux/NVIDIA node with an RTX 6000 Ada 48GB for primary heavy vLLM plus image and video generation services.",
+      "description": "Linux/NVIDIA node with 128GB system RAM and an RTX 6000 Ada 48GB for primary heavy vLLM plus image and video generation services.",
       "platform": "linux",
       "ssh_target": "ai@ada2",
       "components": [

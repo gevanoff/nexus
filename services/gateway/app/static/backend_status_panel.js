@@ -12,6 +12,10 @@
       .status-row.ok { background: rgba(62, 197, 126, 0.12); border-color: rgba(62, 197, 126, 0.28); }
       .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
       .status-row.bad { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.28); }
+      .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
+      .status-row.inactive-unhealthy { background: rgba(199,156,255,0.14); border-color: rgba(199,156,255,0.34); }
+      .status-row.inactive-unknown { background: rgba(169,180,195,0.08); border-color: rgba(169,180,195,0.18); }
+      .status-row.tier-crucial { box-shadow: inset 4px 0 0 rgba(111,184,255,0.92), 0 0 0 1px rgba(111,184,255,0.16); }
       .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
       .status-name { font-weight: 600; }
       .status-name-alias { font-weight: 400; color: #93a4ba; }
@@ -20,6 +24,13 @@
       .status-badge.ok { background: rgba(111,184,255,0.18); color: #cfe7ff; border-color: rgba(111,184,255,0.4); }
       .status-badge.warn { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
       .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-badge.green { background: rgba(111,221,168,0.12); color: #b9efd8; border-color: rgba(111,221,168,0.34); }
+      .status-badge.blue { background: rgba(111,184,255,0.16); color: #cfe7ff; border-color: rgba(111,184,255,0.42); }
+      .status-badge.purple { background: rgba(199,156,255,0.14); color: #decaff; border-color: rgba(199,156,255,0.42); }
+      .status-badge.grey { background: rgba(169,180,195,0.09); color: #c5cfdd; border-color: rgba(169,180,195,0.26); }
+      .status-badge.red { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-badge.yellow { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
+      .status-badge.crucial { background: rgba(111,184,255,0.16); color: #d7ecff; border-color: rgba(111,184,255,0.52); }
       .status-detail { font-size: 12px; color: #a9b4c3; }
       .status-meta { font-size: 12px; color: #a9b4c3; margin-bottom: 8px; }
       .status-aliases { font-size: 12px; color: #b7c4d6; }
@@ -56,6 +67,33 @@
     } catch (e) {
       return '--';
     }
+  }
+
+  function lifecycleColorClass(color) {
+    const value = String(color || '').toLowerCase();
+    if (['green', 'blue', 'purple', 'grey', 'red', 'yellow'].includes(value)) return value;
+    return 'grey';
+  }
+
+  function lifecycleRowClass(status, color) {
+    if (status === 'traded_out_working') return 'traded';
+    if (status === 'inactive_unhealthy') return 'inactive-unhealthy';
+    if (status === 'inactive_unknown') return 'inactive-unknown';
+    if (status === 'active_ready') return 'ok';
+    if (status === 'active_unhealthy') return 'bad';
+    if (color === 'green') return 'ok';
+    if (color === 'red') return 'bad';
+    return 'warn';
+  }
+
+  function isInactiveLifecycleStatus(status) {
+    return ['traded_out_working', 'inactive_unhealthy', 'inactive_unknown'].includes(status);
+  }
+
+  function tierClassName(tier) {
+    const value = String(tier || '').trim().toLowerCase();
+    if (!value) return '';
+    return `tier-${value.replace(/[^a-z0-9_-]/g, '_')}`;
   }
 
   const backendLabels = {
@@ -108,24 +146,76 @@
       missingBadge.textContent = 'Not configured';
       badges.appendChild(missingBadge);
     } else {
+      const lifecycleStatus = String(backend.status || backend.lifecycle_status || '').trim();
+      const lifecycleLabel = String(backend.status_label || '').trim();
+      const lifecycleColor = lifecycleColorClass(backend.status_color);
+      const inactiveLifecycle = isInactiveLifecycleStatus(lifecycleStatus);
+      const tier = String(backend.tier || backend.lifecycle?.tier || '').trim().toLowerCase();
+      const rowTierClass = tierClassName(tier);
+      if (rowTierClass) row.classList.add(rowTierClass);
+
+      if (lifecycleStatus || lifecycleLabel) {
+        const state = document.createElement('span');
+        state.className = `status-badge ${lifecycleColor}`;
+        state.textContent = lifecycleLabel || lifecycleStatus.replace(/_/g, ' ');
+        badges.appendChild(state);
+        row.classList.add(lifecycleRowClass(lifecycleStatus, lifecycleColor));
+      }
+
+      if (tier === 'crucial') {
+        const tierBadge = document.createElement('span');
+        tierBadge.className = 'status-badge crucial';
+        tierBadge.textContent = 'Crucial';
+        badges.appendChild(tierBadge);
+      }
+
+      if (backend.active === true) {
+        const activeBadge = document.createElement('span');
+        activeBadge.className = 'status-badge green';
+        activeBadge.textContent = 'Active';
+        badges.appendChild(activeBadge);
+      } else if (backend.active === false) {
+        const activeBadge = document.createElement('span');
+        activeBadge.className = 'status-badge grey';
+        activeBadge.textContent = 'Inactive';
+        badges.appendChild(activeBadge);
+      }
+
       const healthy = document.createElement('span');
       const isHealthy = backend.healthy === true;
-      healthy.className = `status-badge ${isHealthy ? 'ok' : backend.healthy === false ? 'bad' : 'warn'}`;
-      healthy.textContent = backend.healthy === undefined ? 'Health unknown' : isHealthy ? 'Healthy' : 'Unhealthy';
+      healthy.className = `status-badge ${isHealthy ? 'green' : backend.healthy === false ? 'red' : 'yellow'}`;
+      healthy.textContent = backend.healthy == null ? 'Health unknown' : isHealthy ? 'Healthy' : 'Unhealthy';
       badges.appendChild(healthy);
 
       const ready = document.createElement('span');
       const isReady = backend.ready === true;
-      ready.className = `status-badge ${isReady ? 'ok' : backend.ready === false ? 'bad' : 'warn'}`;
-      ready.textContent = backend.ready === undefined ? 'Readiness unknown' : isReady ? 'Ready' : 'Not ready';
+      ready.className = `status-badge ${isReady ? 'green' : backend.ready === false ? 'red' : 'yellow'}`;
+      ready.textContent = backend.ready == null ? 'Readiness unknown' : isReady ? 'Ready' : 'Not ready';
       badges.appendChild(ready);
 
-      if (backend.healthy === false && backend.ready === false) {
-        row.classList.add('bad');
-      } else if (isHealthy && isReady) {
-        row.classList.add('ok');
-      } else {
-        row.classList.add('warn');
+      if (!inactiveLifecycle) {
+        if (!lifecycleStatus && backend.healthy === false && backend.ready === false) {
+          row.classList.add('bad');
+        } else if (!lifecycleStatus && isHealthy && isReady) {
+          row.classList.add('ok');
+        } else if (!lifecycleStatus) {
+          row.classList.add('warn');
+        }
+      } else if (lifecycleStatus === 'traded_out_working' && backend.last_ready_at) {
+        const lastReady = document.createElement('span');
+        lastReady.className = 'status-badge blue';
+        lastReady.textContent = `Last ready ${formatTimestamp(Number(backend.last_ready_at || 0))}`;
+        badges.appendChild(lastReady);
+      } else if (lifecycleStatus === 'inactive_unhealthy' && backend.last_unhealthy_at) {
+        const lastBad = document.createElement('span');
+        lastBad.className = 'status-badge purple';
+        lastBad.textContent = `Last unhealthy ${formatTimestamp(Number(backend.last_unhealthy_at || 0))}`;
+        badges.appendChild(lastBad);
+      } else if (lifecycleStatus === 'inactive_unknown') {
+        const unknown = document.createElement('span');
+        unknown.className = 'status-badge grey';
+        unknown.textContent = 'Never ready';
+        badges.appendChild(unknown);
       }
     }
 
@@ -138,8 +228,16 @@
       detail.textContent = 'Not configured in the backend registry.';
     } else {
       const capabilities = Array.isArray(backend.capabilities) ? backend.capabilities.join(', ') : 'unknown';
-      const lastCheck = backend.last_check ? formatTimestamp(backend.last_check) : '--';
-      detail.textContent = `Capabilities: ${capabilities} • Last check: ${lastCheck}`;
+      const lastCheckValue = Number(backend.last_checked_at || backend.last_check || 0);
+      const detailParts = [`Capabilities: ${capabilities}`, `Last check: ${lastCheckValue > 0 ? formatTimestamp(lastCheckValue) : '--'}`];
+      const lastReady = Number(backend.last_ready_at || backend.last_confirmed_working_at || 0);
+      const lastUnhealthy = Number(backend.last_unhealthy_at || 0);
+      const lastStopped = Number(backend.last_stopped_at || 0);
+      if (backend.active === false && lastReady > 0) detailParts.push(`Last ready: ${formatTimestamp(lastReady)}`);
+      if (backend.active === false && lastUnhealthy > 0 && lastUnhealthy > lastReady) detailParts.push(`Last unhealthy: ${formatTimestamp(lastUnhealthy)}`);
+      if (backend.active === false && lastStopped > 0) detailParts.push(`Stopped: ${formatTimestamp(lastStopped)}`);
+      if (backend.inflight) detailParts.push(`${backend.inflight} running`);
+      detail.textContent = detailParts.join(' • ');
     }
     row.appendChild(detail);
 
@@ -155,10 +253,19 @@
       row.appendChild(aliasDetail);
     }
 
-    if (backend.error || backend.health_error) {
+    let errorText = String(backend.error || backend.health_error || backend.last_health_error || backend.last_action_error || '');
+    const lifecycleStatus = String(backend.status || backend.lifecycle_status || '').trim();
+    if (backend.active === false && lifecycleStatus === 'traded_out_working') {
+      errorText = String(backend.last_action_error || '');
+    } else if (backend.active === false && lifecycleStatus === 'inactive_unknown') {
+      errorText = String(backend.last_action_error || '');
+    } else if (backend.active === false && lifecycleStatus === 'inactive_unhealthy') {
+      errorText = String(backend.last_action_error || backend.last_health_error || backend.health_error || backend.error || '');
+    }
+    if (errorText) {
       const err = document.createElement('div');
       err.className = 'status-error';
-      err.textContent = String(backend.error || backend.health_error || '');
+      err.textContent = errorText;
       row.appendChild(err);
     }
 

@@ -1,0 +1,39 @@
+services:
+  lifecycle-manager:
+    build:
+      context: ./services/lifecycle-manager
+      dockerfile: Dockerfile
+    container_name: nexus-lifecycle-manager
+    env_file:
+      - ./.env
+    environment:
+      - NEXUS_LIFECYCLE_POLICY=/app/config/backend_lifecycle.json
+      - NEXUS_TOPOLOGY_FILE=/app/config/production.json
+      - NEXUS_LIFECYCLE_MODE=${NEXUS_LIFECYCLE_MODE:-assisted}
+      - NEXUS_LIFECYCLE_POLL_INTERVAL_SEC=${NEXUS_LIFECYCLE_POLL_INTERVAL_SEC:-15}
+      - NEXUS_LIFECYCLE_SSH_IDENTITY=${NEXUS_LIFECYCLE_SSH_IDENTITY:-/root/.ssh/nexus_lifecycle_ed25519}
+      - NEXUS_LIFECYCLE_STATE_PATH=${NEXUS_LIFECYCLE_STATE_PATH:-/app/state/backend_state.json}
+    ports:
+      - "${LIFECYCLE_MANAGER_PORT:-9190}:9190"
+    volumes:
+      - ./deploy/topology:/app/config:ro
+      - ./.runtime/lifecycle-manager/ssh:/root/.ssh:ro
+      - ./.runtime/lifecycle-manager/state:/app/state
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9190/readyz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes: {}

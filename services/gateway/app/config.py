@@ -188,8 +188,15 @@ class Settings(BaseSettings):
 
     # Optional: PersonaPlex chat shim (custom UI)
     PERSONAPLEX_BASE_URL: str = ""
+    PERSONAPLEX_ADVERTISE_BASE_URL: str = ""
     PERSONAPLEX_TIMEOUT_SEC: float = 120.0
-    PERSONAPLEX_UI_URL: str = "https://localhost:8998"
+    PERSONAPLEX_UI_URL: str = ""
+    PERSONAPLEX_UI_SCHEME: str = "https"
+    PERSONAPLEX_UI_PORT: int = 8998
+
+    # Optional backend lifecycle/resource manager.
+    LIFECYCLE_MANAGER_BASE_URL: str = ""
+    LIFECYCLE_MANAGER_TIMEOUT_SEC: float = 15.0
 
     # Optional comma-separated backend classes to omit from the active registry.
     # Useful when a backend exists in static config but is intentionally not

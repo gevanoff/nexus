@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "settings": {
+    "mode": "assisted",
+    "poll_interval_sec": 15,
+    "request_hot_window_sec": 900,
+    "optional_idle_stop_sec": 1800,
+    "memory_pressure_used_ratio": 0.9,
+    "target_free_vram_mb": 4096,
+    "llm_advisor": {
+      "enabled": false,
+      "mode": "advise",
+      "model": "coder",
+      "base_url": "http://gateway:8800/v1"
+    }
+  },
+  "tiers": {
+    "crucial": {
+      "rank": 100,
+      "description": "Keep running unless an operator explicitly stops it."
+    },
+    "high": {
+      "rank": 50,
+      "description": "Prefer to keep running; can displace optional idle backends."
+    },
+    "optional": {
+      "rank": 10,
+      "description": "Can be traded in and out for specialized workflows."
+    }
+  },
+  "hosts": {
+    "ai1": {
+      "resource_kind": "linux_nvidia",
+      "env_file": "deploy/env/.env.prod.ai1"
+    },
+    "ai2": {
+      "resource_kind": "macos",
+      "env_file": "deploy/env/.env.prod.ai2",
+      "remote_shell": "/bin/zsh -lic"
+    },
+    "ada2": {
+      "resource_kind": "linux_nvidia",
+      "env_file": "deploy/env/.env.prod.ada2"
+    }
+  },
+  "backends": {
+    "local_mlx": {
+      "display_name": "MLX",
+      "host": "ai2",
+      "component": "mlx",
+      "tier": "crucial",
+      "capabilities": ["chat", "transcription"],
+      "estimated_vram_mb": 0,
+      "auto_start": false,
+      "auto_stop": false,
+      "compose_managed": false,
+      "ready_path": "/models"
+    },
+    "local_vllm": {
+      "display_name": "vLLM Strong",
+      "host": "ada2",
+      "component": "vllm",
+      "tier": "high",
+      "capabilities": ["chat"],
+      "estimated_vram_mb": 28000,
+      "idle_observed_vram_mb": 27100,
+      "auto_start": true,
+      "auto_stop": false,
+      "compose_file": "docker-compose.vllm-strong.yml",
+      "ready_path": "/models",
+      "notes": "Observed on ada2 after the 128GB system RAM upgrade: vLLM Strong with Qwen3-30B-A3B-FP8, max_model_len=2048, gpu_memory_utilization=0.55, and cpu_offload_gb=8 idles around 27.1GB VRAM, leaving about 18.3GB free on the RTX 6000 Ada. System RAM gives CPU-offload/startup headroom but does not remove VRAM contention with peak media jobs."
+    },
+    "local_vllm_fast": {
+      "display_name": "vLLM Fast",
+      "host": "ai1",
+      "component": "vllm-fast",
+      "tier": "high",
+      "capabilities": ["chat"],
+      "estimated_vram_mb": 22000,
+      "auto_start": true,
+      "auto_stop": false,
+      "compose_file": "docker-compose.vllm-fast.yml",
+      "ready_path": "/models"
+    },
+    "local_vllm_embeddings": {
+      "display_name": "vLLM Embeddings",
+      "host": "ai1",
+      "component": "vllm-embeddings",
+      "tier": "crucial",
+      "capabilities": ["embeddings"],
+      "estimated_vram_mb": 12000,
+      "auto_start": true,
+      "auto_stop": false,
+      "compose_file": "docker-compose.vllm-embeddings.yml",
+      "ready_path": "/models"
+    },
+    "gpu_fast": {
+      "display_name": "SDXL-Turbo",
+      "host": "ai1",
+      "component": "sdxl-turbo",
+      "tier": "high",
+      "capabilities": ["images"],
+      "estimated_vram_mb": 7000,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_file": "docker-compose.sdxl-turbo.yml",
+      "ready_path": "/readyz"
+    },
+    "gpu_heavy": {
+      "display_name": "InvokeAI Images",
+      "host": "ada2",
+      "components": ["invokeai", "images"],
+      "tier": "optional",
+      "capabilities": ["images"],
+      "estimated_vram_mb": 12000,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_files": ["docker-compose.invokeai.yml", "docker-compose.images.yml"],
+      "ready_path": "/readyz"
+    },
+    "lighton_ocr": {
+      "display_name": "LightOn OCR",
+      "host": "ada2",
+      "component": "lighton-ocr",
+      "tier": "high",
+      "capabilities": ["ocr"],
+      "estimated_vram_mb": 7000,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_file": "docker-compose.lighton-ocr.yml",
+      "ready_path": "/readyz"
+    },
+    "skyreels_v2": {
+      "display_name": "SkyReels V2",
+      "host": "ada2",
+      "component": "skyreels-v2",
+      "tier": "optional",
+      "capabilities": ["video"],
+      "estimated_vram_mb": 18000,
+      "peak_observed_vram_mb": 41000,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_file": "docker-compose.skyreels-v2.yml",
+      "ready_path": "/readyz"
+    },
+    "personaplex": {
+      "display_name": "PersonaPlex",
+      "host": "ada2",
+      "component": "personaplex",
+      "tier": "optional",
+      "capabilities": ["speech_to_speech"],
+      "estimated_vram_mb": 32000,
+      "auto_start": false,
+      "auto_stop": true,
+      "requires_confirmation": true,
+      "compose_file": "docker-compose.personaplex.yml",
+      "ready_path": "/readyz",
+      "notes": "CUDA/PyTorch upstream path; likely needs a reserved window on ada2 rather than coexisting with vLLM strong."
+    },
+    "followyourcanvas": {
+      "display_name": "FollowYourCanvas",
+      "host": "ada2",
+      "component": "followyourcanvas",
+      "tier": "optional",
+      "capabilities": ["video"],
+      "estimated_vram_mb": 18000,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_file": "docker-compose.followyourcanvas.yml",
+      "ready_path": "/readyz"
+    },
+    "heartmula_music": {
+      "display_name": "HeartMula",
+      "host": "ada2",
+      "component": "heartmula",
+      "tier": "optional",
+      "capabilities": ["music"],
+      "estimated_vram_mb": 35000,
+      "idle_observed_vram_mb": 1000,
+      "peak_observed_vram_mb": 35000,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_file": "docker-compose.heartmula.yml",
+      "ready_path": "/readyz",
+      "notes": "Observed on ada2 after checkpoint install: about 1GB idle VRAM with HEARTMULA_LAZY_LOAD=true and about 35GB during a short smoke generation. Eager load idles around 22GB and should be avoided for traded-in operation."
+    },
+    "pocket_tts": {
+      "display_name": "Pocket TTS",
+      "host": "ai2",
+      "component": "tts",
+      "tier": "high",
+      "capabilities": ["tts"],
+      "estimated_vram_mb": 0,
+      "auto_start": true,
+      "auto_stop": false,
+      "compose_file": "docker-compose.tts.yml",
+      "ready_path": "/readyz"
+    },
+    "luxtts": {
+      "display_name": "LuxTTS",
+      "host": "ai2",
+      "component": "luxtts",
+      "tier": "high",
+      "capabilities": ["tts"],
+      "estimated_vram_mb": 0,
+      "auto_start": true,
+      "auto_stop": false,
+      "compose_file": "docker-compose.luxtts.yml",
+      "ready_path": "/readyz"
+    },
+    "qwen3_tts": {
+      "display_name": "Qwen3 TTS",
+      "host": "ai2",
+      "component": "qwen3-tts",
+      "tier": "optional",
+      "capabilities": ["tts"],
+      "estimated_vram_mb": 0,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_file": "docker-compose.qwen3-tts.yml",
+      "ready_path": "/readyz"
+    }
+  }
+}

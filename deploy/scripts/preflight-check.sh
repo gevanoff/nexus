@@ -30,7 +30,7 @@ TOPOLOGY_FILE=""
 
 is_valid_component() {
   case "$1" in
-    gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -81,6 +81,7 @@ add_component_selection() {
         append_component_unique followyourcanvas
         append_component_unique skyreels-v2
         append_component_unique heartmula
+        append_component_unique lifecycle-manager
         append_component_unique mediamtx
         append_component_unique tts
         append_component_unique luxtts
