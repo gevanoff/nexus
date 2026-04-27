@@ -48,7 +48,7 @@
     /** @type {{role:'user'|'assistant'|'system', content:string}[]} */
     let history = [];
 
-    const CONVO_KEY = "gw_ui2_conversation_id";
+    const CONVO_KEY = "gw_ui_conversation_id";
 
     let conversationId = "";
     let conversationResetting = false;

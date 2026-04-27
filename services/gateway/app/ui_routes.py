@@ -1753,13 +1753,9 @@ async def _save_ui_file(*, upload: UploadFile) -> Dict[str, Any]:
 
 @router.get("/ui", include_in_schema=False)
 async def ui(req: Request) -> HTMLResponse:
-    """Main UI entrypoint.
-
-    We keep the legacy UI available at /ui1.
-    """
-
+    """Main Gateway chat UI entrypoint."""
     _require_ui_access(req)
-    html_path = Path(__file__).with_name("static").joinpath("chat2.html")
+    html_path = Path(__file__).with_name("static").joinpath("chat.html")
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
