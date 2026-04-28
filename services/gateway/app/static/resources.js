@@ -3,6 +3,7 @@
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
+  let currentUserIsAdmin = false;
 
   function setStatus(text, isError) {
     if (!statusEl) return;
@@ -41,6 +42,18 @@
     fill.style.width = `${p.toFixed(0)}%`;
     outer.appendChild(fill);
     return outer;
+  }
+
+  function appendMemoryRow(card, memory) {
+    const used = Number(memory?.used_mb || 0);
+    const total = Number(memory?.total_mb || 0);
+    if (!total) return false;
+    const row = document.createElement("div");
+    row.style.marginTop = "10px";
+    row.innerHTML = `<div class="meta">System RAM · ${fmtMb(used)} / ${fmtMb(total)}</div>`;
+    row.appendChild(bar(used, total));
+    card.appendChild(row);
+    return true;
   }
 
   function badge(text, cls) {
@@ -103,15 +116,10 @@
           row.appendChild(bar(used, total));
           card.appendChild(row);
         });
-      } else if (host.memory && host.memory.total_mb) {
-        const used = Number(host.memory.used_mb || 0);
-        const total = Number(host.memory.total_mb || 0);
-        const row = document.createElement("div");
-        row.style.marginTop = "10px";
-        row.innerHTML = `<div class="meta">Memory · ${fmtMb(used)} / ${fmtMb(total)}</div>`;
-        row.appendChild(bar(used, total));
-        card.appendChild(row);
-      } else {
+      }
+
+      const hasMemory = appendMemoryRow(card, host.memory);
+      if (!gpus.length && !hasMemory) {
         const empty = document.createElement("div");
         empty.className = "meta";
         empty.style.marginTop = "10px";
@@ -191,19 +199,32 @@
         left.appendChild(detail);
       }
 
-      const controls = document.createElement("div");
-      controls.className = "row";
-      controls.style.justifyContent = "flex-end";
-      if (backend.active) {
-        controls.appendChild(actionButton("Deactivate", backend.backend_class, "deactivate", true));
-      } else {
-        controls.appendChild(actionButton("Activate", backend.backend_class, "activate", false));
-      }
-
       card.appendChild(left);
-      card.appendChild(controls);
+      if (currentUserIsAdmin) {
+        const controls = document.createElement("div");
+        controls.className = "row";
+        controls.style.justifyContent = "flex-end";
+        if (backend.active) {
+          controls.appendChild(actionButton("Deactivate", backend.backend_class, "deactivate", true));
+        } else {
+          controls.appendChild(actionButton("Activate", backend.backend_class, "activate", false));
+        }
+        card.appendChild(controls);
+      }
       backendsEl.appendChild(card);
     });
+  }
+
+  async function loadCurrentUser() {
+    try {
+      const resp = await fetch("/ui/api/auth/me", { method: "GET", credentials: "same-origin" });
+      if (handle401(resp)) return;
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      currentUserIsAdmin = !!(payload?.authenticated && payload?.user?.admin);
+    } catch (error) {
+      currentUserIsAdmin = false;
+    }
   }
 
   async function loadStatus() {
@@ -252,6 +273,9 @@
   }
 
   if (refreshEl) refreshEl.addEventListener("click", () => void loadStatus());
-  void loadStatus();
+  void (async () => {
+    await loadCurrentUser();
+    await loadStatus();
+  })();
   window.setInterval(() => void loadStatus(), 30000);
 })();

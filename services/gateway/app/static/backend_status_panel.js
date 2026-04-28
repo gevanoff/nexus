@@ -13,7 +13,7 @@
       .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
       .status-row.bad { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.28); }
       .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
-      .status-row.inactive-unhealthy { background: rgba(199,156,255,0.14); border-color: rgba(199,156,255,0.34); }
+      .status-row.inactive-unhealthy { background: rgba(224,0,255,0.30); border-color: rgba(255,0,255,0.80); }
       .status-row.inactive-unknown { background: rgba(169,180,195,0.08); border-color: rgba(169,180,195,0.18); }
       .status-row.tier-crucial { box-shadow: inset 4px 0 0 rgba(111,184,255,0.92), 0 0 0 1px rgba(111,184,255,0.16); }
       .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
@@ -26,7 +26,7 @@
       .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
       .status-badge.green { background: rgba(111,221,168,0.12); color: #b9efd8; border-color: rgba(111,221,168,0.34); }
       .status-badge.blue { background: rgba(111,184,255,0.16); color: #cfe7ff; border-color: rgba(111,184,255,0.42); }
-      .status-badge.purple { background: rgba(199,156,255,0.14); color: #decaff; border-color: rgba(199,156,255,0.42); }
+      .status-badge.purple { background: rgba(224,0,255,0.45); color: #ffd0ff; border-color: rgba(255,0,255,0.95); }
       .status-badge.grey { background: rgba(169,180,195,0.09); color: #c5cfdd; border-color: rgba(169,180,195,0.26); }
       .status-badge.red { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
       .status-badge.yellow { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
@@ -183,14 +183,14 @@
 
       const healthy = document.createElement('span');
       const isHealthy = backend.healthy === true;
-      healthy.className = `status-badge ${isHealthy ? 'green' : backend.healthy === false ? 'red' : 'yellow'}`;
-      healthy.textContent = backend.healthy == null ? 'Health unknown' : isHealthy ? 'Healthy' : 'Unhealthy';
+      healthy.className = `status-badge ${inactiveLifecycle ? 'grey' : isHealthy ? 'green' : backend.healthy === false ? 'red' : 'yellow'}`;
+      healthy.textContent = inactiveLifecycle ? 'Health skipped' : backend.healthy == null ? 'Health unknown' : isHealthy ? 'Healthy' : 'Unhealthy';
       badges.appendChild(healthy);
 
       const ready = document.createElement('span');
       const isReady = backend.ready === true;
-      ready.className = `status-badge ${isReady ? 'green' : backend.ready === false ? 'red' : 'yellow'}`;
-      ready.textContent = backend.ready == null ? 'Readiness unknown' : isReady ? 'Ready' : 'Not ready';
+      ready.className = `status-badge ${inactiveLifecycle ? 'grey' : isReady ? 'green' : backend.ready === false ? 'red' : 'yellow'}`;
+      ready.textContent = inactiveLifecycle ? 'Readiness stopped' : backend.ready == null ? 'Readiness unknown' : isReady ? 'Ready' : 'Not ready';
       badges.appendChild(ready);
 
       if (!inactiveLifecycle) {

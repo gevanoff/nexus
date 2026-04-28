@@ -95,6 +95,7 @@ That creates `services/my-new-model/` with:
 - a runnable FastAPI shim
 - an env template
 - a compose fragment with a registrar sidecar
+- a starter lifecycle-manager backend entry
 - a README with the service defaults already filled in
 
 ## Execution Modes

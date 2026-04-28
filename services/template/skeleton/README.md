@@ -71,3 +71,17 @@ It includes:
 - an etcd registrar sidecar
 - a healthcheck
 - a placeholder for GPU reservations
+
+## Lifecycle Metadata
+
+The generated `lifecycle.backend.json` is a paste-ready starter entry for `deploy/topology/backend_lifecycle.json`.
+
+Before enabling the backend in production, fill in:
+
+- host placement
+- tier: `crucial`, `high`, or `optional`
+- estimated idle VRAM and peak observed VRAM
+- whether it can be auto-started or auto-stopped
+- required secrets such as HF tokens
+- required model artifact download steps
+- whether readiness means process-ready, model-loaded, or externally reachable UI-ready

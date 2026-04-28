@@ -104,6 +104,8 @@ class BackendPolicy:
     compose_managed: bool
     ready_path: str
     base_url: str
+    idle_observed_vram_mb: int = 0
+    peak_observed_vram_mb: int = 0
     notes: str = ""
     active: bool = False
     healthy: Optional[bool] = None
@@ -128,6 +130,16 @@ class EnsureRequest(BaseModel):
     reason: str = "ui"
     confirmed: bool = False
     allow_disruptive: bool = False
+
+
+class EnsureCapacityRequest(BaseModel):
+    backend_class: str
+    route_kind: str = ""
+    reason: str = "request"
+    required_free_vram_mb: int = 0
+    confirmed: bool = False
+    allow_disruptive: bool = False
+    execute: bool = True
 
 
 class ActionRequest(BaseModel):
@@ -240,6 +252,8 @@ class LifecycleManager:
                 tier_rank=int(tier_cfg.get("rank") or 0),
                 capabilities=_as_list(raw_cfg.get("capabilities")),
                 estimated_vram_mb=int(raw_cfg.get("estimated_vram_mb") or 0),
+                idle_observed_vram_mb=int(raw_cfg.get("idle_observed_vram_mb") or 0),
+                peak_observed_vram_mb=int(raw_cfg.get("peak_observed_vram_mb") or 0),
                 auto_start=_bool(raw_cfg.get("auto_start")),
                 auto_stop=_bool(raw_cfg.get("auto_stop")),
                 requires_confirmation=_bool(raw_cfg.get("requires_confirmation")),
@@ -460,6 +474,36 @@ class LifecycleManager:
         await self.refresh()
         return plan
 
+    async def ensure_capacity(self, req: EnsureCapacityRequest) -> Dict[str, Any]:
+        await self.refresh()
+        backend = self._backend_or_404(req.backend_class)
+        backend.last_requested_at = time.time()
+        required_free_vram_mb = self._required_free_vram_mb(backend, req.required_free_vram_mb)
+        plan = self._capacity_plan(
+            backend,
+            required_free_vram_mb=required_free_vram_mb,
+            confirmed=req.confirmed,
+            allow_disruptive=req.allow_disruptive,
+        )
+        plan["route_kind"] = req.route_kind
+        plan["reason"] = req.reason
+        if plan.get("decision") in {"requires_confirmation", "blocked", "observe_only"}:
+            return await self._attach_llm_advice(plan)
+        if not req.execute or not (plan.get("start") or plan.get("stop")):
+            return plan
+        if self.mode not in {"assisted", "auto"} and not req.confirmed:
+            plan["ok"] = False
+            plan["decision"] = "observe_only"
+            plan["message"] = "Lifecycle manager is not in assisted/auto mode."
+            return await self._attach_llm_advice(plan)
+        await self._execute_plan(plan)
+        await self.refresh()
+        backend = self._backend_or_404(req.backend_class)
+        plan["ok"] = True
+        plan["decision"] = "capacity_freed" if plan.get("stop") else "capacity_ready"
+        plan["backend"] = self._backend_status(backend)
+        return plan
+
     async def action(self, req: ActionRequest) -> Dict[str, Any]:
         backend = self._backend_or_404(req.backend_class)
         action = req.action.strip().lower()
@@ -491,6 +535,154 @@ class LifecycleManager:
         elif event in {"finish", "finished", "release", "end", "error"}:
             backend.inflight = max(0, backend.inflight - 1)
         return {"ok": True, "backend": self._backend_status(backend)}
+
+    @staticmethod
+    def _required_free_vram_mb(backend: BackendPolicy, requested_mb: int = 0) -> int:
+        return max(
+            0,
+            int(requested_mb or 0),
+            int(backend.peak_observed_vram_mb or 0),
+            int(backend.estimated_vram_mb or 0),
+        )
+
+    @staticmethod
+    def _freed_vram_mb(candidate: BackendPolicy) -> int:
+        return max(0, int(candidate.idle_observed_vram_mb or candidate.estimated_vram_mb or 0))
+
+    def _capacity_stop_candidates(self, backend: BackendPolicy, *, confirmed: bool, allow_disruptive: bool) -> List[BackendPolicy]:
+        candidates: List[BackendPolicy] = []
+        for candidate in self._same_host_candidates(backend):
+            if candidate.backend_class == backend.backend_class or not candidate.active:
+                continue
+            if candidate.inflight > 0:
+                continue
+            safe_optional = candidate.tier == "optional" and candidate.auto_stop and not candidate.requires_confirmation
+            if not allow_disruptive:
+                if not safe_optional:
+                    continue
+            else:
+                if candidate.tier == "crucial" and not confirmed:
+                    continue
+                if candidate.requires_confirmation and not confirmed:
+                    continue
+                if not candidate.auto_stop and not confirmed:
+                    continue
+            candidates.append(candidate)
+        candidates.sort(
+            key=lambda item: (
+                0 if item.tier == "optional" and item.auto_stop else 1,
+                item.tier_rank,
+                item.last_requested_at or 0,
+                -self._freed_vram_mb(item),
+            )
+        )
+        return candidates
+
+    def _capacity_plan(
+        self,
+        backend: BackendPolicy,
+        *,
+        required_free_vram_mb: int,
+        confirmed: bool,
+        allow_disruptive: bool,
+    ) -> Dict[str, Any]:
+        host = self.hosts.get(backend.host)
+        if host is None:
+            return {"ok": False, "decision": "blocked", "message": f"Unknown host {backend.host}", "backend": self._backend_status(backend)}
+
+        target_free_vram_mb = required_free_vram_mb + (self.target_free_vram_mb if required_free_vram_mb > 0 else 0)
+        free_vram_mb = self._host_free_vram(host)
+        needed_vram_mb = max(0, target_free_vram_mb - free_vram_mb)
+        start_items: List[str] = []
+
+        if not backend.active:
+            if not backend.compose_managed:
+                return {
+                    "ok": False,
+                    "decision": "blocked",
+                    "message": "Backend is not active and is not compose-managed by the lifecycle manager.",
+                    "backend": self._backend_status(backend),
+                    "required_free_vram_mb": required_free_vram_mb,
+                    "target_free_vram_mb": target_free_vram_mb,
+                    "free_vram_mb": free_vram_mb,
+                    "needed_vram_mb": needed_vram_mb,
+                }
+            if backend.requires_confirmation and not confirmed:
+                return {
+                    "ok": False,
+                    "decision": "requires_confirmation",
+                    "message": "This backend is marked as requiring operator confirmation.",
+                    "backend": self._backend_status(backend),
+                    "conflicts": self._same_host_active(backend),
+                    "required_free_vram_mb": required_free_vram_mb,
+                    "target_free_vram_mb": target_free_vram_mb,
+                    "free_vram_mb": free_vram_mb,
+                    "needed_vram_mb": needed_vram_mb,
+                }
+            if not backend.auto_start and not confirmed:
+                return {
+                    "ok": False,
+                    "decision": "requires_confirmation",
+                    "message": "Policy disables automatic start for this backend.",
+                    "backend": self._backend_status(backend),
+                    "conflicts": self._same_host_active(backend),
+                    "required_free_vram_mb": required_free_vram_mb,
+                    "target_free_vram_mb": target_free_vram_mb,
+                    "free_vram_mb": free_vram_mb,
+                    "needed_vram_mb": needed_vram_mb,
+                }
+            start_items = [backend.backend_class]
+
+        if needed_vram_mb <= 0:
+            return {
+                "ok": True,
+                "decision": "capacity_ready",
+                "start": start_items,
+                "stop": [],
+                "backend": self._backend_status(backend),
+                "required_free_vram_mb": required_free_vram_mb,
+                "target_free_vram_mb": target_free_vram_mb,
+                "free_vram_mb": free_vram_mb,
+                "needed_vram_mb": 0,
+            }
+
+        victims: List[BackendPolicy] = []
+        freed_vram_mb = 0
+        for candidate in self._capacity_stop_candidates(backend, confirmed=confirmed, allow_disruptive=allow_disruptive):
+            victims.append(candidate)
+            freed_vram_mb += self._freed_vram_mb(candidate)
+            if freed_vram_mb >= needed_vram_mb:
+                break
+
+        if freed_vram_mb >= needed_vram_mb:
+            return {
+                "ok": True,
+                "decision": "capacity_swap",
+                "start": start_items,
+                "stop": [victim.backend_class for victim in victims],
+                "backend": self._backend_status(backend),
+                "conflicts": [self._backend_status(victim) for victim in victims],
+                "required_free_vram_mb": required_free_vram_mb,
+                "target_free_vram_mb": target_free_vram_mb,
+                "free_vram_mb": free_vram_mb,
+                "needed_vram_mb": needed_vram_mb,
+                "freed_vram_mb": freed_vram_mb,
+            }
+
+        return {
+            "ok": False,
+            "decision": "requires_confirmation",
+            "message": "Insufficient free VRAM for this request.",
+            "start": start_items,
+            "stop": [victim.backend_class for victim in victims],
+            "backend": self._backend_status(backend),
+            "conflicts": self._same_host_active(backend),
+            "required_free_vram_mb": required_free_vram_mb,
+            "target_free_vram_mb": target_free_vram_mb,
+            "free_vram_mb": free_vram_mb,
+            "needed_vram_mb": needed_vram_mb,
+            "freed_vram_mb": freed_vram_mb,
+        }
 
     def _activation_plan(self, backend: BackendPolicy, *, confirmed: bool, allow_disruptive: bool) -> Dict[str, Any]:
         if not backend.compose_managed:
@@ -720,7 +912,7 @@ class LifecycleManager:
             "-o",
             "UserKnownHostsFile=/tmp/nexus_lifecycle_known_hosts",
         ]
-        if self.ssh_identity_file:
+        if self.ssh_identity_file and Path(self.ssh_identity_file).expanduser().is_file():
             ssh_args.extend(["-i", self.ssh_identity_file])
         ssh_args.extend([host.ssh_target, remote_command])
         proc = await asyncio.to_thread(
@@ -754,8 +946,22 @@ class LifecycleManager:
     def _macos_probe_command(cls) -> str:
         return (
             "printf '__MEM__\\n'; "
+            "if command -v free >/dev/null 2>&1 && free -m 2>/dev/null | awk '/^Mem:/ {print $2\" \"$3\" \"$7; found=1} END {exit found ? 0 : 1}'; then :; else "
             "total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0); "
-            "printf '%s 0 0\\n' $((total_bytes / 1024 / 1024)); "
+            "vm_output=$(vm_stat 2>/dev/null || true); "
+            "page_size=$(printf '%s\\n' \"$vm_output\" | awk '/page size of/ {gsub(/[^0-9]/, \"\", $8); print $8; exit}'); "
+            "[ -n \"$page_size\" ] || page_size=4096; "
+            "available_pages=$(printf '%s\\n' \"$vm_output\" | awk "
+            "'/Pages free/ {gsub(/\\./, \"\", $3); free=$3} "
+            "/Pages inactive/ {gsub(/\\./, \"\", $3); inactive=$3} "
+            "/Pages speculative/ {gsub(/\\./, \"\", $3); speculative=$3} "
+            "END {print free+inactive+speculative+0}'); "
+            "total_mb=$((total_bytes / 1024 / 1024)); "
+            "available_mb=$((available_pages * page_size / 1024 / 1024)); "
+            "used_mb=$((total_mb - available_mb)); "
+            "[ \"$used_mb\" -lt 0 ] && used_mb=0; "
+            "printf '%s %s %s\\n' \"$total_mb\" \"$used_mb\" \"$available_mb\"; "
+            "fi; "
             "printf '__DOCKER__\\n'; "
             f"{cls._docker_probe_command()}"
         )
@@ -833,6 +1039,8 @@ class LifecycleManager:
             "tier_rank": backend.tier_rank,
             "capabilities": backend.capabilities,
             "estimated_vram_mb": backend.estimated_vram_mb,
+            "idle_observed_vram_mb": backend.idle_observed_vram_mb,
+            "peak_observed_vram_mb": backend.peak_observed_vram_mb,
             "auto_start": backend.auto_start,
             "auto_stop": backend.auto_stop,
             "requires_confirmation": backend.requires_confirmation,
@@ -973,6 +1181,11 @@ async def lifecycle_status(refresh: bool = False) -> Dict[str, Any]:
 @app.post("/v1/lifecycle/ensure")
 async def lifecycle_ensure(req: EnsureRequest) -> Dict[str, Any]:
     return await manager.ensure(req)
+
+
+@app.post("/v1/lifecycle/ensure-capacity")
+async def lifecycle_ensure_capacity(req: EnsureCapacityRequest) -> Dict[str, Any]:
+    return await manager.ensure_capacity(req)
 
 
 @app.post("/v1/lifecycle/action")

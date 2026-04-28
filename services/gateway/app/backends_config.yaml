@@ -103,7 +103,7 @@ backends:
     supported_capabilities:
       - music
     concurrency_limits:
-      music: 2
+      music: 1
     health:
       liveness: /health
       readiness: /readyz

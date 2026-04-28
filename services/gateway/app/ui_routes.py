@@ -285,6 +285,114 @@ async def _call_lifecycle_manager(method: str, path: str, *, json_body: Optional
     return data
 
 
+def _error_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_error_text(v) for v in value.values())
+    if isinstance(value, list):
+        return " ".join(_error_text(v) for v in value)
+    return str(value)
+
+
+def _is_cuda_oom_error(value: Any) -> bool:
+    text = _error_text(value).lower()
+    return (
+        "cuda out of memory" in text
+        or "outofmemoryerror" in text
+        or ("out of memory" in text and ("cuda" in text or "gpu" in text or "vram" in text))
+    )
+
+
+def _format_vram_mb(value: Any) -> str:
+    try:
+        mb = float(value or 0)
+    except Exception:
+        mb = 0.0
+    if mb >= 1024:
+        return f"{mb / 1024:.1f}GB"
+    return f"{mb:.0f}MB"
+
+
+def _lifecycle_capacity_message(backend_class: str, plan: Optional[Dict[str, Any]], *, source_error: Any = None) -> str:
+    if not plan:
+        return f"{backend_class} ran out of GPU memory and no lifecycle capacity plan was available."
+    needed = _format_vram_mb(plan.get("needed_vram_mb"))
+    free = _format_vram_mb(plan.get("free_vram_mb"))
+    target = _format_vram_mb(plan.get("target_free_vram_mb"))
+    conflicts = plan.get("conflicts") if isinstance(plan.get("conflicts"), list) else []
+    names = [
+        str(item.get("display_name") or item.get("backend_class") or "").strip()
+        for item in conflicts
+        if isinstance(item, dict) and str(item.get("display_name") or item.get("backend_class") or "").strip()
+    ]
+    if names:
+        return (
+            f"{backend_class} needs about {target} free VRAM, but only {free} is available. "
+            f"Stopping another active backend may be required: {', '.join(names[:4])}."
+        )
+    if source_error is not None:
+        return f"{backend_class} ran out of GPU memory. Nexus could not find an automatic backend swap plan."
+    return f"{backend_class} needs about {target} free VRAM, but only {free} is available ({needed} short)."
+
+
+def _capacity_error_detail(
+    backend_class: str,
+    plan: Optional[Dict[str, Any]],
+    *,
+    source_error: Any = None,
+) -> Dict[str, Any]:
+    decision = str((plan or {}).get("decision") or "").strip()
+    can_confirm = decision == "requires_confirmation"
+    return {
+        "error": "capacity_confirmation_required" if can_confirm else "resource_exhausted",
+        "backend_class": backend_class,
+        "message": _lifecycle_capacity_message(backend_class, plan, source_error=source_error),
+        "can_retry_with_confirmation": can_confirm,
+        "requires_admin": can_confirm,
+        "lifecycle_plan": plan,
+        "source_error": _error_text(source_error)[:1200] if source_error is not None else "",
+    }
+
+
+def _capacity_allows_request(plan: Optional[Dict[str, Any]]) -> bool:
+    if plan is None:
+        return True
+    if plan.get("ok") is not True:
+        return False
+    return str(plan.get("decision") or "") not in {"requires_confirmation", "blocked", "observe_only"}
+
+
+async def _ensure_lifecycle_capacity(
+    backend_class: str,
+    route_kind: str,
+    *,
+    reason: str,
+    confirmed: bool = False,
+    allow_disruptive: bool = False,
+) -> Optional[Dict[str, Any]]:
+    if not _lifecycle_manager_base_url():
+        return None
+    try:
+        return await _call_lifecycle_manager(
+            "POST",
+            "/v1/lifecycle/ensure-capacity",
+            json_body={
+                "backend_class": backend_class,
+                "route_kind": route_kind,
+                "reason": reason,
+                "confirmed": confirmed,
+                "allow_disruptive": allow_disruptive,
+                "execute": True,
+            },
+            timeout=max(_lifecycle_timeout(), 300.0),
+        )
+    except HTTPException as exc:
+        if exc.status_code in {404, 503}:
+            return None
+        raise
+
+
 async def _notify_lifecycle_manager(backend_class: str, event: str, route_kind: str) -> None:
     if not _lifecycle_manager_base_url():
         return
@@ -1855,9 +1963,14 @@ async def ui_api_music(req: Request) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be an object")
 
+    body = dict(body)
+    lifecycle_confirmed = bool(body.pop("lifecycle_confirmed", False) is True)
+    lifecycle_allow_disruptive = bool(body.pop("lifecycle_allow_disruptive", False) is True)
+    if lifecycle_confirmed or lifecycle_allow_disruptive:
+        _require_admin(req)
+
     requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
     if "backend_class" in body or "backend" in body:
-        body = dict(body)
         body.pop("backend_class", None)
         body.pop("backend", None)
 
@@ -1866,8 +1979,19 @@ async def ui_api_music(req: Request) -> Dict[str, Any]:
         default_backend_class=(getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "heartmula_music",
         route_kind="music",
     )
-    check_backend_ready(backend_class, route_kind="music")
     await check_capability(backend_class, "music")
+
+    capacity_plan = await _ensure_lifecycle_capacity(
+        backend_class,
+        "music",
+        reason="ui:music",
+        confirmed=lifecycle_confirmed,
+        allow_disruptive=lifecycle_allow_disruptive,
+    )
+    if not _capacity_allows_request(capacity_plan):
+        raise HTTPException(status_code=409, detail=_capacity_error_detail(backend_class, capacity_plan))
+    if not (isinstance(capacity_plan, dict) and isinstance(capacity_plan.get("backend"), dict) and capacity_plan["backend"].get("ready") is True):
+        check_backend_ready(backend_class, route_kind="music")
 
     # Best-effort: forward to music backend and return its normalized response.
     from app.music_backend import generate_music
@@ -1878,8 +2002,44 @@ async def ui_api_music(req: Request) -> Dict[str, Any]:
         await admission.acquire(backend_class, "music")
         acquired = True
         _schedule_lifecycle_notify(backend_class, "start", "music")
-        out = await generate_music(backend_class=backend_class, body=body)
+        try:
+            out = await generate_music(backend_class=backend_class, body=body)
+            if isinstance(out, dict) and isinstance(capacity_plan, dict):
+                gw = out.get("_gateway")
+                if not isinstance(gw, dict):
+                    gw = {}
+                gw["lifecycle_capacity"] = capacity_plan
+                out["_gateway"] = gw
+        except Exception as e:
+            if not _is_cuda_oom_error(e):
+                raise
+            retry_plan = await _ensure_lifecycle_capacity(
+                backend_class,
+                "music",
+                reason="ui:music:oom_retry",
+                confirmed=lifecycle_confirmed,
+                allow_disruptive=lifecycle_allow_disruptive,
+            )
+            if _capacity_allows_request(retry_plan) and isinstance(retry_plan, dict) and (retry_plan.get("stop") or retry_plan.get("start")):
+                try:
+                    out = await generate_music(backend_class=backend_class, body=body)
+                    if isinstance(out, dict):
+                        gw = out.get("_gateway")
+                        if not isinstance(gw, dict):
+                            gw = {}
+                        gw["retried_after_oom"] = True
+                        gw["lifecycle_capacity"] = retry_plan
+                        out["_gateway"] = gw
+                except Exception as retry_error:
+                    if _is_cuda_oom_error(retry_error):
+                        raise HTTPException(status_code=507, detail=_capacity_error_detail(backend_class, retry_plan, source_error=retry_error)) from retry_error
+                    raise
+            else:
+                status = 409 if isinstance(retry_plan, dict) and retry_plan.get("decision") == "requires_confirmation" else 507
+                raise HTTPException(status_code=status, detail=_capacity_error_detail(backend_class, retry_plan, source_error=e)) from e
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
         raise HTTPException(status_code=502, detail=f"music backend failed: {e}")
     finally:
         if acquired:
@@ -4163,10 +4323,14 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
             entry["lifecycle"] = lifecycle_entry
             for key in (
                 "active",
+                "healthy",
+                "ready",
                 "tier",
                 "tier_rank",
                 "display_name",
                 "estimated_vram_mb",
+                "idle_observed_vram_mb",
+                "peak_observed_vram_mb",
                 "auto_start",
                 "auto_stop",
                 "requires_confirmation",

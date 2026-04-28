@@ -55,6 +55,7 @@
     let pendingAttachments = [];
     let modelOptionsCache = [];
     let modelOptionLabels = new Map();
+    let currentUserIsAdmin = false;
 
     function handle401(resp) {
       if (resp && resp.status === 401) {
@@ -142,10 +143,111 @@
       return `tier-${value.replace(/[^a-z0-9_-]/g, "_")}`;
     }
 
+    function fmtMb(value) {
+      const mb = Number(value || 0);
+      if (!Number.isFinite(mb) || mb <= 0) return "0 GB";
+      return `${(mb / 1024).toFixed(mb >= 10240 ? 0 : 1)} GB`;
+    }
+
+    function pct(used, total) {
+      const u = Number(used || 0);
+      const t = Number(total || 0);
+      if (!t) return 0;
+      return Math.max(0, Math.min(100, (u / t) * 100));
+    }
+
+    function statusBar(used, total) {
+      const p = pct(used, total);
+      const outer = document.createElement("div");
+      outer.className = "status-bar";
+      const fill = document.createElement("div");
+      fill.className = `status-bar-fill ${p >= 90 ? "bad" : p >= 75 ? "warn" : ""}`;
+      fill.style.width = `${p.toFixed(0)}%`;
+      outer.appendChild(fill);
+      return outer;
+    }
+
+    function appendHostMemory(card, memory) {
+      const used = Number(memory?.used_mb || 0);
+      const total = Number(memory?.total_mb || 0);
+      if (!total) return false;
+      const row = document.createElement("div");
+      row.className = "status-resource-row";
+      const meta = document.createElement("div");
+      meta.className = "status-detail";
+      meta.textContent = `System RAM: ${fmtMb(used)} / ${fmtMb(total)}`;
+      row.appendChild(meta);
+      row.appendChild(statusBar(used, total));
+      card.appendChild(row);
+      return true;
+    }
+
+    function renderHostResources(hosts) {
+      if (!backendStatusList || !Array.isArray(hosts) || !hosts.length) return;
+      const title = document.createElement("div");
+      title.className = "status-section-title";
+      title.textContent = "Hosts";
+      backendStatusList.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "status-host-grid";
+      hosts.forEach((host) => {
+        const card = document.createElement("div");
+        card.className = "status-host-card";
+        const name = document.createElement("div");
+        name.className = "status-host-name";
+        name.textContent = host?.name || "unknown";
+        card.appendChild(name);
+
+        const meta = document.createElement("div");
+        meta.className = host?.error ? "status-error" : "status-detail";
+        meta.textContent = `${host?.resource_kind || host?.platform || "host"}${host?.error ? ` • ${host.error}` : ""}`;
+        card.appendChild(meta);
+
+        const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
+        gpus.forEach((gpu) => {
+          const used = Number(gpu?.memory_used_mb || 0);
+          const total = Number(gpu?.memory_total_mb || 0);
+          const row = document.createElement("div");
+          row.className = "status-resource-row";
+          const gpuMeta = document.createElement("div");
+          gpuMeta.className = "status-detail";
+          gpuMeta.textContent = `${gpu?.name || `GPU ${gpu?.index ?? ""}`.trim()} • ${fmtMb(used)} / ${fmtMb(total)} • ${gpu?.utilization_gpu_pct || 0}% util`;
+          row.appendChild(gpuMeta);
+          row.appendChild(statusBar(used, total));
+          card.appendChild(row);
+        });
+
+        const hasMemory = appendHostMemory(card, host?.memory);
+        if (!gpus.length && !hasMemory) {
+          const empty = document.createElement("div");
+          empty.className = "status-detail";
+          empty.style.marginTop = "8px";
+          empty.textContent = "No resource metrics yet.";
+          card.appendChild(empty);
+        }
+        grid.appendChild(card);
+      });
+      backendStatusList.appendChild(grid);
+    }
+
+    function lifecycleActionButton(label, backendClass, action, danger) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      if (danger) btn.dataset.danger = "true";
+      btn.addEventListener("click", () => {
+        void runLifecycleAction(backendClass, action, false);
+      });
+      return btn;
+    }
+
     function renderBackendStatus(data) {
       if (!backendStatusList) return;
       backendStatusList.innerHTML = "";
-      if (!data || !Array.isArray(data.backends)) {
+      const hosts = Array.isArray(data?.hosts) ? data.hosts : [];
+      const backends = Array.isArray(data?.backends) ? data.backends : [];
+      if (!data || (!hosts.length && !backends.length)) {
         const empty = document.createElement("div");
         empty.className = "status-empty";
         empty.textContent = "No backend status available.";
@@ -165,11 +267,28 @@
         const source = String(aliasConfig.source || "defaults");
         const configuredPath = String(aliasConfig.configured_path || "");
         const err = String(aliasConfig.error || "");
-        backendStatusMeta.textContent = err
-          ? `Alias config: ${source} • ${configuredPath || "no explicit path"} • ${err}`
-          : `Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ""}`;
+        const lifecycleMode = String(data?.mode || "").trim();
+        const settings = data?.settings && typeof data.settings === "object" ? data.settings : {};
+        if (lifecycleMode) {
+          const parts = [`Lifecycle mode: ${lifecycleMode}`];
+          if (Number(settings.target_free_vram_mb || 0) > 0) parts.push(`Target free VRAM: ${fmtMb(settings.target_free_vram_mb)}`);
+          if (Number(settings.optional_idle_stop_sec || 0) > 0) parts.push(`Optional idle stop: ${Math.round(Number(settings.optional_idle_stop_sec) / 60)} min`);
+          backendStatusMeta.textContent = parts.join(" • ");
+        } else {
+          backendStatusMeta.textContent = err
+            ? `Alias config: ${source} • ${configuredPath || "no explicit path"} • ${err}`
+            : `Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ""}`;
+        }
         backendStatusMeta.className = err ? "status-error" : "status-detail";
         backendStatusMeta.style.marginBottom = "8px";
+      }
+
+      renderHostResources(hosts);
+      if (hosts.length && backends.length) {
+        const backendTitle = document.createElement("div");
+        backendTitle.className = "status-section-title";
+        backendTitle.textContent = "Backends";
+        backendStatusList.appendChild(backendTitle);
       }
 
       const backendLabels = {
@@ -215,7 +334,7 @@
       };
 
       const backendMap = new Map();
-      const visibleBackends = (Array.isArray(data.backends) ? data.backends : []).filter(
+      const visibleBackends = backends.filter(
         (backend) => !shouldHideBackend(backend),
       );
       visibleBackends.forEach((backend) => {
@@ -242,13 +361,14 @@
         }
         nameContainer.appendChild(name);
 
-        if (backend.hostname) {
+        const hostName = String(backend.hostname || backend.host || "").trim();
+        if (hostName) {
           const hostEl = document.createElement("div");
           hostEl.style.fontSize = "12px";
           hostEl.style.fontWeight = "600";
           hostEl.style.color = "#6fb8ff";
           hostEl.style.marginTop = "2px";
-          hostEl.textContent = `on ${backend.hostname}`;
+          hostEl.textContent = `on ${hostName}`;
           nameContainer.appendChild(hostEl);
         }
         header.appendChild(nameContainer);
@@ -300,14 +420,14 @@
 
           const healthy = document.createElement("span");
           const isHealthy = backend.healthy === true;
-          healthy.className = `status-badge ${isHealthy ? "green" : backend.healthy === false ? "red" : "yellow"}`;
-          healthy.textContent = backend.healthy == null ? "Health unknown" : isHealthy ? "Healthy" : "Unhealthy";
+          healthy.className = `status-badge ${inactiveLifecycle ? "grey" : isHealthy ? "green" : backend.healthy === false ? "red" : "yellow"}`;
+          healthy.textContent = inactiveLifecycle ? "Health skipped" : backend.healthy == null ? "Health unknown" : isHealthy ? "Healthy" : "Unhealthy";
           badges.appendChild(healthy);
 
           const ready = document.createElement("span");
           const isReady = backend.ready === true;
-          ready.className = `status-badge ${isReady ? "green" : backend.ready === false ? "red" : "yellow"}`;
-          ready.textContent = backend.ready == null ? "Readiness unknown" : isReady ? "Ready" : "Not ready";
+          ready.className = `status-badge ${inactiveLifecycle ? "grey" : isReady ? "green" : backend.ready === false ? "red" : "yellow"}`;
+          ready.textContent = inactiveLifecycle ? "Readiness stopped" : backend.ready == null ? "Readiness unknown" : isReady ? "Ready" : "Not ready";
           badges.appendChild(ready);
 
           if (!inactiveLifecycle) {
@@ -347,6 +467,9 @@
           const capabilities = Array.isArray(backend.capabilities) ? backend.capabilities.join(", ") : "unknown";
           const lastCheckValue = Number(backend.last_checked_at || backend.last_check || 0);
           const detailParts = [`Capabilities: ${capabilities}`, `Last check: ${lastCheckValue > 0 ? formatTimestamp(lastCheckValue) : "--"}`];
+          if (Number(backend.estimated_vram_mb || 0) > 0) detailParts.push(`Est VRAM: ${fmtMb(backend.estimated_vram_mb)}`);
+          if (Number(backend.idle_observed_vram_mb || 0) > 0) detailParts.push(`Idle observed: ${fmtMb(backend.idle_observed_vram_mb)}`);
+          if (Number(backend.peak_observed_vram_mb || 0) > 0) detailParts.push(`Peak observed: ${fmtMb(backend.peak_observed_vram_mb)}`);
           const lastReady = Number(backend.last_ready_at || backend.last_confirmed_working_at || 0);
           const lastUnhealthy = Number(backend.last_unhealthy_at || 0);
           const lastStopped = Number(backend.last_stopped_at || 0);
@@ -354,6 +477,7 @@
           if (backend.active === false && lastUnhealthy > 0 && lastUnhealthy > lastReady) detailParts.push(`Last unhealthy: ${formatTimestamp(lastUnhealthy)}`);
           if (backend.active === false && lastStopped > 0) detailParts.push(`Stopped: ${formatTimestamp(lastStopped)}`);
           if (backend.inflight) detailParts.push(`${backend.inflight} running`);
+          if (backend.notes) detailParts.push(String(backend.notes));
           detail.textContent = detailParts.join(" • ");
         }
         row.appendChild(detail);
@@ -368,6 +492,20 @@
             .join(", ");
           aliasDetail.textContent = `Aliases: ${aliasText}`;
           row.appendChild(aliasDetail);
+        }
+
+        if (!missing && currentUserIsAdmin && backend.compose_managed !== false) {
+          const actions = document.createElement("div");
+          actions.className = "status-actions";
+          const backendClass = String(backend.backend_class || "").trim();
+          if (backendClass) {
+            if (backend.active) {
+              actions.appendChild(lifecycleActionButton("Deactivate", backendClass, "deactivate", true));
+            } else {
+              actions.appendChild(lifecycleActionButton("Activate", backendClass, "activate", false));
+            }
+          }
+          if (actions.childNodes.length) row.appendChild(actions);
         }
 
         let errorText = String(backend.error || backend.health_error || backend.last_health_error || backend.last_action_error || "");
@@ -431,19 +569,67 @@
       }
     }
 
+    async function runLifecycleAction(backendClass, action, confirmed) {
+      if (backendStatusError) backendStatusError.hidden = true;
+      try {
+        const resp = await fetch("/ui/api/lifecycle/action", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ backend_class: backendClass, action, confirmed, allow_disruptive: confirmed }),
+        });
+        if (handle401(resp)) return;
+        const payload = await resp.json().catch(() => ({}));
+        if (resp.status === 403) {
+          throw new Error("Admin privileges are required for manual lifecycle actions.");
+        }
+        if (!resp.ok) {
+          throw new Error(payload?.detail ? JSON.stringify(payload.detail) : `HTTP ${resp.status}`);
+        }
+        if (payload?.decision === "requires_confirmation" && !confirmed) {
+          const ok = window.confirm(`${payload.message || "This action needs confirmation."}\n\nProceed?`);
+          if (ok) return runLifecycleAction(backendClass, action, true);
+          return;
+        }
+        await loadBackendStatus();
+      } catch (e) {
+        if (backendStatusError) {
+          backendStatusError.textContent = `Lifecycle action failed: ${String(e?.message || e)}`;
+          backendStatusError.hidden = false;
+        }
+      }
+    }
+
     async function loadBackendStatus() {
       if (!backendStatusList) return;
       if (backendStatusRefresh) backendStatusRefresh.disabled = true;
       if (backendStatusSpinner) backendStatusSpinner.hidden = false;
       if (backendStatusError) backendStatusError.hidden = true;
       try {
-        const resp = await fetch("/ui/api/backend_status", { credentials: "same-origin" });
-        if (handle401(resp)) return;
-        if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(text || `HTTP ${resp.status}`);
+        let data = null;
+        let lifecycleError = "";
+        try {
+          const lifecycleResp = await fetch("/ui/api/lifecycle/status?refresh=true", { credentials: "same-origin" });
+          if (handle401(lifecycleResp)) return;
+          if (lifecycleResp.ok) {
+            data = await lifecycleResp.json();
+          } else {
+            lifecycleError = `Lifecycle HTTP ${lifecycleResp.status}`;
+          }
+        } catch (e) {
+          lifecycleError = String(e?.message || e);
         }
-        const data = await resp.json();
+
+        if (!data) {
+          const resp = await fetch("/ui/api/backend_status", { credentials: "same-origin" });
+          if (handle401(resp)) return;
+          if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(text || lifecycleError || `HTTP ${resp.status}`);
+          }
+          data = await resp.json();
+          if (lifecycleError) data.lifecycle_error = lifecycleError;
+        }
         renderBackendStatus(data);
         if (backendStatusUpdated) {
           backendStatusUpdated.textContent = `Last updated: ${formatTimestamp(data.generated_at)}`;
@@ -1591,16 +1777,16 @@
         });
         const text = await resp.text();
         if (handle401(resp)) return;
-        if (!resp.ok) {
-          assistant.contentEl.textContent = text;
-          assistant.metaEl.textContent = `Music HTTP ${resp.status}`;
-          return;
-        }
         let payload;
         try {
           payload = JSON.parse(text);
         } catch {
-          assistant.contentEl.textContent = text;
+          payload = text;
+        }
+        if (!resp.ok) {
+          const detail = payload && typeof payload === "object" && payload.detail && typeof payload.detail === "object" ? payload.detail : null;
+          assistant.contentEl.textContent = detail?.message || (typeof payload === "string" ? payload : JSON.stringify(payload));
+          assistant.metaEl.textContent = `Music HTTP ${resp.status}`;
           return;
         }
 
@@ -1918,7 +2104,11 @@
           if (!r.ok) return;
           const j = await r.json();
           if (j && j.authenticated && j.user && j.user.admin) {
+            currentUserIsAdmin = true;
             try { if (adminUiLinkEl) adminUiLinkEl.style.display = 'block'; } catch (e) {}
+            void loadBackendStatus();
+          } else {
+            currentUserIsAdmin = false;
           }
         } catch (e) {}
       })();

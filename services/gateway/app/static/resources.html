@@ -16,7 +16,7 @@
         --good: #6fdda8;
         --warn: #f0c85a;
         --bad: #ff8585;
-        --purple: #c79cff;
+        --purple: #e000ff;
         --unknown: #9aa6b6;
       }
       body {
@@ -49,7 +49,7 @@
       .backend-card.blocked { border-color: rgba(255,133,133,0.24); }
       .backend-card.status-active_unhealthy { border-color: rgba(255,133,133,0.30); background: rgba(116, 45, 53, 0.16); }
       .backend-card.status-traded_out_working { border-color: rgba(111,184,255,0.36); background: rgba(46,102,159,0.16); }
-      .backend-card.status-inactive_unhealthy { border-color: rgba(199,156,255,0.36); background: rgba(90,57,130,0.17); }
+      .backend-card.status-inactive_unhealthy { border-color: rgba(255,0,255,0.80); background: rgba(150,0,190,0.34); }
       .backend-card.status-inactive_unknown { border-color: rgba(169,180,195,0.18); background: rgba(14,20,30,0.62); }
       .badges { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
       .badge { font-size: 11px; padding: 3px 7px; border-radius: 999px; border: 1px solid rgba(231,237,246,0.12); color: #cfe0f7; }
@@ -60,7 +60,7 @@
       .badge.bad { border-color: rgba(255,133,133,0.34); color: #ffc3c3; }
       .badge.green { border-color: rgba(111,221,168,0.34); color: #b9efd8; }
       .badge.blue { border-color: rgba(111,184,255,0.42); color: #cfe7ff; }
-      .badge.purple { border-color: rgba(199,156,255,0.42); color: #decaff; }
+      .badge.purple { background: rgba(224,0,255,0.22); border-color: rgba(255,0,255,0.95); color: #ffd0ff; }
       .badge.grey { border-color: rgba(169,180,195,0.26); color: #c5cfdd; }
       .badge.red { border-color: rgba(255,133,133,0.34); color: #ffc3c3; }
       .badge.yellow { border-color: rgba(240,200,90,0.36); color: #f3dc96; }
@@ -100,6 +100,6 @@
       </div>
     </main>
     <script src="/static/auth_client.js?v=1"></script>
-    <script src="/static/resources.js?v=2"></script>
+    <script src="/static/resources.js?v=3"></script>
   </body>
 </html>

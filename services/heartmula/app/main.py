@@ -160,11 +160,17 @@ def _load_pipeline() -> bool:
         else:
             dtype = torch.float32
 
-        pipeline = HeartMuLaGenPipeline.from_pretrained(_model_path(), device=device, dtype=dtype, version=version)
+        lazy_load = (_env("HEARTMULA_LAZY_LOAD", "true") or "true").lower() in {"1", "true", "yes", "on"}
+        pipeline = HeartMuLaGenPipeline.from_pretrained(
+            _model_path(),
+            device=device,
+            dtype=dtype,
+            version=version,
+            lazy_load=lazy_load,
+        )
         pipeline_device = str(device)
         pipeline_dtype = str(dtype)
-        if (_env("HEARTMULA_LAZY_LOAD", "false") or "false").lower() in {"1", "true", "yes", "on"}:
-            pipeline.lazy_load = True
+        pipeline.lazy_load = lazy_load
         return True
     except Exception:
         logging.exception("Failed to initialize HeartMula pipeline")
@@ -270,7 +276,21 @@ async def _generate_music_impl(request: MusicGenerationRequest) -> MusicGenerati
 
         model_inputs = _align_tensors_to_device(model_inputs, device, target_dtype)
         model_outputs = pipeline._forward(model_inputs, **forward_kwargs)
-        pipeline.postprocess(model_outputs, save_path=str(output_path), **post_kwargs)
+        post_kwargs.setdefault("save_path", str(output_path))
+        try:
+            pipeline.postprocess(model_outputs, **post_kwargs)
+        except Exception as exc:
+            if "TorchCodec is required" not in str(exc):
+                raise
+            import soundfile as sf
+
+            frames = model_outputs["frames"].to(pipeline.codec_device)
+            wav = pipeline.codec.detokenize(frames)
+            pipeline._unload()
+            samples = wav.to(torch.float32).cpu().numpy()
+            if samples.ndim == 2:
+                samples = samples.T
+            sf.write(str(output_path), samples, 48000)
 
         del model_inputs
         del model_outputs
