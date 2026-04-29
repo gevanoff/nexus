@@ -231,6 +231,45 @@
       backendStatusList.appendChild(grid);
     }
 
+    function renderCompactHostResources(hosts) {
+      if (!backendStatusList || !Array.isArray(hosts) || !hosts.length) return;
+      const title = document.createElement("div");
+      title.className = "status-section-title";
+      title.textContent = "Host resources";
+      backendStatusList.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "status-compact-hosts";
+      hosts.forEach((host) => {
+        const card = document.createElement("div");
+        card.className = "status-compact-host";
+        const name = document.createElement("div");
+        name.className = "status-host-name";
+        name.textContent = host?.name || "unknown";
+        card.appendChild(name);
+
+        const lines = [];
+        const kind = String(host?.resource_kind || host?.platform || "host").trim();
+        if (kind) lines.push(kind);
+        const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
+        gpus.forEach((gpu) => {
+          const total = Number(gpu?.memory_total_mb || 0);
+          const used = Number(gpu?.memory_used_mb || 0);
+          if (total > 0) {
+            lines.push(`${gpu?.name || `GPU ${gpu?.index ?? ""}`.trim()}: ${fmtMb(Math.max(0, total - used))} free`);
+          }
+        });
+        if (host?.error) lines.push(String(host.error));
+
+        const detail = document.createElement("div");
+        detail.className = host?.error ? "status-error" : "status-detail";
+        detail.textContent = lines.join(" • ") || "No resource metrics yet.";
+        card.appendChild(detail);
+        grid.appendChild(card);
+      });
+      backendStatusList.appendChild(grid);
+    }
+
     function renderStatusOverview(hosts, backends) {
       if (!backendStatusList) return;
       const hostList = Array.isArray(hosts) ? hosts : [];
@@ -384,11 +423,11 @@
       }
 
       renderStatusOverview(hosts, backends);
-      renderHostResources(hosts);
+      renderCompactHostResources(hosts);
       if (hosts.length && backends.length) {
         const backendTitle = document.createElement("div");
         backendTitle.className = "status-section-title";
-        backendTitle.textContent = "Backends";
+        backendTitle.textContent = "Backends needing attention";
         backendStatusList.appendChild(backendTitle);
       }
 
@@ -405,9 +444,21 @@
         skyreels_v2: "SkyReels-V2",
       };
 
+      const shouldShowBackendInChat = (backend) => {
+        if (!backend || typeof backend !== "object") return false;
+        const status = String(backend.status || backend.lifecycle_status || "").trim();
+        return backend.ready === false
+          || backend.healthy === false
+          || backend.inflight
+          || backend.health_error
+          || backend.last_action_error
+          || status === "active_unhealthy"
+          || status === "inactive_unhealthy";
+      };
+
       const shouldHideBackend = (backend) => {
         if (!backend || typeof backend !== "object") return false;
-        return false;
+        return !shouldShowBackendInChat(backend);
       };
 
       const capabilityGroupOrder = [
@@ -703,6 +754,13 @@
       const extraBackends = groupedBackends.get("other") || [];
       if (extraBackends.length > 0) {
         renderGroup("Other", extraBackends);
+      }
+
+      if (visibleBackends.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "status-empty";
+        empty.textContent = "No backend problems in the compact Chat view. Open Resources for controls and full backend details.";
+        backendStatusList.appendChild(empty);
       }
     }
 

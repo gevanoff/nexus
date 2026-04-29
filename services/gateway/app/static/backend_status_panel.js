@@ -36,6 +36,9 @@
       .status-aliases { font-size: 12px; color: #b7c4d6; }
       .status-error { font-size: 12px; color: #ffb6b6; }
       .status-empty { font-size: 12px; color: #93a4ba; }
+      .backend-status-links { display: flex; justify-content: flex-end; margin: 8px 0; }
+      .backend-status-resources-link { color: #cfe7ff; text-decoration: none; border: 1px solid rgba(111,184,255,0.34); border-radius: 999px; padding: 5px 9px; font-size: 12px; background: rgba(111,184,255,0.10); }
+      .backend-status-resources-link:hover { border-color: rgba(111,184,255,0.58); }
       .loading-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #93a4ba; }
       .loading-indicator::before {
         content: "";
@@ -296,6 +299,16 @@
       metaEl = document.createElement('div');
       metaEl.className = 'backend-status-meta';
       listEl.parentNode.insertBefore(metaEl, listEl);
+    }
+    if (listEl && !panel.querySelector('.backend-status-resources-link')) {
+      const linkRow = document.createElement('div');
+      linkRow.className = 'backend-status-links';
+      const link = document.createElement('a');
+      link.className = 'backend-status-resources-link';
+      link.href = '/ui/resources';
+      link.textContent = 'Open Resources';
+      linkRow.appendChild(link);
+      listEl.parentNode.insertBefore(linkRow, listEl);
     }
     if (spinnerEl) {
       spinnerEl.classList.remove('hint');

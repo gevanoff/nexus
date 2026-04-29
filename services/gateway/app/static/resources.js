@@ -85,6 +85,43 @@
     return "grey";
   }
 
+  function capabilityList(backend) {
+    const values = Array.isArray(backend?.capabilities) ? backend.capabilities : [];
+    return values.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
+  function mergeBackendStatusPayload(lifecyclePayload, registryPayload) {
+    if (!registryPayload || typeof registryPayload !== "object") return lifecyclePayload || {};
+    const base = lifecyclePayload && typeof lifecyclePayload === "object" ? { ...lifecyclePayload } : {};
+    const lifecycleBackends = Array.isArray(lifecyclePayload?.backends) ? lifecyclePayload.backends : [];
+    const registryBackends = Array.isArray(registryPayload?.backends) ? registryPayload.backends : [];
+    const merged = new Map();
+    lifecycleBackends.forEach((backend) => {
+      const key = String(backend?.backend_class || "").trim();
+      if (key) merged.set(key, { ...backend });
+    });
+    registryBackends.forEach((backend) => {
+      const key = String(backend?.backend_class || "").trim();
+      if (!key) return;
+      const existing = merged.get(key) || {};
+      merged.set(key, {
+        ...backend,
+        ...existing,
+        capabilities: capabilityList(existing).length ? existing.capabilities : backend.capabilities,
+        aliases: Array.isArray(backend.aliases) ? backend.aliases : existing.aliases,
+        description: backend.description || existing.description,
+        provider: backend.provider || existing.provider,
+        base_url: backend.base_url || existing.base_url,
+        health: backend.health || existing.health,
+        hostname: existing.hostname || backend.hostname,
+      });
+    });
+    if (merged.size > 0) base.backends = [...merged.values()];
+    if (registryPayload.alias_config) base.alias_config = registryPayload.alias_config;
+    base.generated_at = Number(lifecyclePayload?.generated_at || registryPayload?.generated_at || Date.now() / 1000);
+    return base;
+  }
+
   function renderHosts(hosts) {
     if (!hostsEl) return;
     hostsEl.innerHTML = "";
@@ -166,13 +203,22 @@
       left.appendChild(name);
       const meta = document.createElement("div");
       meta.className = "meta";
-      meta.textContent = `${backend.backend_class} · ${backend.host || "unknown host"} · est ${fmtMb(backend.estimated_vram_mb)}`;
+      const metaParts = [
+        backend.backend_class,
+        backend.host || backend.hostname || "unknown host",
+      ];
+      if (backend.provider && backend.provider !== backend.backend_class) metaParts.push(backend.provider);
+      metaParts.push(`est ${fmtMb(backend.estimated_vram_mb)}`);
+      meta.textContent = metaParts.filter(Boolean).join(" · ");
       left.appendChild(meta);
       const badges = document.createElement("div");
       badges.className = "badges";
       badges.appendChild(badge(backend.status_label || "No healthy check yet", statusBadgeClass(backend)));
       badges.appendChild(badge(backend.tier || "optional", backend.tier || "optional"));
       badges.appendChild(badge(backend.active ? "active" : "stopped", backend.active ? "green" : "grey"));
+      capabilityList(backend).forEach((capability) => {
+        badges.appendChild(badge(capability, "blue"));
+      });
       if (backend.active) {
         badges.appendChild(badge(backend.ready === true ? "ready" : backend.ready === false ? "not ready" : "unknown", backend.ready === true ? "green" : backend.ready === false ? "red" : "grey"));
       } else if (backend.last_ready_at) {
@@ -186,6 +232,19 @@
       left.appendChild(badges);
 
       const detailParts = [];
+      if (backend.description) detailParts.push(String(backend.description));
+      if (backend.base_url) detailParts.push(`base ${backend.base_url}`);
+      if (backend.health && typeof backend.health === "object") {
+        const liveness = String(backend.health.liveness || "").trim();
+        const readiness = String(backend.health.readiness || "").trim();
+        if (liveness || readiness) detailParts.push(`health ${liveness || "--"} / ${readiness || "--"}`);
+      }
+      const aliases = Array.isArray(backend.aliases) ? backend.aliases : [];
+      if (aliases.length) {
+        detailParts.push(`aliases ${aliases.map((alias) => `${alias.name} -> ${alias.target}`).join(", ")}`);
+      }
+      if (Number(backend.idle_observed_vram_mb || 0) > 0) detailParts.push(`idle ${fmtMb(backend.idle_observed_vram_mb)}`);
+      if (Number(backend.peak_observed_vram_mb || 0) > 0) detailParts.push(`peak ${fmtMb(backend.peak_observed_vram_mb)}`);
       if (backend.last_action_error) detailParts.push(backend.last_action_error);
       if (backend.health_error) detailParts.push(backend.health_error);
       if (!backend.health_error && backend.status === "inactive_unhealthy" && backend.last_health_error) detailParts.push(backend.last_health_error);
@@ -231,13 +290,30 @@
     if (refreshEl) refreshEl.disabled = true;
     setStatus("Refreshing lifecycle state...", false);
     try {
-      const resp = await fetch("/ui/api/lifecycle/status?refresh=true", { credentials: "same-origin" });
-      if (handle401(resp)) return;
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const payload = await resp.json();
+      const fetchJson = async (url) => {
+        const resp = await fetch(url, { credentials: "same-origin" });
+        if (handle401(resp)) return { redirected: true };
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          return { error: text || `HTTP ${resp.status}` };
+        }
+        return { data: await resp.json() };
+      };
+      const [lifecycleResult, registryResult] = await Promise.all([
+        fetchJson("/ui/api/lifecycle/status?refresh=true"),
+        fetchJson("/ui/api/backend_status"),
+      ]);
+      if (lifecycleResult.redirected || registryResult.redirected) return;
+      if (!lifecycleResult.data && !registryResult.data) {
+        throw new Error(lifecycleResult.error || registryResult.error || "No status payload returned");
+      }
+      const payload = mergeBackendStatusPayload(lifecycleResult.data, registryResult.data);
       renderHosts(payload.hosts || []);
       renderBackends(payload.backends || []);
-      setStatus(`Mode: ${payload.mode || "unknown"} · Updated ${new Date(Number(payload.generated_at || 0) * 1000).toLocaleTimeString()}`, false);
+      const statusParts = [`Mode: ${payload.mode || "unknown"}`];
+      if (registryResult.error) statusParts.push(`registry ${registryResult.error}`);
+      statusParts.push(`Updated ${new Date(Number(payload.generated_at || 0) * 1000).toLocaleTimeString()}`);
+      setStatus(statusParts.join(" · "), !!registryResult.error);
     } catch (error) {
       setStatus(`Lifecycle status failed: ${String(error?.message || error)}`, true);
     } finally {
