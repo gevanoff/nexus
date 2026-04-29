@@ -91,6 +91,20 @@ def _runtime_error() -> Optional[Dict[str, str]]:
                 "detail": f"Required Python module {module_name!r} is unavailable: {type(exc).__name__}: {exc}",
             }
 
+    try:
+        import torch
+
+        if not torch.cuda.is_available() or torch.cuda.device_count() <= 0:
+            return {
+                "reason": "cuda_unavailable",
+                "detail": "SkyReels requires CUDA, but no CUDA GPU is visible inside the container.",
+            }
+    except Exception as exc:
+        return {
+            "reason": "cuda_check_failed",
+            "detail": f"Unable to verify CUDA availability: {type(exc).__name__}: {exc}",
+        }
+
     if not (workdir / "generate_video.py").exists():
         return {
             "reason": "missing_upstream_clone",

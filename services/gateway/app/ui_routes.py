@@ -4298,7 +4298,14 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     for backend_class, config in registry.backends.items():
         entry: Dict[str, Any] = {
             "backend_class": backend_class,
+            "provider": config.provider,
+            "description": config.description,
+            "base_url": config.base_url,
             "capabilities": list(config.supported_capabilities),
+            "health": {
+                "liveness": config.health_liveness,
+                "readiness": config.health_readiness,
+            },
         }
         alias_entries = alias_map.get(backend_class)
         if alias_entries:

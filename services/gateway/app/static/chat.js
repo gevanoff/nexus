@@ -231,6 +231,103 @@
       backendStatusList.appendChild(grid);
     }
 
+    function renderStatusOverview(hosts, backends) {
+      if (!backendStatusList) return;
+      const hostList = Array.isArray(hosts) ? hosts : [];
+      const backendList = Array.isArray(backends) ? backends : [];
+      const gpuTotals = hostList.reduce(
+        (acc, host) => {
+          const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
+          gpus.forEach((gpu) => {
+            acc.total += Number(gpu?.memory_total_mb || 0);
+            acc.used += Number(gpu?.memory_used_mb || 0);
+          });
+          return acc;
+        },
+        { total: 0, used: 0 },
+      );
+      const activeCount = backendList.filter((backend) => backend?.active === true).length;
+      const readyCount = backendList.filter((backend) => backend?.ready === true).length;
+      const rows = [
+        { label: "Hosts", value: String(hostList.length) },
+        { label: "Active backends", value: `${activeCount} / ${backendList.length}` },
+        { label: "Ready backends", value: `${readyCount} / ${backendList.length}` },
+      ];
+      if (gpuTotals.total > 0) {
+        rows.push({ label: "GPU free", value: `${fmtMb(Math.max(0, gpuTotals.total - gpuTotals.used))} / ${fmtMb(gpuTotals.total)}` });
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "status-overview-grid";
+      rows.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "status-overview-card";
+        const value = document.createElement("div");
+        value.className = "status-overview-value";
+        value.textContent = item.value;
+        const label = document.createElement("div");
+        label.className = "status-overview-label";
+        label.textContent = item.label;
+        card.appendChild(value);
+        card.appendChild(label);
+        grid.appendChild(card);
+      });
+      backendStatusList.appendChild(grid);
+    }
+
+    function backendCapabilityList(backend) {
+      const capabilities = Array.isArray(backend?.capabilities) ? backend.capabilities : [];
+      return capabilities.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+
+    function mergeBackendStatusPayload(lifecycleData, registryData, lifecycleError, registryError) {
+      const base = lifecycleData && typeof lifecycleData === "object"
+        ? { ...lifecycleData }
+        : registryData && typeof registryData === "object"
+          ? { ...registryData }
+          : {};
+      const lifecycleBackends = Array.isArray(lifecycleData?.backends) ? lifecycleData.backends : [];
+      const registryBackends = Array.isArray(registryData?.backends) ? registryData.backends : [];
+      const mergedBackends = new Map();
+
+      lifecycleBackends.forEach((backend) => {
+        const key = String(backend?.backend_class || "").trim();
+        if (key) mergedBackends.set(key, { ...backend });
+      });
+
+      registryBackends.forEach((backend) => {
+        const key = String(backend?.backend_class || "").trim();
+        if (!key) return;
+        const existing = mergedBackends.get(key) || {};
+        mergedBackends.set(key, {
+          ...backend,
+          ...existing,
+          capabilities: backendCapabilityList(existing).length ? existing.capabilities : backend.capabilities,
+          aliases: Array.isArray(backend.aliases) ? backend.aliases : existing.aliases,
+          description: backend.description || existing.description,
+          provider: backend.provider || existing.provider,
+          base_url: backend.base_url || existing.base_url,
+          health: backend.health || existing.health,
+          host: existing.host || backend.lifecycle_host || backend.host,
+          hostname: existing.hostname || backend.hostname,
+        });
+      });
+
+      if (mergedBackends.size > 0) {
+        base.backends = [...mergedBackends.values()];
+      }
+      if (Array.isArray(lifecycleData?.hosts)) {
+        base.hosts = lifecycleData.hosts;
+      }
+      if (registryData?.alias_config) {
+        base.alias_config = registryData.alias_config;
+      }
+      base.generated_at = Number(lifecycleData?.generated_at || registryData?.generated_at || base.generated_at || Date.now() / 1000);
+      if (lifecycleError) base.lifecycle_error = lifecycleError;
+      if (registryError) base.registry_error = registryError;
+      return base;
+    }
+
     function lifecycleActionButton(label, backendClass, action, danger) {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -269,20 +366,24 @@
         const err = String(aliasConfig.error || "");
         const lifecycleMode = String(data?.mode || "").trim();
         const settings = data?.settings && typeof data.settings === "object" ? data.settings : {};
+        const problems = [];
+        if (err) problems.push(`Alias config: ${err}`);
+        if (data?.lifecycle_error) problems.push(`Lifecycle: ${data.lifecycle_error}`);
+        if (data?.registry_error) problems.push(`Registry: ${data.registry_error}`);
+        const parts = [];
         if (lifecycleMode) {
-          const parts = [`Lifecycle mode: ${lifecycleMode}`];
+          parts.push(`Lifecycle mode: ${lifecycleMode}`);
           if (Number(settings.target_free_vram_mb || 0) > 0) parts.push(`Target free VRAM: ${fmtMb(settings.target_free_vram_mb)}`);
           if (Number(settings.optional_idle_stop_sec || 0) > 0) parts.push(`Optional idle stop: ${Math.round(Number(settings.optional_idle_stop_sec) / 60)} min`);
-          backendStatusMeta.textContent = parts.join(" • ");
         } else {
-          backendStatusMeta.textContent = err
-            ? `Alias config: ${source} • ${configuredPath || "no explicit path"} • ${err}`
-            : `Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ""}`;
+          parts.push(`Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ""}`);
         }
-        backendStatusMeta.className = err ? "status-error" : "status-detail";
+        backendStatusMeta.textContent = [...parts, ...problems].join(" • ");
+        backendStatusMeta.className = problems.length ? "status-error" : "status-detail";
         backendStatusMeta.style.marginBottom = "8px";
       }
 
+      renderStatusOverview(hosts, backends);
       renderHostResources(hosts);
       if (hosts.length && backends.length) {
         const backendTitle = document.createElement("div");
@@ -371,6 +472,21 @@
           hostEl.textContent = `on ${hostName}`;
           nameContainer.appendChild(hostEl);
         }
+        if (!missing) {
+          const metaParts = [];
+          const backendClass = String(backend.backend_class || "").trim();
+          const provider = String(backend.provider || "").trim();
+          const baseUrl = String(backend.base_url || "").trim();
+          if (backendClass) metaParts.push(backendClass);
+          if (provider && provider !== backendClass) metaParts.push(provider);
+          if (baseUrl) metaParts.push(baseUrl);
+          if (metaParts.length) {
+            const backendMeta = document.createElement("div");
+            backendMeta.className = "status-backend-meta";
+            backendMeta.textContent = metaParts.join(" • ");
+            nameContainer.appendChild(backendMeta);
+          }
+        }
         header.appendChild(nameContainer);
 
         const badges = document.createElement("div");
@@ -399,10 +515,10 @@
             row.classList.add(lifecycleRowClass(lifecycleStatus, lifecycleColor));
           }
 
-          if (tier === "crucial") {
+          if (tier) {
             const tierBadge = document.createElement("span");
-            tierBadge.className = "status-badge crucial";
-            tierBadge.textContent = "Crucial";
+            tierBadge.className = `status-badge ${["crucial", "high", "optional"].includes(tier) ? tier : "grey"}`;
+            tierBadge.textContent = tier.charAt(0).toUpperCase() + tier.slice(1);
             badges.appendChild(tierBadge);
           }
 
@@ -459,17 +575,38 @@
         header.appendChild(badges);
         row.appendChild(header);
 
+        if (!missing) {
+          const capabilities = backendCapabilityList(backend);
+          if (capabilities.length > 0) {
+            const capabilityList = document.createElement("div");
+            capabilityList.className = "status-capabilities";
+            capabilities.forEach((capability) => {
+              const item = document.createElement("span");
+              item.className = "status-capability";
+              item.textContent = capability;
+              capabilityList.appendChild(item);
+            });
+            row.appendChild(capabilityList);
+          }
+        }
+
         const detail = document.createElement("div");
         detail.className = "status-detail";
         if (missing) {
           detail.textContent = "Not configured in the backend registry.";
         } else {
-          const capabilities = Array.isArray(backend.capabilities) ? backend.capabilities.join(", ") : "unknown";
           const lastCheckValue = Number(backend.last_checked_at || backend.last_check || 0);
-          const detailParts = [`Capabilities: ${capabilities}`, `Last check: ${lastCheckValue > 0 ? formatTimestamp(lastCheckValue) : "--"}`];
+          const detailParts = [];
+          if (backend.description) detailParts.push(String(backend.description));
+          detailParts.push(`Last check: ${lastCheckValue > 0 ? formatTimestamp(lastCheckValue) : "--"}`);
           if (Number(backend.estimated_vram_mb || 0) > 0) detailParts.push(`Est VRAM: ${fmtMb(backend.estimated_vram_mb)}`);
           if (Number(backend.idle_observed_vram_mb || 0) > 0) detailParts.push(`Idle observed: ${fmtMb(backend.idle_observed_vram_mb)}`);
           if (Number(backend.peak_observed_vram_mb || 0) > 0) detailParts.push(`Peak observed: ${fmtMb(backend.peak_observed_vram_mb)}`);
+          if (backend.health && typeof backend.health === "object") {
+            const readiness = String(backend.health.readiness || "").trim();
+            const liveness = String(backend.health.liveness || "").trim();
+            if (readiness || liveness) detailParts.push(`Health: ${liveness || "--"} / ${readiness || "--"}`);
+          }
           const lastReady = Number(backend.last_ready_at || backend.last_confirmed_working_at || 0);
           const lastUnhealthy = Number(backend.last_unhealthy_at || 0);
           const lastStopped = Number(backend.last_stopped_at || 0);
@@ -606,30 +743,35 @@
       if (backendStatusSpinner) backendStatusSpinner.hidden = false;
       if (backendStatusError) backendStatusError.hidden = true;
       try {
-        let data = null;
-        let lifecycleError = "";
-        try {
-          const lifecycleResp = await fetch("/ui/api/lifecycle/status?refresh=true", { credentials: "same-origin" });
-          if (handle401(lifecycleResp)) return;
-          if (lifecycleResp.ok) {
-            data = await lifecycleResp.json();
-          } else {
-            lifecycleError = `Lifecycle HTTP ${lifecycleResp.status}`;
+        const fetchStatusJson = async (url) => {
+          try {
+            const resp = await fetch(url, { credentials: "same-origin" });
+            if (handle401(resp)) return { redirected: true };
+            if (!resp.ok) {
+              const text = await resp.text().catch(() => "");
+              return { error: text || `HTTP ${resp.status}` };
+            }
+            return { data: await resp.json() };
+          } catch (e) {
+            return { error: String(e?.message || e) };
           }
-        } catch (e) {
-          lifecycleError = String(e?.message || e);
+        };
+
+        const [lifecycleResult, registryResult] = await Promise.all([
+          fetchStatusJson("/ui/api/lifecycle/status?refresh=true"),
+          fetchStatusJson("/ui/api/backend_status"),
+        ]);
+        if (lifecycleResult.redirected || registryResult.redirected) return;
+        if (!lifecycleResult.data && !registryResult.data) {
+          throw new Error(lifecycleResult.error || registryResult.error || "No status payload returned");
         }
 
-        if (!data) {
-          const resp = await fetch("/ui/api/backend_status", { credentials: "same-origin" });
-          if (handle401(resp)) return;
-          if (!resp.ok) {
-            const text = await resp.text();
-            throw new Error(text || lifecycleError || `HTTP ${resp.status}`);
-          }
-          data = await resp.json();
-          if (lifecycleError) data.lifecycle_error = lifecycleError;
-        }
+        const data = mergeBackendStatusPayload(
+          lifecycleResult.data,
+          registryResult.data,
+          lifecycleResult.data ? "" : lifecycleResult.error,
+          registryResult.data ? "" : registryResult.error,
+        );
         renderBackendStatus(data);
         if (backendStatusUpdated) {
           backendStatusUpdated.textContent = `Last updated: ${formatTimestamp(data.generated_at)}`;
