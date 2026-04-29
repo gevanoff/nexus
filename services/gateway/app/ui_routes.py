@@ -200,6 +200,20 @@ def _personaplex_ui_url(req: Request, *, base_url: str = "") -> str:
     if configured:
         return configured
 
+    proxy_path = (
+        getattr(S, "PERSONAPLEX_UI_PROXY_PATH", "")
+        or os.environ.get("PERSONAPLEX_UI_PROXY_PATH")
+        or "/personaplex-live/"
+    ).strip()
+    if proxy_path:
+        if proxy_path.startswith(("http://", "https://")):
+            return proxy_path
+        if not proxy_path.startswith("/"):
+            proxy_path = "/" + proxy_path
+        if not proxy_path.endswith("/"):
+            proxy_path += "/"
+        return proxy_path
+
     scheme = (
         getattr(S, "PERSONAPLEX_UI_SCHEME", "")
         or os.environ.get("PERSONAPLEX_UI_SCHEME")

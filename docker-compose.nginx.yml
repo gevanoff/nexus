@@ -8,6 +8,17 @@ services:
     volumes:
       - ./compose/nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
       - ./.runtime/nginx/certs:/etc/nginx/certs:ro
+    extra_hosts:
+      - "ai1:${NEXUS_HOST_AI1_IP}"
+      - "ai1.embrient.com:${NEXUS_HOST_AI1_IP}"
+      - "ai2:${NEXUS_HOST_AI2_IP}"
+      - "ai2.embrient.com:${NEXUS_HOST_AI2_IP}"
+      - "ai3:${NEXUS_HOST_AI3_IP}"
+      - "ai3.embrient.com:${NEXUS_HOST_AI3_IP}"
+      - "ada2:${NEXUS_HOST_ADA2_IP}"
+      - "ada2.embrient.com:${NEXUS_HOST_ADA2_IP}"
+      - "adada:${NEXUS_HOST_ADADA_IP}"
+      - "adada.embrient.com:${NEXUS_HOST_ADADA_IP}"
     networks:
       - nexus
     restart: unless-stopped
