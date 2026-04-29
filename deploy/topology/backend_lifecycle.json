@@ -56,6 +56,19 @@
       "compose_managed": false,
       "ready_path": "/models"
     },
+    "telegram_bot": {
+      "display_name": "Telegram Bot",
+      "host": "ai2",
+      "component": "telegram-bot",
+      "tier": "crucial",
+      "capabilities": ["bridge"],
+      "estimated_vram_mb": 0,
+      "auto_start": true,
+      "auto_stop": false,
+      "compose_file": "docker-compose.telegram-bot.yml",
+      "health_check": "container",
+      "notes": "Core Telegram bridge; readiness is based on the container running because it does not expose an HTTP ready endpoint."
+    },
     "local_vllm": {
       "display_name": "vLLM Strong",
       "host": "ada2",

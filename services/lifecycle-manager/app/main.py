@@ -102,6 +102,7 @@ class BackendPolicy:
     auto_stop: bool
     requires_confirmation: bool
     compose_managed: bool
+    health_check: str
     ready_path: str
     base_url: str
     idle_observed_vram_mb: int = 0
@@ -258,6 +259,7 @@ class LifecycleManager:
                 auto_stop=_bool(raw_cfg.get("auto_stop")),
                 requires_confirmation=_bool(raw_cfg.get("requires_confirmation")),
                 compose_managed=not (raw_cfg.get("compose_managed") is False),
+                health_check=str(raw_cfg.get("health_check") or "http").strip().lower(),
                 ready_path=str(raw_cfg.get("ready_path") or "/readyz").strip(),
                 base_url=base_url,
                 notes=str(raw_cfg.get("notes") or "").strip(),
@@ -406,6 +408,20 @@ class LifecycleManager:
             return
 
         now = time.time()
+        if backend.health_check in {"container", "none"}:
+            backend.last_checked_at = now
+            backend.healthy = backend.active
+            backend.ready = backend.active
+            backend.health_error = "" if backend.active else "container is not running"
+            if backend.active:
+                backend.last_healthy_at = now
+                backend.last_ready_at = now
+                backend.last_health_error = ""
+            else:
+                backend.last_unhealthy_at = now
+                backend.last_health_error = backend.health_error
+            return
+
         base_url = backend.base_url.rstrip("/")
         if not base_url:
             backend.healthy = None
@@ -946,21 +962,18 @@ class LifecycleManager:
     def _macos_probe_command(cls) -> str:
         return (
             "printf '__MEM__\\n'; "
-            "if command -v free >/dev/null 2>&1 && free -m 2>/dev/null | awk '/^Mem:/ {print $2\" \"$3\" \"$7; found=1} END {exit found ? 0 : 1}'; then :; else "
-            "total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0); "
-            "vm_output=$(vm_stat 2>/dev/null || true); "
-            "page_size=$(printf '%s\\n' \"$vm_output\" | awk '/page size of/ {gsub(/[^0-9]/, \"\", $8); print $8; exit}'); "
-            "[ -n \"$page_size\" ] || page_size=4096; "
-            "available_pages=$(printf '%s\\n' \"$vm_output\" | awk "
-            "'/Pages free/ {gsub(/\\./, \"\", $3); free=$3} "
-            "/Pages inactive/ {gsub(/\\./, \"\", $3); inactive=$3} "
-            "/Pages speculative/ {gsub(/\\./, \"\", $3); speculative=$3} "
-            "END {print free+inactive+speculative+0}'); "
-            "total_mb=$((total_bytes / 1024 / 1024)); "
-            "available_mb=$((available_pages * page_size / 1024 / 1024)); "
-            "used_mb=$((total_mb - available_mb)); "
-            "[ \"$used_mb\" -lt 0 ] && used_mb=0; "
-            "printf '%s %s %s\\n' \"$total_mb\" \"$used_mb\" \"$available_mb\"; "
+            "if command -v python3 >/dev/null 2>&1; then "
+            "python3 -c \"import re,subprocess; "
+            "total=int(subprocess.check_output(['sysctl','-n','hw.memsize']).strip() or 0)//1048576; "
+            "out=subprocess.run(['vm_stat'],capture_output=True,text=True).stdout; "
+            "page=int(next(iter(re.findall(r'page size of (\\d+) bytes', out)), 4096)); "
+            "counts={m.group(1).strip():int(m.group(2)) for m in re.finditer(r'^Pages ([^:]+):\\s+(\\d+)\\.', out, re.M)}; "
+            "available_pages=sum(counts.get(k,0) for k in ('free','inactive','speculative')); "
+            "available_mb=available_pages*page//1048576; "
+            "print(total, max(0,total-available_mb), available_mb)\"; "
+            "elif command -v free >/dev/null 2>&1 && free -m 2>/dev/null | awk '/^Mem:/ {print $2\" \"$3\" \"$7; found=1} END {exit found ? 0 : 1}'; then :; else "
+            "total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0); total_mb=$((total_bytes / 1024 / 1024)); "
+            "printf '%s %s %s\\n' \"$total_mb\" 0 0; "
             "fi; "
             "printf '__DOCKER__\\n'; "
             f"{cls._docker_probe_command()}"
@@ -1045,6 +1058,7 @@ class LifecycleManager:
             "auto_stop": backend.auto_stop,
             "requires_confirmation": backend.requires_confirmation,
             "compose_managed": backend.compose_managed,
+            "health_check": backend.health_check,
             "active": backend.active,
             "healthy": backend.healthy,
             "ready": backend.ready,

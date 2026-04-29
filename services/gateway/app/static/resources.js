@@ -45,8 +45,10 @@
   }
 
   function appendMemoryRow(card, memory) {
-    const used = Number(memory?.used_mb || 0);
     const total = Number(memory?.total_mb || 0);
+    const available = Number(memory?.available_mb || 0);
+    let used = Number(memory?.used_mb || 0);
+    if (total > 0 && used <= 0 && available > 0) used = Math.max(0, total - available);
     if (!total) return false;
     const row = document.createElement("div");
     row.style.marginTop = "10px";

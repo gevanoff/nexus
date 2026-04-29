@@ -11,10 +11,10 @@
       .status-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; border: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(20,28,38,0.9), rgba(14,20,28,0.9)); }
       .status-row.ok { background: rgba(24, 126, 76, 0.16); border-color: rgba(42, 178, 103, 0.46); }
       .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
-      .status-row.bad { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.28); }
+      .status-row.bad { background: rgba(140, 18, 36, 0.22); border-color: rgba(255, 73, 97, 0.58); }
       .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
       .status-row.inactive-unhealthy { background: rgba(224,0,255,0.30); border-color: rgba(255,0,255,0.80); }
-      .status-row.inactive-unknown { background: rgba(169,180,195,0.08); border-color: rgba(169,180,195,0.18); }
+      .status-row.inactive-unknown { background: rgba(220,228,240,0.12); border-color: rgba(220,228,240,0.38); }
       .status-row.tier-crucial { box-shadow: inset 4px 0 0 rgba(111,184,255,0.92), 0 0 0 1px rgba(111,184,255,0.16); }
       .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
       .status-name { font-weight: 600; }
@@ -27,8 +27,8 @@
       .status-badge.green { background: rgba(0,120,72,0.24); color: #98f0bf; border-color: rgba(56,197,126,0.72); }
       .status-badge.blue { background: rgba(111,184,255,0.16); color: #cfe7ff; border-color: rgba(111,184,255,0.42); }
       .status-badge.purple { background: rgba(224,0,255,0.45); color: #ffd0ff; border-color: rgba(255,0,255,0.95); }
-      .status-badge.grey { background: rgba(220,228,240,0.15); color: #eff4fb; border-color: rgba(220,228,240,0.46); }
-      .status-badge.red { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-badge.grey { background: rgba(235,242,250,0.18); color: #f8fbff; border-color: rgba(235,242,250,0.62); }
+      .status-badge.red { background: rgba(170,22,42,0.28); color: #ff9aa8; border-color: rgba(255,73,97,0.78); }
       .status-badge.yellow { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
       .status-badge.crucial { background: rgba(111,184,255,0.16); color: #d7ecff; border-color: rgba(111,184,255,0.52); }
       .status-detail { font-size: 12px; color: #a9b4c3; }

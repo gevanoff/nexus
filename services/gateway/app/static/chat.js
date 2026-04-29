@@ -168,8 +168,10 @@
     }
 
     function appendHostMemory(card, memory) {
-      const used = Number(memory?.used_mb || 0);
       const total = Number(memory?.total_mb || 0);
+      const available = Number(memory?.available_mb || 0);
+      let used = Number(memory?.used_mb || 0);
+      if (total > 0 && used <= 0 && available > 0) used = Math.max(0, total - available);
       if (!total) return false;
       const row = document.createElement("div");
       row.className = "status-resource-row";
@@ -243,15 +245,43 @@
       hosts.forEach((host) => {
         const card = document.createElement("div");
         card.className = "status-compact-host";
+        const header = document.createElement("div");
+        header.className = "status-compact-host-header";
         const name = document.createElement("div");
         name.className = "status-host-name";
         name.textContent = host?.name || "unknown";
-        card.appendChild(name);
+        header.appendChild(name);
 
         const lines = [];
         const kind = String(host?.resource_kind || host?.platform || "host").trim();
         if (kind) lines.push(kind);
         const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
+        const gpuTotals = gpus.reduce(
+          (acc, gpu) => {
+            acc.total += Number(gpu?.memory_total_mb || 0);
+            acc.used += Number(gpu?.memory_used_mb || 0);
+            return acc;
+          },
+          { total: 0, used: 0 },
+        );
+        const memoryTotal = Number(host?.memory?.total_mb || 0);
+        const memoryAvailable = Number(host?.memory?.available_mb || 0);
+        let memoryUsed = Number(host?.memory?.used_mb || 0);
+        if (memoryTotal > 0 && memoryUsed <= 0 && memoryAvailable > 0) memoryUsed = Math.max(0, memoryTotal - memoryAvailable);
+        const usage = gpuTotals.total > 0
+          ? { label: "GPU VRAM", used: gpuTotals.used, total: gpuTotals.total }
+          : memoryTotal > 0
+            ? { label: "RAM", used: memoryUsed, total: memoryTotal }
+            : null;
+        if (usage) {
+          const usagePct = pct(usage.used, usage.total);
+          const usageEl = document.createElement("div");
+          usageEl.className = "status-compact-host-line";
+          usageEl.textContent = `${usagePct.toFixed(0)}% used`;
+          header.appendChild(usageEl);
+        }
+        card.appendChild(header);
+
         const gpuFree = gpus
           .map((gpu) => ({
             name: gpu?.name || `GPU ${gpu?.index ?? ""}`.trim(),
@@ -272,9 +302,20 @@
         if (host?.error) lines.push(String(host.error));
 
         const detail = document.createElement("div");
-        detail.className = host?.error ? "status-error" : "status-detail";
+        detail.className = host?.error ? "status-error" : "status-compact-host-line";
         detail.textContent = lines.join(" • ") || "No resource metrics yet.";
         card.appendChild(detail);
+        if (usage) {
+          const usagePct = pct(usage.used, usage.total);
+          const meter = document.createElement("div");
+          meter.className = "status-compact-meter";
+          const fill = document.createElement("div");
+          fill.className = `status-compact-meter-fill ${usagePct >= 90 ? "bad" : usagePct >= 75 ? "warn" : ""}`;
+          fill.style.width = `${usagePct.toFixed(0)}%`;
+          meter.title = `${usage.label}: ${fmtMb(usage.used)} / ${fmtMb(usage.total)}`;
+          meter.appendChild(fill);
+          card.appendChild(meter);
+        }
         grid.appendChild(card);
       });
       backendStatusList.appendChild(grid);
