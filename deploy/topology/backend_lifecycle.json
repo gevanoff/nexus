@@ -219,6 +219,7 @@
       "auto_start": true,
       "auto_stop": false,
       "compose_file": "docker-compose.luxtts.yml",
+      "health_timeout_sec": 30,
       "ready_path": "/readyz"
     },
     "qwen3_tts": {
@@ -231,6 +232,7 @@
       "auto_start": true,
       "auto_stop": true,
       "compose_file": "docker-compose.qwen3-tts.yml",
+      "health_timeout_sec": 30,
       "ready_path": "/readyz"
     }
   }

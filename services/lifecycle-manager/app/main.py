@@ -64,6 +64,14 @@ def _as_list(value: Any) -> List[str]:
     return []
 
 
+def _float_value(value: Any, default: float) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        return default
+    return parsed if parsed > 0 else default
+
+
 def _read_json(path: Path) -> Dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -103,6 +111,7 @@ class BackendPolicy:
     requires_confirmation: bool
     compose_managed: bool
     health_check: str
+    health_timeout_sec: float
     ready_path: str
     base_url: str
     idle_observed_vram_mb: int = 0
@@ -260,6 +269,7 @@ class LifecycleManager:
                 requires_confirmation=_bool(raw_cfg.get("requires_confirmation")),
                 compose_managed=not (raw_cfg.get("compose_managed") is False),
                 health_check=str(raw_cfg.get("health_check") or "http").strip().lower(),
+                health_timeout_sec=_float_value(raw_cfg.get("health_timeout_sec"), 5.0),
                 ready_path=str(raw_cfg.get("ready_path") or "/readyz").strip(),
                 base_url=base_url,
                 notes=str(raw_cfg.get("notes") or "").strip(),
@@ -436,7 +446,13 @@ class LifecycleManager:
         if not path.startswith("/"):
             path = "/" + path
         try:
-            response = await client.get(f"{base_url}{path}")
+            timeout = httpx.Timeout(
+                connect=5.0,
+                read=backend.health_timeout_sec,
+                write=5.0,
+                pool=5.0,
+            )
+            response = await client.get(f"{base_url}{path}", timeout=timeout)
             backend.last_checked_at = now
             backend.healthy = response.status_code < 500
             backend.ready = response.status_code == 200
@@ -1059,6 +1075,7 @@ class LifecycleManager:
             "requires_confirmation": backend.requires_confirmation,
             "compose_managed": backend.compose_managed,
             "health_check": backend.health_check,
+            "health_timeout_sec": backend.health_timeout_sec,
             "active": backend.active,
             "healthy": backend.healthy,
             "ready": backend.ready,
