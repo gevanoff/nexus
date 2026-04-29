@@ -494,10 +494,13 @@ class LifecycleManager:
             if not expected:
                 backend.active = False
                 continue
+            was_active = backend.active
             backend.active = all(
                 any(self._component_container_active(name, expected_name) for name in host.containers)
                 for expected_name in expected
             )
+            if was_active and not backend.active:
+                backend.last_stopped_at = time.time()
 
     async def ensure(self, req: EnsureRequest) -> Dict[str, Any]:
         backend = self._backend_or_404(req.backend_class)
@@ -1112,6 +1115,7 @@ class LifecycleManager:
     def _backend_lifecycle_state(backend: BackendPolicy) -> Dict[str, Any]:
         last_working_at = backend.last_ready_at or backend.last_healthy_at
         last_unhealthy_at = backend.last_unhealthy_at or 0.0
+        last_stopped_at = backend.last_stopped_at or 0.0
 
         if backend.active:
             if backend.ready is True:
@@ -1135,7 +1139,7 @@ class LifecycleManager:
                 "status_rank": 2,
             }
 
-        if last_working_at and last_working_at >= last_unhealthy_at:
+        if last_working_at and (last_working_at >= last_unhealthy_at or last_stopped_at >= last_unhealthy_at):
             return {
                 "status": "traded_out_working",
                 "status_label": "Known working, traded out",
