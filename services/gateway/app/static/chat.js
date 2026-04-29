@@ -252,13 +252,23 @@
         const kind = String(host?.resource_kind || host?.platform || "host").trim();
         if (kind) lines.push(kind);
         const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
-        gpus.forEach((gpu) => {
-          const total = Number(gpu?.memory_total_mb || 0);
-          const used = Number(gpu?.memory_used_mb || 0);
-          if (total > 0) {
-            lines.push(`${gpu?.name || `GPU ${gpu?.index ?? ""}`.trim()}: ${fmtMb(Math.max(0, total - used))} free`);
-          }
-        });
+        const gpuFree = gpus
+          .map((gpu) => ({
+            name: gpu?.name || `GPU ${gpu?.index ?? ""}`.trim(),
+            free: Math.max(0, Number(gpu?.memory_total_mb || 0) - Number(gpu?.memory_used_mb || 0)),
+          }))
+          .filter((gpu) => gpu.free > 0);
+        if (gpuFree.length === 1) {
+          lines.push(`${gpuFree[0].name}: ${fmtMb(gpuFree[0].free)} free`);
+        } else if (gpuFree.length > 1) {
+          const maxFree = gpuFree.reduce((max, gpu) => Math.max(max, gpu.free), 0);
+          const totalFree = gpuFree.reduce((sum, gpu) => sum + gpu.free, 0);
+          lines.push(`${gpuFree.length} GPUs, ${fmtMb(maxFree)} max free, ${fmtMb(totalFree)} total free`);
+        } else if (host?.memory?.total_mb) {
+          const total = Number(host.memory.total_mb || 0);
+          const used = Number(host.memory.used_mb || 0);
+          lines.push(`RAM ${fmtMb(Math.max(0, total - used))} free`);
+        }
         if (host?.error) lines.push(String(host.error));
 
         const detail = document.createElement("div");
@@ -287,10 +297,11 @@
       );
       const activeCount = backendList.filter((backend) => backend?.active === true).length;
       const readyCount = backendList.filter((backend) => backend?.ready === true).length;
+      const attentionCount = backendList.filter((backend) => backendNeedsAttention(backend)).length;
       const rows = [
+        { label: "Backends", value: `${readyCount} ready, ${activeCount} active, ${backendList.length} total` },
+        { label: "Attention", value: attentionCount ? String(attentionCount) : "none" },
         { label: "Hosts", value: String(hostList.length) },
-        { label: "Active backends", value: `${activeCount} / ${backendList.length}` },
-        { label: "Ready backends", value: `${readyCount} / ${backendList.length}` },
       ];
       if (gpuTotals.total > 0) {
         rows.push({ label: "GPU free", value: `${fmtMb(Math.max(0, gpuTotals.total - gpuTotals.used))} / ${fmtMb(gpuTotals.total)}` });
@@ -317,6 +328,18 @@
     function backendCapabilityList(backend) {
       const capabilities = Array.isArray(backend?.capabilities) ? backend.capabilities : [];
       return capabilities.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+
+    function backendNeedsAttention(backend) {
+      if (!backend || typeof backend !== "object") return false;
+      const status = String(backend.status || backend.lifecycle_status || "").trim();
+      return backend.ready === false
+        || backend.healthy === false
+        || backend.inflight
+        || backend.health_error
+        || backend.last_action_error
+        || status === "active_unhealthy"
+        || status === "inactive_unhealthy";
     }
 
     function mergeBackendStatusPayload(lifecycleData, registryData, lifecycleError, registryError) {
@@ -445,15 +468,7 @@
       };
 
       const shouldShowBackendInChat = (backend) => {
-        if (!backend || typeof backend !== "object") return false;
-        const status = String(backend.status || backend.lifecycle_status || "").trim();
-        return backend.ready === false
-          || backend.healthy === false
-          || backend.inflight
-          || backend.health_error
-          || backend.last_action_error
-          || status === "active_unhealthy"
-          || status === "inactive_unhealthy";
+        return backendNeedsAttention(backend);
       };
 
       const shouldHideBackend = (backend) => {
@@ -461,41 +476,26 @@
         return !shouldShowBackendInChat(backend);
       };
 
-      const capabilityGroupOrder = [
-        { title: "Core", capability: "core" },
-        { title: "Images", capability: "images" },
-        { title: "TTS", capability: "tts" },
-        { title: "Music", capability: "music" },
-        { title: "OCR", capability: "ocr" },
-        { title: "Video", capability: "video" },
-        { title: "Transcription", capability: "transcription" },
-      ];
-
-      const classifyBackendGroup = (backend) => {
-        const capabilities = new Set(Array.isArray(backend?.capabilities) ? backend.capabilities : []);
-        if (capabilities.has("chat") || capabilities.has("embeddings") || capabilities.has("bridge")) {
-          return "core";
-        }
-        if (capabilities.has("images")) return "images";
-        if (capabilities.has("tts")) return "tts";
-        if (capabilities.has("music")) return "music";
-        if (capabilities.has("ocr")) return "ocr";
-        if (capabilities.has("video")) return "video";
-        if (capabilities.has("transcription")) return "transcription";
-        return "other";
-      };
-
-      const backendMap = new Map();
       const visibleBackends = backends.filter(
         (backend) => !shouldHideBackend(backend),
       );
-      visibleBackends.forEach((backend) => {
-        backendMap.set(backend.backend_class, backend);
-      });
 
       const renderBackendRow = (backend, { displayName, missing } = {}) => {
         const row = document.createElement("div");
         row.className = "status-row";
+        const lifecycleStatus = String(backend.status || backend.lifecycle_status || "").trim();
+        const lifecycleLabel = String(backend.status_label || "").trim();
+        const lifecycleColor = lifecycleColorClass(backend.status_color);
+        const inactiveLifecycle = isInactiveLifecycleStatus(lifecycleStatus);
+        if (missing) {
+          row.classList.add("warn");
+        } else if (lifecycleStatus || lifecycleLabel) {
+          row.classList.add(lifecycleRowClass(lifecycleStatus, lifecycleColor));
+        } else if (backend.healthy === false || backend.ready === false) {
+          row.classList.add("bad");
+        } else if (backend.inflight) {
+          row.classList.add("warn");
+        }
 
         const header = document.createElement("div");
         header.className = "status-row-header";
@@ -516,244 +516,96 @@
         const hostName = String(backend.hostname || backend.host || "").trim();
         if (hostName) {
           const hostEl = document.createElement("div");
-          hostEl.style.fontSize = "12px";
-          hostEl.style.fontWeight = "600";
-          hostEl.style.color = "#6fb8ff";
-          hostEl.style.marginTop = "2px";
+          hostEl.className = "status-backend-meta";
           hostEl.textContent = `on ${hostName}`;
           nameContainer.appendChild(hostEl);
-        }
-        if (!missing) {
-          const metaParts = [];
-          const backendClass = String(backend.backend_class || "").trim();
-          const provider = String(backend.provider || "").trim();
-          const baseUrl = String(backend.base_url || "").trim();
-          if (backendClass) metaParts.push(backendClass);
-          if (provider && provider !== backendClass) metaParts.push(provider);
-          if (baseUrl) metaParts.push(baseUrl);
-          if (metaParts.length) {
-            const backendMeta = document.createElement("div");
-            backendMeta.className = "status-backend-meta";
-            backendMeta.textContent = metaParts.join(" • ");
-            nameContainer.appendChild(backendMeta);
-          }
         }
         header.appendChild(nameContainer);
 
         const badges = document.createElement("div");
         badges.className = "status-badges";
+        const addBadge = (text, className) => {
+          const badge = document.createElement("span");
+          badge.className = `status-badge ${className}`;
+          badge.textContent = text;
+          badges.appendChild(badge);
+        };
 
         if (missing) {
-          row.classList.add("warn");
-          const missingBadge = document.createElement("span");
-          missingBadge.className = "status-badge warn";
-          missingBadge.textContent = "Not configured";
-          badges.appendChild(missingBadge);
+          addBadge("Not configured", "warn");
         } else {
-          const lifecycleStatus = String(backend.status || backend.lifecycle_status || "").trim();
-          const lifecycleLabel = String(backend.status_label || "").trim();
-          const lifecycleColor = lifecycleColorClass(backend.status_color);
-          const inactiveLifecycle = isInactiveLifecycleStatus(lifecycleStatus);
           const tier = String(backend.tier || backend.lifecycle?.tier || "").trim().toLowerCase();
           const rowTierClass = tierClassName(tier);
           if (rowTierClass) row.classList.add(rowTierClass);
 
           if (lifecycleStatus || lifecycleLabel) {
-            const state = document.createElement("span");
-            state.className = `status-badge ${lifecycleColor}`;
-            state.textContent = lifecycleLabel || lifecycleStatus.replace(/_/g, " ");
-            badges.appendChild(state);
-            row.classList.add(lifecycleRowClass(lifecycleStatus, lifecycleColor));
+            addBadge(lifecycleLabel || lifecycleStatus.replace(/_/g, " "), lifecycleColor);
           }
 
-          if (tier) {
-            const tierBadge = document.createElement("span");
-            tierBadge.className = `status-badge ${["crucial", "high", "optional"].includes(tier) ? tier : "grey"}`;
-            tierBadge.textContent = tier.charAt(0).toUpperCase() + tier.slice(1);
-            badges.appendChild(tierBadge);
+          if (["crucial", "high"].includes(tier)) {
+            addBadge(tier.charAt(0).toUpperCase() + tier.slice(1), tier);
           }
 
           if (backend.active === true) {
-            const activeBadge = document.createElement("span");
-            activeBadge.className = "status-badge green";
-            activeBadge.textContent = "Active";
-            badges.appendChild(activeBadge);
+            addBadge("Active", "green");
           } else if (backend.active === false) {
-            const activeBadge = document.createElement("span");
-            activeBadge.className = "status-badge grey";
-            activeBadge.textContent = "Inactive";
-            badges.appendChild(activeBadge);
+            addBadge("Inactive", "grey");
           }
 
-          const healthy = document.createElement("span");
-          const isHealthy = backend.healthy === true;
-          healthy.className = `status-badge ${inactiveLifecycle ? "grey" : isHealthy ? "green" : backend.healthy === false ? "red" : "yellow"}`;
-          healthy.textContent = inactiveLifecycle ? "Health skipped" : backend.healthy == null ? "Health unknown" : isHealthy ? "Healthy" : "Unhealthy";
-          badges.appendChild(healthy);
-
-          const ready = document.createElement("span");
-          const isReady = backend.ready === true;
-          ready.className = `status-badge ${inactiveLifecycle ? "grey" : isReady ? "green" : backend.ready === false ? "red" : "yellow"}`;
-          ready.textContent = inactiveLifecycle ? "Readiness stopped" : backend.ready == null ? "Readiness unknown" : isReady ? "Ready" : "Not ready";
-          badges.appendChild(ready);
-
-          if (!inactiveLifecycle) {
-            if (!lifecycleStatus && backend.healthy === false && backend.ready === false) {
-              row.classList.add("bad");
-            } else if (!lifecycleStatus && isHealthy && isReady) {
-              row.classList.add("ok");
-            } else if (!lifecycleStatus) {
-              row.classList.add("warn");
-            }
-          } else if (lifecycleStatus === "traded_out_working" && backend.last_ready_at) {
-            const lastReady = document.createElement("span");
-            lastReady.className = "status-badge blue";
-            lastReady.textContent = `Last ready ${formatTimestamp(Number(backend.last_ready_at || 0))}`;
-            badges.appendChild(lastReady);
-          } else if (lifecycleStatus === "inactive_unhealthy" && backend.last_unhealthy_at) {
-            const lastBad = document.createElement("span");
-            lastBad.className = "status-badge purple";
-            lastBad.textContent = `Last unhealthy ${formatTimestamp(Number(backend.last_unhealthy_at || 0))}`;
-            badges.appendChild(lastBad);
-          } else if (lifecycleStatus === "inactive_unknown") {
-            const unknown = document.createElement("span");
-            unknown.className = "status-badge grey";
-            unknown.textContent = "Never ready";
-            badges.appendChild(unknown);
+          if (!inactiveLifecycle && backend.healthy === false) addBadge("Unhealthy", "red");
+          if (!inactiveLifecycle && backend.ready === false) addBadge("Not ready", "red");
+          if (backend.inflight) addBadge(`${backend.inflight} running`, "blue");
+          if (lifecycleStatus === "inactive_unhealthy" && backend.last_unhealthy_at) {
+            addBadge(`Last unhealthy ${formatTimestamp(Number(backend.last_unhealthy_at || 0))}`, "purple");
           }
         }
 
         header.appendChild(badges);
         row.appendChild(header);
 
-        if (!missing) {
-          const capabilities = backendCapabilityList(backend);
-          if (capabilities.length > 0) {
-            const capabilityList = document.createElement("div");
-            capabilityList.className = "status-capabilities";
-            capabilities.forEach((capability) => {
-              const item = document.createElement("span");
-              item.className = "status-capability";
-              item.textContent = capability;
-              capabilityList.appendChild(item);
-            });
-            row.appendChild(capabilityList);
-          }
-        }
-
-        const detail = document.createElement("div");
-        detail.className = "status-detail";
+        const detailParts = [];
         if (missing) {
-          detail.textContent = "Not configured in the backend registry.";
+          detailParts.push("Not configured in the backend registry.");
         } else {
           const lastCheckValue = Number(backend.last_checked_at || backend.last_check || 0);
-          const detailParts = [];
-          if (backend.description) detailParts.push(String(backend.description));
-          detailParts.push(`Last check: ${lastCheckValue > 0 ? formatTimestamp(lastCheckValue) : "--"}`);
-          if (Number(backend.estimated_vram_mb || 0) > 0) detailParts.push(`Est VRAM: ${fmtMb(backend.estimated_vram_mb)}`);
-          if (Number(backend.idle_observed_vram_mb || 0) > 0) detailParts.push(`Idle observed: ${fmtMb(backend.idle_observed_vram_mb)}`);
-          if (Number(backend.peak_observed_vram_mb || 0) > 0) detailParts.push(`Peak observed: ${fmtMb(backend.peak_observed_vram_mb)}`);
-          if (backend.health && typeof backend.health === "object") {
-            const readiness = String(backend.health.readiness || "").trim();
-            const liveness = String(backend.health.liveness || "").trim();
-            if (readiness || liveness) detailParts.push(`Health: ${liveness || "--"} / ${readiness || "--"}`);
+          let errorText = String(backend.error || backend.health_error || backend.last_health_error || backend.last_action_error || "");
+          if (backend.active === false && lifecycleStatus === "traded_out_working") {
+            errorText = String(backend.last_action_error || "");
+          } else if (backend.active === false && lifecycleStatus === "inactive_unknown") {
+            errorText = String(backend.last_action_error || "");
+          } else if (backend.active === false && lifecycleStatus === "inactive_unhealthy") {
+            errorText = String(backend.last_action_error || backend.last_health_error || backend.health_error || backend.error || "");
           }
+          if (errorText) detailParts.push(errorText);
+          if (!errorText && backend.healthy === false) detailParts.push("Health check failed");
+          if (!errorText && backend.ready === false) detailParts.push("Readiness check failed");
+          if (Number(backend.estimated_vram_mb || 0) > 0) detailParts.push(`Est VRAM: ${fmtMb(backend.estimated_vram_mb)}`);
+          if (lastCheckValue > 0) detailParts.push(`Checked ${formatTimestamp(lastCheckValue)}`);
           const lastReady = Number(backend.last_ready_at || backend.last_confirmed_working_at || 0);
           const lastUnhealthy = Number(backend.last_unhealthy_at || 0);
           const lastStopped = Number(backend.last_stopped_at || 0);
           if (backend.active === false && lastReady > 0) detailParts.push(`Last ready: ${formatTimestamp(lastReady)}`);
           if (backend.active === false && lastUnhealthy > 0 && lastUnhealthy > lastReady) detailParts.push(`Last unhealthy: ${formatTimestamp(lastUnhealthy)}`);
           if (backend.active === false && lastStopped > 0) detailParts.push(`Stopped: ${formatTimestamp(lastStopped)}`);
-          if (backend.inflight) detailParts.push(`${backend.inflight} running`);
-          if (backend.notes) detailParts.push(String(backend.notes));
-          detail.textContent = detailParts.join(" • ");
         }
-        row.appendChild(detail);
-
-        const aliasEntries = Array.isArray(backend.aliases) ? backend.aliases : [];
-        if (aliasEntries.length > 0) {
-          const aliasDetail = document.createElement("div");
-          aliasDetail.className = "status-aliases";
-          const aliasText = aliasEntries
-            .map((alias) => `${alias.name} → ${alias.target}`)
-            .filter(Boolean)
-            .join(", ");
-          aliasDetail.textContent = `Aliases: ${aliasText}`;
-          row.appendChild(aliasDetail);
-        }
-
-        if (!missing && currentUserIsAdmin && backend.compose_managed !== false) {
-          const actions = document.createElement("div");
-          actions.className = "status-actions";
-          const backendClass = String(backend.backend_class || "").trim();
-          if (backendClass) {
-            if (backend.active) {
-              actions.appendChild(lifecycleActionButton("Deactivate", backendClass, "deactivate", true));
-            } else {
-              actions.appendChild(lifecycleActionButton("Activate", backendClass, "activate", false));
-            }
-          }
-          if (actions.childNodes.length) row.appendChild(actions);
-        }
-
-        let errorText = String(backend.error || backend.health_error || backend.last_health_error || backend.last_action_error || "");
-        const lifecycleStatus = String(backend.status || backend.lifecycle_status || "").trim();
-        if (backend.active === false && lifecycleStatus === "traded_out_working") {
-          errorText = String(backend.last_action_error || "");
-        } else if (backend.active === false && lifecycleStatus === "inactive_unknown") {
-          errorText = String(backend.last_action_error || "");
-        } else if (backend.active === false && lifecycleStatus === "inactive_unhealthy") {
-          errorText = String(backend.last_action_error || backend.last_health_error || backend.health_error || backend.error || "");
-        }
-        if (errorText) {
-          const err = document.createElement("div");
-          err.className = "status-error";
-          err.textContent = errorText;
-          row.appendChild(err);
+        if (detailParts.length) {
+          const detail = document.createElement("div");
+          detail.className = missing || backend.health_error || backend.last_action_error ? "status-error" : "status-detail";
+          detail.textContent = detailParts.slice(0, 4).join(" • ");
+          row.appendChild(detail);
         }
 
         return row;
       };
 
-      const renderGroup = (title, backendKeys) => {
-        if (!Array.isArray(backendKeys) || backendKeys.length === 0) return;
-        const group = document.createElement("div");
-        group.className = "status-group";
-        const heading = document.createElement("div");
-        heading.className = "status-group-title";
-        heading.textContent = title;
-        group.appendChild(heading);
-
-        const list = document.createElement("div");
-        list.className = "status-group-list";
-        backendKeys.forEach((backendKey) => {
-          const backend = backendMap.get(backendKey);
-          const displayName = backendLabels[backendKey] || backendKey;
-          list.appendChild(renderBackendRow(backend || { backend_class: backendKey }, { displayName, missing: !backend }));
+      if (visibleBackends.length > 0) {
+        const attentionList = document.createElement("div");
+        attentionList.className = "status-group-list";
+        visibleBackends.forEach((backend) => {
+          const backendClass = String(backend.backend_class || "").trim();
+          attentionList.appendChild(renderBackendRow(backend, { displayName: backendLabels[backendClass] || backendClass || "unknown" }));
         });
-        group.appendChild(list);
-        backendStatusList.appendChild(group);
-      };
-
-      const groupedBackends = new Map();
-      capabilityGroupOrder.forEach((group) => groupedBackends.set(group.capability, []));
-      groupedBackends.set("other", []);
-
-      visibleBackends.forEach((backend) => {
-        const backendClass = String(backend.backend_class || "").trim();
-        if (!backendClass) return;
-        const groupKey = classifyBackendGroup(backend);
-        groupedBackends.get(groupKey).push(backendClass);
-      });
-
-      capabilityGroupOrder.forEach((group) => {
-        const groupBackends = groupedBackends.get(group.capability) || [];
-        renderGroup(group.title, groupBackends);
-      });
-
-      const extraBackends = groupedBackends.get("other") || [];
-      if (extraBackends.length > 0) {
-        renderGroup("Other", extraBackends);
+        backendStatusList.appendChild(attentionList);
       }
 
       if (visibleBackends.length === 0) {

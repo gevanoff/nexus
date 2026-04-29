@@ -208,14 +208,14 @@
       .status-panel summary { cursor: pointer; font-weight: 600; color: #e7edf6; }
       .status-body { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
       .status-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-      .status-list { display: flex; flex-direction: column; gap: 8px; }
+      .status-list { display: flex; flex-direction: column; gap: 7px; }
       .status-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #93a4ba; margin-top: 2px; }
-      .status-overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-      .status-overview-card { border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 9px 10px; background: rgba(14,20,30,0.54); }
-      .status-overview-value { font-size: 15px; font-weight: 650; }
-      .status-overview-label { margin-top: 2px; font-size: 11px; color: #93a4ba; }
-      .status-compact-hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
-      .status-compact-host { border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 8px 10px; background: rgba(14,20,30,0.46); }
+      .status-overview-grid { display: flex; flex-wrap: wrap; gap: 6px; border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 7px; background: rgba(14,20,30,0.42); }
+      .status-overview-card { display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid rgba(231,237,246,0.08); border-radius: 999px; padding: 4px 8px; background: rgba(231,237,246,0.04); }
+      .status-overview-value { font-size: 12px; font-weight: 700; color: #e7edf6; }
+      .status-overview-label { font-size: 11px; color: #93a4ba; }
+      .status-compact-hosts { display: flex; flex-wrap: wrap; gap: 6px; }
+      .status-compact-host { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; border: 1px solid rgba(231,237,246,0.08); border-radius: 999px; padding: 5px 8px; background: rgba(14,20,30,0.42); }
       .status-resource-link { color: #cfe7ff; text-decoration: none; border: 1px solid rgba(111,184,255,0.34); border-radius: 999px; padding: 6px 10px; font-size: 12px; background: rgba(111,184,255,0.10); }
       .status-resource-link:hover { border-color: rgba(111,184,255,0.58); }
       .status-host-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
@@ -229,8 +229,8 @@
       .status-group { display: flex; flex-direction: column; gap: 8px; }
       .status-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #93a4ba; }
       .status-group-list { display: flex; flex-direction: column; gap: 8px; }
-      .status-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; border: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(20,28,38,0.9), rgba(14,20,28,0.9)); }
-      .status-row.ok { background: rgba(62, 197, 126, 0.12); border-color: rgba(62, 197, 126, 0.28); }
+      .status-row { display: flex; flex-direction: column; gap: 5px; padding: 8px 9px; border-radius: 8px; border: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(20,28,38,0.82), rgba(14,20,28,0.82)); }
+      .status-row.ok { background: rgba(24, 126, 76, 0.16); border-color: rgba(42, 178, 103, 0.46); }
       .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
       .status-row.bad { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.28); }
       .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
@@ -248,15 +248,15 @@
       .status-badge.ok { background: rgba(111,184,255,0.18); color: #cfe7ff; border-color: rgba(111,184,255,0.4); }
       .status-badge.warn { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
       .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
-      .status-badge.green { background: rgba(111,221,168,0.12); color: #b9efd8; border-color: rgba(111,221,168,0.34); }
+      .status-badge.green { background: rgba(0,120,72,0.24); color: #98f0bf; border-color: rgba(56,197,126,0.72); }
       .status-badge.blue { background: rgba(111,184,255,0.16); color: #cfe7ff; border-color: rgba(111,184,255,0.42); }
       .status-badge.purple { background: rgba(224,0,255,0.45); color: #ffd0ff; border-color: rgba(255,0,255,0.95); }
-      .status-badge.grey { background: rgba(169,180,195,0.09); color: #c5cfdd; border-color: rgba(169,180,195,0.26); }
+      .status-badge.grey { background: rgba(220,228,240,0.15); color: #eff4fb; border-color: rgba(220,228,240,0.46); }
       .status-badge.red { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
       .status-badge.yellow { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
       .status-badge.crucial { background: rgba(111,184,255,0.16); color: #d7ecff; border-color: rgba(111,184,255,0.52); }
       .status-badge.high { background: rgba(240,200,90,0.12); color: #f3dc96; border-color: rgba(240,200,90,0.36); }
-      .status-badge.optional { background: rgba(169,180,195,0.09); color: #c5cfdd; border-color: rgba(169,180,195,0.26); }
+      .status-badge.optional { background: rgba(220,228,240,0.11); color: #dfe7f3; border-color: rgba(220,228,240,0.34); }
       .status-detail { font-size: 12px; color: var(--muted); }
       .status-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
       .status-actions button { padding: 6px 8px; border-radius: 8px; font-size: 11px; box-shadow: none; }
@@ -509,6 +509,6 @@
     </div>
 
     <script src="/static/auth_client.js"></script>
-    <script src="/static/chat.js"></script>
+    <script src="/static/chat.js?v=4"></script>
   </body>
 </html>
