@@ -472,6 +472,15 @@ class LifecycleManager:
             backend.last_unhealthy_at = now
             backend.last_health_error = backend.health_error
 
+    @staticmethod
+    def _component_container_active(name: str, expected_name: str) -> bool:
+        if name == expected_name:
+            return True
+        if not name.startswith(expected_name + "-"):
+            return False
+        suffix = name[len(expected_name) + 1 :]
+        return not suffix.startswith("registrar")
+
     def _refresh_active_flags(self) -> None:
         for backend in self.backends.values():
             host = self.hosts.get(backend.host)
@@ -486,7 +495,7 @@ class LifecycleManager:
                 backend.active = False
                 continue
             backend.active = all(
-                any(name == expected_name or name.startswith(expected_name + "-") for name in host.containers)
+                any(self._component_container_active(name, expected_name) for name in host.containers)
                 for expected_name in expected
             )
 
