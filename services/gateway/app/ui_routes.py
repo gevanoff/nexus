@@ -160,6 +160,30 @@ def _request_url_hostname(req: Request) -> str:
         return ""
 
 
+def _request_url_port(req: Request) -> Optional[int]:
+    host = (req.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
+    if not host:
+        host = (req.headers.get("host") or "").strip()
+    if host:
+        try:
+            port = urlsplit(f"//{host}").port
+            if port:
+                return port
+        except Exception:
+            pass
+    try:
+        return req.url.port
+    except Exception:
+        return None
+
+
+def _public_proxy_hostname(hostname: str) -> str:
+    host = (hostname or "").strip().strip("[]")
+    if host.lower() in {"ai1", "ai2", "ai3", "ada2", "adada"}:
+        return f"{host}.local"
+    return host
+
+
 def _url_hostname(raw_url: str) -> str:
     value = (raw_url or "").strip()
     if not value:
@@ -212,6 +236,15 @@ def _personaplex_ui_url(req: Request, *, base_url: str = "") -> str:
             proxy_path = "/" + proxy_path
         if not proxy_path.endswith("/"):
             proxy_path += "/"
+        hostname = _public_proxy_hostname(_request_url_hostname(req))
+        if hostname:
+            scheme = _request_url_scheme(req)
+            port = _request_url_port(req)
+            if port in {8800, 8801}:
+                scheme = "https"
+                port = None
+            netloc = _format_host_port(hostname, port) if port else hostname
+            return urlunsplit((scheme, netloc, proxy_path, "", ""))
         return proxy_path
 
     scheme = (
