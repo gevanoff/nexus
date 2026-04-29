@@ -227,8 +227,9 @@ def _personaplex_ui_url(req: Request, *, base_url: str = "") -> str:
     proxy_path = (
         getattr(S, "PERSONAPLEX_UI_PROXY_PATH", "")
         or os.environ.get("PERSONAPLEX_UI_PROXY_PATH")
-        or "/personaplex-live/"
+        or ""
     ).strip()
+    hostname = _public_proxy_hostname(_request_url_hostname(req))
     if proxy_path:
         if proxy_path.startswith(("http://", "https://")):
             return proxy_path
@@ -236,7 +237,6 @@ def _personaplex_ui_url(req: Request, *, base_url: str = "") -> str:
             proxy_path = "/" + proxy_path
         if not proxy_path.endswith("/"):
             proxy_path += "/"
-        hostname = _public_proxy_hostname(_request_url_hostname(req))
         if hostname:
             scheme = _request_url_scheme(req)
             port = _request_url_port(req)
@@ -246,6 +246,19 @@ def _personaplex_ui_url(req: Request, *, base_url: str = "") -> str:
             netloc = _format_host_port(hostname, port) if port else hostname
             return urlunsplit((scheme, netloc, proxy_path, "", ""))
         return proxy_path
+
+    if hostname:
+        try:
+            proxy_port = int(
+                getattr(S, "PERSONAPLEX_UI_PROXY_PORT", 8998)
+                or os.environ.get("PERSONAPLEX_UI_PROXY_PORT")
+                or 8998
+            )
+        except Exception:
+            proxy_port = 8998
+        proxy_port = min(65535, max(1, proxy_port))
+        netloc = _format_host_port(hostname, proxy_port)
+        return urlunsplit(("https", netloc, "/", "", ""))
 
     scheme = (
         getattr(S, "PERSONAPLEX_UI_SCHEME", "")
