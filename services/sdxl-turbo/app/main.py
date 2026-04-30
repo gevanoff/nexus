@@ -15,6 +15,7 @@ app = FastAPI(title="SDXL Turbo Shim", version="0.1")
 _PIPELINE = None
 _PIPELINE_DEVICE = None
 _PIPELINE_MODEL_ID = None
+_CUDA_RUNTIME_VERIFIED = False
 
 
 class GenerateRequest(BaseModel):
@@ -165,6 +166,19 @@ def _ensure_pipeline() -> StableDiffusionXLPipeline:
     return pipeline
 
 
+def _verify_runtime_ready() -> None:
+    global _CUDA_RUNTIME_VERIFIED
+    _ensure_pipeline()
+    device = _PIPELINE_DEVICE or "cpu"
+    if device == "cuda" and not _CUDA_RUNTIME_VERIFIED:
+        test = torch.tensor([1.0], device="cuda")
+        result = test + 1.0
+        torch.cuda.synchronize()
+        if float(result.item()) != 2.0:
+            raise RuntimeError("CUDA runtime smoke check returned an unexpected value.")
+        _CUDA_RUNTIME_VERIFIED = True
+
+
 def _generate_image(
     *,
     prompt: str,
@@ -213,7 +227,7 @@ def healthz() -> Dict[str, Any]:
 @app.get("/readyz")
 def readyz() -> Dict[str, Any]:
     try:
-        _ensure_pipeline()
+        _verify_runtime_ready()
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"ok": True, "time": _now()}

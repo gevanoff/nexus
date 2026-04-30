@@ -4,7 +4,7 @@ services:
       context: ./services/sdxl-turbo
       dockerfile: Dockerfile
       args:
-        AI_TORCH_INDEX_URL: ${AI_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}
+        AI_TORCH_INDEX_URL: ${AI_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
     container_name: nexus-sdxl-turbo
     ports:
       - "${SDXL_TURBO_PORT:-9050}:9050"

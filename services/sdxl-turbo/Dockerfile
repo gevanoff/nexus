@@ -5,10 +5,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-ARG AI_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
-ARG AI_TORCH_VERSION=2.5.1
-ARG AI_TORCHVISION_VERSION=0.20.1
-ARG AI_TORCHAUDIO_VERSION=2.5.1
+ARG AI_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
+ARG AI_TORCH_VERSION=2.9.1
+ARG AI_TORCHVISION_VERSION=0.24.1
+ARG AI_TORCHAUDIO_VERSION=2.9.1
 
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends ca-certificates curl git libgl1 libglib2.0-0 \
