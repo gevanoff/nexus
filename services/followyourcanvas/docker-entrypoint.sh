@@ -123,5 +123,6 @@ YAML
 fi
 
 export FYC_WORKDIR="${FYC_WORKDIR:-${APP_DIR}}"
+export FYC_DEFAULT_CONFIG="${DEFAULT_CONFIG}"
 export PYTHONPATH="${APP_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 exec uvicorn app.main:app --host 0.0.0.0 --port "${FYC_PORT:-9165}"
