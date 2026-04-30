@@ -91,6 +91,7 @@ def _runtime_error() -> Optional[Dict[str, str]]:
         "einops",
         "matplotlib",
         "cv2",
+        "imageio_ffmpeg",
     )
     workdir_text = str(workdir)
     if workdir_text not in sys.path:

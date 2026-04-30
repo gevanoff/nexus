@@ -22,6 +22,7 @@ modules = (
     "einops",
     "matplotlib",
     "cv2",
+    "imageio_ffmpeg",
 )
 for name in modules:
     importlib.import_module(name)
