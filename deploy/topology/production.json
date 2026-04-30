@@ -91,6 +91,8 @@
         "SDXL_TURBO_DEVICE": "cuda",
         "SDXL_TURBO_CUDA_VISIBLE_DEVICES": "1",
         "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
+        "SDXL_TURBO_ENABLE_SEQUENTIAL_CPU_OFFLOAD": "true",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "VLLM_FAST_SERVICE_NAME": "vllm-fast",
         "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
         "VLLM_FAST_TOKENIZER": "Qwen/Qwen3-30B-A3B",

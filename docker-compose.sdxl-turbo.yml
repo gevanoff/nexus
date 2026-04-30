@@ -22,6 +22,7 @@ services:
       - SDXL_TURBO_GUIDANCE_SCALE=${SDXL_TURBO_GUIDANCE_SCALE:-0.0}
       - SDXL_TURBO_WIDTH=${SDXL_TURBO_WIDTH:-512}
       - SDXL_TURBO_HEIGHT=${SDXL_TURBO_HEIGHT:-512}
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
     volumes:
       - ./.runtime/sdxl-turbo:/data
     gpus: all
