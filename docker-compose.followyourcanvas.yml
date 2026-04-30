@@ -13,6 +13,7 @@ services:
       - FYC_REPO_REF=${FYC_REPO_REF:-}
       - FYC_UPDATE_ON_START=${FYC_UPDATE_ON_START:-false}
       - FYC_TIMEOUT_SEC=${FYC_TIMEOUT_SEC:-1800}
+      - FYC_DEFAULT_CONFIG=${FYC_DEFAULT_CONFIG:-infer-configs/prompt-panda-nexus.yaml}
     volumes:
       - ./.runtime/followyourcanvas:/data
     gpus: all
