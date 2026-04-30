@@ -9,7 +9,7 @@ UPDATE_ON_START="${FYC_UPDATE_ON_START:-false}"
 REQ_HASH_FILE="${DATA_DIR}/.fyc-requirements.sha256"
 
 fyc_runtime_ready() {
-  python3 - <<'PY' >/dev/null 2>&1
+  PYTHONPATH="${APP_DIR}${PYTHONPATH:+:${PYTHONPATH}}" python3 - <<'PY' >/dev/null 2>&1
 import importlib
 modules = ("torch", "diffusers", "transformers", "omegaconf", "decord", "segment_anything")
 for name in modules:
@@ -43,4 +43,5 @@ if [[ -n "${REPO_URL}" ]]; then
 fi
 
 export FYC_WORKDIR="${FYC_WORKDIR:-${APP_DIR}}"
+export PYTHONPATH="${APP_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
 exec uvicorn app.main:app --host 0.0.0.0 --port "${FYC_PORT:-9165}"

@@ -65,6 +65,13 @@ def _default_config_path() -> Optional[Path]:
     return path
 
 
+def _resolve_runtime_path(value: str, *, workdir: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return workdir / path
+
+
 def _runtime_error() -> Optional[Dict[str, str]]:
     runner = _runner_script()
     workdir = Path(_workdir())
@@ -75,6 +82,9 @@ def _runtime_error() -> Optional[Dict[str, str]]:
         }
 
     required_modules = ("torch", "diffusers", "transformers", "omegaconf", "decord", "segment_anything")
+    workdir_text = str(workdir)
+    if workdir_text not in sys.path:
+        sys.path.insert(0, workdir_text)
     for module_name in required_modules:
         try:
             importlib.import_module(module_name)
@@ -123,10 +133,11 @@ def _runtime_error() -> Optional[Dict[str, str]]:
                 "reason": "invalid_default_config",
                 "detail": f"Config {config_path} still contains placeholder path for {key!r}.",
             }
-        if not Path(value).exists():
+        asset_path = _resolve_runtime_path(value, workdir=workdir)
+        if not asset_path.exists():
             return {
                 "reason": "missing_model_asset",
-                "detail": f"Required FollowYourCanvas asset for {key!r} is missing: {value}",
+                "detail": f"Required FollowYourCanvas asset for {key!r} is missing: {asset_path}",
             }
     return None
 

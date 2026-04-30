@@ -2,3 +2,6 @@ fastapi==0.110.3
 uvicorn[standard]==0.29.0
 imageio
 imageio-ffmpeg
+decord>=0.6,<0.7
+huggingface_hub==0.25.2
+omegaconf>=2.3,<2.4
