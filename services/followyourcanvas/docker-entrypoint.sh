@@ -12,7 +12,17 @@ DEFAULT_CONFIG="${FYC_DEFAULT_CONFIG:-infer-configs/prompt-panda-nexus.yaml}"
 fyc_runtime_ready() {
   PYTHONPATH="${APP_DIR}${PYTHONPATH:+:${PYTHONPATH}}" python3 - <<'PY' >/dev/null 2>&1
 import importlib
-modules = ("torch", "diffusers", "transformers", "omegaconf", "decord", "segment_anything")
+modules = (
+    "torch",
+    "diffusers",
+    "transformers",
+    "omegaconf",
+    "decord",
+    "segment_anything",
+    "einops",
+    "matplotlib",
+    "cv2",
+)
 for name in modules:
     importlib.import_module(name)
 PY

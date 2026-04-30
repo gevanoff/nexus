@@ -81,7 +81,17 @@ def _runtime_error() -> Optional[Dict[str, str]]:
             "detail": "FollowYourCanvas runner or workdir is missing inside the container.",
         }
 
-    required_modules = ("torch", "diffusers", "transformers", "omegaconf", "decord", "segment_anything")
+    required_modules = (
+        "torch",
+        "diffusers",
+        "transformers",
+        "omegaconf",
+        "decord",
+        "segment_anything",
+        "einops",
+        "matplotlib",
+        "cv2",
+    )
     workdir_text = str(workdir)
     if workdir_text not in sys.path:
         sys.path.insert(0, workdir_text)
@@ -215,6 +225,12 @@ async def generate_video(payload: Dict[str, Any]) -> Any:
             raise HTTPException(status_code=504, detail={"error": "followyourcanvas timed out", "job_id": job_id}) from exc
 
         if proc.returncode != 0:
+            result_detail = None
+            if output_json_path.exists():
+                try:
+                    result_detail = json.loads(output_json_path.read_text(encoding="utf-8"))
+                except Exception:
+                    result_detail = None
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -222,6 +238,7 @@ async def generate_video(payload: Dict[str, Any]) -> Any:
                     "returncode": proc.returncode,
                     "stdout": (stdout_bytes or b"").decode(errors="ignore")[-4000:],
                     "stderr": (stderr_bytes or b"").decode(errors="ignore")[-4000:],
+                    "result": result_detail,
                 },
             )
 

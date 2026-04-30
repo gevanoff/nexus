@@ -3,5 +3,8 @@ uvicorn[standard]==0.29.0
 imageio
 imageio-ffmpeg
 decord>=0.6,<0.7
+einops>=0.7,<0.9
 huggingface_hub==0.25.2
+matplotlib>=3.7,<3.10
+opencv-python-headless>=4.8,<4.11
 omegaconf>=2.3,<2.4
