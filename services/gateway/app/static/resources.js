@@ -3,6 +3,7 @@
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
+  const CACHE_KEY = "nexus.resources.status.v1";
   let currentUserIsAdmin = false;
 
   function setStatus(text, isError) {
@@ -75,6 +76,41 @@
     }
   }
 
+  function freshnessText(tsSeconds) {
+    const ts = Number(tsSeconds || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return "";
+    const ageMs = Date.now() - ts * 1000;
+    if (!Number.isFinite(ageMs) || ageMs < 0) return `refreshed ${formatTimestamp(ts)}`;
+    const ageSec = Math.floor(ageMs / 1000);
+    if (ageSec < 60) return `refreshed ${ageSec}s ago`;
+    const ageMin = Math.floor(ageSec / 60);
+    if (ageMin < 60) return `refreshed ${ageMin}m ago`;
+    const ageHr = Math.floor(ageMin / 60);
+    if (ageHr < 36) return `refreshed ${ageHr}h ago`;
+    return `refreshed ${formatTimestamp(ts)}`;
+  }
+
+  function loadCachedPayload() {
+    try {
+      const raw = window.localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (!payload || typeof payload !== "object") return null;
+      return payload;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function saveCachedPayload(payload) {
+    if (!payload || typeof payload !== "object") return;
+    try {
+      window.localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+    } catch (error) {
+      // Ignore storage quota/private-mode failures. The live view still works.
+    }
+  }
+
   function safeStatusClass(value) {
     return String(value || "inactive_unknown").replace(/[^a-z0-9_-]/gi, "_");
   }
@@ -141,7 +177,11 @@
 
       const meta = document.createElement("div");
       meta.className = "meta";
-      meta.textContent = `${host.resource_kind || host.platform || "host"}${host.error ? ` · ${host.error}` : ""}`;
+      const hostMeta = [host.resource_kind || host.platform || "host"];
+      const hostFreshness = freshnessText(host.updated_at);
+      if (hostFreshness) hostMeta.push(hostFreshness);
+      if (host.error) hostMeta.push(host.error);
+      meta.textContent = hostMeta.join(" · ");
       card.appendChild(meta);
 
       const gpus = Array.isArray(host.gpus) ? host.gpus : [];
@@ -230,6 +270,8 @@
       } else {
         badges.appendChild(badge("never ready", "grey"));
       }
+      const backendFreshness = freshnessText(backend.last_checked_at || backend.last_check);
+      if (backendFreshness) badges.appendChild(badge(backendFreshness.replace("refreshed", "checked"), "blue"));
       if (backend.inflight) badges.appendChild(badge(`${backend.inflight} running`, "ok"));
       left.appendChild(badges);
 
@@ -247,6 +289,7 @@
       }
       if (Number(backend.idle_observed_vram_mb || 0) > 0) detailParts.push(`idle ${fmtMb(backend.idle_observed_vram_mb)}`);
       if (Number(backend.peak_observed_vram_mb || 0) > 0) detailParts.push(`peak ${fmtMb(backend.peak_observed_vram_mb)}`);
+      if (backend.last_checked_at || backend.last_check) detailParts.push(`last check ${formatTimestamp(backend.last_checked_at || backend.last_check)}`);
       if (backend.last_action_error) detailParts.push(backend.last_action_error);
       if (backend.health_error) detailParts.push(backend.health_error);
       if (!backend.health_error && backend.status === "inactive_unhealthy" && backend.last_health_error) detailParts.push(backend.last_health_error);
@@ -288,9 +331,21 @@
     }
   }
 
-  async function loadStatus() {
+  function renderPayload(payload, options) {
+    const opts = options || {};
+    renderHosts(payload.hosts || []);
+    renderBackends(payload.backends || []);
+    const statusParts = [`Mode: ${payload.mode || "unknown"}`];
+    if (opts.cached) statusParts.push("showing cached data");
+    if (opts.registryError) statusParts.push(`registry ${opts.registryError}`);
+    statusParts.push(`Updated ${new Date(Number(payload.generated_at || 0) * 1000).toLocaleTimeString()}`);
+    setStatus(statusParts.join(" · "), !!opts.registryError);
+  }
+
+  async function loadStatus(refresh) {
+    const forceRefresh = refresh === true;
     if (refreshEl) refreshEl.disabled = true;
-    setStatus("Refreshing lifecycle state...", false);
+    setStatus(forceRefresh ? "Refreshing lifecycle state..." : "Loading lifecycle state...", false);
     try {
       const fetchJson = async (url) => {
         const resp = await fetch(url, { credentials: "same-origin" });
@@ -301,21 +356,26 @@
         }
         return { data: await resp.json() };
       };
-      const [lifecycleResult, registryResult] = await Promise.all([
-        fetchJson("/ui/api/lifecycle/status?refresh=true"),
-        fetchJson("/ui/api/backend_status"),
-      ]);
-      if (lifecycleResult.redirected || registryResult.redirected) return;
-      if (!lifecycleResult.data && !registryResult.data) {
+      const lifecyclePath = `/ui/api/lifecycle/status${forceRefresh ? "?refresh=true" : ""}`;
+      const lifecyclePromise = fetchJson(lifecyclePath);
+      const registryPromise = fetchJson("/ui/api/backend_status");
+
+      const lifecycleResult = await lifecyclePromise;
+      if (lifecycleResult.redirected) return;
+      let payload = lifecycleResult.data || null;
+      if (payload) {
+        renderPayload(payload);
+        saveCachedPayload(payload);
+      }
+
+      const registryResult = await registryPromise;
+      if (registryResult.redirected) return;
+      if (!payload && !registryResult.data) {
         throw new Error(lifecycleResult.error || registryResult.error || "No status payload returned");
       }
-      const payload = mergeBackendStatusPayload(lifecycleResult.data, registryResult.data);
-      renderHosts(payload.hosts || []);
-      renderBackends(payload.backends || []);
-      const statusParts = [`Mode: ${payload.mode || "unknown"}`];
-      if (registryResult.error) statusParts.push(`registry ${registryResult.error}`);
-      statusParts.push(`Updated ${new Date(Number(payload.generated_at || 0) * 1000).toLocaleTimeString()}`);
-      setStatus(statusParts.join(" · "), !!registryResult.error);
+      payload = mergeBackendStatusPayload(payload, registryResult.data);
+      renderPayload(payload, { registryError: registryResult.error });
+      saveCachedPayload(payload);
     } catch (error) {
       setStatus(`Lifecycle status failed: ${String(error?.message || error)}`, true);
     } finally {
@@ -344,16 +404,18 @@
         if (ok) return runAction(backendClass, action, true);
       }
       setStatus(`${backendClass}: ${String(payload?.decision || action).replace(/_/g, " ")}`, payload?.ok === false);
-      await loadStatus();
+      await loadStatus(true);
     } catch (error) {
       setStatus(`Lifecycle action failed: ${String(error?.message || error)}`, true);
     }
   }
 
-  if (refreshEl) refreshEl.addEventListener("click", () => void loadStatus());
+  if (refreshEl) refreshEl.addEventListener("click", () => void loadStatus(true));
   void (async () => {
     await loadCurrentUser();
-    await loadStatus();
+    const cached = loadCachedPayload();
+    if (cached) renderPayload(cached, { cached: true });
+    await loadStatus(false);
   })();
-  window.setInterval(() => void loadStatus(), 30000);
+  window.setInterval(() => void loadStatus(false), 30000);
 })();
