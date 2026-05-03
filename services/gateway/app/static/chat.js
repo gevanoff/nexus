@@ -28,6 +28,7 @@
     const modelEl = $("model");
     const loadModelsEl = $("loadModels");
     const inputEl = $("input");
+    const inputPreviewEl = $("inputPreview");
     const sendEl = $("send");
     const clearEl = $("clear");
     const clearChatEl = $("clearChat");
@@ -79,6 +80,309 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    function escapeHtmlText(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function normalizeCodeLanguage(lang) {
+      const value = String(lang || "").trim().toLowerCase();
+      if (!value) return "";
+      const aliases = {
+        js: "javascript",
+        jsx: "javascript",
+        ts: "typescript",
+        tsx: "typescript",
+        py: "python",
+        sh: "bash",
+        shell: "bash",
+        zsh: "bash",
+        yml: "yaml",
+        md: "markdown",
+        html: "html",
+        htm: "html",
+      };
+      return (aliases[value] || value).replace(/[^a-z0-9_+.#-]/g, "");
+    }
+
+    function safeLinkHref(rawHref) {
+      const value = String(rawHref || "").trim();
+      if (!value) return "";
+      try {
+        const url = new URL(value, window.location.origin);
+        if (["http:", "https:", "mailto:"].includes(url.protocol)) return url.href;
+      } catch (e) {}
+      return "";
+    }
+
+    function appendInlineMarkdown(parent, text) {
+      const source = String(text || "");
+      const tokenRe = /(`[^`\n]+`|\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|\[[^\]\n]+?\]\([^) \n]+?\))/g;
+      let last = 0;
+      let match;
+      while ((match = tokenRe.exec(source)) !== null) {
+        if (match.index > last) parent.appendChild(document.createTextNode(source.slice(last, match.index)));
+        const token = match[0];
+        if (token.startsWith("`")) {
+          const code = document.createElement("code");
+          code.className = "inline-code";
+          code.textContent = token.slice(1, -1);
+          parent.appendChild(code);
+        } else if (token.startsWith("**")) {
+          const strong = document.createElement("strong");
+          appendInlineMarkdown(strong, token.slice(2, -2));
+          parent.appendChild(strong);
+        } else if (token.startsWith("*")) {
+          const em = document.createElement("em");
+          appendInlineMarkdown(em, token.slice(1, -1));
+          parent.appendChild(em);
+        } else if (token.startsWith("[")) {
+          const close = token.indexOf("](");
+          const label = token.slice(1, close);
+          const href = safeLinkHref(token.slice(close + 2, -1));
+          if (href) {
+            const link = document.createElement("a");
+            link.href = href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            appendInlineMarkdown(link, label);
+            parent.appendChild(link);
+          } else {
+            parent.appendChild(document.createTextNode(token));
+          }
+        }
+        last = match.index + token.length;
+      }
+      if (last < source.length) parent.appendChild(document.createTextNode(source.slice(last)));
+    }
+
+    function appendInlineLines(parent, lines) {
+      lines.forEach((line, idx) => {
+        if (idx > 0) parent.appendChild(document.createElement("br"));
+        appendInlineMarkdown(parent, line);
+      });
+    }
+
+    function highlightCode(code, language) {
+      const lang = normalizeCodeLanguage(language);
+      const keywordPattern = [
+        "and", "as", "async", "await", "break", "case", "catch", "class", "const", "continue",
+        "def", "default", "do", "elif", "else", "except", "false", "False", "finally", "for",
+        "from", "function", "if", "import", "in", "is", "let", "new", "None", "not", "null",
+        "or", "pass", "return", "switch", "throw", "true", "True", "try", "var", "while", "with", "yield"
+      ].join("|");
+      const tokenRe = new RegExp(
+        "(\\/\\*[\\s\\S]*?\\*\\/|<!--[\\s\\S]*?-->|\\/\\/[^\\n]*|#[^\\n]*)" +
+        "|(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`)" +
+        "|(<\\/?[A-Za-z][^>\\n]*?>)" +
+        "|(\\b\\d+(?:\\.\\d+)?\\b)" +
+        `|(\\b(?:${keywordPattern})\\b)` +
+        "|(\\b[A-Za-z_$][\\w$]*(?=\\s*\\())",
+        "g"
+      );
+      let html = "";
+      let last = 0;
+      const raw = String(code || "");
+      let match;
+      while ((match = tokenRe.exec(raw)) !== null) {
+        if (match.index > last) html += escapeHtmlText(raw.slice(last, match.index));
+        const token = match[0];
+        const cls = match[1]
+          ? "md-code-comment"
+          : match[2]
+            ? "md-code-string"
+            : match[3]
+              ? "md-code-tag"
+              : match[4]
+                ? "md-code-number"
+                : match[5]
+                  ? "md-code-keyword"
+                  : "md-code-function";
+        html += `<span class="${cls}">${escapeHtmlText(token)}</span>`;
+        last = match.index + token.length;
+      }
+      if (last < raw.length) html += escapeHtmlText(raw.slice(last));
+      if (lang === "json") {
+        html = html.replace(/(<span class="md-code-string">"[^"]+"<\/span>)(\s*:)/g, '<span class="md-code-keyword">$1</span>$2');
+      }
+      return html;
+    }
+
+    function copyTextToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      const tmp = document.createElement("textarea");
+      tmp.value = text;
+      tmp.setAttribute("readonly", "true");
+      tmp.style.position = "fixed";
+      tmp.style.left = "-9999px";
+      document.body.appendChild(tmp);
+      tmp.select();
+      try {
+        document.execCommand("copy");
+        return Promise.resolve();
+      } catch (e) {
+        return Promise.reject(e);
+      } finally {
+        tmp.remove();
+      }
+    }
+
+    function createCodeBlock(codeText, language) {
+      const lang = normalizeCodeLanguage(language);
+      const block = document.createElement("div");
+      block.className = "code-block";
+
+      const header = document.createElement("div");
+      header.className = "code-block-header";
+      const label = document.createElement("span");
+      label.className = "code-block-lang";
+      label.textContent = lang || "text";
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "code-copy";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", async () => {
+        try {
+          await copyTextToClipboard(String(codeText || ""));
+          copy.textContent = "Copied";
+          window.setTimeout(() => { copy.textContent = "Copy"; }, 1200);
+        } catch (e) {
+          copy.textContent = "Failed";
+          window.setTimeout(() => { copy.textContent = "Copy"; }, 1400);
+        }
+      });
+      header.appendChild(label);
+      header.appendChild(copy);
+      block.appendChild(header);
+
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      if (lang) code.className = `language-${lang}`;
+      code.innerHTML = highlightCode(codeText, lang);
+      pre.appendChild(code);
+      block.appendChild(pre);
+      return block;
+    }
+
+    function isMarkdownBlockStart(line) {
+      return /^```/.test(line)
+        || /^#{1,3}\s+/.test(line)
+        || /^\s*[-*]\s+/.test(line)
+        || /^\s*\d+\.\s+/.test(line)
+        || /^>\s?/.test(line);
+    }
+
+    function renderMarkdownContent(container, markdown) {
+      if (!container) return;
+      container.textContent = "";
+      container.classList.add("markdown");
+      const source = String(markdown || "").replace(/\r\n?/g, "\n");
+      if (!source) return;
+      const lines = source.split("\n");
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line.trim()) {
+          i += 1;
+          continue;
+        }
+
+        const fence = line.match(/^```\s*([A-Za-z0-9_+.#-]*)?.*$/);
+        if (fence) {
+          const lang = fence[1] || "";
+          i += 1;
+          const codeLines = [];
+          while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+            codeLines.push(lines[i]);
+            i += 1;
+          }
+          if (i < lines.length) i += 1;
+          container.appendChild(createCodeBlock(codeLines.join("\n"), lang));
+          continue;
+        }
+
+        const heading = line.match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+          const level = heading[1].length;
+          const el = document.createElement(`h${level + 1}`);
+          el.className = `md-heading md-heading-${level}`;
+          appendInlineMarkdown(el, heading[2]);
+          container.appendChild(el);
+          i += 1;
+          continue;
+        }
+
+        if (/^\s*[-*]\s+/.test(line)) {
+          const list = document.createElement("ul");
+          list.className = "md-list";
+          while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+            const item = document.createElement("li");
+            appendInlineMarkdown(item, lines[i].replace(/^\s*[-*]\s+/, ""));
+            list.appendChild(item);
+            i += 1;
+          }
+          container.appendChild(list);
+          continue;
+        }
+
+        if (/^\s*\d+\.\s+/.test(line)) {
+          const list = document.createElement("ol");
+          list.className = "md-list";
+          while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+            const item = document.createElement("li");
+            appendInlineMarkdown(item, lines[i].replace(/^\s*\d+\.\s+/, ""));
+            list.appendChild(item);
+            i += 1;
+          }
+          container.appendChild(list);
+          continue;
+        }
+
+        if (/^>\s?/.test(line)) {
+          const quote = document.createElement("blockquote");
+          quote.className = "md-quote";
+          const quoteLines = [];
+          while (i < lines.length && /^>\s?/.test(lines[i])) {
+            quoteLines.push(lines[i].replace(/^>\s?/, ""));
+            i += 1;
+          }
+          appendInlineLines(quote, quoteLines);
+          container.appendChild(quote);
+          continue;
+        }
+
+        const paraLines = [];
+        while (i < lines.length && lines[i].trim() && !isMarkdownBlockStart(lines[i])) {
+          paraLines.push(lines[i]);
+          i += 1;
+        }
+        const p = document.createElement("div");
+        p.className = "md-p";
+        appendInlineLines(p, paraLines);
+        container.appendChild(p);
+      }
+    }
+
+    function markdownLikelyPresent(text) {
+      return /```|`[^`\n]+`|\*\*[^*\n]+\*\*|^#{1,3}\s+|^\s*[-*]\s+|^\s*\d+\.\s+|^>\s?/m.test(String(text || ""));
+    }
+
+    function renderInputPreview() {
+      if (!inputPreviewEl || !inputEl) return;
+      const text = inputEl.value || "";
+      if (!text.trim() || !markdownLikelyPresent(text)) {
+        inputPreviewEl.hidden = true;
+        inputPreviewEl.textContent = "";
+        return;
+      }
+      renderMarkdownContent(inputPreviewEl, text);
+      inputPreviewEl.hidden = false;
     }
 
     function buildImageUiUrl({ prompt, image_request }) {
@@ -873,11 +1177,11 @@
       } catch (e) {}
 
       const contentEl = document.createElement("div");
-      contentEl.className = "content";
+      contentEl.className = "content markdown";
       if (html) {
         contentEl.innerHTML = html;
       } else {
-        contentEl.textContent = content || "";
+        renderMarkdownContent(contentEl, content || "");
       }
 
       if (Array.isArray(attachments) && attachments.length > 0) {
@@ -1730,7 +2034,7 @@
       thinkingPanel.appendChild(thinkingSummary);
       thinkingPanel.appendChild(thinkingBody);
       const contentText = document.createElement("div");
-      contentText.className = "content-text";
+      contentText.className = "content-text markdown";
       assistant.contentEl.appendChild(thinkingPanel);
       assistant.contentEl.appendChild(contentText);
 
@@ -1781,7 +2085,7 @@
 
         if (!resp.ok) {
           const text = await resp.text();
-          contentText.textContent = text;
+          renderMarkdownContent(contentText, text);
           assistant.metaEl.textContent = `HTTP ${resp.status}`;
           return;
         }
@@ -1899,13 +2203,13 @@
                   }
                   thinkingResetPending = false;
                 }
-                contentText.textContent = full;
+                renderMarkdownContent(contentText, full);
                 scrollToBottom();
                 continue;
               }
 
               if (evt.type === "error") {
-                contentText.textContent = `${full}\n\n[error]\n${JSON.stringify(evt.error || evt, null, 2)}`;
+                renderMarkdownContent(contentText, `${full}\n\n[error]\n\`\`\`json\n${JSON.stringify(evt.error || evt, null, 2)}\n\`\`\``);
                 updateMeta("error");
                 continue;
               }
@@ -1965,7 +2269,7 @@
         }
         if (!resp.ok) {
           const detail = payload && typeof payload === "object" && payload.detail && typeof payload.detail === "object" ? payload.detail : null;
-          assistant.contentEl.textContent = detail?.message || (typeof payload === "string" ? payload : JSON.stringify(payload));
+          renderMarkdownContent(assistant.contentEl, detail?.message || (typeof payload === "string" ? payload : `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``));
           assistant.metaEl.textContent = `Music HTTP ${resp.status}`;
           return;
         }
@@ -1979,7 +2283,7 @@
           return;
         }
 
-        assistant.contentEl.textContent = `Music response: ${JSON.stringify(payload)}`;
+        renderMarkdownContent(assistant.contentEl, `Music response:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``);
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -2004,7 +2308,7 @@
         const text = await resp.text();
         if (handle401(resp)) return;
         if (!resp.ok) {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           assistant.metaEl.textContent = `Scan HTTP ${resp.status}`;
           return;
         }
@@ -2012,7 +2316,7 @@
         try {
           payload = JSON.parse(text);
         } catch {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           return;
         }
 
@@ -2040,7 +2344,7 @@
           ocrText = String(payload || '');
         }
 
-        assistant.contentEl.textContent = ocrText;
+        renderMarkdownContent(assistant.contentEl, ocrText);
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -2061,7 +2365,7 @@
         const text = await resp.text();
         if (handle401(resp)) return;
         if (!resp.ok) {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           assistant.metaEl.textContent = `Image HTTP ${resp.status}`;
           return;
         }
@@ -2069,7 +2373,7 @@
         try {
           payload = JSON.parse(text);
         } catch {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           assistant.metaEl.textContent = "Image OK (non-JSON)";
           return;
         }
@@ -2084,7 +2388,7 @@
           assistant.contentEl.innerHTML = `<img class="gen" src="${escapeHtml(src)}" alt="generated" />`;
           return;
         }
-        assistant.contentEl.textContent = JSON.stringify(payload, null, 2);
+        renderMarkdownContent(assistant.contentEl, `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``);
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -2113,7 +2417,7 @@
         if (handle401(resp)) return;
         if (!resp.ok) {
           const txt = await resp.text();
-          assistant.contentEl.textContent = `TTS HTTP ${resp.status}: ${txt}`;
+          renderMarkdownContent(assistant.contentEl, `TTS HTTP ${resp.status}:\n${txt}`);
           return;
         }
 
@@ -2160,7 +2464,7 @@
           return;
         }
 
-        assistant.contentEl.textContent = "No audio returned from TTS.";
+        renderMarkdownContent(assistant.contentEl, "No audio returned from TTS.");
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -2177,6 +2481,7 @@
         const text = (inputEl.value || '').trim();
         if (!text && pendingAttachments.length === 0) return;
         inputEl.value = '';
+        renderInputPreview();
 
         // Explicit command routing takes precedence.
         const lower = text.trim().toLowerCase();
@@ -2295,6 +2600,7 @@
       window.addEventListener('gateway-auth-changed', () => updateApiKeyStatusUi());
       updateApiKeyStatusUi();
       if (inputEl) {
+        inputEl.addEventListener('input', () => renderInputPreview());
         inputEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
@@ -2302,7 +2608,10 @@
           }
         });
       }
-      if (clearEl) clearEl.addEventListener('click', () => { if (inputEl) inputEl.value = ''; });
+      if (clearEl) clearEl.addEventListener('click', () => {
+        if (inputEl) inputEl.value = '';
+        renderInputPreview();
+      });
       function formatBytes(bytes) {
         if (!Number.isFinite(bytes)) return "";
         if (bytes < 1024) return `${bytes} B`;
