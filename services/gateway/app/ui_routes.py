@@ -4454,6 +4454,9 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                 entry["status_label"] = "Reachable and ready"
                 entry["status_color"] = "green"
                 entry["status_rank"] = 0
+                entry["health_error"] = ""
+                entry["last_health_error"] = ""
+                entry["last_action_error"] = ""
         backends.append(entry)
 
     telegram_entry: Dict[str, Any] = {

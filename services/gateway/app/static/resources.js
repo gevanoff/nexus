@@ -159,6 +159,32 @@
     return values.map((item) => String(item || "").trim()).filter(Boolean);
   }
 
+  const backendGroups = [
+    { id: "chat", label: "Chat & Reasoning", capabilities: ["chat", "transcription"] },
+    { id: "embeddings", label: "Embeddings", capabilities: ["embeddings"] },
+    { id: "images", label: "Images", capabilities: ["images"] },
+    { id: "video", label: "Video", capabilities: ["video"] },
+    { id: "speech", label: "Speech & Audio", capabilities: ["tts", "speech_to_speech"] },
+    { id: "music", label: "Music", capabilities: ["music"] },
+    { id: "ocr", label: "OCR", capabilities: ["ocr"] },
+    { id: "integrations", label: "Integrations", capabilities: ["bridge"] },
+    { id: "other", label: "Other", capabilities: [] },
+  ];
+
+  function backendGroupFor(backend) {
+    const capabilities = new Set(capabilityList(backend));
+    const provider = String(backend?.provider || "").trim().toLowerCase();
+    const backendClass = String(backend?.backend_class || "").trim().toLowerCase();
+    for (const group of backendGroups) {
+      if (group.id === "other") continue;
+      if (group.capabilities.some((capability) => capabilities.has(capability))) return group;
+    }
+    if (provider.includes("vllm") || provider.includes("mlx") || backendClass.includes("vllm") || backendClass.includes("mlx")) {
+      return backendGroups[0];
+    }
+    return backendGroups[backendGroups.length - 1];
+  }
+
   function mergeBackendStatusPayload(lifecyclePayload, registryPayload) {
     if (!registryPayload || typeof registryPayload !== "object") return lifecyclePayload || {};
     const base = lifecyclePayload && typeof lifecyclePayload === "object" ? { ...lifecyclePayload } : {};
@@ -266,12 +292,20 @@
       return;
     }
     const tierRank = { crucial: 0, high: 1, optional: 2 };
-    [...backends].sort((a, b) => {
+    const sortedBackends = [...backends].sort((a, b) => {
       const ta = tierRank[a.tier] ?? 9;
       const tb = tierRank[b.tier] ?? 9;
       if (ta !== tb) return ta - tb;
       return String(a.host || "").localeCompare(String(b.host || "")) || String(a.display_name || a.backend_class).localeCompare(String(b.display_name || b.backend_class));
-    }).forEach((backend) => {
+    });
+
+    const groups = new Map(backendGroups.map((group) => [group.id, { ...group, backends: [] }]));
+    sortedBackends.forEach((backend) => {
+      const group = backendGroupFor(backend);
+      groups.get(group.id).backends.push(backend);
+    });
+
+    const renderBackendCard = (backend) => {
       const card = document.createElement("div");
       const lifecycleStatus = safeStatusClass(backend.status);
       card.className = `backend-card status-${lifecycleStatus} ${backend.active ? "active" : ""} ${backend.active && backend.ready === false ? "blocked" : ""}`;
@@ -357,7 +391,33 @@
         }
         card.appendChild(controls);
       }
-      backendsEl.appendChild(card);
+      return card;
+    };
+
+    backendGroups.forEach((groupDef) => {
+      const group = groups.get(groupDef.id);
+      if (!group || !group.backends.length) return;
+
+      const section = document.createElement("section");
+      section.className = "backend-group";
+
+      const header = document.createElement("div");
+      header.className = "backend-group-header";
+      const title = document.createElement("div");
+      title.className = "backend-group-title";
+      title.textContent = group.label;
+      const count = document.createElement("div");
+      count.className = "backend-group-count";
+      count.textContent = `${group.backends.length}`;
+      header.appendChild(title);
+      header.appendChild(count);
+      section.appendChild(header);
+
+      const list = document.createElement("div");
+      list.className = "backend-group-list";
+      group.backends.forEach((backend) => list.appendChild(renderBackendCard(backend)));
+      section.appendChild(list);
+      backendsEl.appendChild(section);
     });
   }
 
