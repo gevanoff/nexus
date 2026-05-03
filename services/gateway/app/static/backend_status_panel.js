@@ -1,6 +1,10 @@
 (() => {
   const panelSelector = 'details[data-backend-status]';
   const styleId = 'backend-status-shared-styles';
+  const CACHE_KEY = 'nexus.backendStatusPanel.status.v1';
+  const POLL_INTERVAL_MS = 30000;
+  const STALE_AFTER_POLLS = 3;
+  let pollIntervalSec = POLL_INTERVAL_MS / 1000;
 
   function ensureSharedStyles() {
     if (document.getElementById(styleId)) return;
@@ -12,6 +16,7 @@
       .status-row.ok { background: rgba(24, 126, 76, 0.16); border-color: rgba(42, 178, 103, 0.46); }
       .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
       .status-row.bad { background: rgba(140, 18, 36, 0.22); border-color: rgba(255, 73, 97, 0.58); }
+      .status-row.stale { border-color: rgba(255,200,50,0.72); box-shadow: inset 4px 0 0 rgba(255,200,50,0.72); }
       .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
       .status-row.inactive-unhealthy { background: rgba(224,0,255,0.30); border-color: rgba(255,0,255,0.80); }
       .status-row.inactive-unknown { background: rgba(220,228,240,0.12); border-color: rgba(220,228,240,0.38); }
@@ -72,6 +77,53 @@
     }
   }
 
+  function loadCachedPayload() {
+    try {
+      const raw = window.localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (!payload || typeof payload !== 'object') return null;
+      return payload;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveCachedPayload(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    try {
+      window.localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function updatePollInterval(payload) {
+    const settings = payload?.settings && typeof payload.settings === 'object' ? payload.settings : {};
+    const value = Number(settings.poll_interval_sec || settings.health_poll_interval_sec || 0);
+    if (Number.isFinite(value) && value > 0) pollIntervalSec = value;
+  }
+
+  function timestampIsStale(tsSeconds) {
+    const ts = Number(tsSeconds || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return false;
+    const ageSec = (Date.now() / 1000) - ts;
+    return Number.isFinite(ageSec) && ageSec > pollIntervalSec * STALE_AFTER_POLLS;
+  }
+
+  function staleLabel(tsSeconds) {
+    if (!timestampIsStale(tsSeconds)) return '';
+    const ageSec = Math.max(0, Math.floor((Date.now() / 1000) - Number(tsSeconds || 0)));
+    if (ageSec < 3600) return `Stale ${Math.max(1, Math.floor(ageSec / 60))}m`;
+    return `Stale ${Math.floor(ageSec / 3600)}h`;
+  }
+
+  function effectiveBackendLastCheck(backend) {
+    return Math.max(
+      Number(backend?.last_checked_at || 0),
+      Number(backend?.last_check || 0),
+      Number(backend?.gateway_health?.last_check || 0),
+    );
+  }
+
   function lifecycleColorClass(color) {
     const value = String(color || '').toLowerCase();
     if (['green', 'blue', 'purple', 'grey', 'red', 'yellow'].includes(value)) return value;
@@ -100,6 +152,7 @@
   }
 
   const backendLabels = {
+    local_mlx: 'MLX',
     gpu_fast: 'SDXL-Turbo',
     gpu_heavy: 'InvokeAI',
     lighton_ocr: 'LightOnOCR',
@@ -107,9 +160,25 @@
     skyreels_v2: 'SkyReels-V2',
   };
 
+  function canonicalBackendClass(value) {
+    const normalized = String(value || '').trim();
+    if (normalized === 'mlx' || normalized === 'mlx-coder' || normalized === 'mlx_coder') return 'local_mlx';
+    return normalized;
+  }
+
+  function backendMatchesClass(backend, requestedClass) {
+    const requested = canonicalBackendClass(requestedClass);
+    const actual = canonicalBackendClass(backend?.backend_class);
+    if (requested && requested === actual) return true;
+    const aliases = Array.isArray(backend?.aliases) ? backend.aliases : [];
+    return aliases.some((alias) => canonicalBackendClass(alias?.name) === requested);
+  }
+
   function renderBackendRow(backend, { displayName, missing } = {}) {
     const row = document.createElement('div');
     row.className = 'status-row';
+    const lastCheckValue = effectiveBackendLastCheck(backend);
+    if (timestampIsStale(lastCheckValue)) row.classList.add('stale');
 
     const header = document.createElement('div');
     header.className = 'status-row-header';
@@ -220,6 +289,14 @@
         unknown.textContent = 'Never ready';
         badges.appendChild(unknown);
       }
+
+      const staleness = staleLabel(lastCheckValue);
+      if (staleness) {
+        const staleBadge = document.createElement('span');
+        staleBadge.className = 'status-badge yellow';
+        staleBadge.textContent = staleness;
+        badges.appendChild(staleBadge);
+      }
     }
 
     header.appendChild(badges);
@@ -231,7 +308,6 @@
       detail.textContent = 'Not configured in the backend registry.';
     } else {
       const capabilities = Array.isArray(backend.capabilities) ? backend.capabilities.join(', ') : 'unknown';
-      const lastCheckValue = Number(backend.last_checked_at || backend.last_check || 0);
       const detailParts = [`Capabilities: ${capabilities}`, `Last check: ${lastCheckValue > 0 ? formatTimestamp(lastCheckValue) : '--'}`];
       const lastReady = Number(backend.last_ready_at || backend.last_confirmed_working_at || 0);
       const lastUnhealthy = Number(backend.last_unhealthy_at || 0);
@@ -240,6 +316,8 @@
       if (backend.active === false && lastUnhealthy > 0 && lastUnhealthy > lastReady) detailParts.push(`Last unhealthy: ${formatTimestamp(lastUnhealthy)}`);
       if (backend.active === false && lastStopped > 0) detailParts.push(`Stopped: ${formatTimestamp(lastStopped)}`);
       if (backend.inflight) detailParts.push(`${backend.inflight} running`);
+      const staleness = staleLabel(lastCheckValue);
+      if (staleness) detailParts.push(staleness);
       detail.textContent = detailParts.join(' • ');
     }
     row.appendChild(detail);
@@ -360,10 +438,12 @@
         }
 
         const payload = await resp.json();
+        updatePollInterval(payload);
+        saveCachedPayload(payload);
         const aliasConfig = payload?.alias_config || {};
         const allBackends = Array.isArray(payload?.backends) ? payload.backends : [];
         const filtered = classes.length
-          ? allBackends.filter((item) => classes.includes(String(item?.backend_class || '').trim()))
+          ? allBackends.filter((item) => classes.some((name) => backendMatchesClass(item, name)))
           : allBackends;
 
         if (metaEl) {
@@ -380,11 +460,23 @@
           updatedEl.textContent = `Last updated: ${formatTimestamp(Number(payload?.generated_at || 0))}`;
         }
       } catch (e) {
+        const cached = loadCachedPayload();
+        if (cached) {
+          updatePollInterval(cached);
+          const allBackends = Array.isArray(cached?.backends) ? cached.backends : [];
+          const filtered = classes.length
+            ? allBackends.filter((item) => classes.some((name) => backendMatchesClass(item, name)))
+            : allBackends;
+          renderRows(filtered);
+          if (updatedEl) {
+            updatedEl.textContent = `Last updated: ${formatTimestamp(Number(cached?.generated_at || 0))} (cached)`;
+          }
+        }
         if (errorEl) {
           errorEl.textContent = `Failed to load backend status: ${String(e?.message || e)}`;
           errorEl.hidden = false;
         }
-        if (listEl) {
+        if (listEl && !cached) {
           listEl.innerHTML = '';
           const empty = document.createElement('div');
           empty.className = 'status-empty';
@@ -403,10 +495,22 @@
 
     function startPolling() {
       stopPolling();
+      const cached = loadCachedPayload();
+      if (cached) {
+        updatePollInterval(cached);
+        const allBackends = Array.isArray(cached?.backends) ? cached.backends : [];
+        const filtered = classes.length
+          ? allBackends.filter((item) => classes.some((name) => backendMatchesClass(item, name)))
+          : allBackends;
+        renderRows(filtered);
+        if (updatedEl) {
+          updatedEl.textContent = `Last updated: ${formatTimestamp(Number(cached?.generated_at || 0))} (cached)`;
+        }
+      }
       void loadStatus();
       timer = window.setInterval(() => {
         void loadStatus();
-      }, 30000);
+      }, POLL_INTERVAL_MS);
     }
 
     panel.addEventListener('toggle', () => {

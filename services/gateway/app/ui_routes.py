@@ -4350,7 +4350,11 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                     continue
                 key = str(item.get("backend_class") or "").strip()
                 if key:
-                    lifecycle_by_backend[key] = item
+                    resolved_key = registry.resolve_backend_class(key)
+                    if resolved_key in registry.backends:
+                        lifecycle_by_backend[resolved_key] = item
+                    else:
+                        lifecycle_by_backend[key] = item
     except Exception:
         lifecycle_by_backend = {}
 
@@ -4383,6 +4387,12 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                     "ready": status.is_ready,
                     "last_check": status.last_check,
                     "error": status.error,
+                    "gateway_health": {
+                        "healthy": status.is_healthy,
+                        "ready": status.is_ready,
+                        "last_check": status.last_check,
+                        "error": status.error,
+                    },
                 }
             )
         lifecycle_entry = lifecycle_by_backend.get(backend_class)
@@ -4406,7 +4416,6 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                 "status_label",
                 "status_color",
                 "status_rank",
-                "health_error",
                 "last_checked_at",
                 "last_healthy_at",
                 "last_ready_at",
@@ -4423,6 +4432,28 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                     entry[key] = lifecycle_entry[key]
             if lifecycle_entry.get("host"):
                 entry["lifecycle_host"] = lifecycle_entry.get("host")
+        if status is not None:
+            # The lifecycle manager provides tier/action metadata, but the
+            # gateway health checker is the source of truth for whether a
+            # configured backend can currently serve gateway traffic. This is
+            # especially important for legacy names such as mlx-coder, which
+            # are aliases of local_mlx rather than independent lifecycle units.
+            entry["healthy"] = status.is_healthy
+            entry["ready"] = status.is_ready
+            entry["last_check"] = status.last_check
+            if status.error:
+                entry["error"] = status.error
+                entry["health_error"] = status.error
+            elif entry.get("health_error") and status.is_ready:
+                entry["health_error"] = ""
+            check_interval = float(getattr(checker, "check_interval", 30.0) or 30.0)
+            health_is_fresh = (time.time() - float(status.last_check or 0)) <= (check_interval * 3)
+            if status.is_ready and health_is_fresh:
+                entry["active"] = True
+                entry["status"] = "gateway_ready"
+                entry["status_label"] = "Reachable and ready"
+                entry["status_color"] = "green"
+                entry["status_rank"] = 0
         backends.append(entry)
 
     telegram_entry: Dict[str, Any] = {
@@ -4468,6 +4499,9 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     backends.sort(key=lambda item: item.get("backend_class") or "")
     return {
         "generated_at": time.time(),
+        "settings": {
+            "health_poll_interval_sec": getattr(checker, "check_interval", 30.0),
+        },
         "alias_config": {
             "source": alias_state.source,
             "configured_path": alias_state.configured_path,

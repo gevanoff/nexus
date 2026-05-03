@@ -4,7 +4,10 @@
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
   const CACHE_KEY = "nexus.resources.status.v1";
+  const POLL_INTERVAL_MS = 30000;
+  const STALE_AFTER_POLLS = 3;
   let currentUserIsAdmin = false;
+  let currentPollIntervalSec = POLL_INTERVAL_MS / 1000;
 
   function setStatus(text, isError) {
     if (!statusEl) return;
@@ -90,6 +93,34 @@
     return `refreshed ${formatTimestamp(ts)}`;
   }
 
+  function updatePollInterval(payload) {
+    const settings = payload?.settings && typeof payload.settings === "object" ? payload.settings : {};
+    const value = Number(settings.poll_interval_sec || settings.health_poll_interval_sec || 0);
+    if (Number.isFinite(value) && value > 0) currentPollIntervalSec = value;
+  }
+
+  function isStale(tsSeconds) {
+    const ts = Number(tsSeconds || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return false;
+    const ageSec = (Date.now() / 1000) - ts;
+    return Number.isFinite(ageSec) && ageSec > currentPollIntervalSec * STALE_AFTER_POLLS;
+  }
+
+  function staleText(tsSeconds) {
+    if (!isStale(tsSeconds)) return "";
+    const ageSec = Math.max(0, Math.floor((Date.now() / 1000) - Number(tsSeconds || 0)));
+    if (ageSec < 3600) return `stale ${Math.max(1, Math.floor(ageSec / 60))}m`;
+    return `stale ${Math.floor(ageSec / 3600)}h`;
+  }
+
+  function effectiveBackendLastCheck(backend) {
+    return Math.max(
+      Number(backend?.last_checked_at || 0),
+      Number(backend?.last_check || 0),
+      Number(backend?.gateway_health?.last_check || 0),
+    );
+  }
+
   function loadCachedPayload() {
     try {
       const raw = window.localStorage.getItem(CACHE_KEY);
@@ -143,8 +174,8 @@
       if (!key) return;
       const existing = merged.get(key) || {};
       merged.set(key, {
-        ...backend,
         ...existing,
+        ...backend,
         capabilities: capabilityList(existing).length ? existing.capabilities : backend.capabilities,
         aliases: Array.isArray(backend.aliases) ? backend.aliases : existing.aliases,
         description: backend.description || existing.description,
@@ -156,6 +187,10 @@
     });
     if (merged.size > 0) base.backends = [...merged.values()];
     if (registryPayload.alias_config) base.alias_config = registryPayload.alias_config;
+    base.settings = {
+      ...(registryPayload.settings && typeof registryPayload.settings === "object" ? registryPayload.settings : {}),
+      ...(lifecyclePayload?.settings && typeof lifecyclePayload.settings === "object" ? lifecyclePayload.settings : {}),
+    };
     base.generated_at = Number(lifecyclePayload?.generated_at || registryPayload?.generated_at || Date.now() / 1000);
     return base;
   }
@@ -170,6 +205,7 @@
     hosts.forEach((host) => {
       const card = document.createElement("div");
       card.className = "card";
+      if (isStale(host.updated_at)) card.classList.add("stale");
       const name = document.createElement("div");
       name.className = "host-name";
       name.textContent = host.name || "unknown";
@@ -180,6 +216,8 @@
       const hostMeta = [host.resource_kind || host.platform || "host"];
       const hostFreshness = freshnessText(host.updated_at);
       if (hostFreshness) hostMeta.push(hostFreshness);
+      const hostStale = staleText(host.updated_at);
+      if (hostStale) hostMeta.push(hostStale);
       if (host.error) hostMeta.push(host.error);
       meta.textContent = hostMeta.join(" · ");
       card.appendChild(meta);
@@ -237,6 +275,8 @@
       const card = document.createElement("div");
       const lifecycleStatus = safeStatusClass(backend.status);
       card.className = `backend-card status-${lifecycleStatus} ${backend.active ? "active" : ""} ${backend.active && backend.ready === false ? "blocked" : ""}`;
+      const lastCheck = effectiveBackendLastCheck(backend);
+      if (isStale(lastCheck)) card.classList.add("stale");
 
       const left = document.createElement("div");
       const name = document.createElement("div");
@@ -270,8 +310,10 @@
       } else {
         badges.appendChild(badge("never ready", "grey"));
       }
-      const backendFreshness = freshnessText(backend.last_checked_at || backend.last_check);
+      const backendFreshness = freshnessText(lastCheck);
       if (backendFreshness) badges.appendChild(badge(backendFreshness.replace("refreshed", "checked"), "blue"));
+      const backendStale = staleText(lastCheck);
+      if (backendStale) badges.appendChild(badge(backendStale, "yellow"));
       if (backend.inflight) badges.appendChild(badge(`${backend.inflight} running`, "ok"));
       left.appendChild(badges);
 
@@ -289,7 +331,7 @@
       }
       if (Number(backend.idle_observed_vram_mb || 0) > 0) detailParts.push(`idle ${fmtMb(backend.idle_observed_vram_mb)}`);
       if (Number(backend.peak_observed_vram_mb || 0) > 0) detailParts.push(`peak ${fmtMb(backend.peak_observed_vram_mb)}`);
-      if (backend.last_checked_at || backend.last_check) detailParts.push(`last check ${formatTimestamp(backend.last_checked_at || backend.last_check)}`);
+      if (lastCheck) detailParts.push(`last check ${formatTimestamp(lastCheck)}`);
       if (backend.last_action_error) detailParts.push(backend.last_action_error);
       if (backend.health_error) detailParts.push(backend.health_error);
       if (!backend.health_error && backend.status === "inactive_unhealthy" && backend.last_health_error) detailParts.push(backend.last_health_error);
@@ -333,6 +375,7 @@
 
   function renderPayload(payload, options) {
     const opts = options || {};
+    updatePollInterval(payload);
     renderHosts(payload.hosts || []);
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];
@@ -360,15 +403,9 @@
       const lifecyclePromise = fetchJson(lifecyclePath);
       const registryPromise = fetchJson("/ui/api/backend_status");
 
-      const lifecycleResult = await lifecyclePromise;
-      if (lifecycleResult.redirected) return;
+      const [lifecycleResult, registryResult] = await Promise.all([lifecyclePromise, registryPromise]);
+      if (lifecycleResult.redirected || registryResult.redirected) return;
       let payload = lifecycleResult.data || null;
-      if (payload) {
-        renderPayload(payload);
-        saveCachedPayload(payload);
-      }
-
-      const registryResult = await registryPromise;
       if (registryResult.redirected) return;
       if (!payload && !registryResult.data) {
         throw new Error(lifecycleResult.error || registryResult.error || "No status payload returned");
@@ -377,6 +414,8 @@
       renderPayload(payload, { registryError: registryResult.error });
       saveCachedPayload(payload);
     } catch (error) {
+      const cached = loadCachedPayload();
+      if (cached) renderPayload(cached, { cached: true });
       setStatus(`Lifecycle status failed: ${String(error?.message || error)}`, true);
     } finally {
       if (refreshEl) refreshEl.disabled = false;
@@ -417,5 +456,5 @@
     if (cached) renderPayload(cached, { cached: true });
     await loadStatus(false);
   })();
-  window.setInterval(() => void loadStatus(false), 30000);
+  window.setInterval(() => void loadStatus(false), POLL_INTERVAL_MS);
 })();
