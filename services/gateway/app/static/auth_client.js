@@ -30,6 +30,20 @@
     recordAudio: 'Start recording a voice sample from your microphone.',
     stopRecording: 'Stop the current voice-sample recording.',
     clearRecording: 'Discard the current recorded voice sample.',
+    refreshTasks: 'Reload coding workspaces.',
+    createTask: 'Create an isolated coding workspace clone.',
+    statusBtn: 'Show git status for the selected coding workspace.',
+    diffBtn: 'Show the current diff for the selected coding workspace.',
+    briefBtn: 'Show a copyable brief for a coding agent.',
+    runCommand: 'Run the argv command inside the selected coding workspace.',
+    commitBtn: 'Commit current workspace changes.',
+    pushBtn: 'Push the current workspace branch.',
+    prBtn: 'Open a draft pull request for the current workspace branch.',
+    loadTree: 'Load the file list for the selected workspace path.',
+    readFile: 'Read the selected workspace file.',
+    writeFile: 'Write the selected workspace file.',
+    copyOutput: 'Copy the current output panel text.',
+    deleteTask: 'Delete the selected coding workspace clone.',
   };
   const INPUT_TO_ACTION = {
     username: 'login',
@@ -47,6 +61,15 @@
     speed: 'generate',
     duration: 'generate',
     model: 'generate',
+    repoUrl: 'createTask',
+    baseBranch: 'createTask',
+    branchName: 'createTask',
+    commandInput: 'runCommand',
+    commandCwd: 'runCommand',
+    commitMessage: 'commitBtn',
+    prTitle: 'prBtn',
+    treePath: 'loadTree',
+    filePath: 'readFile',
   };
   const DEFAULT_ACTION_IDS = ['useApiKey', 'login', 'generate', 'run', 'settings_create_api_key', 'settings_save', 'applyBulk'];
 

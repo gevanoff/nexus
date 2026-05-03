@@ -58,7 +58,9 @@ repo docs, or agent prompts.
 
 Run the coding AI in a separate workspace from the operator checkout:
 
-- checkout root: `C:\Users\paper\Code\nexus-ai-worktrees` or a dedicated WSL path
+- checkout root: Nexus Coding Workspaces under
+  `/var/lib/gateway/data/coding/workspaces`, or a dedicated WSL path for agents
+  that are not using the gateway API
 - git identity: `Nexus AI Bot <nexus-ai-bot@users.noreply.github.com>`
 - branch prefix: `ai/<ticket-or-task-slug>`
 - PR mode: draft by default
@@ -66,16 +68,46 @@ Run the coding AI in a separate workspace from the operator checkout:
 The operator checkout can remain authenticated as the human account. The agent
 checkout should use only the bot or GitHub App credential.
 
+## Nexus Coding Workspaces
+
+The gateway exposes an initial native workflow for isolated coding tasks:
+
+- UI: `/ui/coding`
+- bearer API: `/v1/coding/*`
+- UI API: `/ui/api/coding/*`
+
+Each task creates a fresh clone under the gateway data directory, creates a
+working branch, and exposes scoped file, tree, command, diff, commit, push, and
+draft PR operations. Commands are argv arrays, not shell strings, and run only
+inside the task clone. Destructive git operations such as `reset`, `clean`,
+`rebase`, `merge`, `restore`, and `rm` are blocked.
+
+Important gateway settings:
+
+- `CODING_DEFAULT_REPO_URL`
+- `CODING_ALLOWED_REPOS`
+- `CODING_REQUIRE_ADMIN`
+- `CODING_ALLOWED_COMMANDS`
+- `CODING_GIT_TOKEN`
+- `CODING_GIT_AUTHOR_NAME`
+- `CODING_GIT_AUTHOR_EMAIL`
+
+For GitHub access, prefer a short-lived GitHub App installation token in
+`CODING_GIT_TOKEN`. A fine-grained machine-user PAT is acceptable for the first
+iteration. The token is passed to git through a temporary askpass helper and is
+not stored in task metadata.
+
 ## Workflow Contract
 
 1. Human creates or assigns an issue/task.
-2. Agent creates a fresh branch from the target base branch.
-3. Agent makes scoped changes and runs local checks.
-4. Agent commits with a clear message and pushes the branch.
-5. Agent opens a draft PR.
-6. GitHub Actions runs.
-7. Agent may inspect CI logs and push fixes.
-8. Human reviews and merges.
+2. Agent or operator creates a Nexus Coding Workspace from the target base branch.
+3. Agent makes scoped changes and runs local checks through the workspace API.
+4. Agent reviews the diff.
+5. Agent commits with a clear message and pushes the branch.
+6. Agent opens a draft PR.
+7. GitHub Actions runs.
+8. Agent may inspect CI logs and push fixes.
+9. Human reviews and merges.
 
 The agent should never force-push shared branches or push directly to `main`.
 
@@ -115,4 +147,3 @@ operations should remain controlled:
 - which issues/labels should trigger autonomous work
 - whether PR creation should be fully automatic or operator-approved
 - whether the agent should be allowed to run GitHub Actions workflow dispatches
-

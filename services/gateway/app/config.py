@@ -350,6 +350,28 @@ class Settings(BaseSettings):
     COORDINATOR_MAX_PARTICIPANTS: int = 6
     COORDINATOR_PARALLEL_TIMEOUT_SEC: float = 300.0
 
+    # Nexus coding workspaces.
+    # These endpoints create isolated git clones under the gateway data dir and
+    # expose constrained file, git, shell, push, and PR operations for coding AIs.
+    CODING_ENABLED: bool = True
+    CODING_ALLOW_BEARER_API: bool = True
+    CODING_REQUIRE_ADMIN: bool = True
+    CODING_WORKSPACE_ROOT: str = "/var/lib/gateway/data/coding/workspaces"
+    CODING_TASKS_DIR: str = "/var/lib/gateway/data/coding/tasks"
+    CODING_DEFAULT_REPO_URL: str = "https://github.com/gevanoff/nexus.git"
+    CODING_ALLOWED_REPOS: str = "https://github.com/gevanoff/nexus.git"
+    CODING_ALLOWED_REPOS_JSON: str = ""
+    CODING_DEFAULT_BASE_BRANCH: str = "main"
+    CODING_BRANCH_PREFIX: str = "nexus-coder"
+    CODING_ALLOWED_COMMANDS: str = "git,rg,python,python3,node,npm,pytest,ruff,uv,gh"
+    CODING_COMMAND_TIMEOUT_SEC: int = 120
+    CODING_MAX_OUTPUT_CHARS: int = 40_000
+    CODING_FILE_MAX_BYTES: int = 500_000
+    CODING_GIT_USERNAME: str = "x-access-token"
+    CODING_GIT_TOKEN: str = ""
+    CODING_GIT_AUTHOR_NAME: str = "Nexus Coding Agent"
+    CODING_GIT_AUTHOR_EMAIL: str = "nexus-coder@localhost"
+
 
 S = Settings()
 

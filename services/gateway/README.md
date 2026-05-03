@@ -244,8 +244,29 @@ curl -X POST http://localhost:8800/v1/agent/coordinate \
     "input": "Review this migration plan and identify bugs or rollback risks.",
     "participants": ["coder", "coder-ai1", "coder-ada2"],
     "synthesizer": "default"
-  }'
+}'
 ```
+
+### Coding Workspaces
+
+The gateway can create isolated git clones for local coding agents:
+
+- browser UI: `https://<gateway>/ui/coding`
+- bearer API: `/v1/coding/*`
+
+Typical API flow:
+
+```bash
+curl -X POST http://localhost:8800/v1/coding/tasks \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{"prompt":"Update gateway docs","base_branch":"main"}'
+```
+
+Each task gets a fresh branch under `CODING_WORKSPACE_ROOT`. File reads/writes,
+commands, diffs, commits, pushes, and draft PR creation stay scoped to that task
+clone. Configure repository access with `CODING_ALLOWED_REPOS` and
+`CODING_GIT_TOKEN`.
 
 ### Service Discovery
 

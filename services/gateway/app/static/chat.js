@@ -2017,6 +2017,13 @@
         await generateSpeech(prompt || '');
         return;
       }
+      if (lower === '/code' || lower.startsWith('/code ')) {
+        const prompt = String(userText || "").replace(/^\/code\s*/i, '').trim();
+        const url = prompt ? `/ui/coding?prompt=${encodeURIComponent(prompt)}` : '/ui/coding';
+        try { window.open(url, '_blank', 'noopener'); } catch (e) { window.location.href = url; }
+        addMessage({ role: 'system', content: 'Opened Coding Workspaces in a new tab.' });
+        return;
+      }
 
       history.push({ role: "user", content: userText, attachments: pendingAttachments });
       addMessage({ role: "user", content: userText, attachments: pendingAttachments });
