@@ -30,7 +30,7 @@ def _max_turns(requested: Optional[int] = None) -> int:
         value = int(requested) if requested is not None else default
     except Exception:
         value = default
-    return max(1, min(value, max(1, default), 50))
+    return max(1, min(value, 50))
 
 
 def _max_runtime_sec(requested: Optional[float] = None) -> float:
@@ -92,6 +92,64 @@ def _clip_jsonable(value: Any, limit: Optional[int] = None) -> Any:
 
 def _event_result(value: Any) -> Any:
     return _clip_jsonable(value, min(_tool_result_char_limit(), 20_000))
+
+
+def _event_digest_line(event: Dict[str, Any]) -> str:
+    event_type = str(event.get("type") or "event")
+    if event_type == "assistant":
+        calls = event.get("tool_calls")
+        names = []
+        if isinstance(calls, list):
+            for item in calls:
+                if isinstance(item, dict) and item.get("name"):
+                    names.append(str(item.get("name")))
+        content = _clip_text(str(event.get("content") or "").strip(), 700)
+        return f"assistant tools={names or []} {content}".strip()
+    if event_type in {"tool_started", "tool_finished"}:
+        name = str(event.get("name") or "")
+        result = event.get("result")
+        detail = ""
+        if isinstance(result, dict):
+            if result.get("error"):
+                detail = f" error={_clip_text(result.get('error'), 500)}"
+            elif result.get("summary"):
+                detail = f" summary={_clip_text(result.get('summary'), 500)}"
+            elif result.get("path"):
+                detail = f" path={result.get('path')}"
+        return f"{event_type} {name}{detail}".strip()
+    if event_type in {"queued", "started", "turn_started", "review", "commit", "completed", "failed", "stopped"}:
+        summary = str(event.get("summary") or event.get("error") or "")
+        return f"{event_type} {_clip_text(summary, 700)}".strip()
+    return f"{event_type} {_clip_text(json.dumps(event, ensure_ascii=False, sort_keys=True), 700)}"
+
+
+def _previous_run_context(task: Dict[str, Any]) -> str:
+    previous_status = str(task.get("agent_previous_status") or "").strip()
+    previous_run_id = str(task.get("agent_previous_run_id") or "").strip()
+    previous_summary = str(task.get("agent_previous_summary") or "").strip()
+    previous_error = str(task.get("agent_previous_error") or "").strip()
+    events = task.get("agent_events")
+    event_lines: List[str] = []
+    if isinstance(events, list):
+        for item in events[-16:]:
+            if isinstance(item, dict):
+                event_lines.append(f"- {_event_digest_line(item)}")
+    if not previous_status and not event_lines:
+        return ""
+    bits = [
+        "Continuation context:",
+        f"- Previous run id: {previous_run_id or '(unknown)'}",
+        f"- Previous status: {previous_status or '(unknown)'}",
+    ]
+    if previous_summary:
+        bits.append(f"- Previous summary: {_clip_text(previous_summary, 1200)}")
+    if previous_error:
+        bits.append(f"- Previous error: {_clip_text(previous_error, 1200)}")
+    if event_lines:
+        bits.append("- Recent prior events:")
+        bits.extend(event_lines)
+    bits.append("Continue from the current workspace files and git diff. Do not repeat completed work unless needed.")
+    return "\n".join(bits)
 
 
 def _safe_args_preview(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -418,12 +476,16 @@ def _system_prompt(task: Dict[str, Any]) -> str:
 
 
 def _task_context(task: Dict[str, Any]) -> str:
-    return (
+    base = (
         f"User request:\n{str(task.get('prompt') or '').strip()}\n\n"
         f"Repository: {cw.redact_repo_url(str(task.get('repo_url') or ''))}\n"
         f"Branch: {task.get('branch_name')} from {task.get('base_branch')}\n"
         "Start by inspecting the repository, then proceed without waiting for more user input."
     )
+    previous = _previous_run_context(task)
+    if previous:
+        return f"{base}\n\n{previous}"
+    return base
 
 
 def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
@@ -454,6 +516,13 @@ async def start_agent_run(
     runtime = _max_runtime_sec(max_runtime_sec)
     run_id = new_id("coderun")
     model = _choose_model(task, coding_model)
+    previous_events = task.get("agent_events")
+    if not isinstance(previous_events, list):
+        previous_events = []
+    previous_run_id = str(task.get("agent_run_id") or "")
+    previous_status = str(task.get("agent_status") or "idle")
+    previous_summary = str(task.get("agent_summary") or "")
+    previous_error = str(task.get("agent_error") or "")
     now = time.time()
     await asyncio.to_thread(
         _mutate_task,
@@ -471,9 +540,13 @@ async def start_agent_run(
             "agent_last_event_at": now_unix(),
             "agent_summary": "",
             "agent_error": "",
+            "agent_previous_run_id": previous_run_id,
+            "agent_previous_status": previous_status,
+            "agent_previous_summary": previous_summary,
+            "agent_previous_error": previous_error,
             "agent_stop_requested": False,
             "agent_auto_commit": bool(auto_commit),
-            "agent_events": [],
+            "agent_events": previous_events[-_max_events():],
         },
     )
     await asyncio.to_thread(
@@ -487,6 +560,8 @@ async def start_agent_run(
             "max_runtime_sec": runtime,
             "auto_commit": bool(auto_commit),
             "actor": actor or "",
+            "continuation": bool(previous_run_id or previous_events),
+            "previous_status": previous_status,
         },
     )
     job = asyncio.create_task(
@@ -679,7 +754,10 @@ async def _run_agent(
                 break
 
         if not finish_summary and not finish_success:
-            finish_summary = "Turn limit reached before the agent called coding_finish."
+            finish_summary = (
+                "Turn limit reached before the agent called coding_finish. "
+                "Start another run on this same workspace to continue from the current files and diff."
+            )
             finish_success = False
 
         status_result = await asyncio.to_thread(cw.git_status, task_id, git_token_value=git_token_value)
