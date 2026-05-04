@@ -497,6 +497,7 @@ def create_task(
     branch_name: Optional[str],
     prompt: Optional[str],
     owner: Optional[str],
+    owner_user_id: Optional[int] = None,
     git_token_value: Optional[str] = None,
     coding_model: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -515,6 +516,7 @@ def create_task(
         "created_at": _now(),
         "updated_at": _now(),
         "owner": owner or "unknown",
+        "owner_user_id": owner_user_id,
         "repo_url": repo,
         "base_branch": base,
         "branch_name": branch,
@@ -995,6 +997,9 @@ Constraints:
 
 
 def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[str, Any]:
+    agent_events = task.get("agent_events")
+    if not isinstance(agent_events, list):
+        agent_events = []
     out = {
         "id": task.get("id"),
         "status": task.get("status"),
@@ -1013,6 +1018,23 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "last_pushed_at": task.get("last_pushed_at"),
         "last_pr_at": task.get("last_pr_at"),
         "last_pr_output": task.get("last_pr_output"),
+        "agent": {
+            "run_id": task.get("agent_run_id") or "",
+            "status": task.get("agent_status") or "idle",
+            "model": task.get("agent_model") or task.get("coding_model") or "",
+            "backend": task.get("agent_backend") or "",
+            "upstream_model": task.get("agent_upstream_model") or "",
+            "turn": int(task.get("agent_turn") or 0),
+            "max_turns": int(task.get("agent_max_turns") or 0),
+            "started_at": task.get("agent_started_at"),
+            "finished_at": task.get("agent_finished_at"),
+            "last_event_at": task.get("agent_last_event_at"),
+            "summary": task.get("agent_summary") or "",
+            "error": _redact_text(str(task.get("agent_error") or "")),
+            "stop_requested": bool(task.get("agent_stop_requested")),
+            "auto_commit": bool(task.get("agent_auto_commit")),
+            "events": agent_events[-80:],
+        },
     }
     if task.get("error"):
         out["error"] = _redact_text(str(task.get("error") or ""))
@@ -1035,6 +1057,8 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "command_timeout_sec": command_timeout_sec(),
         "max_output_chars": max_output_chars(),
         "file_max_bytes": file_max_bytes(),
+        "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 12) or 12),
+        "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 1800) or 1800),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
         "preferred_coding_model": str(preferred_coding_model or "").strip(),
         "gh_cli_available": shutil.which("gh") is not None,

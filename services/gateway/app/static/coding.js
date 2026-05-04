@@ -6,6 +6,9 @@
     branchName: document.getElementById("branchName"),
     taskPrompt: document.getElementById("taskPrompt"),
     createTask: document.getElementById("createTask"),
+    createAndRun: document.getElementById("createAndRun"),
+    agentMaxTurns: document.getElementById("agentMaxTurns"),
+    agentAutoCommit: document.getElementById("agentAutoCommit"),
     configMeta: document.getElementById("configMeta"),
     refreshTasks: document.getElementById("refreshTasks"),
     tasks: document.getElementById("tasks"),
@@ -17,6 +20,11 @@
     statusBtn: document.getElementById("statusBtn"),
     diffBtn: document.getElementById("diffBtn"),
     briefBtn: document.getElementById("briefBtn"),
+    agentRun: document.getElementById("agentRun"),
+    agentStop: document.getElementById("agentStop"),
+    agentStatus: document.getElementById("agentStatus"),
+    agentMeta: document.getElementById("agentMeta"),
+    agentLog: document.getElementById("agentLog"),
     deleteTask: document.getElementById("deleteTask"),
     commandInput: document.getElementById("commandInput"),
     commandCwd: document.getElementById("commandCwd"),
@@ -44,6 +52,7 @@
     tasks: [],
     selectedId: "",
     busy: false,
+    pollTimer: null,
   };
 
   function setStatus(text, isError) {
@@ -104,13 +113,23 @@
 
   function badgeClass(status) {
     const value = String(status || "").toLowerCase();
-    if (value === "ready") return "ready";
-    if (value === "error") return "error";
+    if (value === "ready" || value === "completed") return "ready";
+    if (value === "error" || value === "failed") return "error";
+    if (value === "running" || value === "queued" || value === "stopping") return "running";
     return "pending";
   }
 
   function selectedTask() {
     return state.tasks.find((task) => task && task.id === state.selectedId) || null;
+  }
+
+  function agentInfo(task) {
+    return task && task.agent && typeof task.agent === "object" ? task.agent : { status: "idle", events: [] };
+  }
+
+  function agentIsActive(task) {
+    const status = String(agentInfo(task).status || "").toLowerCase();
+    return status === "queued" || status === "running" || status === "stopping";
   }
 
   function setOutput(title, value) {
@@ -199,6 +218,12 @@
       const status = document.createElement("span");
       status.className = `badge ${badgeClass(task.status)}`;
       status.textContent = task.status || "unknown";
+      const agent = agentInfo(task);
+      const agentStatus = String(agent.status || "idle");
+      const agentBadge = document.createElement("span");
+      agentBadge.className = `badge ${badgeClass(agentStatus)}`;
+      agentBadge.style.marginLeft = "6px";
+      agentBadge.textContent = `agent ${agentStatus}`;
       const title = document.createElement("div");
       title.style.marginTop = "6px";
       title.style.fontWeight = "700";
@@ -210,6 +235,7 @@
       prompt.className = "meta";
       prompt.textContent = String(task.prompt || "").slice(0, 140);
       button.appendChild(status);
+      button.appendChild(agentBadge);
       button.appendChild(title);
       button.appendChild(meta);
       if (prompt.textContent) button.appendChild(prompt);
@@ -221,11 +247,14 @@
   function renderSelected() {
     const task = selectedTask();
     const disabled = !task;
+    const activeAgent = task ? agentIsActive(task) : false;
     [
       els.statusBtn,
       els.diffBtn,
       els.briefBtn,
       els.deleteTask,
+      els.agentRun,
+      els.agentStop,
       els.runCommand,
       els.commitBtn,
       els.pushBtn,
@@ -236,6 +265,11 @@
     ].forEach((button) => {
       if (button) button.disabled = disabled || state.busy;
     });
+    if (els.agentRun) els.agentRun.disabled = disabled || state.busy || activeAgent;
+    if (els.agentStop) els.agentStop.disabled = disabled || state.busy || !activeAgent;
+    [els.deleteTask, els.runCommand, els.commitBtn, els.pushBtn, els.prBtn, els.writeFile].forEach((button) => {
+      if (button && activeAgent) button.disabled = true;
+    });
     if (!task) {
       if (els.selectedTitle) els.selectedTitle.textContent = "No workspace selected";
       if (els.selectedMeta) els.selectedMeta.textContent = "";
@@ -244,6 +278,7 @@
         els.selectedStatus.className = "badge pending";
         els.selectedStatus.textContent = "idle";
       }
+      renderAgent(null);
       return;
     }
     if (els.selectedTitle) els.selectedTitle.textContent = task.branch_name || task.id;
@@ -264,6 +299,68 @@
     if (els.prBody && !els.prBody.value) {
       els.prBody.value = task.prompt || "";
     }
+    renderAgent(task);
+  }
+
+  function eventLine(event) {
+    if (!event || typeof event !== "object") return "";
+    const time = event.ts ? new Date(Number(event.ts) * 1000).toLocaleTimeString() : "";
+    const type = String(event.type || "event");
+    if (type === "queued") return `${time} queued model=${event.model || ""} turns=${event.max_turns || ""}`;
+    if (type === "started") return `${time} started backend=${event.backend || ""} model=${event.upstream_model || ""}`;
+    if (type === "turn_started") return `${time} turn ${event.turn || ""}`;
+    if (type === "assistant") {
+      const calls = Array.isArray(event.tool_calls) ? event.tool_calls.map((item) => item && item.name).filter(Boolean).join(", ") : "";
+      const content = String(event.content || "").trim();
+      return `${time} assistant${calls ? ` tools=[${calls}]` : ""}${content ? `\n${content}` : ""}`;
+    }
+    if (type === "tool_started") return `${time} tool ${event.name || ""} ${JSON.stringify(event.args || {})}`;
+    if (type === "tool_finished") {
+      const result = event.result || {};
+      const ok = result && Object.prototype.hasOwnProperty.call(result, "ok") ? ` ok=${!!result.ok}` : "";
+      let detail = "";
+      if (result && typeof result === "object") {
+        if (result.summary) detail = String(result.summary);
+        else if (result.error) detail = typeof result.error === "string" ? result.error : JSON.stringify(result.error);
+        else if (result.stdout) detail = String(result.stdout).slice(-1200);
+        else if (result.path) detail = String(result.path);
+      }
+      return `${time} tool ${event.name || ""} finished${ok}${detail ? `\n${detail}` : ""}`;
+    }
+    if (type === "review") return `${time} reviewed status and diff`;
+    if (type === "commit") return `${time} committed ${event.message || ""}`;
+    if (type === "completed") return `${time} completed\n${event.summary || ""}`;
+    if (type === "failed") return `${time} failed\n${event.summary || event.error || ""}`;
+    if (type === "stopped") return `${time} stopped\n${event.summary || ""}`;
+    if (type === "stop_requested") return `${time} stop requested`;
+    return `${time} ${type} ${JSON.stringify(event)}`;
+  }
+
+  function renderAgent(task) {
+    const agent = agentInfo(task);
+    const status = String(agent.status || "idle");
+    if (els.agentStatus) {
+      els.agentStatus.className = `badge ${badgeClass(status)}`;
+      els.agentStatus.textContent = status;
+    }
+    if (els.agentMeta) {
+      const bits = [];
+      if (agent.model) bits.push(`model ${agent.model}`);
+      if (agent.backend) bits.push(`backend ${agent.backend}`);
+      if (agent.upstream_model) bits.push(`upstream ${agent.upstream_model}`);
+      if (agent.turn || agent.max_turns) bits.push(`turn ${agent.turn || 0}/${agent.max_turns || "?"}`);
+      if (agent.last_event_at) bits.push(`updated ${fmtTime(agent.last_event_at)}`);
+      if (agent.auto_commit) bits.push("auto-commit");
+      els.agentMeta.textContent = bits.join(" | ");
+    }
+    if (els.agentLog) {
+      const lines = Array.isArray(agent.events) ? agent.events.map(eventLine).filter(Boolean) : [];
+      if (agent.summary && !lines.some((line) => line.includes(agent.summary))) lines.push(`summary:\n${agent.summary}`);
+      if (agent.error && status === "failed") lines.push(`error:\n${agent.error}`);
+      els.agentLog.textContent = lines.join("\n\n") || "No agent run yet.";
+      els.agentLog.scrollTop = els.agentLog.scrollHeight;
+    }
+    updatePolling();
   }
 
   function selectTask(taskId) {
@@ -278,10 +375,12 @@
     state.config = payload;
     if (els.repoUrl && !els.repoUrl.value) els.repoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
+    if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 12;
     if (els.configMeta) {
       const bits = [];
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
       if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
+      if (payload.agent_max_turns) bits.push(`agent turns: ${payload.agent_max_turns}`);
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
       els.configMeta.textContent = bits.join(" | ");
@@ -298,15 +397,28 @@
     renderSelected();
   }
 
+  function workspaceBody() {
+    return {
+      repo_url: els.repoUrl ? els.repoUrl.value.trim() : "",
+      base_branch: els.baseBranch ? els.baseBranch.value.trim() : "",
+      branch_name: els.branchName ? els.branchName.value.trim() : "",
+      prompt: els.taskPrompt ? els.taskPrompt.value.trim() : "",
+    };
+  }
+
+  function agentOptionsBody() {
+    const turns = els.agentMaxTurns ? Number(els.agentMaxTurns.value || 0) : 0;
+    const body = {
+      auto_commit: !!(els.agentAutoCommit && els.agentAutoCommit.checked),
+    };
+    if (Number.isFinite(turns) && turns > 0) body.max_turns = Math.trunc(turns);
+    return body;
+  }
+
   async function createTask() {
     setBusy(true);
     try {
-      const body = {
-        repo_url: els.repoUrl ? els.repoUrl.value.trim() : "",
-        base_branch: els.baseBranch ? els.baseBranch.value.trim() : "",
-        branch_name: els.branchName ? els.branchName.value.trim() : "",
-        prompt: els.taskPrompt ? els.taskPrompt.value.trim() : "",
-      };
+      const body = workspaceBody();
       setStatus("Creating workspace...");
       const payload = await fetchJson("/ui/api/coding/tasks", {
         method: "POST",
@@ -324,6 +436,28 @@
     }
   }
 
+  async function createAndRun() {
+    setBusy(true);
+    try {
+      const body = { ...workspaceBody(), ...agentOptionsBody() };
+      if (!String(body.prompt || "").trim()) throw new Error("Task brief is required");
+      setStatus("Creating workspace and starting agent...");
+      const payload = await fetchJson("/ui/api/coding/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const task = payload.task;
+      await loadTasks({ keepSelection: false });
+      if (task && task.id) selectTask(task.id);
+      setOutput("agent run", task || payload);
+      setStatus(task && task.status === "error" ? "Workspace created with errors." : "Agent run started.", task && task.status === "error");
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
+  }
+
   async function refreshSelected() {
     const task = selectedTask();
     if (!task) return;
@@ -332,6 +466,69 @@
     state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
     renderTasks();
     renderSelected();
+  }
+
+  function updatePolling() {
+    const task = selectedTask();
+    const shouldPoll = !!(task && agentIsActive(task));
+    if (shouldPoll && !state.pollTimer) {
+      state.pollTimer = window.setInterval(async () => {
+        try {
+          if (selectedTask() && agentIsActive(selectedTask())) {
+            await refreshSelected();
+          } else {
+            updatePolling();
+          }
+        } catch (error) {
+          setStatus(String(error && error.message ? error.message : error), true);
+        }
+      }, 3000);
+    } else if (!shouldPoll && state.pollTimer) {
+      window.clearInterval(state.pollTimer);
+      state.pollTimer = null;
+    }
+  }
+
+  async function startAgentRun() {
+    const task = selectedTask();
+    if (!task) return;
+    setBusy(true);
+    try {
+      setStatus("Starting coding agent...");
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/agent-run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(agentOptionsBody()),
+      });
+      const fresh = payload.task;
+      state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
+      renderTasks();
+      renderSelected();
+      setOutput("agent run", fresh || payload);
+      setStatus("Agent run started.");
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
+  }
+
+  async function stopAgentRun() {
+    const task = selectedTask();
+    if (!task) return;
+    setBusy(true);
+    try {
+      setStatus("Stopping coding agent...");
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/agent-stop`, { method: "POST" });
+      const fresh = payload.task;
+      state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
+      renderTasks();
+      renderSelected();
+      setOutput("agent stop", fresh || payload);
+      setStatus("Stop requested.");
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
   }
 
   async function runStatus() {
@@ -587,10 +784,13 @@
   }
 
   wire("refreshTasks", async () => loadTasks({ keepSelection: true }));
+  wire("createAndRun", createAndRun);
   wire("createTask", createTask);
   wire("statusBtn", runStatus);
   wire("diffBtn", runDiff);
   wire("briefBtn", runAgentBrief);
+  wire("agentRun", startAgentRun);
+  wire("agentStop", stopAgentRun);
   wire("runCommand", runCommand);
   wire("commitBtn", commitTask);
   wire("pushBtn", pushTask);
@@ -603,5 +803,8 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     init().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
+  });
+  window.addEventListener("beforeunload", () => {
+    if (state.pollTimer) window.clearInterval(state.pollTimer);
   });
 })();

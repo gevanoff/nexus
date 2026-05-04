@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from app.auth import require_bearer
 from app.config import S
+from app import coding_agent as ca
 from app import coding_workspace as cw
 from app import user_store
 from app.ui_routes import _require_admin, _require_ui_access, _require_user
@@ -23,6 +24,26 @@ class CodingTaskCreateRequest(BaseModel):
     branch_name: Optional[str] = None
     prompt: Optional[str] = None
     coding_model: Optional[str] = None
+
+
+class CodingCreateAndRunRequest(BaseModel):
+    repo_url: Optional[str] = None
+    base_branch: Optional[str] = None
+    branch_name: Optional[str] = None
+    prompt: Optional[str] = None
+    coding_model: Optional[str] = None
+    max_turns: Optional[int] = None
+    max_runtime_sec: Optional[float] = None
+    auto_commit: bool = False
+    commit_message: Optional[str] = None
+
+
+class CodingAgentRunRequest(BaseModel):
+    coding_model: Optional[str] = None
+    max_turns: Optional[int] = None
+    max_runtime_sec: Optional[float] = None
+    auto_commit: bool = False
+    commit_message: Optional[str] = None
 
 
 class CodingCommandRequest(BaseModel):
@@ -78,6 +99,16 @@ def _actor_from_user(user: Any) -> str:
     except Exception:
         pass
     return "ui"
+
+
+def _user_id(user: Any) -> Optional[int]:
+    try:
+        value = getattr(user, "id", None)
+        if value is not None:
+            return int(value)
+    except Exception:
+        return None
+    return None
 
 
 def _settings_for_user(user: Any) -> Dict[str, Any]:
@@ -146,8 +177,40 @@ async def ui_coding_create_task(req: Request, body: CodingTaskCreateRequest) -> 
         branch_name=body.branch_name,
         prompt=body.prompt,
         owner=_actor_from_user(user),
+        owner_user_id=_user_id(user),
         git_token_value=_git_token_for_user(user),
         coding_model=_coding_model_for_user(user, body.coding_model),
+    )
+    return {"task": task}
+
+
+@router.post("/ui/api/coding/runs", include_in_schema=False)
+async def ui_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest) -> Dict[str, Any]:
+    user = _require_coding_ui(req)
+    token = _git_token_for_user(user)
+    model = _coding_model_for_user(user, body.coding_model)
+    task = await _to_thread(
+        cw.create_task,
+        repo_url=body.repo_url,
+        base_branch=body.base_branch,
+        branch_name=body.branch_name,
+        prompt=body.prompt,
+        owner=_actor_from_user(user),
+        owner_user_id=_user_id(user),
+        git_token_value=token,
+        coding_model=model,
+    )
+    if task.get("status") == "error":
+        return {"task": task}
+    task = await ca.start_agent_run(
+        str(task.get("id") or ""),
+        git_token_value=token,
+        coding_model=model,
+        max_turns=body.max_turns,
+        max_runtime_sec=body.max_runtime_sec,
+        auto_commit=body.auto_commit,
+        commit_message=body.commit_message,
+        actor=_actor_from_user(user),
     )
     return {"task": task}
 
@@ -248,6 +311,28 @@ async def ui_coding_agent_brief(req: Request, task_id: str) -> Dict[str, Any]:
     return await _to_thread(cw.agent_brief, task_id, coding_model=_coding_model_for_user(user))
 
 
+@router.post("/ui/api/coding/tasks/{task_id}/agent-run", include_in_schema=False)
+async def ui_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRequest) -> Dict[str, Any]:
+    user = _require_coding_ui(req)
+    task = await ca.start_agent_run(
+        task_id,
+        git_token_value=_git_token_for_user(user),
+        coding_model=_coding_model_for_user(user, body.coding_model),
+        max_turns=body.max_turns,
+        max_runtime_sec=body.max_runtime_sec,
+        auto_commit=body.auto_commit,
+        commit_message=body.commit_message,
+        actor=_actor_from_user(user),
+    )
+    return {"task": task}
+
+
+@router.post("/ui/api/coding/tasks/{task_id}/agent-stop", include_in_schema=False)
+async def ui_coding_agent_stop(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return {"task": await ca.request_stop(task_id)}
+
+
 @router.get("/v1/coding/config")
 async def v1_coding_config(req: Request) -> Dict[str, Any]:
     user = _require_coding_api(req)
@@ -273,8 +358,40 @@ async def v1_coding_create_task(req: Request, body: CodingTaskCreateRequest) -> 
         branch_name=body.branch_name,
         prompt=body.prompt,
         owner=_actor_from_user(user) if user is not None else "api",
+        owner_user_id=_user_id(user),
         git_token_value=token,
         coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip(),
+    )
+    return {"task": task}
+
+
+@router.post("/v1/coding/runs")
+async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    token = _git_token_for_user(user) if user is not None else None
+    model = _coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder"
+    task = await _to_thread(
+        cw.create_task,
+        repo_url=body.repo_url,
+        base_branch=body.base_branch,
+        branch_name=body.branch_name,
+        prompt=body.prompt,
+        owner=_actor_from_user(user) if user is not None else "api",
+        owner_user_id=_user_id(user),
+        git_token_value=token,
+        coding_model=model,
+    )
+    if task.get("status") == "error":
+        return {"task": task}
+    task = await ca.start_agent_run(
+        str(task.get("id") or ""),
+        git_token_value=token,
+        coding_model=model,
+        max_turns=body.max_turns,
+        max_runtime_sec=body.max_runtime_sec,
+        auto_commit=body.auto_commit,
+        commit_message=body.commit_message,
+        actor=_actor_from_user(user) if user is not None else "api",
     )
     return {"task": task}
 
@@ -368,3 +485,25 @@ async def v1_coding_agent_brief(req: Request, task_id: str) -> Dict[str, Any]:
     user = _require_coding_api(req)
     model = _coding_model_for_user(user) if user is not None else ""
     return await _to_thread(cw.agent_brief, task_id, coding_model=model)
+
+
+@router.post("/v1/coding/tasks/{task_id}/agent-run")
+async def v1_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRequest) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    task = await ca.start_agent_run(
+        task_id,
+        git_token_value=_git_token_for_user(user) if user is not None else None,
+        coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
+        max_turns=body.max_turns,
+        max_runtime_sec=body.max_runtime_sec,
+        auto_commit=body.auto_commit,
+        commit_message=body.commit_message,
+        actor=_actor_from_user(user) if user is not None else "api",
+    )
+    return {"task": task}
+
+
+@router.post("/v1/coding/tasks/{task_id}/agent-stop")
+async def v1_coding_agent_stop(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return {"task": await ca.request_stop(task_id)}

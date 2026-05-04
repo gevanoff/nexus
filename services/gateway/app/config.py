@@ -367,6 +367,10 @@ class Settings(BaseSettings):
     CODING_COMMAND_TIMEOUT_SEC: int = 120
     CODING_MAX_OUTPUT_CHARS: int = 40_000
     CODING_FILE_MAX_BYTES: int = 500_000
+    CODING_AGENT_MAX_TURNS: int = 12
+    CODING_AGENT_MAX_RUNTIME_SEC: int = 1800
+    CODING_AGENT_MAX_EVENTS: int = 120
+    CODING_AGENT_MAX_TOOL_RESULT_CHARS: int = 60_000
     CODING_GIT_USERNAME: str = "x-access-token"
     CODING_GIT_TOKEN: str = ""
     CODING_GIT_AUTHOR_NAME: str = "Nexus Coding Agent"

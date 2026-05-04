@@ -1,0 +1,687 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from typing import Any, Dict, List, Optional
+
+from fastapi import HTTPException
+
+from app import coding_workspace as cw
+from app.config import S, logger
+from app.models import ChatCompletionRequest, ChatMessage, ToolFunction, ToolSpec
+from app.openai_utils import new_id, now_unix
+from app.router import decide_route
+from app.router_cfg import router_cfg
+from app.upstreams import call_backend_chat
+
+
+class _CodingAgentStopped(Exception):
+    pass
+
+
+_RUNNING: Dict[str, asyncio.Task[Any]] = {}
+
+
+def _max_turns(requested: Optional[int] = None) -> int:
+    default = int(getattr(S, "CODING_AGENT_MAX_TURNS", 12) or 12)
+    try:
+        value = int(requested) if requested is not None else default
+    except Exception:
+        value = default
+    return max(1, min(value, max(1, default), 50))
+
+
+def _max_runtime_sec(requested: Optional[float] = None) -> float:
+    default = float(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 1800) or 1800)
+    try:
+        value = float(requested) if requested is not None else default
+    except Exception:
+        value = default
+    return max(30.0, min(value, max(30.0, default), 7200.0))
+
+
+def _max_events() -> int:
+    try:
+        return max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 120) or 120), 1000))
+    except Exception:
+        return 120
+
+
+def _tool_result_char_limit() -> int:
+    try:
+        return max(2_000, min(int(getattr(S, "CODING_AGENT_MAX_TOOL_RESULT_CHARS", 60_000) or 60_000), 500_000))
+    except Exception:
+        return 60_000
+
+
+def _clip_text(value: Any, limit: int = 12_000) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    keep = max(200, limit // 2)
+    return f"{text[:keep]}\n\n[... truncated {len(text) - limit} chars ...]\n\n{text[-keep:]}"
+
+
+def _clip_jsonable(value: Any, limit: Optional[int] = None) -> Any:
+    char_limit = _tool_result_char_limit() if limit is None else max(500, int(limit))
+    try:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return _clip_text(str(value), char_limit)
+    if len(raw) <= char_limit:
+        return value
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        budget_each = max(500, char_limit // max(1, len(value)))
+        for key, item in value.items():
+            if isinstance(item, str):
+                out[key] = _clip_text(item, budget_each)
+            elif isinstance(item, (dict, list)):
+                out[key] = _clip_jsonable(item, budget_each)
+            else:
+                out[key] = item
+        try:
+            if len(json.dumps(out, ensure_ascii=False, sort_keys=True)) <= char_limit:
+                return out
+        except Exception:
+            pass
+    return {"truncated": True, "text": _clip_text(raw, char_limit)}
+
+
+def _event_result(value: Any) -> Any:
+    return _clip_jsonable(value, min(_tool_result_char_limit(), 20_000))
+
+
+def _safe_args_preview(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key, value in (args or {}).items():
+        if key == "content":
+            out[key] = f"<{len(str(value or '').encode('utf-8'))} bytes>"
+        elif isinstance(value, str):
+            out[key] = _clip_text(value, 1000)
+        else:
+            out[key] = value
+    if name == "coding_write_file" and "content" not in out:
+        out["content"] = "<empty>"
+    return out
+
+
+def _extract_assistant_message(resp: Dict[str, Any]) -> ChatMessage:
+    msg = ((resp.get("choices") or [{}])[0].get("message") or {})
+    if not isinstance(msg, dict):
+        msg = {}
+    role = msg.get("role") if isinstance(msg.get("role"), str) else "assistant"
+    content = msg.get("content")
+    tool_calls = msg.get("tool_calls")
+    return ChatMessage(role=role, content=content, tool_calls=tool_calls)
+
+
+def _extract_tool_calls(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
+    msg = ((resp.get("choices") or [{}])[0].get("message") or {})
+    calls = (msg or {}).get("tool_calls")
+    if isinstance(calls, list):
+        return [item for item in calls if isinstance(item, dict)]
+    return []
+
+
+def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> ChatMessage:
+    compact = _clip_jsonable(result)
+    return ChatMessage(role="tool", tool_call_id=tool_call_id, content=json.dumps(compact, separators=(",", ":"), ensure_ascii=False))
+
+
+def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {"_raw": raw}
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
+
+
+def _tool_specs() -> List[ToolSpec]:
+    return [
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_list_tree",
+                description="List files and directories inside the coding workspace repository.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Repository-relative directory path. Empty string means repository root."},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_read_file",
+                description="Read a UTF-8 text file from the coding workspace repository.",
+                parameters={
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string", "description": "Repository-relative file path."}},
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_write_file",
+                description="Write a complete UTF-8 text file inside the coding workspace repository.",
+                parameters={
+                    "type": "object",
+                    "required": ["path", "content"],
+                    "properties": {
+                        "path": {"type": "string", "description": "Repository-relative file path."},
+                        "content": {"type": "string", "description": "Complete replacement file content."},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_search_text",
+                description="Search repository text using ripgrep. Prefer this before opening many files.",
+                parameters={
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {"type": "string"},
+                        "path": {"type": "string", "description": "Optional repository-relative path to limit the search."},
+                        "glob": {"type": "string", "description": "Optional ripgrep glob, such as *.py or services/gateway/**."},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_run_command",
+                description="Run an allowlisted argv command in the workspace. Use for targeted tests and non-destructive inspection.",
+                parameters={
+                    "type": "object",
+                    "required": ["argv"],
+                    "properties": {
+                        "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        "cwd": {"type": "string", "description": "Optional repository-relative working directory."},
+                        "timeout_sec": {"type": "number", "minimum": 1},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_git_status",
+                description="Return git status for the workspace branch.",
+                parameters={"type": "object", "properties": {}},
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_git_diff",
+                description="Return the current staged and unstaged git diff for review.",
+                parameters={"type": "object", "properties": {}},
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_finish",
+                description="Finish the autonomous run when the requested coding work is complete or blocked.",
+                parameters={
+                    "type": "object",
+                    "required": ["summary"],
+                    "properties": {
+                        "summary": {"type": "string"},
+                        "success": {"type": "boolean", "description": "True if the task is complete enough for user review."},
+                    },
+                },
+            )
+        ),
+    ]
+
+
+def _mutate_task(task_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    task = cw.load_task(task_id)
+    task.update(fields)
+    cw.save_task(task)
+    return task
+
+
+def _append_event(task_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+    task = cw.load_task(task_id)
+    events = task.get("agent_events")
+    if not isinstance(events, list):
+        events = []
+    ev = {"ts": now_unix(), **event}
+    events.append(ev)
+    task["agent_events"] = events[-_max_events():]
+    task["agent_last_event_at"] = ev["ts"]
+    cw.save_task(task)
+    return ev
+
+
+def _stop_requested(task_id: str) -> bool:
+    try:
+        task = cw.load_task(task_id)
+        return bool(task.get("agent_stop_requested"))
+    except Exception:
+        return False
+
+
+def _raise_if_stopped(task_id: str) -> None:
+    if _stop_requested(task_id):
+        raise _CodingAgentStopped("coding run stop requested")
+
+
+def _search_text(task_id: str, args: Dict[str, Any], *, git_token_value: Optional[str]) -> Dict[str, Any]:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query is required")
+    if len(query) > 500:
+        raise HTTPException(status_code=400, detail="query is too long")
+    argv = ["rg", "-n", "--hidden", "--glob", "!.git"]
+    glob = str(args.get("glob") or "").strip()
+    if glob:
+        argv.extend(["--glob", glob])
+    argv.extend(["--", query])
+    path = str(args.get("path") or "").strip().lstrip("/\\")
+    if path:
+        argv.append(path)
+    return cw.run_task_command(task_id, argv=argv, git_token_value=git_token_value)
+
+
+def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value: Optional[str]) -> Dict[str, Any]:
+    if name == "coding_list_tree":
+        return cw.list_tree(task_id, path=str(args.get("path") or ""), limit=int(args.get("limit") or 250))
+    if name == "coding_read_file":
+        return cw.read_file(task_id, path=str(args.get("path") or ""))
+    if name == "coding_write_file":
+        return cw.write_file(task_id, path=str(args.get("path") or ""), content=str(args.get("content") or ""))
+    if name == "coding_search_text":
+        return _search_text(task_id, args, git_token_value=git_token_value)
+    if name == "coding_run_command":
+        argv = args.get("argv")
+        if not isinstance(argv, list):
+            raise HTTPException(status_code=400, detail="argv must be a list")
+        return cw.run_task_command(
+            task_id,
+            argv=[str(item) for item in argv],
+            cwd=str(args.get("cwd") or ""),
+            timeout_sec=args.get("timeout_sec"),
+            git_token_value=git_token_value,
+        )
+    if name == "coding_git_status":
+        return cw.git_status(task_id, git_token_value=git_token_value)
+    if name == "coding_git_diff":
+        return cw.git_diff(task_id)
+    if name == "coding_finish":
+        return {"ok": True, "summary": str(args.get("summary") or ""), "success": bool(args.get("success", True))}
+    raise HTTPException(status_code=400, detail=f"unknown coding tool: {name}")
+
+
+def _system_prompt(task: Dict[str, Any]) -> str:
+    allowed = ", ".join(cw.allowed_commands())
+    return (
+        "You are Nexus Coding Agent. Work autonomously toward the user's coding request inside one isolated git workspace. "
+        "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
+        "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
+        "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
+        "Write complete replacement file contents when using coding_write_file. "
+        "Use coding_search_text before reading many files. "
+        "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
+        f"Allowed commands are: {allowed or '(none)'}. "
+        f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}."
+    )
+
+
+def _task_context(task: Dict[str, Any]) -> str:
+    return (
+        f"User request:\n{str(task.get('prompt') or '').strip()}\n\n"
+        f"Repository: {cw.redact_repo_url(str(task.get('repo_url') or ''))}\n"
+        f"Branch: {task.get('branch_name')} from {task.get('base_branch')}\n"
+        "Start by inspecting the repository, then proceed without waiting for more user input."
+    )
+
+
+def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
+    return str(requested_model or task.get("coding_model") or "coder").strip() or "coder"
+
+
+async def start_agent_run(
+    task_id: str,
+    *,
+    git_token_value: Optional[str] = None,
+    coding_model: Optional[str] = None,
+    max_turns: Optional[int] = None,
+    max_runtime_sec: Optional[float] = None,
+    auto_commit: bool = False,
+    commit_message: Optional[str] = None,
+    actor: Optional[str] = None,
+) -> Dict[str, Any]:
+    cw._ensure_enabled()
+    task = await asyncio.to_thread(cw.load_task, task_id)
+    status = str(task.get("status") or "")
+    if status == "error":
+        raise HTTPException(status_code=409, detail="workspace is in error state")
+    running = _RUNNING.get(task_id)
+    if running is not None and not running.done():
+        raise HTTPException(status_code=409, detail="coding agent is already running for this workspace")
+
+    turns = _max_turns(max_turns)
+    runtime = _max_runtime_sec(max_runtime_sec)
+    run_id = new_id("coderun")
+    model = _choose_model(task, coding_model)
+    now = time.time()
+    await asyncio.to_thread(
+        _mutate_task,
+        task_id,
+        {
+            "agent_run_id": run_id,
+            "agent_status": "queued",
+            "agent_model": model,
+            "agent_backend": "",
+            "agent_upstream_model": "",
+            "agent_turn": 0,
+            "agent_max_turns": turns,
+            "agent_started_at": now,
+            "agent_finished_at": None,
+            "agent_last_event_at": now_unix(),
+            "agent_summary": "",
+            "agent_error": "",
+            "agent_stop_requested": False,
+            "agent_auto_commit": bool(auto_commit),
+            "agent_events": [],
+        },
+    )
+    await asyncio.to_thread(
+        _append_event,
+        task_id,
+        {
+            "type": "queued",
+            "run_id": run_id,
+            "model": model,
+            "max_turns": turns,
+            "max_runtime_sec": runtime,
+            "auto_commit": bool(auto_commit),
+            "actor": actor or "",
+        },
+    )
+    job = asyncio.create_task(
+        _run_agent(
+            task_id,
+            run_id=run_id,
+            git_token_value=git_token_value,
+            model=model,
+            max_turns=turns,
+            max_runtime_sec=runtime,
+            auto_commit=bool(auto_commit),
+            commit_message=commit_message,
+        )
+    )
+    _RUNNING[task_id] = job
+
+    def _cleanup(done: asyncio.Task[Any]) -> None:
+        current = _RUNNING.get(task_id)
+        if current is done:
+            _RUNNING.pop(task_id, None)
+
+    job.add_done_callback(_cleanup)
+    fresh = await asyncio.to_thread(cw.load_task, task_id)
+    return cw.public_task(fresh)
+
+
+async def request_stop(task_id: str) -> Dict[str, Any]:
+    await asyncio.to_thread(
+        _mutate_task,
+        task_id,
+        {
+            "agent_stop_requested": True,
+            "agent_status": "stopping",
+            "agent_last_event_at": now_unix(),
+        },
+    )
+    await asyncio.to_thread(_append_event, task_id, {"type": "stop_requested"})
+    running = _RUNNING.get(task_id)
+    if running is not None and not running.done():
+        running.cancel()
+    fresh = await asyncio.to_thread(cw.load_task, task_id)
+    return cw.public_task(fresh)
+
+
+async def _run_agent(
+    task_id: str,
+    *,
+    run_id: str,
+    git_token_value: Optional[str],
+    model: str,
+    max_turns: int,
+    max_runtime_sec: float,
+    auto_commit: bool,
+    commit_message: Optional[str],
+) -> None:
+    t0 = time.monotonic()
+    finish_summary = ""
+    finish_success = False
+    backend = ""
+    upstream_model = ""
+    try:
+        task = await asyncio.to_thread(cw.load_task, task_id)
+        route = decide_route(
+            cfg=router_cfg(),
+            request_model=model,
+            headers={"x-request-type": "coding"},
+            messages=[{"role": "user", "content": str(task.get("prompt") or "")}],
+            has_tools=True,
+            enable_policy=getattr(S, "ROUTER_ENABLE_POLICY", True),
+            enable_request_type=True,
+        )
+        backend = route.backend
+        upstream_model = route.model
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_status": "running",
+                "agent_backend": backend,
+                "agent_upstream_model": upstream_model,
+                "agent_last_event_at": now_unix(),
+            },
+        )
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "started",
+                "run_id": run_id,
+                "backend": backend,
+                "upstream_model": upstream_model,
+                "route_reason": route.reason,
+            },
+        )
+
+        messages: List[ChatMessage] = [
+            ChatMessage(role="system", content=_system_prompt(task)),
+            ChatMessage(role="user", content=_task_context(task)),
+        ]
+        tools = _tool_specs()
+
+        for turn in range(max_turns):
+            _raise_if_stopped(task_id)
+            if time.monotonic() - t0 > max_runtime_sec:
+                raise HTTPException(status_code=408, detail="coding agent runtime budget exceeded")
+            await asyncio.to_thread(_mutate_task, task_id, {"agent_turn": turn + 1, "agent_last_event_at": now_unix()})
+            await asyncio.to_thread(_append_event, task_id, {"type": "turn_started", "turn": turn + 1})
+
+            req = ChatCompletionRequest(
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=0.1,
+                stream=False,
+            )
+            resp = await call_backend_chat(req, backend, upstream_model)
+            assistant = _extract_assistant_message(resp)
+            tool_calls = _extract_tool_calls(resp)
+            messages.append(assistant)
+            await asyncio.to_thread(
+                _append_event,
+                task_id,
+                {
+                    "type": "assistant",
+                    "turn": turn + 1,
+                    "content": _clip_text(assistant.content if isinstance(assistant.content, str) else "", 4000),
+                    "tool_calls": [
+                        {
+                            "id": item.get("id") if isinstance(item.get("id"), str) else "",
+                            "name": ((item.get("function") or {}).get("name") if isinstance(item.get("function"), dict) else ""),
+                        }
+                        for item in tool_calls
+                    ],
+                },
+            )
+
+            if not tool_calls:
+                finish_summary = str(assistant.content or "").strip()
+                finish_success = True
+                break
+
+            stop_after_tools = False
+            for tc in tool_calls:
+                _raise_if_stopped(task_id)
+                fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+                name = str(fn.get("name") or "").strip()
+                args = _parse_tool_arguments(fn.get("arguments", ""))
+                tool_call_id = tc.get("id") if isinstance(tc.get("id"), str) else new_id("toolcall")
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {"type": "tool_started", "turn": turn + 1, "tool_call_id": tool_call_id, "name": name, "args": _safe_args_preview(name, args)},
+                )
+                try:
+                    result = await asyncio.to_thread(_run_tool, task_id, name, args, git_token_value=git_token_value)
+                except HTTPException as exc:
+                    result = {"ok": False, "error": exc.detail}
+                except Exception as exc:
+                    result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "tool_finished",
+                        "turn": turn + 1,
+                        "tool_call_id": tool_call_id,
+                        "name": name,
+                        "result": _event_result(result),
+                    },
+                )
+                messages.append(_tool_message_for_result(tool_call_id=tool_call_id, result=result))
+
+                if name == "coding_finish":
+                    finish_summary = str(result.get("summary") or args.get("summary") or "").strip()
+                    finish_success = bool(result.get("success", args.get("success", True)))
+                    stop_after_tools = True
+                    break
+
+            if stop_after_tools:
+                break
+
+        if not finish_summary and not finish_success:
+            finish_summary = "Turn limit reached before the agent called coding_finish."
+            finish_success = False
+
+        status_result = await asyncio.to_thread(cw.git_status, task_id, git_token_value=git_token_value)
+        diff_result = await asyncio.to_thread(cw.git_diff, task_id)
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "review",
+                "status": _event_result(status_result),
+                "diff": _event_result(diff_result),
+            },
+        )
+
+        if auto_commit and finish_success:
+            msg = str(commit_message or finish_summary or "").strip()
+            if not msg:
+                msg = "Apply Nexus coding agent changes"
+            msg = msg.splitlines()[0][:160]
+            commit_result = await asyncio.to_thread(cw.commit_task, task_id, message=msg)
+            await asyncio.to_thread(_append_event, task_id, {"type": "commit", "message": msg, "result": _event_result(commit_result)})
+
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_status": "completed" if finish_success else "failed",
+                "agent_summary": finish_summary,
+                "agent_error": "" if finish_success else finish_summary,
+                "agent_finished_at": time.time(),
+                "agent_last_event_at": now_unix(),
+            },
+        )
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "completed" if finish_success else "failed",
+                "ok": finish_success,
+                "summary": finish_summary,
+                "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
+            },
+        )
+    except asyncio.CancelledError:
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_status": "stopped",
+                "agent_error": "",
+                "agent_summary": "Coding run was stopped.",
+                "agent_finished_at": time.time(),
+                "agent_last_event_at": now_unix(),
+            },
+        )
+        await asyncio.to_thread(_append_event, task_id, {"type": "stopped", "summary": "Coding run was stopped."})
+        raise
+    except _CodingAgentStopped as exc:
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_status": "stopped",
+                "agent_error": "",
+                "agent_summary": str(exc),
+                "agent_finished_at": time.time(),
+                "agent_last_event_at": now_unix(),
+            },
+        )
+        await asyncio.to_thread(_append_event, task_id, {"type": "stopped", "summary": str(exc)})
+    except Exception as exc:
+        error = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
+        logger.warning("coding agent failed task=%s backend=%s model=%s error=%s", task_id, backend, upstream_model, error)
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_status": "failed",
+                "agent_error": str(error),
+                "agent_summary": "",
+                "agent_finished_at": time.time(),
+                "agent_last_event_at": now_unix(),
+            },
+        )
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "failed",
+                "error": _clip_text(str(error), 4000),
+                "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
+            },
+        )

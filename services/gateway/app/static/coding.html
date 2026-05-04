@@ -89,10 +89,21 @@
       .badge { display:inline-flex; align-items:center; border-radius:999px; border:1px solid var(--border); padding:3px 7px; font-size:11px; color:#cfe0f7; }
       .badge.ready { border-color:rgba(88,214,141,0.54); color:#a5f3c7; background:rgba(0,120,72,0.18); }
       .badge.error { border-color:rgba(255,127,143,0.54); color:#ffc3cb; background:rgba(150,20,38,0.20); }
+      .badge.running { border-color:rgba(111,184,255,0.58); color:#cfe6ff; background:rgba(20,82,140,0.22); }
       .badge.pending { border-color:rgba(240,200,90,0.46); color:#f5dda0; }
       .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
       .panel-grid { display:grid; grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr); gap:10px; }
       .subpanel { border:1px solid rgba(231,237,246,0.10); border-radius:8px; background:rgba(8,13,20,0.52); padding:10px; }
+      .agent-log {
+        max-height:300px;
+        overflow:auto;
+        border:1px solid rgba(231,237,246,0.10);
+        border-radius:8px;
+        background:#05080d;
+        padding:8px;
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space:pre-wrap;
+      }
       .output {
         margin:0;
         min-height:160px;
@@ -149,7 +160,7 @@
       <div class="layout">
         <section class="stack">
           <div class="card stack">
-            <h2>New Workspace</h2>
+            <h2>New Agent Run</h2>
             <div>
               <label for="repoUrl">Repository</label>
               <input id="repoUrl" autocomplete="off" />
@@ -168,7 +179,20 @@
               <label for="taskPrompt">Task brief</label>
               <textarea id="taskPrompt" placeholder="Describe the coding task"></textarea>
             </div>
-            <button id="createTask" type="button" data-ui-role="action">Create workspace</button>
+            <div class="two">
+              <div>
+                <label for="agentMaxTurns">Max turns</label>
+                <input id="agentMaxTurns" type="number" min="1" step="1" />
+              </div>
+              <label style="display:flex;gap:8px;align-items:center;margin-top:22px;">
+                <input id="agentAutoCommit" type="checkbox" style="width:auto;" />
+                Commit successful run
+              </label>
+            </div>
+            <div class="row">
+              <button id="createAndRun" type="button" data-ui-role="action">Create and run agent</button>
+              <button id="createTask" type="button" data-ui-role="secondary">Create workspace only</button>
+            </div>
             <div id="configMeta" class="hint"></div>
           </div>
 
@@ -195,9 +219,20 @@
               <button id="statusBtn" type="button" data-ui-role="secondary">Git status</button>
               <button id="diffBtn" type="button" data-ui-role="secondary">Diff</button>
               <button id="briefBtn" type="button" data-ui-role="secondary">Agent brief</button>
+              <button id="agentRun" type="button" data-ui-role="action">Run agent</button>
+              <button id="agentStop" type="button" data-ui-role="danger" data-danger="true">Stop agent</button>
               <button id="copyOutput" type="button" data-ui-role="secondary">Copy output</button>
               <button id="deleteTask" type="button" data-danger="true" data-ui-role="danger">Delete</button>
             </div>
+          </div>
+
+          <div class="subpanel stack">
+            <div class="row" style="justify-content:space-between;">
+              <h3>Agent Run</h3>
+              <span id="agentStatus" class="badge pending">idle</span>
+            </div>
+            <div id="agentMeta" class="meta"></div>
+            <pre id="agentLog" class="agent-log"></pre>
           </div>
 
           <div class="panel-grid">
@@ -263,7 +298,7 @@
         </section>
       </div>
     </main>
-    <script src="/static/auth_client.js?v=1"></script>
-    <script src="/static/coding.js?v=1"></script>
+    <script src="/static/auth_client.js?v=2"></script>
+    <script src="/static/coding.js?v=2"></script>
   </body>
 </html>

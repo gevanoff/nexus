@@ -82,12 +82,28 @@ draft PR operations. Commands are argv arrays, not shell strings, and run only
 inside the task clone. Destructive git operations such as `reset`, `clean`,
 `rebase`, `merge`, `restore`, and `rm` are blocked.
 
+The UI also supports autonomous runs. The primary path is now:
+
+1. Enter a repo, base branch, and task brief.
+2. Click `Create and run agent`.
+3. Nexus creates the workspace, starts a background coding runner, and persists
+   progress under `task.agent.events`.
+4. The runner uses scoped tools to inspect/search/read/write files and run
+   allowlisted checks until it finishes or hits a budget.
+5. The human reviews the resulting diff, then explicitly pushes or opens a PR.
+
+The API equivalent is `POST /v1/coding/runs`; existing workspaces can be started
+with `POST /v1/coding/tasks/{task_id}/agent-run` and stopped with
+`POST /v1/coding/tasks/{task_id}/agent-stop`.
+
 Important gateway settings:
 
 - `CODING_DEFAULT_REPO_URL`
 - `CODING_ALLOWED_REPOS`
 - `CODING_REQUIRE_ADMIN`
 - `CODING_ALLOWED_COMMANDS`
+- `CODING_AGENT_MAX_TURNS`
+- `CODING_AGENT_MAX_RUNTIME_SEC`
 - `CODING_GIT_AUTHOR_NAME`
 - `CODING_GIT_AUTHOR_EMAIL`
 
@@ -104,11 +120,10 @@ token.
 ## Workflow Contract
 
 1. Human creates or assigns an issue/task.
-2. Agent or operator creates a Nexus Coding Workspace from the target base branch.
-3. Agent makes scoped changes and runs local checks through the workspace API.
-4. Agent reviews the diff.
-5. Agent commits with a clear message and pushes the branch.
-6. Agent opens a draft PR.
+2. Human starts a Nexus autonomous coding run from the target base branch.
+3. Agent makes scoped changes and runs local checks through the workspace tools.
+4. Agent reviews the diff and marks the run complete or blocked.
+5. Human reviews the diff and may commit, push, or open a draft PR.
 7. GitHub Actions runs.
 8. Agent may inspect CI logs and push fixes.
 9. Human reviews and merges.
