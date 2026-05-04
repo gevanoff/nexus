@@ -281,6 +281,7 @@
     if (els.configMeta) {
       const bits = [];
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
+      if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
       els.configMeta.textContent = bits.join(" | ");

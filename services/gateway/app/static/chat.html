@@ -484,6 +484,9 @@
                 <label>Preferred chat model
                   <select id="settings_model_preference"></select>
                 </label>
+                <label>Preferred coding model
+                  <select id="settings_coding_model_preference"></select>
+                </label>
                 <label>Preferred TTS backend
                   <select id="settings_tts_backend"><option value="">(default)</option></select>
                 </label>
@@ -535,6 +538,17 @@
                   </div>
                   <div id="settings_api_key_result" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
                   <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+                </fieldset>
+                <fieldset id="settings_coding_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Coding workspaces</legend>
+                  <div id="settings_coding_git_token_status" class="hint" style="margin-bottom:8px"></div>
+                  <label>GitHub token
+                    <input type="password" id="settings_coding_git_token" autocomplete="off" placeholder="Leave blank to keep existing token" />
+                  </label>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_clear_coding_git_token" style="width:auto" />
+                    Clear saved GitHub token
+                  </label>
                 </fieldset>
               </section>
             </div>

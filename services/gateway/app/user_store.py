@@ -366,6 +366,9 @@ def _default_settings() -> Dict[str, Any]:
             "history": True,
             "model_preference": "default",
         },
+        "coding": {
+            "model_preference": "coder",
+        },
         "profile": {"system_prompt": "", "tone": ""},
     }
 

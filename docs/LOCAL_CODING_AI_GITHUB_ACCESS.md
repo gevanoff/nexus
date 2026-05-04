@@ -88,14 +88,18 @@ Important gateway settings:
 - `CODING_ALLOWED_REPOS`
 - `CODING_REQUIRE_ADMIN`
 - `CODING_ALLOWED_COMMANDS`
-- `CODING_GIT_TOKEN`
 - `CODING_GIT_AUTHOR_NAME`
 - `CODING_GIT_AUTHOR_EMAIL`
 
-For GitHub access, prefer a short-lived GitHub App installation token in
-`CODING_GIT_TOKEN`. A fine-grained machine-user PAT is acceptable for the first
-iteration. The token is passed to git through a temporary askpass helper and is
-not stored in task metadata.
+For GitHub access, each Nexus user stores their own token in User Settings.
+The preferred token is a short-lived GitHub App installation token or a
+fine-grained machine-user PAT scoped only to the Nexus repository. The token is
+passed to git through a temporary askpass helper and is not stored in task
+metadata or returned by the settings API after save.
+
+`CODING_GIT_TOKEN` remains a fallback for static bearer-token automation, but
+the browser UI and user personal API keys use the authenticated user's saved
+token.
 
 ## Workflow Contract
 

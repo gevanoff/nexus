@@ -265,8 +265,8 @@ curl -X POST http://localhost:8800/v1/coding/tasks \
 
 Each task gets a fresh branch under `CODING_WORKSPACE_ROOT`. File reads/writes,
 commands, diffs, commits, pushes, and draft PR creation stay scoped to that task
-clone. Configure repository access with `CODING_ALLOWED_REPOS` and
-`CODING_GIT_TOKEN`.
+clone. Configure allowed repositories with `CODING_ALLOWED_REPOS`; each user
+stores their GitHub token and preferred coding model in User Settings.
 
 ### Service Discovery
 

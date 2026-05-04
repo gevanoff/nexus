@@ -1369,6 +1369,9 @@
       systemPrompt: "",
       profileTone: "",
       preferredModel: "default",
+      preferredCodingModel: "coder",
+      codingGitTokenConfigured: false,
+      codingGitTokenHint: "",
     };
 
     async function loadApiKeys() {
@@ -1514,6 +1517,9 @@
           systemPrompt: (s.profile && s.profile.system_prompt) || s.profile?.system_prompt || s.profile?.systemPrompt || "",
           profileTone: (s.profile && s.profile.tone) || s.profile?.tone || "",
           preferredModel: (s.chat && s.chat.model_preference) || s.model_preference || s.modelPreference || "default",
+          preferredCodingModel: (s.coding && s.coding.model_preference) || s.coding_model_preference || s.codingModelPreference || "coder",
+          codingGitTokenConfigured: !!(s.coding && s.coding.git_token_configured),
+          codingGitTokenHint: (s.coding && s.coding.git_token_hint) || "",
         };
         applyUserSettingsToUi();
       } catch (e) {
@@ -1571,6 +1577,7 @@
         const vol = document.getElementById('settings_audio_volume');
         const autoplay = document.getElementById('settings_autoplay_tts');
         const preferredModel = document.getElementById('settings_model_preference');
+        const preferredCodingModel = document.getElementById('settings_coding_model_preference');
         // populate voice list if available from TTS voices endpoint
         try {
           if (backendSelect) {
@@ -1640,12 +1647,25 @@
         if (preferredModel) {
           syncSettingsModelSelect(userSettings.preferredModel || "default");
         }
+        if (preferredCodingModel) {
+          syncSettingsCodingModelSelect(userSettings.preferredCodingModel || "coder");
+        }
         // populate profile fields
         try {
           const sys = document.getElementById('settings_system_prompt');
           const tone = document.getElementById('settings_profile_tone');
           if (sys) sys.value = userSettings.systemPrompt || "";
           if (tone) tone.value = userSettings.profileTone || "";
+          const gitToken = document.getElementById('settings_coding_git_token');
+          const clearGitToken = document.getElementById('settings_clear_coding_git_token');
+          const gitTokenStatus = document.getElementById('settings_coding_git_token_status');
+          if (gitToken) gitToken.value = "";
+          if (clearGitToken) clearGitToken.checked = false;
+          if (gitTokenStatus) {
+            gitTokenStatus.textContent = userSettings.codingGitTokenConfigured
+              ? `Saved GitHub token: ${userSettings.codingGitTokenHint || "configured"}`
+              : "No GitHub token saved for coding workspaces.";
+          }
         } catch (e) {}
 
         // Show password controls only when user auth is enabled and the user
@@ -1696,12 +1716,18 @@
       const vol = document.getElementById('settings_audio_volume');
       const autoplay = document.getElementById('settings_autoplay_tts');
       const preferredModel = document.getElementById('settings_model_preference');
+      const preferredCodingModel = document.getElementById('settings_coding_model_preference');
       const sys = document.getElementById('settings_system_prompt');
       const tone = document.getElementById('settings_profile_tone');
+      const codingGitToken = document.getElementById('settings_coding_git_token');
+      const clearCodingGitToken = document.getElementById('settings_clear_coding_git_token');
       const curPwd = document.getElementById('settings_current_password');
       const newPwd = document.getElementById('settings_new_password');
       const confirmPwd = document.getElementById('settings_confirm_password');
       const chosenModel = normalizePreferredModel(preferredModel ? String(preferredModel.value || "").trim() : "default");
+      const chosenCodingModel = normalizePreferredModel(preferredCodingModel ? String(preferredCodingModel.value || "").trim() : "coder");
+      const gitTokenValue = codingGitToken ? String(codingGitToken.value || "").trim() : "";
+      const clearGitToken = !!(clearCodingGitToken && clearCodingGitToken.checked);
       const newSettings = {
         tts: { voice: select ? select.value : "", backend_class: backendSelect ? backendSelect.value : "" },
         ui: {
@@ -1711,7 +1737,14 @@
         autoPlayTTS: !!(autoplay && autoplay.checked),
         profile: { system_prompt: sys ? String(sys.value || '') : '', tone: tone ? String(tone.value || '') : '' },
         chat: { model_preference: chosenModel || "default" },
+        coding: { model_preference: chosenCodingModel || "coder" },
       };
+      if (gitTokenValue) {
+        newSettings.coding.git_token = gitTokenValue;
+      }
+      if (clearGitToken) {
+        newSettings.coding.clear_git_token = true;
+      }
       try {
         // If user provided password fields, attempt password change first.
         try {
@@ -1750,7 +1783,16 @@
         userSettings.systemPrompt = newSettings.profile?.system_prompt || "";
         userSettings.profileTone = newSettings.profile?.tone || "";
         userSettings.preferredModel = newSettings.chat?.model_preference || "default";
+        userSettings.preferredCodingModel = newSettings.coding?.model_preference || "coder";
+        if (clearGitToken) {
+          userSettings.codingGitTokenConfigured = false;
+          userSettings.codingGitTokenHint = "";
+        } else if (gitTokenValue) {
+          userSettings.codingGitTokenConfigured = true;
+          userSettings.codingGitTokenHint = gitTokenValue.length > 10 ? `${gitTokenValue.slice(0, 4)}...${gitTokenValue.slice(-4)}` : "***";
+        }
         syncSettingsModelSelect(userSettings.preferredModel);
+        syncSettingsCodingModelSelect(userSettings.preferredCodingModel);
         applyUserSettingsToUi();
         closeSettings();
       } catch (e) {
@@ -1858,6 +1900,14 @@
       select.value = desired;
     }
 
+    function syncSettingsCodingModelSelect(preferred) {
+      const select = document.getElementById("settings_coding_model_preference");
+      if (!select) return;
+      populateModelSelect(select, modelOptionsCache);
+      const desired = pickModelValue({ options: modelOptionsCache, preferred, fallback: "coder" });
+      select.value = desired;
+    }
+
     function normalizePreferredModel(preferred) {
       const desired = (preferred || "").trim();
       if (!modelOptionsCache.length) return desired || "default";
@@ -1872,6 +1922,7 @@
       const desired = pickModelValue({ options, preferred, fallback: prev });
       if (modelEl) modelEl.value = desired;
       syncSettingsModelSelect(preferred);
+      syncSettingsCodingModelSelect(userSettings.preferredCodingModel || "coder");
     }
 
     async function loadModels() {

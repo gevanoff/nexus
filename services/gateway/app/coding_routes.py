@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.auth import require_bearer
 from app.config import S
 from app import coding_workspace as cw
+from app import user_store
 from app.ui_routes import _require_admin, _require_ui_access, _require_user
 
 
@@ -21,6 +22,7 @@ class CodingTaskCreateRequest(BaseModel):
     base_branch: Optional[str] = None
     branch_name: Optional[str] = None
     prompt: Optional[str] = None
+    coding_model: Optional[str] = None
 
 
 class CodingCommandRequest(BaseModel):
@@ -58,10 +60,14 @@ def _require_coding_ui(req: Request):
     return _require_user(req)
 
 
-def _require_coding_api(req: Request) -> None:
+def _require_coding_api(req: Request):
     if not bool(getattr(S, "CODING_ALLOW_BEARER_API", True)):
         raise HTTPException(status_code=403, detail="coding bearer API is disabled")
     require_bearer(req)
+    try:
+        return getattr(req.state, "user", None)
+    except Exception:
+        return None
 
 
 def _actor_from_user(user: Any) -> str:
@@ -72,6 +78,35 @@ def _actor_from_user(user: Any) -> str:
     except Exception:
         pass
     return "ui"
+
+
+def _settings_for_user(user: Any) -> Dict[str, Any]:
+    try:
+        if user is not None and getattr(user, "id", None) is not None:
+            settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user.id))
+            return settings if isinstance(settings, dict) else {}
+    except Exception:
+        return {}
+    return {}
+
+
+def _coding_settings_for_user(user: Any) -> Dict[str, Any]:
+    settings = _settings_for_user(user)
+    coding = settings.get("coding") if isinstance(settings, dict) else None
+    return coding if isinstance(coding, dict) else {}
+
+
+def _git_token_for_user(user: Any) -> str:
+    coding = _coding_settings_for_user(user)
+    return str(coding.get("git_token") or "").strip()
+
+
+def _coding_model_for_user(user: Any, requested: Optional[str] = None) -> str:
+    explicit = str(requested or "").strip()
+    if explicit:
+        return explicit
+    coding = _coding_settings_for_user(user)
+    return str(coding.get("model_preference") or coding.get("preferred_model") or "coder").strip() or "coder"
 
 
 async def _to_thread(func, *args, **kwargs):
@@ -91,8 +126,8 @@ async def ui_coding_slash(req: Request):
 
 @router.get("/ui/api/coding/config", include_in_schema=False)
 async def ui_coding_config(req: Request) -> Dict[str, Any]:
-    _require_coding_ui(req)
-    return cw.config_payload()
+    user = _require_coding_ui(req)
+    return cw.config_payload(git_token_value=_git_token_for_user(user), preferred_coding_model=_coding_model_for_user(user))
 
 
 @router.get("/ui/api/coding/tasks", include_in_schema=False)
@@ -111,6 +146,8 @@ async def ui_coding_create_task(req: Request, body: CodingTaskCreateRequest) -> 
         branch_name=body.branch_name,
         prompt=body.prompt,
         owner=_actor_from_user(user),
+        git_token_value=_git_token_for_user(user),
+        coding_model=_coding_model_for_user(user, body.coding_model),
     )
     return {"task": task}
 
@@ -130,15 +167,22 @@ async def ui_coding_delete_task(req: Request, task_id: str) -> Dict[str, Any]:
 
 @router.post("/ui/api/coding/tasks/{task_id}/command", include_in_schema=False)
 async def ui_coding_command(req: Request, task_id: str, body: CodingCommandRequest) -> Dict[str, Any]:
-    _require_coding_ui(req)
-    result = await _to_thread(cw.run_task_command, task_id, argv=body.argv, cwd=body.cwd, timeout_sec=body.timeout_sec)
+    user = _require_coding_ui(req)
+    result = await _to_thread(
+        cw.run_task_command,
+        task_id,
+        argv=body.argv,
+        cwd=body.cwd,
+        timeout_sec=body.timeout_sec,
+        git_token_value=_git_token_for_user(user),
+    )
     return {"result": result}
 
 
 @router.get("/ui/api/coding/tasks/{task_id}/status", include_in_schema=False)
 async def ui_coding_git_status(req: Request, task_id: str) -> Dict[str, Any]:
-    _require_coding_ui(req)
-    return {"result": await _to_thread(cw.git_status, task_id)}
+    user = _require_coding_ui(req)
+    return {"result": await _to_thread(cw.git_status, task_id, git_token_value=_git_token_for_user(user))}
 
 
 @router.get("/ui/api/coding/tasks/{task_id}/diff", include_in_schema=False)
@@ -155,13 +199,13 @@ async def ui_coding_commit(req: Request, task_id: str, body: CodingCommitRequest
 
 @router.post("/ui/api/coding/tasks/{task_id}/push", include_in_schema=False)
 async def ui_coding_push(req: Request, task_id: str, body: CodingPushRequest) -> Dict[str, Any]:
-    _require_coding_ui(req)
-    return {"result": await _to_thread(cw.push_task, task_id, remote=body.remote)}
+    user = _require_coding_ui(req)
+    return {"result": await _to_thread(cw.push_task, task_id, remote=body.remote, git_token_value=_git_token_for_user(user))}
 
 
 @router.post("/ui/api/coding/tasks/{task_id}/pull-request", include_in_schema=False)
 async def ui_coding_pull_request(req: Request, task_id: str, body: CodingPullRequestRequest) -> Dict[str, Any]:
-    _require_coding_ui(req)
+    user = _require_coding_ui(req)
     return {
         "result": await _to_thread(
             cw.create_pull_request,
@@ -170,6 +214,7 @@ async def ui_coding_pull_request(req: Request, task_id: str, body: CodingPullReq
             body=body.body,
             draft=body.draft,
             base_branch=body.base_branch,
+            git_token_value=_git_token_for_user(user),
         )
     }
 
@@ -199,14 +244,16 @@ async def ui_coding_write_file(req: Request, task_id: str, body: CodingFileWrite
 
 @router.get("/ui/api/coding/tasks/{task_id}/agent-brief", include_in_schema=False)
 async def ui_coding_agent_brief(req: Request, task_id: str) -> Dict[str, Any]:
-    _require_coding_ui(req)
-    return await _to_thread(cw.agent_brief, task_id)
+    user = _require_coding_ui(req)
+    return await _to_thread(cw.agent_brief, task_id, coding_model=_coding_model_for_user(user))
 
 
 @router.get("/v1/coding/config")
 async def v1_coding_config(req: Request) -> Dict[str, Any]:
-    _require_coding_api(req)
-    return cw.config_payload()
+    user = _require_coding_api(req)
+    token = _git_token_for_user(user) if user is not None else None
+    model = _coding_model_for_user(user) if user is not None else ""
+    return cw.config_payload(git_token_value=token, preferred_coding_model=model)
 
 
 @router.get("/v1/coding/tasks")
@@ -217,14 +264,17 @@ async def v1_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le
 
 @router.post("/v1/coding/tasks")
 async def v1_coding_create_task(req: Request, body: CodingTaskCreateRequest) -> Dict[str, Any]:
-    _require_coding_api(req)
+    user = _require_coding_api(req)
+    token = _git_token_for_user(user) if user is not None else None
     task = await _to_thread(
         cw.create_task,
         repo_url=body.repo_url,
         base_branch=body.base_branch,
         branch_name=body.branch_name,
         prompt=body.prompt,
-        owner="api",
+        owner=_actor_from_user(user) if user is not None else "api",
+        git_token_value=token,
+        coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip(),
     )
     return {"task": task}
 
@@ -238,15 +288,22 @@ async def v1_coding_get_task(req: Request, task_id: str) -> Dict[str, Any]:
 
 @router.post("/v1/coding/tasks/{task_id}/command")
 async def v1_coding_command(req: Request, task_id: str, body: CodingCommandRequest) -> Dict[str, Any]:
-    _require_coding_api(req)
-    result = await _to_thread(cw.run_task_command, task_id, argv=body.argv, cwd=body.cwd, timeout_sec=body.timeout_sec)
+    user = _require_coding_api(req)
+    result = await _to_thread(
+        cw.run_task_command,
+        task_id,
+        argv=body.argv,
+        cwd=body.cwd,
+        timeout_sec=body.timeout_sec,
+        git_token_value=_git_token_for_user(user) if user is not None else None,
+    )
     return {"result": result}
 
 
 @router.get("/v1/coding/tasks/{task_id}/status")
 async def v1_coding_git_status(req: Request, task_id: str) -> Dict[str, Any]:
-    _require_coding_api(req)
-    return {"result": await _to_thread(cw.git_status, task_id)}
+    user = _require_coding_api(req)
+    return {"result": await _to_thread(cw.git_status, task_id, git_token_value=_git_token_for_user(user) if user is not None else None)}
 
 
 @router.get("/v1/coding/tasks/{task_id}/diff")
@@ -286,13 +343,13 @@ async def v1_coding_commit(req: Request, task_id: str, body: CodingCommitRequest
 
 @router.post("/v1/coding/tasks/{task_id}/push")
 async def v1_coding_push(req: Request, task_id: str, body: CodingPushRequest) -> Dict[str, Any]:
-    _require_coding_api(req)
-    return {"result": await _to_thread(cw.push_task, task_id, remote=body.remote)}
+    user = _require_coding_api(req)
+    return {"result": await _to_thread(cw.push_task, task_id, remote=body.remote, git_token_value=_git_token_for_user(user) if user is not None else None)}
 
 
 @router.post("/v1/coding/tasks/{task_id}/pull-request")
 async def v1_coding_pull_request(req: Request, task_id: str, body: CodingPullRequestRequest) -> Dict[str, Any]:
-    _require_coding_api(req)
+    user = _require_coding_api(req)
     return {
         "result": await _to_thread(
             cw.create_pull_request,
@@ -301,11 +358,13 @@ async def v1_coding_pull_request(req: Request, task_id: str, body: CodingPullReq
             body=body.body,
             draft=body.draft,
             base_branch=body.base_branch,
+            git_token_value=_git_token_for_user(user) if user is not None else None,
         )
     }
 
 
 @router.get("/v1/coding/tasks/{task_id}/agent-brief")
 async def v1_coding_agent_brief(req: Request, task_id: str) -> Dict[str, Any]:
-    _require_coding_api(req)
-    return await _to_thread(cw.agent_brief, task_id)
+    user = _require_coding_api(req)
+    model = _coding_model_for_user(user) if user is not None else ""
+    return await _to_thread(cw.agent_brief, task_id, coding_model=model)

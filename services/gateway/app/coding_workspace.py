@@ -154,9 +154,18 @@ def list_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     return items[: max(1, min(int(limit or 100), 500))]
 
 
-def _redact_text(value: str) -> str:
+def _effective_git_token(token_value: Optional[str] = None) -> str:
+    if token_value is not None:
+        return str(token_value or "").strip()
+    return git_token()
+
+
+def _redact_text(value: str, *, extra_tokens: Optional[Sequence[str]] = None) -> str:
     out = str(value or "")
-    for token in [git_token()]:
+    tokens = [git_token()]
+    if extra_tokens:
+        tokens.extend(str(item or "").strip() for item in extra_tokens)
+    for token in tokens:
         if token:
             out = out.replace(token, "***")
     return out
@@ -316,13 +325,14 @@ def _base_env() -> Dict[str, str]:
 
 
 class _GitCredentialEnv:
-    def __init__(self, enabled: bool) -> None:
+    def __init__(self, enabled: bool, *, git_token_value: Optional[str] = None) -> None:
         self.enabled = enabled
+        self.git_token_value = git_token_value
         self.tmpdir: Optional[tempfile.TemporaryDirectory[str]] = None
         self.path = ""
 
     def __enter__(self) -> Dict[str, str]:
-        token = git_token() if self.enabled else ""
+        token = _effective_git_token(self.git_token_value) if self.enabled else ""
         if not token:
             return {}
         username = str(getattr(S, "CODING_GIT_USERNAME", "") or "x-access-token").strip() or "x-access-token"
@@ -354,16 +364,18 @@ class _GitCredentialEnv:
             self.tmpdir.cleanup()
 
 
-def _truncate(value: str, limit: int) -> Tuple[str, bool]:
-    text = _redact_text(value or "")
+def _truncate(value: str, limit: int, *, extra_tokens: Optional[Sequence[str]] = None) -> Tuple[str, bool]:
+    text = _redact_text(value or "", extra_tokens=extra_tokens)
     if len(text) <= limit:
         return text, False
     half = max(100, limit // 2)
     return f"{text[:half]}\n\n[... truncated {len(text) - limit} chars ...]\n\n{text[-half:]}", True
 
 
-def _redact_argv(argv: Sequence[str]) -> List[str]:
-    token = git_token()
+def _redact_argv(argv: Sequence[str], *, extra_tokens: Optional[Sequence[str]] = None) -> List[str]:
+    tokens = [git_token()]
+    if extra_tokens:
+        tokens.extend(str(item or "").strip() for item in extra_tokens)
     out: List[str] = []
     skip_next = False
     for item in argv:
@@ -377,9 +389,9 @@ def _redact_argv(argv: Sequence[str]) -> List[str]:
             out.append(value)
             skip_next = True
             continue
-        if token and token in value:
-            out.append(value.replace(token, "***"))
-            continue
+        for token in tokens:
+            if token and token in value:
+                value = value.replace(token, "***")
         out.append(value)
     return out
 
@@ -390,11 +402,13 @@ def _run_process(
     cwd: Path,
     timeout_sec: Optional[float] = None,
     use_git_credentials: bool = False,
+    git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     limit = max_output_chars()
     env = _base_env()
-    with _GitCredentialEnv(use_git_credentials) as extra_env:
+    redaction_tokens = [_effective_git_token(git_token_value)] if use_git_credentials else []
+    with _GitCredentialEnv(use_git_credentials, git_token_value=git_token_value) as extra_env:
         env.update(extra_env)
         try:
             proc = subprocess.run(
@@ -405,8 +419,8 @@ def _run_process(
                 capture_output=True,
                 timeout=command_timeout_sec(timeout_sec),
             )
-            stdout, stdout_truncated = _truncate(proc.stdout or "", limit)
-            stderr, stderr_truncated = _truncate(proc.stderr or "", limit)
+            stdout, stdout_truncated = _truncate(proc.stdout or "", limit, extra_tokens=redaction_tokens)
+            stderr, stderr_truncated = _truncate(proc.stderr or "", limit, extra_tokens=redaction_tokens)
             return {
                 "ok": proc.returncode == 0,
                 "returncode": proc.returncode,
@@ -414,13 +428,13 @@ def _run_process(
                 "stderr": stderr,
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
-                "argv": _redact_argv(argv),
+                "argv": _redact_argv(argv, extra_tokens=redaction_tokens),
                 "cwd": str(cwd),
                 "duration_ms": round((time.perf_counter() - started) * 1000.0, 1),
             }
         except subprocess.TimeoutExpired as exc:
-            stdout, stdout_truncated = _truncate(exc.stdout or "", limit)
-            stderr, stderr_truncated = _truncate(exc.stderr or "", limit)
+            stdout, stdout_truncated = _truncate(exc.stdout or "", limit, extra_tokens=redaction_tokens)
+            stderr, stderr_truncated = _truncate(exc.stderr or "", limit, extra_tokens=redaction_tokens)
             return {
                 "ok": False,
                 "returncode": None,
@@ -428,7 +442,7 @@ def _run_process(
                 "stderr": stderr or f"timeout after {command_timeout_sec(timeout_sec):.0f}s",
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
-                "argv": _redact_argv(argv),
+                "argv": _redact_argv(argv, extra_tokens=redaction_tokens),
                 "cwd": str(cwd),
                 "duration_ms": round((time.perf_counter() - started) * 1000.0, 1),
             }
@@ -438,7 +452,7 @@ def _run_process(
                 "returncode": None,
                 "stdout": "",
                 "stderr": f"command not found: {argv[0]}",
-                "argv": _redact_argv(argv),
+                "argv": _redact_argv(argv, extra_tokens=redaction_tokens),
                 "cwd": str(cwd),
                 "duration_ms": round((time.perf_counter() - started) * 1000.0, 1),
             }
@@ -483,6 +497,8 @@ def create_task(
     branch_name: Optional[str],
     prompt: Optional[str],
     owner: Optional[str],
+    git_token_value: Optional[str] = None,
+    coding_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     _ensure_enabled()
     _ensure_dirs()
@@ -503,6 +519,7 @@ def create_task(
         "base_branch": base,
         "branch_name": branch,
         "prompt": str(prompt or "").strip(),
+        "coding_model": str(coding_model or "").strip(),
         "workspace_path": str(workspace),
         "repo_path": str(repo_path),
         "commands": [],
@@ -512,7 +529,13 @@ def create_task(
     try:
         workspace.mkdir(parents=True, exist_ok=True)
         clone_argv = ["git", "clone", "--depth", "1", "--branch", base, repo, str(repo_path)]
-        clone_result = _run_process(clone_argv, cwd=workspace, timeout_sec=max(command_timeout_sec(), 300.0), use_git_credentials=True)
+        clone_result = _run_process(
+            clone_argv,
+            cwd=workspace,
+            timeout_sec=max(command_timeout_sec(), 300.0),
+            use_git_credentials=True,
+            git_token_value=git_token_value,
+        )
         _append_command(task, clone_result, label="clone")
         if not clone_result.get("ok"):
             task["status"] = "error"
@@ -537,7 +560,7 @@ def create_task(
     except Exception as exc:
         logger.warning("coding task create failed id=%s error=%s", task_id, exc)
         task["status"] = "error"
-        task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc))}"
+        task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc), extra_tokens=[_effective_git_token(git_token_value)])}"
         save_task(task)
         return public_task(task)
 
@@ -626,6 +649,7 @@ def run_task_command(
     argv: Sequence[str],
     cwd: Optional[str] = None,
     timeout_sec: Optional[float] = None,
+    git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
@@ -634,14 +658,20 @@ def run_task_command(
     if not run_cwd.exists() or not run_cwd.is_dir():
         raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
     cmd = Path(command[0]).name.lower()
-    result = _run_process(command, cwd=run_cwd, timeout_sec=timeout_sec, use_git_credentials=cmd in {"git", "gh"})
+    result = _run_process(
+        command,
+        cwd=run_cwd,
+        timeout_sec=timeout_sec,
+        use_git_credentials=cmd in {"git", "gh"},
+        git_token_value=git_token_value,
+    )
     _append_command(task, result, label="command")
     save_task(task)
     return result
 
 
-def git_status(task_id: str) -> Dict[str, Any]:
-    result = run_task_command(task_id, argv=["git", "status", "--short", "--branch"])
+def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
+    result = run_task_command(task_id, argv=["git", "status", "--short", "--branch"], git_token_value=git_token_value)
     return result
 
 
@@ -693,14 +723,20 @@ def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
     return {"ok": bool(commit.get("ok")), "status": status, "add": add, "commit": commit, "last_commit": task.get("last_commit")}
 
 
-def push_task(task_id: str, *, remote: Optional[str] = None) -> Dict[str, Any]:
+def push_task(task_id: str, *, remote: Optional[str] = None, git_token_value: Optional[str] = None) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     remote_name = str(remote or "origin").strip() or "origin"
     if not re.match(r"^[A-Za-z0-9._-]+$", remote_name):
         raise HTTPException(status_code=400, detail="invalid remote")
     branch = str(task.get("branch_name") or "").strip()
-    result = _run_process(["git", "push", "-u", remote_name, branch], cwd=repo, timeout_sec=max(command_timeout_sec(), 300.0), use_git_credentials=True)
+    result = _run_process(
+        ["git", "push", "-u", remote_name, branch],
+        cwd=repo,
+        timeout_sec=max(command_timeout_sec(), 300.0),
+        use_git_credentials=True,
+        git_token_value=git_token_value,
+    )
     _append_command(task, result, label="git-push")
     if result.get("ok"):
         task["last_pushed_at"] = _now()
@@ -741,8 +777,9 @@ def _create_github_pr_api(
     head: str,
     base: str,
     draft: bool,
+    git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
-    token = git_token()
+    token = _effective_git_token(git_token_value)
     if not token:
         return {"ok": False, "error": "CODING_GIT_TOKEN or GITHUB_TOKEN is required for GitHub API PR creation"}
     owner_repo = _github_owner_repo(repo_url)
@@ -791,6 +828,7 @@ def create_pull_request(
     body: Optional[str],
     draft: bool = True,
     base_branch: Optional[str] = None,
+    git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
@@ -799,7 +837,7 @@ def create_pull_request(
         raise HTTPException(status_code=400, detail="PR title is required")
     base = _base_branch(base_branch or str(task.get("base_branch") or "main"))
     branch = str(task.get("branch_name") or "").strip()
-    if git_token():
+    if _effective_git_token(git_token_value):
         api_result = _create_github_pr_api(
             repo_url=str(task.get("repo_url") or ""),
             title=pr_title,
@@ -807,6 +845,7 @@ def create_pull_request(
             head=branch,
             base=base,
             draft=draft,
+            git_token_value=git_token_value,
         )
         _append_command(
             task,
@@ -837,7 +876,13 @@ def create_pull_request(
     argv = ["gh", "pr", "create", "--base", base, "--head", branch, "--title", pr_title, "--body", str(body or "").strip()]
     if draft:
         argv.append("--draft")
-    result = _run_process(argv, cwd=repo, timeout_sec=max(command_timeout_sec(), 300.0), use_git_credentials=True)
+    result = _run_process(
+        argv,
+        cwd=repo,
+        timeout_sec=max(command_timeout_sec(), 300.0),
+        use_git_credentials=True,
+        git_token_value=git_token_value,
+    )
     _append_command(task, result, label="gh-pr-create")
     if result.get("ok"):
         task["last_pr_at"] = _now()
@@ -915,12 +960,13 @@ def delete_task(task_id: str) -> Dict[str, Any]:
     return {"ok": True, "task_id": task_id, "deleted_workspace": str(path), "repo_url": redact_repo_url(str(task.get("repo_url") or ""))}
 
 
-def agent_brief(task_id: str) -> Dict[str, Any]:
+def agent_brief(task_id: str, *, coding_model: Optional[str] = None) -> Dict[str, Any]:
     task = load_task(task_id)
     task_public = public_task(task)
     prompt = str(task.get("prompt") or "").strip() or "(no task prompt recorded)"
     branch = str(task.get("branch_name") or "").strip()
     base = str(task.get("base_branch") or "").strip()
+    model = str(coding_model or task.get("coding_model") or "").strip()
     text = f"""Nexus coding task: {task.get("id")}
 
 Goal:
@@ -930,6 +976,7 @@ Repository:
 - URL: {redact_repo_url(str(task.get("repo_url") or ""))}
 - Base branch: {base}
 - Working branch: {branch}
+- Preferred coding model: {model or "default"}
 
 Use the Nexus Coding API for workspace operations. Prefer a tight loop:
 1. Inspect files with GET /v1/coding/tasks/{task.get("id")}/tree and /file.
@@ -958,6 +1005,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "base_branch": task.get("base_branch"),
         "branch_name": task.get("branch_name"),
         "prompt": task.get("prompt") or "",
+        "coding_model": task.get("coding_model") or "",
         "workspace_path": task.get("workspace_path"),
         "repo_path": task.get("repo_path"),
         "last_command_at": task.get("last_command_at"),
@@ -973,7 +1021,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
     return out
 
 
-def config_payload() -> Dict[str, Any]:
+def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_model: Optional[str] = None) -> Dict[str, Any]:
     return {
         "enabled": coding_enabled(),
         "bearer_api_enabled": bool(getattr(S, "CODING_ALLOW_BEARER_API", True)),
@@ -987,6 +1035,7 @@ def config_payload() -> Dict[str, Any]:
         "command_timeout_sec": command_timeout_sec(),
         "max_output_chars": max_output_chars(),
         "file_max_bytes": file_max_bytes(),
-        "git_token_configured": bool(git_token()),
+        "git_token_configured": bool(_effective_git_token(git_token_value)),
+        "preferred_coding_model": str(preferred_coding_model or "").strip(),
         "gh_cli_available": shutil.which("gh") is not None,
     }

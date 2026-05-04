@@ -879,6 +879,66 @@ def _merge_user_settings(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[st
     return out
 
 
+def _token_hint(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if len(raw) <= 10:
+        return "***"
+    return f"{raw[:4]}...{raw[-4:]}"
+
+
+def _sanitize_user_settings_for_response(settings: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        out = json.loads(json.dumps(settings or {}, ensure_ascii=False))
+    except Exception:
+        out = dict(settings or {})
+    coding = out.get("coding")
+    if isinstance(coding, dict):
+        token = str(coding.get("git_token") or "").strip()
+        coding.pop("git_token", None)
+        coding.pop("clear_git_token", None)
+        coding["git_token_configured"] = bool(token)
+        coding["git_token_hint"] = _token_hint(token)
+    return out
+
+
+def _merge_user_settings_with_secrets(current: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    merged = _merge_user_settings(current if isinstance(current, dict) else {}, patch if isinstance(patch, dict) else {})
+    patch_coding = patch.get("coding") if isinstance(patch, dict) else None
+    if not isinstance(patch_coding, dict):
+        return merged
+
+    merged_coding = merged.get("coding")
+    if not isinstance(merged_coding, dict):
+        merged_coding = {}
+        merged["coding"] = merged_coding
+
+    current_coding = current.get("coding") if isinstance(current, dict) else None
+    current_token = ""
+    if isinstance(current_coding, dict):
+        current_token = str(current_coding.get("git_token") or "").strip()
+
+    clear_token = bool(patch_coding.get("clear_git_token"))
+    token_supplied = "git_token" in patch_coding
+    supplied_token = str(patch_coding.get("git_token") or "").strip() if token_supplied else ""
+
+    if clear_token:
+        merged_coding.pop("git_token", None)
+    elif token_supplied:
+        if supplied_token:
+            merged_coding["git_token"] = supplied_token
+        elif current_token:
+            merged_coding["git_token"] = current_token
+        else:
+            merged_coding.pop("git_token", None)
+
+    merged_coding.pop("clear_git_token", None)
+    merged_coding.pop("git_token_configured", None)
+    merged_coding.pop("git_token_hint", None)
+    return merged
+
+
 def _image_backend_display_name(backend_class: str, description: str = "") -> str:
     name = _IMAGE_BACKEND_LABELS.get((backend_class or "").strip())
     if name:
@@ -2990,9 +3050,10 @@ async def ui_user_settings_get(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     user = _require_user(req)
     if user is None:
-        return {"settings": user_store.get_settings(S.USER_DB_PATH, user_id=-1)}
+        settings = user_store.get_settings(S.USER_DB_PATH, user_id=-1)
+        return {"settings": _sanitize_user_settings_for_response(settings)}
     settings = user_store.get_settings(S.USER_DB_PATH, user_id=user.id)
-    return {"settings": settings}
+    return {"settings": _sanitize_user_settings_for_response(settings)}
 
 
 @router.put("/ui/api/user/settings", include_in_schema=False)
@@ -3008,9 +3069,9 @@ async def ui_user_settings_put(req: Request) -> Dict[str, Any]:
     if user is None:
         raise HTTPException(status_code=401, detail="authentication required")
     current = user_store.get_settings(S.USER_DB_PATH, user_id=user.id) or {}
-    merged = _merge_user_settings(current if isinstance(current, dict) else {}, settings)
+    merged = _merge_user_settings_with_secrets(current if isinstance(current, dict) else {}, settings)
     user_store.set_settings(S.USER_DB_PATH, user_id=user.id, settings=merged)
-    return {"ok": True, "settings": merged}
+    return {"ok": True, "settings": _sanitize_user_settings_for_response(merged)}
 
 
 @router.get("/ui/api/user/api-keys", include_in_schema=False)

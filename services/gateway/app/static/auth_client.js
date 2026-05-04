@@ -26,6 +26,9 @@
     settings_save: 'Save the current settings changes.',
     settings_create_api_key: 'Create a new personal API key for this account.',
     settings_forget_browser_api_key: 'Remove the saved browser API key from this browser only.',
+    settings_coding_git_token: 'Set or replace your personal GitHub token for coding workspaces.',
+    settings_clear_coding_git_token: 'Remove your saved GitHub token for coding workspaces.',
+    settings_coding_model_preference: 'Choose your preferred model for Nexus coding workspaces.',
     backendStatusRefresh: 'Refresh backend health and readiness information.',
     recordAudio: 'Start recording a voice sample from your microphone.',
     stopRecording: 'Stop the current voice-sample recording.',
@@ -52,6 +55,7 @@
     imageUrl: 'run',
     settings_api_key_name: 'settings_create_api_key',
     settings_profile_tone: 'settings_save',
+    settings_coding_git_token: 'settings_save',
     settings_current_password: 'settings_save',
     settings_new_password: 'settings_save',
     settings_confirm_password: 'settings_save',
@@ -70,6 +74,7 @@
     prTitle: 'prBtn',
     treePath: 'loadTree',
     filePath: 'readFile',
+    settings_coding_model_preference: 'settings_save',
   };
   const DEFAULT_ACTION_IDS = ['useApiKey', 'login', 'generate', 'run', 'settings_create_api_key', 'settings_save', 'applyBulk'];
 
