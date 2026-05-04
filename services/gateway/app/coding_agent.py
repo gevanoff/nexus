@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import json
 import time
 from typing import Any, Dict, List, Optional
@@ -123,6 +124,85 @@ def _extract_tool_calls(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
     if isinstance(calls, list):
         return [item for item in calls if isinstance(item, dict)]
     return []
+
+
+_TEXT_TOOL_CALL_RE = re.compile(r"<tool_call>(.*?)</tool_call>", re.IGNORECASE | re.DOTALL)
+_TEXT_FUNCTION_RE = re.compile(r"<function=([A-Za-z_][A-Za-z0-9_]*)>(.*?)</function>", re.IGNORECASE | re.DOTALL)
+_TEXT_PARAMETER_RE = re.compile(r"<parameter=([A-Za-z_][A-Za-z0-9_]*)>(.*?)</parameter>", re.IGNORECASE | re.DOTALL)
+
+
+def _coerce_text_tool_value(value: str) -> Any:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if raw.lower() in {"true", "false"}:
+        return raw.lower() == "true"
+    if raw.lower() == "null":
+        return None
+    if re.fullmatch(r"-?\d+", raw):
+        try:
+            return int(raw)
+        except Exception:
+            return raw
+    if re.fullmatch(r"-?(?:\d+\.\d*|\d*\.\d+)", raw):
+        try:
+            return float(raw)
+        except Exception:
+            return raw
+    if raw.startswith("{") or raw.startswith("["):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return raw
+    return raw
+
+
+def _text_tool_call(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": new_id("toolcall"),
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(args, separators=(",", ":"), ensure_ascii=False)},
+    }
+
+
+def _extract_text_tool_calls(content: Any) -> List[Dict[str, Any]]:
+    text = content if isinstance(content, str) else ""
+    if "<tool_call>" not in text.lower():
+        return []
+    out: List[Dict[str, Any]] = []
+    for block in _TEXT_TOOL_CALL_RE.findall(text):
+        block = str(block or "").strip()
+        if not block:
+            continue
+
+        if block.startswith("{"):
+            try:
+                parsed = json.loads(block)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                name = str(parsed.get("name") or parsed.get("tool") or parsed.get("function") or "").strip()
+                args = parsed.get("arguments") or parsed.get("args") or {}
+                if isinstance(args, str):
+                    args = _parse_tool_arguments(args)
+                if name and isinstance(args, dict):
+                    out.append(_text_tool_call(name, args))
+                    continue
+
+        fn = _TEXT_FUNCTION_RE.search(block)
+        if not fn:
+            continue
+        name = str(fn.group(1) or "").strip()
+        body = str(fn.group(2) or "")
+        args: Dict[str, Any] = {}
+        for param in _TEXT_PARAMETER_RE.finditer(body):
+            key = str(param.group(1) or "").strip()
+            if not key:
+                continue
+            args[key] = _coerce_text_tool_value(str(param.group(2) or ""))
+        if name:
+            out.append(_text_tool_call(name, args))
+    return out
 
 
 def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> ChatMessage:
@@ -526,6 +606,13 @@ async def _run_agent(
             resp = await call_backend_chat(req, backend, upstream_model)
             assistant = _extract_assistant_message(resp)
             tool_calls = _extract_tool_calls(resp)
+            text_tool_calls = False
+            if not tool_calls:
+                tool_calls = _extract_text_tool_calls(assistant.content)
+                text_tool_calls = bool(tool_calls)
+            event_content = assistant.content if isinstance(assistant.content, str) else ""
+            if text_tool_calls:
+                assistant = ChatMessage(role=assistant.role, content=None, tool_calls=tool_calls)
             messages.append(assistant)
             await asyncio.to_thread(
                 _append_event,
@@ -533,7 +620,8 @@ async def _run_agent(
                 {
                     "type": "assistant",
                     "turn": turn + 1,
-                    "content": _clip_text(assistant.content if isinstance(assistant.content, str) else "", 4000),
+                    "content": _clip_text(event_content, 4000),
+                    "tool_call_format": "text" if text_tool_calls else "native",
                     "tool_calls": [
                         {
                             "id": item.get("id") if isinstance(item.get("id"), str) else "",
