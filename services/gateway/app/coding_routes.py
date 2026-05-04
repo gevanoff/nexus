@@ -254,6 +254,12 @@ async def ui_coding_git_diff(req: Request, task_id: str) -> Dict[str, Any]:
     return await _to_thread(cw.git_diff, task_id)
 
 
+@router.get("/ui/api/coding/tasks/{task_id}/changes", include_in_schema=False)
+async def ui_coding_git_changes(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return {"result": await _to_thread(cw.git_change_summary, task_id)}
+
+
 @router.post("/ui/api/coding/tasks/{task_id}/commit", include_in_schema=False)
 async def ui_coding_commit(req: Request, task_id: str, body: CodingCommitRequest) -> Dict[str, Any]:
     _require_coding_ui(req)
@@ -427,6 +433,12 @@ async def v1_coding_git_status(req: Request, task_id: str) -> Dict[str, Any]:
 async def v1_coding_git_diff(req: Request, task_id: str) -> Dict[str, Any]:
     _require_coding_api(req)
     return await _to_thread(cw.git_diff, task_id)
+
+
+@router.get("/v1/coding/tasks/{task_id}/changes")
+async def v1_coding_git_changes(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return {"result": await _to_thread(cw.git_change_summary, task_id)}
 
 
 @router.get("/v1/coding/tasks/{task_id}/tree")

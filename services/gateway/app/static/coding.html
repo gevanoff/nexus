@@ -94,6 +94,40 @@
       .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
       .panel-grid { display:grid; grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr); gap:10px; }
       .subpanel { border:1px solid rgba(231,237,246,0.10); border-radius:8px; background:rgba(8,13,20,0.52); padding:10px; }
+      details.subpanel { padding:0; overflow:hidden; }
+      details.subpanel > summary {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        cursor:pointer;
+        padding:10px;
+        list-style:none;
+      }
+      details.subpanel > summary::-webkit-details-marker { display:none; }
+      details.subpanel > summary::before {
+        content:">";
+        color:var(--muted);
+        margin-right:2px;
+      }
+      details.subpanel[open] > summary::before { content:"v"; }
+      .details-body { padding:0 10px 10px; }
+      .change-summary { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+      .change-chip { border-radius:999px; border:1px solid var(--border); padding:2px 7px; font-size:11px; }
+      .change-chip.added { border-color:rgba(88,214,141,0.48); color:#a5f3c7; background:rgba(0,120,72,0.14); }
+      .change-chip.modified { border-color:rgba(111,184,255,0.48); color:#cfe6ff; background:rgba(20,82,140,0.16); }
+      .change-chip.removed { border-color:rgba(255,127,143,0.52); color:#ffc3cb; background:rgba(150,20,38,0.18); }
+      .publish-feedback {
+        min-height:22px;
+        border:1px solid rgba(231,237,246,0.10);
+        border-radius:8px;
+        padding:8px;
+        background:rgba(5,9,14,0.45);
+        font-size:12px;
+        color:var(--muted);
+      }
+      .publish-feedback.ok { border-color:rgba(88,214,141,0.42); color:#a5f3c7; background:rgba(0,120,72,0.12); }
+      .publish-feedback.error { border-color:rgba(255,127,143,0.48); color:#ffc3cb; background:rgba(150,20,38,0.16); }
       .agent-log {
         max-height:300px;
         overflow:auto;
@@ -106,8 +140,8 @@
       }
       .output {
         margin:0;
-        min-height:160px;
-        max-height:420px;
+        min-height:320px;
+        max-height:640px;
         overflow:auto;
         white-space:pre-wrap;
         word-break:break-word;
@@ -228,12 +262,22 @@
 
           <div class="subpanel stack">
             <div class="row" style="justify-content:space-between;">
+              <h3>Output</h3>
+              <span id="outputTitle" class="meta"></span>
+            </div>
+            <pre id="output" class="output"></pre>
+          </div>
+
+          <details class="subpanel" open>
+            <summary>
               <h3>Agent Run</h3>
               <span id="agentStatus" class="badge pending">idle</span>
+            </summary>
+            <div class="details-body stack">
+              <div id="agentMeta" class="meta"></div>
+              <pre id="agentLog" class="agent-log"></pre>
             </div>
-            <div id="agentMeta" class="meta"></div>
-            <pre id="agentLog" class="agent-log"></pre>
-          </div>
+          </details>
 
           <div class="panel-grid">
             <div class="subpanel stack">
@@ -259,6 +303,7 @@
                 <button id="commitBtn" type="button" data-ui-role="secondary">Commit</button>
                 <button id="pushBtn" type="button" data-ui-role="secondary">Push</button>
               </div>
+              <div id="publishFeedback" class="publish-feedback">No publish action yet.</div>
               <div>
                 <label for="prTitle">Pull request title</label>
                 <input id="prTitle" autocomplete="off" />
@@ -268,37 +313,32 @@
             </div>
           </div>
 
-          <div class="subpanel stack">
-            <div class="row" style="justify-content:space-between;">
+          <details id="filesPanel" class="subpanel">
+            <summary>
               <h3>Files</h3>
-              <div class="row">
+              <span id="changeSummary" class="change-summary"></span>
+            </summary>
+            <div class="details-body stack">
+              <div class="row" style="justify-content:flex-end;">
                 <input id="treePath" style="width:220px;" autocomplete="off" placeholder="path" />
                 <button id="loadTree" type="button" data-ui-role="secondary">Load</button>
               </div>
-            </div>
-            <div id="fileList" class="file-list"></div>
-            <div>
-              <label for="filePath">Open file</label>
-              <div class="row">
-                <input id="filePath" style="flex:1 1 260px;" autocomplete="off" />
-                <button id="readFile" type="button" data-ui-role="secondary">Read</button>
-                <button id="writeFile" type="button" data-ui-role="secondary">Write</button>
+              <div id="fileList" class="file-list"></div>
+              <div>
+                <label for="filePath">Open file</label>
+                <div class="row">
+                  <input id="filePath" style="flex:1 1 260px;" autocomplete="off" />
+                  <button id="readFile" type="button" data-ui-role="secondary">Read</button>
+                  <button id="writeFile" type="button" data-ui-role="secondary">Write</button>
+                </div>
               </div>
+              <textarea id="fileContent" class="file-content" spellcheck="false"></textarea>
             </div>
-            <textarea id="fileContent" class="file-content" spellcheck="false"></textarea>
-          </div>
-
-          <div class="subpanel stack">
-            <div class="row" style="justify-content:space-between;">
-              <h3>Output</h3>
-              <span id="outputTitle" class="meta"></span>
-            </div>
-            <pre id="output" class="output"></pre>
-          </div>
+          </details>
         </section>
       </div>
     </main>
-    <script src="/static/auth_client.js?v=2"></script>
-    <script src="/static/coding.js?v=2"></script>
+    <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/coding.js?v=3"></script>
   </body>
 </html>

@@ -677,6 +677,46 @@ def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[s
     return result
 
 
+def git_change_summary(task_id: str) -> Dict[str, Any]:
+    task = load_task(task_id)
+    repo = _repo_path(task)
+    result = _run_process(["git", "status", "--porcelain"], cwd=repo)
+    counts = {"added": 0, "modified": 0, "removed": 0, "renamed": 0, "untracked": 0, "other": 0, "total": 0}
+    files: List[Dict[str, Any]] = []
+    if result.get("ok"):
+        for raw_line in str(result.get("stdout") or "").splitlines():
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            code = line[:2]
+            path = line[3:] if len(line) > 3 else ""
+            x = code[0] if len(code) > 0 else " "
+            y = code[1] if len(code) > 1 else " "
+            if code == "??":
+                kind = "untracked"
+                counts["untracked"] += 1
+                counts["added"] += 1
+            elif "D" in {x, y}:
+                kind = "removed"
+                counts["removed"] += 1
+            elif "R" in {x, y}:
+                kind = "renamed"
+                counts["renamed"] += 1
+                counts["modified"] += 1
+            elif "A" in {x, y}:
+                kind = "added"
+                counts["added"] += 1
+            elif any(item in {x, y} for item in ["M", "T", "U"]):
+                kind = "modified"
+                counts["modified"] += 1
+            else:
+                kind = "other"
+                counts["other"] += 1
+            counts["total"] += 1
+            files.append({"path": path, "status": code, "kind": kind})
+    return {"ok": bool(result.get("ok")), "counts": counts, "files": files[:500], "truncated": len(files) > 500, "raw": result}
+
+
 def git_diff(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)

@@ -25,6 +25,7 @@
     agentStatus: document.getElementById("agentStatus"),
     agentMeta: document.getElementById("agentMeta"),
     agentLog: document.getElementById("agentLog"),
+    publishFeedback: document.getElementById("publishFeedback"),
     deleteTask: document.getElementById("deleteTask"),
     commandInput: document.getElementById("commandInput"),
     commandCwd: document.getElementById("commandCwd"),
@@ -35,6 +36,8 @@
     prTitle: document.getElementById("prTitle"),
     prBody: document.getElementById("prBody"),
     prBtn: document.getElementById("prBtn"),
+    filesPanel: document.getElementById("filesPanel"),
+    changeSummary: document.getElementById("changeSummary"),
     treePath: document.getElementById("treePath"),
     loadTree: document.getElementById("loadTree"),
     fileList: document.getElementById("fileList"),
@@ -53,6 +56,8 @@
     selectedId: "",
     busy: false,
     pollTimer: null,
+    outputHistory: [],
+    changeSummary: null,
   };
 
   function setStatus(text, isError) {
@@ -135,11 +140,25 @@
   function setOutput(title, value) {
     if (els.outputTitle) els.outputTitle.textContent = title || "";
     if (!els.output) return;
+    let body = "";
     if (typeof value === "string") {
-      els.output.textContent = value;
+      body = value;
     } else {
-      els.output.textContent = JSON.stringify(value, null, 2);
+      body = JSON.stringify(value, null, 2);
     }
+    const time = new Date().toLocaleTimeString();
+    state.outputHistory.push({ title: title || "output", body, time });
+    state.outputHistory = state.outputHistory.slice(-40);
+    els.output.textContent = state.outputHistory
+      .map((item) => `# ${item.title} @ ${item.time}\n${item.body || ""}`.trim())
+      .join("\n\n---\n\n");
+    els.output.scrollTop = els.output.scrollHeight;
+  }
+
+  function setPublishFeedback(text, kind) {
+    if (!els.publishFeedback) return;
+    els.publishFeedback.textContent = text || "No publish action yet.";
+    els.publishFeedback.className = `publish-feedback ${kind || ""}`.trim();
   }
 
   function resultText(result) {
@@ -152,6 +171,20 @@
     if (result.stderr) bits.push(`\nstderr:\n${result.stderr}`);
     if (!bits.length) return JSON.stringify(result, null, 2);
     return bits.join("\n");
+  }
+
+  function pushPermissionHint(result) {
+    const stderr = String((result && result.stderr) || "");
+    const stdout = String((result && result.stdout) || "");
+    const text = `${stderr}\n${stdout}`.toLowerCase();
+    if ((text.includes("permission to") && text.includes("denied")) || text.includes("returned error: 403")) {
+      return "GitHub rejected the push. Update your saved GitHub token in User Settings with write access to this repository, typically Contents: read/write and Pull requests: read/write for gevanoff/nexus.";
+    }
+    return "";
+  }
+
+  function commandOk(result) {
+    return !!(result && typeof result === "object" && result.ok);
   }
 
   function parseArgv(input) {
@@ -363,11 +396,42 @@
     updatePolling();
   }
 
+  function renderChangeSummary(summary) {
+    if (!els.changeSummary) return;
+    const counts = summary && summary.counts && typeof summary.counts === "object" ? summary.counts : {};
+    const added = Number(counts.added || 0);
+    const modified = Number(counts.modified || 0);
+    const removed = Number(counts.removed || 0);
+    const total = Number(counts.total || 0);
+    els.changeSummary.innerHTML = "";
+    const addChip = (label, value, cls) => {
+      const span = document.createElement("span");
+      span.className = `change-chip ${cls || ""}`.trim();
+      span.textContent = `${value} ${label}`;
+      els.changeSummary.appendChild(span);
+    };
+    addChip("added", added, "added");
+    addChip("modified", modified, "modified");
+    addChip("removed", removed, "removed");
+    if (!total) {
+      const clean = document.createElement("span");
+      clean.className = "meta";
+      clean.textContent = "clean";
+      els.changeSummary.appendChild(clean);
+    }
+  }
+
   function selectTask(taskId) {
     state.selectedId = String(taskId || "");
+    setPublishFeedback("No publish action yet.");
     renderTasks();
     renderSelected();
-    if (state.selectedId) loadTree().catch((error) => setStatus(String(error.message || error), true));
+    if (state.selectedId) {
+      loadChanges().catch((error) => setStatus(String(error.message || error), true));
+      if (els.filesPanel && els.filesPanel.open) {
+        loadTree().catch((error) => setStatus(String(error.message || error), true));
+      }
+    }
   }
 
   async function loadConfig() {
@@ -466,6 +530,25 @@
     state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
     renderTasks();
     renderSelected();
+    await loadChanges({ quiet: true });
+  }
+
+  async function loadChanges({ quiet = false } = {}) {
+    const task = selectedTask();
+    if (!task) {
+      state.changeSummary = null;
+      renderChangeSummary(null);
+      return null;
+    }
+    try {
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/changes`);
+      state.changeSummary = payload.result || null;
+      renderChangeSummary(state.changeSummary);
+      return state.changeSummary;
+    } catch (error) {
+      if (!quiet) throw error;
+      return null;
+    }
   }
 
   function updatePolling() {
@@ -539,6 +622,7 @@
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/status`);
       setOutput("git status", resultText(payload.result));
       await refreshSelected();
+      await loadChanges({ quiet: true });
     } finally {
       setBusy(false);
       renderSelected();
@@ -558,6 +642,7 @@
       if (payload.diff && payload.diff.stdout) parts.push(`diff:\n${payload.diff.stdout}`);
       setOutput("diff", parts.join("\n\n") || JSON.stringify(payload, null, 2));
       await refreshSelected();
+      await loadChanges({ quiet: true });
     } finally {
       setBusy(false);
       renderSelected();
@@ -585,6 +670,7 @@
       });
       setOutput("command", resultText(payload.result));
       await refreshSelected();
+      await loadChanges({ quiet: true });
     } finally {
       setBusy(false);
       renderSelected();
@@ -604,7 +690,14 @@
         body: JSON.stringify({ message }),
       });
       setOutput("commit", payload);
+      if (payload && payload.ok) {
+        setPublishFeedback(`Commit succeeded${payload.last_commit ? `: ${String(payload.last_commit).slice(0, 12)}` : "."}`, "ok");
+      } else {
+        const error = payload && payload.error ? String(payload.error) : "Commit did not complete.";
+        setPublishFeedback(error, "error");
+      }
       await refreshSelected();
+      await loadChanges({ quiet: true });
     } finally {
       setBusy(false);
       renderSelected();
@@ -622,6 +715,13 @@
         body: JSON.stringify({ remote: "origin" }),
       });
       setOutput("push", resultText(payload.result));
+      if (commandOk(payload.result)) {
+        setPublishFeedback("Push succeeded. The branch is available on origin.", "ok");
+      } else {
+        const hint = pushPermissionHint(payload.result);
+        const stderr = String((payload.result && payload.result.stderr) || "").trim();
+        setPublishFeedback(hint || stderr || "Push failed.", "error");
+      }
       await refreshSelected();
     } finally {
       setBusy(false);
@@ -642,6 +742,13 @@
         body: JSON.stringify({ title, body: els.prBody ? els.prBody.value : "", draft: true }),
       });
       setOutput("pull request", resultText(payload.result || payload));
+      if ((payload.result || payload).ok) {
+        const url = (payload.result || payload).url || (payload.result || payload).stdout || "";
+        setPublishFeedback(`Draft PR created${url ? `: ${url}` : "."}`, "ok");
+      } else {
+        const error = (payload.result || payload).error || "Draft PR creation failed.";
+        setPublishFeedback(String(error), "error");
+      }
       await refreshSelected();
     } finally {
       setBusy(false);
@@ -744,7 +851,8 @@
       });
       setOutput("write file", payload);
       await refreshSelected();
-      await loadTree();
+      await loadChanges({ quiet: true });
+      if (els.filesPanel && els.filesPanel.open) await loadTree();
     } finally {
       setBusy(false);
       renderSelected();
@@ -779,7 +887,8 @@
     await loadConfig();
     await loadTasks({ keepSelection: false });
     if (state.selectedId) {
-      await loadTree();
+      await loadChanges({ quiet: true });
+      if (els.filesPanel && els.filesPanel.open) await loadTree();
     }
   }
 
@@ -800,6 +909,14 @@
   wire("readFile", readFile);
   wire("writeFile", writeFile);
   wire("copyOutput", copyOutput);
+
+  if (els.filesPanel) {
+    els.filesPanel.addEventListener("toggle", () => {
+      if (els.filesPanel.open && selectedTask()) {
+        loadTree().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
+      }
+    });
+  }
 
   document.addEventListener("DOMContentLoaded", () => {
     init().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
