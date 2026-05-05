@@ -1,5 +1,6 @@
 (() => {
   const styleId = "nexus-focused-nav-styles";
+  const apiStatusId = "focusedApiKeyStatus";
   const appLinks = [
     ["Image UI", "/ui/image"],
     ["Music UI", "/ui/music"],
@@ -18,6 +19,16 @@
     style.id = styleId;
     style.textContent = `
       .focused-nav-wrap { position: relative; display: inline-flex; }
+      main > header > :first-child { flex: 1 1 420px; min-width: 220px; }
+      main > header > .row { flex: 0 0 auto; justify-content: flex-end; max-width: 58%; }
+      .focused-nav-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.1em;
+        min-width: 1.1em;
+        color: #cfe7ff;
+      }
       .focused-nav-menu {
         position: absolute;
         right: 0;
@@ -41,25 +52,77 @@
       }
       .focused-nav-menu a:hover { background: rgba(231,237,246,0.06); text-decoration: none; }
       .focused-nav-caret { color: #93a4ba; font-size: 12px; margin-left: 2px; }
+      .focused-api-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 9px;
+        border: 1px solid rgba(231,237,246,0.12);
+        border-radius: 999px;
+        background: rgba(231,237,246,0.04);
+        color: #9fb3d6;
+        font: inherit;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        box-shadow: none;
+      }
+      .focused-api-status::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #8a96a8;
+      }
+      .focused-api-status.active {
+        color: #cfe7ff;
+        border-color: rgba(111,184,255,0.28);
+        background: rgba(111,184,255,0.08);
+      }
+      .focused-api-status.active::before { background: #6fb8ff; }
+      @media (max-width: 760px) {
+        main > header > .row { max-width: 100%; }
+      }
     `;
     document.head.appendChild(style);
   }
 
-  function button(text) {
+  function icon(name) {
+    const span = document.createElement("span");
+    span.className = "focused-nav-icon";
+    span.setAttribute("aria-hidden", "true");
+    const paths = {
+      Chat: '<path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v5A3.5 3.5 0 0 1 16.5 14H10l-4.5 4v-4A3.5 3.5 0 0 1 4 10.5v-5Z"/>',
+      Gear: '<path d="M12 8.3A3.7 3.7 0 1 0 12 15.7A3.7 3.7 0 0 0 12 8.3Z"/><path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.4-2.4 1a8 8 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.6A8 8 0 0 0 7 6.6l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.4 2.4-1a8 8 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a8 8 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.5Z"/>',
+      Grid: '<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/>',
+    };
+    span.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round">${paths[name] || ""}</svg>`;
+    return span;
+  }
+
+  function appendLabel(el, text) {
+    const label = document.createElement("span");
+    label.textContent = text;
+    el.appendChild(label);
+  }
+
+  function button(text, iconText) {
     const el = document.createElement("button");
     el.type = "button";
     el.className = "pill";
     el.dataset.uiRole = "menu";
-    el.textContent = text;
+    if (iconText) el.appendChild(icon(iconText));
+    appendLabel(el, text);
     return el;
   }
 
-  function linkButton(text, href) {
+  function linkButton(text, href, iconText) {
     const el = document.createElement("a");
     el.className = "pill";
     el.dataset.uiRole = "nav";
     el.href = href;
-    el.textContent = text;
+    if (iconText) el.appendChild(icon(iconText));
+    appendLabel(el, text);
     return el;
   }
 
@@ -78,18 +141,59 @@
     } catch (error) {}
   }
 
+  function hasApiKey() {
+    return !!(window.GatewayAuth && window.GatewayAuth.getApiKey && window.GatewayAuth.getApiKey());
+  }
+
+  function updateApiStatus(el) {
+    if (!el) return;
+    const active = hasApiKey();
+    el.textContent = active ? "API key active" : "API key inactive";
+    el.classList.toggle("active", active);
+    el.title = active
+      ? "A saved personal API key is active in this browser."
+      : "No saved browser API key. Open Settings to create or paste one.";
+  }
+
+  function makeApiStatus() {
+    const el = document.createElement("button");
+    el.id = apiStatusId;
+    el.type = "button";
+    el.className = "focused-api-status";
+    el.dataset.uiRole = "status";
+    el.addEventListener("click", () => {
+      window.location.href = "/ui?settings=security";
+    });
+    updateApiStatus(el);
+    window.addEventListener("gateway-auth-changed", () => updateApiStatus(el));
+    return el;
+  }
+
   function init() {
     ensureStyles();
     const row = document.querySelector("main > header .row");
     if (!row || row.dataset.focusedNavInit === "1") return;
     row.dataset.focusedNavInit = "1";
 
-    const settings = linkButton("Settings", "/ui?settings=1");
+    const backToChat = Array.from(row.querySelectorAll("a[href='/ui'], a[href='/ui/']")).find((item) => {
+      return String(item.textContent || "").trim().toLowerCase().includes("back to chat");
+    });
+    if (backToChat && !backToChat.querySelector(".focused-nav-icon")) {
+      backToChat.textContent = "";
+      backToChat.appendChild(icon("Chat"));
+      appendLabel(backToChat, "Back to Chat");
+    }
+
+    if (!document.getElementById(apiStatusId)) {
+      row.appendChild(makeApiStatus());
+    }
+
+    const settings = linkButton("Settings", "/ui?settings=1", "Gear");
     settings.title = "Open user settings and preferences";
 
     const appsWrap = document.createElement("div");
     appsWrap.className = "focused-nav-wrap";
-    const appsBtn = button("Apps");
+    const appsBtn = button("Apps", "Grid");
     appsBtn.setAttribute("aria-expanded", "false");
     const caret = document.createElement("span");
     caret.className = "focused-nav-caret";

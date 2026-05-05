@@ -1430,6 +1430,11 @@
         return;
       }
 
+      const note = document.createElement('div');
+      note.className = 'hint';
+      note.textContent = 'Existing keys are listed by name only. Paste a saved token or create a new key to activate it in this browser.';
+      listEl.appendChild(note);
+
       for (const item of keys) {
         const row = document.createElement('div');
         row.className = 'attachment-row';
@@ -1517,10 +1522,15 @@
         const token = String(key?.token || '').trim();
         if (resultEl) {
           if (token) {
-            resultEl.textContent = `New API key (shown once):\n${token}`;
+            resultEl.textContent = `New API key (shown once):\n${token}\n\nThis key has been saved in this browser.`;
           } else {
             resultEl.textContent = 'API key created, but token was not returned.';
           }
+        }
+        if (token && window.GatewayAuth && window.GatewayAuth.setApiKey) {
+          window.GatewayAuth.setApiKey(token);
+          try { await window.GatewayAuth.ensureBrowserSession(); } catch (e) {}
+          updateApiKeyStatusUi();
         }
         if (nameEl) nameEl.value = '';
         const refreshed = await loadApiKeys();
@@ -1580,6 +1590,48 @@
       }
     }
 
+    async function useBrowserApiKeyFromSettings() {
+      const tokenEl = document.getElementById('settings_browser_api_key');
+      const resultEl = document.getElementById('settings_api_key_result');
+      const token = String(tokenEl?.value || '').trim();
+      if (!token) {
+        alert('Paste an API key first.');
+        return;
+      }
+      try {
+        const validation = window.GatewayAuth && window.GatewayAuth.validateApiKey
+          ? await window.GatewayAuth.validateApiKey(token)
+          : { ok: false, detail: 'GatewayAuth is unavailable' };
+        if (!validation.ok) {
+          if (resultEl) resultEl.textContent = `API key was not accepted: ${JSON.stringify(validation.detail || validation.status || 'invalid key')}`;
+          return;
+        }
+        if (window.GatewayAuth && window.GatewayAuth.setApiKey) {
+          window.GatewayAuth.setApiKey(token);
+          try { await window.GatewayAuth.ensureBrowserSession(); } catch (e) {}
+        }
+        if (tokenEl) tokenEl.value = '';
+        if (resultEl) resultEl.textContent = 'API key saved in this browser.';
+        updateApiKeyStatusUi();
+      } catch (e) {
+        if (resultEl) resultEl.textContent = `Failed to use API key: ${String(e)}`;
+      }
+    }
+
+    function setSettingsSection(sectionId) {
+      const requested = String(sectionId || '').trim();
+      const normalized = requested === 'security' ? 'settings-security' : requested || 'settings-backends';
+      const targetId = document.getElementById(normalized) ? normalized : 'settings-backends';
+      const menuButtons = document.querySelectorAll('.settings-menu button');
+      const sections = document.querySelectorAll('.settings-section');
+      menuButtons.forEach((btn) => {
+        btn.classList.toggle('active', btn.dataset.section === targetId);
+      });
+      sections.forEach((section) => {
+        section.classList.toggle('active', section.id === targetId);
+      });
+    }
+
     function forgetStoredApiKey() {
       try {
         if (window.GatewayAuth && window.GatewayAuth.clearApiKey) {
@@ -1592,7 +1644,7 @@
       }
     }
 
-    function openSettings() {
+    function openSettings(sectionId) {
       const modal = document.getElementById('settingsModal');
       if (!modal) return;
       // populate form
@@ -1728,6 +1780,7 @@
         } catch (e) {}
 
         modal.setAttribute('aria-hidden', 'false');
+        setSettingsSection(sectionId || 'settings-backends');
         const close = document.getElementById('settingsClose');
         if (close) close.focus();
       })();
@@ -2601,10 +2654,13 @@
       if (clearChatEl) clearChatEl.addEventListener('click', () => clearChatUI());
       if (resetSessionEl) resetSessionEl.addEventListener('click', () => resetSession());
       if (settingsBtn) settingsBtn.addEventListener('click', () => openSettings());
+      if (apiKeyStatusEl) apiKeyStatusEl.addEventListener('click', () => openSettings('settings-security'));
       try {
         const params = new URLSearchParams(window.location.search || "");
-        if (params.get("settings") === "1" || window.location.hash === "#settings") {
-          window.setTimeout(() => openSettings(), 0);
+        const requestedSettings = params.get("settings") || "";
+        if (requestedSettings || window.location.hash === "#settings") {
+          const section = requestedSettings === "security" ? "settings-security" : "";
+          window.setTimeout(() => openSettings(section), 0);
         }
       } catch (error) {}
       // modal controls
@@ -2613,11 +2669,13 @@
       const settingsClose = document.getElementById('settingsClose');
       const createApiKeyBtn = document.getElementById('settings_create_api_key');
       const forgetBrowserApiKeyBtn = document.getElementById('settings_forget_browser_api_key');
+      const useBrowserApiKeyBtn = document.getElementById('settings_use_browser_api_key');
       if (settingsCancel) settingsCancel.addEventListener('click', () => closeSettings());
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
       if (settingsSave) settingsSave.addEventListener('click', () => saveSettingsFromModal());
       if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
       if (forgetBrowserApiKeyBtn) forgetBrowserApiKeyBtn.addEventListener('click', () => forgetStoredApiKey());
+      if (useBrowserApiKeyBtn) useBrowserApiKeyBtn.addEventListener('click', () => void useBrowserApiKeyFromSettings());
       if (backendStatusPanel) {
         backendStatusPanel.open = true;
         backendStatusPanel.addEventListener('toggle', () => {
@@ -2634,20 +2692,10 @@
           void loadBackendStatus({ refresh: true });
         });
       }
-      function setActiveSettingsSection(sectionId) {
-        const menuButtons = document.querySelectorAll('.settings-menu button');
-        const sections = document.querySelectorAll('.settings-section');
-        menuButtons.forEach((btn) => {
-          btn.classList.toggle('active', btn.dataset.section === sectionId);
-        });
-        sections.forEach((section) => {
-          section.classList.toggle('active', section.id === sectionId);
-        });
-      }
       document.querySelectorAll('.settings-menu button').forEach((btn) => {
         btn.addEventListener('click', () => {
           const target = btn.dataset.section;
-          if (target) setActiveSettingsSection(target);
+          if (target) setSettingsSection(target);
         });
       });
       // Apps menu: toggle and admin-only link visibility
