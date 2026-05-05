@@ -28,6 +28,7 @@
     const modelEl = $("model");
     const loadModelsEl = $("loadModels");
     const inputEl = $("input");
+    const inputPreviewEl = $("inputPreview");
     const sendEl = $("send");
     const clearEl = $("clear");
     const clearChatEl = $("clearChat");
@@ -48,13 +49,18 @@
     /** @type {{role:'user'|'assistant'|'system', content:string}[]} */
     let history = [];
 
-    const CONVO_KEY = "gw_ui2_conversation_id";
+    const CONVO_KEY = "gw_ui_conversation_id";
 
     let conversationId = "";
     let conversationResetting = false;
     let pendingAttachments = [];
     let modelOptionsCache = [];
     let modelOptionLabels = new Map();
+    let currentUserIsAdmin = false;
+    const BACKEND_STATUS_CACHE_KEY = "nexus.chat.backendStatus.v1";
+    const BACKEND_STATUS_POLL_MS = 30000;
+    const BACKEND_STATUS_STALE_AFTER_POLLS = 3;
+    let backendStatusPollIntervalSec = BACKEND_STATUS_POLL_MS / 1000;
 
     function handle401(resp) {
       if (resp && resp.status === 401) {
@@ -74,6 +80,309 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+    }
+
+    function escapeHtmlText(s) {
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function normalizeCodeLanguage(lang) {
+      const value = String(lang || "").trim().toLowerCase();
+      if (!value) return "";
+      const aliases = {
+        js: "javascript",
+        jsx: "javascript",
+        ts: "typescript",
+        tsx: "typescript",
+        py: "python",
+        sh: "bash",
+        shell: "bash",
+        zsh: "bash",
+        yml: "yaml",
+        md: "markdown",
+        html: "html",
+        htm: "html",
+      };
+      return (aliases[value] || value).replace(/[^a-z0-9_+.#-]/g, "");
+    }
+
+    function safeLinkHref(rawHref) {
+      const value = String(rawHref || "").trim();
+      if (!value) return "";
+      try {
+        const url = new URL(value, window.location.origin);
+        if (["http:", "https:", "mailto:"].includes(url.protocol)) return url.href;
+      } catch (e) {}
+      return "";
+    }
+
+    function appendInlineMarkdown(parent, text) {
+      const source = String(text || "");
+      const tokenRe = /(`[^`\n]+`|\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|\[[^\]\n]+?\]\([^) \n]+?\))/g;
+      let last = 0;
+      let match;
+      while ((match = tokenRe.exec(source)) !== null) {
+        if (match.index > last) parent.appendChild(document.createTextNode(source.slice(last, match.index)));
+        const token = match[0];
+        if (token.startsWith("`")) {
+          const code = document.createElement("code");
+          code.className = "inline-code";
+          code.textContent = token.slice(1, -1);
+          parent.appendChild(code);
+        } else if (token.startsWith("**")) {
+          const strong = document.createElement("strong");
+          appendInlineMarkdown(strong, token.slice(2, -2));
+          parent.appendChild(strong);
+        } else if (token.startsWith("*")) {
+          const em = document.createElement("em");
+          appendInlineMarkdown(em, token.slice(1, -1));
+          parent.appendChild(em);
+        } else if (token.startsWith("[")) {
+          const close = token.indexOf("](");
+          const label = token.slice(1, close);
+          const href = safeLinkHref(token.slice(close + 2, -1));
+          if (href) {
+            const link = document.createElement("a");
+            link.href = href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            appendInlineMarkdown(link, label);
+            parent.appendChild(link);
+          } else {
+            parent.appendChild(document.createTextNode(token));
+          }
+        }
+        last = match.index + token.length;
+      }
+      if (last < source.length) parent.appendChild(document.createTextNode(source.slice(last)));
+    }
+
+    function appendInlineLines(parent, lines) {
+      lines.forEach((line, idx) => {
+        if (idx > 0) parent.appendChild(document.createElement("br"));
+        appendInlineMarkdown(parent, line);
+      });
+    }
+
+    function highlightCode(code, language) {
+      const lang = normalizeCodeLanguage(language);
+      const keywordPattern = [
+        "and", "as", "async", "await", "break", "case", "catch", "class", "const", "continue",
+        "def", "default", "do", "elif", "else", "except", "false", "False", "finally", "for",
+        "from", "function", "if", "import", "in", "is", "let", "new", "None", "not", "null",
+        "or", "pass", "return", "switch", "throw", "true", "True", "try", "var", "while", "with", "yield"
+      ].join("|");
+      const tokenRe = new RegExp(
+        "(\\/\\*[\\s\\S]*?\\*\\/|<!--[\\s\\S]*?-->|\\/\\/[^\\n]*|#[^\\n]*)" +
+        "|(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|`(?:\\\\.|[^`\\\\])*`)" +
+        "|(<\\/?[A-Za-z][^>\\n]*?>)" +
+        "|(\\b\\d+(?:\\.\\d+)?\\b)" +
+        `|(\\b(?:${keywordPattern})\\b)` +
+        "|(\\b[A-Za-z_$][\\w$]*(?=\\s*\\())",
+        "g"
+      );
+      let html = "";
+      let last = 0;
+      const raw = String(code || "");
+      let match;
+      while ((match = tokenRe.exec(raw)) !== null) {
+        if (match.index > last) html += escapeHtmlText(raw.slice(last, match.index));
+        const token = match[0];
+        const cls = match[1]
+          ? "md-code-comment"
+          : match[2]
+            ? "md-code-string"
+            : match[3]
+              ? "md-code-tag"
+              : match[4]
+                ? "md-code-number"
+                : match[5]
+                  ? "md-code-keyword"
+                  : "md-code-function";
+        html += `<span class="${cls}">${escapeHtmlText(token)}</span>`;
+        last = match.index + token.length;
+      }
+      if (last < raw.length) html += escapeHtmlText(raw.slice(last));
+      if (lang === "json") {
+        html = html.replace(/(<span class="md-code-string">"[^"]+"<\/span>)(\s*:)/g, '<span class="md-code-keyword">$1</span>$2');
+      }
+      return html;
+    }
+
+    function copyTextToClipboard(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      const tmp = document.createElement("textarea");
+      tmp.value = text;
+      tmp.setAttribute("readonly", "true");
+      tmp.style.position = "fixed";
+      tmp.style.left = "-9999px";
+      document.body.appendChild(tmp);
+      tmp.select();
+      try {
+        document.execCommand("copy");
+        return Promise.resolve();
+      } catch (e) {
+        return Promise.reject(e);
+      } finally {
+        tmp.remove();
+      }
+    }
+
+    function createCodeBlock(codeText, language) {
+      const lang = normalizeCodeLanguage(language);
+      const block = document.createElement("div");
+      block.className = "code-block";
+
+      const header = document.createElement("div");
+      header.className = "code-block-header";
+      const label = document.createElement("span");
+      label.className = "code-block-lang";
+      label.textContent = lang || "text";
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "code-copy";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", async () => {
+        try {
+          await copyTextToClipboard(String(codeText || ""));
+          copy.textContent = "Copied";
+          window.setTimeout(() => { copy.textContent = "Copy"; }, 1200);
+        } catch (e) {
+          copy.textContent = "Failed";
+          window.setTimeout(() => { copy.textContent = "Copy"; }, 1400);
+        }
+      });
+      header.appendChild(label);
+      header.appendChild(copy);
+      block.appendChild(header);
+
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      if (lang) code.className = `language-${lang}`;
+      code.innerHTML = highlightCode(codeText, lang);
+      pre.appendChild(code);
+      block.appendChild(pre);
+      return block;
+    }
+
+    function isMarkdownBlockStart(line) {
+      return /^```/.test(line)
+        || /^#{1,3}\s+/.test(line)
+        || /^\s*[-*]\s+/.test(line)
+        || /^\s*\d+\.\s+/.test(line)
+        || /^>\s?/.test(line);
+    }
+
+    function renderMarkdownContent(container, markdown) {
+      if (!container) return;
+      container.textContent = "";
+      container.classList.add("markdown");
+      const source = String(markdown || "").replace(/\r\n?/g, "\n");
+      if (!source) return;
+      const lines = source.split("\n");
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line.trim()) {
+          i += 1;
+          continue;
+        }
+
+        const fence = line.match(/^```\s*([A-Za-z0-9_+.#-]*)?.*$/);
+        if (fence) {
+          const lang = fence[1] || "";
+          i += 1;
+          const codeLines = [];
+          while (i < lines.length && !/^```\s*$/.test(lines[i])) {
+            codeLines.push(lines[i]);
+            i += 1;
+          }
+          if (i < lines.length) i += 1;
+          container.appendChild(createCodeBlock(codeLines.join("\n"), lang));
+          continue;
+        }
+
+        const heading = line.match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+          const level = heading[1].length;
+          const el = document.createElement(`h${level + 1}`);
+          el.className = `md-heading md-heading-${level}`;
+          appendInlineMarkdown(el, heading[2]);
+          container.appendChild(el);
+          i += 1;
+          continue;
+        }
+
+        if (/^\s*[-*]\s+/.test(line)) {
+          const list = document.createElement("ul");
+          list.className = "md-list";
+          while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+            const item = document.createElement("li");
+            appendInlineMarkdown(item, lines[i].replace(/^\s*[-*]\s+/, ""));
+            list.appendChild(item);
+            i += 1;
+          }
+          container.appendChild(list);
+          continue;
+        }
+
+        if (/^\s*\d+\.\s+/.test(line)) {
+          const list = document.createElement("ol");
+          list.className = "md-list";
+          while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+            const item = document.createElement("li");
+            appendInlineMarkdown(item, lines[i].replace(/^\s*\d+\.\s+/, ""));
+            list.appendChild(item);
+            i += 1;
+          }
+          container.appendChild(list);
+          continue;
+        }
+
+        if (/^>\s?/.test(line)) {
+          const quote = document.createElement("blockquote");
+          quote.className = "md-quote";
+          const quoteLines = [];
+          while (i < lines.length && /^>\s?/.test(lines[i])) {
+            quoteLines.push(lines[i].replace(/^>\s?/, ""));
+            i += 1;
+          }
+          appendInlineLines(quote, quoteLines);
+          container.appendChild(quote);
+          continue;
+        }
+
+        const paraLines = [];
+        while (i < lines.length && lines[i].trim() && !isMarkdownBlockStart(lines[i])) {
+          paraLines.push(lines[i]);
+          i += 1;
+        }
+        const p = document.createElement("div");
+        p.className = "md-p";
+        appendInlineLines(p, paraLines);
+        container.appendChild(p);
+      }
+    }
+
+    function markdownLikelyPresent(text) {
+      return /```|`[^`\n]+`|\*\*[^*\n]+\*\*|^#{1,3}\s+|^\s*[-*]\s+|^\s*\d+\.\s+|^>\s?/m.test(String(text || ""));
+    }
+
+    function renderInputPreview() {
+      if (!inputPreviewEl || !inputEl) return;
+      const text = inputEl.value || "";
+      if (!text.trim() || !markdownLikelyPresent(text)) {
+        inputPreviewEl.hidden = true;
+        inputPreviewEl.textContent = "";
+        return;
+      }
+      renderMarkdownContent(inputPreviewEl, text);
+      inputPreviewEl.hidden = false;
     }
 
     function buildImageUiUrl({ prompt, image_request }) {
@@ -115,10 +424,397 @@
       }
     }
 
+    function loadCachedBackendStatus() {
+      try {
+        const raw = window.localStorage.getItem(BACKEND_STATUS_CACHE_KEY);
+        if (!raw) return null;
+        const payload = JSON.parse(raw);
+        if (!payload || typeof payload !== "object") return null;
+        return payload;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveCachedBackendStatus(payload) {
+      if (!payload || typeof payload !== "object") return;
+      try {
+        window.localStorage.setItem(BACKEND_STATUS_CACHE_KEY, JSON.stringify(payload));
+      } catch (e) {}
+    }
+
+    function updateBackendStatusPollInterval(payload) {
+      const settings = payload?.settings && typeof payload.settings === "object" ? payload.settings : {};
+      const value = Number(settings.poll_interval_sec || settings.health_poll_interval_sec || 0);
+      if (Number.isFinite(value) && value > 0) backendStatusPollIntervalSec = value;
+    }
+
+    function statusTimestampIsStale(tsSeconds) {
+      const ts = Number(tsSeconds || 0);
+      if (!Number.isFinite(ts) || ts <= 0) return false;
+      const ageSec = (Date.now() / 1000) - ts;
+      return Number.isFinite(ageSec) && ageSec > backendStatusPollIntervalSec * BACKEND_STATUS_STALE_AFTER_POLLS;
+    }
+
+    function statusStaleLabel(tsSeconds) {
+      if (!statusTimestampIsStale(tsSeconds)) return "";
+      const ageSec = Math.max(0, Math.floor((Date.now() / 1000) - Number(tsSeconds || 0)));
+      if (ageSec < 3600) return `Stale ${Math.max(1, Math.floor(ageSec / 60))}m`;
+      return `Stale ${Math.floor(ageSec / 3600)}h`;
+    }
+
+    function effectiveBackendLastCheck(backend) {
+      return Math.max(
+        Number(backend?.last_checked_at || 0),
+        Number(backend?.last_check || 0),
+        Number(backend?.gateway_health?.last_check || 0),
+      );
+    }
+
+    function lifecycleColorClass(color) {
+      const value = String(color || "").toLowerCase();
+      if (["green", "blue", "purple", "grey", "red", "yellow"].includes(value)) return value;
+      return "grey";
+    }
+
+    function lifecycleRowClass(status, color) {
+      if (status === "traded_out_working") return "traded";
+      if (status === "inactive_unhealthy") return "inactive-unhealthy";
+      if (status === "inactive_unknown") return "inactive-unknown";
+      if (status === "active_ready") return "ok";
+      if (status === "active_unhealthy") return "bad";
+      if (color === "green") return "ok";
+      if (color === "red") return "bad";
+      return "warn";
+    }
+
+    function isInactiveLifecycleStatus(status) {
+      return ["traded_out_working", "inactive_unhealthy", "inactive_unknown"].includes(status);
+    }
+
+    function tierClassName(tier) {
+      const value = String(tier || "").trim().toLowerCase();
+      if (!value) return "";
+      return `tier-${value.replace(/[^a-z0-9_-]/g, "_")}`;
+    }
+
+    function fmtMb(value) {
+      const mb = Number(value || 0);
+      if (!Number.isFinite(mb) || mb <= 0) return "0 GB";
+      return `${(mb / 1024).toFixed(mb >= 10240 ? 0 : 1)} GB`;
+    }
+
+    function pct(used, total) {
+      const u = Number(used || 0);
+      const t = Number(total || 0);
+      if (!t) return 0;
+      return Math.max(0, Math.min(100, (u / t) * 100));
+    }
+
+    function statusBar(used, total) {
+      const p = pct(used, total);
+      const outer = document.createElement("div");
+      outer.className = "status-bar";
+      const fill = document.createElement("div");
+      fill.className = `status-bar-fill ${p >= 90 ? "bad" : p >= 75 ? "warn" : ""}`;
+      fill.style.width = `${p.toFixed(0)}%`;
+      outer.appendChild(fill);
+      return outer;
+    }
+
+    function appendHostMemory(card, memory) {
+      const total = Number(memory?.total_mb || 0);
+      const available = Number(memory?.available_mb || 0);
+      let used = Number(memory?.used_mb || 0);
+      if (total > 0 && used <= 0 && available > 0) used = Math.max(0, total - available);
+      if (!total) return false;
+      const row = document.createElement("div");
+      row.className = "status-resource-row";
+      const meta = document.createElement("div");
+      meta.className = "status-detail";
+      meta.textContent = `System RAM: ${fmtMb(used)} / ${fmtMb(total)}`;
+      row.appendChild(meta);
+      row.appendChild(statusBar(used, total));
+      card.appendChild(row);
+      return true;
+    }
+
+    function renderHostResources(hosts) {
+      if (!backendStatusList || !Array.isArray(hosts) || !hosts.length) return;
+      const title = document.createElement("div");
+      title.className = "status-section-title";
+      title.textContent = "Hosts";
+      backendStatusList.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "status-host-grid";
+      hosts.forEach((host) => {
+        const card = document.createElement("div");
+        card.className = "status-host-card";
+        if (statusTimestampIsStale(host?.updated_at)) card.classList.add("stale");
+        const name = document.createElement("div");
+        name.className = "status-host-name";
+        name.textContent = host?.name || "unknown";
+        card.appendChild(name);
+
+        const meta = document.createElement("div");
+        meta.className = host?.error ? "status-error" : "status-detail";
+        const hostMeta = [host?.resource_kind || host?.platform || "host"];
+        const hostStale = statusStaleLabel(host?.updated_at);
+        if (hostStale) hostMeta.push(hostStale);
+        if (host?.error) hostMeta.push(host.error);
+        meta.textContent = hostMeta.join(" • ");
+        card.appendChild(meta);
+
+        const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
+        gpus.forEach((gpu) => {
+          const used = Number(gpu?.memory_used_mb || 0);
+          const total = Number(gpu?.memory_total_mb || 0);
+          const row = document.createElement("div");
+          row.className = "status-resource-row";
+          const gpuMeta = document.createElement("div");
+          gpuMeta.className = "status-detail";
+          gpuMeta.textContent = `${gpu?.name || `GPU ${gpu?.index ?? ""}`.trim()} • ${fmtMb(used)} / ${fmtMb(total)} • ${gpu?.utilization_gpu_pct || 0}% util`;
+          row.appendChild(gpuMeta);
+          row.appendChild(statusBar(used, total));
+          card.appendChild(row);
+        });
+
+        const hasMemory = appendHostMemory(card, host?.memory);
+        if (!gpus.length && !hasMemory) {
+          const empty = document.createElement("div");
+          empty.className = "status-detail";
+          empty.style.marginTop = "8px";
+          empty.textContent = "No resource metrics yet.";
+          card.appendChild(empty);
+        }
+        grid.appendChild(card);
+      });
+      backendStatusList.appendChild(grid);
+    }
+
+    function renderCompactHostResources(hosts) {
+      if (!backendStatusList || !Array.isArray(hosts) || !hosts.length) return;
+      const title = document.createElement("div");
+      title.className = "status-section-title";
+      title.textContent = "Host resources";
+      backendStatusList.appendChild(title);
+
+      const grid = document.createElement("div");
+      grid.className = "status-compact-hosts";
+      hosts.forEach((host) => {
+        const card = document.createElement("div");
+        card.className = "status-compact-host";
+        if (statusTimestampIsStale(host?.updated_at)) card.classList.add("stale");
+        const header = document.createElement("div");
+        header.className = "status-compact-host-header";
+        const name = document.createElement("div");
+        name.className = "status-host-name";
+        name.textContent = host?.name || "unknown";
+        header.appendChild(name);
+
+        const lines = [];
+        const kind = String(host?.resource_kind || host?.platform || "host").trim();
+        if (kind) lines.push(kind);
+        const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
+        const gpuTotals = gpus.reduce(
+          (acc, gpu) => {
+            acc.total += Number(gpu?.memory_total_mb || 0);
+            acc.used += Number(gpu?.memory_used_mb || 0);
+            return acc;
+          },
+          { total: 0, used: 0 },
+        );
+        const memoryTotal = Number(host?.memory?.total_mb || 0);
+        const memoryAvailable = Number(host?.memory?.available_mb || 0);
+        let memoryUsed = Number(host?.memory?.used_mb || 0);
+        if (memoryTotal > 0 && memoryUsed <= 0 && memoryAvailable > 0) memoryUsed = Math.max(0, memoryTotal - memoryAvailable);
+        const usage = gpuTotals.total > 0
+          ? { label: "GPU VRAM", used: gpuTotals.used, total: gpuTotals.total }
+          : memoryTotal > 0
+            ? { label: "RAM", used: memoryUsed, total: memoryTotal }
+            : null;
+        if (usage) {
+          const usagePct = pct(usage.used, usage.total);
+          const usageEl = document.createElement("div");
+          usageEl.className = "status-compact-host-line";
+          usageEl.textContent = `${usagePct.toFixed(0)}% used`;
+          header.appendChild(usageEl);
+        }
+        card.appendChild(header);
+
+        const gpuFree = gpus
+          .map((gpu) => ({
+            name: gpu?.name || `GPU ${gpu?.index ?? ""}`.trim(),
+            free: Math.max(0, Number(gpu?.memory_total_mb || 0) - Number(gpu?.memory_used_mb || 0)),
+          }))
+          .filter((gpu) => gpu.free > 0);
+        if (gpuFree.length === 1) {
+          lines.push(`${gpuFree[0].name}: ${fmtMb(gpuFree[0].free)} free`);
+        } else if (gpuFree.length > 1) {
+          const maxFree = gpuFree.reduce((max, gpu) => Math.max(max, gpu.free), 0);
+          const totalFree = gpuFree.reduce((sum, gpu) => sum + gpu.free, 0);
+          lines.push(`${gpuFree.length} GPUs, ${fmtMb(maxFree)} max free, ${fmtMb(totalFree)} total free`);
+        } else if (host?.memory?.total_mb) {
+          const total = Number(host.memory.total_mb || 0);
+          const used = Number(host.memory.used_mb || 0);
+          lines.push(`RAM ${fmtMb(Math.max(0, total - used))} free`);
+        }
+        const hostStale = statusStaleLabel(host?.updated_at);
+        if (hostStale) lines.push(hostStale);
+        if (host?.error) lines.push(String(host.error));
+
+        const detail = document.createElement("div");
+        detail.className = host?.error ? "status-error" : "status-compact-host-line";
+        detail.textContent = lines.join(" • ") || "No resource metrics yet.";
+        card.appendChild(detail);
+        if (usage) {
+          const usagePct = pct(usage.used, usage.total);
+          const meter = document.createElement("div");
+          meter.className = "status-compact-meter";
+          const fill = document.createElement("div");
+          fill.className = `status-compact-meter-fill ${usagePct >= 90 ? "bad" : usagePct >= 75 ? "warn" : ""}`;
+          fill.style.width = `${usagePct.toFixed(0)}%`;
+          meter.title = `${usage.label}: ${fmtMb(usage.used)} / ${fmtMb(usage.total)}`;
+          meter.appendChild(fill);
+          card.appendChild(meter);
+        }
+        grid.appendChild(card);
+      });
+      backendStatusList.appendChild(grid);
+    }
+
+    function renderStatusOverview(hosts, backends) {
+      if (!backendStatusList) return;
+      const hostList = Array.isArray(hosts) ? hosts : [];
+      const backendList = Array.isArray(backends) ? backends : [];
+      const gpuTotals = hostList.reduce(
+        (acc, host) => {
+          const gpus = Array.isArray(host?.gpus) ? host.gpus : [];
+          gpus.forEach((gpu) => {
+            acc.total += Number(gpu?.memory_total_mb || 0);
+            acc.used += Number(gpu?.memory_used_mb || 0);
+          });
+          return acc;
+        },
+        { total: 0, used: 0 },
+      );
+      const activeCount = backendList.filter((backend) => backend?.active === true).length;
+      const readyCount = backendList.filter((backend) => backend?.ready === true).length;
+      const attentionCount = backendList.filter((backend) => backendNeedsAttention(backend)).length;
+      const rows = [
+        { label: "Backends", value: `${readyCount} ready, ${activeCount} active, ${backendList.length} total` },
+        { label: "Attention", value: attentionCount ? String(attentionCount) : "none" },
+        { label: "Hosts", value: String(hostList.length) },
+      ];
+      if (gpuTotals.total > 0) {
+        rows.push({ label: "GPU free", value: `${fmtMb(Math.max(0, gpuTotals.total - gpuTotals.used))} / ${fmtMb(gpuTotals.total)}` });
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "status-overview-grid";
+      rows.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "status-overview-card";
+        const value = document.createElement("div");
+        value.className = "status-overview-value";
+        value.textContent = item.value;
+        const label = document.createElement("div");
+        label.className = "status-overview-label";
+        label.textContent = item.label;
+        card.appendChild(value);
+        card.appendChild(label);
+        grid.appendChild(card);
+      });
+      backendStatusList.appendChild(grid);
+    }
+
+    function backendCapabilityList(backend) {
+      const capabilities = Array.isArray(backend?.capabilities) ? backend.capabilities : [];
+      return capabilities.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+
+    function backendNeedsAttention(backend) {
+      if (!backend || typeof backend !== "object") return false;
+      const status = String(backend.status || backend.lifecycle_status || "").trim();
+      return backend.ready === false
+        || backend.healthy === false
+        || backend.inflight
+        || backend.health_error
+        || backend.last_action_error
+        || status === "active_unhealthy"
+        || status === "inactive_unhealthy";
+    }
+
+    function mergeBackendStatusPayload(lifecycleData, registryData, lifecycleError, registryError) {
+      const base = lifecycleData && typeof lifecycleData === "object"
+        ? { ...lifecycleData }
+        : registryData && typeof registryData === "object"
+          ? { ...registryData }
+          : {};
+      const lifecycleBackends = Array.isArray(lifecycleData?.backends) ? lifecycleData.backends : [];
+      const registryBackends = Array.isArray(registryData?.backends) ? registryData.backends : [];
+      const mergedBackends = new Map();
+
+      lifecycleBackends.forEach((backend) => {
+        const key = String(backend?.backend_class || "").trim();
+        if (key) mergedBackends.set(key, { ...backend });
+      });
+
+      registryBackends.forEach((backend) => {
+        const key = String(backend?.backend_class || "").trim();
+        if (!key) return;
+        const existing = mergedBackends.get(key) || {};
+        mergedBackends.set(key, {
+          ...existing,
+          ...backend,
+          capabilities: backendCapabilityList(existing).length ? existing.capabilities : backend.capabilities,
+          aliases: Array.isArray(backend.aliases) ? backend.aliases : existing.aliases,
+          description: backend.description || existing.description,
+          provider: backend.provider || existing.provider,
+          base_url: backend.base_url || existing.base_url,
+          health: backend.health || existing.health,
+          host: existing.host || backend.lifecycle_host || backend.host,
+          hostname: existing.hostname || backend.hostname,
+        });
+      });
+
+      if (mergedBackends.size > 0) {
+        base.backends = [...mergedBackends.values()];
+      }
+      if (Array.isArray(lifecycleData?.hosts)) {
+        base.hosts = lifecycleData.hosts;
+      }
+      if (registryData?.alias_config) {
+        base.alias_config = registryData.alias_config;
+      }
+      base.settings = {
+        ...(registryData?.settings && typeof registryData.settings === "object" ? registryData.settings : {}),
+        ...(lifecycleData?.settings && typeof lifecycleData.settings === "object" ? lifecycleData.settings : {}),
+      };
+      base.generated_at = Number(lifecycleData?.generated_at || registryData?.generated_at || base.generated_at || Date.now() / 1000);
+      if (lifecycleError) base.lifecycle_error = lifecycleError;
+      if (registryError) base.registry_error = registryError;
+      return base;
+    }
+
+    function lifecycleActionButton(label, backendClass, action, danger) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = label;
+      if (danger) btn.dataset.danger = "true";
+      btn.addEventListener("click", () => {
+        void runLifecycleAction(backendClass, action, false);
+      });
+      return btn;
+    }
+
     function renderBackendStatus(data) {
       if (!backendStatusList) return;
       backendStatusList.innerHTML = "";
-      if (!data || !Array.isArray(data.backends)) {
+      const hosts = Array.isArray(data?.hosts) ? data.hosts : [];
+      const backends = Array.isArray(data?.backends) ? data.backends : [];
+      if (!data || (!hosts.length && !backends.length)) {
         const empty = document.createElement("div");
         empty.className = "status-empty";
         empty.textContent = "No backend status available.";
@@ -138,11 +834,32 @@
         const source = String(aliasConfig.source || "defaults");
         const configuredPath = String(aliasConfig.configured_path || "");
         const err = String(aliasConfig.error || "");
-        backendStatusMeta.textContent = err
-          ? `Alias config: ${source} • ${configuredPath || "no explicit path"} • ${err}`
-          : `Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ""}`;
-        backendStatusMeta.className = err ? "status-error" : "status-detail";
+        const lifecycleMode = String(data?.mode || "").trim();
+        const settings = data?.settings && typeof data.settings === "object" ? data.settings : {};
+        const problems = [];
+        if (err) problems.push(`Alias config: ${err}`);
+        if (data?.lifecycle_error) problems.push(`Lifecycle: ${data.lifecycle_error}`);
+        if (data?.registry_error) problems.push(`Registry: ${data.registry_error}`);
+        const parts = [];
+        if (lifecycleMode) {
+          parts.push(`Lifecycle mode: ${lifecycleMode}`);
+          if (Number(settings.target_free_vram_mb || 0) > 0) parts.push(`Target free VRAM: ${fmtMb(settings.target_free_vram_mb)}`);
+          if (Number(settings.optional_idle_stop_sec || 0) > 0) parts.push(`Optional idle stop: ${Math.round(Number(settings.optional_idle_stop_sec) / 60)} min`);
+        } else {
+          parts.push(`Alias config: ${source}${configuredPath ? ` • ${configuredPath}` : ""}`);
+        }
+        backendStatusMeta.textContent = [...parts, ...problems].join(" • ");
+        backendStatusMeta.className = problems.length ? "status-error" : "status-detail";
         backendStatusMeta.style.marginBottom = "8px";
+      }
+
+      renderStatusOverview(hosts, backends);
+      renderCompactHostResources(hosts);
+      if (hosts.length && backends.length) {
+        const backendTitle = document.createElement("div");
+        backendTitle.className = "status-section-title";
+        backendTitle.textContent = "Backends needing attention";
+        backendStatusList.appendChild(backendTitle);
       }
 
       const backendLabels = {
@@ -158,46 +875,37 @@
         skyreels_v2: "SkyReels-V2",
       };
 
+      const shouldShowBackendInChat = (backend) => {
+        return backendNeedsAttention(backend);
+      };
+
       const shouldHideBackend = (backend) => {
         if (!backend || typeof backend !== "object") return false;
-        return false;
+        return !shouldShowBackendInChat(backend);
       };
 
-      const capabilityGroupOrder = [
-        { title: "Core", capability: "core" },
-        { title: "Images", capability: "images" },
-        { title: "TTS", capability: "tts" },
-        { title: "Music", capability: "music" },
-        { title: "OCR", capability: "ocr" },
-        { title: "Video", capability: "video" },
-        { title: "Transcription", capability: "transcription" },
-      ];
-
-      const classifyBackendGroup = (backend) => {
-        const capabilities = new Set(Array.isArray(backend?.capabilities) ? backend.capabilities : []);
-        if (capabilities.has("chat") || capabilities.has("embeddings") || capabilities.has("bridge")) {
-          return "core";
-        }
-        if (capabilities.has("images")) return "images";
-        if (capabilities.has("tts")) return "tts";
-        if (capabilities.has("music")) return "music";
-        if (capabilities.has("ocr")) return "ocr";
-        if (capabilities.has("video")) return "video";
-        if (capabilities.has("transcription")) return "transcription";
-        return "other";
-      };
-
-      const backendMap = new Map();
-      const visibleBackends = (Array.isArray(data.backends) ? data.backends : []).filter(
+      const visibleBackends = backends.filter(
         (backend) => !shouldHideBackend(backend),
       );
-      visibleBackends.forEach((backend) => {
-        backendMap.set(backend.backend_class, backend);
-      });
 
       const renderBackendRow = (backend, { displayName, missing } = {}) => {
         const row = document.createElement("div");
         row.className = "status-row";
+        const lifecycleStatus = String(backend.status || backend.lifecycle_status || "").trim();
+        const lifecycleLabel = String(backend.status_label || "").trim();
+        const lifecycleColor = lifecycleColorClass(backend.status_color);
+        const inactiveLifecycle = isInactiveLifecycleStatus(lifecycleStatus);
+        const lastCheckValue = effectiveBackendLastCheck(backend);
+        if (statusTimestampIsStale(lastCheckValue)) row.classList.add("stale");
+        if (missing) {
+          row.classList.add("warn");
+        } else if (lifecycleStatus || lifecycleLabel) {
+          row.classList.add(lifecycleRowClass(lifecycleStatus, lifecycleColor));
+        } else if (backend.healthy === false || backend.ready === false) {
+          row.classList.add("bad");
+        } else if (backend.inflight) {
+          row.classList.add("warn");
+        }
 
         const header = document.createElement("div");
         header.className = "status-row-header";
@@ -215,149 +923,199 @@
         }
         nameContainer.appendChild(name);
 
-        if (backend.hostname) {
+        const hostName = String(backend.hostname || backend.host || "").trim();
+        if (hostName) {
           const hostEl = document.createElement("div");
-          hostEl.style.fontSize = "12px";
-          hostEl.style.fontWeight = "600";
-          hostEl.style.color = "#6fb8ff";
-          hostEl.style.marginTop = "2px";
-          hostEl.textContent = `on ${backend.hostname}`;
+          hostEl.className = "status-backend-meta";
+          hostEl.textContent = `on ${hostName}`;
           nameContainer.appendChild(hostEl);
         }
         header.appendChild(nameContainer);
 
         const badges = document.createElement("div");
         badges.className = "status-badges";
+        const addBadge = (text, className) => {
+          const badge = document.createElement("span");
+          badge.className = `status-badge ${className}`;
+          badge.textContent = text;
+          badges.appendChild(badge);
+        };
 
         if (missing) {
-          row.classList.add("warn");
-          const missingBadge = document.createElement("span");
-          missingBadge.className = "status-badge warn";
-          missingBadge.textContent = "Not configured";
-          badges.appendChild(missingBadge);
+          addBadge("Not configured", "warn");
         } else {
-          const healthy = document.createElement("span");
-          const isHealthy = backend.healthy === true;
-          healthy.className = `status-badge ${isHealthy ? "ok" : backend.healthy === false ? "bad" : "warn"}`;
-          healthy.textContent =
-            backend.healthy === undefined ? "Health unknown" : isHealthy ? "Healthy" : "Unhealthy";
-          badges.appendChild(healthy);
+          const tier = String(backend.tier || backend.lifecycle?.tier || "").trim().toLowerCase();
+          const rowTierClass = tierClassName(tier);
+          if (rowTierClass) row.classList.add(rowTierClass);
 
-          const ready = document.createElement("span");
-          const isReady = backend.ready === true;
-          ready.className = `status-badge ${isReady ? "ok" : backend.ready === false ? "bad" : "warn"}`;
-          ready.textContent = backend.ready === undefined ? "Readiness unknown" : isReady ? "Ready" : "Not ready";
-          badges.appendChild(ready);
-          if (backend.healthy === false && backend.ready === false) {
-            row.classList.add("bad");
-          } else if (isHealthy && isReady) {
-            row.classList.add("ok");
-          } else {
-            row.classList.add("warn");
+          if (lifecycleStatus || lifecycleLabel) {
+            addBadge(lifecycleLabel || lifecycleStatus.replace(/_/g, " "), lifecycleColor);
+          }
+
+          if (["crucial", "high"].includes(tier)) {
+            addBadge(tier.charAt(0).toUpperCase() + tier.slice(1), tier);
+          }
+
+          if (backend.active === true) {
+            addBadge("Active", "green");
+          } else if (backend.active === false) {
+            addBadge("Inactive", "grey");
+          }
+
+          if (!inactiveLifecycle && backend.healthy === false) addBadge("Unhealthy", "red");
+          if (!inactiveLifecycle && backend.ready === false) addBadge("Not ready", "red");
+          if (backend.inflight) addBadge(`${backend.inflight} running`, "blue");
+          const staleLabel = statusStaleLabel(lastCheckValue);
+          if (staleLabel) addBadge(staleLabel, "yellow");
+          if (lifecycleStatus === "inactive_unhealthy" && backend.last_unhealthy_at) {
+            addBadge(`Last unhealthy ${formatTimestamp(Number(backend.last_unhealthy_at || 0))}`, "purple");
           }
         }
 
         header.appendChild(badges);
         row.appendChild(header);
 
-        const detail = document.createElement("div");
-        detail.className = "status-detail";
+        const detailParts = [];
         if (missing) {
-          detail.textContent = "Not configured in the backend registry.";
+          detailParts.push("Not configured in the backend registry.");
         } else {
-          const capabilities = Array.isArray(backend.capabilities) ? backend.capabilities.join(", ") : "unknown";
-          const lastCheck = backend.last_check ? formatTimestamp(backend.last_check) : "--";
-          detail.textContent = `Capabilities: ${capabilities} • Last check: ${lastCheck}`;
+          let errorText = String(backend.error || backend.health_error || backend.last_health_error || backend.last_action_error || "");
+          if (backend.active === false && lifecycleStatus === "traded_out_working") {
+            errorText = String(backend.last_action_error || "");
+          } else if (backend.active === false && lifecycleStatus === "inactive_unknown") {
+            errorText = String(backend.last_action_error || "");
+          } else if (backend.active === false && lifecycleStatus === "inactive_unhealthy") {
+            errorText = String(backend.last_action_error || backend.last_health_error || backend.health_error || backend.error || "");
+          }
+          if (errorText) detailParts.push(errorText);
+          if (!errorText && backend.healthy === false) detailParts.push("Health check failed");
+          if (!errorText && backend.ready === false) detailParts.push("Readiness check failed");
+          if (Number(backend.estimated_vram_mb || 0) > 0) detailParts.push(`Est VRAM: ${fmtMb(backend.estimated_vram_mb)}`);
+          if (lastCheckValue > 0) detailParts.push(`Checked ${formatTimestamp(lastCheckValue)}`);
+          const lastReady = Number(backend.last_ready_at || backend.last_confirmed_working_at || 0);
+          const lastUnhealthy = Number(backend.last_unhealthy_at || 0);
+          const lastStopped = Number(backend.last_stopped_at || 0);
+          if (backend.active === false && lastReady > 0) detailParts.push(`Last ready: ${formatTimestamp(lastReady)}`);
+          if (backend.active === false && lastUnhealthy > 0 && lastUnhealthy > lastReady) detailParts.push(`Last unhealthy: ${formatTimestamp(lastUnhealthy)}`);
+          if (backend.active === false && lastStopped > 0) detailParts.push(`Stopped: ${formatTimestamp(lastStopped)}`);
         }
-        row.appendChild(detail);
-
-        const aliasEntries = Array.isArray(backend.aliases) ? backend.aliases : [];
-        if (aliasEntries.length > 0) {
-          const aliasDetail = document.createElement("div");
-          aliasDetail.className = "status-aliases";
-          const aliasText = aliasEntries
-            .map((alias) => `${alias.name} → ${alias.target}`)
-            .filter(Boolean)
-            .join(", ");
-          aliasDetail.textContent = `Aliases: ${aliasText}`;
-          row.appendChild(aliasDetail);
-        }
-
-        if (backend.error) {
-          const err = document.createElement("div");
-          err.className = "status-error";
-          err.textContent = backend.error;
-          row.appendChild(err);
+        if (detailParts.length) {
+          const detail = document.createElement("div");
+          detail.className = missing || backend.health_error || backend.last_action_error ? "status-error" : "status-detail";
+          detail.textContent = detailParts.slice(0, 4).join(" • ");
+          row.appendChild(detail);
         }
 
         return row;
       };
 
-      const renderGroup = (title, backendKeys) => {
-        if (!Array.isArray(backendKeys) || backendKeys.length === 0) return;
-        const group = document.createElement("div");
-        group.className = "status-group";
-        const heading = document.createElement("div");
-        heading.className = "status-group-title";
-        heading.textContent = title;
-        group.appendChild(heading);
-
-        const list = document.createElement("div");
-        list.className = "status-group-list";
-        backendKeys.forEach((backendKey) => {
-          const backend = backendMap.get(backendKey);
-          const displayName = backendLabels[backendKey] || backendKey;
-          list.appendChild(renderBackendRow(backend || { backend_class: backendKey }, { displayName, missing: !backend }));
+      if (visibleBackends.length > 0) {
+        const attentionList = document.createElement("div");
+        attentionList.className = "status-group-list";
+        visibleBackends.forEach((backend) => {
+          const backendClass = String(backend.backend_class || "").trim();
+          attentionList.appendChild(renderBackendRow(backend, { displayName: backendLabels[backendClass] || backendClass || "unknown" }));
         });
-        group.appendChild(list);
-        backendStatusList.appendChild(group);
-      };
+        backendStatusList.appendChild(attentionList);
+      }
 
-      const groupedBackends = new Map();
-      capabilityGroupOrder.forEach((group) => groupedBackends.set(group.capability, []));
-      groupedBackends.set("other", []);
-
-      visibleBackends.forEach((backend) => {
-        const backendClass = String(backend.backend_class || "").trim();
-        if (!backendClass) return;
-        const groupKey = classifyBackendGroup(backend);
-        groupedBackends.get(groupKey).push(backendClass);
-      });
-
-      capabilityGroupOrder.forEach((group) => {
-        const groupBackends = groupedBackends.get(group.capability) || [];
-        renderGroup(group.title, groupBackends);
-      });
-
-      const extraBackends = groupedBackends.get("other") || [];
-      if (extraBackends.length > 0) {
-        renderGroup("Other", extraBackends);
+      if (visibleBackends.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "status-empty";
+        empty.textContent = "No backend problems in the compact Chat view. Open Resources for controls and full backend details.";
+        backendStatusList.appendChild(empty);
       }
     }
 
-    async function loadBackendStatus() {
+    async function runLifecycleAction(backendClass, action, confirmed) {
+      if (backendStatusError) backendStatusError.hidden = true;
+      try {
+        const resp = await fetch("/ui/api/lifecycle/action", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ backend_class: backendClass, action, confirmed, allow_disruptive: confirmed }),
+        });
+        if (handle401(resp)) return;
+        const payload = await resp.json().catch(() => ({}));
+        if (resp.status === 403) {
+          throw new Error("Admin privileges are required for manual lifecycle actions.");
+        }
+        if (!resp.ok) {
+          throw new Error(payload?.detail ? JSON.stringify(payload.detail) : `HTTP ${resp.status}`);
+        }
+        if (payload?.decision === "requires_confirmation" && !confirmed) {
+          const ok = window.confirm(`${payload.message || "This action needs confirmation."}\n\nProceed?`);
+          if (ok) return runLifecycleAction(backendClass, action, true);
+          return;
+        }
+        await loadBackendStatus({ refresh: true });
+      } catch (e) {
+        if (backendStatusError) {
+          backendStatusError.textContent = `Lifecycle action failed: ${String(e?.message || e)}`;
+          backendStatusError.hidden = false;
+        }
+      }
+    }
+
+    async function loadBackendStatus(options) {
+      const opts = options || {};
+      const forceRefresh = opts.refresh === true;
       if (!backendStatusList) return;
       if (backendStatusRefresh) backendStatusRefresh.disabled = true;
       if (backendStatusSpinner) backendStatusSpinner.hidden = false;
       if (backendStatusError) backendStatusError.hidden = true;
       try {
-        const resp = await fetch("/ui/api/backend_status", { credentials: "same-origin" });
-        if (handle401(resp)) return;
-        if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(text || `HTTP ${resp.status}`);
+        const fetchStatusJson = async (url) => {
+          try {
+            const resp = await fetch(url, { credentials: "same-origin" });
+            if (handle401(resp)) return { redirected: true };
+            if (!resp.ok) {
+              const text = await resp.text().catch(() => "");
+              return { error: text || `HTTP ${resp.status}` };
+            }
+            return { data: await resp.json() };
+          } catch (e) {
+            return { error: String(e?.message || e) };
+          }
+        };
+
+        const lifecyclePath = `/ui/api/lifecycle/status${forceRefresh ? "?refresh=true" : ""}`;
+        const [lifecycleResult, registryResult] = await Promise.all([
+          fetchStatusJson(lifecyclePath),
+          fetchStatusJson("/ui/api/backend_status"),
+        ]);
+        if (lifecycleResult.redirected || registryResult.redirected) return;
+        if (!lifecycleResult.data && !registryResult.data) {
+          throw new Error(lifecycleResult.error || registryResult.error || "No status payload returned");
         }
-        const data = await resp.json();
+
+        const data = mergeBackendStatusPayload(
+          lifecycleResult.data,
+          registryResult.data,
+          lifecycleResult.data ? "" : lifecycleResult.error,
+          registryResult.data ? "" : registryResult.error,
+        );
+        updateBackendStatusPollInterval(data);
         renderBackendStatus(data);
+        saveCachedBackendStatus(data);
         if (backendStatusUpdated) {
           backendStatusUpdated.textContent = `Last updated: ${formatTimestamp(data.generated_at)}`;
         }
       } catch (e) {
+        const cached = loadCachedBackendStatus();
+        if (cached) {
+          updateBackendStatusPollInterval(cached);
+          renderBackendStatus(cached);
+          if (backendStatusUpdated) {
+            backendStatusUpdated.textContent = `Last updated: ${formatTimestamp(Number(cached.generated_at || 0))} (cached)`;
+          }
+        }
         if (backendStatusError) {
           backendStatusError.textContent = `Failed to load status: ${e}`;
           backendStatusError.hidden = false;
         }
-        if (backendStatusList) {
+        if (backendStatusList && !cached) {
           backendStatusList.innerHTML = "";
           const empty = document.createElement("div");
           empty.className = "status-empty";
@@ -378,8 +1136,16 @@
     let backendStatusInterval = null;
     function startBackendStatusPolling() {
       if (backendStatusInterval) return;
+      const cached = loadCachedBackendStatus();
+      if (cached) {
+        updateBackendStatusPollInterval(cached);
+        renderBackendStatus(cached);
+        if (backendStatusUpdated) {
+          backendStatusUpdated.textContent = `Last updated: ${formatTimestamp(Number(cached.generated_at || 0))} (cached)`;
+        }
+      }
       loadBackendStatus();
-      backendStatusInterval = window.setInterval(loadBackendStatus, 30000);
+      backendStatusInterval = window.setInterval(loadBackendStatus, BACKEND_STATUS_POLL_MS);
     }
 
     function stopBackendStatusPolling() {
@@ -411,11 +1177,11 @@
       } catch (e) {}
 
       const contentEl = document.createElement("div");
-      contentEl.className = "content";
+      contentEl.className = "content markdown";
       if (html) {
         contentEl.innerHTML = html;
       } else {
-        contentEl.textContent = content || "";
+        renderMarkdownContent(contentEl, content || "");
       }
 
       if (Array.isArray(attachments) && attachments.length > 0) {
@@ -603,6 +1369,9 @@
       systemPrompt: "",
       profileTone: "",
       preferredModel: "default",
+      preferredCodingModel: "coder",
+      codingGitTokenConfigured: false,
+      codingGitTokenHint: "",
     };
 
     async function loadApiKeys() {
@@ -748,6 +1517,9 @@
           systemPrompt: (s.profile && s.profile.system_prompt) || s.profile?.system_prompt || s.profile?.systemPrompt || "",
           profileTone: (s.profile && s.profile.tone) || s.profile?.tone || "",
           preferredModel: (s.chat && s.chat.model_preference) || s.model_preference || s.modelPreference || "default",
+          preferredCodingModel: (s.coding && s.coding.model_preference) || s.coding_model_preference || s.codingModelPreference || "coder",
+          codingGitTokenConfigured: !!(s.coding && s.coding.git_token_configured),
+          codingGitTokenHint: (s.coding && s.coding.git_token_hint) || "",
         };
         applyUserSettingsToUi();
       } catch (e) {
@@ -805,6 +1577,7 @@
         const vol = document.getElementById('settings_audio_volume');
         const autoplay = document.getElementById('settings_autoplay_tts');
         const preferredModel = document.getElementById('settings_model_preference');
+        const preferredCodingModel = document.getElementById('settings_coding_model_preference');
         // populate voice list if available from TTS voices endpoint
         try {
           if (backendSelect) {
@@ -874,12 +1647,25 @@
         if (preferredModel) {
           syncSettingsModelSelect(userSettings.preferredModel || "default");
         }
+        if (preferredCodingModel) {
+          syncSettingsCodingModelSelect(userSettings.preferredCodingModel || "coder");
+        }
         // populate profile fields
         try {
           const sys = document.getElementById('settings_system_prompt');
           const tone = document.getElementById('settings_profile_tone');
           if (sys) sys.value = userSettings.systemPrompt || "";
           if (tone) tone.value = userSettings.profileTone || "";
+          const gitToken = document.getElementById('settings_coding_git_token');
+          const clearGitToken = document.getElementById('settings_clear_coding_git_token');
+          const gitTokenStatus = document.getElementById('settings_coding_git_token_status');
+          if (gitToken) gitToken.value = "";
+          if (clearGitToken) clearGitToken.checked = false;
+          if (gitTokenStatus) {
+            gitTokenStatus.textContent = userSettings.codingGitTokenConfigured
+              ? `Saved GitHub token: ${userSettings.codingGitTokenHint || "configured"}`
+              : "No GitHub token saved for coding workspaces.";
+          }
         } catch (e) {}
 
         // Show password controls only when user auth is enabled and the user
@@ -930,12 +1716,18 @@
       const vol = document.getElementById('settings_audio_volume');
       const autoplay = document.getElementById('settings_autoplay_tts');
       const preferredModel = document.getElementById('settings_model_preference');
+      const preferredCodingModel = document.getElementById('settings_coding_model_preference');
       const sys = document.getElementById('settings_system_prompt');
       const tone = document.getElementById('settings_profile_tone');
+      const codingGitToken = document.getElementById('settings_coding_git_token');
+      const clearCodingGitToken = document.getElementById('settings_clear_coding_git_token');
       const curPwd = document.getElementById('settings_current_password');
       const newPwd = document.getElementById('settings_new_password');
       const confirmPwd = document.getElementById('settings_confirm_password');
       const chosenModel = normalizePreferredModel(preferredModel ? String(preferredModel.value || "").trim() : "default");
+      const chosenCodingModel = normalizePreferredModel(preferredCodingModel ? String(preferredCodingModel.value || "").trim() : "coder");
+      const gitTokenValue = codingGitToken ? String(codingGitToken.value || "").trim() : "";
+      const clearGitToken = !!(clearCodingGitToken && clearCodingGitToken.checked);
       const newSettings = {
         tts: { voice: select ? select.value : "", backend_class: backendSelect ? backendSelect.value : "" },
         ui: {
@@ -945,7 +1737,14 @@
         autoPlayTTS: !!(autoplay && autoplay.checked),
         profile: { system_prompt: sys ? String(sys.value || '') : '', tone: tone ? String(tone.value || '') : '' },
         chat: { model_preference: chosenModel || "default" },
+        coding: { model_preference: chosenCodingModel || "coder" },
       };
+      if (gitTokenValue) {
+        newSettings.coding.git_token = gitTokenValue;
+      }
+      if (clearGitToken) {
+        newSettings.coding.clear_git_token = true;
+      }
       try {
         // If user provided password fields, attempt password change first.
         try {
@@ -984,7 +1783,16 @@
         userSettings.systemPrompt = newSettings.profile?.system_prompt || "";
         userSettings.profileTone = newSettings.profile?.tone || "";
         userSettings.preferredModel = newSettings.chat?.model_preference || "default";
+        userSettings.preferredCodingModel = newSettings.coding?.model_preference || "coder";
+        if (clearGitToken) {
+          userSettings.codingGitTokenConfigured = false;
+          userSettings.codingGitTokenHint = "";
+        } else if (gitTokenValue) {
+          userSettings.codingGitTokenConfigured = true;
+          userSettings.codingGitTokenHint = gitTokenValue.length > 10 ? `${gitTokenValue.slice(0, 4)}...${gitTokenValue.slice(-4)}` : "***";
+        }
         syncSettingsModelSelect(userSettings.preferredModel);
+        syncSettingsCodingModelSelect(userSettings.preferredCodingModel);
         applyUserSettingsToUi();
         closeSettings();
       } catch (e) {
@@ -1092,6 +1900,14 @@
       select.value = desired;
     }
 
+    function syncSettingsCodingModelSelect(preferred) {
+      const select = document.getElementById("settings_coding_model_preference");
+      if (!select) return;
+      populateModelSelect(select, modelOptionsCache);
+      const desired = pickModelValue({ options: modelOptionsCache, preferred, fallback: "coder" });
+      select.value = desired;
+    }
+
     function normalizePreferredModel(preferred) {
       const desired = (preferred || "").trim();
       if (!modelOptionsCache.length) return desired || "default";
@@ -1106,6 +1922,7 @@
       const desired = pickModelValue({ options, preferred, fallback: prev });
       if (modelEl) modelEl.value = desired;
       syncSettingsModelSelect(preferred);
+      syncSettingsCodingModelSelect(userSettings.preferredCodingModel || "coder");
     }
 
     async function loadModels() {
@@ -1251,6 +2068,13 @@
         await generateSpeech(prompt || '');
         return;
       }
+      if (lower === '/code' || lower.startsWith('/code ')) {
+        const prompt = String(userText || "").replace(/^\/code\s*/i, '').trim();
+        const url = prompt ? `/ui/coding?prompt=${encodeURIComponent(prompt)}` : '/ui/coding';
+        try { window.open(url, '_blank', 'noopener'); } catch (e) { window.location.href = url; }
+        addMessage({ role: 'system', content: 'Opened Coding Workspaces in a new tab.' });
+        return;
+      }
 
       history.push({ role: "user", content: userText, attachments: pendingAttachments });
       addMessage({ role: "user", content: userText, attachments: pendingAttachments });
@@ -1268,7 +2092,7 @@
       thinkingPanel.appendChild(thinkingSummary);
       thinkingPanel.appendChild(thinkingBody);
       const contentText = document.createElement("div");
-      contentText.className = "content-text";
+      contentText.className = "content-text markdown";
       assistant.contentEl.appendChild(thinkingPanel);
       assistant.contentEl.appendChild(contentText);
 
@@ -1319,7 +2143,7 @@
 
         if (!resp.ok) {
           const text = await resp.text();
-          contentText.textContent = text;
+          renderMarkdownContent(contentText, text);
           assistant.metaEl.textContent = `HTTP ${resp.status}`;
           return;
         }
@@ -1437,13 +2261,13 @@
                   }
                   thinkingResetPending = false;
                 }
-                contentText.textContent = full;
+                renderMarkdownContent(contentText, full);
                 scrollToBottom();
                 continue;
               }
 
               if (evt.type === "error") {
-                contentText.textContent = `${full}\n\n[error]\n${JSON.stringify(evt.error || evt, null, 2)}`;
+                renderMarkdownContent(contentText, `${full}\n\n[error]\n\`\`\`json\n${JSON.stringify(evt.error || evt, null, 2)}\n\`\`\``);
                 updateMeta("error");
                 continue;
               }
@@ -1495,16 +2319,16 @@
         });
         const text = await resp.text();
         if (handle401(resp)) return;
-        if (!resp.ok) {
-          assistant.contentEl.textContent = text;
-          assistant.metaEl.textContent = `Music HTTP ${resp.status}`;
-          return;
-        }
         let payload;
         try {
           payload = JSON.parse(text);
         } catch {
-          assistant.contentEl.textContent = text;
+          payload = text;
+        }
+        if (!resp.ok) {
+          const detail = payload && typeof payload === "object" && payload.detail && typeof payload.detail === "object" ? payload.detail : null;
+          renderMarkdownContent(assistant.contentEl, detail?.message || (typeof payload === "string" ? payload : `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``));
+          assistant.metaEl.textContent = `Music HTTP ${resp.status}`;
           return;
         }
 
@@ -1517,7 +2341,7 @@
           return;
         }
 
-        assistant.contentEl.textContent = `Music response: ${JSON.stringify(payload)}`;
+        renderMarkdownContent(assistant.contentEl, `Music response:\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``);
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -1542,7 +2366,7 @@
         const text = await resp.text();
         if (handle401(resp)) return;
         if (!resp.ok) {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           assistant.metaEl.textContent = `Scan HTTP ${resp.status}`;
           return;
         }
@@ -1550,7 +2374,7 @@
         try {
           payload = JSON.parse(text);
         } catch {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           return;
         }
 
@@ -1578,7 +2402,7 @@
           ocrText = String(payload || '');
         }
 
-        assistant.contentEl.textContent = ocrText;
+        renderMarkdownContent(assistant.contentEl, ocrText);
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -1599,7 +2423,7 @@
         const text = await resp.text();
         if (handle401(resp)) return;
         if (!resp.ok) {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           assistant.metaEl.textContent = `Image HTTP ${resp.status}`;
           return;
         }
@@ -1607,7 +2431,7 @@
         try {
           payload = JSON.parse(text);
         } catch {
-          assistant.contentEl.textContent = text;
+          renderMarkdownContent(assistant.contentEl, text);
           assistant.metaEl.textContent = "Image OK (non-JSON)";
           return;
         }
@@ -1622,7 +2446,7 @@
           assistant.contentEl.innerHTML = `<img class="gen" src="${escapeHtml(src)}" alt="generated" />`;
           return;
         }
-        assistant.contentEl.textContent = JSON.stringify(payload, null, 2);
+        renderMarkdownContent(assistant.contentEl, `\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``);
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -1651,7 +2475,7 @@
         if (handle401(resp)) return;
         if (!resp.ok) {
           const txt = await resp.text();
-          assistant.contentEl.textContent = `TTS HTTP ${resp.status}: ${txt}`;
+          renderMarkdownContent(assistant.contentEl, `TTS HTTP ${resp.status}:\n${txt}`);
           return;
         }
 
@@ -1698,7 +2522,7 @@
           return;
         }
 
-        assistant.contentEl.textContent = "No audio returned from TTS.";
+        renderMarkdownContent(assistant.contentEl, "No audio returned from TTS.");
       } catch (e) {
         addMessage({ role: "system", content: String(e) });
       }
@@ -1715,6 +2539,7 @@
         const text = (inputEl.value || '').trim();
         if (!text && pendingAttachments.length === 0) return;
         inputEl.value = '';
+        renderInputPreview();
 
         // Explicit command routing takes precedence.
         const lower = text.trim().toLowerCase();
@@ -1770,7 +2595,7 @@
       }
       if (backendStatusRefresh) {
         backendStatusRefresh.addEventListener('click', () => {
-          void loadBackendStatus();
+          void loadBackendStatus({ refresh: true });
         });
       }
       function setActiveSettingsSection(sectionId) {
@@ -1822,13 +2647,18 @@
           if (!r.ok) return;
           const j = await r.json();
           if (j && j.authenticated && j.user && j.user.admin) {
+            currentUserIsAdmin = true;
             try { if (adminUiLinkEl) adminUiLinkEl.style.display = 'block'; } catch (e) {}
+            void loadBackendStatus();
+          } else {
+            currentUserIsAdmin = false;
           }
         } catch (e) {}
       })();
       window.addEventListener('gateway-auth-changed', () => updateApiKeyStatusUi());
       updateApiKeyStatusUi();
       if (inputEl) {
+        inputEl.addEventListener('input', () => renderInputPreview());
         inputEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
@@ -1836,7 +2666,10 @@
           }
         });
       }
-      if (clearEl) clearEl.addEventListener('click', () => { if (inputEl) inputEl.value = ''; });
+      if (clearEl) clearEl.addEventListener('click', () => {
+        if (inputEl) inputEl.value = '';
+        renderInputPreview();
+      });
       function formatBytes(bytes) {
         if (!Number.isFinite(bytes)) return "";
         if (bytes < 1024) return `${bytes} B`;

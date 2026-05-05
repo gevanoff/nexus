@@ -155,6 +155,13 @@ def _supported_pipeline_tasks() -> list[str]:
         return []
 
 
+def _default_ocr_prompt() -> str:
+    return (
+        _env("LIGHTON_OCR_DEFAULT_PROMPT")
+        or "Read all visible text exactly. Return only the transcribed text; do not include Markdown image placeholders."
+    ).strip()
+
+
 def _pick_task(request_payload: Dict[str, Any]) -> list[str]:
     raw = request_payload.get("task") or request_payload.get("operation")
     if isinstance(raw, str) and raw.strip():
@@ -204,6 +211,8 @@ def _run_lighton_native(image_path: str, request_payload: Dict[str, Any], model_
 
     prompt = request_payload.get("prompt") or request_payload.get("text")
     prompt_str = prompt.strip() if isinstance(prompt, str) else ""
+    if not prompt_str:
+        prompt_str = _default_ocr_prompt()
 
     conversation_content: list[dict[str, Any]] = [{"type": "image", "url": image_path}]
     if prompt_str:
@@ -321,7 +330,7 @@ def _run_ocr(image, request_payload: Dict[str, Any]) -> Dict[str, Any]:
         prompt = request_payload.get("prompt") or request_payload.get("text")
         prompt_str = prompt.strip() if isinstance(prompt, str) else ""
         if (selected_task or "").strip().lower() == "image-text-to-text" and not prompt_str:
-            prompt_str = (_env("LIGHTON_OCR_DEFAULT_PROMPT") or "Read the text in this image.").strip()
+            prompt_str = _default_ocr_prompt()
         if prompt_str:
             if (selected_task or "").strip().lower() == "image-text-to-text":
                 inputs = {"images": image, "text": prompt_str}

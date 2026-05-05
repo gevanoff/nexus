@@ -65,6 +65,13 @@ def _default_config_path() -> Optional[Path]:
     return path
 
 
+def _resolve_runtime_path(value: str, *, workdir: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return workdir / path
+
+
 def _runtime_error() -> Optional[Dict[str, str]]:
     runner = _runner_script()
     workdir = Path(_workdir())
@@ -74,7 +81,21 @@ def _runtime_error() -> Optional[Dict[str, str]]:
             "detail": "FollowYourCanvas runner or workdir is missing inside the container.",
         }
 
-    required_modules = ("torch", "diffusers", "transformers", "omegaconf", "decord", "segment_anything")
+    required_modules = (
+        "torch",
+        "diffusers",
+        "transformers",
+        "omegaconf",
+        "decord",
+        "segment_anything",
+        "einops",
+        "matplotlib",
+        "cv2",
+        "imageio_ffmpeg",
+    )
+    workdir_text = str(workdir)
+    if workdir_text not in sys.path:
+        sys.path.insert(0, workdir_text)
     for module_name in required_modules:
         try:
             importlib.import_module(module_name)
@@ -123,10 +144,11 @@ def _runtime_error() -> Optional[Dict[str, str]]:
                 "reason": "invalid_default_config",
                 "detail": f"Config {config_path} still contains placeholder path for {key!r}.",
             }
-        if not Path(value).exists():
+        asset_path = _resolve_runtime_path(value, workdir=workdir)
+        if not asset_path.exists():
             return {
                 "reason": "missing_model_asset",
-                "detail": f"Required FollowYourCanvas asset for {key!r} is missing: {value}",
+                "detail": f"Required FollowYourCanvas asset for {key!r} is missing: {asset_path}",
             }
     return None
 
@@ -204,6 +226,12 @@ async def generate_video(payload: Dict[str, Any]) -> Any:
             raise HTTPException(status_code=504, detail={"error": "followyourcanvas timed out", "job_id": job_id}) from exc
 
         if proc.returncode != 0:
+            result_detail = None
+            if output_json_path.exists():
+                try:
+                    result_detail = json.loads(output_json_path.read_text(encoding="utf-8"))
+                except Exception:
+                    result_detail = None
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -211,6 +239,7 @@ async def generate_video(payload: Dict[str, Any]) -> Any:
                     "returncode": proc.returncode,
                     "stdout": (stdout_bytes or b"").decode(errors="ignore")[-4000:],
                     "stderr": (stderr_bytes or b"").decode(errors="ignore")[-4000:],
+                    "result": result_detail,
                 },
             )
 

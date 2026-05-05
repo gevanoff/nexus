@@ -9,10 +9,15 @@ services:
     environment:
       - HEARTMULA_PORT=9185
       - HEARTMULA_WORKDIR=${HEARTMULA_WORKDIR:-/data/app}
+      - HEARTMULA_MODEL_PATH=${HEARTMULA_MODEL_PATH:-/data/ckpt}
+      - HEARTMULA_MODEL_ID=${HEARTMULA_MODEL_ID:-HeartMuLa-oss-3B-happy-new-year}
+      - HEARTMULA_VERSION=${HEARTMULA_VERSION:-3B}
+      - HEARTMULA_LAZY_LOAD=${HEARTMULA_LAZY_LOAD:-true}
       - HEARTMULA_REPO_URL=${HEARTMULA_REPO_URL:-https://github.com/HeartMuLa/heartlib.git}
       - HEARTMULA_REPO_REF=${HEARTMULA_REPO_REF:-}
       - HEARTMULA_UPDATE_ON_START=${HEARTMULA_UPDATE_ON_START:-false}
       - HEARTMULA_TIMEOUT_SEC=${HEARTMULA_TIMEOUT_SEC:-1200}
+      - HF_HOME=/data/huggingface
     volumes:
       - ./.runtime/heartmula:/data
     gpus: all

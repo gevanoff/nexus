@@ -244,8 +244,38 @@ curl -X POST http://localhost:8800/v1/agent/coordinate \
     "input": "Review this migration plan and identify bugs or rollback risks.",
     "participants": ["coder", "coder-ai1", "coder-ada2"],
     "synthesizer": "default"
-  }'
+}'
 ```
+
+### Coding Workspaces
+
+The gateway can create isolated git clones for local coding agents:
+
+- browser UI: `https://<gateway>/ui/coding`
+- bearer API: `/v1/coding/*`
+
+Typical API flow:
+
+```bash
+curl -X POST http://localhost:8800/v1/coding/tasks \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{"prompt":"Update gateway docs","base_branch":"main"}'
+```
+
+Each task gets a fresh branch under `CODING_WORKSPACE_ROOT`. File reads/writes,
+commands, diffs, commits, pushes, and draft PR creation stay scoped to that task
+clone. Configure allowed repositories with `CODING_ALLOWED_REPOS`; each user
+stores their GitHub token and preferred coding model in User Settings.
+
+The same page can start autonomous coding runs. `POST /v1/coding/runs` creates
+a workspace and starts the background agent for the prompt; existing workspaces
+can be started with `POST /v1/coding/tasks/{task_id}/agent-run` and stopped with
+`POST /v1/coding/tasks/{task_id}/agent-stop`. Agent progress is persisted on
+the task under `task.agent.events`. The agent may inspect/search/read/write
+workspace files and run the configured allowlisted commands. Push and PR
+creation remain explicit approval steps; successful runs can optionally make a
+local commit.
 
 ### Service Discovery
 

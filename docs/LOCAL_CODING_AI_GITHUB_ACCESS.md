@@ -1,0 +1,168 @@
+# Local Coding AI GitHub Access Plan
+
+This plan gives a local coding agent its own GitHub access to work on Nexus
+without reusing a human operator's personal GitHub session.
+
+## Goal
+
+Allow a local AI coding worker to:
+
+- read issues, pull requests, and repository files
+- create branches and commits
+- push draft PRs for human review
+- inspect CI status and logs
+- respond to review comments when assigned
+
+The worker should not be able to push directly to protected branches or access
+production secrets by default.
+
+## Recommended Credential Model
+
+Use a GitHub App installed only on the Nexus repository.
+
+Recommended app permissions:
+
+- Metadata: read
+- Contents: read and write
+- Pull requests: read and write
+- Issues: read and write
+- Checks: read
+- Actions: read
+
+Keep repository administration, secrets, environments, and organization-wide
+permissions disabled unless a specific workflow requires them.
+
+The app private key should live outside the repository in the local secret
+store. A small local token helper can mint short-lived installation tokens for
+the agent process. Prefer this over a long-lived personal access token.
+
+## Simpler First Version
+
+If a GitHub App is too much for the first iteration, create a dedicated machine
+user such as `nexus-ai-bot` and issue a fine-grained personal access token
+scoped only to `gevanoff/nexus`.
+
+Minimum token permissions:
+
+- Contents: read and write
+- Pull requests: read and write
+- Issues: read and write
+- Actions: read
+- Metadata: read
+
+Store the token using `gh auth login --with-token` under a dedicated OS user,
+WSL account, or container. Do not store the token in `.env`, Compose files,
+repo docs, or agent prompts.
+
+## Local Isolation
+
+Run the coding AI in a separate workspace from the operator checkout:
+
+- checkout root: Nexus Coding Workspaces under
+  `/var/lib/gateway/data/coding/workspaces`, or a dedicated WSL path for agents
+  that are not using the gateway API
+- git identity: `Nexus AI Bot <nexus-ai-bot@users.noreply.github.com>`
+- branch prefix: `ai/<ticket-or-task-slug>`
+- PR mode: draft by default
+
+The operator checkout can remain authenticated as the human account. The agent
+checkout should use only the bot or GitHub App credential.
+
+## Nexus Coding Workspaces
+
+The gateway exposes an initial native workflow for isolated coding tasks:
+
+- UI: `/ui/coding`
+- bearer API: `/v1/coding/*`
+- UI API: `/ui/api/coding/*`
+
+Each task creates a fresh clone under the gateway data directory, creates a
+working branch, and exposes scoped file, tree, command, diff, commit, push, and
+draft PR operations. Commands are argv arrays, not shell strings, and run only
+inside the task clone. Destructive git operations such as `reset`, `clean`,
+`rebase`, `merge`, `restore`, and `rm` are blocked.
+
+The UI also supports autonomous runs. The primary path is now:
+
+1. Enter a repo, base branch, and task brief.
+2. Click `Create and run agent`.
+3. Nexus creates the workspace, starts a background coding runner, and persists
+   progress under `task.agent.events`.
+4. The runner uses scoped tools to inspect/search/read/write files and run
+   allowlisted checks until it finishes or hits a budget.
+5. The human reviews the resulting diff, then explicitly pushes or opens a PR.
+
+The API equivalent is `POST /v1/coding/runs`; existing workspaces can be started
+with `POST /v1/coding/tasks/{task_id}/agent-run` and stopped with
+`POST /v1/coding/tasks/{task_id}/agent-stop`.
+
+Important gateway settings:
+
+- `CODING_DEFAULT_REPO_URL`
+- `CODING_ALLOWED_REPOS`
+- `CODING_REQUIRE_ADMIN`
+- `CODING_ALLOWED_COMMANDS`
+- `CODING_AGENT_MAX_TURNS`
+- `CODING_AGENT_MAX_RUNTIME_SEC`
+- `CODING_GIT_AUTHOR_NAME`
+- `CODING_GIT_AUTHOR_EMAIL`
+
+For GitHub access, each Nexus user stores their own token in User Settings.
+The preferred token is a short-lived GitHub App installation token or a
+fine-grained machine-user PAT scoped only to the Nexus repository. The token is
+passed to git through a temporary askpass helper and is not stored in task
+metadata or returned by the settings API after save.
+
+`CODING_GIT_TOKEN` remains a fallback for static bearer-token automation, but
+the browser UI and user personal API keys use the authenticated user's saved
+token.
+
+## Workflow Contract
+
+1. Human creates or assigns an issue/task.
+2. Human starts a Nexus autonomous coding run from the target base branch.
+3. Agent makes scoped changes and runs local checks through the workspace tools.
+4. Agent reviews the diff and marks the run complete or blocked.
+5. Human reviews the diff and may commit, push, or open a draft PR.
+7. GitHub Actions runs.
+8. Agent may inspect CI logs and push fixes.
+9. Human reviews and merges.
+
+The agent should never force-push shared branches or push directly to `main`.
+
+## Repository Guardrails
+
+Add or confirm these repository settings:
+
+- protect `main`
+- require PR review before merge
+- require passing CI on protected branches
+- disallow direct pushes to protected branches
+- require linear history if desired
+- optionally add CODEOWNERS for high-risk areas
+
+Useful labels:
+
+- `ai-ready`
+- `ai-working`
+- `ai-needs-human`
+- `ai-produced`
+
+## Nexus-Specific Boundaries
+
+The coding AI can use GitHub and local tests freely, but production-impacting
+operations should remain controlled:
+
+- no automatic deploys from agent PRs
+- no direct reads of private SSH keys or password files
+- no printing of host IPs, tokens, or local secrets
+- Nexus host access should go through existing deploy scripts or an explicit
+  operator-approved runbook
+
+## Open Decisions
+
+- GitHub App versus machine user for the first implementation
+- whether the agent runs as a Windows process, WSL process, or container
+- which issues/labels should trigger autonomous work
+- whether PR creation should be fully automatic or operator-approved
+- whether the agent should be allowed to run GitHub Actions workflow dispatches

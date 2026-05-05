@@ -15,9 +15,6 @@ services:
       - MAX_HISTORY=${TELEGRAM_MAX_HISTORY:-20}
       - LOG_LEVEL=${TELEGRAM_LOG_LEVEL:-info}
       - TELEGRAM_MAX_MESSAGE=${TELEGRAM_MAX_MESSAGE:-3900}
-    depends_on:
-      gateway:
-        condition: service_healthy
     networks:
       - nexus
     restart: unless-stopped

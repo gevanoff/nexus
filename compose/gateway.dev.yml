@@ -8,6 +8,12 @@ services:
       - GATEWAY_BEARER_TOKEN=${DEV_GATEWAY_BEARER_TOKEN:-dev-change-me}
       - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
       - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+      - CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
+      - CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
+      - CODING_DEFAULT_REPO_URL=${CODING_DEFAULT_REPO_URL:-https://github.com/gevanoff/nexus.git}
+      - CODING_ALLOWED_REPOS=${CODING_ALLOWED_REPOS:-https://github.com/gevanoff/nexus.git}
+      - CODING_REQUIRE_ADMIN=${CODING_REQUIRE_ADMIN:-true}
+      - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
     volumes:
       - ../.runtime/gateway-dev/data:/var/lib/gateway/data

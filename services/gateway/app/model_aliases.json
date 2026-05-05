@@ -11,8 +11,8 @@
       "tools": true
     },
     "coder": {
-      "backend": "mlx-coder",
-      "model": "mlx-community/Qwen3-Coder-Next-8bit",
+      "backend": "local_mlx",
+      "model": "mlx-community/Qwen3.6-27B-4bit",
       "tools": true
     },
     "long": {

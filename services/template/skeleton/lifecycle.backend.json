@@ -1,0 +1,15 @@
+{
+  "__SERVICE_NAME__": {
+    "display_name": "__SERVICE_TITLE__",
+    "host": "ada2",
+    "component": "__SERVICE_NAME__",
+    "tier": "optional",
+    "capabilities": ["__ROUTE_KIND__"],
+    "estimated_vram_mb": 0,
+    "auto_start": true,
+    "auto_stop": true,
+    "compose_file": "docker-compose.__SERVICE_NAME__.yml",
+    "ready_path": "/readyz",
+    "notes": "Set host, tier, memory estimates, required secrets, artifact prerequisites, and peak observed memory before enabling in production."
+  }
+}

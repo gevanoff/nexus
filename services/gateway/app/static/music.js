@@ -33,6 +33,29 @@
     statusEl.className = isError ? "hint error" : "hint";
   }
 
+  function responseDetail(payload) {
+    return payload && typeof payload === "object" && payload.detail && typeof payload.detail === "object"
+      ? payload.detail
+      : null;
+  }
+
+  function musicErrorMessage(payload, status) {
+    const detail = responseDetail(payload);
+    if (detail && typeof detail.message === "string" && detail.message.trim()) return detail.message.trim();
+    if (payload && typeof payload === "object" && typeof payload.detail === "string" && payload.detail.trim()) return payload.detail.trim();
+    return `HTTP ${status}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`;
+  }
+
+  function confirmationText(detail) {
+    const plan = detail?.lifecycle_plan;
+    const conflicts = Array.isArray(plan?.conflicts) ? plan.conflicts : [];
+    const names = conflicts
+      .map((item) => String(item?.display_name || item?.backend_class || "").trim())
+      .filter(Boolean);
+    const suffix = names.length ? `\n\nCandidate backend(s): ${names.slice(0, 5).join(", ")}` : "";
+    return `${detail?.message || "Nexus needs to stop another backend before retrying."}${suffix}\n\nStop backend(s) and retry?`;
+  }
+
   function clearOutput() {
     metaEl.textContent = "";
     galleryEl.innerHTML = "";
@@ -309,28 +332,44 @@
       if (progressContainer) progressContainer.appendChild(wrap);
       stop = _startUiProgress(inner, txt);
 
-      const resp = await fetch("/ui/api/music", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const postMusic = async (requestBody) => {
+        const resp = await fetch("/ui/api/music", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        const text = await resp.text();
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = text;
+        }
+        return { resp, payload };
+      };
 
-      const text = await resp.text();
-      let payload;
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = text;
-      }
+      let { resp, payload } = await postMusic(body);
 
       debugEl.textContent = JSON.stringify({ request: body, response: payload }, null, 2);
 
       if (!resp.ok) {
-        try { if (stop) stop(); } catch (e) {}
-        try { if (progWrap) progWrap.remove(); } catch (e) {}
-        setStatus(`HTTP ${resp.status}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`, true);
-        return;
+        const detail = responseDetail(payload);
+        if (detail?.can_retry_with_confirmation && !body.lifecycle_confirmed) {
+          const ok = window.confirm(confirmationText(detail));
+          if (ok) {
+            const retryBody = { ...body, lifecycle_confirmed: true, lifecycle_allow_disruptive: true };
+            setStatus("Freeing GPU capacity and retrying...", false);
+            ({ resp, payload } = await postMusic(retryBody));
+            debugEl.textContent = JSON.stringify({ request: retryBody, response: payload }, null, 2);
+          }
+        }
+        if (!resp.ok) {
+          try { if (stop) stop(); } catch (e) {}
+          try { if (progWrap) progWrap.remove(); } catch (e) {}
+          setStatus(musicErrorMessage(payload, resp.status), true);
+          return;
+        }
       }
 
       // finish progress

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Gateway Chat UI (v2)</title>
+    <title>Gateway Chat UI</title>
     <style>
     :root {
       color-scheme: dark;
@@ -77,6 +77,29 @@
       .msg.system { background: linear-gradient(180deg, rgba(255, 200, 50, 0.12), rgba(32,26,18,0.6)); }
       .meta { font-size: 12px; color: var(--muted); }
       .content { white-space: pre-wrap; line-height: 1.5; }
+      .content.markdown { white-space: normal; }
+      .markdown .md-p { margin: 0.35rem 0; white-space: pre-wrap; }
+      .markdown .md-heading { margin: 0.45rem 0 0.3rem; line-height: 1.25; font-weight: 700; }
+      .markdown .md-heading-1 { font-size: 1.28rem; }
+      .markdown .md-heading-2 { font-size: 1.14rem; }
+      .markdown .md-heading-3 { font-size: 1.02rem; }
+      .markdown .md-list { margin: 0.35rem 0; padding-left: 1.35rem; }
+      .markdown .md-list li { margin: 0.18rem 0; }
+      .markdown .md-quote { margin: 0.45rem 0; padding: 0.2rem 0 0.2rem 0.8rem; border-left: 3px solid rgba(111,184,255,0.55); color: #c8d5e7; }
+      .markdown .inline-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.93em; padding: 0.08rem 0.32rem; border-radius: 5px; background: rgba(231,237,246,0.10); color: #f3dc96; border: 1px solid rgba(231,237,246,0.08); }
+      .markdown a { color: #9fc2ff; text-decoration-color: rgba(159,194,255,0.45); }
+      .code-block { margin: 0.65rem 0; border: 1px solid rgba(111,184,255,0.20); border-radius: 8px; overflow: hidden; background: #070b10; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); }
+      .code-block-header { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-bottom: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(18,25,35,0.96), rgba(10,14,20,0.96)); }
+      .code-block-lang { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: #93a4ba; text-transform: uppercase; letter-spacing: 0.06em; }
+      .code-copy { padding: 4px 8px; border-radius: 6px; font-size: 11px; box-shadow: none; background: rgba(111,184,255,0.10); border-color: rgba(111,184,255,0.24); }
+      .code-block pre { margin: 0; padding: 11px 12px; overflow-x: auto; white-space: pre; line-height: 1.48; }
+      .code-block code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: #dfe7f3; }
+      .md-code-comment { color: #71829a; }
+      .md-code-string { color: #95d99f; }
+      .md-code-number { color: #f0c85a; }
+      .md-code-keyword { color: #8fbaff; font-weight: 650; }
+      .md-code-function { color: #8be3c9; }
+      .md-code-tag { color: #ff9aa8; }
       .thinking-line { font-size: 12px; color: #93a4ba; font-style: italic; margin-bottom: 6px; }
       .thinking-panel {
         display: none;
@@ -120,7 +143,9 @@
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       .composer { margin-top: 12px; display:flex; gap:10px; }
-      .composer textarea { flex: 1; min-height: 64px; resize: vertical; }
+      .composer-main { flex: 1; display:flex; flex-direction:column; gap:8px; min-width:0; }
+      .composer textarea { width: 100%; min-height: 64px; resize: vertical; }
+      .composer-preview { max-height: 240px; overflow:auto; border: 1px solid rgba(111,184,255,0.20); border-radius: 10px; padding: 9px 10px; background: rgba(7,11,16,0.72); }
       .right { display:flex; flex-direction:column; gap:10px; }
       .pill {
         display:inline-flex;
@@ -208,23 +233,68 @@
       .status-panel summary { cursor: pointer; font-weight: 600; color: #e7edf6; }
       .status-body { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
       .status-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-      .status-list { display: flex; flex-direction: column; gap: 8px; }
+      .status-list { display: flex; flex-direction: column; gap: 7px; }
+      .status-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #93a4ba; margin-top: 2px; }
+      .status-overview-grid { display: flex; flex-wrap: wrap; gap: 6px; border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 7px; background: rgba(14,20,30,0.42); }
+      .status-overview-card { display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid rgba(231,237,246,0.08); border-radius: 999px; padding: 4px 8px; background: rgba(231,237,246,0.04); }
+      .status-overview-value { font-size: 12px; font-weight: 700; color: #e7edf6; }
+      .status-overview-label { font-size: 11px; color: #93a4ba; }
+      .status-compact-hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 7px; }
+      .status-compact-host { display: flex; flex-direction: column; gap: 5px; max-width: 100%; border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 7px 8px; background: rgba(14,20,30,0.42); }
+      .status-compact-host.stale { border-color: rgba(240,200,90,0.72); box-shadow: inset 3px 0 0 rgba(240,200,90,0.70); }
+      .status-compact-host-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .status-compact-host-line { font-size: 11px; color: #93a4ba; overflow-wrap: anywhere; }
+      .status-compact-meter { height: 6px; border-radius: 999px; overflow: hidden; background: rgba(231,237,246,0.08); border: 1px solid rgba(231,237,246,0.08); }
+      .status-compact-meter-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #227a52, #56c57e); }
+      .status-compact-meter-fill.warn { background: linear-gradient(90deg, #c99424, #f0c85a); }
+      .status-compact-meter-fill.bad { background: linear-gradient(90deg, #a6162a, #ff4d61); }
+      .status-resource-link { color: #cfe7ff; text-decoration: none; border: 1px solid rgba(111,184,255,0.34); border-radius: 999px; padding: 6px 10px; font-size: 12px; background: rgba(111,184,255,0.10); }
+      .status-resource-link:hover { border-color: rgba(111,184,255,0.58); }
+      .status-host-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+      .status-host-card { border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 10px; background: linear-gradient(180deg, rgba(20,28,38,0.9), rgba(14,20,28,0.9)); }
+      .status-host-card.stale { border-color: rgba(240,200,90,0.72); box-shadow: inset 3px 0 0 rgba(240,200,90,0.70); }
+      .status-host-name { font-weight: 600; }
+      .status-resource-row { margin-top: 9px; }
+      .status-bar { height: 11px; border-radius: 999px; border: 1px solid rgba(231,237,246,0.10); background: rgba(231,237,246,0.05); overflow: hidden; margin-top: 6px; }
+      .status-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #6fdda8, #6fb8ff); }
+      .status-bar-fill.warn { background: linear-gradient(90deg, #f0c85a, #f59f53); }
+      .status-bar-fill.bad { background: linear-gradient(90deg, #f27474, #ff8585); }
       .status-group { display: flex; flex-direction: column; gap: 8px; }
       .status-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #93a4ba; }
       .status-group-list { display: flex; flex-direction: column; gap: 8px; }
-      .status-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 10px; border: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(20,28,38,0.9), rgba(14,20,28,0.9)); }
-      .status-row.ok { background: rgba(62, 197, 126, 0.12); border-color: rgba(62, 197, 126, 0.28); }
+      .status-row { display: flex; flex-direction: column; gap: 5px; padding: 8px 9px; border-radius: 8px; border: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(20,28,38,0.82), rgba(14,20,28,0.82)); }
+      .status-row.stale { border-color: rgba(240,200,90,0.72); box-shadow: inset 4px 0 0 rgba(240,200,90,0.72); }
+      .status-row.ok { background: rgba(24, 126, 76, 0.16); border-color: rgba(42, 178, 103, 0.46); }
       .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
-      .status-row.bad { background: rgba(255, 90, 90, 0.12); border-color: rgba(255, 90, 90, 0.28); }
+      .status-row.bad { background: rgba(140, 18, 36, 0.22); border-color: rgba(255, 73, 97, 0.58); }
+      .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
+      .status-row.inactive-unhealthy { background: rgba(224,0,255,0.30); border-color: rgba(255,0,255,0.80); }
+      .status-row.inactive-unknown { background: rgba(220,228,240,0.12); border-color: rgba(220,228,240,0.38); }
+      .status-row.tier-crucial { box-shadow: inset 4px 0 0 rgba(111,184,255,0.92), 0 0 0 1px rgba(111,184,255,0.16); }
       .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
       .status-name { font-weight: 600; }
       .status-name-alias { font-weight: 400; color: #93a4ba; }
+      .status-backend-meta { margin-top: 2px; font-size: 12px; color: #93a4ba; overflow-wrap: anywhere; }
+      .status-capabilities { display: flex; gap: 6px; flex-wrap: wrap; }
+      .status-capability { font-size: 11px; padding: 3px 7px; border-radius: 999px; border: 1px solid rgba(111,184,255,0.28); color: #cfe7ff; background: rgba(111,184,255,0.10); }
       .status-badges { display: flex; gap: 6px; flex-wrap: wrap; }
       .status-badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid transparent; }
       .status-badge.ok { background: rgba(111,184,255,0.18); color: #cfe7ff; border-color: rgba(111,184,255,0.4); }
       .status-badge.warn { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
       .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-badge.green { background: rgba(0,120,72,0.24); color: #98f0bf; border-color: rgba(56,197,126,0.72); }
+      .status-badge.blue { background: rgba(111,184,255,0.16); color: #cfe7ff; border-color: rgba(111,184,255,0.42); }
+      .status-badge.purple { background: rgba(224,0,255,0.45); color: #ffd0ff; border-color: rgba(255,0,255,0.95); }
+      .status-badge.grey { background: rgba(235,242,250,0.18); color: #f8fbff; border-color: rgba(235,242,250,0.62); }
+      .status-badge.red { background: rgba(170,22,42,0.28); color: #ff9aa8; border-color: rgba(255,73,97,0.78); }
+      .status-badge.yellow { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
+      .status-badge.crucial { background: rgba(111,184,255,0.16); color: #d7ecff; border-color: rgba(111,184,255,0.52); }
+      .status-badge.high { background: rgba(240,200,90,0.12); color: #f3dc96; border-color: rgba(240,200,90,0.36); }
+      .status-badge.optional { background: rgba(220,228,240,0.11); color: #dfe7f3; border-color: rgba(220,228,240,0.34); }
       .status-detail { font-size: 12px; color: var(--muted); }
+      .status-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+      .status-actions button { padding: 6px 8px; border-radius: 8px; font-size: 11px; box-shadow: none; }
+      .status-actions button[data-danger="true"] { border-color: rgba(255,133,133,0.30); color: #ffd5d5; }
       .status-aliases { font-size: 12px; color: #b7c4d6; }
       .status-error { font-size: 12px; color: #ffb6b6; }
       .status-empty { font-size: 12px; color: #93a4ba; }
@@ -285,7 +355,7 @@
         background: #6fb8ff;
       }
     </style>
-    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
+    <link rel="stylesheet" href="/static/ui_roles.css" />
   </head>
   <body>
     <main>
@@ -299,7 +369,7 @@
       <meta name="theme-color" content="#0b0d10">
       <header>
         <div>
-          <h1>Gateway chat (v2)</h1>
+          <h1>Gateway chat</h1>
           <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Streams status + output tokens (no hidden chain-of-thought).</div>
         </div>
         <div class="header-right">
@@ -326,6 +396,8 @@
               <a class="menu-item" href="/ui/tts">Text-to-speech</a>
               <a class="menu-item" href="/ui/voice-clone">Voice Clone</a>
               <a class="menu-item" href="/ui/ocr">OCR / Scan</a>
+              <a class="menu-item" href="/ui/coding">Coding Workspaces</a>
+              <a class="menu-item" href="/ui/resources">Resources</a>
               <div class="menu-sep"></div>
               <a id="adminUiLink" class="menu-item admin-only" href="/ui/admin/users" style="display:none">Admin UI</a>
             </div>
@@ -341,7 +413,10 @@
       <div id="chat" class="chat" aria-live="polite"></div>
 
       <div class="composer">
-        <textarea id="input" placeholder="Message (try: /image a cozy cabin in snow at dusk)"></textarea>
+        <div class="composer-main">
+          <textarea id="input" placeholder="Message (try: /image a cozy cabin in snow at dusk)"></textarea>
+          <div id="inputPreview" class="composer-preview markdown" hidden></div>
+        </div>
         <div class="right">
           <button id="send" data-ui-role="action">Send</button>
           <button id="attachBtn" type="button" data-ui-role="secondary">Attach file</button>
@@ -363,17 +438,19 @@
             <li><strong>/clone</strong> — open the Voice Library UI to upload and manage reference clips, then use them from <a href="/ui/tts">Text-to-speech</a>. Open <a href="/ui/voice-clone">Voice Clone</a>.</li>
             <li><strong>/scan</strong> — run OCR against an image URL (LightOnOCR). Works: <code>/scan https://example.org/photo.jpg</code> or open <a href="/ui/ocr">OCR UI</a> if available.</li>
             <li><strong>/video</strong> — video generation UI via SkyReels-V2. Open <a href="/ui/video">Video UI</a>.</li>
+            <li><strong>/code</strong> — open an isolated coding workspace. Works: <code>/code update the gateway docs</code> or open <a href="/ui/coding">Coding Workspaces</a>.</li>
           </ul>
           <div class="hint" style="margin-top:6px">Notes: Chat commands require that the UI is reachable (see <code>UI_IP_ALLOWLIST</code>) and you may need to be authenticated for persisted storage.</div>
         </div>
       </details>
 
       <details id="backendStatusPanel" class="status-panel">
-        <summary>Backend status</summary>
+        <summary>Resources and backend status</summary>
         <div class="status-body">
           <div class="status-meta">
             <span id="backendStatusUpdated" class="hint">Last updated: --</span>
             <div style="display:flex;align-items:center;gap:8px;">
+              <a class="status-resource-link" href="/ui/resources">Open Resources</a>
               <button id="backendStatusRefresh" type="button" data-ui-role="secondary">Refresh</button>
               <span id="backendStatusSpinner" class="loading-indicator" hidden>Refreshing…</span>
             </div>
@@ -406,6 +483,9 @@
               <section id="settings-backends" class="settings-section active">
                 <label>Preferred chat model
                   <select id="settings_model_preference"></select>
+                </label>
+                <label>Preferred coding model
+                  <select id="settings_coding_model_preference"></select>
                 </label>
                 <label>Preferred TTS backend
                   <select id="settings_tts_backend"><option value="">(default)</option></select>
@@ -459,6 +539,17 @@
                   <div id="settings_api_key_result" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
                   <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
                 </fieldset>
+                <fieldset id="settings_coding_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Coding workspaces</legend>
+                  <div id="settings_coding_git_token_status" class="hint" style="margin-bottom:8px"></div>
+                  <label>GitHub token
+                    <input type="password" id="settings_coding_git_token" autocomplete="off" placeholder="Leave blank to keep existing token" />
+                  </label>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_clear_coding_git_token" style="width:auto" />
+                    Clear saved GitHub token
+                  </label>
+                </fieldset>
               </section>
             </div>
           </div>
@@ -470,7 +561,7 @@
       </div>
     </div>
 
-    <script src="/static/auth_client.js?v=1"></script>
-    <script src="/static/chat.js?v=2"></script>
+    <script src="/static/auth_client.js"></script>
+    <script src="/static/chat.js?v=7"></script>
   </body>
 </html>

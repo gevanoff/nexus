@@ -19,6 +19,7 @@ from app.openai_routes import router as openai_router
 from app.model_aliases import get_aliases, get_aliases_state
 from app.tools_bus import router as tools_router
 from app.agent_routes import router as agent_router
+from app.coding_routes import router as coding_router
 from app.ui_routes import router as ui_router
 from app.images_routes import router as images_router
 from app.music_routes import router as music_router
@@ -288,4 +289,5 @@ app.include_router(audio_router)
 app.include_router(memory_router)
 app.include_router(tools_router)
 app.include_router(agent_router)
+app.include_router(coding_router)
 app.include_router(ui_router)

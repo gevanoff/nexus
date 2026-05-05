@@ -46,6 +46,12 @@ services:
       - UI_IMAGE_DIR=/var/lib/gateway/data/ui_images
       - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
       - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+      - CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
+      - CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
+      - CODING_DEFAULT_REPO_URL=${CODING_DEFAULT_REPO_URL:-https://github.com/gevanoff/nexus.git}
+      - CODING_ALLOWED_REPOS=${CODING_ALLOWED_REPOS:-https://github.com/gevanoff/nexus.git}
+      - CODING_REQUIRE_ADMIN=${CODING_REQUIRE_ADMIN:-true}
+      - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
 
       # Tool bus configuration
       - TOOLS_LOG_MODE=ndjson

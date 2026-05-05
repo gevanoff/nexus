@@ -55,6 +55,10 @@ def _write_output_json(output_path: Optional[Path], result: Dict[str, Any]) -> N
     output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _bootstrap_script() -> Path:
+    return Path(__file__).with_name("bootstrap_followyourcanvas.py")
+
+
 def main() -> int:
     workdir = Path(_env("FYC_WORKDIR", "/data/app") or "/data/app")
     output_dir = Path(_env("FYC_OUTPUT_DIR") or "")
@@ -94,18 +98,20 @@ def main() -> int:
     config_path = _resolve_under_workdir(workdir, str(config_rel))
     script_path = _resolve_under_workdir(workdir, str(script_rel))
 
-    if not script_path.exists() or not config_path.exists():
+    bootstrap_path = _bootstrap_script()
+    if not script_path.exists() or not config_path.exists() or not bootstrap_path.exists():
         result = {
             "ok": False,
             "error": "missing_upstream_asset",
             "script": str(script_path),
             "config": str(config_path),
+            "bootstrap": str(bootstrap_path),
         }
         _write_output_json(output_json_path, result)
         print(json.dumps(result))
         return 2
 
-    cmd = [sys.executable, str(script_path), "--config", str(config_path), *extra_args]
+    cmd = [sys.executable, str(bootstrap_path), str(script_path), "--config", str(config_path), *extra_args]
     started = time.time()
     proc = subprocess.run(
         cmd,

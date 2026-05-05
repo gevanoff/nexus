@@ -153,7 +153,7 @@
       setMeta(metaBits.join(" · "));
       setStatus("Done.", false);
     } catch (e) {
-      setStatus(String(e), true);
+      setStatus(`Video request lost its connection before a response was returned: ${String(e?.message || e)}`, true);
     } finally {
       generateEl.disabled = false;
     }

@@ -188,8 +188,15 @@ class Settings(BaseSettings):
 
     # Optional: PersonaPlex chat shim (custom UI)
     PERSONAPLEX_BASE_URL: str = ""
+    PERSONAPLEX_ADVERTISE_BASE_URL: str = ""
     PERSONAPLEX_TIMEOUT_SEC: float = 120.0
-    PERSONAPLEX_UI_URL: str = "https://localhost:8998"
+    PERSONAPLEX_UI_URL: str = ""
+    PERSONAPLEX_UI_SCHEME: str = "https"
+    PERSONAPLEX_UI_PORT: int = 8998
+
+    # Optional backend lifecycle/resource manager.
+    LIFECYCLE_MANAGER_BASE_URL: str = ""
+    LIFECYCLE_MANAGER_TIMEOUT_SEC: float = 15.0
 
     # Optional comma-separated backend classes to omit from the active registry.
     # Useful when a backend exists in static config but is intentionally not
@@ -231,7 +238,7 @@ class Settings(BaseSettings):
 
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
-    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"mlx-coder","model":"mlx-community/Qwen3-Coder-Next-8bit"}}}'
+    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/Qwen3.6-27B-4bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 
@@ -342,6 +349,32 @@ class Settings(BaseSettings):
     COORDINATOR_INCLUDE_CODER_ON_CODE: bool = True
     COORDINATOR_MAX_PARTICIPANTS: int = 6
     COORDINATOR_PARALLEL_TIMEOUT_SEC: float = 300.0
+
+    # Nexus coding workspaces.
+    # These endpoints create isolated git clones under the gateway data dir and
+    # expose constrained file, git, shell, push, and PR operations for coding AIs.
+    CODING_ENABLED: bool = True
+    CODING_ALLOW_BEARER_API: bool = True
+    CODING_REQUIRE_ADMIN: bool = True
+    CODING_WORKSPACE_ROOT: str = "/var/lib/gateway/data/coding/workspaces"
+    CODING_TASKS_DIR: str = "/var/lib/gateway/data/coding/tasks"
+    CODING_DEFAULT_REPO_URL: str = "https://github.com/gevanoff/nexus.git"
+    CODING_ALLOWED_REPOS: str = "https://github.com/gevanoff/nexus.git"
+    CODING_ALLOWED_REPOS_JSON: str = ""
+    CODING_DEFAULT_BASE_BRANCH: str = "main"
+    CODING_BRANCH_PREFIX: str = "nexus-coder"
+    CODING_ALLOWED_COMMANDS: str = "git,rg,python,python3,node,npm,pytest,ruff,uv,gh"
+    CODING_COMMAND_TIMEOUT_SEC: int = 120
+    CODING_MAX_OUTPUT_CHARS: int = 40_000
+    CODING_FILE_MAX_BYTES: int = 500_000
+    CODING_AGENT_MAX_TURNS: int = 12
+    CODING_AGENT_MAX_RUNTIME_SEC: int = 1800
+    CODING_AGENT_MAX_EVENTS: int = 120
+    CODING_AGENT_MAX_TOOL_RESULT_CHARS: int = 60_000
+    CODING_GIT_USERNAME: str = "x-access-token"
+    CODING_GIT_TOKEN: str = ""
+    CODING_GIT_AUTHOR_NAME: str = "Nexus Coding Agent"
+    CODING_GIT_AUTHOR_EMAIL: str = "nexus-coder@localhost"
 
 
 S = Settings()

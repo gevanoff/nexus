@@ -24,6 +24,8 @@ services:
       - ETCD_PREFIX=${ETCD_PREFIX:-/nexus/services/}
       - ETCD_POLL_INTERVAL=${ETCD_POLL_INTERVAL:-15}
       - ETCD_SEED_FROM_ENV=${ETCD_SEED_FROM_ENV:-true}
+      - LIFECYCLE_MANAGER_BASE_URL=${LIFECYCLE_MANAGER_BASE_URL:-}
+      - LIFECYCLE_MANAGER_TIMEOUT_SEC=${LIFECYCLE_MANAGER_TIMEOUT_SEC:-15}
 
       # Observability
       - OBSERVABILITY_HOST=0.0.0.0
@@ -54,6 +56,12 @@ services:
       - VOICE_LIBRARY_DIR=/var/lib/tts_refs
       - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
       - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
+      - CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
+      - CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
+      - CODING_DEFAULT_REPO_URL=${CODING_DEFAULT_REPO_URL:-https://github.com/gevanoff/nexus.git}
+      - CODING_ALLOWED_REPOS=${CODING_ALLOWED_REPOS:-https://github.com/gevanoff/nexus.git}
+      - CODING_REQUIRE_ADMIN=${CODING_REQUIRE_ADMIN:-true}
+      - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
 
       # Tool bus configuration
       - TOOLS_LOG_MODE=ndjson
@@ -74,6 +82,17 @@ services:
         read_only: true
         bind:
           create_host_path: false
+    extra_hosts:
+      - "ai1:${NEXUS_HOST_AI1_IP}"
+      - "ai1.embrient.com:${NEXUS_HOST_AI1_IP}"
+      - "ai2:${NEXUS_HOST_AI2_IP}"
+      - "ai2.embrient.com:${NEXUS_HOST_AI2_IP}"
+      - "ai3:${NEXUS_HOST_AI3_IP}"
+      - "ai3.embrient.com:${NEXUS_HOST_AI3_IP}"
+      - "ada2:${NEXUS_HOST_ADA2_IP}"
+      - "ada2.embrient.com:${NEXUS_HOST_ADA2_IP}"
+      - "adada:${NEXUS_HOST_ADADA_IP}"
+      - "adada.embrient.com:${NEXUS_HOST_ADADA_IP}"
     networks:
       - nexus
     restart: unless-stopped

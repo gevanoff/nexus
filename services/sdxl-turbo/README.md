@@ -24,6 +24,7 @@ Use [docker-compose.sdxl-turbo.yml](../../docker-compose.sdxl-turbo.yml).
 - `SDXL_TURBO_DTYPE`
 - `SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD`
 - `SDXL_TURBO_ENABLE_SEQUENTIAL_CPU_OFFLOAD`
+- `SDXL_TURBO_MAX_GUIDANCE_SCALE` (default `0.0`; set to `off` to honor caller guidance unchanged)
 
 ## Gateway integration
 

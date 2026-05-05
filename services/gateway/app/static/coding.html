@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Nexus Coding Workspaces</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090d12;
+        --panel: #111821;
+        --panel2: #0d141d;
+        --border: rgba(231,237,246,0.13);
+        --text: #e7edf6;
+        --muted: #a9b4c3;
+        --accent: #6fb8ff;
+        --good: #58d68d;
+        --warn: #f0c85a;
+        --bad: #ff7f8f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(900px 420px at 15% -10%, rgba(111,184,255,0.15), transparent 62%),
+          radial-gradient(800px 460px at 90% 0%, rgba(88,214,141,0.10), transparent 58%),
+          linear-gradient(180deg, var(--bg), #0c1016);
+        color: var(--text);
+      }
+      main { max-width: 1260px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+      h1 { margin:0; font-size:16px; font-weight:700; }
+      h2 { margin:0 0 10px; font-size:14px; font-weight:700; }
+      h3 { margin:0; font-size:13px; font-weight:700; }
+      label { display:block; font-size:12px; color:var(--muted); margin: 0 0 5px; }
+      input, textarea, select {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: rgba(5,9,14,0.78);
+        color: var(--text);
+        padding: 9px 10px;
+        font: inherit;
+      }
+      textarea { min-height: 92px; resize: vertical; }
+      button, .pill {
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        gap:7px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(24,31,42,0.96), rgba(14,20,29,0.96));
+        color: var(--text);
+        padding: 8px 10px;
+        font: inherit;
+        text-decoration: none;
+        cursor:pointer;
+      }
+      button:hover, .pill:hover { border-color: rgba(111,184,255,0.44); }
+      button:disabled { opacity:0.58; cursor:default; }
+      button[data-danger="true"] { border-color: rgba(255,127,143,0.34); color:#ffd2d8; }
+      .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+      .layout { display:grid; grid-template-columns: minmax(300px, 0.9fr) minmax(520px, 1.6fr); gap:12px; align-items:start; }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95));
+        box-shadow: 0 12px 30px rgba(6,10,16,0.35);
+        padding: 12px;
+      }
+      .stack { display:flex; flex-direction:column; gap:10px; }
+      .two { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+      .hint, .meta { font-size:12px; color:var(--muted); }
+      .status { min-height:18px; margin-bottom:12px; }
+      .error { color:#ffb6c0; }
+      .task-list { display:flex; flex-direction:column; gap:8px; max-height: 48vh; overflow:auto; }
+      .task-item {
+        display:block;
+        text-align:left;
+        width:100%;
+        border:1px solid rgba(231,237,246,0.10);
+        background: rgba(13,20,29,0.72);
+        border-radius:8px;
+        padding:10px;
+      }
+      .task-item.active { border-color:rgba(111,184,255,0.58); background: rgba(24,58,91,0.26); }
+      .badge { display:inline-flex; align-items:center; border-radius:999px; border:1px solid var(--border); padding:3px 7px; font-size:11px; color:#cfe0f7; }
+      .badge.ready { border-color:rgba(88,214,141,0.54); color:#a5f3c7; background:rgba(0,120,72,0.18); }
+      .badge.error { border-color:rgba(255,127,143,0.54); color:#ffc3cb; background:rgba(150,20,38,0.20); }
+      .badge.running { border-color:rgba(111,184,255,0.58); color:#cfe6ff; background:rgba(20,82,140,0.22); }
+      .badge.pending { border-color:rgba(240,200,90,0.46); color:#f5dda0; }
+      .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
+      .panel-grid { display:grid; grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr); gap:10px; }
+      .subpanel { border:1px solid rgba(231,237,246,0.10); border-radius:8px; background:rgba(8,13,20,0.52); padding:10px; }
+      details.subpanel { padding:0; overflow:hidden; }
+      details.subpanel > summary {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        cursor:pointer;
+        padding:10px;
+        list-style:none;
+      }
+      details.subpanel > summary::-webkit-details-marker { display:none; }
+      details.subpanel > summary::before {
+        content:">";
+        color:var(--muted);
+        margin-right:2px;
+      }
+      details.subpanel[open] > summary::before { content:"v"; }
+      .details-body { padding:0 10px 10px; }
+      .change-summary { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+      .change-chip { border-radius:999px; border:1px solid var(--border); padding:2px 7px; font-size:11px; }
+      .change-chip.added { border-color:rgba(88,214,141,0.48); color:#a5f3c7; background:rgba(0,120,72,0.14); }
+      .change-chip.modified { border-color:rgba(111,184,255,0.48); color:#cfe6ff; background:rgba(20,82,140,0.16); }
+      .change-chip.removed { border-color:rgba(255,127,143,0.52); color:#ffc3cb; background:rgba(150,20,38,0.18); }
+      .publish-feedback {
+        min-height:22px;
+        border:1px solid rgba(231,237,246,0.10);
+        border-radius:8px;
+        padding:8px;
+        background:rgba(5,9,14,0.45);
+        font-size:12px;
+        color:var(--muted);
+      }
+      .publish-feedback.ok { border-color:rgba(88,214,141,0.42); color:#a5f3c7; background:rgba(0,120,72,0.12); }
+      .publish-feedback.error { border-color:rgba(255,127,143,0.48); color:#ffc3cb; background:rgba(150,20,38,0.16); }
+      .agent-log {
+        max-height:300px;
+        overflow:auto;
+        border:1px solid rgba(231,237,246,0.10);
+        border-radius:8px;
+        background:#05080d;
+        padding:8px;
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space:pre-wrap;
+      }
+      .output {
+        margin:0;
+        min-height:320px;
+        max-height:640px;
+        overflow:auto;
+        white-space:pre-wrap;
+        word-break:break-word;
+        border:1px solid rgba(231,237,246,0.10);
+        border-radius:8px;
+        background:#05080d;
+        color:#dbe8f8;
+        padding:10px;
+        font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .file-list { max-height:260px; overflow:auto; border:1px solid rgba(231,237,246,0.10); border-radius:8px; }
+      .file-row {
+        display:grid;
+        grid-template-columns: auto 1fr auto;
+        gap:8px;
+        width:100%;
+        text-align:left;
+        padding:7px 9px;
+        border:0;
+        border-bottom:1px solid rgba(231,237,246,0.07);
+        border-radius:0;
+        background:transparent;
+      }
+      .file-row:last-child { border-bottom:0; }
+      .file-row:hover { background:rgba(111,184,255,0.08); }
+      .file-content { min-height:280px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; line-height:1.45; }
+      @media (max-width: 920px) {
+        .layout, .panel-grid, .two { grid-template-columns: 1fr; }
+        .task-list { max-height:none; }
+      }
+    </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Nexus coding workspaces</h1>
+          <div class="hint">Isolated git branches for local coding agents and reviewable changes.</div>
+        </div>
+        <div class="row">
+          <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
+          <a class="pill" href="/ui/resources" data-ui-role="nav">Resources</a>
+          <button id="refreshTasks" type="button" data-ui-role="secondary">Refresh</button>
+        </div>
+      </header>
+
+      <div id="status" class="hint status"></div>
+
+      <div class="layout">
+        <section class="stack">
+          <div class="card stack">
+            <h2>New Agent Run</h2>
+            <div>
+              <label for="repoUrl">Repository</label>
+              <input id="repoUrl" autocomplete="off" />
+            </div>
+            <div class="two">
+              <div>
+                <label for="baseBranch">Base branch</label>
+                <input id="baseBranch" autocomplete="off" />
+              </div>
+              <div>
+                <label for="branchName">Working branch</label>
+                <input id="branchName" autocomplete="off" placeholder="auto" />
+              </div>
+            </div>
+            <div>
+              <label for="taskPrompt">Task brief</label>
+              <textarea id="taskPrompt" placeholder="Describe the coding task"></textarea>
+            </div>
+            <div class="two">
+              <div>
+                <label for="agentMaxTurns">Max turns</label>
+                <input id="agentMaxTurns" type="number" min="1" step="1" />
+              </div>
+              <label style="display:flex;gap:8px;align-items:center;margin-top:22px;">
+                <input id="agentAutoCommit" type="checkbox" style="width:auto;" />
+                Commit successful run
+              </label>
+            </div>
+            <div class="row">
+              <button id="createAndRun" type="button" data-ui-role="action">Create and run agent</button>
+              <button id="createTask" type="button" data-ui-role="secondary">Create workspace only</button>
+            </div>
+            <div id="configMeta" class="hint"></div>
+          </div>
+
+          <div class="card">
+            <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+              <h2 style="margin:0;">Workspaces</h2>
+              <span id="taskCount" class="badge">0</span>
+            </div>
+            <div id="tasks" class="task-list"></div>
+          </div>
+        </section>
+
+        <section class="card stack">
+          <div>
+            <div class="row" style="justify-content:space-between;">
+              <div>
+                <h2 id="selectedTitle">No workspace selected</h2>
+                <div id="selectedMeta" class="meta"></div>
+              </div>
+              <span id="selectedStatus" class="badge pending">idle</span>
+            </div>
+            <div id="selectedPrompt" class="meta" style="margin-top:6px;"></div>
+            <div class="toolbar">
+              <button id="statusBtn" type="button" data-ui-role="secondary">Git status</button>
+              <button id="diffBtn" type="button" data-ui-role="secondary">Diff</button>
+              <button id="briefBtn" type="button" data-ui-role="secondary">Agent brief</button>
+              <button id="agentRun" type="button" data-ui-role="action">Run agent</button>
+              <button id="agentStop" type="button" data-ui-role="danger" data-danger="true">Stop agent</button>
+              <button id="copyOutput" type="button" data-ui-role="secondary">Copy output</button>
+              <button id="deleteTask" type="button" data-danger="true" data-ui-role="danger">Delete</button>
+            </div>
+          </div>
+
+          <div class="subpanel stack">
+            <div class="row" style="justify-content:space-between;">
+              <h3>Output</h3>
+              <span id="outputTitle" class="meta"></span>
+            </div>
+            <pre id="output" class="output"></pre>
+          </div>
+
+          <details class="subpanel" open>
+            <summary>
+              <h3>Agent Run</h3>
+              <span id="agentStatus" class="badge pending">idle</span>
+            </summary>
+            <div class="details-body stack">
+              <div id="agentMeta" class="meta"></div>
+              <pre id="agentLog" class="agent-log"></pre>
+            </div>
+          </details>
+
+          <div class="panel-grid">
+            <div class="subpanel stack">
+              <h3>Command</h3>
+              <div>
+                <label for="commandInput">Argv</label>
+                <input id="commandInput" autocomplete="off" value="git status --short --branch" />
+              </div>
+              <div>
+                <label for="commandCwd">Cwd</label>
+                <input id="commandCwd" autocomplete="off" placeholder="repo root" />
+              </div>
+              <button id="runCommand" type="button" data-ui-role="action">Run command</button>
+            </div>
+
+            <div class="subpanel stack">
+              <h3>Publish</h3>
+              <div>
+                <label for="commitMessage">Commit message</label>
+                <input id="commitMessage" autocomplete="off" placeholder="Describe the change" />
+              </div>
+              <div class="row">
+                <button id="commitBtn" type="button" data-ui-role="secondary">Commit</button>
+                <button id="pushBtn" type="button" data-ui-role="secondary">Push</button>
+              </div>
+              <div id="publishFeedback" class="publish-feedback">No publish action yet.</div>
+              <div>
+                <label for="prTitle">Pull request title</label>
+                <input id="prTitle" autocomplete="off" />
+              </div>
+              <textarea id="prBody" placeholder="PR body"></textarea>
+              <button id="prBtn" type="button" data-ui-role="secondary">Open draft PR</button>
+            </div>
+          </div>
+
+          <details id="filesPanel" class="subpanel">
+            <summary>
+              <h3>Files</h3>
+              <span id="changeSummary" class="change-summary"></span>
+            </summary>
+            <div class="details-body stack">
+              <div class="row" style="justify-content:flex-end;">
+                <input id="treePath" style="width:220px;" autocomplete="off" placeholder="path" />
+                <button id="loadTree" type="button" data-ui-role="secondary">Load</button>
+              </div>
+              <div id="fileList" class="file-list"></div>
+              <div>
+                <label for="filePath">Open file</label>
+                <div class="row">
+                  <input id="filePath" style="flex:1 1 260px;" autocomplete="off" />
+                  <button id="readFile" type="button" data-ui-role="secondary">Read</button>
+                  <button id="writeFile" type="button" data-ui-role="secondary">Write</button>
+                </div>
+              </div>
+              <textarea id="fileContent" class="file-content" spellcheck="false"></textarea>
+            </div>
+          </details>
+        </section>
+      </div>
+    </main>
+    <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/coding.js?v=3"></script>
+  </body>
+</html>

@@ -4,7 +4,7 @@ services:
       context: ./services/sdxl-turbo
       dockerfile: Dockerfile
       args:
-        AI_TORCH_INDEX_URL: ${AI_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}
+        AI_TORCH_INDEX_URL: ${AI_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}
     container_name: nexus-sdxl-turbo
     ports:
       - "${SDXL_TURBO_PORT:-9050}:9050"
@@ -20,8 +20,10 @@ services:
       - SDXL_TURBO_ENABLE_SEQUENTIAL_CPU_OFFLOAD=${SDXL_TURBO_ENABLE_SEQUENTIAL_CPU_OFFLOAD:-false}
       - SDXL_TURBO_NUM_INFERENCE_STEPS=${SDXL_TURBO_NUM_INFERENCE_STEPS:-1}
       - SDXL_TURBO_GUIDANCE_SCALE=${SDXL_TURBO_GUIDANCE_SCALE:-0.0}
+      - SDXL_TURBO_MAX_GUIDANCE_SCALE=${SDXL_TURBO_MAX_GUIDANCE_SCALE:-0.0}
       - SDXL_TURBO_WIDTH=${SDXL_TURBO_WIDTH:-512}
       - SDXL_TURBO_HEIGHT=${SDXL_TURBO_HEIGHT:-512}
+      - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
     volumes:
       - ./.runtime/sdxl-turbo:/data
     gpus: all

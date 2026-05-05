@@ -8,7 +8,24 @@ The container is Nexus-owned. The upstream HeartMuLa repo is still cloned into t
 
 - Recommended host: `ada2`
 - Default port: `9185`
+- Checkpoint path: `/data/ckpt`
+- Recommended traded-in setting: `HEARTMULA_LAZY_LOAD=true`
 
 ## Performance note
 
-No clear container-specific performance regression is expected on Linux/NVIDIA. The main risks remain upstream CUDA, audio dependency, and repo-runtime compatibility.
+First production bring-up on `ada2` required downloading these upstream checkpoints into `.runtime/heartmula/ckpt`:
+
+```bash
+hf download --local-dir .runtime/heartmula/ckpt HeartMuLa/HeartMuLaGen
+hf download --local-dir .runtime/heartmula/ckpt/HeartMuLa-oss-3B HeartMuLa/HeartMuLa-oss-3B-happy-new-year
+hf download --local-dir .runtime/heartmula/ckpt/HeartCodec-oss HeartMuLa/HeartCodec-oss-20260123
+```
+
+Observed on `ada2`:
+
+- idle VRAM with `HEARTMULA_LAZY_LOAD=true`: about 1GB after a request settles
+- idle VRAM with eager load: about 22GB
+- peak VRAM during a short generation smoke test: about 35GB
+- first start spent several minutes installing upstream dependencies because `heartlib` is cloned and installed at container startup
+
+The service adapter includes a `soundfile` fallback for current `torchaudio.save()` builds that require `torchcodec`.

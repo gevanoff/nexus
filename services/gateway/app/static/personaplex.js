@@ -15,7 +15,11 @@
       const resp = await fetch('/ui/api/personaplex/info', { method: 'GET', credentials: 'same-origin' });
       if (!resp.ok) return;
       const payload = await resp.json();
-      const uiUrl = String(payload?.ui_url || 'https://localhost:8998');
+      const uiUrl = String(payload?.ui_url || '').trim();
+      if (!uiUrl) {
+        setStatus('PersonaPlex UI URL is not configured.', true);
+        return;
+      }
       if (linkEl) linkEl.href = uiUrl;
       if (openEl) openEl.onclick = () => {
         try { window.open(uiUrl, '_blank', 'noopener'); } catch (e) {}

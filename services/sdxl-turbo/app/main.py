@@ -15,6 +15,7 @@ app = FastAPI(title="SDXL Turbo Shim", version="0.1")
 _PIPELINE = None
 _PIPELINE_DEVICE = None
 _PIPELINE_MODEL_ID = None
+_CUDA_RUNTIME_VERIFIED = False
 
 
 class GenerateRequest(BaseModel):
@@ -94,6 +95,24 @@ def _default_guidance() -> float:
     return _float_env("SDXL_TURBO_GUIDANCE_SCALE", 0.0)
 
 
+def _max_guidance() -> Optional[float]:
+    raw = (_env("SDXL_TURBO_MAX_GUIDANCE_SCALE", "0.0") or "").strip().lower()
+    if raw in {"", "none", "off", "false"}:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return 1.0
+    return None if value < 0 else value
+
+
+def _normalize_guidance(value: float) -> tuple[float, bool]:
+    max_guidance = _max_guidance()
+    if max_guidance is None or value <= max_guidance:
+        return value, False
+    return max_guidance, True
+
+
 def _default_width() -> int:
     return _int_env("SDXL_TURBO_WIDTH", 512)
 
@@ -165,6 +184,19 @@ def _ensure_pipeline() -> StableDiffusionXLPipeline:
     return pipeline
 
 
+def _verify_runtime_ready() -> None:
+    global _CUDA_RUNTIME_VERIFIED
+    _ensure_pipeline()
+    device = _PIPELINE_DEVICE or "cpu"
+    if device == "cuda" and not _CUDA_RUNTIME_VERIFIED:
+        test = torch.tensor([1.0], device="cuda")
+        result = test + 1.0
+        torch.cuda.synchronize()
+        if float(result.item()) != 2.0:
+            raise RuntimeError("CUDA runtime smoke check returned an unexpected value.")
+        _CUDA_RUNTIME_VERIFIED = True
+
+
 def _generate_image(
     *,
     prompt: str,
@@ -213,7 +245,7 @@ def healthz() -> Dict[str, Any]:
 @app.get("/readyz")
 def readyz() -> Dict[str, Any]:
     try:
-        _ensure_pipeline()
+        _verify_runtime_ready()
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"ok": True, "time": _now()}
@@ -242,11 +274,14 @@ def models() -> Dict[str, Any]:
 @app.post("/v1/generate")
 def generate(payload: GenerateRequest) -> Dict[str, Any]:
     seed = payload.seed if payload.seed is not None else _default_seed()
+    guidance, guidance_clamped = _normalize_guidance(
+        payload.guidance_scale if payload.guidance_scale is not None else _default_guidance()
+    )
     encoded, _ = _generate_image(
         prompt=payload.prompt,
         negative_prompt=payload.negative_prompt,
         num_inference_steps=payload.num_inference_steps or _default_steps(),
-        guidance_scale=payload.guidance_scale if payload.guidance_scale is not None else _default_guidance(),
+        guidance_scale=guidance,
         width=payload.width or _default_width(),
         height=payload.height or _default_height(),
         seed=seed,
@@ -257,6 +292,8 @@ def generate(payload: GenerateRequest) -> Dict[str, Any]:
         "model": _PIPELINE_MODEL_ID,
         "data": [{"b64_json": encoded}],
         "seed": seed,
+        "guidance_scale": guidance,
+        "guidance_clamped": guidance_clamped,
     }
 
 
@@ -312,6 +349,7 @@ async def openai_images(req: Request) -> Dict[str, Any]:
         guidance = float(guidance) if guidance is not None else _default_guidance()
     except Exception:
         guidance = _default_guidance()
+    guidance, guidance_clamped = _normalize_guidance(guidance)
 
     seed = payload.get("seed")
     try:
@@ -337,4 +375,7 @@ async def openai_images(req: Request) -> Dict[str, Any]:
         "created": _now(),
         "model": _PIPELINE_MODEL_ID,
         "data": data,
+        "guidance_scale": guidance,
+        "guidance_clamped": guidance_clamped,
+        "num_inference_steps": steps,
     }
