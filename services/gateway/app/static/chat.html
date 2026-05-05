@@ -330,6 +330,7 @@
       header > div:first-child { flex: 1 1 420px; min-width: 220px; }
       .header-right { flex: 0 0 auto; max-width: 62%; }
       .topbar { justify-content: flex-end; }
+      .topbar-secondary { max-width: 100%; }
       .nav-icon { display:inline-flex; align-items:center; justify-content:center; width:1.1em; min-width:1.1em; color:#cfe7ff; }
       .nav-icon svg { display:block; }
       .header-status-row { display:flex; align-items:center; gap:8px; min-height:20px; }
@@ -384,16 +385,15 @@
           <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Streams status + output tokens (no hidden chain-of-thought).</div>
         </div>
         <div class="header-right">
-        <div class="header-status-row">
-          <button id="apiKeyStatus" type="button" class="status-indicator" data-ui-role="status" style="display:none">API key active</button>
-        </div>
         <div class="topbar">
-          <span class="pill">
-            <span class="hint">Model</span>
-            <select id="model"></select>
-            <button id="loadModels" type="button" data-ui-role="secondary">Load</button>
-          </span>
-          <!-- Auto-detect toggles removed to simplify UI -->
+          <button id="uiRefreshBtn" class="pill" type="button" data-ui-role="secondary">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.4 6.4L4 8.7"/><path d="M5.8 15A7 7 0 0 0 17.6 17.6L20 15.3"/></svg></span>
+            <span>Refresh</span>
+          </button>
+          <a id="topResourcesLink" class="pill" href="/ui/resources" data-ui-role="nav">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <span>Resources</span>
+          </a>
           <div style="position:relative;">
             <button id="appsBtn" class="pill apps-btn" type="button" aria-expanded="false" data-ui-role="menu">
               <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></span>
@@ -414,13 +414,21 @@
               <a id="adminUiLink" class="menu-item admin-only" href="/ui/admin/users" style="display:none">Admin UI</a>
             </div>
           </div>
-          <button id="clear" type="button" data-ui-role="secondary">Clear message box</button>
-          <button id="clearChat" type="button" data-ui-role="danger">Clear Chat</button>
-          <button id="resetSession" type="button" data-ui-role="danger">Reset Session</button>
           <button id="settingsBtn" type="button" title="Settings" data-ui-role="menu">
             <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M12 8.3A3.7 3.7 0 1 0 12 15.7A3.7 3.7 0 0 0 12 8.3Z"/><path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.4-2.4 1a8 8 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.6A8 8 0 0 0 7 6.6l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.4 2.4-1a8 8 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a8 8 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.5Z"/></svg></span>
             <span>Settings</span>
           </button>
+          <button id="apiKeyStatus" type="button" class="status-indicator" data-ui-role="status" style="display:none">API key active</button>
+        </div>
+        <div class="topbar topbar-secondary">
+          <span class="pill">
+            <span class="hint">Model</span>
+            <select id="model"></select>
+            <button id="loadModels" type="button" data-ui-role="secondary">Load</button>
+          </span>
+          <button id="clear" type="button" data-ui-role="secondary">Clear message box</button>
+          <button id="clearChat" type="button" data-ui-role="danger">Clear Chat</button>
+          <button id="resetSession" type="button" data-ui-role="danger">Reset Session</button>
         </div>
         </div>
       </header>
@@ -582,7 +590,7 @@
       </div>
     </div>
 
-    <script src="/static/auth_client.js?v=2"></script>
-    <script src="/static/chat.js?v=9"></script>
+    <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/chat.js?v=10"></script>
   </body>
 </html>

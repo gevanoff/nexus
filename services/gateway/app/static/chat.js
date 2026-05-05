@@ -33,6 +33,7 @@
     const clearEl = $("clear");
     const clearChatEl = $("clearChat");
     const resetSessionEl = $("resetSession");
+    const uiRefreshBtn = $("uiRefreshBtn");
     const apiKeyStatusEl = $("apiKeyStatus");
     const settingsBtn = $("settingsBtn");
     const attachBtn = $("attachBtn");
@@ -2651,6 +2652,12 @@
       }
 
       if (sendEl) sendEl.addEventListener('click', () => void handleSendClick());
+      if (uiRefreshBtn) {
+        uiRefreshBtn.addEventListener('click', () => {
+          void loadModels();
+          void loadBackendStatus({ refresh: true });
+        });
+      }
       if (clearChatEl) clearChatEl.addEventListener('click', () => clearChatUI());
       if (resetSessionEl) resetSessionEl.addEventListener('click', () => resetSession());
       if (settingsBtn) settingsBtn.addEventListener('click', () => openSettings());

@@ -4,6 +4,8 @@
   const TITLE_BY_ID = {
     model: 'Choose which chat model to use for the next message.',
     loadModels: 'Refresh the list of available chat models.',
+    uiRefreshBtn: 'Refresh the Chat UI model list and backend status.',
+    topResourcesLink: 'Open Nexus Resources.',
     appsBtn: 'Open the applications menu.',
     clear: 'Clear the chat message editor without sending.',
     clearChat: 'Clear the visible chat transcript from this page.',

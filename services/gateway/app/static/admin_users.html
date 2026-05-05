@@ -62,8 +62,8 @@
           <h1>Gateway Admin</h1>
           <div class="hint">User management — admins only</div>
         </div>
-        <div>
-          <a href="/ui" style="color:#9fbff5; text-decoration:none;" data-ui-role="nav">← Back to Chat UI</a>
+        <div class="row">
+          <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
         </div>
       </header>
 
@@ -135,7 +135,8 @@
       </section>
 
     </main>
-    <script src="/static/auth_client.js?v=1"></script>
+    <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/focused_nav.js?v=3"></script>
     <script>
       async function postJson(url, body){
         const res = await fetch(url, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body), credentials:'same-origin'});
