@@ -58,6 +58,11 @@
       .backend-card.status-inactive_unhealthy { border-color: rgba(255,0,255,0.80); background: rgba(150,0,190,0.34); }
       .backend-card.status-inactive_unknown { border-color: rgba(220,228,240,0.38); background: rgba(220,228,240,0.10); }
       .backend-card.stale { border-color: rgba(240,200,90,0.72); box-shadow: inset 4px 0 0 rgba(240,200,90,0.70); }
+      .backend-card:target,
+      .backend-card.focused {
+        border-color: rgba(111,184,255,0.92);
+        box-shadow: 0 0 0 2px rgba(111,184,255,0.22), 0 12px 30px rgba(6,10,16,0.35);
+      }
       .badges { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
       .badge { font-size: 11px; padding: 3px 7px; border-radius: 999px; border: 1px solid rgba(231,237,246,0.12); color: #cfe0f7; }
       .badge.crucial { border-color: rgba(111,184,255,0.36); color: #cfe7ff; }
@@ -107,6 +112,7 @@
       </div>
     </main>
     <script src="/static/auth_client.js?v=1"></script>
-    <script src="/static/resources.js?v=7"></script>
+    <script src="/static/focused_nav.js?v=1"></script>
+    <script src="/static/resources.js?v=8"></script>
   </body>
 </html>

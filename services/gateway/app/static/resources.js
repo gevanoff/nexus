@@ -159,6 +159,40 @@
     return values.map((item) => String(item || "").trim()).filter(Boolean);
   }
 
+  function canonicalBackendClass(value) {
+    const normalized = String(value || "").trim();
+    if (normalized === "mlx" || normalized === "mlx-coder" || normalized === "mlx_coder") return "local_mlx";
+    return normalized;
+  }
+
+  function backendAnchorId(value) {
+    const canonical = canonicalBackendClass(value);
+    const safe = canonical.replace(/[^a-z0-9_-]/gi, "_");
+    return safe ? `backend-${safe}` : "";
+  }
+
+  function requestedBackendAnchor() {
+    try {
+      const params = new URLSearchParams(window.location.search || "");
+      const fromQuery = params.get("backend") || params.get("backend_class") || "";
+      if (fromQuery) return backendAnchorId(fromQuery);
+      const hash = String(window.location.hash || "").replace(/^#/, "");
+      if (hash.startsWith("backend-")) return hash;
+      if (hash) return backendAnchorId(hash);
+    } catch (error) {}
+    return "";
+  }
+
+  function focusRequestedBackend() {
+    const id = requestedBackendAnchor();
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (!target) return;
+    document.querySelectorAll(".backend-card.focused").forEach((el) => el.classList.remove("focused"));
+    target.classList.add("focused");
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
   const backendGroups = [
     { id: "chat", label: "Chat & Reasoning", capabilities: ["chat", "transcription"] },
     { id: "embeddings", label: "Embeddings", capabilities: ["embeddings"] },
@@ -309,6 +343,9 @@
       const card = document.createElement("div");
       const lifecycleStatus = safeStatusClass(backend.status);
       card.className = `backend-card status-${lifecycleStatus} ${backend.active ? "active" : ""} ${backend.active && backend.ready === false ? "blocked" : ""}`;
+      const anchorId = backendAnchorId(backend.backend_class);
+      if (anchorId) card.id = anchorId;
+      if (backend.backend_class) card.dataset.backendClass = backend.backend_class;
       const lastCheck = effectiveBackendLastCheck(backend);
       if (isStale(lastCheck)) card.classList.add("stale");
 
@@ -419,6 +456,7 @@
       section.appendChild(list);
       backendsEl.appendChild(section);
     });
+    focusRequestedBackend();
   }
 
   async function loadCurrentUser() {
@@ -510,6 +548,7 @@
   }
 
   if (refreshEl) refreshEl.addEventListener("click", () => void loadStatus(true));
+  window.addEventListener("hashchange", () => focusRequestedBackend());
   void (async () => {
     await loadCurrentUser();
     const cached = loadCachedPayload();

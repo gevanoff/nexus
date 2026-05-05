@@ -20,6 +20,9 @@
       .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
       .status-row.inactive-unhealthy { background: rgba(224,0,255,0.30); border-color: rgba(255,0,255,0.80); }
       .status-row.inactive-unknown { background: rgba(220,228,240,0.12); border-color: rgba(220,228,240,0.38); }
+      .status-row.backend-link { cursor: pointer; }
+      .status-row.backend-link:hover { border-color: rgba(111,184,255,0.58); }
+      .status-row.backend-link:focus-visible { outline: 2px solid rgba(111,184,255,0.62); outline-offset: 2px; }
       .status-row.tier-crucial { box-shadow: inset 4px 0 0 rgba(111,184,255,0.92), 0 0 0 1px rgba(111,184,255,0.16); }
       .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
       .status-name { font-weight: 600; }
@@ -166,6 +169,12 @@
     return normalized;
   }
 
+  function backendResourcesUrl(value) {
+    const backendClass = canonicalBackendClass(value);
+    if (!backendClass) return '/ui/resources';
+    return `/ui/resources?backend=${encodeURIComponent(backendClass)}#backend-${encodeURIComponent(backendClass.replace(/[^a-z0-9_-]/gi, '_'))}`;
+  }
+
   function backendMatchesClass(backend, requestedClass) {
     const requested = canonicalBackendClass(requestedClass);
     const actual = canonicalBackendClass(backend?.backend_class);
@@ -177,6 +186,23 @@
   function renderBackendRow(backend, { displayName, missing } = {}) {
     const row = document.createElement('div');
     row.className = 'status-row';
+    const resourceBackend = canonicalBackendClass(backend?.backend_class || displayName || '');
+    if (resourceBackend) {
+      row.classList.add('backend-link');
+      row.setAttribute('role', 'link');
+      row.tabIndex = 0;
+      row.title = 'Open this backend in Nexus Resources';
+      const openResource = () => {
+        window.location.href = backendResourcesUrl(resourceBackend);
+      };
+      row.addEventListener('click', openResource);
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openResource();
+        }
+      });
+    }
     const lastCheckValue = effectiveBackendLastCheck(backend);
     if (timestampIsStale(lastCheckValue)) row.classList.add('stale');
 
@@ -383,7 +409,7 @@
       linkRow.className = 'backend-status-links';
       const link = document.createElement('a');
       link.className = 'backend-status-resources-link';
-      link.href = '/ui/resources';
+      link.href = classes.length ? backendResourcesUrl(classes[0]) : '/ui/resources';
       link.textContent = 'Open Resources';
       linkRow.appendChild(link);
       listEl.parentNode.insertBefore(linkRow, listEl);

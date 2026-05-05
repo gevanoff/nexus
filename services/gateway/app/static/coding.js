@@ -79,6 +79,7 @@
     state.busy = !!value;
     document.querySelectorAll("button").forEach((button) => {
       if (button.id === "copyOutput") return;
+      if (button.closest(".focused-nav-wrap")) return;
       button.disabled = state.busy;
     });
   }

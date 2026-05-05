@@ -498,6 +498,19 @@
       return `tier-${value.replace(/[^a-z0-9_-]/g, "_")}`;
     }
 
+    function canonicalBackendClass(value) {
+      const normalized = String(value || "").trim();
+      if (normalized === "mlx" || normalized === "mlx-coder" || normalized === "mlx_coder") return "local_mlx";
+      return normalized;
+    }
+
+    function backendResourcesUrl(value) {
+      const backendClass = canonicalBackendClass(value);
+      if (!backendClass) return "/ui/resources";
+      const anchor = backendClass.replace(/[^a-z0-9_-]/gi, "_");
+      return `/ui/resources?backend=${encodeURIComponent(backendClass)}#backend-${encodeURIComponent(anchor)}`;
+    }
+
     function fmtMb(value) {
       const mb = Number(value || 0);
       if (!Number.isFinite(mb) || mb <= 0) return "0 GB";
@@ -891,6 +904,23 @@
       const renderBackendRow = (backend, { displayName, missing } = {}) => {
         const row = document.createElement("div");
         row.className = "status-row";
+        const resourceBackend = canonicalBackendClass(backend?.backend_class || displayName || "");
+        if (resourceBackend) {
+          row.classList.add("backend-link");
+          row.setAttribute("role", "link");
+          row.tabIndex = 0;
+          row.title = "Open this backend in Nexus Resources";
+          const openResource = () => {
+            window.location.href = backendResourcesUrl(resourceBackend);
+          };
+          row.addEventListener("click", openResource);
+          row.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openResource();
+            }
+          });
+        }
         const lifecycleStatus = String(backend.status || backend.lifecycle_status || "").trim();
         const lifecycleLabel = String(backend.status_label || "").trim();
         const lifecycleColor = lifecycleColorClass(backend.status_color);
@@ -2571,6 +2601,12 @@
       if (clearChatEl) clearChatEl.addEventListener('click', () => clearChatUI());
       if (resetSessionEl) resetSessionEl.addEventListener('click', () => resetSession());
       if (settingsBtn) settingsBtn.addEventListener('click', () => openSettings());
+      try {
+        const params = new URLSearchParams(window.location.search || "");
+        if (params.get("settings") === "1" || window.location.hash === "#settings") {
+          window.setTimeout(() => openSettings(), 0);
+        }
+      } catch (error) {}
       // modal controls
       const settingsCancel = document.getElementById('settings_cancel');
       const settingsSave = document.getElementById('settings_save');
