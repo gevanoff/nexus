@@ -124,11 +124,24 @@ async def lifespan(_app: FastAPI):
     
     # Start background health checking
     await start_health_checker()
+
+    try:
+        from app.agent_tasks import start_scheduler as start_agent_task_scheduler
+
+        await start_agent_task_scheduler()
+    except Exception as e:
+        logger.warning("startup: agent task scheduler unavailable (%s: %s)", type(e).__name__, e)
     
     await _startup_check_models()
     yield
     
     # Stop health checker on shutdown
+    try:
+        from app.agent_tasks import stop_scheduler as stop_agent_task_scheduler
+
+        await stop_agent_task_scheduler()
+    except Exception as e:
+        logger.info("shutdown: agent task scheduler stop skipped (%s: %s)", type(e).__name__, e)
     await stop_health_checker()
     await stop_registry_sync()
     observability.stop()

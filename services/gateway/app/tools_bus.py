@@ -46,6 +46,7 @@ log = logging.getLogger(__name__)
 
 from app import metrics
 from app import memory_v2
+from app import agent_tasks
 from app.upstreams import embed_text_for_memory
 
 
@@ -397,6 +398,8 @@ def _tool_category(name: str) -> str:
         return "network"
     if name in {"current_time", "tool_manifest", "noop", "system_info", "models_refresh"}:
         return "introspection"
+    if name.startswith("agent_task_"):
+        return "scheduling"
     if name.startswith("memory_"):
         return "memory"
     if name in {"write_file", "git", "shell"}:
@@ -436,6 +439,8 @@ def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[s
         guidance.append("Use web_browse for current public documentation, issue pages, and other external facts that may have changed.")
     if "current_time" in allowed:
         guidance.append("Use current_time before reasoning about freshness, schedules, or relative dates.")
+    if allowed.intersection({"agent_task_create", "agent_task_list", "agent_task_cancel"}):
+        guidance.append("Use agent_task_create for reminders, countdowns, recurring checks, and follow-up work; use agent_task_list/cancel to inspect or stop scheduled work.")
     if allowed.intersection({"write_file", "git", "shell"}):
         guidance.append("Treat write_file, git, and shell as higher-impact tools; inspect first and keep changes scoped.")
     return guidance
@@ -1520,6 +1525,9 @@ TOOL_IMPL = {
     "git": tool_git,
     "system_info": tool_system_info,
     "models_refresh": tool_models_refresh,
+    "agent_task_create": agent_tasks.create_task,
+    "agent_task_list": agent_tasks.list_tasks,
+    "agent_task_cancel": agent_tasks.cancel_task,
     "memory_v2_upsert": lambda args: memory_v2.upsert(
         db_path=S.MEMORY_DB_PATH,
         embed=_embed_text_sync,
@@ -1830,6 +1838,58 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {},
             "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "agent_task_create": {
+        "name": "agent_task_create",
+        "version": "1",
+        "description": (
+            "Create a durable scheduled Nexus agent task. Supports one-shot countdowns via delay_seconds, "
+            "absolute run_at times, recurring interval_seconds, or five-field cron expressions evaluated in UTC. "
+            "Due tasks run through AgentRuntimeV1 and are recorded for later inspection."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "Prompt the agent should handle when the task fires."},
+                "title": {"type": "string", "description": "Short human-readable task title."},
+                "agent": {"type": "string", "description": "Agent spec id to run; defaults to default."},
+                "run_at": {"type": "string", "description": "ISO-8601 UTC time or Unix timestamp for an absolute one-shot or first interval run."},
+                "delay_seconds": {"type": "integer", "description": "Countdown delay for a one-shot task or first interval run."},
+                "interval_seconds": {"type": "integer", "description": "Repeat every N seconds; minimum 60 seconds."},
+                "cron": {"type": "string", "description": "Five-field cron expression in UTC: minute hour day month weekday."},
+                "max_runs": {"type": "integer", "description": "Optional maximum run count for recurring tasks."},
+                "metadata": {"type": "object", "description": "Optional structured metadata for clients."},
+            },
+            "required": ["prompt"],
+            "additionalProperties": False,
+        },
+    },
+    "agent_task_list": {
+        "name": "agent_task_list",
+        "version": "1",
+        "description": "List durable scheduled Nexus agent tasks, including next run, last run, and last result summary.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "description": "Optional status filter: enabled, running, completed, cancelled, or error."},
+                "limit": {"type": "integer", "description": "Maximum tasks to return, 1-200."},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "agent_task_cancel": {
+        "name": "agent_task_cancel",
+        "version": "1",
+        "description": "Cancel a scheduled Nexus agent task by id. Running tasks are allowed to finish; future runs are disabled.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Task id returned by agent_task_create or agent_task_list."},
+            },
+            "required": ["id"],
             "additionalProperties": False,
         },
     },

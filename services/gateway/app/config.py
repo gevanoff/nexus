@@ -341,6 +341,17 @@ class Settings(BaseSettings):
     AGENT_RUNS_LOG_DIR: str = "/var/lib/gateway/data/agent"
     AGENT_RUNS_LOG_MODE: Literal["ndjson", "per_run", "both"] = "per_run"
 
+    # Durable agent scheduled tasks.
+    # Agents can create countdown-style one-shot tasks or recurring interval/cron
+    # checks. The scheduler stores state in SQLite and executes due tasks through
+    # AgentRuntimeV1, so normal agent specs, tool tiers, budgets, and run logs apply.
+    AGENT_TASKS_ENABLED: bool = True
+    AGENT_TASKS_DB_PATH: str = "/var/lib/gateway/data/agent/tasks.sqlite"
+    AGENT_TASKS_POLL_INTERVAL_SEC: float = 5.0
+    AGENT_TASKS_MAX_DUE_PER_TICK: int = 3
+    AGENT_TASKS_MIN_DELAY_SEC: int = 5
+    AGENT_TASKS_RUN_TIMEOUT_SEC: float = 1800.0
+
     # Admission control / load shedding
     AGENT_BACKEND_CONCURRENCY_VLLM: int = 4
     AGENT_BACKEND_CONCURRENCY_MLX: int = 2

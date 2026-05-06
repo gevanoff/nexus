@@ -107,7 +107,21 @@ def tools_for_tier(tier: int) -> set[str]:
     """Capability tiers: agents can only be granted tiers explicitly."""
 
     # Tier 0: read-only FS + restricted HTTP GET.
-    t0 = {"read_file", "read_file_lines", "list_dir", "search_files", "search_text", "http_fetch_local", "web_browse", "current_time", "tool_manifest", "noop"}
+    t0 = {
+        "read_file",
+        "read_file_lines",
+        "list_dir",
+        "search_files",
+        "search_text",
+        "http_fetch_local",
+        "web_browse",
+        "current_time",
+        "tool_manifest",
+        "noop",
+        "agent_task_create",
+        "agent_task_list",
+        "agent_task_cancel",
+    }
 
     # Tier 1: write FS + structured DB ops.
     # Include media/music generation tools like HeartMula in tier 1 so agents configured
