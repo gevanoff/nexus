@@ -388,6 +388,74 @@ def _resolve_declared_tool(name: str) -> tuple[dict | None, dict | None, str]:
     return None, None, "missing"
 
 
+def _tool_category(name: str) -> str:
+    if name in {"list_dir", "search_files", "search_text"}:
+        return "discovery"
+    if name in {"read_file", "read_file_lines"}:
+        return "read_files"
+    if name in {"web_browse", "http_fetch", "http_fetch_local"}:
+        return "network"
+    if name in {"current_time", "tool_manifest", "noop", "system_info", "models_refresh"}:
+        return "introspection"
+    if name.startswith("memory_"):
+        return "memory"
+    if name in {"write_file", "git", "shell"}:
+        return "workspace"
+    return "specialized"
+
+
+def tool_manifest_for_names(names: set[str] | list[str] | tuple[str, ...], *, include_parameters: bool = False) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for name in sorted({str(n).strip() for n in names if isinstance(n, str) and str(n).strip()}):
+        sch, _reg_def, src = _resolve_declared_tool(name)
+        if not isinstance(sch, dict):
+            continue
+        item: dict[str, Any] = {
+            "name": str(sch.get("name") or name),
+            "version": str(sch.get("version") or ""),
+            "category": _tool_category(name),
+            "description": str(sch.get("description") or ""),
+            "source": src,
+        }
+        if include_parameters and isinstance(sch.get("parameters"), dict):
+            item["parameters"] = sch["parameters"]
+        out.append(item)
+    return out
+
+
+def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[str]:
+    allowed = {str(n).strip() for n in names if isinstance(n, str) and str(n).strip()}
+    guidance: list[str] = []
+    if "tool_manifest" in allowed:
+        guidance.append("Use tool_manifest when you need to inspect your currently granted tool capabilities.")
+    if allowed.intersection({"list_dir", "search_files", "search_text"}):
+        guidance.append("Use discovery tools before broad reading: list_dir for directory shape, search_files for names, search_text for literal code/content matches.")
+    if "read_file_lines" in allowed:
+        guidance.append("Prefer read_file_lines for targeted file inspection; use read_file only when you need the whole bounded file.")
+    if "web_browse" in allowed:
+        guidance.append("Use web_browse for current public documentation, issue pages, and other external facts that may have changed.")
+    if "current_time" in allowed:
+        guidance.append("Use current_time before reasoning about freshness, schedules, or relative dates.")
+    if allowed.intersection({"write_file", "git", "shell"}):
+        guidance.append("Treat write_file, git, and shell as higher-impact tools; inspect first and keep changes scoped.")
+    return guidance
+
+
+def tool_awareness_text(names: set[str] | list[str] | tuple[str, ...], *, include_parameters: bool = False) -> str:
+    manifest = tool_manifest_for_names(names, include_parameters=include_parameters)
+    if not manifest:
+        return "Available Nexus tools: none."
+    lines = ["Available Nexus tools:"]
+    for item in manifest:
+        lines.append(f"- {item['name']} ({item['category']}): {item['description']}")
+    guidance = tool_usage_guidance([str(item.get("name") or "") for item in manifest])
+    if guidance:
+        lines.append("Tool-use guidance:")
+        for item in guidance:
+            lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
 def _truncate(s: Any, *, max_chars: int) -> Any:
     if isinstance(s, str) and len(s) > max_chars:
         return s[:max_chars] + "…"
@@ -1312,6 +1380,27 @@ def tool_current_time(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def tool_tool_manifest(args: Dict[str, Any]) -> Dict[str, Any]:
+    include_parameters = bool(args.get("include_parameters", False))
+    category = args.get("category")
+    if category is not None and not isinstance(category, str):
+        return {"ok": False, "error": "category must be a string"}
+    allowed_raw = args.get("__allowed_tools")
+    if isinstance(allowed_raw, (set, list, tuple)):
+        names = {str(n).strip() for n in allowed_raw if isinstance(n, str) and str(n).strip()}
+    else:
+        names = allowed_tool_names_for_policy(None)
+    manifest = tool_manifest_for_names(names, include_parameters=include_parameters)
+    if isinstance(category, str) and category.strip():
+        wanted = category.strip()
+        manifest = [item for item in manifest if item.get("category") == wanted]
+    return {
+        "ok": True,
+        "tools": manifest,
+        "guidance": tool_usage_guidance([str(item.get("name") or "") for item in manifest]),
+    }
+
+
 def tool_system_info(args: Dict[str, Any]) -> Dict[str, Any]:
     if not getattr(S, "TOOLS_ALLOW_SYSTEM_INFO", False):
         return {"ok": False, "error": "system_info tool disabled"}
@@ -1427,6 +1516,7 @@ TOOL_IMPL = {
     "http_fetch_local": tool_http_fetch_local,
     "web_browse": tool_web_browse,
     "current_time": tool_current_time,
+    "tool_manifest": tool_tool_manifest,
     "git": tool_git,
     "system_info": tool_system_info,
     "models_refresh": tool_models_refresh,
@@ -1469,7 +1559,7 @@ TOOL_IMPL = {
 
 def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
     pol = policy if isinstance(policy, dict) else {}
-    allowed: set[str] = {"noop", "current_time"}
+    allowed: set[str] = {"noop", "current_time", "tool_manifest"}
 
     raw = (pol.get("tools_allowlist") or S.TOOLS_ALLOWLIST or "").strip()
     if raw:
@@ -1643,6 +1733,20 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "tool_manifest": {
+        "name": "tool_manifest",
+        "version": "1",
+        "description": "Return the Nexus tools currently available to this agent, grouped by category with usage guidance.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "include_parameters": {"type": "boolean"},
+                "category": {"type": "string"},
+            },
             "required": [],
             "additionalProperties": False,
         },
@@ -1965,7 +2069,10 @@ def _execute_tool(name: str, args: Dict[str, Any], *, allowed_tools: set[str] | 
             if reg_def and isinstance(reg_def.get("exec"), dict) and reg_def["exec"].get("type") == "subprocess":
                 out = _normalize_tool_result(_run_subprocess_tool(exec_spec=reg_def["exec"], args=args))
             else:
-                out = _normalize_tool_result(TOOL_IMPL[name](args))
+                impl_args = dict(args)
+                if name == "tool_manifest" and allowed_tools is not None:
+                    impl_args["__allowed_tools"] = sorted(allowed_tools)
+                out = _normalize_tool_result(TOOL_IMPL[name](impl_args))
         except Exception as e:
             out = _normalize_tool_result({"ok": False, "error": f"{type(e).__name__}: {e}"})
     finally:

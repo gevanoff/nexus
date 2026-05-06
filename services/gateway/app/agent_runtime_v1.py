@@ -17,7 +17,7 @@ from app.models import AgentRunRequest, AgentSpecModel, ChatCompletionRequest, C
 from app.openai_utils import new_id, now_unix
 from app.router import decide_route
 from app.router_cfg import router_cfg
-from app.tools_bus import TOOL_SCHEMAS, run_tool_call
+from app.tools_bus import TOOL_SCHEMAS, run_tool_call, tool_awareness_text
 from app.upstreams import call_backend_chat
 
 Backend = str
@@ -107,7 +107,7 @@ def tools_for_tier(tier: int) -> set[str]:
     """Capability tiers: agents can only be granted tiers explicitly."""
 
     # Tier 0: read-only FS + restricted HTTP GET.
-    t0 = {"read_file", "read_file_lines", "list_dir", "search_files", "search_text", "http_fetch_local", "web_browse", "current_time", "noop"}
+    t0 = {"read_file", "read_file_lines", "list_dir", "search_files", "search_text", "http_fetch_local", "web_browse", "current_time", "tool_manifest", "noop"}
 
     # Tier 1: write FS + structured DB ops.
     # Include media/music generation tools like HeartMula in tier 1 so agents configured
@@ -314,6 +314,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
     if spec.tools_allowlist:
         allow2 = {t.strip() for t in spec.tools_allowlist if isinstance(t, str) and t.strip()}
         allowed = allowed.intersection(allow2)
+        allowed.add("tool_manifest")
 
     tools = _tool_specs_for_names(sorted(allowed)) if allowed else None
 
@@ -380,11 +381,13 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
             max_tool_io = int(spec.max_total_tool_io_bytes) if spec.max_total_tool_io_bytes is not None else None
 
             # Deterministic system prompt for the planning phase.
+            tool_context = tool_awareness_text(allowed)
             system_plan = ChatMessage(
                 role="system",
                 content=(
                     "You are AgentRuntimeV1. Follow a strict loop: PLAN -> (optional TOOL) -> OBSERVE -> NEXT -> TERMINATE. "
-                    "Do not exceed the user's budgets. Be concise."
+                    "Do not exceed the user's budgets. Be concise.\n\n"
+                    f"{tool_context}"
                 ),
             )
 

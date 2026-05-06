@@ -346,6 +346,18 @@ def _tool_specs() -> List[ToolSpec]:
     return [
         ToolSpec(
             function=ToolFunction(
+                name="coding_tool_manifest",
+                description="List the coding tools currently available in this workspace with usage guidance.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "include_parameters": {"type": "boolean"},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
                 name="coding_list_tree",
                 description="List files and directories inside the coding workspace repository.",
                 parameters={
@@ -529,8 +541,16 @@ def _tool_specs() -> List[ToolSpec]:
 
 def coding_tool_manifest() -> Dict[str, Any]:
     tools = [spec.model_dump(exclude_none=True) for spec in _tool_specs()]
+    guidance = [
+        "Use coding_tool_manifest when you need to inspect your workspace tool capabilities.",
+        "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
+        "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
+        "Use coding_fetch_url for current public documentation or issue pages.",
+        "Inspect coding_git_diff or coding_change_summary before calling coding_finish.",
+    ]
     return {
         "tools": tools,
+        "guidance": guidance,
         "tool_names": [
             str(((item.get("function") or {}).get("name") if isinstance(item.get("function"), dict) else ""))
             for item in tools
@@ -585,6 +605,22 @@ def _new_guidance_since(task_id: str, seen_count: int) -> tuple[List[Dict[str, A
 def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value: Optional[str]) -> Dict[str, Any]:
     if name == "coding_list_tree":
         return cw.list_tree(task_id, path=str(args.get("path") or ""), limit=int(args.get("limit") or 250))
+    if name == "coding_tool_manifest":
+        manifest = coding_tool_manifest()
+        if not bool(args.get("include_parameters", False)):
+            slim_tools = []
+            for item in manifest.get("tools") or []:
+                if not isinstance(item, dict):
+                    continue
+                fn = item.get("function") if isinstance(item.get("function"), dict) else {}
+                slim_tools.append(
+                    {
+                        "name": str(fn.get("name") or ""),
+                        "description": str(fn.get("description") or ""),
+                    }
+                )
+            manifest["tools"] = slim_tools
+        return {"ok": True, **manifest}
     if name == "coding_read_file":
         return cw.read_file(task_id, path=str(args.get("path") or ""))
     if name == "coding_read_file_lines":
@@ -682,6 +718,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
         "The Gateway may create local checkpoint commits between turns so interrupted runs can resume from durable git history. "
+        "Call coding_tool_manifest if you need to inspect the exact tools and guidance currently available in this workspace. "
         "Prefer coding_read_file_lines for targeted inspection, coding_replace_text for exact small edits, and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
         "Use coding_fetch_url for public documentation or issue pages when current external information is needed. "
         "Use coding_search_text before reading many files. "
