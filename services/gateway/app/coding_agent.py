@@ -26,12 +26,12 @@ _RUNNING: Dict[str, asyncio.Task[Any]] = {}
 
 
 def _max_turns(requested: Optional[int] = None) -> int:
-    default = int(getattr(S, "CODING_AGENT_MAX_TURNS", 12) or 12)
+    default = int(getattr(S, "CODING_AGENT_MAX_TURNS", 40) or 40)
     try:
         value = int(requested) if requested is not None else default
     except Exception:
         value = default
-    return max(1, min(value, 50))
+    return max(1, min(value, 1000))
 
 
 def _max_runtime_sec(requested: Optional[float] = None) -> float:

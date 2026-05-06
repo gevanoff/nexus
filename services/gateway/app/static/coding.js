@@ -544,7 +544,7 @@
     state.config = payload;
     if (els.repoUrl && !els.repoUrl.value) els.repoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
-    if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 12;
+    if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 40;
     if (els.configMeta) {
       const bits = [];
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
