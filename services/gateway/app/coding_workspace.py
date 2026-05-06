@@ -1432,7 +1432,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "command_timeout_sec": command_timeout_sec(),
         "max_output_chars": max_output_chars(),
         "file_max_bytes": file_max_bytes(),
-        "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 12) or 12),
+        "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 40) or 40),
         "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 1800) or 1800),
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
