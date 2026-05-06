@@ -57,6 +57,60 @@ def _tool_result_char_limit() -> int:
         return 60_000
 
 
+def _backend_retry_count() -> int:
+    try:
+        return max(0, min(int(getattr(S, "CODING_AGENT_BACKEND_RETRIES", 2) or 0), 5))
+    except Exception:
+        return 2
+
+
+def _backend_retry_delay(attempt_index: int) -> float:
+    try:
+        base = max(0.0, float(getattr(S, "CODING_AGENT_BACKEND_RETRY_BASE_DELAY_SEC", 10.0) or 0.0))
+    except Exception:
+        base = 10.0
+    try:
+        max_delay = max(base, float(getattr(S, "CODING_AGENT_BACKEND_RETRY_MAX_DELAY_SEC", 60.0) or 60.0))
+    except Exception:
+        max_delay = 60.0
+    return min(max_delay, base * (2 ** max(0, attempt_index)))
+
+
+def _backend_retry_statuses() -> set[int]:
+    raw = str(getattr(S, "CODING_AGENT_BACKEND_RETRY_STATUSES", "500,502,503,504") or "")
+    out: set[int] = set()
+    for part in re.split(r"[\s,]+", raw):
+        if not part:
+            continue
+        try:
+            out.add(int(part))
+        except Exception:
+            continue
+    return out or {500, 502, 503, 504}
+
+
+def _backend_error_detail(exc: HTTPException) -> Dict[str, Any]:
+    if isinstance(exc.detail, dict):
+        return exc.detail
+    return {"error": str(exc.detail)}
+
+
+def _is_retryable_backend_error(exc: HTTPException) -> bool:
+    detail = _backend_error_detail(exc)
+    upstream_status = detail.get("status")
+    try:
+        upstream_status_i = int(upstream_status)
+    except Exception:
+        upstream_status_i = 0
+    if upstream_status_i in _backend_retry_statuses():
+        return True
+    if int(getattr(exc, "status_code", 0) or 0) in {502, 503, 504}:
+        body = str(detail.get("body") or detail.get("error") or "")
+        transient_markers = ("internal_error", "timeout", "timed out", "temporarily unavailable", "connection")
+        return not body or any(marker in body.lower() for marker in transient_markers)
+    return False
+
+
 def _clip_text(value: Any, limit: int = 12_000) -> str:
     text = str(value or "")
     if len(text) <= limit:
@@ -126,6 +180,11 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
             elif result.get("path"):
                 detail = f" path={result.get('path')}"
         return f"{event_type} {name}{detail}".strip()
+    if event_type == "backend_retry":
+        return (
+            f"backend_retry turn={event.get('turn') or ''} attempt={event.get('attempt') or ''}/{event.get('max_retries') or ''} "
+            f"delay={event.get('delay_sec') or ''}s {_clip_text(str(event.get('error') or ''), 500)}"
+        ).strip()
     if event_type in {"queued", "started", "turn_started", "review", "commit", "completed", "failed", "stopped"}:
         summary = str(event.get("summary") or event.get("error") or "")
         return f"{event_type} {_clip_text(summary, 700)}".strip()
@@ -328,6 +387,53 @@ def _extract_text_tool_calls(content: Any) -> List[Dict[str, Any]]:
 def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> ChatMessage:
     compact = _clip_jsonable(result)
     return ChatMessage(role="tool", tool_call_id=tool_call_id, content=json.dumps(compact, separators=(",", ":"), ensure_ascii=False))
+
+
+async def _call_backend_chat_with_retry(
+    req: ChatCompletionRequest,
+    backend: str,
+    upstream_model: str,
+    *,
+    task_id: str,
+    turn: int,
+) -> Dict[str, Any]:
+    max_retries = _backend_retry_count()
+    for attempt in range(max_retries + 1):
+        try:
+            return await call_backend_chat(req, backend, upstream_model)
+        except HTTPException as exc:
+            if attempt >= max_retries or not _is_retryable_backend_error(exc):
+                raise
+            delay = _backend_retry_delay(attempt)
+            detail = _backend_error_detail(exc)
+            await asyncio.to_thread(
+                _append_event,
+                task_id,
+                {
+                    "type": "backend_retry",
+                    "turn": turn,
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries,
+                    "delay_sec": round(delay, 1),
+                    "backend": backend,
+                    "upstream_model": upstream_model,
+                    "error": _clip_text(str(detail), 1200),
+                },
+            )
+            logger.warning(
+                "coding agent retrying backend task=%s turn=%s backend=%s model=%s attempt=%s/%s delay=%.1fs error=%s",
+                task_id,
+                turn,
+                backend,
+                upstream_model,
+                attempt + 1,
+                max_retries,
+                delay,
+                detail,
+            )
+            if delay > 0:
+                await asyncio.sleep(delay)
+    raise HTTPException(status_code=502, detail={"upstream": backend, "error": "retry loop exhausted"})
 
 
 def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
@@ -978,7 +1084,7 @@ async def _run_agent(
                 temperature=0.1,
                 stream=False,
             )
-            resp = await call_backend_chat(req, backend, upstream_model)
+            resp = await _call_backend_chat_with_retry(req, backend, upstream_model, task_id=task_id, turn=turn + 1)
             assistant = _extract_assistant_message(resp)
             thinking = _extract_assistant_thinking(resp)
             tool_calls = _extract_tool_calls(resp)

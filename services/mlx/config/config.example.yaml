@@ -28,10 +28,11 @@ models:
   #   model_type: lm
 
   # Optional coder alias target. Gateway points `coder` at local_mlx with this
-  # served model name. Use `multimodal` for MLX-VLM converted repos.
+  # served model name. Keep text/code models on the `lm` handler; use
+  # `multimodal` only for MLX-VLM converted repos.
   # - served_model_name: mlx-community/Qwen3.6-27B-4bit
   #   model_path: mlx-community/Qwen3.6-27B-4bit
-  #   model_type: multimodal
+  #   model_type: lm
 
   # Optional image generation model. Uncomment after installing the image extras
   # for mlx-openai-server and selecting a config_name supported by that model.

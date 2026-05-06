@@ -263,7 +263,7 @@ If a specific MLX model identifier is unavailable, keep alias names and routing 
 Operational note for `ai2`:
 
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
-- Add `mlx-community/Qwen3.6-27B-4bit` to `/var/lib/mlx/config/config.yaml` before routing live coder traffic to it. For MLX-VLM converted repos, use `model_type: multimodal` and validate `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
+- Add `mlx-community/Qwen3.6-27B-4bit` to `/var/lib/mlx/config/config.yaml` before routing live coder traffic to it. For text/code use, configure it with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
 
 ## Are these models already configured?
 

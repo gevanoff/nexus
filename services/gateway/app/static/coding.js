@@ -459,6 +459,10 @@
     }
     if (type === "review") return `${time} reviewed status and diff`;
     if (type === "guidance_seen") return `${time} guidance seen count=${event.count || 0}\n${event.summary || ""}`;
+    if (type === "backend_retry") {
+      const attempt = `${event.attempt || "?"}/${event.max_retries || "?"}`;
+      return `${time} backend retry turn=${event.turn || ""} attempt=${attempt} delay=${event.delay_sec || 0}s\n${event.error || ""}`;
+    }
     if (type === "checkpoint") {
       const commit = String(event.commit || "").slice(0, 12);
       const changed = event.changed ? "changed" : "clean";
