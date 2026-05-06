@@ -96,6 +96,8 @@ def _event_result(value: Any) -> Any:
 
 def _event_digest_line(event: Dict[str, Any]) -> str:
     event_type = str(event.get("type") or "event")
+    if event_type == "thinking":
+        return f"thinking {_clip_text(str(event.get('thinking') or event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "assistant":
         calls = event.get("tool_calls")
         names = []
@@ -206,6 +208,27 @@ def _extract_assistant_message(resp: Dict[str, Any]) -> ChatMessage:
     content = msg.get("content")
     tool_calls = msg.get("tool_calls")
     return ChatMessage(role=role, content=content, tool_calls=tool_calls)
+
+
+def _extract_assistant_thinking(resp: Dict[str, Any]) -> str:
+    choice = (resp.get("choices") or [{}])[0]
+    msg = (choice.get("message") or {}) if isinstance(choice, dict) else {}
+    if not isinstance(msg, dict):
+        msg = {}
+    parts: List[str] = []
+    for source in (msg, choice if isinstance(choice, dict) else {}):
+        if not isinstance(source, dict):
+            continue
+        for key in ("thinking", "reasoning", "reasoning_content", "reasoning_text"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+            elif isinstance(value, (dict, list)):
+                try:
+                    parts.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+                except Exception:
+                    parts.append(str(value))
+    return "\n\n".join(part for part in parts if part).strip()
 
 
 def _extract_tool_calls(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -777,6 +800,7 @@ async def _run_agent(
             )
             resp = await call_backend_chat(req, backend, upstream_model)
             assistant = _extract_assistant_message(resp)
+            thinking = _extract_assistant_thinking(resp)
             tool_calls = _extract_tool_calls(resp)
             text_tool_calls = False
             if not tool_calls:
@@ -786,6 +810,16 @@ async def _run_agent(
             if text_tool_calls:
                 assistant = ChatMessage(role=assistant.role, content=None, tool_calls=tool_calls)
             messages.append(assistant)
+            if thinking:
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "thinking",
+                        "turn": turn + 1,
+                        "thinking": _clip_text(thinking, 4000),
+                    },
+                )
             await asyncio.to_thread(
                 _append_event,
                 task_id,

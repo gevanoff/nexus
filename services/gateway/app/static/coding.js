@@ -256,6 +256,9 @@
       head = `<span class="agent-ts">${escapeHtml(timeMatch[1])}</span>`;
       rest = timeMatch[2] || "";
     }
+    if (/^\s*thinking\b/i.test(rest)) {
+      return `${head}<span class="agent-thinking">${escapeHtml(rest)}</span>`;
+    }
     const tokenRe = /(coding_[A-Za-z0-9_]+|function=[A-Za-z_][A-Za-z0-9_]*|[A-Za-z]:[\\/][A-Za-z0-9._ -]+(?:[\\/][A-Za-z0-9._ -]+)+|(?:^|[\s"'=])(?:\.{0,2}\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?:[A-Za-z0-9._-])|(?:backend|model|turns|turn|ok|path|cwd|argv|returncode|summary|error|status)=)/g;
     let out = head;
     let last = 0;
@@ -439,6 +442,7 @@
       const content = String(event.content || "").trim();
       return `${time} assistant${calls ? ` tools=[${calls}]` : ""}${content ? `\n${content}` : ""}`;
     }
+    if (type === "thinking") return `${time} thinking\n${event.thinking || event.summary || ""}`;
     if (type === "tool_started") return `${time} tool ${event.name || ""} ${JSON.stringify(event.args || {})}`;
     if (type === "tool_finished") {
       const result = event.result || {};
