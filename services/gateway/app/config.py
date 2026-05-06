@@ -261,7 +261,7 @@ class Settings(BaseSettings):
     TOOLS_SHELL_TIMEOUT_SEC: int = 20
     TOOLS_SHELL_ALLOWED_CMDS: str = ""  # comma-separated, e.g. "git,rg,ls,cat"
 
-    TOOLS_FS_ROOTS: str = "/var/lib/gateway"  # comma-separated roots
+    TOOLS_FS_ROOTS: str = "/var/lib/gateway/app,/var/lib/gateway/tools,/var/lib/gateway/data/tools_work"  # comma-separated roots
     TOOLS_FS_MAX_BYTES: int = 200_000
     TOOLS_ALLOW_FS_WRITE: bool = False
 
