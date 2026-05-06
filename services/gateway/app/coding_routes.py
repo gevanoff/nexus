@@ -11,6 +11,7 @@ from app.auth import require_bearer
 from app.config import S
 from app import coding_agent as ca
 from app import coding_workspace as cw
+from app.tools_bus import tool_web_browse
 from app import user_store
 from app.ui_routes import _require_admin, _require_ui_access, _require_user
 
@@ -70,6 +71,14 @@ class CodingSearchRequest(BaseModel):
     fixed_strings: bool = False
     case_sensitive: bool = True
     limit: Optional[int] = 200
+
+
+class CodingWebBrowseRequest(BaseModel):
+    url: str
+    max_bytes: Optional[int] = None
+    timeout_sec: Optional[float] = None
+    extract_links: bool = True
+    include_html: bool = False
 
 
 class CodingFileWriteRequest(BaseModel):
@@ -310,6 +319,22 @@ async def ui_coding_search(req: Request, task_id: str, body: CodingSearchRequest
         fixed_strings=body.fixed_strings,
         case_sensitive=body.case_sensitive,
         limit=body.limit or 200,
+    )
+
+
+@router.post("/ui/api/coding/tasks/{task_id}/fetch", include_in_schema=False)
+async def ui_coding_fetch_url(req: Request, task_id: str, body: CodingWebBrowseRequest) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    await _to_thread(cw.load_task, task_id)
+    return await _to_thread(
+        tool_web_browse,
+        {
+            "url": body.url,
+            "max_bytes": body.max_bytes,
+            "timeout_sec": body.timeout_sec,
+            "extract_links": body.extract_links,
+            "include_html": body.include_html,
+        },
     )
 
 
@@ -567,6 +592,22 @@ async def v1_coding_search(req: Request, task_id: str, body: CodingSearchRequest
         fixed_strings=body.fixed_strings,
         case_sensitive=body.case_sensitive,
         limit=body.limit or 200,
+    )
+
+
+@router.post("/v1/coding/tasks/{task_id}/fetch")
+async def v1_coding_fetch_url(req: Request, task_id: str, body: CodingWebBrowseRequest) -> Dict[str, Any]:
+    _require_coding_api(req)
+    await _to_thread(cw.load_task, task_id)
+    return await _to_thread(
+        tool_web_browse,
+        {
+            "url": body.url,
+            "max_bytes": body.max_bytes,
+            "timeout_sec": body.timeout_sec,
+            "extract_links": body.extract_links,
+            "include_html": body.include_html,
+        },
     )
 
 

@@ -255,6 +255,7 @@ class Settings(BaseSettings):
     # Optional explicit allowlist; if set, only these tools may be executed.
     # Example: "read_file,write_file,http_fetch"
     TOOLS_ALLOWLIST: str = ""
+    TOOLS_ALLOW_WEB_BROWSE: bool = True
 
     TOOLS_SHELL_CWD: str = "/var/lib/gateway/tools"
     TOOLS_SHELL_TIMEOUT_SEC: int = 20
@@ -267,6 +268,11 @@ class Settings(BaseSettings):
     TOOLS_HTTP_ALLOWED_HOSTS: str = "127.0.0.1,localhost"
     TOOLS_HTTP_TIMEOUT_SEC: int = 10
     TOOLS_HTTP_MAX_BYTES: int = 200_000
+    TOOLS_WEB_BROWSE_TIMEOUT_SEC: float = 20.0
+    TOOLS_WEB_BROWSE_MAX_BYTES: int = 1_000_000
+    TOOLS_WEB_BROWSE_ALLOWED_HOSTS: str = "*"
+    TOOLS_WEB_BROWSE_ALLOW_PRIVATE: bool = False
+    TOOLS_WEB_BROWSE_MAX_REDIRECTS: int = 4
 
     # Outbound/backend TLS verification
     # - BACKEND_VERIFY_TLS: when false, disable TLS verification for upstreams.

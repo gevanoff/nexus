@@ -14,6 +14,7 @@ from app.models import ChatCompletionRequest, ChatMessage, ToolFunction, ToolSpe
 from app.openai_utils import new_id, now_unix
 from app.router import decide_route
 from app.router_cfg import router_cfg
+from app.tools_bus import tool_web_browse
 from app.upstreams import call_backend_chat
 
 
@@ -446,6 +447,23 @@ def _tool_specs() -> List[ToolSpec]:
         ),
         ToolSpec(
             function=ToolFunction(
+                name="coding_fetch_url",
+                description="Use the shared Gateway web browsing tool to fetch a public HTTP/HTTPS page as readable text with links and metadata.",
+                parameters={
+                    "type": "object",
+                    "required": ["url"],
+                    "properties": {
+                        "url": {"type": "string"},
+                        "max_bytes": {"type": "integer"},
+                        "timeout_sec": {"type": "number"},
+                        "extract_links": {"type": "boolean"},
+                        "include_html": {"type": "boolean"},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
                 name="coding_run_command",
                 description="Run an allowlisted argv command in the workspace. Use for targeted tests and non-destructive inspection.",
                 parameters={
@@ -603,6 +621,16 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
             case_sensitive=bool(args.get("case_sensitive", True)),
             limit=int(args.get("limit") or 200),
         )
+    if name == "coding_fetch_url":
+        return tool_web_browse(
+            {
+                "url": str(args.get("url") or ""),
+                "max_bytes": args.get("max_bytes"),
+                "timeout_sec": args.get("timeout_sec"),
+                "extract_links": bool(args.get("extract_links", True)),
+                "include_html": bool(args.get("include_html")),
+            }
+        )
     if name == "coding_run_command":
         argv = args.get("argv")
         if not isinstance(argv, list):
@@ -655,6 +683,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
         "The Gateway may create local checkpoint commits between turns so interrupted runs can resume from durable git history. "
         "Prefer coding_read_file_lines for targeted inspection, coding_replace_text for exact small edits, and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
+        "Use coding_fetch_url for public documentation or issue pages when current external information is needed. "
         "Use coding_search_text before reading many files. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         f"Allowed commands are: {allowed or '(none)'}. "

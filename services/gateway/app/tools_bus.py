@@ -3,17 +3,20 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import json
 import logging
 import os
 import shlex
+import socket
 import subprocess
 import tempfile
 import threading
 import time
+from html.parser import HTMLParser
 from typing import Any, Dict
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit
 import platform
 import sys
 
@@ -48,6 +51,68 @@ _REGISTRY_CACHE: dict[str, Any] = {"path": None, "mtime": None, "tools": {}}
 
 
 _TOOLS_CONCURRENCY_SEM: threading.Semaphore | None = None
+
+
+class _ReadableHtmlParser(HTMLParser):
+    def __init__(self, *, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.title_parts: list[str] = []
+        self.text_parts: list[str] = []
+        self.links: list[dict[str, str]] = []
+        self._skip_depth = 0
+        self._in_title = False
+        self._link_href = ""
+        self._link_text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag_l = tag.lower()
+        attrs_d = {str(k).lower(): str(v or "") for k, v in attrs}
+        if tag_l in {"script", "style", "noscript", "template", "svg"}:
+            self._skip_depth += 1
+            return
+        if tag_l == "title":
+            self._in_title = True
+            return
+        if tag_l == "a" and attrs_d.get("href"):
+            self._link_href = urljoin(self.base_url, attrs_d.get("href") or "")
+            self._link_text = []
+        if tag_l in {"p", "div", "section", "article", "header", "footer", "main", "aside", "nav", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.text_parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag_l = tag.lower()
+        if self._skip_depth and tag_l in {"script", "style", "noscript", "template", "svg"}:
+            self._skip_depth -= 1
+            return
+        if tag_l == "title":
+            self._in_title = False
+            return
+        if tag_l == "a" and self._link_href:
+            text = _collapse_ws(" ".join(self._link_text))
+            if len(self.links) < 100:
+                self.links.append({"href": self._link_href, "text": text})
+            self._link_href = ""
+            self._link_text = []
+        if tag_l in {"p", "div", "section", "article", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.text_parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        text = str(data or "")
+        if not text.strip():
+            return
+        if self._in_title:
+            self.title_parts.append(text)
+        if self._link_href:
+            self._link_text.append(text)
+        self.text_parts.append(text)
+        self.text_parts.append(" ")
+
+
+def _collapse_ws(value: str) -> str:
+    return " ".join(str(value or "").split())
 
 
 def _run_coroutine_sync(coro: Any) -> Any:
@@ -811,6 +876,197 @@ def tool_http_fetch_local(args: Dict[str, Any]) -> Dict[str, Any]:
     return tool_http_fetch(args, override_allowed_hosts={"127.0.0.1", "localhost", "::1"})
 
 
+def _web_browse_max_bytes(value: Any = None) -> int:
+    default = int(getattr(S, "TOOLS_WEB_BROWSE_MAX_BYTES", 1_000_000) or 1_000_000)
+    try:
+        requested = int(value) if value is not None else default
+    except Exception:
+        requested = default
+    return max(1_000, min(requested, default, 5_000_000))
+
+
+def _web_browse_timeout_sec(value: Any = None) -> float:
+    default = float(getattr(S, "TOOLS_WEB_BROWSE_TIMEOUT_SEC", 20.0) or 20.0)
+    try:
+        requested = float(value) if value is not None else default
+    except Exception:
+        requested = default
+    return max(1.0, min(requested, default, 60.0))
+
+
+def _web_browse_allowed_patterns() -> list[str]:
+    raw = str(getattr(S, "TOOLS_WEB_BROWSE_ALLOWED_HOSTS", "*") or "*")
+    return [item.strip().lower() for item in raw.split(",") if item.strip()]
+
+
+def _host_allowed_for_web_browse(host: str) -> bool:
+    host_l = str(host or "").strip().lower().rstrip(".")
+    if not host_l:
+        return False
+    for pattern in _web_browse_allowed_patterns():
+        if pattern == "*":
+            return True
+        if pattern.startswith("*.") and host_l.endswith(pattern[1:]):
+            return True
+        if pattern == host_l:
+            return True
+    return False
+
+
+def _host_is_public(host: str) -> bool:
+    host_l = str(host or "").strip().lower().rstrip(".")
+    if host_l in {"localhost", "localhost.localdomain"}:
+        return False
+    try:
+        ip = ipaddress.ip_address(host_l.strip("[]"))
+        return bool(ip.is_global)
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host_l, None, type=socket.SOCK_STREAM)
+    except Exception:
+        return False
+    addresses = set()
+    for info in infos:
+        sockaddr = info[4]
+        if sockaddr:
+            addresses.add(str(sockaddr[0]))
+    if not addresses:
+        return False
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            return False
+        if not ip.is_global:
+            return False
+    return True
+
+
+def _validate_web_browse_url(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        raise ValueError("url is required")
+    if len(raw) > 4096:
+        raise ValueError("url is too long")
+    parts = urlsplit(raw)
+    if parts.scheme.lower() not in {"http", "https"}:
+        raise ValueError("only http and https URLs are supported")
+    if not parts.hostname:
+        raise ValueError("url host is required")
+    if parts.username or parts.password:
+        raise ValueError("url credentials are not allowed")
+    host = parts.hostname.lower().rstrip(".")
+    if not _host_allowed_for_web_browse(host):
+        raise ValueError("url host is not allowed")
+    if not bool(getattr(S, "TOOLS_WEB_BROWSE_ALLOW_PRIVATE", False)) and not _host_is_public(host):
+        raise ValueError("localhost and private-network targets are blocked")
+    return urlunsplit((parts.scheme.lower(), parts.netloc, parts.path or "/", parts.query, ""))
+
+
+def _decode_response_body(raw: bytes, content_type: str) -> tuple[str, str]:
+    charset = ""
+    for part in str(content_type or "").split(";"):
+        part = part.strip()
+        if part.lower().startswith("charset="):
+            charset = part.split("=", 1)[1].strip().strip('"')
+            break
+    for encoding in [charset, "utf-8", "latin-1"]:
+        if not encoding:
+            continue
+        try:
+            return raw.decode(encoding, errors="replace"), encoding
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace"), "utf-8"
+
+
+def _readable_html(text: str, *, base_url: str) -> dict[str, Any]:
+    parser = _ReadableHtmlParser(base_url=base_url)
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception:
+        pass
+    body = "\n".join(_collapse_ws(part) for part in "".join(parser.text_parts).splitlines())
+    body = "\n".join(line for line in body.splitlines() if line.strip())
+    return {
+        "title": _collapse_ws(" ".join(parser.title_parts)),
+        "text": body,
+        "links": parser.links[:100],
+    }
+
+
+def tool_web_browse(args: Dict[str, Any]) -> Dict[str, Any]:
+    url = args.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return {"ok": False, "error": "url must be a non-empty string"}
+    max_bytes = _web_browse_max_bytes(args.get("max_bytes"))
+    timeout = _web_browse_timeout_sec(args.get("timeout_sec"))
+    max_redirects = max(0, min(int(args.get("max_redirects") if args.get("max_redirects") is not None else getattr(S, "TOOLS_WEB_BROWSE_MAX_REDIRECTS", 4)), 8))
+    include_html = bool(args.get("include_html"))
+    extract_links = bool(args.get("extract_links", True))
+    user_agent = str(args.get("user_agent") or "Nexus-WebBrowse/1.0").strip()[:200] or "Nexus-WebBrowse/1.0"
+    try:
+        current = _validate_web_browse_url(url)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+    redirects: list[str] = []
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=False, headers={"User-Agent": user_agent}) as client:
+            for _ in range(max_redirects + 1):
+                with client.stream("GET", current) as resp:
+                    status = int(resp.status_code)
+                    location = resp.headers.get("location") or ""
+                    if status in {301, 302, 303, 307, 308} and location and len(redirects) < max_redirects:
+                        next_url = _validate_web_browse_url(urljoin(current, location))
+                        redirects.append(next_url)
+                        current = next_url
+                        continue
+                    out = bytearray()
+                    for chunk in resp.iter_bytes():
+                        if not chunk:
+                            continue
+                        remaining = max_bytes - len(out)
+                        if remaining <= 0:
+                            break
+                        out.extend(chunk[:remaining])
+                    content_type = resp.headers.get("content-type", "")
+                    final_url = str(resp.url)
+                    break
+            else:
+                return {"ok": False, "error": "too many redirects", "redirects": redirects}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "url": current, "redirects": redirects}
+
+    raw = bytes(out)
+    text, encoding = _decode_response_body(raw, content_type)
+    lowered_type = str(content_type or "").lower()
+    readable = {"title": "", "text": text, "links": []}
+    if "html" in lowered_type or "<html" in text[:1000].lower():
+        readable = _readable_html(text, base_url=final_url)
+    if not extract_links:
+        readable["links"] = []
+    result: Dict[str, Any] = {
+        "ok": True,
+        "url": str(url),
+        "final_url": final_url,
+        "status": status,
+        "content_type": content_type,
+        "encoding": encoding,
+        "title": readable.get("title") or "",
+        "text": str(readable.get("text") or "")[:max_bytes],
+        "links": readable.get("links") or [],
+        "redirects": redirects,
+        "truncated": len(raw) >= max_bytes,
+        "__io_bytes": len(raw),
+    }
+    if include_html:
+        result["html"] = text[:max_bytes]
+    return result
+
+
 def tool_system_info(args: Dict[str, Any]) -> Dict[str, Any]:
     if not getattr(S, "TOOLS_ALLOW_SYSTEM_INFO", False):
         return {"ok": False, "error": "system_info tool disabled"}
@@ -920,6 +1176,7 @@ TOOL_IMPL = {
     "write_file": tool_write_file,
     "http_fetch": tool_http_fetch,
     "http_fetch_local": tool_http_fetch_local,
+    "web_browse": tool_web_browse,
     "git": tool_git,
     "system_info": tool_system_info,
     "models_refresh": tool_models_refresh,
@@ -972,6 +1229,7 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
     allow_shell = bool(pol.get("tools_allow_shell", S.TOOLS_ALLOW_SHELL))
     allow_fs = bool(pol.get("tools_allow_fs", S.TOOLS_ALLOW_FS))
     allow_http = bool(pol.get("tools_allow_http_fetch", S.TOOLS_ALLOW_HTTP_FETCH))
+    allow_web_browse = bool(pol.get("tools_allow_web_browse", getattr(S, "TOOLS_ALLOW_WEB_BROWSE", True)))
     allow_git = bool(pol.get("tools_allow_git", S.TOOLS_ALLOW_GIT))
 
     if allow_shell:
@@ -981,6 +1239,8 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
     if allow_http:
         allowed.add("http_fetch")
         allowed.add("http_fetch_local")
+    if allow_web_browse:
+        allowed.add("web_browse")
     if allow_git:
         allowed.add("git")
 
@@ -1093,6 +1353,25 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "url": {"type": "string"},
                 "method": {"type": "string", "enum": ["GET"]},
                 "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+    },
+    "web_browse": {
+        "name": "web_browse",
+        "version": "1",
+        "description": "Fetch a public HTTP/HTTPS page and return readable text, title, links, and response metadata. Blocks localhost/private-network targets unless explicitly enabled.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "max_bytes": {"type": "integer"},
+                "timeout_sec": {"type": "number"},
+                "max_redirects": {"type": "integer"},
+                "extract_links": {"type": "boolean"},
+                "include_html": {"type": "boolean"},
+                "user_agent": {"type": "string"},
             },
             "required": ["url"],
             "additionalProperties": False,
