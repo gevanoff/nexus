@@ -59,9 +59,9 @@ def _tool_result_char_limit() -> int:
 
 def _max_completion_tokens() -> int:
     try:
-        return max(128, min(int(getattr(S, "CODING_AGENT_MAX_TOKENS", 1024) or 1024), 8192))
+        return max(128, min(int(getattr(S, "CODING_AGENT_MAX_TOKENS", 512) or 512), 8192))
     except Exception:
-        return 1024
+        return 512
 
 
 def _tool_context_char_limit() -> int:
