@@ -359,11 +359,26 @@ def _tool_specs() -> List[ToolSpec]:
         ToolSpec(
             function=ToolFunction(
                 name="coding_read_file",
-                description="Read a UTF-8 text file from the coding workspace repository.",
+                description="Read a complete UTF-8 text file from the coding workspace repository. Prefer coding_read_file_lines for large files.",
                 parameters={
                     "type": "object",
                     "required": ["path"],
                     "properties": {"path": {"type": "string", "description": "Repository-relative file path."}},
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_read_file_lines",
+                description="Read a bounded 1-based line range from a UTF-8 text file.",
+                parameters={
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {
+                        "path": {"type": "string", "description": "Repository-relative file path."},
+                        "start_line": {"type": "integer", "minimum": 1},
+                        "line_count": {"type": "integer", "minimum": 1, "maximum": 2000},
+                    },
                 },
             )
         ),
@@ -406,6 +421,7 @@ def _tool_specs() -> List[ToolSpec]:
                     "required": ["patch"],
                     "properties": {
                         "patch": {"type": "string", "description": "Unified diff text, with repository-relative paths."},
+                        "check_only": {"type": "boolean", "description": "Validate the patch without applying it."},
                     },
                 },
             )
@@ -421,6 +437,9 @@ def _tool_specs() -> List[ToolSpec]:
                         "query": {"type": "string"},
                         "path": {"type": "string", "description": "Optional repository-relative path to limit the search."},
                         "glob": {"type": "string", "description": "Optional ripgrep glob, such as *.py or services/gateway/**."},
+                        "fixed_strings": {"type": "boolean", "description": "Treat query as a literal string."},
+                        "case_sensitive": {"type": "boolean", "description": "Default true."},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
                     },
                 },
             )
@@ -490,6 +509,18 @@ def _tool_specs() -> List[ToolSpec]:
     ]
 
 
+def coding_tool_manifest() -> Dict[str, Any]:
+    tools = [spec.model_dump(exclude_none=True) for spec in _tool_specs()]
+    return {
+        "tools": tools,
+        "tool_names": [
+            str(((item.get("function") or {}).get("name") if isinstance(item.get("function"), dict) else ""))
+            for item in tools
+            if isinstance(item, dict)
+        ],
+    }
+
+
 def _mutate_task(task_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
     task = cw.load_task(task_id)
     task.update(fields)
@@ -533,28 +564,18 @@ def _new_guidance_since(task_id: str, seen_count: int) -> tuple[List[Dict[str, A
     return messages[seen_count:], len(messages)
 
 
-def _search_text(task_id: str, args: Dict[str, Any], *, git_token_value: Optional[str]) -> Dict[str, Any]:
-    query = str(args.get("query") or "").strip()
-    if not query:
-        raise HTTPException(status_code=400, detail="query is required")
-    if len(query) > 500:
-        raise HTTPException(status_code=400, detail="query is too long")
-    argv = ["rg", "-n", "--hidden", "--glob", "!.git"]
-    glob = str(args.get("glob") or "").strip()
-    if glob:
-        argv.extend(["--glob", glob])
-    argv.extend(["--", query])
-    path = str(args.get("path") or "").strip().lstrip("/\\")
-    if path:
-        argv.append(path)
-    return cw.run_task_command(task_id, argv=argv, git_token_value=git_token_value)
-
-
 def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value: Optional[str]) -> Dict[str, Any]:
     if name == "coding_list_tree":
         return cw.list_tree(task_id, path=str(args.get("path") or ""), limit=int(args.get("limit") or 250))
     if name == "coding_read_file":
         return cw.read_file(task_id, path=str(args.get("path") or ""))
+    if name == "coding_read_file_lines":
+        return cw.read_file_lines(
+            task_id,
+            path=str(args.get("path") or ""),
+            start_line=int(args.get("start_line") or 1),
+            line_count=int(args.get("line_count") or 200),
+        )
     if name == "coding_write_file":
         return cw.write_file(task_id, path=str(args.get("path") or ""), content=str(args.get("content") or ""))
     if name == "coding_replace_text":
@@ -571,9 +592,17 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
             expected_replacements=expected,
         )
     if name == "coding_apply_patch":
-        return cw.apply_unified_patch(task_id, patch=str(args.get("patch") or ""))
+        return cw.apply_unified_patch(task_id, patch=str(args.get("patch") or ""), check_only=bool(args.get("check_only")))
     if name == "coding_search_text":
-        return _search_text(task_id, args, git_token_value=git_token_value)
+        return cw.search_text(
+            task_id,
+            query=str(args.get("query") or ""),
+            path=str(args.get("path") or ""),
+            glob=str(args.get("glob") or ""),
+            fixed_strings=bool(args.get("fixed_strings")),
+            case_sensitive=bool(args.get("case_sensitive", True)),
+            limit=int(args.get("limit") or 200),
+        )
     if name == "coding_run_command":
         argv = args.get("argv")
         if not isinstance(argv, list):
@@ -625,7 +654,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
         "The Gateway may create local checkpoint commits between turns so interrupted runs can resume from durable git history. "
-        "Prefer coding_replace_text for exact small edits and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
+        "Prefer coding_read_file_lines for targeted inspection, coding_replace_text for exact small edits, and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
         "Use coding_search_text before reading many files. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         f"Allowed commands are: {allowed or '(none)'}. "

@@ -830,7 +830,70 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
     return {"ok": bool(result.get("ok")), "counts": counts, "files": files[:500], "truncated": len(files) > 500, "raw": result}
 
 
-def apply_unified_patch(task_id: str, *, patch: str) -> Dict[str, Any]:
+def search_text(
+    task_id: str,
+    *,
+    query: str,
+    path: Optional[str] = None,
+    glob: Optional[str] = None,
+    fixed_strings: bool = False,
+    case_sensitive: bool = True,
+    limit: int = 200,
+) -> Dict[str, Any]:
+    needle = str(query or "").strip()
+    if not needle:
+        raise HTTPException(status_code=400, detail="query is required")
+    if len(needle) > 500:
+        raise HTTPException(status_code=400, detail="query is too long")
+    task = load_task(task_id)
+    repo = _repo_path(task)
+    max_matches = max(1, min(int(limit or 200), 1000))
+    argv = ["rg", "-n", "--column", "--hidden", "--glob", "!.git"]
+    if fixed_strings:
+        argv.append("-F")
+    if not case_sensitive:
+        argv.append("-i")
+    glob_value = str(glob or "").strip()
+    if glob_value:
+        argv.extend(["--glob", glob_value])
+    argv.extend(["--", needle])
+    rel_path = str(path or "").strip().lstrip("/\\")
+    if rel_path:
+        target = _resolve_repo_child(task, rel_path)
+        if not target.exists():
+            raise HTTPException(status_code=404, detail="search path not found")
+        argv.append(rel_path)
+    result = _run_process(argv, cwd=repo)
+    _append_command(task, result, label="search")
+    save_task(task)
+    matches: List[Dict[str, Any]] = []
+    for raw_line in str(result.get("stdout") or "").splitlines():
+        if len(matches) >= max_matches:
+            break
+        parts = raw_line.split(":", 3)
+        if len(parts) < 4:
+            continue
+        match_path, line_raw, col_raw, text = parts
+        try:
+            line_no = int(line_raw)
+        except Exception:
+            line_no = 0
+        try:
+            column = int(col_raw)
+        except Exception:
+            column = 0
+        matches.append({"path": match_path, "line": line_no, "column": column, "text": text})
+    return {
+        "ok": result.get("returncode") in {0, 1},
+        "matched": int(result.get("returncode") or 0) == 0,
+        "query": needle,
+        "matches": matches,
+        "truncated": len(matches) >= max_matches,
+        "raw": result,
+    }
+
+
+def apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -> Dict[str, Any]:
     raw = str(patch or "")
     if not raw.strip():
         raise HTTPException(status_code=400, detail="patch is required")
@@ -850,9 +913,15 @@ def apply_unified_patch(task_id: str, *, patch: str) -> Dict[str, Any]:
             tmp_path = tmp.name
         check = _run_process(["git", "apply", "--check", "--whitespace=nowarn", tmp_path], cwd=repo)
         _append_command(task, check, label="patch-check")
-        if not check.get("ok"):
+        if check_only or not check.get("ok"):
             save_task(task)
-            return {"ok": False, "paths": paths, "check": check, "error": "patch check failed"}
+            return {
+                "ok": bool(check.get("ok")),
+                "check_only": bool(check_only),
+                "paths": paths,
+                "check": check,
+                "error": "" if check.get("ok") else "patch check failed",
+            }
         apply = _run_process(["git", "apply", "--whitespace=nowarn", tmp_path], cwd=repo)
         _append_command(task, apply, label="patch-apply")
         if apply.get("ok"):
@@ -1161,6 +1230,33 @@ def read_file(task_id: str, *, path: str) -> Dict[str, Any]:
     raw = target.read_bytes()
     text = raw.decode("utf-8", errors="replace")
     return {"path": str(path), "size": size, "content": text}
+
+
+def read_file_lines(task_id: str, *, path: str, start_line: int = 1, line_count: int = 200) -> Dict[str, Any]:
+    task = load_task(task_id)
+    target = _resolve_repo_child(task, path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    size = target.stat().st_size
+    if size > file_max_bytes():
+        raise HTTPException(status_code=413, detail="file is too large for the coding file API")
+    start = max(1, int(start_line or 1))
+    count = max(1, min(int(line_count or 200), 2000))
+    text = target.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines(keepends=True)
+    total = len(lines)
+    selected = lines[start - 1 : start - 1 + count]
+    end_line = start + len(selected) - 1 if selected else start - 1
+    return {
+        "path": str(path),
+        "size": size,
+        "start_line": start,
+        "end_line": end_line,
+        "line_count": len(selected),
+        "total_lines": total,
+        "content": "".join(selected),
+        "truncated": end_line < total,
+    }
 
 
 def replace_text(

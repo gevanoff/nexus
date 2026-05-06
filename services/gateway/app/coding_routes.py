@@ -63,6 +63,15 @@ class CodingCommandRequest(BaseModel):
     timeout_sec: Optional[float] = None
 
 
+class CodingSearchRequest(BaseModel):
+    query: str
+    path: Optional[str] = None
+    glob: Optional[str] = None
+    fixed_strings: bool = False
+    case_sensitive: bool = True
+    limit: Optional[int] = 200
+
+
 class CodingFileWriteRequest(BaseModel):
     path: str
     content: str
@@ -77,6 +86,7 @@ class CodingTextReplaceRequest(BaseModel):
 
 class CodingPatchRequest(BaseModel):
     patch: str
+    check_only: bool = False
 
 
 class CodingCommitRequest(BaseModel):
@@ -183,6 +193,12 @@ async def ui_coding_config(req: Request) -> Dict[str, Any]:
     return cw.config_payload(git_token_value=_git_token_for_user(user), preferred_coding_model=_coding_model_for_user(user))
 
 
+@router.get("/ui/api/coding/tools", include_in_schema=False)
+async def ui_coding_tools(req: Request) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return ca.coding_tool_manifest()
+
+
 @router.get("/ui/api/coding/tasks", include_in_schema=False)
 async def ui_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, Any]:
     _require_coding_ui(req)
@@ -282,6 +298,21 @@ async def ui_coding_git_changes(req: Request, task_id: str) -> Dict[str, Any]:
     return {"result": await _to_thread(cw.git_change_summary, task_id)}
 
 
+@router.post("/ui/api/coding/tasks/{task_id}/search", include_in_schema=False)
+async def ui_coding_search(req: Request, task_id: str, body: CodingSearchRequest) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return await _to_thread(
+        cw.search_text,
+        task_id,
+        query=body.query,
+        path=body.path,
+        glob=body.glob,
+        fixed_strings=body.fixed_strings,
+        case_sensitive=body.case_sensitive,
+        limit=body.limit or 200,
+    )
+
+
 @router.post("/ui/api/coding/tasks/{task_id}/commit", include_in_schema=False)
 async def ui_coding_commit(req: Request, task_id: str, body: CodingCommitRequest) -> Dict[str, Any]:
     _require_coding_ui(req)
@@ -322,8 +353,16 @@ async def ui_coding_tree(
 
 
 @router.get("/ui/api/coding/tasks/{task_id}/file", include_in_schema=False)
-async def ui_coding_read_file(req: Request, task_id: str, path: str = Query(...)) -> Dict[str, Any]:
+async def ui_coding_read_file(
+    req: Request,
+    task_id: str,
+    path: str = Query(...),
+    start_line: Optional[int] = Query(default=None, ge=1),
+    line_count: int = Query(default=200, ge=1, le=2000),
+) -> Dict[str, Any]:
     _require_coding_ui(req)
+    if start_line is not None:
+        return await _to_thread(cw.read_file_lines, task_id, path=path, start_line=start_line, line_count=line_count)
     return await _to_thread(cw.read_file, task_id, path=path)
 
 
@@ -349,7 +388,7 @@ async def ui_coding_replace_text(req: Request, task_id: str, body: CodingTextRep
 @router.post("/ui/api/coding/tasks/{task_id}/patch", include_in_schema=False)
 async def ui_coding_apply_patch(req: Request, task_id: str, body: CodingPatchRequest) -> Dict[str, Any]:
     _require_coding_ui(req)
-    return await _to_thread(cw.apply_unified_patch, task_id, patch=body.patch)
+    return await _to_thread(cw.apply_unified_patch, task_id, patch=body.patch, check_only=body.check_only)
 
 
 @router.get("/ui/api/coding/tasks/{task_id}/agent-brief", include_in_schema=False)
@@ -414,6 +453,12 @@ async def v1_coding_config(req: Request) -> Dict[str, Any]:
     token = _git_token_for_user(user) if user is not None else None
     model = _coding_model_for_user(user) if user is not None else ""
     return cw.config_payload(git_token_value=token, preferred_coding_model=model)
+
+
+@router.get("/v1/coding/tools")
+async def v1_coding_tools(req: Request) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return ca.coding_tool_manifest()
 
 
 @router.get("/v1/coding/tasks")
@@ -510,6 +555,21 @@ async def v1_coding_git_changes(req: Request, task_id: str) -> Dict[str, Any]:
     return {"result": await _to_thread(cw.git_change_summary, task_id)}
 
 
+@router.post("/v1/coding/tasks/{task_id}/search")
+async def v1_coding_search(req: Request, task_id: str, body: CodingSearchRequest) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return await _to_thread(
+        cw.search_text,
+        task_id,
+        query=body.query,
+        path=body.path,
+        glob=body.glob,
+        fixed_strings=body.fixed_strings,
+        case_sensitive=body.case_sensitive,
+        limit=body.limit or 200,
+    )
+
+
 @router.get("/v1/coding/tasks/{task_id}/tree")
 async def v1_coding_tree(
     req: Request,
@@ -522,8 +582,16 @@ async def v1_coding_tree(
 
 
 @router.get("/v1/coding/tasks/{task_id}/file")
-async def v1_coding_read_file(req: Request, task_id: str, path: str = Query(...)) -> Dict[str, Any]:
+async def v1_coding_read_file(
+    req: Request,
+    task_id: str,
+    path: str = Query(...),
+    start_line: Optional[int] = Query(default=None, ge=1),
+    line_count: int = Query(default=200, ge=1, le=2000),
+) -> Dict[str, Any]:
     _require_coding_api(req)
+    if start_line is not None:
+        return await _to_thread(cw.read_file_lines, task_id, path=path, start_line=start_line, line_count=line_count)
     return await _to_thread(cw.read_file, task_id, path=path)
 
 
@@ -549,7 +617,7 @@ async def v1_coding_replace_text(req: Request, task_id: str, body: CodingTextRep
 @router.post("/v1/coding/tasks/{task_id}/patch")
 async def v1_coding_apply_patch(req: Request, task_id: str, body: CodingPatchRequest) -> Dict[str, Any]:
     _require_coding_api(req)
-    return await _to_thread(cw.apply_unified_patch, task_id, patch=body.patch)
+    return await _to_thread(cw.apply_unified_patch, task_id, patch=body.patch, check_only=body.check_only)
 
 
 @router.post("/v1/coding/tasks/{task_id}/commit")
