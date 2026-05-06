@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fnmatch
 import hashlib
 import ipaddress
 import json
@@ -13,6 +14,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Dict
 from pathlib import Path
@@ -695,33 +697,62 @@ def tool_shell(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
+def _tools_fs_roots() -> list[Path]:
+    roots = [r.strip() for r in (S.TOOLS_FS_ROOTS or "").split(",") if r.strip()]
+    out: list[Path] = []
+    for root in roots:
+        try:
+            out.append(Path(root).resolve())
+        except Exception:
+            continue
+    return out
+
+
+def _resolve_tools_path(path: str, *, roots: list[Path] | None = None) -> Path:
+    roots = roots if roots is not None else _tools_fs_roots()
+    if not roots:
+        raise ValueError("fs tool not configured (TOOLS_FS_ROOTS empty)")
+    p = Path(path)
+    if not p.is_absolute():
+        p = roots[0] / p
+    p = p.resolve()
+    for root in roots:
+        try:
+            p.relative_to(root)
+            return p
+        except Exception:
+            continue
+    raise ValueError("path outside allowed roots")
+
+
+def _max_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        n = int(value) if value is not None else default
+    except Exception:
+        n = default
+    return max(minimum, min(n, maximum))
+
+
+def _path_is_probably_text(path: Path, *, max_probe_bytes: int = 4096) -> bool:
+    try:
+        with open(path, "rb") as f:
+            data = f.read(max_probe_bytes)
+        if b"\x00" in data:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def tool_read_file(args: Dict[str, Any]) -> Dict[str, Any]:
     if not S.TOOLS_ALLOW_FS:
         return {"ok": False, "error": "fs tool disabled"}
     path = args.get("path")
     if not isinstance(path, str) or not path:
         return {"ok": False, "error": "path must be a non-empty string"}
-    roots = [r.strip() for r in (S.TOOLS_FS_ROOTS or "").split(",") if r.strip()]
-    if not roots:
-        return {"ok": False, "error": "fs tool not configured (TOOLS_FS_ROOTS empty)"}
 
     try:
-        p = Path(path)
-        if not p.is_absolute():
-            p = Path(roots[0]) / p
-        p = p.resolve()
-
-        allowed_root = False
-        for r in roots:
-            try:
-                root_path = Path(r).resolve()
-                p.relative_to(root_path)
-                allowed_root = True
-                break
-            except Exception:
-                continue
-        if not allowed_root:
-            return {"ok": False, "error": "path outside allowed roots"}
+        p = _resolve_tools_path(path)
 
         max_bytes = int(S.TOOLS_FS_MAX_BYTES)
         with open(p, "rb") as f:
@@ -731,6 +762,210 @@ def tool_read_file(args: Dict[str, Any]) -> Dict[str, Any]:
         data = data[:max_bytes]
         text = data.decode("utf-8", errors="replace")
         return {"ok": True, "path": str(p), "truncated": truncated, "content": text, "__io_bytes": len(data)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def tool_read_file_lines(args: Dict[str, Any]) -> Dict[str, Any]:
+    if not S.TOOLS_ALLOW_FS:
+        return {"ok": False, "error": "fs tool disabled"}
+    path = args.get("path")
+    if not isinstance(path, str) or not path:
+        return {"ok": False, "error": "path must be a non-empty string"}
+    start = _max_int(args.get("start"), default=1, minimum=1, maximum=10_000_000)
+    limit = _max_int(args.get("limit"), default=120, minimum=1, maximum=1_000)
+    try:
+        p = _resolve_tools_path(path)
+        max_bytes = int(S.TOOLS_FS_MAX_BYTES)
+        lines: list[dict[str, Any]] = []
+        bytes_read = 0
+        truncated = False
+        with open(p, "rb") as f:
+            for idx, raw in enumerate(f, start=1):
+                bytes_read += len(raw)
+                if bytes_read > max_bytes:
+                    truncated = True
+                    break
+                if idx < start:
+                    continue
+                if len(lines) >= limit:
+                    truncated = True
+                    break
+                lines.append({"line": idx, "text": raw.decode("utf-8", errors="replace").rstrip("\r\n")})
+        return {"ok": True, "path": str(p), "start": start, "limit": limit, "lines": lines, "truncated": truncated, "__io_bytes": min(bytes_read, max_bytes)}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def tool_list_dir(args: Dict[str, Any]) -> Dict[str, Any]:
+    if not S.TOOLS_ALLOW_FS:
+        return {"ok": False, "error": "fs tool disabled"}
+    path = args.get("path") or "."
+    if not isinstance(path, str) or not path:
+        return {"ok": False, "error": "path must be a non-empty string"}
+    limit = _max_int(args.get("limit"), default=200, minimum=1, maximum=2_000)
+    include_hidden = bool(args.get("include_hidden", False))
+    try:
+        p = _resolve_tools_path(path)
+        if not p.is_dir():
+            return {"ok": False, "error": "path is not a directory", "path": str(p)}
+        entries: list[dict[str, Any]] = []
+        for child in sorted(p.iterdir(), key=lambda c: (not c.is_dir(), c.name.lower())):
+            if not include_hidden and child.name.startswith("."):
+                continue
+            try:
+                st = child.stat()
+                kind = "dir" if child.is_dir() else "file" if child.is_file() else "other"
+                entries.append(
+                    {
+                        "name": child.name,
+                        "path": str(child),
+                        "type": kind,
+                        "size": int(st.st_size),
+                        "mtime": int(st.st_mtime),
+                    }
+                )
+            except Exception:
+                entries.append({"name": child.name, "path": str(child), "type": "unknown"})
+            if len(entries) >= limit:
+                break
+        return {"ok": True, "path": str(p), "entries": entries, "truncated": len(entries) >= limit}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def tool_search_files(args: Dict[str, Any]) -> Dict[str, Any]:
+    if not S.TOOLS_ALLOW_FS:
+        return {"ok": False, "error": "fs tool disabled"}
+    path = args.get("path") or "."
+    pattern = args.get("pattern") or "*"
+    if not isinstance(path, str) or not path:
+        return {"ok": False, "error": "path must be a non-empty string"}
+    if not isinstance(pattern, str) or not pattern:
+        return {"ok": False, "error": "pattern must be a non-empty string"}
+    limit = _max_int(args.get("limit"), default=200, minimum=1, maximum=2_000)
+    max_entries = _max_int(args.get("max_entries"), default=10_000, minimum=1, maximum=100_000)
+    include_hidden = bool(args.get("include_hidden", False))
+    include_dirs = bool(args.get("include_dirs", True))
+    try:
+        roots = _tools_fs_roots()
+        base = _resolve_tools_path(path, roots=roots)
+        if not base.exists():
+            return {"ok": False, "error": "path does not exist", "path": str(base)}
+        matches: list[dict[str, Any]] = []
+        inspected = 0
+        stack = [base]
+        while stack and len(matches) < limit and inspected < max_entries:
+            current = stack.pop()
+            inspected += 1
+            if current.is_dir():
+                try:
+                    children = sorted(current.iterdir(), key=lambda c: c.name.lower(), reverse=True)
+                except Exception:
+                    continue
+                for child in children:
+                    if inspected >= max_entries:
+                        break
+                    inspected += 1
+                    if not include_hidden and any(part.startswith(".") for part in child.relative_to(base).parts):
+                        continue
+                    if child.is_dir():
+                        stack.append(child)
+                    name_matches = fnmatch.fnmatch(child.name, pattern) or fnmatch.fnmatch(str(child.relative_to(base)), pattern)
+                    if name_matches and (include_dirs or not child.is_dir()):
+                        try:
+                            st = child.stat()
+                            matches.append({"path": str(child), "relative_path": str(child.relative_to(base)), "type": "dir" if child.is_dir() else "file", "size": int(st.st_size)})
+                        except Exception:
+                            matches.append({"path": str(child), "relative_path": str(child.relative_to(base)), "type": "unknown"})
+                        if len(matches) >= limit:
+                            break
+            else:
+                if fnmatch.fnmatch(current.name, pattern):
+                    matches.append({"path": str(current), "relative_path": current.name, "type": "file", "size": int(current.stat().st_size)})
+        return {"ok": True, "path": str(base), "pattern": pattern, "matches": matches, "inspected": inspected, "truncated": len(matches) >= limit or bool(stack) or inspected >= max_entries}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def tool_search_text(args: Dict[str, Any]) -> Dict[str, Any]:
+    if not S.TOOLS_ALLOW_FS:
+        return {"ok": False, "error": "fs tool disabled"}
+    path = args.get("path") or "."
+    query = args.get("query")
+    if not isinstance(path, str) or not path:
+        return {"ok": False, "error": "path must be a non-empty string"}
+    if not isinstance(query, str) or not query:
+        return {"ok": False, "error": "query must be a non-empty string"}
+    pattern = args.get("file_pattern") or "*"
+    if not isinstance(pattern, str) or not pattern:
+        return {"ok": False, "error": "file_pattern must be a non-empty string"}
+    case_sensitive = bool(args.get("case_sensitive", False))
+    limit = _max_int(args.get("limit"), default=100, minimum=1, maximum=1_000)
+    context_lines = _max_int(args.get("context_lines"), default=0, minimum=0, maximum=5)
+    max_files = _max_int(args.get("max_files"), default=3_000, minimum=1, maximum=20_000)
+    max_total_bytes = _max_int(args.get("max_total_bytes"), default=5_000_000, minimum=10_000, maximum=50_000_000)
+    include_hidden = bool(args.get("include_hidden", False))
+    try:
+        roots = _tools_fs_roots()
+        base = _resolve_tools_path(path, roots=roots)
+        files = [base] if base.is_file() else []
+        if base.is_dir():
+            for candidate in base.rglob("*"):
+                if len(files) >= max_files:
+                    break
+                try:
+                    rel = candidate.relative_to(base)
+                except Exception:
+                    continue
+                if not include_hidden and any(part.startswith(".") for part in rel.parts):
+                    continue
+                if candidate.is_file() and (fnmatch.fnmatch(candidate.name, pattern) or fnmatch.fnmatch(str(rel), pattern)):
+                    files.append(candidate)
+        needle = query if case_sensitive else query.lower()
+        max_bytes = int(S.TOOLS_FS_MAX_BYTES)
+        matches: list[dict[str, Any]] = []
+        io_bytes = 0
+        for file_path in files:
+            if len(matches) >= limit or io_bytes >= max_total_bytes:
+                break
+            if not _path_is_probably_text(file_path):
+                continue
+            try:
+                remaining = max_total_bytes - io_bytes
+                raw = file_path.read_bytes()[: min(max_bytes, remaining) + 1]
+            except Exception:
+                continue
+            allowed_bytes = min(len(raw), max_bytes, max(0, max_total_bytes - io_bytes))
+            io_bytes += allowed_bytes
+            text = raw[:allowed_bytes].decode("utf-8", errors="replace")
+            lines = text.splitlines()
+            for idx, line in enumerate(lines, start=1):
+                hay = line if case_sensitive else line.lower()
+                if needle not in hay:
+                    continue
+                start_idx = max(1, idx - context_lines)
+                end_idx = min(len(lines), idx + context_lines)
+                item: dict[str, Any] = {
+                    "path": str(file_path),
+                    "relative_path": str(file_path.relative_to(base)) if base.is_dir() else file_path.name,
+                    "line": idx,
+                    "text": line[:2_000],
+                }
+                if context_lines:
+                    item["context"] = [{"line": n, "text": lines[n - 1][:2_000]} for n in range(start_idx, end_idx + 1)]
+                matches.append(item)
+                if len(matches) >= limit:
+                    break
+        return {
+            "ok": True,
+            "path": str(base),
+            "query": query,
+            "matches": matches,
+            "files_considered": len(files),
+            "truncated": len(matches) >= limit or len(files) >= max_files or io_bytes >= max_total_bytes,
+            "__io_bytes": io_bytes,
+        }
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -1067,6 +1302,16 @@ def tool_web_browse(args: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def tool_current_time(args: Dict[str, Any]) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    return {
+        "ok": True,
+        "unix": int(now.timestamp()),
+        "iso_utc": now.isoformat().replace("+00:00", "Z"),
+        "timezone": "UTC",
+    }
+
+
 def tool_system_info(args: Dict[str, Any]) -> Dict[str, Any]:
     if not getattr(S, "TOOLS_ALLOW_SYSTEM_INFO", False):
         return {"ok": False, "error": "system_info tool disabled"}
@@ -1173,10 +1418,15 @@ TOOL_IMPL = {
     "noop": tool_noop,
     "shell": tool_shell,
     "read_file": tool_read_file,
+    "read_file_lines": tool_read_file_lines,
+    "list_dir": tool_list_dir,
+    "search_files": tool_search_files,
+    "search_text": tool_search_text,
     "write_file": tool_write_file,
     "http_fetch": tool_http_fetch,
     "http_fetch_local": tool_http_fetch_local,
     "web_browse": tool_web_browse,
+    "current_time": tool_current_time,
     "git": tool_git,
     "system_info": tool_system_info,
     "models_refresh": tool_models_refresh,
@@ -1219,7 +1469,7 @@ TOOL_IMPL = {
 
 def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
     pol = policy if isinstance(policy, dict) else {}
-    allowed: set[str] = {"noop"}
+    allowed: set[str] = {"noop", "current_time"}
 
     raw = (pol.get("tools_allowlist") or S.TOOLS_ALLOWLIST or "").strip()
     if raw:
@@ -1235,7 +1485,7 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
     if allow_shell:
         allowed.add("shell")
     if allow_fs:
-        allowed.update({"read_file", "write_file"})
+        allowed.update({"read_file", "read_file_lines", "list_dir", "search_files", "search_text", "write_file"})
     if allow_http:
         allowed.add("http_fetch")
         allowed.add("http_fetch_local")
@@ -1306,6 +1556,75 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
+    "read_file_lines": {
+        "name": "read_file_lines",
+        "version": "1",
+        "description": "Read a bounded line range from a local text file under the configured filesystem roots.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "start": {"type": "integer"},
+                "limit": {"type": "integer"},
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    },
+    "list_dir": {
+        "name": "list_dir",
+        "version": "1",
+        "description": "List files and directories under the configured filesystem roots.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "limit": {"type": "integer"},
+                "include_hidden": {"type": "boolean"},
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "search_files": {
+        "name": "search_files",
+        "version": "1",
+        "description": "Find files or directories by glob pattern under the configured filesystem roots.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "pattern": {"type": "string"},
+                "limit": {"type": "integer"},
+                "max_entries": {"type": "integer"},
+                "include_hidden": {"type": "boolean"},
+                "include_dirs": {"type": "boolean"},
+            },
+            "required": ["pattern"],
+            "additionalProperties": False,
+        },
+    },
+    "search_text": {
+        "name": "search_text",
+        "version": "1",
+        "description": "Search text files for a literal string under the configured filesystem roots.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "query": {"type": "string"},
+                "file_pattern": {"type": "string"},
+                "case_sensitive": {"type": "boolean"},
+                "limit": {"type": "integer"},
+                "context_lines": {"type": "integer"},
+                "max_files": {"type": "integer"},
+                "max_total_bytes": {"type": "integer"},
+                "include_hidden": {"type": "boolean"},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
     "write_file": {
         "name": "write_file",
         "version": "1",
@@ -1314,6 +1633,17 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
             "required": ["path", "content"],
+            "additionalProperties": False,
+        },
+    },
+    "current_time": {
+        "name": "current_time",
+        "version": "1",
+        "description": "Return the current UTC time for scheduling, freshness checks, and timestamped reasoning.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
             "additionalProperties": False,
         },
     },
