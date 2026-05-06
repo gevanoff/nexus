@@ -140,6 +140,35 @@ def save_task(task: Dict[str, Any]) -> Dict[str, Any]:
     return task
 
 
+def append_guidance_message(
+    task_id: str,
+    *,
+    message: str,
+    actor: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    task = load_task(task_id)
+    text = str(message or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="message is required")
+    messages = task.get("guidance_messages")
+    if not isinstance(messages, list):
+        messages = []
+    messages.append(
+        {
+            "ts": _now(),
+            "role": "user",
+            "actor": str(actor or "").strip(),
+            "run_id": str(run_id or "").strip(),
+            "content": text,
+        }
+    )
+    task["guidance_messages"] = messages[-200:]
+    task["last_guidance_at"] = _now()
+    save_task(task)
+    return public_task(task)
+
+
 def list_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     _ensure_enabled()
     _ensure_dirs()
@@ -1040,6 +1069,9 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
     agent_events = task.get("agent_events")
     if not isinstance(agent_events, list):
         agent_events = []
+    guidance_messages = task.get("guidance_messages")
+    if not isinstance(guidance_messages, list):
+        guidance_messages = []
     out = {
         "id": task.get("id"),
         "status": task.get("status"),
@@ -1050,6 +1082,8 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "base_branch": task.get("base_branch"),
         "branch_name": task.get("branch_name"),
         "prompt": task.get("prompt") or "",
+        "guidance_messages": guidance_messages[-80:],
+        "last_guidance_at": task.get("last_guidance_at"),
         "coding_model": task.get("coding_model") or "",
         "workspace_path": task.get("workspace_path"),
         "repo_path": task.get("repo_path"),
@@ -1062,6 +1096,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
             "run_id": task.get("agent_run_id") or "",
             "status": task.get("agent_status") or "idle",
             "model": task.get("agent_model") or task.get("coding_model") or "",
+            "run_prompt": task.get("agent_run_prompt") or "",
             "backend": task.get("agent_backend") or "",
             "upstream_model": task.get("agent_upstream_model") or "",
             "turn": int(task.get("agent_turn") or 0),

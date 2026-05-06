@@ -152,6 +152,38 @@ def _previous_run_context(task: Dict[str, Any]) -> str:
     return "\n".join(bits)
 
 
+def _guidance_messages(task: Dict[str, Any]) -> List[Dict[str, Any]]:
+    messages = task.get("guidance_messages")
+    if not isinstance(messages, list):
+        return []
+    return [item for item in messages if isinstance(item, dict)]
+
+
+def _effective_run_prompt(task: Dict[str, Any]) -> str:
+    prompt = str(task.get("agent_run_prompt") or "").strip()
+    if prompt:
+        return prompt
+    return str(task.get("prompt") or "").strip()
+
+
+def _guidance_context(task: Dict[str, Any], *, limit: int = 12) -> str:
+    messages = _guidance_messages(task)[-max(1, limit):]
+    if not messages:
+        return ""
+    lines = ["Workspace conversation and guidance:"]
+    for item in messages:
+        actor = str(item.get("actor") or "user").strip() or "user"
+        ts = item.get("ts")
+        when = ""
+        try:
+            when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(ts))) if ts else ""
+        except Exception:
+            when = ""
+        label = f"{actor} at {when}" if when else actor
+        lines.append(f"- {label}: {_clip_text(str(item.get('content') or '').strip(), 1600)}")
+    return "\n".join(lines)
+
+
 def _safe_args_preview(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for key, value in (args or {}).items():
@@ -414,6 +446,16 @@ def _raise_if_stopped(task_id: str) -> None:
         raise _CodingAgentStopped("coding run stop requested")
 
 
+def _new_guidance_since(task_id: str, seen_count: int) -> tuple[List[Dict[str, Any]], int]:
+    task = cw.load_task(task_id)
+    messages = _guidance_messages(task)
+    if seen_count < 0:
+        seen_count = 0
+    if seen_count >= len(messages):
+        return [], len(messages)
+    return messages[seen_count:], len(messages)
+
+
 def _search_text(task_id: str, args: Dict[str, Any], *, git_token_value: Optional[str]) -> Dict[str, Any]:
     query = str(args.get("query") or "").strip()
     if not query:
@@ -462,26 +504,42 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
 
 def _system_prompt(task: Dict[str, Any]) -> str:
     allowed = ", ".join(cw.allowed_commands())
+    original = str(task.get("prompt") or "").strip()
+    current = _effective_run_prompt(task)
+    guidance = _guidance_context(task)
+    request_bits = [f"Original user request:\n{original or '(none recorded)'}"]
+    if current and current != original:
+        request_bits.append(f"Current run request:\n{current}")
+    if guidance:
+        request_bits.append(guidance)
     return (
         "You are Nexus Coding Agent. Work autonomously toward the user's coding request inside one isolated git workspace. "
         "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
+        "Treat workspace conversation messages as additional user guidance. If new guidance arrives during a run, adjust the plan on the next turn. "
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
         "Write complete replacement file contents when using coding_write_file. "
         "Use coding_search_text before reading many files. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         f"Allowed commands are: {allowed or '(none)'}. "
-        f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}."
+        f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
+        + "\n\n".join(request_bits)
     )
 
 
 def _task_context(task: Dict[str, Any]) -> str:
+    original = str(task.get("prompt") or "").strip()
+    current = _effective_run_prompt(task)
     base = (
-        f"User request:\n{str(task.get('prompt') or '').strip()}\n\n"
+        f"Original user request:\n{original}\n\n"
+        f"Current run request:\n{current or original}\n\n"
         f"Repository: {cw.redact_repo_url(str(task.get('repo_url') or ''))}\n"
         f"Branch: {task.get('branch_name')} from {task.get('base_branch')}\n"
         "Start by inspecting the repository, then proceed without waiting for more user input."
     )
+    guidance = _guidance_context(task)
+    if guidance:
+        base = f"{base}\n\n{guidance}"
     previous = _previous_run_context(task)
     if previous:
         return f"{base}\n\n{previous}"
@@ -497,6 +555,7 @@ async def start_agent_run(
     *,
     git_token_value: Optional[str] = None,
     coding_model: Optional[str] = None,
+    prompt: Optional[str] = None,
     max_turns: Optional[int] = None,
     max_runtime_sec: Optional[float] = None,
     auto_commit: bool = False,
@@ -523,6 +582,20 @@ async def start_agent_run(
     previous_status = str(task.get("agent_status") or "idle")
     previous_summary = str(task.get("agent_summary") or "")
     previous_error = str(task.get("agent_error") or "")
+    requested_prompt = str(prompt or "").strip()
+    effective_prompt = requested_prompt or str(task.get("prompt") or "").strip()
+    guidance_messages = _guidance_messages(task)
+    if requested_prompt:
+        guidance_messages.append(
+            {
+                "ts": time.time(),
+                "role": "user",
+                "actor": str(actor or "").strip(),
+                "run_id": run_id,
+                "content": requested_prompt,
+            }
+        )
+        guidance_messages = guidance_messages[-200:]
     now = time.time()
     await asyncio.to_thread(
         _mutate_task,
@@ -546,7 +619,10 @@ async def start_agent_run(
             "agent_previous_error": previous_error,
             "agent_stop_requested": False,
             "agent_auto_commit": bool(auto_commit),
+            "agent_run_prompt": effective_prompt,
             "agent_events": previous_events[-_max_events():],
+            "guidance_messages": guidance_messages,
+            "last_guidance_at": guidance_messages[-1].get("ts") if requested_prompt and guidance_messages else task.get("last_guidance_at"),
         },
     )
     await asyncio.to_thread(
@@ -562,6 +638,7 @@ async def start_agent_run(
             "actor": actor or "",
             "continuation": bool(previous_run_id or previous_events),
             "previous_status": previous_status,
+            "prompt": _clip_text(effective_prompt, 1000),
         },
     )
     job = asyncio.create_task(
@@ -628,7 +705,7 @@ async def _run_agent(
             cfg=router_cfg(),
             request_model=model,
             headers={"x-request-type": "coding"},
-            messages=[{"role": "user", "content": str(task.get("prompt") or "")}],
+            messages=[{"role": "user", "content": _effective_run_prompt(task)}],
             has_tools=True,
             enable_policy=getattr(S, "ROUTER_ENABLE_POLICY", True),
             enable_request_type=True,
@@ -661,12 +738,32 @@ async def _run_agent(
             ChatMessage(role="system", content=_system_prompt(task)),
             ChatMessage(role="user", content=_task_context(task)),
         ]
+        seen_guidance_count = len(_guidance_messages(task))
         tools = _tool_specs()
 
         for turn in range(max_turns):
             _raise_if_stopped(task_id)
             if time.monotonic() - t0 > max_runtime_sec:
                 raise HTTPException(status_code=408, detail="coding agent runtime budget exceeded")
+            new_guidance, seen_guidance_count = await asyncio.to_thread(_new_guidance_since, task_id, seen_guidance_count)
+            if new_guidance:
+                guidance_text = "\n\n".join(
+                    _clip_text(str(item.get("content") or "").strip(), 4000)
+                    for item in new_guidance
+                    if str(item.get("content") or "").strip()
+                )
+                if guidance_text:
+                    messages.append(ChatMessage(role="user", content=f"User guidance update during this run:\n{guidance_text}"))
+                    await asyncio.to_thread(
+                        _append_event,
+                        task_id,
+                        {
+                            "type": "guidance_seen",
+                            "turn": turn + 1,
+                            "count": len(new_guidance),
+                            "summary": _clip_text(guidance_text, 1000),
+                        },
+                    )
             await asyncio.to_thread(_mutate_task, task_id, {"agent_turn": turn + 1, "agent_last_event_at": now_unix()})
             await asyncio.to_thread(_append_event, task_id, {"type": "turn_started", "turn": turn + 1})
 

@@ -17,6 +17,11 @@
     selectedMeta: document.getElementById("selectedMeta"),
     selectedStatus: document.getElementById("selectedStatus"),
     selectedPrompt: document.getElementById("selectedPrompt"),
+    workspaceChat: document.getElementById("workspaceChat"),
+    workspaceChatInput: document.getElementById("workspaceChatInput"),
+    workspaceChatMeta: document.getElementById("workspaceChatMeta"),
+    workspaceChatStatus: document.getElementById("workspaceChatStatus"),
+    sendWorkspaceMessage: document.getElementById("sendWorkspaceMessage"),
     statusBtn: document.getElementById("statusBtn"),
     diffBtn: document.getElementById("diffBtn"),
     briefBtn: document.getElementById("briefBtn"),
@@ -233,6 +238,49 @@
     return out;
   }
 
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function highlightAgentLine(line) {
+    const raw = String(line || "");
+    const timeMatch = raw.match(/^(\d{1,2}:\d{2}:\d{2}(?:\s?[AP]M)?)(.*)$/);
+    let head = "";
+    let rest = raw;
+    if (timeMatch) {
+      head = `<span class="agent-ts">${escapeHtml(timeMatch[1])}</span>`;
+      rest = timeMatch[2] || "";
+    }
+    const tokenRe = /(coding_[A-Za-z0-9_]+|function=[A-Za-z_][A-Za-z0-9_]*|[A-Za-z]:[\\/][A-Za-z0-9._ -]+(?:[\\/][A-Za-z0-9._ -]+)+|(?:^|[\s"'=])(?:\.{0,2}\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?:[A-Za-z0-9._-])|(?:backend|model|turns|turn|ok|path|cwd|argv|returncode|summary|error|status)=)/g;
+    let out = head;
+    let last = 0;
+    for (const match of rest.matchAll(tokenRe)) {
+      const token = match[0];
+      const index = Number(match.index || 0);
+      out += escapeHtml(rest.slice(last, index));
+      const lead = token.match(/^\s+/);
+      const prefix = lead ? lead[0] : "";
+      const value = token.slice(prefix.length);
+      let cls = "agent-key";
+      if (value.startsWith("coding_") || value.startsWith("function=")) cls = "agent-fn";
+      else if (value.includes("/") || value.includes("\\")) cls = "agent-path";
+      else if (value === "error=" || value === "status=" || value === "ok=") cls = "agent-state";
+      out += escapeHtml(prefix) + `<span class="${cls}">${escapeHtml(value)}</span>`;
+      last = index + token.length;
+    }
+    out += escapeHtml(rest.slice(last));
+    return out;
+  }
+
+  function highlightAgentLog(text) {
+    return String(text || "").split("\n").map(highlightAgentLine).join("\n");
+  }
+
   function renderTasks() {
     if (!els.tasks) return;
     els.tasks.innerHTML = "";
@@ -296,6 +344,7 @@
       els.loadTree,
       els.readFile,
       els.writeFile,
+      els.sendWorkspaceMessage,
     ].forEach((button) => {
       if (button) button.disabled = disabled || state.busy;
     });
@@ -313,6 +362,7 @@
         els.selectedStatus.textContent = "idle";
       }
       renderAgent(null);
+      renderWorkspaceChat(null);
       return;
     }
     if (els.selectedTitle) els.selectedTitle.textContent = task.branch_name || task.id;
@@ -334,6 +384,47 @@
       els.prBody.value = task.prompt || "";
     }
     renderAgent(task);
+    renderWorkspaceChat(task);
+  }
+
+  function renderWorkspaceChat(task) {
+    if (!els.workspaceChat) return;
+    const messages = task && Array.isArray(task.guidance_messages) ? task.guidance_messages : [];
+    els.workspaceChat.innerHTML = "";
+    if (els.workspaceChatMeta) {
+      els.workspaceChatMeta.textContent = messages.length ? `${messages.length} message${messages.length === 1 ? "" : "s"}` : "No guidance yet";
+    }
+    if (els.workspaceChatStatus) {
+      if (!task) els.workspaceChatStatus.textContent = "";
+      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = "Sent messages are read by the active agent on a later turn.";
+      else els.workspaceChatStatus.textContent = "Sending a message starts another continuation run.";
+    }
+    if (!messages.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint";
+      empty.textContent = task ? "No workspace messages yet." : "Select a workspace to chat with its coding agent.";
+      els.workspaceChat.appendChild(empty);
+      return;
+    }
+    for (const item of messages.slice(-40)) {
+      const wrap = document.createElement("div");
+      wrap.className = "workspace-message";
+      const meta = document.createElement("div");
+      meta.className = "workspace-message-meta";
+      const actor = document.createElement("span");
+      actor.textContent = item.actor || item.role || "user";
+      const time = document.createElement("span");
+      time.textContent = fmtTime(item.ts) || "";
+      const body = document.createElement("div");
+      body.className = "workspace-message-body";
+      body.textContent = item.content || "";
+      meta.appendChild(actor);
+      meta.appendChild(time);
+      wrap.appendChild(meta);
+      wrap.appendChild(body);
+      els.workspaceChat.appendChild(wrap);
+    }
+    els.workspaceChat.scrollTop = els.workspaceChat.scrollHeight;
   }
 
   function eventLine(event) {
@@ -362,6 +453,7 @@
       return `${time} tool ${event.name || ""} finished${ok}${detail ? `\n${detail}` : ""}`;
     }
     if (type === "review") return `${time} reviewed status and diff`;
+    if (type === "guidance_seen") return `${time} guidance seen count=${event.count || 0}\n${event.summary || ""}`;
     if (type === "commit") return `${time} committed ${event.message || ""}`;
     if (type === "completed") return `${time} completed\n${event.summary || ""}`;
     if (type === "failed") return `${time} failed\n${event.summary || event.error || ""}`;
@@ -391,7 +483,7 @@
       const lines = Array.isArray(agent.events) ? agent.events.map(eventLine).filter(Boolean) : [];
       if (agent.summary && !lines.some((line) => line.includes(agent.summary))) lines.push(`summary:\n${agent.summary}`);
       if (agent.error && status === "failed") lines.push(`error:\n${agent.error}`);
-      els.agentLog.textContent = lines.join("\n\n") || "No agent run yet.";
+      els.agentLog.innerHTML = highlightAgentLog(lines.join("\n\n") || "No agent run yet.");
       els.agentLog.scrollTop = els.agentLog.scrollHeight;
     }
     updatePolling();
@@ -590,6 +682,33 @@
       renderSelected();
       setOutput("agent run", fresh || payload);
       setStatus("Agent run started.");
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
+  }
+
+  async function sendWorkspaceMessage() {
+    const task = selectedTask();
+    if (!task) return;
+    const message = els.workspaceChatInput ? els.workspaceChatInput.value.trim() : "";
+    if (!message) throw new Error("Workspace message is empty");
+    const active = agentIsActive(task);
+    setBusy(true);
+    try {
+      setStatus(active ? "Sending guidance to active run..." : "Starting continuation run...");
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, run: !active, ...agentOptionsBody() }),
+      });
+      const fresh = payload.task;
+      if (fresh) state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
+      if (els.workspaceChatInput) els.workspaceChatInput.value = "";
+      renderTasks();
+      renderSelected();
+      setOutput(payload.started ? "workspace message and run" : "workspace message", fresh || payload);
+      setStatus(payload.started ? "Workspace message sent and continuation run started." : "Workspace message sent.");
     } finally {
       setBusy(false);
       renderSelected();
@@ -901,6 +1020,7 @@
   wire("briefBtn", runAgentBrief);
   wire("agentRun", startAgentRun);
   wire("agentStop", stopAgentRun);
+  wire("sendWorkspaceMessage", sendWorkspaceMessage);
   wire("runCommand", runCommand);
   wire("commitBtn", commitTask);
   wire("pushBtn", pushTask);
@@ -915,6 +1035,15 @@
     els.filesPanel.addEventListener("toggle", () => {
       if (els.filesPanel.open && selectedTask()) {
         loadTree().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
+      }
+    });
+  }
+
+  if (els.workspaceChatInput) {
+    els.workspaceChatInput.addEventListener("keydown", (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        sendWorkspaceMessage().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
       }
     });
   }

@@ -40,6 +40,17 @@ class CodingCreateAndRunRequest(BaseModel):
 
 class CodingAgentRunRequest(BaseModel):
     coding_model: Optional[str] = None
+    prompt: Optional[str] = None
+    max_turns: Optional[int] = None
+    max_runtime_sec: Optional[float] = None
+    auto_commit: bool = False
+    commit_message: Optional[str] = None
+
+
+class CodingGuidanceRequest(BaseModel):
+    message: str
+    run: bool = False
+    coding_model: Optional[str] = None
     max_turns: Optional[int] = None
     max_runtime_sec: Optional[float] = None
     auto_commit: bool = False
@@ -324,6 +335,7 @@ async def ui_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         task_id,
         git_token_value=_git_token_for_user(user),
         coding_model=_coding_model_for_user(user, body.coding_model),
+        prompt=body.prompt,
         max_turns=body.max_turns,
         max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
@@ -331,6 +343,33 @@ async def ui_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         actor=_actor_from_user(user),
     )
     return {"task": task}
+
+
+@router.post("/ui/api/coding/tasks/{task_id}/messages", include_in_schema=False)
+async def ui_coding_task_message(req: Request, task_id: str, body: CodingGuidanceRequest) -> Dict[str, Any]:
+    user = _require_coding_ui(req)
+    message = str(body.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+    if body.run:
+        try:
+            task = await ca.start_agent_run(
+                task_id,
+                git_token_value=_git_token_for_user(user),
+                coding_model=_coding_model_for_user(user, body.coding_model),
+                prompt=message,
+                max_turns=body.max_turns,
+                max_runtime_sec=body.max_runtime_sec,
+                auto_commit=body.auto_commit,
+                commit_message=body.commit_message,
+                actor=_actor_from_user(user),
+            )
+            return {"task": task, "started": True}
+        except HTTPException as exc:
+            if exc.status_code != 409 or "already running" not in str(exc.detail):
+                raise
+    task = await _to_thread(cw.append_guidance_message, task_id, message=message, actor=_actor_from_user(user))
+    return {"task": task, "started": False}
 
 
 @router.post("/ui/api/coding/tasks/{task_id}/agent-stop", include_in_schema=False)
@@ -506,6 +545,7 @@ async def v1_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         task_id,
         git_token_value=_git_token_for_user(user) if user is not None else None,
         coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
+        prompt=body.prompt,
         max_turns=body.max_turns,
         max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
@@ -513,6 +553,33 @@ async def v1_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         actor=_actor_from_user(user) if user is not None else "api",
     )
     return {"task": task}
+
+
+@router.post("/v1/coding/tasks/{task_id}/messages")
+async def v1_coding_task_message(req: Request, task_id: str, body: CodingGuidanceRequest) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    message = str(body.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+    if body.run:
+        try:
+            task = await ca.start_agent_run(
+                task_id,
+                git_token_value=_git_token_for_user(user) if user is not None else None,
+                coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
+                prompt=message,
+                max_turns=body.max_turns,
+                max_runtime_sec=body.max_runtime_sec,
+                auto_commit=body.auto_commit,
+                commit_message=body.commit_message,
+                actor=_actor_from_user(user) if user is not None else "api",
+            )
+            return {"task": task, "started": True}
+        except HTTPException as exc:
+            if exc.status_code != 409 or "already running" not in str(exc.detail):
+                raise
+    task = await _to_thread(cw.append_guidance_message, task_id, message=message, actor=_actor_from_user(user) if user is not None else "api")
+    return {"task": task, "started": False}
 
 
 @router.post("/v1/coding/tasks/{task_id}/agent-stop")
