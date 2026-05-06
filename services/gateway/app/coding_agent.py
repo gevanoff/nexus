@@ -195,7 +195,7 @@ def _guidance_context(task: Dict[str, Any], *, limit: int = 12) -> str:
 def _safe_args_preview(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for key, value in (args or {}).items():
-        if key == "content":
+        if key in {"content", "patch", "old_text", "new_text"}:
             out[key] = f"<{len(str(value or '').encode('utf-8'))} bytes>"
         elif isinstance(value, str):
             out[key] = _clip_text(value, 1000)
@@ -370,13 +370,42 @@ def _tool_specs() -> List[ToolSpec]:
         ToolSpec(
             function=ToolFunction(
                 name="coding_write_file",
-                description="Write a complete UTF-8 text file inside the coding workspace repository.",
+                description="Write a complete UTF-8 text file inside the coding workspace repository. Prefer coding_replace_text or coding_apply_patch for focused edits.",
                 parameters={
                     "type": "object",
                     "required": ["path", "content"],
                     "properties": {
                         "path": {"type": "string", "description": "Repository-relative file path."},
                         "content": {"type": "string", "description": "Complete replacement file content."},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_replace_text",
+                description="Replace an exact text span in one UTF-8 file. Use for small, precise edits after reading the target file.",
+                parameters={
+                    "type": "object",
+                    "required": ["path", "old_text", "new_text"],
+                    "properties": {
+                        "path": {"type": "string", "description": "Repository-relative file path."},
+                        "old_text": {"type": "string", "description": "Exact text to replace."},
+                        "new_text": {"type": "string", "description": "Replacement text."},
+                        "expected_replacements": {"type": "integer", "description": "Expected match count. Default is 1. Use -1 to allow any positive count."},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_apply_patch",
+                description="Apply a unified diff to repository files after validating patch paths stay inside the workspace.",
+                parameters={
+                    "type": "object",
+                    "required": ["patch"],
+                    "properties": {
+                        "patch": {"type": "string", "description": "Unified diff text, with repository-relative paths."},
                     },
                 },
             )
@@ -423,6 +452,25 @@ def _tool_specs() -> List[ToolSpec]:
                 name="coding_git_diff",
                 description="Return the current staged and unstaged git diff for review.",
                 parameters={"type": "object", "properties": {}},
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_change_summary",
+                description="Return a compact summary of changed files by status.",
+                parameters={"type": "object", "properties": {}},
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
+                name="coding_checkpoint",
+                description="Create a local checkpoint commit for current workspace changes.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "message": {"type": "string", "description": "Optional checkpoint commit message."},
+                    },
+                },
             )
         ),
         ToolSpec(
@@ -509,6 +557,21 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
         return cw.read_file(task_id, path=str(args.get("path") or ""))
     if name == "coding_write_file":
         return cw.write_file(task_id, path=str(args.get("path") or ""), content=str(args.get("content") or ""))
+    if name == "coding_replace_text":
+        expected = args.get("expected_replacements", 1)
+        if expected is not None:
+            expected = int(expected)
+            if expected < 0:
+                expected = None
+        return cw.replace_text(
+            task_id,
+            path=str(args.get("path") or ""),
+            old_text=str(args.get("old_text") or ""),
+            new_text=str(args.get("new_text") or ""),
+            expected_replacements=expected,
+        )
+    if name == "coding_apply_patch":
+        return cw.apply_unified_patch(task_id, patch=str(args.get("patch") or ""))
     if name == "coding_search_text":
         return _search_text(task_id, args, git_token_value=git_token_value)
     if name == "coding_run_command":
@@ -526,6 +589,11 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
         return cw.git_status(task_id, git_token_value=git_token_value)
     if name == "coding_git_diff":
         return cw.git_diff(task_id)
+    if name == "coding_change_summary":
+        return cw.git_change_summary(task_id)
+    if name == "coding_checkpoint":
+        message = str(args.get("message") or "").strip() or f"Nexus coding agent checkpoint for {task_id}"
+        return cw.checkpoint_task(task_id, message=message)
     if name == "coding_finish":
         return {"ok": True, "summary": str(args.get("summary") or ""), "success": bool(args.get("success", True))}
     raise HTTPException(status_code=400, detail=f"unknown coding tool: {name}")
@@ -557,7 +625,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
         "The Gateway may create local checkpoint commits between turns so interrupted runs can resume from durable git history. "
-        "Write complete replacement file contents when using coding_write_file. "
+        "Prefer coding_replace_text for exact small edits and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
         "Use coding_search_text before reading many files. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         f"Allowed commands are: {allowed or '(none)'}. "

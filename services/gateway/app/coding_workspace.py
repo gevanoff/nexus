@@ -665,6 +665,51 @@ def _resolve_repo_child(task: Dict[str, Any], rel_path: Optional[str] = None) ->
     return resolved
 
 
+def _validate_repo_relative_path(path: str) -> str:
+    rel = str(path or "").strip().replace("\\", "/")
+    if rel.startswith("a/") or rel.startswith("b/"):
+        rel = rel[2:]
+    rel = rel.lstrip("/")
+    if not rel or rel == "/dev/null":
+        return ""
+    if "\x00" in rel or re.match(r"^[A-Za-z]:/", rel):
+        raise HTTPException(status_code=400, detail="invalid patch path")
+    parts = [part for part in rel.split("/") if part]
+    if any(part in {"..", ".git"} for part in parts):
+        raise HTTPException(status_code=403, detail="patch path escapes the repository or targets .git")
+    return "/".join(parts)
+
+
+def _patch_paths(patch: str) -> List[str]:
+    paths: List[str] = []
+    for raw in str(patch or "").splitlines():
+        line = raw.strip()
+        if line.startswith("diff --git "):
+            bits = line.split()
+            if len(bits) >= 4:
+                for item in bits[2:4]:
+                    rel = _validate_repo_relative_path(item)
+                    if rel:
+                        paths.append(rel)
+            continue
+        if line.startswith("--- ") or line.startswith("+++ "):
+            item = line[4:].strip().split("\t", 1)[0]
+            if item == "/dev/null":
+                continue
+            if item.startswith('"') and item.endswith('"'):
+                item = item[1:-1]
+            rel = _validate_repo_relative_path(item)
+            if rel:
+                paths.append(rel)
+    deduped: List[str] = []
+    seen = set()
+    for item in paths:
+        if item not in seen:
+            seen.add(item)
+            deduped.append(item)
+    return deduped
+
+
 def _parse_git_subcommand(argv: Sequence[str]) -> str:
     skip_next = False
     for raw in list(argv)[1:]:
@@ -783,6 +828,43 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
             counts["total"] += 1
             files.append({"path": path, "status": code, "kind": kind})
     return {"ok": bool(result.get("ok")), "counts": counts, "files": files[:500], "truncated": len(files) > 500, "raw": result}
+
+
+def apply_unified_patch(task_id: str, *, patch: str) -> Dict[str, Any]:
+    raw = str(patch or "")
+    if not raw.strip():
+        raise HTTPException(status_code=400, detail="patch is required")
+    if len(raw.encode("utf-8")) > file_max_bytes():
+        raise HTTPException(status_code=413, detail="patch is too large")
+    paths = _patch_paths(raw)
+    if not paths:
+        raise HTTPException(status_code=400, detail="patch must include repository-relative file paths")
+    task = load_task(task_id)
+    repo = _repo_path(task)
+    for rel in paths:
+        _resolve_repo_child(task, rel)
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, prefix="nexus-coding-", suffix=".patch") as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+        check = _run_process(["git", "apply", "--check", "--whitespace=nowarn", tmp_path], cwd=repo)
+        _append_command(task, check, label="patch-check")
+        if not check.get("ok"):
+            save_task(task)
+            return {"ok": False, "paths": paths, "check": check, "error": "patch check failed"}
+        apply = _run_process(["git", "apply", "--whitespace=nowarn", tmp_path], cwd=repo)
+        _append_command(task, apply, label="patch-apply")
+        if apply.get("ok"):
+            task["last_file_write_at"] = _now()
+        save_task(task)
+        return {"ok": bool(apply.get("ok")), "paths": paths, "check": check, "apply": apply}
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink()
+            except FileNotFoundError:
+                pass
 
 
 def git_diff(task_id: str) -> Dict[str, Any]:
@@ -1079,6 +1161,44 @@ def read_file(task_id: str, *, path: str) -> Dict[str, Any]:
     raw = target.read_bytes()
     text = raw.decode("utf-8", errors="replace")
     return {"path": str(path), "size": size, "content": text}
+
+
+def replace_text(
+    task_id: str,
+    *,
+    path: str,
+    old_text: str,
+    new_text: str,
+    expected_replacements: Optional[int] = 1,
+) -> Dict[str, Any]:
+    task = load_task(task_id)
+    rel = str(path or "").strip()
+    if not rel:
+        raise HTTPException(status_code=400, detail="path is required")
+    old = str(old_text or "")
+    if not old:
+        raise HTTPException(status_code=400, detail="old_text is required")
+    target = _resolve_repo_child(task, rel)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    size = target.stat().st_size
+    if size > file_max_bytes():
+        raise HTTPException(status_code=413, detail="file is too large for the coding file API")
+    text = target.read_text(encoding="utf-8", errors="replace")
+    count = text.count(old)
+    if count <= 0:
+        return {"ok": False, "path": rel, "replacements": 0, "error": "old_text was not found"}
+    expected = None if expected_replacements is None else int(expected_replacements)
+    if expected is not None and expected >= 0 and count != expected:
+        return {"ok": False, "path": rel, "replacements": count, "expected_replacements": expected, "error": "replacement count did not match expected_replacements"}
+    updated = text.replace(old, str(new_text or ""))
+    data = updated.encode("utf-8")
+    if len(data) > file_max_bytes():
+        raise HTTPException(status_code=413, detail="replacement result is too large")
+    target.write_bytes(data)
+    task["last_file_write_at"] = _now()
+    save_task(task)
+    return {"ok": True, "path": rel, "replacements": count, "bytes": len(data)}
 
 
 def write_file(task_id: str, *, path: str, content: str) -> Dict[str, Any]:

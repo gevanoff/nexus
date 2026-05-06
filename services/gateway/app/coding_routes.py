@@ -68,6 +68,17 @@ class CodingFileWriteRequest(BaseModel):
     content: str
 
 
+class CodingTextReplaceRequest(BaseModel):
+    path: str
+    old_text: str
+    new_text: str
+    expected_replacements: Optional[int] = 1
+
+
+class CodingPatchRequest(BaseModel):
+    patch: str
+
+
 class CodingCommitRequest(BaseModel):
     message: str
 
@@ -322,6 +333,25 @@ async def ui_coding_write_file(req: Request, task_id: str, body: CodingFileWrite
     return await _to_thread(cw.write_file, task_id, path=body.path, content=body.content)
 
 
+@router.post("/ui/api/coding/tasks/{task_id}/replace", include_in_schema=False)
+async def ui_coding_replace_text(req: Request, task_id: str, body: CodingTextReplaceRequest) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return await _to_thread(
+        cw.replace_text,
+        task_id,
+        path=body.path,
+        old_text=body.old_text,
+        new_text=body.new_text,
+        expected_replacements=body.expected_replacements,
+    )
+
+
+@router.post("/ui/api/coding/tasks/{task_id}/patch", include_in_schema=False)
+async def ui_coding_apply_patch(req: Request, task_id: str, body: CodingPatchRequest) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return await _to_thread(cw.apply_unified_patch, task_id, patch=body.patch)
+
+
 @router.get("/ui/api/coding/tasks/{task_id}/agent-brief", include_in_schema=False)
 async def ui_coding_agent_brief(req: Request, task_id: str) -> Dict[str, Any]:
     user = _require_coding_ui(req)
@@ -501,6 +531,25 @@ async def v1_coding_read_file(req: Request, task_id: str, path: str = Query(...)
 async def v1_coding_write_file(req: Request, task_id: str, body: CodingFileWriteRequest) -> Dict[str, Any]:
     _require_coding_api(req)
     return await _to_thread(cw.write_file, task_id, path=body.path, content=body.content)
+
+
+@router.post("/v1/coding/tasks/{task_id}/replace")
+async def v1_coding_replace_text(req: Request, task_id: str, body: CodingTextReplaceRequest) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return await _to_thread(
+        cw.replace_text,
+        task_id,
+        path=body.path,
+        old_text=body.old_text,
+        new_text=body.new_text,
+        expected_replacements=body.expected_replacements,
+    )
+
+
+@router.post("/v1/coding/tasks/{task_id}/patch")
+async def v1_coding_apply_patch(req: Request, task_id: str, body: CodingPatchRequest) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return await _to_thread(cw.apply_unified_patch, task_id, patch=body.patch)
 
 
 @router.post("/v1/coding/tasks/{task_id}/commit")
