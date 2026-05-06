@@ -57,6 +57,20 @@ def _tool_result_char_limit() -> int:
         return 60_000
 
 
+def _max_completion_tokens() -> int:
+    try:
+        return max(128, min(int(getattr(S, "CODING_AGENT_MAX_TOKENS", 1024) or 1024), 8192))
+    except Exception:
+        return 1024
+
+
+def _tool_context_char_limit() -> int:
+    try:
+        return max(2_000, min(int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 10_000) or 10_000), 100_000))
+    except Exception:
+        return 10_000
+
+
 def _backend_retry_count() -> int:
     try:
         return max(0, min(int(getattr(S, "CODING_AGENT_BACKEND_RETRIES", 2) or 0), 5))
@@ -385,7 +399,7 @@ def _extract_text_tool_calls(content: Any) -> List[Dict[str, Any]]:
 
 
 def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> ChatMessage:
-    compact = _clip_jsonable(result)
+    compact = _clip_jsonable(result, _tool_context_char_limit())
     return ChatMessage(role="tool", tool_call_id=tool_call_id, content=json.dumps(compact, separators=(",", ":"), ensure_ascii=False))
 
 
@@ -822,10 +836,12 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
         "Treat workspace conversation messages as additional user guidance. If new guidance arrives during a run, adjust the plan on the next turn. "
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
+        "Keep assistant turns concise; call tools promptly instead of narrating long plans. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
         "The Gateway may create local checkpoint commits between turns so interrupted runs can resume from durable git history. "
         "Call coding_tool_manifest if you need to inspect the exact tools and guidance currently available in this workspace. "
-        "Prefer coding_read_file_lines for targeted inspection, coding_replace_text for exact small edits, and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
+        "Prefer coding_read_file_lines for targeted inspection. Avoid reading full large files unless needed; use coding_search_text first, then focused line ranges. "
+        "Prefer coding_replace_text for exact small edits and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
         "Use coding_fetch_url for public documentation or issue pages when current external information is needed. "
         "Use coding_search_text before reading many files. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
@@ -1082,6 +1098,7 @@ async def _run_agent(
                 tools=tools,
                 tool_choice="auto",
                 temperature=0.1,
+                max_tokens=_max_completion_tokens(),
                 stream=False,
             )
             resp = await _call_backend_chat_with_retry(req, backend, upstream_model, task_id=task_id, turn=turn + 1)
