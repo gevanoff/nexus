@@ -371,6 +371,7 @@ class Settings(BaseSettings):
     CODING_AGENT_MAX_RUNTIME_SEC: int = 1800
     CODING_AGENT_MAX_EVENTS: int = 120
     CODING_AGENT_MAX_TOOL_RESULT_CHARS: int = 60_000
+    CODING_AGENT_CHECKPOINT_COMMITS: bool = True
     CODING_GIT_USERNAME: str = "x-access-token"
     CODING_GIT_TOKEN: str = ""
     CODING_GIT_AUTHOR_NAME: str = "Nexus Coding Agent"

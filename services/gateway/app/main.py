@@ -112,6 +112,15 @@ async def lifespan(_app: FastAPI):
         user_store.init_db(S.USER_DB_PATH)
     except Exception as e:
         logger.warning("startup: failed to init user db (%s: %s)", type(e).__name__, e)
+
+    try:
+        from app import coding_workspace as coding_workspace_store
+
+        recovered = coding_workspace_store.recover_interrupted_agent_runs()
+        if recovered.get("recovered"):
+            logger.warning("startup: marked interrupted coding runs recovered=%s tasks=%s", recovered.get("recovered"), recovered.get("tasks"))
+    except Exception as e:
+        logger.info("startup: coding workspace recovery skipped (%s: %s)", type(e).__name__, e)
     
     # Start background health checking
     await start_health_checker()

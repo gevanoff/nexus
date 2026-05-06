@@ -127,6 +127,7 @@
     if (value === "ready" || value === "completed") return "ready";
     if (value === "error" || value === "failed") return "error";
     if (value === "running" || value === "queued" || value === "stopping") return "running";
+    if (value === "interrupted") return "error";
     return "pending";
   }
 
@@ -458,7 +459,14 @@
     }
     if (type === "review") return `${time} reviewed status and diff`;
     if (type === "guidance_seen") return `${time} guidance seen count=${event.count || 0}\n${event.summary || ""}`;
-    if (type === "commit") return `${time} committed ${event.message || ""}`;
+    if (type === "checkpoint") {
+      const commit = String(event.commit || "").slice(0, 12);
+      const changed = event.changed ? "changed" : "clean";
+      const stateText = event.ok ? "saved" : "failed";
+      return `${time} checkpoint ${stateText} ${changed}${commit ? ` commit=${commit}` : ""}${event.error ? `\n${event.error}` : ""}`;
+    }
+    if (type === "interrupted") return `${time} interrupted\n${event.summary || ""}`;
+    if (type === "commit") return `${time} ${event.skipped ? "commit skipped" : "committed"} ${event.message || ""}${event.summary ? `\n${event.summary}` : ""}`;
     if (type === "completed") return `${time} completed\n${event.summary || ""}`;
     if (type === "failed") return `${time} failed\n${event.summary || event.error || ""}`;
     if (type === "stopped") return `${time} stopped\n${event.summary || ""}`;
@@ -542,6 +550,7 @@
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
       if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
       if (payload.agent_max_turns) bits.push(`agent turns: ${payload.agent_max_turns}`);
+      if (payload.agent_checkpoint_commits) bits.push("checkpoint commits on");
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
       els.configMeta.textContent = bits.join(" | ");

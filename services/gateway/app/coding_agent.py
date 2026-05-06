@@ -98,6 +98,12 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
     event_type = str(event.get("type") or "event")
     if event_type == "thinking":
         return f"thinking {_clip_text(str(event.get('thinking') or event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "checkpoint":
+        commit_hash = str(event.get("commit") or "").strip()
+        status = "saved" if event.get("ok") else "failed"
+        return f"checkpoint {status} turn={event.get('turn') or ''} commit={commit_hash[:12]}".strip()
+    if event_type == "interrupted":
+        return f"interrupted {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "assistant":
         calls = event.get("tool_calls")
         names = []
@@ -525,6 +531,15 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
     raise HTTPException(status_code=400, detail=f"unknown coding tool: {name}")
 
 
+def _checkpoint_enabled() -> bool:
+    return bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True))
+
+
+def _checkpoint_after_turn(task_id: str, *, run_id: str, turn: int) -> Dict[str, Any]:
+    msg = f"Nexus checkpoint: {task_id} turn {turn}"
+    return cw.checkpoint_task(task_id, message=msg, run_id=run_id, turn=turn)
+
+
 def _system_prompt(task: Dict[str, Any]) -> str:
     allowed = ", ".join(cw.allowed_commands())
     original = str(task.get("prompt") or "").strip()
@@ -541,6 +556,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Treat workspace conversation messages as additional user guidance. If new guidance arrives during a run, adjust the plan on the next turn. "
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
+        "The Gateway may create local checkpoint commits between turns so interrupted runs can resume from durable git history. "
         "Write complete replacement file contents when using coding_write_file. "
         "Use coding_search_text before reading many files. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
@@ -662,6 +678,7 @@ async def start_agent_run(
             "continuation": bool(previous_run_id or previous_events),
             "previous_status": previous_status,
             "prompt": _clip_text(effective_prompt, 1000),
+            "checkpoint_commits": _checkpoint_enabled(),
         },
     )
     job = asyncio.create_task(
@@ -881,6 +898,23 @@ async def _run_agent(
                     stop_after_tools = True
                     break
 
+            if _checkpoint_enabled():
+                checkpoint = await asyncio.to_thread(_checkpoint_after_turn, task_id, run_id=run_id, turn=turn + 1)
+                if checkpoint.get("changed") or not checkpoint.get("ok"):
+                    await asyncio.to_thread(
+                        _append_event,
+                        task_id,
+                        {
+                            "type": "checkpoint",
+                            "turn": turn + 1,
+                            "ok": bool(checkpoint.get("ok")),
+                            "changed": bool(checkpoint.get("changed")),
+                            "commit": str(checkpoint.get("last_commit") or ""),
+                            "error": str(checkpoint.get("error") or ""),
+                            "result": _event_result(checkpoint),
+                        },
+                    )
+
             if stop_after_tools:
                 break
 
@@ -909,7 +943,14 @@ async def _run_agent(
                 msg = "Apply Nexus coding agent changes"
             msg = msg.splitlines()[0][:160]
             commit_result = await asyncio.to_thread(cw.commit_task, task_id, message=msg)
-            await asyncio.to_thread(_append_event, task_id, {"type": "commit", "message": msg, "result": _event_result(commit_result)})
+            if not commit_result.get("ok") and str(commit_result.get("error") or "") == "no changes to commit":
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {"type": "commit", "message": msg, "skipped": True, "summary": "No uncommitted changes remained after checkpoint commits.", "result": _event_result(commit_result)},
+                )
+            else:
+                await asyncio.to_thread(_append_event, task_id, {"type": "commit", "message": msg, "result": _event_result(commit_result)})
 
         await asyncio.to_thread(
             _mutate_task,

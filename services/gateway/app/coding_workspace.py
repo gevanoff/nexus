@@ -183,6 +183,45 @@ def list_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     return items[: max(1, min(int(limit or 100), 500))]
 
 
+def recover_interrupted_agent_runs() -> Dict[str, Any]:
+    if not coding_enabled():
+        return {"ok": True, "recovered": 0, "tasks": []}
+    _ensure_dirs()
+    recovered: List[str] = []
+    for path in tasks_dir().glob("code_*.json"):
+        try:
+            task = _read_json(path)
+        except Exception:
+            continue
+        status = str(task.get("agent_status") or "").strip().lower()
+        if status not in {"queued", "running", "stopping"}:
+            continue
+        events = task.get("agent_events")
+        if not isinstance(events, list):
+            events = []
+        ev = {
+            "ts": _now(),
+            "type": "interrupted",
+            "summary": (
+                "Gateway restarted while this coding run was active. "
+                "Start another run on the same workspace to continue from the latest checkpoint commit and current git state."
+            ),
+            "previous_status": status,
+            "run_id": task.get("agent_run_id") or "",
+        }
+        events.append(ev)
+        task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 120) or 120), 1000)) :]
+        task["agent_previous_status"] = status
+        task["agent_status"] = "interrupted"
+        task["agent_summary"] = ev["summary"]
+        task["agent_error"] = ev["summary"]
+        task["agent_finished_at"] = _now()
+        task["agent_last_event_at"] = ev["ts"]
+        save_task(task)
+        recovered.append(str(task.get("id") or path.stem))
+    return {"ok": True, "recovered": len(recovered), "tasks": recovered}
+
+
 def _effective_git_token(token_value: Optional[str] = None) -> str:
     if token_value is not None:
         return str(token_value or "").strip()
@@ -794,6 +833,48 @@ def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
     return {"ok": bool(commit.get("ok")), "status": status, "add": add, "commit": commit, "last_commit": task.get("last_commit")}
 
 
+def checkpoint_task(task_id: str, *, message: str, run_id: Optional[str] = None, turn: Optional[int] = None) -> Dict[str, Any]:
+    msg = str(message or "").strip() or "Nexus coding agent checkpoint"
+    if len(msg) > 2000:
+        msg = msg[:2000]
+    task = load_task(task_id)
+    repo = _repo_path(task)
+    status = _run_process(["git", "status", "--porcelain"], cwd=repo)
+    if not status.get("ok"):
+        _append_command(task, status, label="checkpoint-status")
+        save_task(task)
+        return {"ok": False, "changed": False, "status": status, "error": "git status failed"}
+    if not str(status.get("stdout") or "").strip():
+        save_task(task)
+        return {"ok": True, "changed": False, "status": status, "message": "no changes to checkpoint"}
+    add = _run_process(["git", "add", "-A"], cwd=repo)
+    _append_command(task, add, label="checkpoint-add")
+    if not add.get("ok"):
+        save_task(task)
+        return {"ok": False, "changed": True, "add": add, "error": "git add failed"}
+    commit = _run_process(["git", "commit", "-m", msg], cwd=repo)
+    _append_command(task, commit, label="checkpoint-commit")
+    rev = {"ok": False, "stdout": ""}
+    if commit.get("ok"):
+        rev = _run_process(["git", "rev-parse", "HEAD"], cwd=repo)
+        commit_hash = str(rev.get("stdout") or "").strip()
+        task["last_commit"] = commit_hash
+        task["last_checkpoint_commit"] = commit_hash
+        task["last_checkpoint_at"] = _now()
+        task["last_checkpoint_run_id"] = str(run_id or "").strip()
+        task["last_checkpoint_turn"] = int(turn or 0)
+    save_task(task)
+    return {
+        "ok": bool(commit.get("ok")),
+        "changed": True,
+        "status": status,
+        "add": add,
+        "commit": commit,
+        "rev": rev,
+        "last_commit": task.get("last_commit"),
+    }
+
+
 def push_task(task_id: str, *, remote: Optional[str] = None, git_token_value: Optional[str] = None) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
@@ -1089,6 +1170,9 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "repo_path": task.get("repo_path"),
         "last_command_at": task.get("last_command_at"),
         "last_commit": task.get("last_commit"),
+        "last_checkpoint_commit": task.get("last_checkpoint_commit"),
+        "last_checkpoint_at": task.get("last_checkpoint_at"),
+        "last_checkpoint_turn": task.get("last_checkpoint_turn"),
         "last_pushed_at": task.get("last_pushed_at"),
         "last_pr_at": task.get("last_pr_at"),
         "last_pr_output": task.get("last_pr_output"),
@@ -1134,6 +1218,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "file_max_bytes": file_max_bytes(),
         "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 12) or 12),
         "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 1800) or 1800),
+        "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
         "preferred_coding_model": str(preferred_coding_model or "").strip(),
         "gh_cli_available": shutil.which("gh") is not None,
