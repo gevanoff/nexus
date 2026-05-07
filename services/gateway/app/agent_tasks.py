@@ -360,6 +360,69 @@ def list_tasks(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "tasks": [_task_row_to_dict(row) for row in rows]}
 
 
+def get_task(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    task_id = args.get("id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return {"ok": False, "error": "id must be a non-empty string"}
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+    if row is None:
+        return {"ok": False, "error": "task not found"}
+    return {"ok": True, "task": _task_row_to_dict(row)}
+
+
+def _task_run_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    try:
+        parsed = json.loads(row["payload_json"] or "{}")
+        if isinstance(parsed, dict):
+            payload = parsed
+    except Exception:
+        payload = {}
+    return {
+        "id": row["id"],
+        "task_id": row["task_id"],
+        "due_ts": row["due_ts"],
+        "due_at": _iso(row["due_ts"]),
+        "started_ts": row["started_ts"],
+        "started_at": _iso(row["started_ts"]),
+        "finished_ts": row["finished_ts"],
+        "finished_at": _iso(row["finished_ts"]),
+        "agent_run_id": row["agent_run_id"],
+        "ok": None if row["ok"] is None else bool(row["ok"]),
+        "output_text": row["output_text"],
+        "error": row["error"],
+        "payload": payload,
+    }
+
+
+def list_task_runs(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    task_id = args.get("id") or args.get("task_id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return {"ok": False, "error": "id must be a non-empty string"}
+    try:
+        limit = int(args.get("limit") or 20)
+    except Exception:
+        limit = 20
+    limit = max(1, min(limit, 100))
+    with _connect() as conn:
+        task = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        if task is None:
+            return {"ok": False, "error": "task not found"}
+        rows = conn.execute(
+            """
+            SELECT * FROM agent_task_runs
+            WHERE task_id=?
+            ORDER BY started_ts DESC
+            LIMIT ?
+            """,
+            (task_id.strip(), limit),
+        ).fetchall()
+    return {"ok": True, "task": _task_row_to_dict(task), "runs": [_task_run_row_to_dict(row) for row in rows]}
+
+
 def cancel_task(args: dict[str, Any]) -> dict[str, Any]:
     init_db()
     task_id = args.get("id")

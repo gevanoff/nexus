@@ -10,6 +10,7 @@
     ["Voice Clone", "/ui/voice-clone"],
     ["OCR / Scan", "/ui/ocr"],
     ["Coding Workspaces", "/ui/coding"],
+    ["Scheduled Tasks", "/ui/tasks"],
     ["Resources", "/ui/resources"],
   ];
 

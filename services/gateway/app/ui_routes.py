@@ -48,6 +48,9 @@ from app.images_backend import generate_images, resolve_images_backend_class
 from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
 from app import user_store
+from app import agent_tasks
+from app.agent_runtime_v1 import tools_for_tier
+from app.tools_bus import TOOL_SCHEMAS
 
 
 logger = logging.getLogger(__name__)
@@ -2094,6 +2097,295 @@ async def ui_resources_frontend(req: Request) -> HTMLResponse:
     _require_ui_access(req)
     html_path = Path(__file__).with_name("static").joinpath("resources.html")
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+@router.get("/ui/tasks", include_in_schema=False)
+async def ui_tasks_frontend(req: Request) -> HTMLResponse:
+    _require_ui_access(req)
+    html_path = Path(__file__).with_name("static").joinpath("tasks.html")
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+def _agent_specs_path() -> Path:
+    raw = (getattr(S, "AGENT_SPECS_PATH", "") or "/var/lib/gateway/config/agent_specs.json").strip()
+    return Path(raw)
+
+
+def _load_agent_specs_json() -> Dict[str, Any]:
+    path = _agent_specs_path()
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict):
+            return parsed
+    except FileNotFoundError:
+        pass
+    except Exception:
+        logger.warning("failed to load agent specs json", exc_info=True)
+    return {}
+
+
+def _write_agent_specs_json(specs: Dict[str, Any]) -> None:
+    path = _agent_specs_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    tmp.write_text(json.dumps(specs, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    try:
+        path.chmod(0o600)
+    except Exception:
+        pass
+
+
+def _task_visible_to_user(task: Dict[str, Any], user: Optional[user_store.User]) -> bool:
+    if user is None:
+        return False
+    if bool(getattr(user, "admin", False)):
+        return True
+    meta = task.get("metadata") if isinstance(task, dict) else {}
+    owner_id = meta.get("user_id") if isinstance(meta, dict) else None
+    if owner_id is None:
+        return True
+    try:
+        return int(owner_id) == int(user.id)
+    except Exception:
+        return False
+
+
+def _require_task_visible(task: Dict[str, Any], user: Optional[user_store.User]) -> None:
+    if not _task_visible_to_user(task, user):
+        raise HTTPException(status_code=404, detail="task not found")
+
+
+def _tool_tier(name: str) -> int:
+    for tier in (0, 1, 2):
+        if name in tools_for_tier(tier):
+            return tier
+    return 99
+
+
+def _coerce_selected_tools(raw: Any, tier: int) -> list[str]:
+    if raw is None:
+        return ["tool_manifest", "current_time", "web_browse"]
+    if not isinstance(raw, list):
+        raise ValueError("tools must be a list")
+    allowed = tools_for_tier(tier)
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name:
+            continue
+        if name not in TOOL_SCHEMAS:
+            raise ValueError(f"unknown tool: {name}")
+        if name not in allowed:
+            raise ValueError(f"tool {name} requires a higher tool tier")
+        if name not in out:
+            out.append(name)
+    if "tool_manifest" not in out:
+        out.append("tool_manifest")
+    return out
+
+
+def _coerce_task_int(body: Dict[str, Any], key: str, default: int, *, min_value: int, max_value: int) -> int:
+    raw = body.get(key)
+    if raw in (None, ""):
+        return default
+    try:
+        out = int(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"{key} must be an integer") from exc
+    return max(min_value, min(max_value, out))
+
+
+def _coerce_task_float(body: Dict[str, Any], key: str, default: float, *, min_value: float, max_value: float) -> float:
+    raw = body.get(key)
+    if raw in (None, ""):
+        return default
+    try:
+        out = float(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"{key} must be a number") from exc
+    return max(min_value, min(max_value, out))
+
+
+@router.get("/ui/api/agent-tasks/capabilities", include_in_schema=False)
+async def ui_api_agent_tasks_capabilities(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    tools: list[Dict[str, Any]] = []
+    for name in sorted(TOOL_SCHEMAS.keys()):
+        schema = TOOL_SCHEMAS.get(name) or {}
+        tools.append(
+            {
+                "name": name,
+                "description": str(schema.get("description") or ""),
+                "tier": _tool_tier(name),
+            }
+        )
+    return {
+        "task_types": [
+            {"id": "llm", "label": "LLM task", "enabled": True},
+            {"id": "coder", "label": "Coder task", "enabled": False},
+            {"id": "image", "label": "Image generation", "enabled": False},
+            {"id": "music", "label": "Music generation", "enabled": False},
+            {"id": "video", "label": "Video generation", "enabled": False},
+            {"id": "app", "label": "App workflow", "enabled": False},
+            {"id": "multi_model", "label": "Multiple models", "enabled": False},
+        ],
+        "tool_tiers": [
+            {"id": 0, "label": "Read and browse"},
+            {"id": 1, "label": "Read, browse, memory, and file writes"},
+            {"id": 2, "label": "Shell-capable"},
+        ],
+        "tools": tools,
+        "agents": sorted(_load_agent_specs_json().keys()),
+    }
+
+
+@router.get("/ui/api/agent-tasks", include_in_schema=False)
+async def ui_api_agent_tasks_list(req: Request, status: str = "", limit: int = 100) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    payload = agent_tasks.list_tasks({"status": status or None, "limit": limit})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to list tasks")
+    tasks = [t for t in payload.get("tasks", []) if isinstance(t, dict) and _task_visible_to_user(t, user)]
+    return {"ok": True, "tasks": tasks}
+
+
+@router.post("/ui/api/agent-tasks", include_in_schema=False)
+async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+
+    task_type = str(body.get("task_type") or "llm").strip().lower()
+    if task_type != "llm":
+        raise HTTPException(status_code=400, detail="only llm scheduled tasks are enabled currently")
+
+    prompt = str(body.get("prompt") or "").strip()
+    title = str(body.get("title") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="task prompt required")
+    if not title:
+        title = prompt[:80]
+
+    model = str(body.get("model") or "default").strip() or "default"
+    try:
+        tier = int(body.get("tier") if body.get("tier") is not None else 0)
+    except Exception:
+        raise HTTPException(status_code=400, detail="tier must be an integer")
+    tier = max(0, min(tier, 2))
+    try:
+        selected_tools = _coerce_selected_tools(body.get("tools"), tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    agent_name = f"scheduled_llm_{secrets.token_hex(8)}"
+    max_turns = _coerce_task_int(body, "max_turns", 20, min_value=1, max_value=80)
+    max_runtime_sec = _coerce_task_float(body, "max_runtime_sec", 300.0, min_value=10.0, max_value=3600.0)
+    max_tool_io = _coerce_task_int(
+        body,
+        "max_total_tool_io_bytes",
+        2_000_000,
+        min_value=100_000,
+        max_value=20_000_000,
+    )
+
+    specs = _load_agent_specs_json()
+    if not specs:
+        specs["default"] = {
+            "model": "fast",
+            "tier": 0,
+            "max_turns": 40,
+            "max_runtime_sec": 60.0,
+            "max_total_tool_io_bytes": 2_000_000,
+        }
+    specs[agent_name] = {
+        "model": model,
+        "tier": tier,
+        "max_turns": max_turns,
+        "max_runtime_sec": max_runtime_sec,
+        "max_total_tool_io_bytes": max_tool_io,
+        "tools_allowlist": selected_tools,
+    }
+    _write_agent_specs_json(specs)
+
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    metadata = dict(metadata)
+    metadata.update(
+        {
+            "task_type": task_type,
+            "runner": "llm",
+            "user_id": user.id if user is not None else None,
+            "username": user.username if user is not None else "",
+            "model": model,
+            "tools": selected_tools,
+            "tier": tier,
+            "agent_spec": agent_name,
+            "future": {"apps": [], "models": [model], "outputs": ["text"]},
+        }
+    )
+
+    args: Dict[str, Any] = {
+        "title": title,
+        "prompt": prompt,
+        "agent": agent_name,
+        "metadata": metadata,
+    }
+    for key in ("run_at", "delay_seconds", "interval_seconds", "cron", "max_runs"):
+        if body.get(key) not in (None, ""):
+            args[key] = body.get(key)
+
+    result = agent_tasks.create_task(args)
+    if not result.get("ok"):
+        specs = _load_agent_specs_json()
+        specs.pop(agent_name, None)
+        _write_agent_specs_json(specs)
+        raise HTTPException(status_code=400, detail=result.get("error") or "failed to create task")
+    return result
+
+
+@router.get("/ui/api/agent-tasks/{task_id}", include_in_schema=False)
+async def ui_api_agent_tasks_get(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    payload = agent_tasks.get_task({"id": task_id})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=404, detail=payload.get("error") or "task not found")
+    task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    return {"ok": True, "task": task}
+
+
+@router.get("/ui/api/agent-tasks/{task_id}/runs", include_in_schema=False)
+async def ui_api_agent_tasks_runs(req: Request, task_id: str, limit: int = 20) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    payload = agent_tasks.list_task_runs({"id": task_id, "limit": limit})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=404, detail=payload.get("error") or "task not found")
+    task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    return payload
+
+
+@router.post("/ui/api/agent-tasks/{task_id}/cancel", include_in_schema=False)
+async def ui_api_agent_tasks_cancel(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    current = agent_tasks.get_task({"id": task_id})
+    if not current.get("ok"):
+        raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
+    task = current.get("task") if isinstance(current.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    payload = agent_tasks.cancel_task({"id": task_id})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to cancel task")
+    return payload
 
 
 @router.get("/ui/admin/users", include_in_schema=False)
