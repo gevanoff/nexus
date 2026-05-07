@@ -1050,7 +1050,6 @@
   wire("commitBtn", commitTask);
   wire("pushBtn", pushTask);
   wire("prBtn", openPr);
-  wire("deleteTask", deleteTask);
   wire("loadTree", loadTree);
   wire("readFile", readFile);
   wire("writeFile", writeFile);
