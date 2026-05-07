@@ -31,7 +31,6 @@
     agentMeta: document.getElementById("agentMeta"),
     agentLog: document.getElementById("agentLog"),
     publishFeedback: document.getElementById("publishFeedback"),
-    deleteTask: document.getElementById("deleteTask"),
     commandInput: document.getElementById("commandInput"),
     commandCwd: document.getElementById("commandCwd"),
     runCommand: document.getElementById("runCommand"),
