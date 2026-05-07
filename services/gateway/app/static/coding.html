@@ -84,9 +84,27 @@
         background: rgba(13,20,29,0.72);
         border-radius:8px;
         padding:10px;
+        position:relative;
       }
       .task-item.active { border-color:rgba(111,184,255,0.58); background: rgba(24,58,91,0.26); }
-      .commit-meta { color:#a5f3c7; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .task-delete-btn {
+        position:absolute;
+        top:8px;
+        right:8px;
+        width:28px;
+        height:28px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        border:1px solid rgba(255,127,143,0.25);
+        border-radius:6px;
+        background:rgba(150,20,38,0.15);
+        color:#ff7f8f;
+        padding:0;
+        cursor:pointer;
+      }
+      .task-delete-btn:hover { background:rgba(150,20,38,0.35); border-color:rgba(255,127,143,0.55); }
+      .task-delete-btn svg { width:14px; height:14px; fill:currentColor; }
       .badge { display:inline-flex; align-items:center; border-radius:999px; border:1px solid var(--border); padding:3px 7px; font-size:11px; color:#cfe0f7; }
       .badge.ready { border-color:rgba(88,214,141,0.54); color:#a5f3c7; background:rgba(0,120,72,0.18); }
       .badge.error { border-color:rgba(255,127,143,0.54); color:#ffc3cb; background:rgba(150,20,38,0.20); }
@@ -295,8 +313,7 @@
               <button id="agentRun" type="button" data-ui-role="action">Run agent</button>
               <button id="agentStop" type="button" data-ui-role="danger" data-danger="true">Stop agent</button>
               <button id="copyOutput" type="button" data-ui-role="secondary">Copy output</button>
-              <button id="deleteTask" type="button" data-danger="true" data-ui-role="danger">Delete</button>
-            </div>
+              </div>
           </div>
 
           <div class="subpanel stack">
