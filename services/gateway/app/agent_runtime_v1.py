@@ -72,7 +72,7 @@ def load_agent_specs() -> Dict[str, AgentSpecModel]:
 
     File format:
       {
-        "default": {"model": "fast", "tier": 0, "max_turns": 40, ...},
+        "default": {"model": "fast", "tier": 0, "max_turns": 100, ...},
         "heavy": {"model": "coder", "tier": 2, ...}
       }
 
