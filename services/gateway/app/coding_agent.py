@@ -173,6 +173,10 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
         return f"checkpoint {status} turn={event.get('turn') or ''} commit={commit_hash[:12]}".strip()
     if event_type == "interrupted":
         return f"interrupted {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "no_tool_call":
+        return f"no_tool_call turn={event.get('turn') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "no_change_audit":
+        return f"no_change_audit {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "assistant":
         calls = event.get("tool_calls")
         names = []
@@ -844,7 +848,9 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Prefer coding_replace_text for exact small edits and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
         "Use coding_fetch_url for public documentation or issue pages when current external information is needed. "
         "Use coding_search_text before reading many files. "
+        "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
+        "If the request requires code or documentation changes, make edits and inspect the diff before calling coding_finish. "
         f"Allowed commands are: {allowed or '(none)'}. "
         f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
         + "\n\n".join(request_bits)
@@ -1022,10 +1028,13 @@ async def _run_agent(
     t0 = time.monotonic()
     finish_summary = ""
     finish_success = False
+    finish_called = False
     backend = ""
     upstream_model = ""
     try:
         task = await asyncio.to_thread(cw.load_task, task_id)
+        start_head_result = await asyncio.to_thread(cw.git_head, task_id)
+        start_head = str(start_head_result.get("commit") or "")
         route = decide_route(
             cfg=router_cfg(),
             request_model=model,
@@ -1065,6 +1074,7 @@ async def _run_agent(
         ]
         seen_guidance_count = len(_guidance_messages(task))
         tools = _tool_specs()
+        no_tool_turns = 0
 
         for turn in range(max_turns):
             _raise_if_stopped(task_id)
@@ -1142,9 +1152,41 @@ async def _run_agent(
             )
 
             if not tool_calls:
-                finish_summary = str(assistant.content or "").strip()
-                finish_success = True
-                break
+                no_tool_turns += 1
+                notice = (
+                    "The assistant responded without a tool call. A coding run cannot complete from prose alone; "
+                    "it must call workspace tools and then coding_finish."
+                )
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "no_tool_call",
+                        "turn": turn + 1,
+                        "count": no_tool_turns,
+                        "summary": notice,
+                        "content": _clip_text(str(assistant.content or ""), 2000),
+                    },
+                )
+                if no_tool_turns >= 3:
+                    finish_summary = (
+                        "The coding agent produced prose without tool calls for three consecutive turns. "
+                        "No edits were trusted as completed. Start another run to continue, or choose a stronger coding model."
+                    )
+                    finish_success = False
+                    break
+                messages.append(
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            "Your previous response did not call any workspace tool. Continue the coding task now by calling one of the "
+                            "provided tools, such as coding_read_file_lines, coding_replace_text, coding_apply_patch, "
+                            "coding_git_diff, or coding_finish. Do not answer with a prose-only plan."
+                        ),
+                    )
+                )
+                continue
+            no_tool_turns = 0
 
             stop_after_tools = False
             for tc in tool_calls:
@@ -1181,6 +1223,7 @@ async def _run_agent(
                 if name == "coding_finish":
                     finish_summary = str(result.get("summary") or args.get("summary") or "").strip()
                     finish_success = bool(result.get("success", args.get("success", True)))
+                    finish_called = True
                     stop_after_tools = True
                     break
 
@@ -1204,7 +1247,7 @@ async def _run_agent(
             if stop_after_tools:
                 break
 
-        if not finish_summary and not finish_success:
+        if not finish_called and not finish_summary:
             finish_summary = (
                 "Turn limit reached before the agent called coding_finish. "
                 "Start another run on this same workspace to continue from the current files and diff."
@@ -1213,6 +1256,12 @@ async def _run_agent(
 
         status_result = await asyncio.to_thread(cw.git_status, task_id, git_token_value=git_token_value)
         diff_result = await asyncio.to_thread(cw.git_diff, task_id)
+        change_summary = await asyncio.to_thread(cw.git_change_summary, task_id)
+        end_head_result = await asyncio.to_thread(cw.git_head, task_id)
+        end_head = str(end_head_result.get("commit") or "")
+        change_counts = change_summary.get("counts") if isinstance(change_summary.get("counts"), dict) else {}
+        uncommitted_changes = int(change_counts.get("total") or 0) > 0
+        committed_changes = bool(start_head and end_head and start_head != end_head)
         await asyncio.to_thread(
             _append_event,
             task_id,
@@ -1220,8 +1269,32 @@ async def _run_agent(
                 "type": "review",
                 "status": _event_result(status_result),
                 "diff": _event_result(diff_result),
+                "change_summary": _event_result(change_summary),
+                "start_commit": start_head,
+                "end_commit": end_head,
+                "committed_changes": committed_changes,
+                "uncommitted_changes": uncommitted_changes,
             },
         )
+
+        if finish_success and not committed_changes and not uncommitted_changes:
+            audit_summary = (
+                "The coding agent called coding_finish, but the workspace audit found no file changes and no commits "
+                "created during the run. Marking the run failed instead of completed."
+            )
+            await asyncio.to_thread(
+                _append_event,
+                task_id,
+                {
+                    "type": "no_change_audit",
+                    "ok": False,
+                    "summary": audit_summary,
+                    "start_commit": start_head,
+                    "end_commit": end_head,
+                },
+            )
+            finish_summary = f"{audit_summary}\n\nAgent summary:\n{finish_summary}".strip()
+            finish_success = False
 
         if auto_commit and finish_success:
             msg = str(commit_message or finish_summary or "").strip()
@@ -1230,13 +1303,41 @@ async def _run_agent(
             msg = msg.splitlines()[0][:160]
             commit_result = await asyncio.to_thread(cw.commit_task, task_id, message=msg)
             if not commit_result.get("ok") and str(commit_result.get("error") or "") == "no changes to commit":
+                latest_task = await asyncio.to_thread(cw.load_task, task_id)
+                existing_commit = str(latest_task.get("last_commit") or latest_task.get("last_checkpoint_commit") or "")
+                summary = "No uncommitted changes remained after checkpoint commits."
+                if existing_commit:
+                    summary = f"Changes were already saved in checkpoint commit {existing_commit[:12]}."
                 await asyncio.to_thread(
                     _append_event,
                     task_id,
-                    {"type": "commit", "message": msg, "skipped": True, "summary": "No uncommitted changes remained after checkpoint commits.", "result": _event_result(commit_result)},
+                    {
+                        "type": "commit",
+                        "message": msg,
+                        "skipped": True,
+                        "summary": summary,
+                        "commit": existing_commit,
+                        "result": _event_result(commit_result),
+                    },
                 )
             else:
-                await asyncio.to_thread(_append_event, task_id, {"type": "commit", "message": msg, "result": _event_result(commit_result)})
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "commit",
+                        "message": msg,
+                        "ok": bool(commit_result.get("ok")),
+                        "commit": str(commit_result.get("last_commit") or ""),
+                        "result": _event_result(commit_result),
+                    },
+                )
+                if not commit_result.get("ok"):
+                    finish_success = False
+                    finish_summary = (
+                        f"Agent completed the coding work, but auto-commit failed: "
+                        f"{commit_result.get('error') or 'git commit failed'}"
+                    )
 
         await asyncio.to_thread(
             _mutate_task,

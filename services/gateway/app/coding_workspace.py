@@ -790,6 +790,13 @@ def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[s
     return result
 
 
+def git_head(task_id: str) -> Dict[str, Any]:
+    task = load_task(task_id)
+    repo = _repo_path(task)
+    result = _run_process(["git", "rev-parse", "HEAD"], cwd=repo)
+    return {"ok": bool(result.get("ok")), "commit": str(result.get("stdout") or "").strip(), "raw": result}
+
+
 def git_change_summary(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
