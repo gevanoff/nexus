@@ -325,6 +325,16 @@
       button.appendChild(title);
       button.appendChild(meta);
       if (prompt.textContent) button.appendChild(prompt);
+      const trashBtn = document.createElement("button");
+      trashBtn.type = "button";
+      trashBtn.className = "task-delete-btn";
+      trashBtn.title = "Delete workspace";
+      trashBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M3 6h18v2H3V6zm4 4v8a2 2 0 002 2h6a2 2 0 002-2V10h-2v8h-6v-8H7zm2-4h6V5a1 1 0 00-1-1h-4a1 1 0 00-1 1v1z'/></svg>";
+      trashBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        deleteTask(task.id);
+      });
+      button.appendChild(trashBtn);
       button.addEventListener("click", () => selectTask(task.id));
       els.tasks.appendChild(button);
     }
