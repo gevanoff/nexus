@@ -749,6 +749,30 @@ def _session_token_from_req(req: Request) -> str:
         return ""
 
 
+def _allowed_static_bearer_tokens() -> set[str]:
+    raw = (getattr(S, "GATEWAY_BEARER_TOKENS", "") or "").strip()
+    if raw:
+        return {p.strip() for p in raw.split(",") if p.strip()}
+    token = (getattr(S, "GATEWAY_BEARER_TOKEN", "") or "").strip()
+    return {token} if token else set()
+
+
+def _static_bearer_user(token: str) -> Optional[user_store.User]:
+    candidate = (token or "").strip()
+    if not candidate:
+        return None
+    for allowed in _allowed_static_bearer_tokens():
+        if allowed and secrets.compare_digest(candidate, allowed):
+            users = [u for u in user_store.list_users(S.USER_DB_PATH) if not u.disabled]
+            admin_users = [u for u in users if u.admin]
+            preferred = (os.environ.get("UI_STATIC_BEARER_USERNAME") or "gevanoff").strip().lower()
+            for user in admin_users or users:
+                if user.username.lower() == preferred:
+                    return user
+            return (admin_users or users or [None])[0]
+    return None
+
+
 def _require_user(req: Request) -> Optional[user_store.User]:
     if not getattr(S, "USER_AUTH_ENABLED", True):
         return None
@@ -759,6 +783,11 @@ def _require_user(req: Request) -> Optional[user_store.User]:
             resolved = user_store.get_user_by_api_key(S.USER_DB_PATH, token=token, touch_last_used=True)
             if resolved:
                 user, _key_meta = resolved
+        except Exception:
+            user = None
+    if user is None and token:
+        try:
+            user = _static_bearer_user(token)
         except Exception:
             user = None
     if user is None:
