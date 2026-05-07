@@ -99,7 +99,7 @@ def load_agent_specs() -> Dict[str, AgentSpecModel]:
             pass
 
     return {
-        "default": AgentSpecModel(model="fast", tier=0, max_turns=40, max_runtime_sec=60.0, max_total_tool_io_bytes=2_000_000)
+        "default": AgentSpecModel(model="fast", tier=0, max_turns=100, max_runtime_sec=60.0, max_total_tool_io_bytes=2_000_000)
     }
 
 
