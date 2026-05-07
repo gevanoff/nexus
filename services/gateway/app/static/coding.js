@@ -893,8 +893,8 @@
     }
   }
 
-  async function deleteTask() {
-    const task = selectedTask();
+  async function deleteTask(taskId) {
+    const task = taskId ? state.tasks.find((t) => t.id === taskId) : selectedTask();
     if (!task) return;
     const ok = window.confirm(`Delete workspace ${task.id}?`);
     if (!ok) return;
@@ -902,7 +902,7 @@
     try {
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" });
       setOutput("delete", payload);
-      state.selectedId = "";
+      if (task.id === state.selectedId) state.selectedId = "";
       await loadTasks({ keepSelection: false });
     } finally {
       setBusy(false);
