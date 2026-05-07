@@ -347,7 +347,6 @@
       els.statusBtn,
       els.diffBtn,
       els.briefBtn,
-      els.deleteTask,
       els.agentRun,
       els.agentStop,
       els.runCommand,
