@@ -362,7 +362,7 @@
     });
     if (els.agentRun) els.agentRun.disabled = disabled || state.busy || activeAgent;
     if (els.agentStop) els.agentStop.disabled = disabled || state.busy || !activeAgent;
-    [els.deleteTask, els.runCommand, els.commitBtn, els.pushBtn, els.prBtn, els.writeFile].forEach((button) => {
+    [els.runCommand, els.commitBtn, els.pushBtn, els.prBtn, els.writeFile].forEach((button) => {
       if (button && activeAgent) button.disabled = true;
     });
     if (!task) {
