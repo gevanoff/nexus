@@ -121,6 +121,11 @@
     }
   }
 
+  function shortCommit(value) {
+    const text = String(value || "").trim();
+    return text ? text.slice(0, 12) : "";
+  }
+
   function badgeClass(status) {
     const value = String(status || "").toLowerCase();
     if (value === "ready" || value === "completed") return "ready";
@@ -319,10 +324,15 @@
       const prompt = document.createElement("div");
       prompt.className = "meta";
       prompt.textContent = String(task.prompt || "").slice(0, 140);
+      const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
+      const commitMeta = document.createElement("div");
+      commitMeta.className = "meta commit-meta";
+      commitMeta.textContent = commit ? `commit ${commit}` : "";
       button.appendChild(status);
       button.appendChild(agentBadge);
       button.appendChild(title);
       button.appendChild(meta);
+      if (commitMeta.textContent) button.appendChild(commitMeta);
       if (prompt.textContent) button.appendChild(prompt);
       const trashBtn = document.createElement("button");
       trashBtn.type = "button";
@@ -379,7 +389,10 @@
     }
     if (els.selectedTitle) els.selectedTitle.textContent = task.branch_name || task.id;
     if (els.selectedMeta) {
-      els.selectedMeta.textContent = `${task.repo_url || ""} | base ${task.base_branch || ""} | updated ${fmtTime(task.updated_at)}`;
+      const bits = [`${task.repo_url || ""}`, `base ${task.base_branch || ""}`, `updated ${fmtTime(task.updated_at)}`];
+      const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
+      if (commit) bits.push(`commit ${commit}`);
+      els.selectedMeta.textContent = bits.join(" | ");
     }
     if (els.selectedPrompt) els.selectedPrompt.textContent = task.prompt || "";
     if (els.selectedStatus) {
@@ -466,6 +479,8 @@
       return `${time} tool ${event.name || ""} finished${ok}${detail ? `\n${detail}` : ""}`;
     }
     if (type === "review") return `${time} reviewed status and diff`;
+    if (type === "no_tool_call") return `${time} no tool call count=${event.count || ""}\n${event.summary || ""}`;
+    if (type === "no_change_audit") return `${time} no-change audit\n${event.summary || ""}`;
     if (type === "guidance_seen") return `${time} guidance seen count=${event.count || 0}\n${event.summary || ""}`;
     if (type === "backend_retry") {
       const attempt = `${event.attempt || "?"}/${event.max_retries || "?"}`;
@@ -478,7 +493,10 @@
       return `${time} checkpoint ${stateText} ${changed}${commit ? ` commit=${commit}` : ""}${event.error ? `\n${event.error}` : ""}`;
     }
     if (type === "interrupted") return `${time} interrupted\n${event.summary || ""}`;
-    if (type === "commit") return `${time} ${event.skipped ? "commit skipped" : "committed"} ${event.message || ""}${event.summary ? `\n${event.summary}` : ""}`;
+    if (type === "commit") {
+      const commit = shortCommit(event.commit || (event.result && event.result.last_commit));
+      return `${time} ${event.skipped ? "commit skipped" : "committed"} ${event.message || ""}${commit ? ` commit=${commit}` : ""}${event.summary ? `\n${event.summary}` : ""}`;
+    }
     if (type === "completed") return `${time} completed\n${event.summary || ""}`;
     if (type === "failed") return `${time} failed\n${event.summary || event.error || ""}`;
     if (type === "stopped") return `${time} stopped\n${event.summary || ""}`;
@@ -501,6 +519,8 @@
       if (agent.turn || agent.max_turns) bits.push(`turn ${agent.turn || 0}/${agent.max_turns || "?"}`);
       if (agent.last_event_at) bits.push(`updated ${fmtTime(agent.last_event_at)}`);
       if (agent.auto_commit) bits.push("auto-commit");
+      const commit = shortCommit(task && (task.last_commit || task.last_checkpoint_commit));
+      if (commit) bits.push(`commit ${commit}`);
       els.agentMeta.textContent = bits.join(" | ");
     }
     if (els.agentLog) {
