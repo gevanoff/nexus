@@ -204,7 +204,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 		},
 		"reasoning": {
 			"backend": "local_mlx",
-			"model": "mlx-community/DeepSeek-V4-Flash-4bit",
+			"model": "mlx-community/Qwen3.6-27B-4bit",
 			"tools": true,
 			"max_tokens_cap": 2048
 		},
@@ -240,7 +240,7 @@ Recommended `ai2` alias-to-model mapping (starting point):
 		},
 		"reasoning": {
 			"backend": "local_mlx",
-			"model": "mlx-community/DeepSeek-V4-Flash-4bit",
+			"model": "mlx-community/Qwen3.6-27B-4bit",
 			"tools": true,
 			"max_tokens_cap": 2048
 		},
@@ -267,8 +267,8 @@ Alias-by-alias alternatives (if available and validated in your environment):
 	- Secondary checks: remote Ollama aliases such as `coder-ai1` and `coder-ada2`
 	- Dedicated MLX candidates if preferred: `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit`
 - `reasoning` (higher-latency deep reasoning):
-	- Primary: `local_mlx` on `ai2` serving `mlx-community/DeepSeek-V4-Flash-4bit`
-	- Requires an MLX-LM build with `deepseek_v4` support; expect about 150 GB resident memory when loaded.
+	- Primary: `local_mlx` on `ai2` serving `mlx-community/Qwen3.6-27B-4bit`
+	- Experimental candidate: `mlx-community/DeepSeek-V4-Flash-4bit`. It requires an MLX-LM build with `deepseek_v4` support, uses about 150 GB resident memory when loaded, and has shown early repetition/collapse in local MLX testing.
 - `long` (extended context):
 	- Primary: `mlx-community/Qwen3-30B-A3B-4bit` with `context_window` `65536`
 	- Alternatives: use the same family as `default` with reduced concurrency, or a lower-parameter instruct model for higher sustained throughput.
@@ -279,7 +279,7 @@ Operational note for `ai2`:
 
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
 - Add `mlx-community/Qwen3.6-27B-4bit` to `/var/lib/mlx/config/config.yaml` before routing live coder traffic to it. For text/code use, configure it with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
-- Add `mlx-community/DeepSeek-V4-Flash-4bit` to `/var/lib/mlx/config/config.yaml` before routing live reasoning traffic to it. On current MLX builds this model may require installing an MLX-LM branch with DeepSeek V4 support and avoiding handler-created prompt cache state in `mlx-openai-server`.
+- Treat `mlx-community/DeepSeek-V4-Flash-4bit` as experimental until local smoke tests can produce stable multi-paragraph answers without repetition. On current MLX builds this model may require installing an MLX-LM branch with DeepSeek V4 support and avoiding handler-created prompt cache state in `mlx-openai-server`.
 
 ## Are these models already configured?
 

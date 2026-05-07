@@ -34,8 +34,9 @@ models:
   #   model_path: mlx-community/Qwen3.6-27B-4bit
   #   model_type: lm
 
-  # Optional high-capacity reasoning model. This currently requires an MLX-LM
-  # build with DeepSeek V4 support and is expensive to keep resident.
+  # Optional high-capacity reasoning experiment. This currently requires an
+  # MLX-LM build with DeepSeek V4 support, is expensive to keep resident, and
+  # should be validated for repetition/collapse before live routing.
   # - served_model_name: mlx-community/DeepSeek-V4-Flash-4bit
   #   model_path: mlx-community/DeepSeek-V4-Flash-4bit
   #   model_type: lm
