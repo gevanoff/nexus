@@ -4,6 +4,8 @@
 
 Nexus successfully combines material from the `gateway` and `ai-infra` repositories into a unified, container-based AI orchestration infrastructure.
 
+Status note as of 2026-05-07: this file is a high-level implementation checkpoint, not the canonical operational runbook. Current gateway details live in `services/gateway/README.md`, deployment details in `docs/DEPLOYMENT.md`, and current remaining work in `docs/TODO.md` / `docs/REPLICATION_PLAN.md`.
+
 ## What Was Implemented
 
 ### 1. Container-Based Architecture ✅
@@ -28,7 +30,7 @@ Nexus successfully combines material from the `gateway` and `ai-infra` repositor
 - Request routing to backend services
 - Service discovery via metadata endpoints
 - Health monitoring and metrics
-- Full gateway integration from the repo’s top-level `gateway/` project (OpenAI-ish endpoints + tools + memory + UI endpoints)
+- Full gateway integration from `services/gateway/` (OpenAI-ish endpoints, tools, memory, focused UIs, coding workspaces, scheduled tasks, and agent endpoints)
 
 #### Ollama Service
 - LLM inference using official Ollama image

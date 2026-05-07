@@ -15,3 +15,10 @@
 - Make gateway disabled-backend configuration lifecycle-aware so a traded-in backend can become visible without manual env edits.
 - Add artifact proxy tests for every backend that returns generated media.
 - Extend service scaffolding to optionally generate gateway config and lifecycle config patches.
+
+## Agent And Scheduled Task Expansion
+
+- Extend the current scheduled LLM task runner to support coder workspaces, including branch selection, checkpoint commits, and draft PR creation policies.
+- Add scheduled task runners for app workflows, multi-model review/synthesis, image generation, music generation, and video generation.
+- Add a Resources/Admin view for scheduled task queue health, missed runs, retry policy, and stale/failed runner diagnostics.
+- Decide whether scheduled tasks should be able to activate lifecycle-managed backends before execution and deactivate them after completion.

@@ -16,6 +16,9 @@ The Nexus Gateway is the central API gateway that provides:
 - **Metrics**: Prometheus-compatible metrics endpoint
 - **Streaming**: Supports streaming responses for chat completions
 - **User API Keys**: Per-user bearer keys that can be created/revoked from UI settings
+- **Focused UIs**: Gateway-served Chat, Resources, Coding Workspaces, Scheduled Tasks, and media/service UIs
+- **Agent Runtime**: Tiered tools bus, persistent agent run logs, scheduled LLM tasks, and multi-backend coordination
+- **Coding Workspaces**: Isolated git clones with scoped file/command/git APIs, agent runs, local checkpoint commits, pushes, and draft PRs
 
 ## Endpoints
 
@@ -23,19 +26,52 @@ The Nexus Gateway is the central API gateway that provides:
 
 - `GET /health` - Liveness check
 - `GET /readyz` - Readiness check with backend validation
-- `GET /v1/metadata` - Service capabilities and endpoint discovery
-- `GET /v1/descriptor` - Enhanced descriptor (response types + UI placement hints)
+- `GET /v1/gateway/status` - Gateway backend health/admission status
+- `GET /v1/registry` - Gateway view of registered service records
 
 ### OpenAI-Compatible Endpoints
 
 - `GET /v1/models` - List available models
 - `POST /v1/chat/completions` - Create chat completion (streaming supported)
+- `POST /v1/completions` - Create text completion
+- `POST /v1/embeddings` - Create embeddings
+- `POST /v1/rerank` - Rerank documents
+- `POST /v1/responses` - Responses-compatible wrapper
+- `POST /v1/images/generations` - Image generation
+- `POST /v1/images/edits` - Image editing
+- `POST /v1/audio/speech` - Text-to-speech
+- `POST /v1/audio/transcriptions` - Speech-to-text
+- `POST /v1/music/generations` - Music generation
 
-### Dynamic Backend Catalog/UI Endpoints
+### Agent, Tool, Memory, And Coding Endpoints
 
-- `GET /v1/registry` - List service records from the gateway registry
-- `GET /v1/backends/catalog` - Return backend descriptors and endpoint/capability contracts
-- `GET /v1/ui/layout` - Return gateway-generated UI layout (Chat primary + specialized backend panels)
+- `POST /v1/agent/run` - Run one configured agent spec
+- `POST /v1/agent/coordinate` - Fan out to several model aliases and synthesize
+- `GET /v1/agent/replay/{run_id}` - Replay a persisted agent run
+- `GET /v1/tools` / `POST /v1/tools/{name}` - Inspect and execute registered tools, subject to auth/policy
+- `POST /v1/memory/*` and `GET /v1/memory/*` - Persistent memory operations
+- `/v1/coding/*` - Isolated coding workspace API for tree/file/search/patch/command/git/agent operations
+
+### Backend Status/UI Helper Endpoints
+
+- `GET /ui/api/backend_status` - Backend/resource status used by Chat and Resources
+- `GET /ui/api/lifecycle/status` - Lifecycle-manager service state
+- `POST /ui/api/lifecycle/ensure` - Ask lifecycle-manager to activate a backend
+- `POST /ui/api/lifecycle/action` - Ask lifecycle-manager to perform a lifecycle action
+- `GET /ui/api/models` - UI-friendly model list with cached backend probing
+- `GET /ui/api/image/catalog` and `/ui/api/{tts,music,video,ocr}/backends` - Focused UI backend catalogs
+
+### Gateway-Served UI Routes
+
+- `/ui` - Main Chat UI
+- `/ui/login` - Login/API-key session entry point
+- `/ui/resources` - Backend/resource status and lifecycle controls
+- `/ui/coding` - Coding Workspaces
+- `/ui/tasks` - Scheduled Tasks
+- `/ui/image`, `/ui/music`, `/ui/video`, `/ui/ocr`, `/ui/tts`, `/ui/voice-clone`, `/ui/personaplex` - Focused capability UIs
+- `/ui/admin/users` - Admin user management
+
+The focused UIs share top navigation and include Back to Chat, Refresh, Resources, Apps, Settings, and API-key status where applicable.
 
 ### User API Key Endpoints (UI Authenticated)
 
@@ -92,6 +128,10 @@ METRICS_ENABLED=true
 # Data persistence
 MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
 USER_DB_PATH=/var/lib/gateway/data/users.sqlite
+AGENT_RUNS_LOG_DIR=/var/lib/gateway/data/agent
+AGENT_TASKS_DB_PATH=/var/lib/gateway/data/agent/tasks.sqlite
+CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
+CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
 
 # Operator config (mounted read-only from the host)
 MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
@@ -112,6 +152,12 @@ Config files are seeded (once) by the setup scripts:
 - `tools_registry.json`
 - `model_aliases.json`
 - `agent_specs.json`
+
+Runtime data files/directories are owned by the gateway, not by git:
+- `users.sqlite`: users, password hashes, settings, per-user API key hashes, and hidden user preferences such as saved GitHub tokens.
+- `agent/`: per-run agent logs and scheduled-task database.
+- `coding/`: coding workspace task metadata and isolated clones.
+- `ui_images`, `ui_files`, `ui_audio`, `ui_chats`: generated UI artifacts and chat/conversation history.
 
 Alias precedence note:
 - If `MODEL_ALIASES_PATH` is set, that file is authoritative.
@@ -266,7 +312,9 @@ curl -X POST http://localhost:8800/v1/coding/tasks \
 Each task gets a fresh branch under `CODING_WORKSPACE_ROOT`. File reads/writes,
 commands, diffs, commits, pushes, and draft PR creation stay scoped to that task
 clone. Configure allowed repositories with `CODING_ALLOWED_REPOS`; each user
-stores their GitHub token and preferred coding model in User Settings.
+stores their GitHub token and preferred coding model in User Settings. Tokens are
+used through a temporary askpass helper and are not returned by the settings API
+after save.
 
 The same page can start autonomous coding runs. `POST /v1/coding/runs` creates
 a workspace and starts the background agent for the prompt; existing workspaces
@@ -275,7 +323,29 @@ can be started with `POST /v1/coding/tasks/{task_id}/agent-run` and stopped with
 the task under `task.agent.events`. The agent may inspect/search/read/write
 workspace files and run the configured allowlisted commands. Push and PR
 creation remain explicit approval steps; successful runs can optionally make a
-local commit.
+local commit. Coding runs can also be steered after creation with workspace
+messages (`POST /v1/coding/tasks/{task_id}/messages` or the UI chat controls),
+so one workspace/branch can receive additional requests after the first run.
+
+### Scheduled Tasks
+
+The gateway can run durable scheduled LLM tasks:
+
+- browser UI: `https://<gateway>/ui/tasks`
+- UI API: `/ui/api/agent-tasks/*`
+- agent tools: `agent_task_create`, `agent_task_list`, `agent_task_cancel`
+
+Supported schedule modes:
+- timer (`delay_seconds`)
+- exact run time (`run_at`)
+- fixed interval (`interval_seconds`)
+- cron (`cron`, five-field minute/hour/day/month/weekday)
+
+The task UI lets a user choose the LLM model alias, tool tier, explicit tool
+allowlist, turn/runtime budget, max runs, and schedule. Results are shown with
+per-run status/output. Current scheduled tasks are LLM/text tasks; the API/UI
+shape reserves task types for future coder, app, multi-model, image, music, and
+video runners.
 
 ### Service Discovery
 
@@ -283,23 +353,16 @@ local commit.
 curl http://localhost:8800/v1/metadata
 ```
 
-### Backend Catalog
+### Backend Status
 
 ```bash
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:8800/v1/backends/catalog
-```
-
-### Dynamic UI Layout
-
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:8800/v1/ui/layout
+  http://localhost:8800/ui/api/backend_status
 ```
 
 ## Implementation
 
-Nexus builds and runs the full gateway implementation from the repo’s top-level `gateway/` directory.
+Nexus builds and runs the full gateway implementation from `services/gateway/`.
 The container runtime layout is kept compatible with the gateway’s expected paths under `/var/lib/gateway/*`.
 
 ## Architecture
@@ -362,9 +425,11 @@ Structured logging to stdout with:
 - Use `/ui/tts` with the `luxtts` backend to generate speech from those saved voices.
 - The TTS voice picker groups LuxTTS voices into native voices, cloned voices, and shared refs.
 
-## UI TODO Backlog
+## UI Notes
 
-- Chat UI: Add a conversation history log/sidebar and a "resume previous conversation" flow so users can intentionally continue prior sessions.
+- Chat history is persisted under `UI_CHAT_DIR` and exposed through `/ui/api/conversations/*`.
+- Backend/resource status is intentionally summarized in Chat and expanded in `/ui/resources`.
+- The Resources page is the canonical place for backend host/resource details and lifecycle activation/deactivation controls.
 
 ### Gateway won't start
 
@@ -400,17 +465,19 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8800/v1/models
 
 ### Adding New Endpoints
 
-1. Add route handler in `app/main.py`
-2. Add to metadata endpoint's `endpoints` list
-3. Update `capabilities` if needed
-4. Add tests
+1. Add the route to the appropriate `app/*_routes.py` module.
+2. Include the router from `app/main.py` if it is a new route module.
+3. Add to metadata/descriptor output if it is part of the public service contract.
+4. Update UI/API docs and tests or smoke coverage.
 
 ### Integrating New Backend
 
 1. Add environment variable for backend URL
-2. Add health check in `/readyz`
-3. Add routing logic
-4. Update metadata to advertise new capabilities
+2. Add backend config/aliases in `app/backends.py` or runtime config as appropriate
+3. Add health/readiness behavior and lifecycle metadata where applicable
+4. Add routing logic or descriptor handling
+5. Update metadata to advertise new capabilities
+6. Register the service in etcd/topology if it is a multi-host backend
 
 ## Testing
 

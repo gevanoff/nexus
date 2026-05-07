@@ -24,7 +24,7 @@ Each service is:
 #### Gateway (`gateway/`)
 - **Purpose**: Central API gateway and request router
 - **Ports**: 8800 (API), 8801 (observability)
-- **Capabilities**: Chat, routing, auth, service discovery
+- **Capabilities**: Chat, routing, auth, service discovery, focused UIs, Resources/lifecycle status, tools bus, scheduled LLM tasks, coding workspaces, memory, and multi-backend coordination
 - **Status**: ✅ Implemented
 - **Documentation**: [gateway/README.md](gateway/README.md)
 
@@ -150,6 +150,9 @@ Each service is:
 │  • Request routing                      │
 │  • Service discovery                    │
 │  • API aggregation                      │
+│  • Focused UIs                          │
+│  • Agents / tools / scheduled tasks     │
+│  • Coding workspaces                    │
 └──────┬─────────┬──────────┬─────────────┘
        │         │          │
        ▼         ▼          ▼
@@ -236,7 +239,7 @@ The generated shim already exposes the right route shape. Most new services only
 - `/v1/audio/speech` for TTS
 - etc.
 
-### 7. Update Gateway
+### 6. Update Gateway
 
 Add backend URL to gateway environment:
 
@@ -246,7 +249,7 @@ gateway:
     - MY_SERVICE_BASE_URL=http://my-service:9000
 ```
 
-### 8. Test
+### 7. Test
 
 ```bash
 # Start service
@@ -304,12 +307,17 @@ Services communicate over the internal Docker network:
 
 - **Service-to-Service**: HTTP over internal network
 - **Client-to-Gateway**: HTTPS with authentication
-- **Gateway-to-Services**: HTTP (internal network, no auth needed)
+- **Gateway-to-Services**: HTTP over Compose DNS, private host aliases, or registered service URLs. Backend ports should be firewalled to trusted hosts.
 
 Service DNS names match their docker compose service names:
 - `http://ollama:11434`
 - `http://images:7860`
 - `http://tts:9940`
+
+In the current multi-host deployment, some accelerators are intentionally host-native or remote rather than Compose-local:
+- `local_mlx` is typically host-native on `ai2` at port `10240`.
+- vLLM services live on Linux/NVIDIA hosts such as `ai1` or `ada2`.
+- Lifecycle-manager and etcd/topology config determine which optional backends are active and where they are hosted.
 
 ## Resource Management
 
@@ -518,7 +526,8 @@ See these services for reference:
 
 - **Template skeleton**: `template/skeleton/app/nexus_model_service.py`
 - **Full gateway**: `gateway/app/main.py`
-- **Service wrapper**: `ollama/` (wraps existing service)
+- **Service wrapper/install support**: `ollama/`, `mlx/`
+- **Backend shims**: `images/`, `sdxl-turbo/`, `tts/`, `luxtts/`, `qwen3-tts/`, `heartmula/`, `lighton-ocr/`, `skyreels-v2/`, `followyourcanvas/`, `personaplex/`
 
 ## Resources
 

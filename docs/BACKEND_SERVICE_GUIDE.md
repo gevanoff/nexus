@@ -61,13 +61,14 @@ Operationally, 128 GB system RAM makes the current 8 GB vLLM CPU offload setting
 
 The Nexus PersonaPlex service is only a shim on `9160`. It does not start the upstream live UI/server on `8998`.
 
-The upstream repo can build its own CUDA UI container from `.runtime/personaplex/app/docker-compose.yaml`, but it needs access to the gated `nvidia/personaplex-7b-v1` Hugging Face repo. On `ada2`, `HF_TOKEN` and `HUGGINGFACE_HUB_TOKEN` were empty and no cached artifacts existed, so the upstream server exited with a 401 while downloading `voices.tgz`.
+The upstream repo can build its own CUDA UI container from `.runtime/personaplex/app/docker-compose.yaml`, but it needs access to the gated `nvidia/personaplex-7b-v1` Hugging Face repo. The initial bring-up failed because the active token did not have accepted model access and no cached artifacts existed. After the correct token/access were installed and the nginx/live-UI path was fixed, PersonaPlex was confirmed working through the gateway/nginx path.
 
-Do not call PersonaPlex functional until:
+Do not call a fresh PersonaPlex deployment functional until:
 
 - a token with accepted model access is installed,
-- the upstream UI/server is managed by Nexus compose or lifecycle,
-- `https://ada2:8998/` returns the UI,
+- the upstream app is confirmed running on the selected host,
+- the live UI path loads through `https://ai2.local/personaplex-live/` or the configured equivalent,
+- the shim can reach `PERSONAPLEX_UPSTREAM_BASE_URL` if REST proxying is enabled,
 - the lifecycle readiness check reflects the upstream runtime, not only the shim process.
 
 ### HeartMula

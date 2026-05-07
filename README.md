@@ -1,6 +1,6 @@
 # Nexus - Extensible AI-orchestration infrastructure
 
-Nexus is a container-based AI orchestration platform that combines API gateway capabilities with modular AI services. It provides a unified interface for chat, image generation, audio processing, and other AI capabilities.
+Nexus is a container-based AI orchestration platform that combines API gateway capabilities with modular AI services. It provides a unified interface for chat, image generation, audio processing, coding agents, scheduled agent tasks, backend resources, and other AI capabilities.
 
 ## Overview
 
@@ -12,6 +12,8 @@ Nexus transforms the monolithic AI infrastructure into a containerized microserv
 - **Extensible**: Add new services without modifying gateway code
 - **OpenAI-compatible**: Follow industry-standard API conventions
 - **Service discovery**: Etcd-backed registry for multi-host routing
+- **Focused web UIs**: Gateway-served Chat, Resources, Coding Workspaces, Scheduled Tasks, image, music, video, OCR, TTS, voice-clone, and PersonaPlex views share one auth/settings/navigation model
+- **Agent tooling**: A policy-gated tools bus, persistent agent run logs, and scheduled LLM task runner are available through the gateway
 
 ## Architecture
 
@@ -37,11 +39,11 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - The current `vllm` compose profile is GPU-bound (`gpus: all`) and should only be assigned to GPU-capable hosts.
 - NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
 
-### Current Host Inventory (2026-04-24)
+### Current Host Inventory (2026-05-07)
 
-- `ai2` (Mac M3 Ultra, 512GB unified memory): primary control-plane host, host-native `mlx` node, and current home for the containerized TTS stack.
+- `ai2` (Mac M3 Ultra, macOS 15.6, 512GB unified memory): primary control-plane host, gateway/nginx/etcd/lifecycle-manager host, host-native `mlx` node, and current home for the containerized TTS stack.
 - `ai1` (Ubuntu Linux, Intel Core Ultra 5 250K, 64GB RAM, NVIDIA GeForce RTX 3090 24GB in the PCIe x16 slot plus NVIDIA GeForce RTX 5060 Ti 16GB in the PCIe x4 slot): dual-GPU Linux/NVIDIA node used for media ingress and secondary `vllm`/CUDA capacity.
-- `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, 32GB RAM, NVIDIA RTX 6000 Ada 48GB): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
+- `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, 128GB RAM, NVIDIA RTX 6000 Ada 48GB): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
 
 Operational implication:
 - Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
@@ -87,6 +89,13 @@ The quickstart flow automatically runs `deploy/scripts/preflight-check.sh` and v
 Gateway persistence is stored on the host under `./.runtime/gateway/` and bind-mounted into the container:
 - **Read-write data** (SQLite DBs, tool logs, cached UI assets): `./.runtime/gateway/data/` → `/var/lib/gateway/data`
 - **Read-only operator config** (model aliases, agent specs, tools registry): `./.runtime/gateway/config/` → `/var/lib/gateway/config`
+
+Important persistent gateway state includes:
+- `data/users.sqlite`: UI users, password hashes, user settings, and per-user API keys.
+- `data/coding/`: isolated coding workspace task metadata and git clones.
+- `data/agent/`: agent run logs and scheduled-task database (`tasks.sqlite`).
+- `data/ui_*`: generated UI images, files, audio, and chat/conversation history.
+- `config/model_aliases.json`, `config/agent_specs.json`, `config/tools_registry.json`: operator-managed routing and agent/tool configuration.
 
 ### Start the Stack
 
@@ -259,6 +268,17 @@ Once running, the gateway is available at:
 - **API**: `http://localhost:8800`
 - **Health**: `http://localhost:8800/health`
 - **Docs**: `http://localhost:8800/docs` (Swagger UI)
+- **Main Chat UI**: `http://localhost:8800/ui`
+
+Focused UI routes served by the gateway:
+
+- `/ui/resources`: backend/resource status, lifecycle actions, host metrics, and model/backend details
+- `/ui/coding`: isolated coding workspaces, autonomous agent runs, workspace chat steering, commits, pushes, and draft PRs
+- `/ui/tasks`: scheduled LLM tasks with timers, run-at schedules, intervals, cron expressions, model choice, tool access, status, and run results
+- `/ui/image`, `/ui/music`, `/ui/video`, `/ui/ocr`, `/ui/tts`, `/ui/voice-clone`, `/ui/personaplex`: capability-specific UIs
+- `/ui/admin/users`: admin-only user management
+
+UI authentication supports browser sessions and per-user API keys created in Settings. A static `GATEWAY_BEARER_TOKEN` remains available for automation and recovery, but normal user preferences such as GitHub tokens and preferred coding model are stored per user.
 
 ### Example Request
 
@@ -330,6 +350,8 @@ Nexus includes the following services:
 - Request routing and load balancing
 - Authentication and authorization
 - Service discovery and health monitoring
+- Gateway-served focused UIs
+- Agent runtime, tool bus, scheduled LLM tasks, and coding workspaces
 - **Ports**: 8800 (API), 8801 (observability)
 
 ### Ollama (`services/ollama/`)
@@ -378,6 +400,16 @@ Nexus includes the following services:
 Operational scripts and key layout are documented in [docs/ETCD_OPERATIONS.md](docs/ETCD_OPERATIONS.md).
 
 See `services/README.md` for complete service documentation.
+
+## Gateway Agent And Coding Features
+
+The gateway has two related automation surfaces:
+
+- **General agents**: `POST /v1/agent/run` executes an agent spec from `AGENT_SPECS_PATH` with tiered tool access. Available tools are exposed through `GET /v1/tools`, and agents can introspect their allowed tools through `tool_manifest`.
+- **Scheduled LLM tasks**: `/ui/tasks` and `/ui/api/agent-tasks/*` create durable LLM tasks backed by `AGENT_TASKS_DB_PATH`. Tasks can run once after a timer, at a specific time, repeatedly by interval, or by cron expression. Current scheduled-task execution is LLM/text oriented; coder, app, multi-model, image, music, and video task types are intentionally reserved for future extension.
+- **Coding workspaces**: `/ui/coding`, `/ui/api/coding/*`, and `/v1/coding/*` create isolated git clones under `CODING_WORKSPACE_ROOT`. Each workspace gets a branch, scoped file/tree/search/command/git APIs, optional autonomous agent runs, local checkpoint commits, push/draft-PR actions, and a workspace message channel for steering after the initial run.
+
+Production-impacting changes should still flow through GitHub branches and deployment scripts. Do not live-edit tracked Nexus code on `ai2`, `ai1`, or `ada2`; use those hosts for branch-based deploys and testing.
 
 ## Adding a New Service
 

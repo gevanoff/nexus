@@ -70,7 +70,7 @@ checkout should use only the bot or GitHub App credential.
 
 ## Nexus Coding Workspaces
 
-The gateway exposes an initial native workflow for isolated coding tasks:
+The gateway exposes a native workflow for isolated coding tasks:
 
 - UI: `/ui/coding`
 - bearer API: `/v1/coding/*`
@@ -82,19 +82,20 @@ draft PR operations. Commands are argv arrays, not shell strings, and run only
 inside the task clone. Destructive git operations such as `reset`, `clean`,
 `rebase`, `merge`, `restore`, and `rm` are blocked.
 
-The UI also supports autonomous runs. The primary path is now:
+The UI supports autonomous runs and workspace steering. The primary path is now:
 
 1. Enter a repo, base branch, and task brief.
 2. Click `Create and run agent`.
 3. Nexus creates the workspace, starts a background coding runner, and persists
    progress under `task.agent.events`.
-4. The runner uses scoped tools to inspect/search/read/write files and run
-   allowlisted checks until it finishes or hits a budget.
-5. The human reviews the resulting diff, then explicitly pushes or opens a PR.
+4. The runner uses scoped tools to inspect/search/read/write files, fetch public URLs, run allowlisted checks, and create local checkpoint commits until it finishes or hits a budget.
+5. The human can send additional workspace messages to steer the same branch/run context or request follow-up changes after a run completes.
+6. The human reviews the resulting diff, then explicitly pushes or opens a PR.
 
 The API equivalent is `POST /v1/coding/runs`; existing workspaces can be started
 with `POST /v1/coding/tasks/{task_id}/agent-run` and stopped with
-`POST /v1/coding/tasks/{task_id}/agent-stop`.
+`POST /v1/coding/tasks/{task_id}/agent-stop`. Workspace guidance messages can
+be appended with `POST /v1/coding/tasks/{task_id}/messages`.
 
 Important gateway settings:
 
@@ -104,6 +105,8 @@ Important gateway settings:
 - `CODING_ALLOWED_COMMANDS`
 - `CODING_AGENT_MAX_TURNS`
 - `CODING_AGENT_MAX_RUNTIME_SEC`
+- `CODING_AGENT_CHECKPOINT_COMMITS`
+- `CODING_AGENT_BACKEND_RETRIES`
 - `CODING_GIT_AUTHOR_NAME`
 - `CODING_GIT_AUTHOR_EMAIL`
 
@@ -123,7 +126,8 @@ token.
 2. Human starts a Nexus autonomous coding run from the target base branch.
 3. Agent makes scoped changes and runs local checks through the workspace tools.
 4. Agent reviews the diff and marks the run complete or blocked.
-5. Human reviews the diff and may commit, push, or open a draft PR.
+5. Human may send additional workspace messages for follow-up work on the same branch.
+6. Human reviews the diff and may commit, push, or open a draft PR.
 7. GitHub Actions runs.
 8. Agent may inspect CI logs and push fixes.
 9. Human reviews and merges.
@@ -159,10 +163,10 @@ operations should remain controlled:
 - Nexus host access should go through existing deploy scripts or an explicit
   operator-approved runbook
 
-## Open Decisions
+## Remaining Decisions
 
-- GitHub App versus machine user for the first implementation
-- whether the agent runs as a Windows process, WSL process, or container
-- which issues/labels should trigger autonomous work
+- whether to migrate from per-user PATs to GitHub App installation tokens for routine use
+- which issues/labels should trigger autonomous work, if any
 - whether PR creation should be fully automatic or operator-approved
 - whether the agent should be allowed to run GitHub Actions workflow dispatches
+- how scheduled coder tasks should reuse or extend the current LLM scheduled-task runner

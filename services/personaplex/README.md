@@ -56,4 +56,10 @@ cd .runtime/personaplex/app
 docker compose -p personaplex-upstream -f docker-compose.yaml up -d --build
 ```
 
-The upstream model repo `nvidia/personaplex-7b-v1` is gated. In the April 26, 2026 smoke test, both `HF_TOKEN` and `HUGGINGFACE_HUB_TOKEN` were present but empty on `ada2`, no model artifacts were cached, and the upstream server exited with a Hugging Face 401 while downloading `voices.tgz`. A token with accepted access to `nvidia/personaplex-7b-v1` is required before this backend can become functional.
+The upstream model repo `nvidia/personaplex-7b-v1` is gated. The initial April 26, 2026 smoke test failed with a Hugging Face 401 while downloading `voices.tgz` because the active token did not have accepted model access. After accepted access and a correct token were installed, and after the reverse-proxy path was corrected, the live PersonaPlex UI was confirmed working through the gateway/nginx path (`/personaplex-live/`).
+
+For future bring-up, verify all three layers separately:
+
+1. Upstream live server on `8998`.
+2. Gateway/nginx live UI path.
+3. Optional shim REST proxy on `9160` when `PERSONAPLEX_UPSTREAM_BASE_URL` is set.

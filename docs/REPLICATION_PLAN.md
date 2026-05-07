@@ -1,28 +1,30 @@
 # Nexus Replication Plan
 
-This document summarizes what needs to be built to replicate the functional state of the `gateway` and `ai-infra` repositories while applying the new containerized, multi-host approach.
+This document summarizes the remaining parity gaps after the current Nexus
+gateway migration. It is no longer a from-zero build plan: the gateway, UI,
+agent runtime, coding workspace, tools bus, lifecycle manager, and several
+backend shims are implemented and deployed through the Nexus repo.
 
 ## Required Capabilities
 
 ### Core Routing and Auth
-- Full OpenAI-compatible gateway endpoints (chat, completions, embeddings, images, audio).
-- Multi-tenant auth, token policies, rate limiting, and request auditing.
-- Service routing rules that can target specific hosts, GPUs, or model tiers.
+- Implemented: OpenAI-compatible gateway endpoints for chat, completions, embeddings, responses, rerank, images, audio speech, transcription, and music.
+- Implemented: UI users, browser sessions, per-user API keys, static bearer fallback, and token policy hooks.
+- Remaining: stronger rate limiting/audit reporting and richer resource-aware routing that can reason over host/GPU pressure before dispatch.
 
 ### Service Discovery
-- Etcd-backed registry for service base URLs and metadata endpoints.
-- Automatic health checking and readiness gating per backend.
-- Support for remote host discovery without hardcoded hostnames in git.
+- Implemented: etcd-backed registry, env/static config, topology rendering, backend health checks, Resources UI, and lifecycle-manager integration.
+- Remaining: deeper artifact/preflight checks before activation and richer lifecycle state for memory/VRAM/startup failure causes.
 
 ### Observability
-- Structured logs with correlation IDs across gateway and services.
-- Metrics endpoints and dashboards (Prometheus + Grafana).
-- Tracing hooks for multi-host request spans.
+- Implemented: gateway health/readiness, Prometheus metrics endpoint, backend status/resource UI, request IDs, and agent/coding run logs.
+- Remaining: central dashboards, distributed tracing, and unified log correlation across all remote hosts.
 
 ### Agent Runtime
-- Tool bus support (as in `gateway`) with agent specs and policy enforcement.
-- Memory system (v1/v2) with persistence and isolation per user or workspace.
-- Multi-agent orchestration (Adversary and Supplicant roles).
+- Implemented: tool bus with tier/allowlist enforcement, agent specs, run persistence, web browsing, memory tools, scheduled-task tools, and multi-backend coordinator.
+- Implemented: coding workspaces with autonomous runs, workspace steering messages, checkpoint commits, push/PR actions, and per-user GitHub token/preferred model settings.
+- Implemented: scheduled LLM tasks with timer/run-at/interval/cron schedules and a focused UI.
+- Remaining: scheduled coder tasks, app/multi-model scheduled runners, and more formal role/team orchestration beyond the current coordinator.
 
 ### Backend Services
 - LLM inference (Ollama, MLX) with streaming support.
@@ -42,11 +44,12 @@ This document summarizes what needs to be built to replicate the functional stat
 2. **Service discovery**: etcd registration and health monitoring across hosts.
 3. **Core backends**: Ollama + one image + one TTS service with metadata endpoints.
 4. **Observability**: metrics, logs, and dashboards across all services.
-5. **Agent runtime**: tool bus, memory system, and multi-agent coordination.
-6. **UI container**: separate UI service that consumes `/v1/metadata` for dynamic forms.
+5. **Scheduled/coding automation**: extend the current LLM scheduled-task runner to coder, app, multi-model, image, music, and video tasks.
+6. **UI split decision**: keep the gateway-served UI as the supported path unless scale/security requirements justify a separate UI service.
 
 ## Open Decisions
 
 - Standardize on a single service registry (etcd today, evaluate Consul later).
-- Define the UI deployment strategy for multi-host clusters (separate container recommended).
+- Define whether/when the gateway-served UI should split into a separate service.
 - Decide on network overlay (WireGuard/Tailscale/VPC) for cross-host service traffic.
+- Decide whether coding GitHub auth should stay per-user PAT based or move to GitHub App installation tokens.

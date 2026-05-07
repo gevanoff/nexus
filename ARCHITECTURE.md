@@ -45,15 +45,19 @@ Central API gateway that:
 - Provides request logging and metrics
 - Implements policy-based routing
 - Manages tool bus for agent operations
-- Builds backend catalogs/UI layout hints by reading backend descriptors
+- Builds backend/resource UI state from static backend config, registry records, lifecycle metadata, health probes, and model aliases
+- Serves the current Nexus web UI bundle, including Chat, Resources, Coding Workspaces, Scheduled Tasks, and focused media/service UIs
+- Persists UI users/settings/API keys, coding workspace metadata, agent run logs, scheduled-task state, and generated UI artifacts under `/var/lib/gateway/data`
 
 ### UI Layer
-The UI should be deployed as its own container in production to keep the gateway focused on API routing, simplify scaling, and reduce the blast radius of UI-related vulnerabilities. For local development, a lightweight UI can be served by the gateway if needed, but multi-host deployments should keep UI and gateway separate.
+The current production UI is gateway-served and same-origin with the API. It includes Chat (`/ui`), Resources, Coding Workspaces, Scheduled Tasks, image, music, video, OCR, TTS, voice cloning, PersonaPlex, and admin user management. The focused UIs share top navigation, Apps, Settings, Resources, Refresh, and API-key status affordances.
+
+A separate UI container remains a possible future hardening/scaling step, but the current supported operator path is the gateway-served UI.
 
 ### LLM Services
-Containerized language model inference engines:
-- Ollama for general-purpose models
-- MLX for Apple Silicon optimization
+Language model inference engines:
+- Ollama for general-purpose models, usually host-native on Apple Silicon when used
+- MLX for Apple Silicon optimization, usually host-native on `ai2`
 - OpenAI-compatible API interface
 - Model management and loading
 - Streaming response support
@@ -77,6 +81,7 @@ Domain-specific capabilities:
 - OCR (optical character recognition)
 - Video generation
 - Custom tool implementations
+- Coding workspaces and scheduled agent tasks
 
 ## Service Communication
 
@@ -132,7 +137,7 @@ Key considerations:
 ### Service Communication Pattern
 1. **Client → Gateway**: HTTPS with bearer token authentication
 2. **Gateway → Services**: HTTP within Docker network (internal, no auth required)
-3. **Service Discovery**: Gateway queries `/v1/metadata` on startup and periodically
+3. **Service Discovery**: Gateway reads static config, polls etcd registry records, and queries `/v1/metadata`/`/v1/descriptor` where available
 4. **Health Monitoring**: Gateway polls `/health` and `/readyz` endpoints
 
 ## Data Flow
@@ -171,8 +176,10 @@ Key considerations:
 ### Authentication & Authorization
 - Bearer token authentication at gateway level
 - Optional per-token policies (rate limits, feature access)
-- IP allowlisting for sensitive endpoints
-- User authentication for UI endpoints (optional)
+- IP allowlisting and proxy trust settings for UI access
+- UI username/password login and browser sessions
+- Per-user API keys, preferences, GitHub token storage for coding workspaces, and preferred coding model settings
+- Static bearer token fallback for automation and recovery
 
 ## Configuration Management
 
@@ -188,6 +195,20 @@ Key considerations:
 - Dynamic service addition without gateway restarts
 - Capability-based routing (e.g., only route image requests to services advertising `domains: ["image"]`)
 - **Etcd-backed discovery**: services register their base URLs in etcd (`/nexus/services/<name>`), and the gateway polls etcd for updates
+
+### Agent Runtime And Tools
+- Agent specs are loaded from `AGENT_SPECS_PATH` and can set model aliases, tool tier, turn/runtime budgets, and explicit tool allowlists.
+- Tool access is tiered. Tier 0 is read/browse/scheduling oriented; tier 1 adds memory and file-write tools; tier 2 adds constrained shell execution.
+- The tools bus exposes tool metadata and execution through `/v1/tools` and includes web browsing, local file reads/search, memory operations, HeartMula music generation, and scheduled-task create/list/cancel tools.
+- Agent runs are persisted under `AGENT_RUNS_LOG_DIR` or `AGENT_RUNS_LOG_PATH`.
+- Scheduled tasks are persisted in `AGENT_TASKS_DB_PATH` and executed by a gateway scheduler loop. Current scheduled task UI/API supports LLM/text tasks; coder, app, multi-model, image, music, and video task types are reserved in the UI/API shape for future runners.
+
+### Coding Workspaces
+- Coding tasks create isolated git clones under `CODING_WORKSPACE_ROOT`.
+- The workspace API exposes bounded tree/file/search/patch/command/git operations and blocks high-risk git subcommands.
+- Autonomous coding runs can be started, stopped, resumed after gateway restarts at the metadata level, and steered with workspace messages.
+- Successful or in-progress agent work can create local checkpoint commits; pushing and draft PR creation remain explicit user actions.
+- Git credentials are per-user preferences when the browser/API-key user is authenticated. `CODING_GIT_TOKEN` is only a fallback for static-bearer automation.
 
 ## Observability
 
@@ -236,7 +257,7 @@ Single-command startup of full stack for development.
 ### Custom Tools
 - Implement tool following tools bus specification
 - Register in gateway's tool registry
-- Available to agent runtime automatically
+- Grant through an agent spec tier/allowlist before expecting it to be available at runtime
 
 ### Backend Models
 - Add new model to service's model manifest
@@ -257,11 +278,11 @@ The original `ai-infra` repository used macOS launchd and Linux systemd for serv
 | pocket-tts (launchd/systemd) | tts | TTS service shim |
 
 Key differences:
-- **No host installation scripts**: Everything runs in containers
-- **Unified networking**: Docker network instead of host ports + SSH
-- **Portable**: Works on any Docker-capable host (macOS, Linux, Windows)
-- **Reproducible**: Defined in version-controlled `docker-compose.*.yml` files
-- **Isolated**: Services can't access host filesystem without explicit volume mounts
+- **Containerized control plane**: Gateway, etcd, lifecycle-manager, nginx, Telegram bot, and many shims run through Compose.
+- **Host-native accelerators where needed**: MLX and sometimes Ollama run on macOS bare metal for Apple Silicon acceleration; CUDA services run on Linux/NVIDIA hosts.
+- **Unified networking**: Gateway reaches backends through Compose DNS, registered service URLs, or host aliases rendered from private runtime env.
+- **Reproducible deploys**: Code changes should be committed/pushed and pulled onto hosts through deployment scripts rather than live edits.
+- **Explicit host access**: Services cannot access host filesystems without declared volumes; lifecycle operations use dedicated SSH identity/mounts.
 
 ## Future Enhancements
 
@@ -271,3 +292,5 @@ Key differences:
 - [ ] Multi-region deployment support
 - [ ] GPU resource management
 - [ ] Model caching and sharing between services
+- [ ] Split UI into a separate deployable service if gateway-served UI becomes a scaling or security bottleneck
+- [ ] Extend scheduled tasks to coder, app, multi-model, image, music, and video runners

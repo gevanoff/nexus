@@ -181,10 +181,16 @@ python services/template/scaffold_service.py \
    - Service README.md
    - Update main README.md
    - Update services/README.md
+   - Update `SERVICE_API_SPECIFICATION.md` or `docs/DYNAMIC_BACKEND_UI.md` if the backend adds a new modality, descriptor field, or UI placement pattern
 
-4. **Add tests**
+4. **Wire deployment/runtime config**
+   - Add a per-component compose file or topology entry.
+   - Register the backend in etcd/topology or document the required static env variable.
+   - Add gateway backend config/aliases only when descriptor/env discovery is not enough.
 
-5. **Submit PR**
+5. **Add tests**
+
+6. **Submit PR**
 
 See [Template Service](services/template/README.md) for detailed guide.
 
@@ -221,6 +227,8 @@ docker compose logs -f
 4. **Make changes**
 
 Edit files in `services/gateway/app/` or other service directories.
+
+For deployed Nexus hosts (`ai2`, `ai1`, `ada2`), do not live-edit tracked code in the host checkout. Commit and push from your development checkout, then deploy the intended branch with the repo deployment scripts. Runtime state under `.runtime/` is host-local and is the exception.
 
 5. **Restart services**
 

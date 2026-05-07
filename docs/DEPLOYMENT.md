@@ -129,11 +129,19 @@ Nexus keeps persistent state and large artifacts on the **host filesystem** unde
 - TTS data: `./.runtime/tts/data` → `/data` (read-write)
 - etcd state: `./.runtime/etcd/data` → `/etcd-data` (read-write)
 
+Important gateway data under `./.runtime/gateway/data` includes:
+- `users.sqlite`: UI users, password hashes, user settings, and per-user API keys.
+- `agent/`: agent run logs plus scheduled-task state (`tasks.sqlite`).
+- `coding/`: coding workspace task metadata and isolated git clones.
+- `ui_images`, `ui_files`, `ui_audio`, `ui_chats`: generated UI artifacts and persisted chat/conversation history.
+
 - Edit gateway operator config on the host under `./.runtime/gateway/config/`:
   - `tools_registry.json` (seeded from `services/gateway/env/tools_registry.json.example`)
   - `model_aliases.json` (seeded from `services/gateway/env/model_aliases.json.example`)
   - `agent_specs.json` (seeded from `services/gateway/env/agent_specs.json.example`)
 - No image rebuild is required after edits; restart the gateway container if you want a clean reload.
+
+For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `ai1`, or `ada2`. Commit and push from a development checkout, then deploy by pulling the intended branch on the target host with `deploy/scripts/deploy.sh` or the remote deploy wrapper. The runtime directories above are host state and are the exception.
 
 ## Deployment Scripts
 

@@ -11,6 +11,11 @@ All services in the Nexus infrastructure must expose a common set of endpoints f
 
 Nexus also supports an **etcd service registry** for multi-host deployments. Services should register their base URLs under `/nexus/services/<service-name>` so the gateway can discover remote backends.
 
+The gateway itself exposes additional orchestration APIs for agents, tools,
+memory, coding workspaces, UI helper routes, and scheduled tasks. Those gateway
+APIs are documented in `services/gateway/README.md`; this document is the
+contract for service backends that the gateway can route to or display.
+
 Example registry payload (stored as JSON value in etcd):
 
 ```json
@@ -197,7 +202,7 @@ curl http://service:8080/readyz
 - `operation_id` should be unique and descriptive (e.g., `chat.completions.create`, `images.generate`)
 
 **capabilities.domains** (recommended):
-- Supported domains: `chat`, `image`, `audio`, `video`, `ocr`, `asr`, `tts`, `embedding`, `tool`
+- Supported domains: `chat`, `image`, `audio`, `music`, `video`, `ocr`, `asr`, `tts`, `embedding`, `tool`
 - Used by gateway for capability-based routing
 
 **capabilities.modalities** (recommended):
@@ -325,6 +330,21 @@ Services providing AI capabilities should follow OpenAI API conventions where ap
 - **Transcriptions (ASR)**: `/v1/audio/transcriptions` (POST)
 - **Translations**: `/v1/audio/translations` (POST)
 
+### Music
+- **Path**: `/v1/music/generations`
+- **Method**: `POST`
+- **Response**: JSON containing generated audio URL/artifact metadata or an OpenAI-style error.
+
+### Video
+- **Path**: `/v1/videos/generations`
+- **Method**: `POST`
+- **Response**: JSON containing generated video URL/artifact metadata, job status, or an OpenAI-style error.
+
+### OCR
+- **Path**: `/v1/ocr`
+- **Method**: `POST`
+- **Response**: JSON text/blocks/pages extracted from an image or document.
+
 ### Models
 - **Path**: `/v1/models`
 - **Method**: `GET`
@@ -402,6 +422,11 @@ Services should include:
 
 See the `services/` directory for reference implementations:
 - `services/gateway/`: Full-featured gateway with all patterns
-- `services/ollama/`: LLM inference service
-- `services/image-gen/`: Image generation service
-- `services/tts/`: Text-to-speech service
+- `services/ollama/`: LLM inference service wrapper/install support
+- `services/mlx/`: Apple Silicon MLX serving support
+- `services/images/`, `services/sdxl-turbo/`: Image generation shims
+- `services/tts/`, `services/luxtts/`, `services/qwen3-tts/`: Text-to-speech shims
+- `services/heartmula/`: Music generation shim
+- `services/lighton-ocr/`: OCR shim
+- `services/skyreels-v2/`, `services/followyourcanvas/`: Video generation shims
+- `services/template/`: Scaffolder and skeleton for new services
