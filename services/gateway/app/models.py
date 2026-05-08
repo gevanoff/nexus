@@ -103,7 +103,7 @@ class AgentSpecModel(BaseModel):
 
     model: str
     tier: int = 0
-    max_turns: int = 40
+    max_turns: int = 100
     max_runtime_sec: Optional[float] = 60.0
     max_total_tool_io_bytes: Optional[int] = 2_000_000
     tools_allowlist: Optional[List[str]] = None
