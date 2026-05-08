@@ -54,6 +54,19 @@
       .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
       .grid3 { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
       .status { min-height: 18px; margin-bottom: 10px; }
+      .diagnostics {
+        margin: 0 0 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border: 1px solid rgba(255,133,133,0.24);
+        border-radius: 8px;
+        background: rgba(77,14,22,0.34);
+        color: #ffd8d8;
+        padding: 10px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+      }
       .error { color: #ffb6b6; }
       .ok { color: #9ef0bf; }
       .task-list { display:flex; flex-direction:column; gap: 8px; }
@@ -111,6 +124,7 @@
       </header>
 
       <div id="status" class="hint status"></div>
+      <div id="diagnostics" class="diagnostics" style="display:none;"></div>
 
       <div class="layout">
         <section class="stack">
@@ -242,7 +256,7 @@
       </div>
     </main>
     <script src="/static/auth_client.js?v=3"></script>
-    <script src="/static/focused_nav.js?v=4"></script>
-    <script src="/static/tasks.js?v=1"></script>
+    <script src="/static/focused_nav.js?v=5"></script>
+    <script src="/static/tasks.js?v=2"></script>
   </body>
 </html>

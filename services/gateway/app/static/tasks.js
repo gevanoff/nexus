@@ -2,6 +2,7 @@
   const els = {
     status: document.getElementById("status"),
     form: document.getElementById("taskForm"),
+    diagnostics: document.getElementById("diagnostics"),
     title: document.getElementById("taskTitle"),
     prompt: document.getElementById("taskPrompt"),
     taskType: document.getElementById("taskType"),
@@ -46,10 +47,19 @@
     selectedId: "",
   };
 
-  function setStatus(text, isError = false) {
+  function setStatus(text, isError = false, diagnostic = null) {
     if (!els.status) return;
     els.status.textContent = text || "";
     els.status.className = `hint status${isError ? " error" : text ? " ok" : ""}`;
+    if (els.diagnostics) {
+      if (isError && diagnostic) {
+        els.diagnostics.style.display = "block";
+        els.diagnostics.textContent = diagnostic;
+      } else {
+        els.diagnostics.style.display = "none";
+        els.diagnostics.textContent = "";
+      }
+    }
   }
 
   async function fetchJson(url, options = {}) {
@@ -63,6 +73,14 @@
     }
     if (!resp.ok) {
       const detail = payload?.detail || payload?.error || `HTTP ${resp.status}`;
+      // Attach raw response for diagnostics
+      const diagnostic = [
+        `Status: ${resp.status} ${resp.statusText}`,
+        `URL: ${url}`,
+        `Detail: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
+        text ? `Raw: ${text}` : null
+      ].filter(Boolean).join("\n");
+      setStatus(typeof detail === "string" ? detail : JSON.stringify(detail), true, diagnostic);
       throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
     }
     return payload;
@@ -371,7 +389,7 @@
       renderTools();
       await loadTasks({ keepSelection: true });
     } catch (error) {
-      setStatus(error.message || String(error), true);
+      setStatus(error.message || String(error), true, error.stack || error);
     }
   }
 
@@ -385,7 +403,7 @@
       renderTasks();
       renderDetail(payload.task || state.tasks.find((task) => task.id === state.selectedId));
     } catch (error) {
-      setStatus(error.message || String(error), true);
+      setStatus(error.message || String(error), true, error.stack || error);
     }
   }
 
@@ -416,7 +434,7 @@
       await loadTasks({ keepSelection: false });
       setStatus("");
     } catch (error) {
-      setStatus(error.message || String(error), true);
+      setStatus(error.message || String(error), true, error.stack || error);
     }
   }
 
