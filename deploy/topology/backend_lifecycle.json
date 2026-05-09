@@ -7,11 +7,17 @@
     "optional_idle_stop_sec": 1800,
     "memory_pressure_used_ratio": 0.9,
     "target_free_vram_mb": 4096,
+    "model_probe_enabled": true,
     "llm_advisor": {
-      "enabled": false,
-      "mode": "advise",
-      "model": "coder",
-      "base_url": "http://gateway:8800/v1"
+      "enabled": true,
+      "mode": "decide",
+      "model": "fast",
+      "base_url": "http://gateway:8800/v1",
+      "timeout_sec": 20,
+      "max_context_chars": 3000,
+      "max_tokens": 768,
+      "min_confidence": 0.55,
+      "include_models": true
     }
   },
   "tiers": {

@@ -132,6 +132,9 @@ class BackendPolicy:
     last_action: str = ""
     last_action_at: float = 0.0
     last_action_error: str = ""
+    models: List[Dict[str, Any]] = field(default_factory=list)
+    models_error: str = ""
+    models_checked_at: float = 0.0
 
 
 class EnsureRequest(BaseModel):
@@ -177,8 +180,14 @@ class LifecycleManager:
         self.memory_pressure_used_ratio = 0.9
         self.target_free_vram_mb = 4096
         self.llm_advisor_enabled = False
+        self.llm_advisor_mode = "advise"
         self.llm_advisor_model = "coder"
         self.llm_advisor_base_url = "http://gateway:8800/v1"
+        self.llm_advisor_timeout_sec = 20.0
+        self.llm_advisor_max_context_chars = 3000
+        self.llm_advisor_max_tokens = 768
+        self.llm_advisor_min_confidence = 0.55
+        self.model_probe_enabled = False
         self.ssh_identity_file = _env("NEXUS_LIFECYCLE_SSH_IDENTITY", "/root/.ssh/nexus_lifecycle_ed25519")
         self.hosts: Dict[str, HostPolicy] = {}
         self.backends: Dict[str, BackendPolicy] = {}
@@ -208,8 +217,14 @@ class LifecycleManager:
         self.target_free_vram_mb = int(settings.get("target_free_vram_mb") or self.target_free_vram_mb)
         llm_cfg = settings.get("llm_advisor") if isinstance(settings.get("llm_advisor"), dict) else {}
         self.llm_advisor_enabled = _bool(llm_cfg.get("enabled"))
+        self.llm_advisor_mode = str(llm_cfg.get("mode") or "advise").strip().lower()
         self.llm_advisor_model = str(llm_cfg.get("model") or "coder").strip()
         self.llm_advisor_base_url = str(llm_cfg.get("base_url") or "http://gateway:8800/v1").strip().rstrip("/")
+        self.llm_advisor_timeout_sec = _float_value(llm_cfg.get("timeout_sec"), self.llm_advisor_timeout_sec)
+        self.llm_advisor_max_context_chars = int(llm_cfg.get("max_context_chars") or self.llm_advisor_max_context_chars)
+        self.llm_advisor_max_tokens = int(llm_cfg.get("max_tokens") or self.llm_advisor_max_tokens)
+        self.llm_advisor_min_confidence = float(llm_cfg.get("min_confidence") or self.llm_advisor_min_confidence)
+        self.model_probe_enabled = _bool(settings.get("model_probe_enabled")) or self.llm_advisor_enabled or _bool(llm_cfg.get("include_models"))
 
         hosts: Dict[str, HostPolicy] = {}
         for name, topo in topology_hosts.items():
@@ -409,6 +424,10 @@ class LifecycleManager:
             tasks = [self._check_backend_health(client, backend) for backend in self.backends.values()]
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            if self.model_probe_enabled:
+                model_tasks = [self._check_backend_models(client, backend) for backend in self.backends.values()]
+                if model_tasks:
+                    await asyncio.gather(*model_tasks, return_exceptions=True)
 
     async def _check_backend_health(self, client: httpx.AsyncClient, backend: BackendPolicy) -> None:
         if backend.compose_managed and not backend.active:
@@ -473,6 +492,79 @@ class LifecycleManager:
             backend.last_health_error = backend.health_error
 
     @staticmethod
+    def _models_url_candidates(backend: BackendPolicy) -> List[str]:
+        base_url = backend.base_url.rstrip("/")
+        if not base_url:
+            return []
+        paths: List[str] = []
+        ready_path = backend.ready_path or ""
+        if ready_path.endswith("/models"):
+            paths.append(ready_path if ready_path.startswith("/") else "/" + ready_path)
+        paths.append("/models")
+        if not base_url.endswith("/v1"):
+            paths.append("/v1/models")
+
+        urls: List[str] = []
+        seen: set[str] = set()
+        for path in paths:
+            url = f"{base_url}{path}"
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+        return urls
+
+    @staticmethod
+    def _coerce_model_items(payload: Any) -> List[Dict[str, Any]]:
+        data = payload.get("data") if isinstance(payload, dict) else payload
+        if not isinstance(data, list):
+            return []
+        out: List[Dict[str, Any]] = []
+        for item in data[:20]:
+            if isinstance(item, dict):
+                model_id = str(item.get("id") or item.get("name") or "").strip()
+                if not model_id:
+                    continue
+                out.append(
+                    {
+                        "id": model_id,
+                        "object": str(item.get("object") or "").strip(),
+                        "owned_by": str(item.get("owned_by") or item.get("provider") or "").strip(),
+                    }
+                )
+            elif isinstance(item, str) and item.strip():
+                out.append({"id": item.strip(), "object": "", "owned_by": ""})
+        return out
+
+    async def _check_backend_models(self, client: httpx.AsyncClient, backend: BackendPolicy) -> None:
+        if not backend.active or backend.ready is not True or not backend.base_url:
+            backend.models = []
+            backend.models_error = ""
+            backend.models_checked_at = 0.0
+            return
+
+        last_error = ""
+        timeout = httpx.Timeout(connect=2.0, read=3.0, write=2.0, pool=2.0)
+        for url in self._models_url_candidates(backend):
+            try:
+                response = await client.get(url, timeout=timeout)
+                if response.status_code == 404:
+                    last_error = "HTTP 404"
+                    continue
+                if response.status_code >= 400:
+                    last_error = f"HTTP {response.status_code}"
+                    continue
+                backend.models = self._coerce_model_items(response.json())
+                backend.models_error = ""
+                backend.models_checked_at = time.time()
+                return
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+        backend.models = []
+        backend.models_error = last_error
+        backend.models_checked_at = time.time()
+
+    @staticmethod
     def _component_container_active(name: str, expected_name: str) -> bool:
         if name == expected_name:
             return True
@@ -508,6 +600,16 @@ class LifecycleManager:
         if backend.active and backend.ready is not False:
             return {"ok": True, "decision": "already_active", "backend": self._backend_status(backend)}
         plan = self._activation_plan(backend, confirmed=req.confirmed, allow_disruptive=req.allow_disruptive)
+        plan = await self._maybe_apply_llm_decision(
+            plan,
+            purpose="activation",
+            backend=backend,
+            route_kind=req.route_kind,
+            reason=req.reason,
+            confirmed=req.confirmed,
+            allow_disruptive=req.allow_disruptive,
+            required_free_vram_mb=0,
+        )
         if plan["decision"] in {"requires_confirmation", "blocked", "observe_only"}:
             return await self._attach_llm_advice(plan)
         if self.mode not in {"assisted", "auto"} and not req.confirmed:
@@ -531,6 +633,16 @@ class LifecycleManager:
         )
         plan["route_kind"] = req.route_kind
         plan["reason"] = req.reason
+        plan = await self._maybe_apply_llm_decision(
+            plan,
+            purpose="capacity",
+            backend=backend,
+            route_kind=req.route_kind,
+            reason=req.reason,
+            confirmed=req.confirmed,
+            allow_disruptive=req.allow_disruptive,
+            required_free_vram_mb=required_free_vram_mb,
+        )
         if plan.get("decision") in {"requires_confirmation", "blocked", "observe_only"}:
             return await self._attach_llm_advice(plan)
         if not req.execute or not (plan.get("start") or plan.get("stop")):
@@ -804,6 +916,432 @@ class LifecycleManager:
             "conflicts": self._same_host_active(backend),
         }
 
+    def _llm_decision_enabled(self) -> bool:
+        if not self.llm_advisor_enabled:
+            return False
+        return self.llm_advisor_mode in {"decide", "decision", "plan", "assist", "assisted"}
+
+    @staticmethod
+    def _compact_models(models: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        for item in models[:8]:
+            model_id = str(item.get("id") or "").strip()
+            if not model_id:
+                continue
+            out.append({"id": model_id})
+        return out
+
+    def _compact_backend_for_llm(self, backend: BackendPolicy) -> Dict[str, Any]:
+        return {
+            "backend_class": backend.backend_class,
+            "host": backend.host,
+            "components": backend.components,
+            "tier": backend.tier,
+            "tier_rank": backend.tier_rank,
+            "capabilities": backend.capabilities,
+            "estimated_vram_mb": backend.estimated_vram_mb,
+            "idle_observed_vram_mb": backend.idle_observed_vram_mb,
+            "peak_observed_vram_mb": backend.peak_observed_vram_mb,
+            "auto_start": backend.auto_start,
+            "auto_stop": backend.auto_stop,
+            "requires_confirmation": backend.requires_confirmation,
+            "compose_managed": backend.compose_managed,
+            "active": backend.active,
+            "ready": backend.ready,
+            "inflight": backend.inflight,
+            "models": self._compact_models(backend.models),
+            "models_error": backend.models_error,
+            "notes": backend.notes[:180],
+        }
+
+    def _host_for_llm(self, host: Optional[HostPolicy]) -> Dict[str, Any]:
+        if host is None:
+            return {}
+        total, used, free = self._host_vram_tuple(host)
+        gpus = [
+            {
+                "index": gpu.get("index"),
+                "name": gpu.get("name"),
+                "memory_total_mb": gpu.get("memory_total_mb"),
+                "memory_used_mb": gpu.get("memory_used_mb"),
+                "memory_free_mb": gpu.get("memory_free_mb"),
+                "utilization_gpu_pct": gpu.get("utilization_gpu_pct"),
+            }
+            for gpu in host.gpus[:8]
+        ]
+        containers = [
+            {"name": name, "status": status[:120]}
+            for name, status in sorted(host.containers.items())
+            if name.startswith("nexus-")
+        ][:40]
+        return {
+            "name": host.name,
+            "resource_kind": host.resource_kind,
+            "error": host.error,
+            "memory": host.memory,
+            "gpus": gpus,
+            "vram": {"total_mb": total, "used_mb": used, "free_mb": free},
+            "container_count": len(host.containers),
+            "containers": containers[:12],
+        }
+
+    def _compact_plan_for_llm(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "ok": plan.get("ok"),
+            "decision": plan.get("decision"),
+            "message": plan.get("message"),
+            "start": plan.get("start") or [],
+            "stop": plan.get("stop") or [],
+            "required_free_vram_mb": plan.get("required_free_vram_mb"),
+            "target_free_vram_mb": plan.get("target_free_vram_mb"),
+            "free_vram_mb": plan.get("free_vram_mb"),
+            "needed_vram_mb": plan.get("needed_vram_mb"),
+            "freed_vram_mb": plan.get("freed_vram_mb"),
+        }
+        conflicts = plan.get("conflicts")
+        if isinstance(conflicts, list):
+            out["conflicts"] = [
+                {
+                    "backend_class": item.get("backend_class"),
+                    "host": item.get("host"),
+                    "tier": item.get("tier"),
+                    "estimated_vram_mb": item.get("estimated_vram_mb"),
+                    "idle_observed_vram_mb": item.get("idle_observed_vram_mb"),
+                    "auto_stop": item.get("auto_stop"),
+                    "requires_confirmation": item.get("requires_confirmation"),
+                    "active": item.get("active"),
+                    "ready": item.get("ready"),
+                    "inflight": item.get("inflight"),
+                }
+                for item in conflicts
+                if isinstance(item, dict)
+            ]
+        return out
+
+    def _llm_context(
+        self,
+        *,
+        plan: Dict[str, Any],
+        purpose: str,
+        backend: BackendPolicy,
+        route_kind: str,
+        reason: str,
+        confirmed: bool,
+        allow_disruptive: bool,
+        required_free_vram_mb: int,
+    ) -> Dict[str, Any]:
+        host = self.hosts.get(backend.host)
+        same_host = [candidate for candidate in self._same_host_candidates(backend)]
+        return {
+            "task": purpose,
+            "mode": self.mode,
+            "request": {
+                "backend_class": backend.backend_class,
+                "route_kind": route_kind,
+                "reason": reason,
+                "confirmed": confirmed,
+                "allow_disruptive": allow_disruptive,
+                "required_free_vram_mb": required_free_vram_mb,
+                "target_free_vram_mb": plan.get("target_free_vram_mb"),
+                "free_vram_mb": plan.get("free_vram_mb"),
+                "needed_vram_mb": plan.get("needed_vram_mb"),
+            },
+            "deterministic_plan": self._compact_plan_for_llm(plan),
+            "target_backend": self._compact_backend_for_llm(backend),
+            "host": self._host_for_llm(host),
+            "same_host_backends": [self._compact_backend_for_llm(candidate) for candidate in same_host],
+            "guardrails": (
+                "JSON only. Use same_host backend_class IDs. Never stop inflight backends. "
+                "Without confirmation, stop only optional auto_stop backends. Start only requested backend."
+            ),
+            "expected_response": "{recommendation,decision,start,stop,confidence,rationale,risks}",
+        }
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+        raw = (text or "").strip()
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            pass
+
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            parsed = json.loads(raw[start : end + 1])
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+
+    async def _call_llm_planner(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.llm_advisor_base_url or not self.llm_advisor_model:
+            return {"error": "llm planner is not configured"}
+
+        context_text = json.dumps(context, ensure_ascii=False, separators=(",", ":"))[: self.llm_advisor_max_context_chars]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a fast local lifecycle planning assistant for Nexus AI backends. "
+                    "Choose a minimal backend start/stop plan from the provided policy and live resource state. "
+                    "Never ignore guardrails. Do not include analysis. The first character of your reply must be {. "
+                    "Return only compact JSON."
+                ),
+            },
+            {"role": "user", "content": context_text},
+        ]
+        headers = {}
+        token = _env("GATEWAY_BEARER_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            async with httpx.AsyncClient(timeout=self.llm_advisor_timeout_sec) as client:
+                response = await client.post(
+                    f"{self.llm_advisor_base_url}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": self.llm_advisor_model,
+                        "messages": messages,
+                        "temperature": 0,
+                        "max_tokens": self.llm_advisor_max_tokens,
+                    },
+                )
+            if response.status_code >= 400:
+                return {"error": f"HTTP {response.status_code}: {response.text[:1000]}", "prompt_chars": len(context_text)}
+            payload = response.json()
+            content = ""
+            finish_reason = ""
+            choices = payload.get("choices") if isinstance(payload, dict) else None
+            if isinstance(choices, list) and choices:
+                finish_reason = str(choices[0].get("finish_reason") or "")
+                msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+                if isinstance(msg, dict):
+                    content = str(msg.get("content") or "")
+            parsed = self._extract_json_object(content)
+            if parsed is None:
+                return {
+                    "error": "llm returned non-json content",
+                    "content": content[:2000],
+                    "finish_reason": finish_reason,
+                    "prompt_chars": len(context_text),
+                }
+            return {"content": content[:4000], "proposal": parsed, "finish_reason": finish_reason, "prompt_chars": len(context_text)}
+        except Exception as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+    @staticmethod
+    def _list_field(value: Any) -> List[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str) and value.strip():
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return []
+
+    def _validate_llm_proposal(
+        self,
+        proposal: Dict[str, Any],
+        *,
+        base_plan: Dict[str, Any],
+        purpose: str,
+        backend: BackendPolicy,
+        confirmed: bool,
+        allow_disruptive: bool,
+        required_free_vram_mb: int,
+    ) -> tuple[Optional[Dict[str, Any]], str]:
+        recommendation = str(proposal.get("recommendation") or "").strip().lower()
+        decision_hint = str(proposal.get("decision") or "").strip().lower()
+        if not recommendation and decision_hint in {"requires_confirmation", "blocked"}:
+            recommendation = decision_hint
+        if not recommendation and (proposal.get("start") or proposal.get("stop") or decision_hint):
+            recommendation = "apply_plan"
+        if recommendation in {"", "use_deterministic", "deterministic", "no_change"}:
+            return None, "llm chose deterministic plan"
+        if recommendation in {"requires_confirmation", "blocked"}:
+            return None, f"llm recommended {recommendation}"
+
+        requested_start = self._list_field(proposal.get("start"))
+        requested_stop = self._list_field(proposal.get("stop"))
+        start_items: List[str] = []
+        stop_items: List[str] = []
+
+        for item in requested_start:
+            if item != backend.backend_class:
+                return None, f"llm tried to start unrelated backend {item}"
+            if item not in start_items:
+                start_items.append(item)
+        if backend.active and start_items:
+            return None, "llm tried to start an already-active backend"
+        if not backend.active and not start_items and purpose in {"activation", "capacity"}:
+            start_items.append(backend.backend_class)
+
+        for item in requested_stop:
+            if item in stop_items:
+                continue
+            candidate = self.backends.get(item)
+            if candidate is None:
+                return None, f"llm requested unknown stop backend {item}"
+            if candidate.backend_class == backend.backend_class:
+                return None, "llm tried to stop the requested backend"
+            if candidate.host != backend.host:
+                return None, f"llm tried to stop backend on another host: {item}"
+            if not candidate.active:
+                return None, f"llm tried to stop inactive backend {item}"
+            if candidate.inflight > 0:
+                return None, f"llm tried to stop inflight backend {item}"
+            safe_optional = candidate.tier == "optional" and candidate.auto_stop and not candidate.requires_confirmation
+            if not allow_disruptive and not safe_optional:
+                return None, f"llm requested disruptive stop without permission: {item}"
+            if allow_disruptive:
+                if candidate.tier == "crucial" and not confirmed:
+                    return None, f"llm requested unconfirmed crucial stop: {item}"
+                if candidate.requires_confirmation and not confirmed:
+                    return None, f"llm requested unconfirmed protected stop: {item}"
+                if not candidate.auto_stop and not confirmed:
+                    return None, f"llm requested unconfirmed non-auto-stop backend: {item}"
+            stop_items.append(item)
+
+        confidence_raw = proposal.get("confidence")
+        try:
+            confidence = float(confidence_raw if confidence_raw is not None else 0.0)
+        except Exception:
+            confidence = 0.0
+        base_start = self._list_field(base_plan.get("start"))
+        base_stop = self._list_field(base_plan.get("stop"))
+        matches_base_plan = set(start_items) == set(base_start) and set(stop_items) == set(base_stop)
+        if confidence_raw in (None, "") and matches_base_plan and (start_items or stop_items):
+            confidence = self.llm_advisor_min_confidence
+        if confidence < self.llm_advisor_min_confidence:
+            return None, f"llm confidence {confidence:.2f} below threshold {self.llm_advisor_min_confidence:.2f}"
+
+        host = self.hosts.get(backend.host)
+        free_vram_mb = int(base_plan.get("free_vram_mb") or (self._host_free_vram(host) if host else 0))
+        target_free_vram_mb = int(
+            base_plan.get("target_free_vram_mb")
+            or (required_free_vram_mb + (self.target_free_vram_mb if required_free_vram_mb > 0 else 0))
+            or 0
+        )
+        needed_vram_mb = max(0, target_free_vram_mb - free_vram_mb)
+        freed_vram_mb = sum(self._freed_vram_mb(self.backends[item]) for item in stop_items)
+
+        if purpose == "activation" and backend.estimated_vram_mb > 0:
+            needed_vram_mb = max(0, backend.estimated_vram_mb - free_vram_mb + self.target_free_vram_mb)
+            target_free_vram_mb = free_vram_mb + needed_vram_mb
+
+        if needed_vram_mb > 0 and freed_vram_mb < needed_vram_mb:
+            return None, f"llm plan frees {freed_vram_mb}MB but needs {needed_vram_mb}MB"
+
+        if purpose == "capacity":
+            decision = "capacity_swap" if stop_items or start_items else "capacity_ready"
+        else:
+            decision = "swap" if stop_items else "activate"
+
+        plan = dict(base_plan)
+        plan.update(
+            {
+                "ok": True,
+                "decision": decision,
+                "message": "LLM-selected lifecycle plan validated against policy.",
+                "start": start_items,
+                "stop": stop_items,
+                "backend": self._backend_status(backend),
+                "conflicts": [self._backend_status(self.backends[item]) for item in stop_items],
+                "required_free_vram_mb": required_free_vram_mb or base_plan.get("required_free_vram_mb", 0),
+                "target_free_vram_mb": target_free_vram_mb,
+                "free_vram_mb": free_vram_mb,
+                "needed_vram_mb": needed_vram_mb,
+                "freed_vram_mb": freed_vram_mb,
+                "llm_decision": {
+                    "used": True,
+                    "model": self.llm_advisor_model,
+                    "confidence": confidence,
+                    "recommendation": recommendation or "apply_plan",
+                    "rationale": str(proposal.get("rationale") or "")[:1000],
+                    "risks": self._list_field(proposal.get("risks"))[:8],
+                    "proposal": {
+                        "decision": proposal.get("decision"),
+                        "start": start_items,
+                        "stop": stop_items,
+                    },
+                },
+            }
+        )
+        return plan, ""
+
+    async def _maybe_apply_llm_decision(
+        self,
+        plan: Dict[str, Any],
+        *,
+        purpose: str,
+        backend: BackendPolicy,
+        route_kind: str,
+        reason: str,
+        confirmed: bool,
+        allow_disruptive: bool,
+        required_free_vram_mb: int,
+    ) -> Dict[str, Any]:
+        if not self._llm_decision_enabled():
+            return plan
+        if plan.get("decision") in {"requires_confirmation", "blocked", "observe_only"} and not confirmed:
+            plan["llm_decision"] = {
+                "used": False,
+                "model": self.llm_advisor_model,
+                "error": f"deterministic plan is {plan.get('decision')}; confirmation is required before LLM selection",
+            }
+            return plan
+        context = self._llm_context(
+            plan=plan,
+            purpose=purpose,
+            backend=backend,
+            route_kind=route_kind,
+            reason=reason,
+            confirmed=confirmed,
+            allow_disruptive=allow_disruptive,
+            required_free_vram_mb=required_free_vram_mb,
+        )
+        result = await self._call_llm_planner(context)
+        if result.get("error"):
+            plan["llm_decision"] = {
+                "used": False,
+                "model": self.llm_advisor_model,
+                "error": result.get("error"),
+                "content": result.get("content", ""),
+                "finish_reason": result.get("finish_reason", ""),
+                "prompt_chars": result.get("prompt_chars"),
+            }
+            return plan
+        proposal = result.get("proposal")
+        if not isinstance(proposal, dict):
+            plan["llm_decision"] = {"used": False, "model": self.llm_advisor_model, "error": "missing proposal"}
+            return plan
+        llm_plan, error = self._validate_llm_proposal(
+            proposal,
+            base_plan=plan,
+            purpose=purpose,
+            backend=backend,
+            confirmed=confirmed,
+            allow_disruptive=allow_disruptive,
+            required_free_vram_mb=required_free_vram_mb,
+        )
+        if llm_plan is None:
+            plan["llm_decision"] = {
+                "used": False,
+                "model": self.llm_advisor_model,
+                "error": error,
+                "proposal": proposal,
+                "finish_reason": result.get("finish_reason", ""),
+                "prompt_chars": result.get("prompt_chars"),
+            }
+            return plan
+        if isinstance(llm_plan.get("llm_decision"), dict):
+            llm_plan["llm_decision"]["finish_reason"] = result.get("finish_reason", "")
+            llm_plan["llm_decision"]["prompt_chars"] = result.get("prompt_chars")
+        return llm_plan
+
     async def _execute_plan(self, plan: Dict[str, Any]) -> None:
         stop_items = [self.backends[item] for item in plan.get("stop", []) if item in self.backends]
         start_items = [self.backends[item] for item in plan.get("start", []) if item in self.backends]
@@ -815,49 +1353,52 @@ class LifecycleManager:
     async def _attach_llm_advice(self, plan: Dict[str, Any]) -> Dict[str, Any]:
         if not self.llm_advisor_enabled:
             return plan
+        if plan.get("advisor") or (isinstance(plan.get("llm_decision"), dict) and plan["llm_decision"].get("used") is True):
+            return plan
         if not self.llm_advisor_base_url or not self.llm_advisor_model:
             return plan
         summary = {
-            "plan": plan,
+            "plan": self._compact_plan_for_llm(plan),
             "mode": self.mode,
-            "hosts": [
-                {
-                    "name": host.name,
-                    "resource_kind": host.resource_kind,
-                    "error": host.error,
-                    "gpus": host.gpus,
-                }
-                for host in self.hosts.values()
-            ],
+            "hosts": [self._host_for_llm(host) for host in self.hosts.values()],
             "active_backends": [
-                self._backend_status(backend)
+                self._compact_backend_for_llm(backend)
                 for backend in self.backends.values()
                 if backend.active
             ],
         }
+        context_text = json.dumps(summary, ensure_ascii=False, separators=(",", ":"))[: self.llm_advisor_max_context_chars]
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You advise a local AI backend lifecycle manager. Reply with compact JSON containing "
-                    "recommendation, rationale, and risks. Do not ask questions."
+                    "You advise a local AI backend lifecycle manager. The deterministic plan is authoritative. "
+                    "If the plan is requires_confirmation or blocked, recommend that state and explain the operator "
+                    "confirmation or resource issue; do not present forbidden stop/start actions as approved. "
+                    "Reply only with compact JSON containing recommendation, rationale, and risks."
                 ),
             },
-            {"role": "user", "content": json.dumps(summary, ensure_ascii=False)[:12000]},
+            {"role": "user", "content": context_text},
         ]
         headers = {}
         token = _env("GATEWAY_BEARER_TOKEN")
         if token:
             headers["Authorization"] = f"Bearer {token}"
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=self.llm_advisor_timeout_sec) as client:
                 response = await client.post(
                     f"{self.llm_advisor_base_url}/chat/completions",
                     headers=headers,
-                    json={"model": self.llm_advisor_model, "messages": messages, "temperature": 0},
+                    json={
+                        "model": self.llm_advisor_model,
+                        "messages": messages,
+                        "temperature": 0,
+                        "max_tokens": self.llm_advisor_max_tokens,
+                    },
                 )
             if response.status_code >= 400:
-                plan["advisor_error"] = f"HTTP {response.status_code}"
+                plan["advisor_error"] = f"HTTP {response.status_code}: {response.text[:1000]}"
+                plan["advisor_prompt_chars"] = len(context_text)
                 return plan
             payload = response.json()
             content = ""
@@ -1112,6 +1653,9 @@ class LifecycleManager:
             "last_action": backend.last_action,
             "last_action_at": backend.last_action_at,
             "last_action_error": backend.last_action_error,
+            "models": backend.models,
+            "models_error": backend.models_error,
+            "models_checked_at": backend.models_checked_at,
             "notes": backend.notes,
         }
 
@@ -1176,7 +1720,12 @@ class LifecycleManager:
                 "memory_pressure_used_ratio": self.memory_pressure_used_ratio,
                 "target_free_vram_mb": self.target_free_vram_mb,
                 "llm_advisor_enabled": self.llm_advisor_enabled,
+                "llm_advisor_mode": self.llm_advisor_mode,
                 "llm_advisor_model": self.llm_advisor_model,
+                "llm_advisor_max_context_chars": self.llm_advisor_max_context_chars,
+                "llm_advisor_max_tokens": self.llm_advisor_max_tokens,
+                "llm_advisor_min_confidence": self.llm_advisor_min_confidence,
+                "model_probe_enabled": self.model_probe_enabled,
             },
             "hosts": [
                 {
