@@ -58,6 +58,7 @@ const COMMANDS = [
   { command: 'chatinfo', description: 'Show chat metadata' },
   { command: 'poll', description: 'Create a poll: /poll Question | option 1 | option 2' },
   { command: 'image', description: 'Generate an image: /image prompt' },
+  { command: 'scan', description: 'Run OCR against an image URL: /scan https://...' },
   { command: 'speech', description: 'Generate speech audio: /speech text' },
   { command: 'music', description: 'Generate music: /music prompt' },
 ];
@@ -380,27 +381,106 @@ async function handleMusicCommand(ctx, prompt) {
   return true;
 }
 
+function extractOcrText(payload) {
+  if (payload && typeof payload === 'object') {
+    if (typeof payload.text === 'string' && payload.text.trim()) {
+      return payload.text.trim();
+    }
+    if (Array.isArray(payload.data)) {
+      const parts = [];
+      for (const item of payload.data) {
+        if (!item || typeof item !== 'object') continue;
+        for (const key of ['text', 'raw_text', 'transcript', 'generated_text']) {
+          if (typeof item[key] === 'string' && item[key].trim()) {
+            parts.push(item[key].trim());
+            break;
+          }
+        }
+        if (Array.isArray(item.lines)) {
+          for (const line of item.lines) {
+            if (line && typeof line.text === 'string' && line.text.trim()) {
+              parts.push(line.text.trim());
+            }
+          }
+        }
+      }
+      if (parts.length) return parts.join('\n');
+    }
+  }
+  return '';
+}
+
+async function handleScanCommand(ctx, imageUrl) {
+  const url = imageUrl.trim();
+  if (!url) {
+    await ctx.reply('Usage: /scan <image_url>');
+    return true;
+  }
+
+  const res = await axios.post(
+    `${GATEWAY_BASE_URL}/v1/ocr`,
+    { image_url: url },
+    {
+      headers: {
+        Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: GATEWAY_SOCKET_TIMEOUT_MS,
+    },
+  );
+
+  let text = extractOcrText(res.data);
+  if (!text) {
+    text = JSON.stringify(res.data, null, 2);
+  }
+  const warning = res.data?._gateway?.ocr_warning;
+  if (typeof warning === 'string' && warning.trim()) {
+    text = `${text}\n\n[Scan note] ${warning.trim()}`;
+  }
+  await replyLongText(ctx, text);
+  return true;
+}
+
+function parseSlashCommand(text) {
+  const raw = String(text || '').trim();
+  const match = raw.match(/^\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+  return {
+    name: String(match[1] || '').toLowerCase(),
+    args: String(match[2] || '').trim(),
+  };
+}
+
 async function maybeHandleSlashCommand(ctx, text) {
   const raw = String(text || '').trim();
   if (!raw.startsWith('/')) {
     return false;
   }
 
-  const lower = raw.toLowerCase();
-  if (lower === '/image' || lower.startsWith('/image ')) {
-    const prompt = raw.replace(/^\/image\s*/i, '').trim();
+  const command = parseSlashCommand(raw);
+  if (!command) {
+    return false;
+  }
+
+  if (command.name === 'image') {
+    const prompt = command.args;
     await sendAck(ctx, 'Generating image…');
     return handleImageCommand(ctx, prompt);
   }
-  if (lower === '/speech' || lower.startsWith('/speech ') || lower === '/tts' || lower.startsWith('/tts ')) {
-    const prompt = raw.replace(/^\/(speech|tts)\s*/i, '').trim();
+  if (command.name === 'speech' || command.name === 'tts') {
+    const prompt = command.args;
     await sendAck(ctx, 'Synthesizing speech…');
     return handleSpeechCommand(ctx, prompt);
   }
-  if (lower === '/music' || lower.startsWith('/music ')) {
-    const prompt = raw.replace(/^\/music\s*/i, '').trim();
+  if (command.name === 'music') {
+    const prompt = command.args;
     await sendAck(ctx, 'Generating music…');
     return handleMusicCommand(ctx, prompt);
+  }
+  if (command.name === 'scan') {
+    const imageUrl = command.args;
+    await sendAck(ctx, 'Scanning image…');
+    return handleScanCommand(ctx, imageUrl);
   }
 
   return false;

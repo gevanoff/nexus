@@ -147,6 +147,67 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _normalize_ocr_text(text: str) -> tuple[str, list[str]]:
+    raw = str(text or "").strip()
+    if not raw:
+        return raw, []
+    if not _bool_env("LIGHTON_OCR_DEDUP_REPEATED_LINES", True):
+        return raw, []
+
+    lines = [line.rstrip() for line in raw.splitlines()]
+    nonempty = [line.strip() for line in lines if line.strip()]
+    if len(nonempty) < 6:
+        return raw, []
+
+    counts: Dict[str, int] = {}
+    for line in nonempty:
+        counts[line] = counts.get(line, 0) + 1
+    repeated_line, repeated_count = max(counts.items(), key=lambda item: item[1])
+    if repeated_count < 4 or repeated_count / max(1, len(nonempty)) < 0.65:
+        return raw, []
+
+    collapsed: list[str] = []
+    previous = ""
+    for line in lines:
+        normalized = line.strip()
+        if normalized and normalized == previous:
+            continue
+        collapsed.append(line)
+        previous = normalized if normalized else ""
+
+    warning = f"collapsed repeated OCR line {repeated_count} times: {repeated_line[:120]}"
+    return "\n".join(collapsed).strip(), [warning]
+
+
+def _ocr_response(
+    *,
+    text: str,
+    model_id: str,
+    raw: Any,
+    backend: str,
+    device: Optional[str] = None,
+    dtype: Optional[str] = None,
+    task: Optional[str] = None,
+) -> Dict[str, Any]:
+    normalized_text, warnings = _normalize_ocr_text(text)
+    out: Dict[str, Any] = {
+        "text": normalized_text,
+        "model": model_id,
+        "data": [{"text": normalized_text}],
+        "raw": raw,
+        "backend": backend,
+    }
+    if device:
+        out["device"] = device
+    if dtype:
+        out["dtype"] = dtype
+    if task:
+        out["task"] = task
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
 def _supported_pipeline_tasks() -> list[str]:
     try:
         from transformers.pipelines import PIPELINE_REGISTRY
@@ -235,6 +296,8 @@ def _run_lighton_native(image_path: str, request_payload: Dict[str, Any], model_
     if isinstance(request_payload.get("parameters"), dict):
         generate_kwargs.update(request_payload["parameters"])
     generate_kwargs.setdefault("max_new_tokens", max_tokens)
+    generate_kwargs.setdefault("do_sample", False)
+    generate_kwargs.setdefault("repetition_penalty", 1.05)
 
     try:
         output_ids = model.generate(**inputs, **generate_kwargs)
@@ -256,15 +319,14 @@ def _run_lighton_native(image_path: str, request_payload: Dict[str, Any], model_
     generated_ids = output_ids[0, inputs["input_ids"].shape[1]:]
     output_text = processor.decode(generated_ids, skip_special_tokens=True)
 
-    return {
-        "text": output_text,
-        "model": model_id,
-        "data": [{"text": output_text}],
-        "raw": {"output_text": output_text},
-        "backend": "lighton-native",
-        "device": device,
-        "dtype": str(dtype).replace("torch.", ""),
-    }
+    return _ocr_response(
+        text=output_text,
+        model_id=model_id,
+        raw={"output_text": output_text},
+        backend="lighton-native",
+        device=device,
+        dtype=str(dtype).replace("torch.", ""),
+    )
 
 
 def _run_ocr(image, request_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -343,6 +405,8 @@ def _run_ocr(image, request_payload: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(request_payload.get("parameters"), dict):
         params.update(request_payload["parameters"])
     params.setdefault("max_new_tokens", max_tokens)
+    params.setdefault("do_sample", False)
+    params.setdefault("repetition_penalty", 1.05)
 
     result = pipe(inputs, **params)
     text = None
@@ -353,7 +417,7 @@ def _run_ocr(image, request_payload: Dict[str, Any]) -> Dict[str, Any]:
     if not text:
         text = str(result)
 
-    return {"text": text, "model": model_id, "data": [{"text": text}], "raw": result}
+    return _ocr_response(text=text, model_id=model_id, raw=result, backend="transformers-pipeline", device=device, task=selected_task)
 
 
 def main() -> int:

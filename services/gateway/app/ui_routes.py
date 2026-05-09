@@ -45,6 +45,7 @@ from app.router import decide_route
 from app.router_cfg import router_cfg
 from app.upstreams import call_backend_chat, stream_backend_chat_as_openai
 from app.images_backend import generate_images, resolve_images_backend_class
+from app.ocr_backend import extract_ocr_text, scan_ocr
 from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
 from app import user_store
@@ -4606,56 +4607,22 @@ async def ui_chat_stream(req: Request):
                 else:
                     try:
                         pre_events.append({"type": "thinking", "thinking": "Scanning image…"})
-                        import httpx
-                        import json as _json
-
-                        base = _lighton_ocr_base_url()
-                        if not base:
-                            pre_events.append({"type": "delta", "delta": "[Scan] LightOnOCR is not configured (set LIGHTON_OCR_API_BASE_URL in the gateway env)."})
-                        else:
-                            timeout_sec = float(getattr(S, "LIGHTON_OCR_TIMEOUT_SEC", 120) or 120)
-                            timeout = httpx.Timeout(connect=10.0, read=timeout_sec, write=10.0, pool=10.0)
-                            async with httpx.AsyncClient(timeout=timeout) as client:
-                                resp = await client.post(f"{base}/v1/ocr", json={"image_url": image_url})
-                            if resp.status_code >= 400:
-                                pre_events.append({"type": "delta", "delta": f"[Scan] failed: HTTP {resp.status_code}: {resp.text}"})
-                            else:
-                                try:
-                                    data = resp.json()
-                                except Exception:
-                                    data = {"raw": resp.text}
-
-                                # Best-effort text extraction from common shapes
-                                text = None
-                                if isinstance(data, dict):
-                                    if isinstance(data.get("text"), str) and data.get("text").strip():
-                                        text = data.get("text").strip()
-                                    elif isinstance(data.get("data"), list):
-                                        parts = []
-                                        for item in data.get("data"):
-                                            if isinstance(item, dict):
-                                                t = item.get("text") or item.get("raw_text") or item.get("transcript")
-                                                if isinstance(t, str) and t.strip():
-                                                    parts.append(t.strip())
-                                                elif isinstance(item.get("lines"), list):
-                                                    for ln in item.get("lines"):
-                                                        if isinstance(ln, dict) and isinstance(ln.get("text"), str):
-                                                            parts.append(ln.get("text"))
-                                        if parts:
-                                            text = "\n".join(parts)
-
-                                if not text:
-                                    text = _json.dumps(data, ensure_ascii=False)[:2000]
-
-                                pre_events.append({"type": "delta", "delta": f"[Scan] {text}"})
-                                try:
-                                    if conversation_id:
-                                        if user is None:
-                                            ui_conversations.append_message(conversation_id, {"role": "assistant", "type": "scan", "text": text, "image_url": image_url})
-                                        else:
-                                            user_store.append_message(S.USER_DB_PATH, user_id=user.id, conversation_id=conversation_id, msg={"role": "assistant", "type": "scan", "text": text, "image_url": image_url})
-                                except Exception:
-                                    pass
+                        data = await scan_ocr({"image_url": image_url})
+                        text = extract_ocr_text(data) or json.dumps(data, ensure_ascii=False)[:2000]
+                        warning = ""
+                        if isinstance(data, dict) and isinstance(data.get("_gateway"), dict):
+                            warning = str(data["_gateway"].get("ocr_warning") or "").strip()
+                        if warning:
+                            text = f"{text}\n\n[Scan note] {warning}"
+                        pre_events.append({"type": "delta", "delta": f"[Scan] {text}"})
+                        try:
+                            if conversation_id:
+                                if user is None:
+                                    ui_conversations.append_message(conversation_id, {"role": "assistant", "type": "scan", "text": text, "image_url": image_url})
+                                else:
+                                    user_store.append_message(S.USER_DB_PATH, user_id=user.id, conversation_id=conversation_id, msg={"role": "assistant", "type": "scan", "text": text, "image_url": image_url})
+                        except Exception:
+                            pass
                     except Exception as e:
                         pre_events.append({"type": "delta", "delta": f"[Scan] failed: {type(e).__name__}: {e}"})
 
@@ -5089,50 +5056,9 @@ async def ui_scan(req: Request) -> Dict[str, Any]:
     if not image_url:
         raise HTTPException(status_code=400, detail="image_url required")
 
-    requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
-    backend_class = _resolve_ui_backend_class(
-        requested_backend_class=requested_backend_class,
-        default_backend_class=(getattr(S, "OCR_BACKEND_CLASS", "") or "").strip() or "lighton_ocr",
-        route_kind="ocr",
-    )
-    check_backend_ready(backend_class, route_kind="ocr")
-    await check_capability(backend_class, "ocr")
-    admission = get_admission_controller()
-    await admission.acquire(backend_class, "ocr")
+    backend_class = str(body.get("backend_class") or body.get("backend") or (getattr(S, "OCR_BACKEND_CLASS", "") or "lighton_ocr")).strip()
     _schedule_lifecycle_notify(backend_class, "start", "ocr")
-
     try:
-        import httpx
-
-        base = _backend_base_url(backend_class) or _lighton_ocr_base_url()
-        if not base:
-            raise HTTPException(
-                status_code=503,
-                detail=f"{backend_class} is not configured. Set its base_url in gateway config or env.",
-            )
-        timeout_sec = float(getattr(S, "LIGHTON_OCR_TIMEOUT_SEC", 120) or 120)
-        timeout = httpx.Timeout(connect=10.0, read=timeout_sec, write=10.0, pool=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(f"{base}/v1/ocr", json={"image_url": image_url})
-            if resp.status_code >= 400:
-                try:
-                    detail = resp.json()
-                except Exception:
-                    detail = resp.text
-                raise HTTPException(status_code=resp.status_code, detail=detail)
-            try:
-                data = resp.json()
-                if isinstance(data, dict):
-                    gateway_meta = data.get("_gateway") if isinstance(data.get("_gateway"), dict) else {}
-                    gateway_meta.update({"backend_class": backend_class, "base_url": base})
-                    data["_gateway"] = gateway_meta
-                return data
-            except Exception:
-                raise HTTPException(status_code=502, detail=resp.text)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ocr backend error: {type(e).__name__}: {e}")
+        return await scan_ocr(body, backend_class=backend_class)
     finally:
-        admission.release(backend_class, "ocr")
         _schedule_lifecycle_notify(backend_class, "finish", "ocr")

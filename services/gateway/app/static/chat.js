@@ -2444,7 +2444,10 @@
     }
 
     async function generateScan(image_url) {
-      if (!image_url) return;
+      if (!image_url) {
+        addMessage({ role: "system", content: "Usage: /scan <image_url>" });
+        return;
+      }
       try {
         const assistant = addMessage({ role: "assistant", content: "", meta: "Assistant" });
         assistant.contentEl.textContent = "";
@@ -2496,6 +2499,10 @@
           }
         } else {
           ocrText = String(payload || '');
+        }
+        const warning = payload?._gateway && typeof payload._gateway.ocr_warning === "string" ? payload._gateway.ocr_warning.trim() : "";
+        if (warning) {
+          ocrText = `${ocrText}\n\n[Scan note] ${warning}`;
         }
 
         renderMarkdownContent(assistant.contentEl, ocrText);

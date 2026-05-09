@@ -1,5 +1,6 @@
 (() => {
   const hostsEl = document.getElementById("hosts");
+  const coreServicesEl = document.getElementById("core_services");
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
@@ -246,6 +247,7 @@
       });
     });
     if (merged.size > 0) base.backends = [...merged.values()];
+    if (Array.isArray(lifecyclePayload?.core_services)) base.core_services = lifecyclePayload.core_services;
     if (registryPayload.alias_config) base.alias_config = registryPayload.alias_config;
     base.settings = {
       ...(registryPayload.settings && typeof registryPayload.settings === "object" ? registryPayload.settings : {}),
@@ -304,6 +306,68 @@
         card.appendChild(empty);
       }
       hostsEl.appendChild(card);
+    });
+  }
+
+  function renderCoreServices(services) {
+    if (!coreServicesEl) return;
+    coreServicesEl.innerHTML = "";
+    if (!Array.isArray(services) || !services.length) {
+      coreServicesEl.innerHTML = '<div class="hint">No core services reported.</div>';
+      return;
+    }
+    const sorted = [...services].sort((a, b) =>
+      (Number(a.status_rank ?? 9) - Number(b.status_rank ?? 9))
+      || String(a.host || "").localeCompare(String(b.host || ""))
+      || String(a.display_name || a.service_id || "").localeCompare(String(b.display_name || b.service_id || ""))
+    );
+    sorted.forEach((service) => {
+      const card = document.createElement("div");
+      card.className = `core-service-card ${service.active ? "active" : "problem"}`;
+      if (isStale(service.updated_at)) card.classList.add("stale");
+
+      const left = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "backend-name";
+      name.textContent = service.display_name || service.service_id || "Core service";
+      left.appendChild(name);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const components = Array.isArray(service.components) ? service.components.join(", ") : "";
+      meta.textContent = [service.service_id, service.host || "unknown host", components].filter(Boolean).join(" · ");
+      left.appendChild(meta);
+
+      const badges = document.createElement("div");
+      badges.className = "badges";
+      badges.appendChild(badge(service.status_label || service.status || "unknown", statusBadgeClass(service)));
+      badges.appendChild(badge(service.tier || "core", service.tier === "edge" ? "blue" : "crucial"));
+      const fresh = freshnessText(service.updated_at);
+      if (fresh) badges.appendChild(badge(fresh.replace("refreshed", "checked"), "blue"));
+      const stale = staleText(service.updated_at);
+      if (stale) badges.appendChild(badge(stale, "yellow"));
+      left.appendChild(badges);
+
+      const detailParts = [];
+      const containers = Array.isArray(service.containers) ? service.containers : [];
+      if (containers.length) {
+        detailParts.push(containers.map((item) => `${item.name}: ${item.status}`).join(" · "));
+      }
+      if (Array.isArray(service.missing_components) && service.missing_components.length) {
+        detailParts.push(`missing ${service.missing_components.join(", ")}`);
+      }
+      if (service.host_error) detailParts.push(service.host_error);
+      if (service.notes) detailParts.push(service.notes);
+      if (detailParts.length) {
+        const detail = document.createElement("div");
+        detail.className = service.active ? "meta" : "meta error";
+        detail.style.marginTop = "6px";
+        detail.textContent = detailParts.join(" · ");
+        left.appendChild(detail);
+      }
+
+      card.appendChild(left);
+      coreServicesEl.appendChild(card);
     });
   }
 
@@ -475,6 +539,7 @@
     const opts = options || {};
     updatePollInterval(payload);
     renderHosts(payload.hosts || []);
+    renderCoreServices(payload.core_services || []);
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];
     if (opts.cached) statusParts.push("showing cached data");

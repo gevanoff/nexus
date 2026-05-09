@@ -137,6 +137,16 @@ class BackendPolicy:
     models_checked_at: float = 0.0
 
 
+@dataclass
+class CoreServicePolicy:
+    service_id: str
+    display_name: str
+    host: str
+    components: List[str]
+    tier: str = "core"
+    notes: str = ""
+
+
 class EnsureRequest(BaseModel):
     backend_class: str
     route_kind: str = ""
@@ -191,6 +201,7 @@ class LifecycleManager:
         self.ssh_identity_file = _env("NEXUS_LIFECYCLE_SSH_IDENTITY", "/root/.ssh/nexus_lifecycle_ed25519")
         self.hosts: Dict[str, HostPolicy] = {}
         self.backends: Dict[str, BackendPolicy] = {}
+        self.core_services: Dict[str, CoreServicePolicy] = {}
         self._task: Optional[asyncio.Task] = None
         self._lock = asyncio.Lock()
         self._load_config()
@@ -208,6 +219,7 @@ class LifecycleManager:
         settings = policy.get("settings") if isinstance(policy.get("settings"), dict) else {}
         tiers = policy.get("tiers") if isinstance(policy.get("tiers"), dict) else {}
         policy_backends = policy.get("backends") if isinstance(policy.get("backends"), dict) else {}
+        policy_core_services = policy.get("core_services") if isinstance(policy.get("core_services"), dict) else {}
 
         self.mode = self.mode or str(settings.get("mode") or "observe").strip().lower()
         self.poll_interval_sec = max(5, int(settings.get("poll_interval_sec") or self.poll_interval_sec))
@@ -290,6 +302,21 @@ class LifecycleManager:
                 notes=str(raw_cfg.get("notes") or "").strip(),
             )
         self.backends = backends
+
+        core_services: Dict[str, CoreServicePolicy] = {}
+        for service_id, raw_cfg in policy_core_services.items():
+            if not isinstance(raw_cfg, dict):
+                continue
+            components = _as_list(raw_cfg.get("components")) or _as_list(raw_cfg.get("component"))
+            core_services[str(service_id)] = CoreServicePolicy(
+                service_id=str(service_id),
+                display_name=str(raw_cfg.get("display_name") or service_id).strip(),
+                host=str(raw_cfg.get("host") or "").strip(),
+                components=components,
+                tier=str(raw_cfg.get("tier") or "core").strip().lower(),
+                notes=str(raw_cfg.get("notes") or "").strip(),
+            )
+        self.core_services = core_services
 
     def _load_state(self) -> None:
         try:
@@ -1659,6 +1686,63 @@ class LifecycleManager:
             "notes": backend.notes,
         }
 
+    def _core_service_status(self, service: CoreServicePolicy) -> Dict[str, Any]:
+        host = self.hosts.get(service.host)
+        expected = [f"nexus-{component}" for component in service.components]
+        containers: List[Dict[str, str]] = []
+        active_by_component: Dict[str, bool] = {}
+        if host is not None:
+            for component, expected_name in zip(service.components, expected):
+                matched = [
+                    {"name": name, "status": status}
+                    for name, status in sorted(host.containers.items())
+                    if self._component_container_active(name, expected_name)
+                ]
+                containers.extend(matched)
+                active_by_component[component] = any("Up" in item["status"] for item in matched)
+
+        missing = [component for component in service.components if not active_by_component.get(component)]
+        host_error = host.error if host is not None else f"unknown host {service.host}"
+        active = bool(service.components) and not missing and not host_error
+        if host_error:
+            status = "host_error"
+            label = "Host probe failed"
+            color = "red"
+            rank = 3
+        elif active:
+            status = "active"
+            label = "Active"
+            color = "green"
+            rank = 0
+        elif containers:
+            status = "partial"
+            label = "Partial"
+            color = "yellow"
+            rank = 2
+        else:
+            status = "missing"
+            label = "Missing"
+            color = "red"
+            rank = 4
+
+        return {
+            "service_id": service.service_id,
+            "display_name": service.display_name,
+            "host": service.host,
+            "components": service.components,
+            "tier": service.tier,
+            "active": active,
+            "status": status,
+            "status_label": label,
+            "status_color": color,
+            "status_rank": rank,
+            "containers": containers,
+            "missing_components": missing,
+            "host_error": host_error,
+            "updated_at": host.updated_at if host is not None else 0.0,
+            "notes": service.notes,
+        }
+
     @staticmethod
     def _backend_lifecycle_state(backend: BackendPolicy) -> Dict[str, Any]:
         last_working_at = backend.last_ready_at or backend.last_healthy_at
@@ -1740,6 +1824,10 @@ class LifecycleManager:
                     "updated_at": host.updated_at,
                 }
                 for host in sorted(self.hosts.values(), key=lambda item: item.name)
+            ],
+            "core_services": [
+                self._core_service_status(service)
+                for service in sorted(self.core_services.values(), key=lambda item: (item.host, item.service_id))
             ],
             "backends": [self._backend_status(backend) for backend in sorted(self.backends.values(), key=lambda item: item.backend_class)],
         }

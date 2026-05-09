@@ -49,6 +49,36 @@
       "env_file": "deploy/env/.env.prod.ada2"
     }
   },
+  "core_services": {
+    "gateway": {
+      "display_name": "Gateway",
+      "host": "ai2",
+      "component": "gateway",
+      "tier": "core",
+      "notes": "Primary API, Chat UI, Resources UI, and routing plane."
+    },
+    "etcd": {
+      "display_name": "etcd",
+      "host": "ai2",
+      "component": "etcd",
+      "tier": "core",
+      "notes": "Service registry and discovery state for Nexus."
+    },
+    "lifecycle_manager": {
+      "display_name": "Lifecycle Manager",
+      "host": "ai2",
+      "component": "lifecycle-manager",
+      "tier": "core",
+      "notes": "Tracks host resources and manages backend lifecycle actions."
+    },
+    "telegram_bot": {
+      "display_name": "Telegram Bot",
+      "host": "ai2",
+      "component": "telegram-bot",
+      "tier": "core",
+      "notes": "Telegram bridge into the gateway."
+    }
+  },
   "backends": {
     "local_mlx": {
       "display_name": "MLX",

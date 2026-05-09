@@ -23,6 +23,7 @@ from app.coding_routes import router as coding_router
 from app.ui_routes import router as ui_router
 from app.images_routes import router as images_router
 from app.music_routes import router as music_router
+from app.ocr_routes import router as ocr_router
 from app import memory_v2
 from app import metrics
 from app import user_store
@@ -301,6 +302,7 @@ app.include_router(health_router)
 app.include_router(openai_router)
 app.include_router(images_router)
 app.include_router(music_router)
+app.include_router(ocr_router)
 from app.tts_routes import router as tts_router
 app.include_router(tts_router)
 from app.transcription_routes import router as transcription_router
