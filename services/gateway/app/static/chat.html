@@ -124,14 +124,19 @@
       }
       .thinking-summary::-webkit-details-marker { display: none; }
       .thinking-summary::before {
-        content: ">";
+        content: "";
         display: inline-block;
-        margin-right: 8px;
-        transform: rotate(0deg);
-        transition: transform 0.14s ease;
+        width: 7px;
+        height: 7px;
+        margin-right: 9px;
+        border-right: 2px solid #8fa2ba;
+        border-bottom: 2px solid #8fa2ba;
+        transform: rotate(-45deg);
+        transition: transform 0.14s ease, border-color 0.14s ease;
       }
+      .thinking-summary:hover::before { border-color: #6fb8ff; }
       .thinking-panel[open] .thinking-summary::before {
-        transform: rotate(90deg);
+        transform: rotate(45deg);
       }
       .thinking-body {
         white-space: pre-wrap;
@@ -219,7 +224,25 @@
       .apps-menu .menu-item:hover { background: rgba(231,237,246,0.03); }
       .apps-menu .menu-sep { height: 1px; background: rgba(231,237,246,0.04); margin: 6px 0; }
       .apps-btn { display:inline-flex; align-items:center; gap:8px; }
-      .apps-btn .caret { font-size: 12px; color: #93a4ba; margin-left: 4px; }
+      .apps-btn .caret {
+        display:inline-flex;
+        width:10px;
+        height:10px;
+        margin-left:2px;
+        align-items:center;
+        justify-content:center;
+      }
+      .apps-btn .caret::before {
+        content:"";
+        width:6px;
+        height:6px;
+        border-right:2px solid #93a4ba;
+        border-bottom:2px solid #93a4ba;
+        transform:rotate(45deg);
+        transition:transform 0.16s ease, border-color 0.16s ease;
+      }
+      .apps-btn:hover .caret::before { border-color:#6fb8ff; }
+      .apps-btn[aria-expanded="true"] .caret::before { transform:rotate(225deg); }
       .apps-menu[aria-hidden="true"] { display: none; }
       .apps-menu[aria-hidden="false"] { display: block; }
       .status-panel {
@@ -396,9 +419,9 @@
           </a>
           <div style="position:relative;">
             <button id="appsBtn" class="pill apps-btn" type="button" aria-expanded="false" data-ui-role="menu">
-              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg></span>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></span>
               <span class="apps-label">Apps</span>
-              <span class="caret" aria-hidden="true">▾</span>
+              <span class="caret" aria-hidden="true"></span>
             </button>
             <div id="appsMenu" class="apps-menu" hidden aria-hidden="true">
               <a class="menu-item" href="/ui/image">Image UI</a>

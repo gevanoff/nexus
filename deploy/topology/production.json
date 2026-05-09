@@ -115,6 +115,7 @@
         "gateway",
         "etcd",
         "lifecycle-manager",
+        "telegram-bot",
         "tts",
         "luxtts"
       ],

@@ -19,6 +19,7 @@
 
 ## Commit and distribution policy
 - If code updates require user changes on test/production hosts, commit and push to `origin`.
+- If you would otherwise mention that changes have not yet been committed and pushed, commit and push them instead whenever it is safe and within the user's requested scope.
 - Do not stop at recommendations when practical code/docs updates can be completed safely.
 
 ## Cross-platform script guidance (Linux + macOS)

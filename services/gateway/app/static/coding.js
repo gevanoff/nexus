@@ -25,8 +25,6 @@
     statusBtn: document.getElementById("statusBtn"),
     diffBtn: document.getElementById("diffBtn"),
     briefBtn: document.getElementById("briefBtn"),
-    agentRun: document.getElementById("agentRun"),
-    agentStop: document.getElementById("agentStop"),
     agentStatus: document.getElementById("agentStatus"),
     agentMeta: document.getElementById("agentMeta"),
     agentLog: document.getElementById("agentLog"),
@@ -86,6 +84,10 @@
       if (button.closest(".focused-nav-wrap")) return;
       button.disabled = state.busy;
     });
+    if (!state.busy) {
+      renderTasks();
+      renderSelected();
+    }
   }
 
   async function fetchJson(url, options) {
@@ -139,6 +141,11 @@
     return state.tasks.find((task) => task && task.id === state.selectedId) || null;
   }
 
+  function taskById(taskId) {
+    const id = String(taskId || "");
+    return state.tasks.find((task) => task && task.id === id) || null;
+  }
+
   function agentInfo(task) {
     return task && task.agent && typeof task.agent === "object" ? task.agent : { status: "idle", events: [] };
   }
@@ -164,6 +171,16 @@
       .map((item) => `# ${item.title} @ ${item.time}\n${item.body || ""}`.trim())
       .join("\n\n---\n\n");
     els.output.scrollTop = els.output.scrollHeight;
+  }
+
+  async function runTaskButtonAction(event, action) {
+    event.stopPropagation();
+    try {
+      setStatus("");
+      await action();
+    } catch (error) {
+      setStatus(String(error && error.message ? error.message : error), true);
+    }
   }
 
   function setPublishFeedback(text, kind) {
@@ -302,9 +319,10 @@
       return;
     }
     for (const task of tasks) {
-      const button = document.createElement("button");
-      button.type = "button";
+      const button = document.createElement("div");
       button.className = `task-item ${task.id === state.selectedId ? "active" : ""}`;
+      button.setAttribute("role", "button");
+      button.tabIndex = 0;
       const status = document.createElement("span");
       status.className = `badge ${badgeClass(task.status)}`;
       status.textContent = task.status || "unknown";
@@ -334,17 +352,46 @@
       button.appendChild(meta);
       if (commitMeta.textContent) button.appendChild(commitMeta);
       if (prompt.textContent) button.appendChild(prompt);
+      const actions = document.createElement("div");
+      actions.className = "task-actions";
+      const runBtn = document.createElement("button");
+      runBtn.type = "button";
+      runBtn.className = "task-icon-btn task-run-btn";
+      runBtn.title = "Run agent for this workspace";
+      runBtn.setAttribute("aria-label", "Run agent for this workspace");
+      runBtn.disabled = state.busy || agentIsActive(task);
+      runBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M8 5v14l11-7z'/></svg>";
+      runBtn.addEventListener("click", (event) => runTaskButtonAction(event, () => startAgentRun(task.id)));
+      const stopBtn = document.createElement("button");
+      stopBtn.type = "button";
+      stopBtn.className = "task-icon-btn task-stop-btn";
+      stopBtn.title = "Stop agent for this workspace";
+      stopBtn.setAttribute("aria-label", "Stop agent for this workspace");
+      stopBtn.disabled = state.busy || !agentIsActive(task);
+      stopBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M7 7h10v10H7z'/></svg>";
+      stopBtn.addEventListener("click", (event) => runTaskButtonAction(event, () => stopAgentRun(task.id)));
       const trashBtn = document.createElement("button");
       trashBtn.type = "button";
-      trashBtn.className = "task-delete-btn";
+      trashBtn.className = "task-icon-btn task-delete-btn";
       trashBtn.title = "Delete workspace";
+      trashBtn.setAttribute("aria-label", "Delete workspace");
       trashBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M3 6h18v2H3V6zm4 4v8a2 2 0 002 2h6a2 2 0 002-2V10h-2v8h-6v-8H7zm2-4h6V5a1 1 0 00-1-1h-4a1 1 0 00-1 1v1z'/></svg>";
       trashBtn.addEventListener("click", (event) => {
         event.stopPropagation();
         deleteTask(task.id);
       });
-      button.appendChild(trashBtn);
+      actions.appendChild(runBtn);
+      actions.appendChild(stopBtn);
+      actions.appendChild(trashBtn);
+      button.appendChild(actions);
       button.addEventListener("click", () => selectTask(task.id));
+      button.addEventListener("keydown", (event) => {
+        if (event.target !== button) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectTask(task.id);
+        }
+      });
       els.tasks.appendChild(button);
     }
   }
@@ -357,8 +404,6 @@
       els.statusBtn,
       els.diffBtn,
       els.briefBtn,
-      els.agentRun,
-      els.agentStop,
       els.runCommand,
       els.commitBtn,
       els.pushBtn,
@@ -370,8 +415,6 @@
     ].forEach((button) => {
       if (button) button.disabled = disabled || state.busy;
     });
-    if (els.agentRun) els.agentRun.disabled = disabled || state.busy || activeAgent;
-    if (els.agentStop) els.agentStop.disabled = disabled || state.busy || !activeAgent;
     [els.runCommand, els.commitBtn, els.pushBtn, els.prBtn, els.writeFile].forEach((button) => {
       if (button && activeAgent) button.disabled = true;
     });
@@ -710,9 +753,10 @@
     }
   }
 
-  async function startAgentRun() {
-    const task = selectedTask();
+  async function startAgentRun(taskId) {
+    const task = taskId ? taskById(taskId) : selectedTask();
     if (!task) return;
+    state.selectedId = task.id;
     setBusy(true);
     try {
       setStatus("Starting coding agent...");
@@ -760,9 +804,10 @@
     }
   }
 
-  async function stopAgentRun() {
-    const task = selectedTask();
+  async function stopAgentRun(taskId) {
+    const task = taskId ? taskById(taskId) : selectedTask();
     if (!task) return;
+    state.selectedId = task.id;
     setBusy(true);
     try {
       setStatus("Stopping coding agent...");
@@ -1063,8 +1108,6 @@
   wire("statusBtn", runStatus);
   wire("diffBtn", runDiff);
   wire("briefBtn", runAgentBrief);
-  wire("agentRun", startAgentRun);
-  wire("agentStop", stopAgentRun);
   wire("sendWorkspaceMessage", sendWorkspaceMessage);
   wire("runCommand", runCommand);
   wire("commitBtn", commitTask);

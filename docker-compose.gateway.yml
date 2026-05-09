@@ -18,7 +18,7 @@ services:
       # Server configuration
       - GATEWAY_HOST=0.0.0.0
       - GATEWAY_PORT=8800
-      - GATEWAY_BEARER_TOKEN=${GATEWAY_BEARER_TOKEN:-change-me-in-production}
+      - GATEWAY_BEARER_TOKEN=${GATEWAY_BEARER_TOKEN:?GATEWAY_BEARER_TOKEN must be set in .env}
       - ETCD_ENABLED=${ETCD_ENABLED:-true}
       - ETCD_URL=${ETCD_URL:-http://etcd:2379}
       - ETCD_PREFIX=${ETCD_PREFIX:-/nexus/services/}

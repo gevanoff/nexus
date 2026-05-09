@@ -62,10 +62,6 @@ const COMMANDS = [
   { command: 'music', description: 'Generate music: /music prompt' },
 ];
 
-bot.api.setMyCommands(COMMANDS).catch((err) => {
-  console.error('Failed to set bot commands:', err.message);
-});
-
 function shouldLog(level) {
   const levels = ['error', 'warn', 'info', 'debug'];
   const current = levels.indexOf(LOG_LEVEL);
@@ -554,5 +550,22 @@ bot.catch((err) => {
   });
 });
 
-bot.start();
-console.log('Telegram gateway bot is running.');
+async function startBot() {
+  const me = await bot.api.getMe();
+  log('info', 'Telegram bot authenticated', {
+    botId: me.id,
+    username: me.username,
+  });
+
+  await bot.api.setMyCommands(COMMANDS);
+  bot.start();
+  console.log('Telegram gateway bot is running.');
+}
+
+startBot().catch((err) => {
+  log('error', 'Telegram bot startup failed', {
+    error: err?.message || String(err),
+    stack: err?.stack,
+  });
+  process.exit(1);
+});

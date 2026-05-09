@@ -49,6 +49,7 @@ from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
 from app import user_store
 from app import agent_tasks
+from app.auth import configured_static_bearer_tokens
 from app.agent_runtime_v1 import tools_for_tier
 from app.tools_bus import TOOL_SCHEMAS
 
@@ -753,11 +754,7 @@ def _session_token_from_req(req: Request) -> str:
 
 
 def _allowed_static_bearer_tokens() -> set[str]:
-    raw = (getattr(S, "GATEWAY_BEARER_TOKENS", "") or "").strip()
-    if raw:
-        return {p.strip() for p in raw.split(",") if p.strip()}
-    token = (getattr(S, "GATEWAY_BEARER_TOKEN", "") or "").strip()
-    return {token} if token else set()
+    return configured_static_bearer_tokens()
 
 
 def _static_bearer_user(token: str) -> Optional[user_store.User]:

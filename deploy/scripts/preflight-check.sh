@@ -404,6 +404,36 @@ else
   env_file_for_ports=""
 fi
 
+check_compose_extra_host_env() {
+  local key value
+  local missing=()
+  local invalid=()
+
+  while IFS= read -r key; do
+    [[ -n "${key:-}" ]] || continue
+    value="$(ns_env_get "$env_file_for_ports" "$key" "")"
+    if [[ -z "${value:-}" ]]; then
+      missing+=("$key")
+    elif ! ns_is_valid_ipv4 "$value"; then
+      invalid+=("$key")
+    fi
+  done < <(ns_gateway_extra_host_env_keys)
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    fail "Compose extra_hosts env missing: ${missing[*]}"
+  fi
+  if [[ ${#invalid[@]} -gt 0 ]]; then
+    fail "Compose extra_hosts env invalid IPv4 value(s): ${invalid[*]}"
+  fi
+  if [[ ${#missing[@]} -eq 0 && ${#invalid[@]} -eq 0 ]]; then
+    ok "Compose extra_hosts env configured"
+  fi
+}
+
+if component_selected gateway || component_selected lifecycle-manager || component_selected nginx; then
+  check_compose_extra_host_env
+fi
+
 check_port_required() {
   local key="$1"
   local default_port="$2"

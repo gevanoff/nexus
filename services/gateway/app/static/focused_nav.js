@@ -72,7 +72,25 @@
         text-decoration: none;
       }
       .focused-nav-menu a:hover { background: rgba(231,237,246,0.06); text-decoration: none; }
-      .focused-nav-caret { color: #93a4ba; font-size: 12px; margin-left: 2px; }
+      .focused-nav-caret {
+        display: inline-flex;
+        width: 10px;
+        height: 10px;
+        margin-left: 1px;
+        align-items: center;
+        justify-content: center;
+      }
+      .focused-nav-caret::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-right: 2px solid #93a4ba;
+        border-bottom: 2px solid #93a4ba;
+        transform: rotate(45deg);
+        transition: transform 0.16s ease, border-color 0.16s ease;
+      }
+      .pill:hover .focused-nav-caret::before { border-color: #6fb8ff; }
+      .pill[aria-expanded="true"] .focused-nav-caret::before { transform: rotate(225deg); }
       .focused-nav-current { opacity: 0.72; pointer-events: none; }
       .focused-api-status {
         display: inline-flex;
@@ -117,6 +135,7 @@
       Chat: '<path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v5A3.5 3.5 0 0 1 16.5 14H10l-4.5 4v-4A3.5 3.5 0 0 1 4 10.5v-5Z"/>',
       Gear: '<path d="M12 8.3A3.7 3.7 0 1 0 12 15.7A3.7 3.7 0 0 0 12 8.3Z"/><path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.4-2.4 1a8 8 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.6A8 8 0 0 0 7 6.6l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.4 2.4-1a8 8 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a8 8 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.5Z"/>',
       Grid: '<path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/>',
+      Menu: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>',
       Refresh: '<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.4 6.4L4 8.7"/><path d="M5.8 15A7 7 0 0 0 17.6 17.6L20 15.3"/>',
       Resources: '<path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
     };
@@ -262,12 +281,11 @@
 
     const appsWrap = document.createElement("div");
     appsWrap.className = "focused-nav-wrap";
-    const appsBtn = button("Apps", "Grid");
+    const appsBtn = button("Apps", "Menu");
     appsBtn.setAttribute("aria-expanded", "false");
     const caret = document.createElement("span");
     caret.className = "focused-nav-caret";
     caret.setAttribute("aria-hidden", "true");
-    caret.textContent = "v";
     appsBtn.appendChild(caret);
 
     const menu = document.createElement("div");

@@ -83,28 +83,55 @@
         border:1px solid rgba(231,237,246,0.10);
         background: rgba(13,20,29,0.72);
         border-radius:8px;
-        padding:10px;
+        padding:10px 112px 10px 10px;
         position:relative;
+        color:var(--text);
+        cursor:pointer;
       }
+      .task-item:hover { border-color: rgba(111,184,255,0.34); }
+      .task-item:focus-visible { outline: 2px solid rgba(111,184,255,0.62); outline-offset: 2px; }
       .task-item.active { border-color:rgba(111,184,255,0.58); background: rgba(24,58,91,0.26); }
-      .task-delete-btn {
+      .task-actions {
         position:absolute;
         top:8px;
         right:8px;
+        display:flex;
+        gap:6px;
+      }
+      .task-icon-btn {
         width:28px;
         height:28px;
         display:inline-flex;
         align-items:center;
         justify-content:center;
-        border:1px solid rgba(255,127,143,0.25);
         border-radius:6px;
-        background:rgba(150,20,38,0.15);
-        color:#ff7f8f;
         padding:0;
         cursor:pointer;
+        box-shadow:none;
+      }
+      .task-icon-btn:disabled {
+        opacity:0.36;
+        cursor:default;
+      }
+      .task-run-btn {
+        border:1px solid rgba(88,214,141,0.25);
+        background:rgba(0,120,72,0.14);
+        color:#9ef0bf;
+      }
+      .task-run-btn:hover { background:rgba(0,120,72,0.28); border-color:rgba(88,214,141,0.55); }
+      .task-stop-btn {
+        border:1px solid rgba(240,200,90,0.25);
+        background:rgba(145,103,10,0.14);
+        color:#f5dda0;
+      }
+      .task-stop-btn:hover { background:rgba(145,103,10,0.30); border-color:rgba(240,200,90,0.55); }
+      .task-delete-btn {
+        border:1px solid rgba(255,127,143,0.25);
+        background:rgba(150,20,38,0.15);
+        color:#ff7f8f;
       }
       .task-delete-btn:hover { background:rgba(150,20,38,0.35); border-color:rgba(255,127,143,0.55); }
-      .task-delete-btn svg { width:14px; height:14px; fill:currentColor; }
+      .task-icon-btn svg { width:14px; height:14px; fill:currentColor; }
       .badge { display:inline-flex; align-items:center; border-radius:999px; border:1px solid var(--border); padding:3px 7px; font-size:11px; color:#cfe0f7; }
       .badge.ready { border-color:rgba(88,214,141,0.54); color:#a5f3c7; background:rgba(0,120,72,0.18); }
       .badge.error { border-color:rgba(255,127,143,0.54); color:#ffc3cb; background:rgba(150,20,38,0.20); }
@@ -125,11 +152,19 @@
       }
       details.subpanel > summary::-webkit-details-marker { display:none; }
       details.subpanel > summary::before {
-        content:">";
+        content:"";
+        width:8px;
+        height:8px;
+        border-right:2px solid var(--muted);
+        border-bottom:2px solid var(--muted);
+        transform:rotate(-45deg);
+        transition:transform 0.16s ease, border-color 0.16s ease;
         color:var(--muted);
-        margin-right:2px;
+        margin:0 2px 0 1px;
+        flex:0 0 auto;
       }
-      details.subpanel[open] > summary::before { content:"v"; }
+      details.subpanel > summary:hover::before { border-color:var(--accent); }
+      details.subpanel[open] > summary::before { transform:rotate(45deg); }
       .details-body { padding:0 10px 10px; }
       .change-summary { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
       .change-chip { border-radius:999px; border:1px solid var(--border); padding:2px 7px; font-size:11px; }
@@ -310,8 +345,6 @@
               <button id="statusBtn" type="button" data-ui-role="secondary">Git status</button>
               <button id="diffBtn" type="button" data-ui-role="secondary">Diff</button>
               <button id="briefBtn" type="button" data-ui-role="secondary">Agent brief</button>
-              <button id="agentRun" type="button" data-ui-role="action">Run agent</button>
-              <button id="agentStop" type="button" data-ui-role="danger" data-danger="true">Stop agent</button>
               <button id="copyOutput" type="button" data-ui-role="secondary">Copy output</button>
               </div>
           </div>
@@ -410,7 +443,7 @@
       </div>
     </main>
     <script src="/static/auth_client.js?v=5"></script>
-    <script src="/static/focused_nav.js?v=4"></script>
-    <script src="/static/coding.js?v=7"></script>
+    <script src="/static/focused_nav.js?v=5"></script>
+    <script src="/static/coding.js?v=8"></script>
   </body>
 </html>

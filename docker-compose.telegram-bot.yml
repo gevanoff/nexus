@@ -15,6 +15,7 @@ services:
       - MAX_HISTORY=${TELEGRAM_MAX_HISTORY:-20}
       - LOG_LEVEL=${TELEGRAM_LOG_LEVEL:-info}
       - TELEGRAM_MAX_MESSAGE=${TELEGRAM_MAX_MESSAGE:-3900}
+      - TELEGRAM_HEALTHCHECK_TIMEOUT_MS=${TELEGRAM_HEALTHCHECK_TIMEOUT_MS:-5000}
     networks:
       - nexus
     restart: unless-stopped

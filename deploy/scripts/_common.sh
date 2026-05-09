@@ -100,6 +100,28 @@ ns_env_get() {
   echo "$value"
 }
 
+ns_is_valid_ipv4() {
+  # Usage: ns_is_valid_ipv4 <value>
+  local value="$1"
+  local a b c d octet
+
+  [[ "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r a b c d <<<"$value"
+  for octet in "$a" "$b" "$c" "$d"; do
+    [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+    (( octet >= 0 && octet <= 255 )) || return 1
+  done
+}
+
+ns_gateway_extra_host_env_keys() {
+  printf '%s\n' \
+    NEXUS_HOST_AI1_IP \
+    NEXUS_HOST_AI2_IP \
+    NEXUS_HOST_AI3_IP \
+    NEXUS_HOST_ADA2_IP \
+    NEXUS_HOST_ADADA_IP
+}
+
 ns_apply_env_overlay_file() {
   # Merge a sibling dotenv overlay into a materialized env file.
   # Usage: ns_apply_env_overlay_file <env_file> [overlay_file]

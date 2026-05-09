@@ -11,6 +11,8 @@ from app import user_store
 
 logger = logging.getLogger(__name__)
 
+INSECURE_STATIC_BEARER_TOKENS = {"change-me-in-production"}
+
 
 def _peer_ip(req: Request) -> str:
     try:
@@ -224,12 +226,24 @@ def token_policy_for_token(token: str) -> dict:
         return {}
 
 
-def _allowed_bearer_tokens() -> set[str]:
+def _valid_static_bearer_tokens(tokens: list[str]) -> set[str]:
+    return {
+        token
+        for token in (t.strip() for t in tokens)
+        if token and token not in INSECURE_STATIC_BEARER_TOKENS
+    }
+
+
+def configured_static_bearer_tokens() -> set[str]:
     raw = (getattr(S, "GATEWAY_BEARER_TOKENS", "") or "").strip()
     if raw:
-        return {p.strip() for p in raw.split(",") if p.strip()}
+        return _valid_static_bearer_tokens(raw.split(","))
     # Back-compat: single-token mode.
-    return {S.GATEWAY_BEARER_TOKEN}
+    return _valid_static_bearer_tokens([getattr(S, "GATEWAY_BEARER_TOKEN", "") or ""])
+
+
+def _allowed_bearer_tokens() -> set[str]:
+    return configured_static_bearer_tokens()
 
 
 def require_bearer(req: Request) -> None:

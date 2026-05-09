@@ -16,6 +16,7 @@ NS_AUTO_YES="false"
 ENV_FILE=""
 SELECTED_COMPONENTS=()
 COMPONENTS_SET="false"
+EXPLICIT_COMPONENTS_SET="false"
 TOPOLOGY_FILE=""
 TOPOLOGY_HOST=""
 
@@ -207,10 +208,12 @@ parse_args() {
         shift 2
         ;;
       --component)
+        EXPLICIT_COMPONENTS_SET="true"
         add_component_selection "${2:-}"
         shift 2
         ;;
       --components)
+        EXPLICIT_COMPONENTS_SET="true"
         add_component_selection "${2:-}"
         shift 2
         ;;
@@ -321,6 +324,79 @@ if [[ ${#compose_files[@]} -eq 0 ]]; then
   exit 1
 fi
 
+component_selected() {
+  local wanted="$1"
+  local selected
+  for selected in "${SELECTED_COMPONENTS[@]:-}"; do
+    if [[ "$selected" == "$wanted" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+topology_essential_components() {
+  [[ "${NEXUS_ENSURE_ESSENTIAL_COMPONENTS:-true}" == "true" ]] || return 0
+  case "${TOPOLOGY_HOST:-}" in
+    ai2)
+      printf '%s\n' etcd lifecycle-manager telegram-bot
+      ;;
+  esac
+}
+
+component_service_name() {
+  case "$1" in
+    lifecycle-manager) echo "lifecycle-manager" ;;
+    telegram-bot) echo "telegram-bot" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+ensure_topology_essential_components() {
+  local env_file="$1"
+  local essential_components=()
+  local component compose_file service_name compose_file_seen existing_compose_file
+  while IFS= read -r component; do
+    [[ -n "${component:-}" ]] || continue
+    essential_components+=("$component")
+  done < <(topology_essential_components)
+
+  [[ ${#essential_components[@]} -gt 0 ]] || return 0
+
+  local essential_compose_files=()
+  local essential_services=()
+  essential_compose_files+=("docker-compose.gateway.yml")
+  for component in "${essential_components[@]}"; do
+    while IFS= read -r compose_file; do
+      [[ -n "${compose_file:-}" ]] || continue
+      compose_file_seen="false"
+      for existing_compose_file in "${essential_compose_files[@]}"; do
+        if [[ "$existing_compose_file" == "$compose_file" ]]; then
+          compose_file_seen="true"
+          break
+        fi
+      done
+      if [[ "$compose_file_seen" != "true" ]]; then
+        essential_compose_files+=("$compose_file")
+      fi
+    done < <(compose_files_for_component "$component")
+    service_name="$(component_service_name "$component")"
+    essential_services+=("$service_name")
+  done
+
+  local essential_compose_args=()
+  for compose_file in "${essential_compose_files[@]}"; do
+    essential_compose_args+=("-f" "$compose_file")
+  done
+
+  ns_print_header "Ensuring essential topology containers"
+  ns_compose --env-file "$env_file" "${essential_compose_args[@]}" up -d --build --no-recreate "${essential_services[@]}"
+
+  if [[ -f "$ROOT_DIR/deploy/scripts/check-essential-containers.sh" ]]; then
+    /bin/bash "$ROOT_DIR/deploy/scripts/check-essential-containers.sh" --wait "${NEXUS_ESSENTIAL_WAIT_SECONDS:-90}"
+  fi
+}
+
 env_file="${ENV_FILE:-$ROOT_DIR/.env}"
 
 if [[ -z "${ENV_FILE:-}" ]]; then
@@ -377,6 +453,31 @@ ns_prepare_sops_env_overlays "$ROOT_DIR" "$environment" "$env_file" "${TOPOLOGY_
 ns_apply_env_overlay_file "$env_file" "$(ns_sops_generated_common_overlay "$env_file")"
 ns_apply_env_overlay_file "$env_file" "$(ns_sops_generated_specific_overlay "$env_file")"
 ns_apply_env_overlay_file "$env_file" "${env_file}.local"
+
+if component_selected gateway || component_selected lifecycle-manager || component_selected nginx; then
+  missing_extra_host_keys=()
+  invalid_extra_host_keys=()
+  while IFS= read -r key; do
+    [[ -n "${key:-}" ]] || continue
+    value="$(ns_env_get "$env_file" "$key" "")"
+    if [[ -z "${value:-}" ]]; then
+      missing_extra_host_keys+=("$key")
+    elif ! ns_is_valid_ipv4 "$value"; then
+      invalid_extra_host_keys+=("$key")
+    fi
+  done < <(ns_gateway_extra_host_env_keys)
+  if [[ ${#missing_extra_host_keys[@]} -gt 0 || ${#invalid_extra_host_keys[@]} -gt 0 ]]; then
+    if [[ ${#missing_extra_host_keys[@]} -gt 0 ]]; then
+      ns_print_error "Selected compose files require these env vars for extra_hosts: ${missing_extra_host_keys[*]}"
+    fi
+    if [[ ${#invalid_extra_host_keys[@]} -gt 0 ]]; then
+      ns_print_error "Selected compose files have invalid IPv4 values for: ${invalid_extra_host_keys[*]}"
+    fi
+    ns_print_error "Add the required host IPs to ${env_file}, its .local overlay, or its generated SOPS overlay before deploying."
+    exit 1
+  fi
+fi
+
 bind_env_sync_mode="preserve"
 if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   bind_env_sync_mode="refresh"
@@ -404,7 +505,8 @@ if [[ -x "$ROOT_DIR/deploy/scripts/preflight-check.sh" ]]; then
   preflight_args=(--mode deploy --env-file "$env_file")
   if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
     preflight_args+=(--topology-host "$TOPOLOGY_HOST" --topology-file "$topology_file")
-  elif [[ ${#SELECTED_COMPONENTS[@]} -gt 0 ]]; then
+  fi
+  if [[ ${#SELECTED_COMPONENTS[@]} -gt 0 ]]; then
     preflight_args+=(--components "$(IFS=,; echo "${SELECTED_COMPONENTS[*]}")")
   fi
   "$ROOT_DIR/deploy/scripts/preflight-check.sh" "${preflight_args[@]}"
@@ -423,7 +525,12 @@ printf 'Compose files: %s\n' "${compose_files[*]}"
 up_args=(up -d --build)
 if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   up_args+=(--force-recreate)
-  up_args+=(--remove-orphans)
+  if [[ "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then
+    ns_print_warn "Skipping --remove-orphans for an explicit component-scoped topology deploy."
+  else
+    up_args+=(--remove-orphans)
+  fi
 fi
 
 ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}"
+ensure_topology_essential_components "$env_file"
