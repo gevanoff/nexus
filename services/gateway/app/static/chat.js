@@ -2137,6 +2137,11 @@
         await generateImage(prompt || '', {});
         return;
       }
+      if (lower === '/music' || lower.startsWith('/music ')) {
+        const body = { style: String(userText || "").replace(/^\/music\s*/i, '').trim() };
+        await generateMusic(body);
+        return;
+      }
       if (lower === '/clone' || lower.startsWith('/clone ')) {
         try { window.open('/ui/voice-clone', '_blank', 'noopener'); } catch (e) {}
         addMessage({ role: 'system', content: 'Opened Voice Clone UI in a new tab.' });
@@ -2147,9 +2152,16 @@
         await generateScan(image_url || '');
         return;
       }
-      if (lower === '/speech' || lower.startsWith('/speech ') || lower.startsWith('/tts ')) {
+      if (lower === '/speech' || lower.startsWith('/speech ') || lower === '/tts' || lower.startsWith('/tts ')) {
         const prompt = String(userText || "").replace(/^\/(speech|tts)\s*/i, '').trim();
         await generateSpeech(prompt || '');
+        return;
+      }
+      if (lower === '/video' || lower.startsWith('/video ')) {
+        const prompt = String(userText || "").replace(/^\/video\s*/i, '').trim();
+        const url = prompt ? `/ui/video?prompt=${encodeURIComponent(prompt)}` : '/ui/video';
+        try { window.open(url, '_blank', 'noopener'); } catch (e) { window.location.href = url; }
+        addMessage({ role: 'system', content: 'Opened Video UI in a new tab.' });
         return;
       }
       if (lower === '/code' || lower.startsWith('/code ')) {
@@ -2642,9 +2654,28 @@
           addMessage({ role: 'system', content: 'Opened Voice Clone UI in a new tab.' });
           return;
         }
-        if (lower === '/speech' || lower.startsWith('/speech ') || lower.startsWith('/tts ')) {
+        if (lower === '/scan' || lower.startsWith('/scan ')) {
+          const image_url = text.replace(/^\/scan\s*/i, '').trim();
+          await generateScan(image_url || '');
+          return;
+        }
+        if (lower === '/speech' || lower.startsWith('/speech ') || lower === '/tts' || lower.startsWith('/tts ')) {
           const prompt = text.replace(/^\/(speech|tts)\s*/i, '').trim();
           await generateSpeech(prompt || '');
+          return;
+        }
+        if (lower === '/video' || lower.startsWith('/video ')) {
+          const prompt = text.replace(/^\/video\s*/i, '').trim();
+          const url = prompt ? `/ui/video?prompt=${encodeURIComponent(prompt)}` : '/ui/video';
+          try { window.open(url, '_blank', 'noopener'); } catch (e) { window.location.href = url; }
+          addMessage({ role: 'system', content: 'Opened Video UI in a new tab.' });
+          return;
+        }
+        if (lower === '/code' || lower.startsWith('/code ')) {
+          const prompt = text.replace(/^\/code\s*/i, '').trim();
+          const url = prompt ? `/ui/coding?prompt=${encodeURIComponent(prompt)}` : '/ui/coding';
+          try { window.open(url, '_blank', 'noopener'); } catch (e) { window.location.href = url; }
+          addMessage({ role: 'system', content: 'Opened Coding Workspaces in a new tab.' });
           return;
         }
 

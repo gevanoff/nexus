@@ -4151,6 +4151,17 @@ async def _stream_ui_chat(
         admission.release(backend_class, "chat")
 
 
+async def _stream_ui_command_events(pre_events: list | None = None):
+    if pre_events:
+        for ev in pre_events:
+            try:
+                yield sse(ev)
+            except Exception:
+                continue
+    yield sse({"type": "done"})
+    yield sse_done()
+
+
 def _conversation_payload_to_chat_messages(convo: Dict[str, Any]) -> list[ChatMessage]:
     msgs: list[ChatMessage] = []
     include_prior_context = bool(getattr(S, "UI_CHAT_INCLUDE_PRIOR_CONTEXT", False))
@@ -4421,17 +4432,20 @@ async def ui_chat_stream(req: Request):
     # Collect pre-stream events produced by server-side command handling.
     pre_events: list[dict] = []
 
-    # Server-side command handling: if the user sent a single leading slash-command
+    # Server-side command handling: if the user sent a leading slash-command
     # like `/image`, `/music`, or `/speech`, invoke the appropriate backend and
-    # emit a short SSE update with the backend result before continuing to the
-    # normal chat model routing. This ensures slash-commands always surface the
-    # backend output even if the chat model responds differently.
+    # emit SSE updates without sending the command text to the chat model. This
+    # fallback intentionally does not depend on the expanded conversation history,
+    # because authenticated UI requests usually include saved context plus a
+    # profile/system message.
+    command_handled = False
     try:
-        if isinstance(message_text, str) and message_text and len(messages) == 1 and (messages[0].role or "") == "user":
+        if isinstance(message_text, str) and message_text:
             cmd = message_text.strip()
             low = cmd.lower()
             # /image
             if low == "/image" or low.startswith("/image "):
+                command_handled = True
                 prompt = cmd.replace("/image", "", 1).strip()
                 try:
                     # Announce backend work to the UI
@@ -4483,6 +4497,7 @@ async def ui_chat_stream(req: Request):
 
             # /music
             elif low == "/music" or low.startswith("/music "):
+                command_handled = True
                 prompt = cmd.replace("/music", "", 1).strip()
                 try:
                     pre_events.append({"type": "thinking", "thinking": "Generating music…"})
@@ -4506,7 +4521,8 @@ async def ui_chat_stream(req: Request):
                     pre_events.append({"type": "delta", "delta": f"[Music] generation failed: {type(e).__name__}: {e}"})
 
             # /speech or /tts
-            elif low == "/speech" or low.startswith("/speech ") or low.startswith("/tts"):
+            elif low == "/speech" or low.startswith("/speech ") or low == "/tts" or low.startswith("/tts "):
+                command_handled = True
                 prompt = cmd.replace("/speech", "", 1).replace("/tts", "", 1).strip()
                 try:
                     pre_events.append({"type": "thinking", "thinking": "Synthesizing speech…"})
@@ -4583,6 +4599,7 @@ async def ui_chat_stream(req: Request):
 
             # /scan — OCR an image URL via the LightOnOCR shim
             elif low == "/scan" or low.startswith("/scan "):
+                command_handled = True
                 image_url = cmd.replace("/scan", "", 1).strip()
                 if not image_url:
                     pre_events.append({"type": "delta", "delta": "[Scan] usage: /scan <image_url>"})
@@ -4641,9 +4658,27 @@ async def ui_chat_stream(req: Request):
                                     pass
                     except Exception as e:
                         pre_events.append({"type": "delta", "delta": f"[Scan] failed: {type(e).__name__}: {e}"})
+
+            # /video and /code are UI navigation commands.
+            elif low == "/video" or low.startswith("/video "):
+                command_handled = True
+                prompt = cmd.replace("/video", "", 1).strip()
+                url = "/ui/video"
+                if prompt:
+                    url += f"?prompt={quote(prompt, safe='')}"
+                pre_events.append({"type": "delta", "delta": f"[Video] Open the video UI: {url}"})
+            elif low == "/code" or low.startswith("/code "):
+                command_handled = True
+                prompt = cmd.replace("/code", "", 1).strip()
+                url = "/ui/coding"
+                if prompt:
+                    url += f"?prompt={quote(prompt, safe='')}"
+                pre_events.append({"type": "delta", "delta": f"[Code] Open Coding Workspaces: {url}"})
     except Exception:
         # best-effort only; do not fail the chat stream on command-handling errors
         pass
+    if command_handled:
+        return StreamingResponse(_stream_ui_command_events(pre_events), media_type="text/event-stream")
     cc = ChatCompletionRequest(
         model=model,
         messages=messages,
