@@ -21,6 +21,6 @@ RUN chmod +x /app/docker-entrypoint.sh
 EXPOSE 9185
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9185/health', timeout=3).read(); print('ok')" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9185/readyz', timeout=3).read(); print('ok')" || exit 1
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

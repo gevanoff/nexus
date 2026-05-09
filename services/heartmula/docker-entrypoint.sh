@@ -7,8 +7,9 @@ REPO_URL="${HEARTMULA_REPO_URL:-https://github.com/HeartMuLa/heartlib.git}"
 REPO_REF="${HEARTMULA_REPO_REF:-}"
 UPDATE_ON_START="${HEARTMULA_UPDATE_ON_START:-false}"
 REQ_HASH_FILE="${DATA_DIR}/.heartmula-requirements.sha256"
+OUTPUT_DIR="${HEARTMULA_OUTPUT_DIR:-${DATA_DIR}/output}"
 
-mkdir -p "${DATA_DIR}" "${DATA_DIR}/logs"
+mkdir -p "${DATA_DIR}" "${DATA_DIR}/logs" "${OUTPUT_DIR}" "${DATA_DIR}/huggingface"
 
 if [[ -n "${REPO_URL}" ]]; then
   if [[ ! -d "${APP_DIR}/.git" ]]; then

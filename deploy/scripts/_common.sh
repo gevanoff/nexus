@@ -720,6 +720,28 @@ ns_ensure_images_runtime_dirs() {
   local repo_root="$1"
   ns_mkdir_p "${repo_root}/.runtime/images/data"
   ns_mkdir_p "${repo_root}/.runtime/images/models"
+  ns_mkdir_p "${repo_root}/.runtime/invokeai"
+}
+
+ns_ensure_media_runtime_dirs() {
+  # Optional media backend persistence. These dirs are safe to pre-create and
+  # make bind-mount failures show up as container/runtime problems instead of
+  # missing output paths during generation.
+  # Usage: ns_ensure_media_runtime_dirs <repo_root>
+  local repo_root="$1"
+  ns_mkdir_p "${repo_root}/.runtime/sdxl-turbo"
+  ns_mkdir_p "${repo_root}/.runtime/lighton-ocr"
+  ns_mkdir_p "${repo_root}/.runtime/skyreels-v2/app"
+  ns_mkdir_p "${repo_root}/.runtime/skyreels-v2/outputs"
+  ns_mkdir_p "${repo_root}/.runtime/skyreels-v2/cache"
+  ns_mkdir_p "${repo_root}/.runtime/followyourcanvas/app"
+  ns_mkdir_p "${repo_root}/.runtime/followyourcanvas/outputs"
+  ns_mkdir_p "${repo_root}/.runtime/personaplex"
+  ns_mkdir_p "${repo_root}/.runtime/heartmula/app"
+  ns_mkdir_p "${repo_root}/.runtime/heartmula/logs"
+  ns_mkdir_p "${repo_root}/.runtime/heartmula/output"
+  ns_mkdir_p "${repo_root}/.runtime/heartmula/huggingface"
+  ns_mkdir_p "${repo_root}/.runtime/mediamtx/recordings"
 }
 
 ns_ensure_tts_runtime_dirs() {
@@ -769,6 +791,7 @@ ns_ensure_runtime_dirs() {
   local repo_root="$1"
   ns_ensure_gateway_runtime_dirs "$repo_root"
   ns_ensure_images_runtime_dirs "$repo_root"
+  ns_ensure_media_runtime_dirs "$repo_root"
   ns_ensure_tts_runtime_dirs "$repo_root"
   ns_ensure_nginx_runtime_dirs "$repo_root"
   ns_ensure_etcd_runtime_dirs "$repo_root"

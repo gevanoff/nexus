@@ -8,6 +8,7 @@ REPO_REF="${SKYREELS_REPO_REF:-}"
 UPDATE_ON_START="${SKYREELS_UPDATE_ON_START:-false}"
 REQ_HASH_FILE="${DATA_DIR}/.skyreels-requirements.sha256"
 FALLBACK_REQ_FILE="/app/runtime-requirements.txt"
+OUTPUT_ROOT="${SKYREELS_OUTPUT_ROOT:-${DATA_DIR}/outputs}"
 
 skyreels_runtime_ready() {
   python3 - <<'PY' >/dev/null 2>&1
@@ -109,7 +110,7 @@ path.write_text(text.replace(needle, replacement), encoding="utf-8")
 PY
 }
 
-mkdir -p "${DATA_DIR}" "${DATA_DIR}/logs"
+mkdir -p "${DATA_DIR}" "${DATA_DIR}/logs" "${OUTPUT_ROOT}" "${DATA_DIR}/cache"
 
 if [[ -n "${REPO_URL}" ]]; then
   if [[ ! -d "${APP_DIR}/.git" ]]; then

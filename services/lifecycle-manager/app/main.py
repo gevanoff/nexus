@@ -924,7 +924,11 @@ class LifecycleManager:
         return [candidate for candidate in self.backends.values() if candidate.host == backend.host]
 
     def _same_host_active(self, backend: BackendPolicy) -> List[Dict[str, Any]]:
-        return [self._backend_status(candidate) for candidate in self._same_host_candidates(backend) if candidate.active]
+        return [
+            self._backend_status(candidate)
+            for candidate in self._same_host_candidates(backend)
+            if candidate.active and candidate.backend_class != backend.backend_class
+        ]
 
     def _backend_or_404(self, backend_class: str) -> BackendPolicy:
         key = backend_class.strip()

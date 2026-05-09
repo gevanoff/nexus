@@ -89,8 +89,20 @@ def _model_id() -> str:
 
 def _output_dir() -> Path:
     output_dir = Path(_env("HEARTMULA_OUTPUT_DIR", "/data/output") or "/data/output")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_writable_dir(output_dir)
     return output_dir
+
+
+def _ensure_writable_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    probe = path / f".write-check-{uuid.uuid4().hex}"
+    try:
+        probe.write_text("", encoding="utf-8")
+    finally:
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _split_tags(raw: str) -> list[str]:
@@ -199,7 +211,18 @@ def healthz() -> Dict[str, Any]:
 @app.get("/readyz")
 def readyz() -> JSONResponse:
     if pipeline is not None:
-        return JSONResponse(status_code=200, content={"ok": True})
+        try:
+            output_dir = _output_dir()
+        except Exception as exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "ok": False,
+                    "reason": "output_dir_unavailable",
+                    "detail": f"HeartMula output directory is not writable: {type(exc).__name__}: {exc}",
+                },
+            )
+        return JSONResponse(status_code=200, content={"ok": True, "output_dir": str(output_dir)})
     return JSONResponse(
         status_code=503,
         content={

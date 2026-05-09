@@ -59,6 +59,25 @@ def _output_root() -> Path:
     return Path(_env("SKYREELS_OUTPUT_ROOT", "/data/outputs") or "/data/outputs")
 
 
+def _writable_dir_error(path: Path) -> Optional[Dict[str, str]]:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".write-check-{uuid.uuid4().hex}"
+        try:
+            probe.write_text("", encoding="utf-8")
+        finally:
+            try:
+                probe.unlink()
+            except FileNotFoundError:
+                pass
+    except Exception as exc:
+        return {
+            "reason": "output_dir_unavailable",
+            "detail": f"SkyReels output directory is not writable: {type(exc).__name__}: {exc}",
+        }
+    return None
+
+
 def _model_id() -> str:
     return _env("SKYREELS_MODEL_ID", "SkyReels-V2") or "SkyReels-V2"
 
@@ -110,6 +129,9 @@ def _runtime_error() -> Optional[Dict[str, str]]:
             "reason": "missing_upstream_clone",
             "detail": "SkyReels upstream sources are missing from the configured workdir.",
         }
+    output_error = _writable_dir_error(_output_root())
+    if output_error is not None:
+        return output_error
     return None
 
 
