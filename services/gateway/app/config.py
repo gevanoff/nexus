@@ -100,10 +100,10 @@ class Settings(BaseSettings):
     UI_CHAT_SUMMARY_TRIGGER_BYTES: int = 250_000  # summarize when history grows beyond this
     UI_CHAT_SUMMARY_KEEP_LAST_MESSAGES: int = 12  # keep tail messages after summarizing
     # Chat context shaping for the UI chat endpoint.
-    # Default is strict single-turn mode: only the newest user message is sent
-    # upstream to avoid leaking prior turns into model context unexpectedly.
-    # Set true to include prior turns as folded system context.
-    UI_CHAT_INCLUDE_PRIOR_CONTEXT: bool = False
+    # Default is multi-turn mode: prior turns are folded into system context so
+    # the browser chat behaves like a normal ongoing conversation.
+    # Set false to force strict single-turn behavior.
+    UI_CHAT_INCLUDE_PRIOR_CONTEXT: bool = True
 
     # User authentication + storage
     USER_AUTH_ENABLED: bool = True
