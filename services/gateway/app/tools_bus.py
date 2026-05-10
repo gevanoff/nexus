@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 from app import metrics
 from app import memory_v2
 from app import agent_tasks
+from app import coding_workspace
 from app.upstreams import embed_text_for_memory
 
 
@@ -403,7 +404,7 @@ def _tool_category(name: str) -> str:
         return "scheduling"
     if name.startswith("memory_"):
         return "memory"
-    if name in {"write_file", "git", "shell"}:
+    if name in {"write_file", "git", "shell", "coding_model_integration"}:
         return "workspace"
     return "specialized"
 
@@ -446,6 +447,8 @@ def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[s
         guidance.append("Use agent_task_create for reminders, countdowns, recurring checks, and follow-up work; use agent_task_list/cancel to inspect or stop scheduled work.")
     if allowed.intersection({"write_file", "git", "shell"}):
         guidance.append("Treat write_file, git, and shell as higher-impact tools; inspect first and keep changes scoped.")
+    if "coding_model_integration" in allowed:
+        guidance.append("Use coding_model_integration to bootstrap a coding workspace for adapting a HuggingFace model into a Nexus backend with scaffolded runtime files.")
     return guidance
 
 
@@ -1495,6 +1498,36 @@ def tool_models_refresh(args: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def tool_coding_model_integration(args: Dict[str, Any]) -> Dict[str, Any]:
+    task = coding_workspace.create_model_integration_task(
+        model=str(args.get("model") or "").strip(),
+        preferred_runtime=str(args.get("preferred_runtime") or "").strip() or None,
+        route_kind=str(args.get("route_kind") or "").strip() or None,
+        service_name=str(args.get("service_name") or "").strip() or None,
+        base_branch=str(args.get("base_branch") or "").strip() or None,
+        branch_name=str(args.get("branch_name") or "").strip() or None,
+        prompt=str(args.get("prompt") or "").strip() or None,
+        owner="tool",
+        owner_user_id=None,
+        coding_model=str(args.get("coding_model") or "coder").strip() or "coder",
+    )
+    if bool(args.get("auto_run")) and task.get("status") != "error":
+        from app import coding_agent
+
+        task = _run_coroutine_sync(
+            coding_agent.start_agent_run(
+                str(task.get("id") or ""),
+                coding_model=str(args.get("coding_model") or task.get("coding_model") or "coder").strip() or "coder",
+                max_turns=int(args.get("max_turns") or 0) or None,
+                max_runtime_sec=float(args.get("max_runtime_sec") or 0) or None,
+                auto_commit=bool(args.get("auto_commit")),
+                commit_message=str(args.get("commit_message") or "").strip() or None,
+                actor="tool",
+            )
+        )
+    return {"ok": task.get("status") != "error", "task": task}
+
+
 def tool_git(args: Dict[str, Any]) -> Dict[str, Any]:
     if not S.TOOLS_ALLOW_GIT:
         return {"ok": False, "error": "git tool disabled"}
@@ -1567,6 +1600,7 @@ TOOL_IMPL = {
     "system_info": tool_system_info,
     "cluster_resources": tool_cluster_resources,
     "models_refresh": tool_models_refresh,
+    "coding_model_integration": tool_coding_model_integration,
     "agent_task_create": agent_tasks.create_task,
     "agent_task_list": agent_tasks.list_tasks,
     "agent_task_cancel": agent_tasks.cancel_task,
@@ -1640,6 +1674,8 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
         allowed.add("cluster_resources")
     if bool(pol.get("tools_allow_models_refresh", getattr(S, "TOOLS_ALLOW_MODELS_REFRESH", False))):
         allowed.add("models_refresh")
+    if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_model_integration", True)):
+        allowed.add("coding_model_integration")
     return allowed
 
 
@@ -1896,6 +1932,31 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {},
             "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "coding_model_integration": {
+        "name": "coding_model_integration",
+        "version": "1",
+        "description": "Create a Nexus coding workspace for integrating a HuggingFace model into a backend, with containerized scaffolding when appropriate and host-native MLX scaffolding otherwise.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "model": {"type": "string", "description": "HuggingFace owner/model id or huggingface.co model URL."},
+                "preferred_runtime": {"type": "string", "enum": ["auto", "mlx", "vllm", "transformers"]},
+                "route_kind": {"type": "string", "enum": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"]},
+                "service_name": {"type": "string"},
+                "base_branch": {"type": "string"},
+                "branch_name": {"type": "string"},
+                "prompt": {"type": "string"},
+                "coding_model": {"type": "string"},
+                "auto_run": {"type": "boolean"},
+                "max_turns": {"type": "integer"},
+                "max_runtime_sec": {"type": "number"},
+                "auto_commit": {"type": "boolean"},
+                "commit_message": {"type": "string"}
+            },
+            "required": ["model"],
             "additionalProperties": False,
         },
     },

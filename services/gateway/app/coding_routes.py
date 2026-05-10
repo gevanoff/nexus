@@ -39,6 +39,24 @@ class CodingCreateAndRunRequest(BaseModel):
     commit_message: Optional[str] = None
 
 
+class CodingModelIntegrationCreateRequest(BaseModel):
+    model: str
+    preferred_runtime: Optional[str] = None
+    route_kind: Optional[str] = None
+    service_name: Optional[str] = None
+    base_branch: Optional[str] = None
+    branch_name: Optional[str] = None
+    prompt: Optional[str] = None
+    coding_model: Optional[str] = None
+
+
+class CodingModelIntegrationRunRequest(CodingModelIntegrationCreateRequest):
+    max_turns: Optional[int] = None
+    max_runtime_sec: Optional[float] = None
+    auto_commit: bool = False
+    commit_message: Optional[str] = None
+
+
 class CodingAgentRunRequest(BaseModel):
     coding_model: Optional[str] = None
     prompt: Optional[str] = None
@@ -212,6 +230,56 @@ async def ui_coding_tools(req: Request) -> Dict[str, Any]:
 async def ui_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, Any]:
     _require_coding_ui(req)
     return {"tasks": await _to_thread(cw.list_tasks, limit)}
+
+
+@router.post("/ui/api/coding/model-integrations", include_in_schema=False)
+async def ui_coding_create_model_integration(req: Request, body: CodingModelIntegrationCreateRequest) -> Dict[str, Any]:
+    user = _require_coding_ui(req)
+    task = await _to_thread(
+        cw.create_model_integration_task,
+        model=body.model,
+        preferred_runtime=body.preferred_runtime,
+        route_kind=body.route_kind,
+        service_name=body.service_name,
+        base_branch=body.base_branch,
+        branch_name=body.branch_name,
+        prompt=body.prompt,
+        owner=_actor_from_user(user),
+        owner_user_id=_user_id(user),
+        coding_model=_coding_model_for_user(user, body.coding_model),
+    )
+    return {"task": task}
+
+
+@router.post("/ui/api/coding/model-integrations/runs", include_in_schema=False)
+async def ui_coding_create_model_integration_and_run(req: Request, body: CodingModelIntegrationRunRequest) -> Dict[str, Any]:
+    user = _require_coding_ui(req)
+    model = _coding_model_for_user(user, body.coding_model)
+    task = await _to_thread(
+        cw.create_model_integration_task,
+        model=body.model,
+        preferred_runtime=body.preferred_runtime,
+        route_kind=body.route_kind,
+        service_name=body.service_name,
+        base_branch=body.base_branch,
+        branch_name=body.branch_name,
+        prompt=body.prompt,
+        owner=_actor_from_user(user),
+        owner_user_id=_user_id(user),
+        coding_model=model,
+    )
+    if task.get("status") == "error":
+        return {"task": task}
+    task = await ca.start_agent_run(
+        str(task.get("id") or ""),
+        coding_model=model,
+        max_turns=body.max_turns,
+        max_runtime_sec=body.max_runtime_sec,
+        auto_commit=body.auto_commit,
+        commit_message=body.commit_message,
+        actor=_actor_from_user(user),
+    )
+    return {"task": task}
 
 
 @router.post("/ui/api/coding/tasks", include_in_schema=False)
@@ -490,6 +558,56 @@ async def v1_coding_tools(req: Request) -> Dict[str, Any]:
 async def v1_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, Any]:
     _require_coding_api(req)
     return {"tasks": await _to_thread(cw.list_tasks, limit)}
+
+
+@router.post("/v1/coding/model-integrations")
+async def v1_coding_model_integrations(req: Request, body: CodingModelIntegrationCreateRequest) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    task = await _to_thread(
+        cw.create_model_integration_task,
+        model=body.model,
+        preferred_runtime=body.preferred_runtime,
+        route_kind=body.route_kind,
+        service_name=body.service_name,
+        base_branch=body.base_branch,
+        branch_name=body.branch_name,
+        prompt=body.prompt,
+        owner=_actor_from_user(user) if user is not None else "api",
+        owner_user_id=_user_id(user),
+        coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
+    )
+    return {"task": task}
+
+
+@router.post("/v1/coding/model-integrations/runs")
+async def v1_coding_model_integrations_run(req: Request, body: CodingModelIntegrationRunRequest) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    model = _coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder"
+    task = await _to_thread(
+        cw.create_model_integration_task,
+        model=body.model,
+        preferred_runtime=body.preferred_runtime,
+        route_kind=body.route_kind,
+        service_name=body.service_name,
+        base_branch=body.base_branch,
+        branch_name=body.branch_name,
+        prompt=body.prompt,
+        owner=_actor_from_user(user) if user is not None else "api",
+        owner_user_id=_user_id(user),
+        coding_model=model,
+    )
+    if task.get("status") == "error":
+        return {"task": task}
+    task = await ca.start_agent_run(
+        str(task.get("id") or ""),
+        coding_model=model,
+        max_turns=body.max_turns,
+        max_runtime_sec=body.max_runtime_sec,
+        auto_commit=body.auto_commit,
+        commit_message=body.commit_message,
+        actor=_actor_from_user(user) if user is not None else "api",
+    )
+    return {"task": task}
 
 
 @router.post("/v1/coding/tasks")

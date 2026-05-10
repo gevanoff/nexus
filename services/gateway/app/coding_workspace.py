@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import HTTPException
 
 from app.config import S, logger
+from app import model_integration_workspace as miw
 
 
 SCHEMA = "nexus_coding_task.v1"
@@ -381,14 +382,12 @@ def _base_env() -> Dict[str, str]:
     env.setdefault("LANG", "C.UTF-8")
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["PYTHONUNBUFFERED"] = "1"
-    author_name = str(getattr(S, "CODING_GIT_AUTHOR_NAME", "") or "").strip()
-    author_email = str(getattr(S, "CODING_GIT_AUTHOR_EMAIL", "") or "").strip()
-    if author_name:
-        env.setdefault("GIT_AUTHOR_NAME", author_name)
-        env.setdefault("GIT_COMMITTER_NAME", author_name)
-    if author_email:
-        env.setdefault("GIT_AUTHOR_EMAIL", author_email)
-        env.setdefault("GIT_COMMITTER_EMAIL", author_email)
+    author_name = str(getattr(S, "CODING_GIT_AUTHOR_NAME", "") or "Nexus Coding Agent").strip() or "Nexus Coding Agent"
+    author_email = str(getattr(S, "CODING_GIT_AUTHOR_EMAIL", "") or "nexus-coder@localhost").strip() or "nexus-coder@localhost"
+    env.setdefault("GIT_AUTHOR_NAME", author_name)
+    env.setdefault("GIT_COMMITTER_NAME", author_name)
+    env.setdefault("GIT_AUTHOR_EMAIL", author_email)
+    env.setdefault("GIT_COMMITTER_EMAIL", author_email)
     return env
 
 
@@ -631,6 +630,115 @@ def create_task(
         logger.warning("coding task create failed id=%s error=%s", task_id, exc)
         task["status"] = "error"
         task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc), extra_tokens=[_effective_git_token(git_token_value)])}"
+        save_task(task)
+        return public_task(task)
+
+
+def create_model_integration_task(
+    *,
+    model: str,
+    preferred_runtime: Optional[str],
+    route_kind: Optional[str],
+    service_name: Optional[str],
+    base_branch: Optional[str],
+    branch_name: Optional[str],
+    prompt: Optional[str],
+    owner: Optional[str],
+    owner_user_id: Optional[int] = None,
+    coding_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    _ensure_enabled()
+    _ensure_dirs()
+    plan = miw.build_integration_plan(
+        model=model,
+        preferred_runtime=preferred_runtime,
+        route_kind=route_kind,
+        service_name=service_name,
+        prompt=prompt,
+    )
+    task_id = new_task_id()
+    branch = _safe_branch(branch_name, task_id=task_id)
+    base = _base_branch(base_branch)
+    workspace = _task_workspace(task_id)
+    repo_path = _repo_path_for(task_id)
+    task = {
+        "schema": SCHEMA,
+        "id": task_id,
+        "kind": "model_integration",
+        "status": "initializing",
+        "created_at": _now(),
+        "updated_at": _now(),
+        "owner": owner or "unknown",
+        "owner_user_id": owner_user_id,
+        "repo_url": str(plan.get("source_url") or ""),
+        "source_url": str(plan.get("source_url") or ""),
+        "base_branch": base,
+        "branch_name": branch,
+        "prompt": str(plan.get("prompt") or "").strip(),
+        "coding_model": str(coding_model or "").strip(),
+        "workspace_path": str(workspace),
+        "repo_path": str(repo_path),
+        "integration": plan,
+        "commands": [],
+    }
+    save_task(task)
+
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+        repo_path.mkdir(parents=True, exist_ok=True)
+        init_result = _run_process(["git", "init"], cwd=repo_path, use_git_credentials=False)
+        _append_command(task, init_result, label="git-init")
+        if not init_result.get("ok"):
+            task["status"] = "error"
+            task["error"] = "git init failed"
+            save_task(task)
+            return public_task(task)
+
+        task["seed_files"] = miw.scaffold_workspace(repo_path, plan)
+
+        add_result = _run_process(["git", "add", "."], cwd=repo_path, use_git_credentials=False)
+        _append_command(task, add_result, label="git-add")
+        if not add_result.get("ok"):
+            task["status"] = "error"
+            task["error"] = "git add failed"
+            save_task(task)
+            return public_task(task)
+
+        commit_result = _run_process(["git", "commit", "-m", "Seed model integration workspace"], cwd=repo_path, use_git_credentials=False)
+        _append_command(task, commit_result, label="git-commit")
+        if not commit_result.get("ok"):
+            task["status"] = "error"
+            task["error"] = "git commit failed"
+            save_task(task)
+            return public_task(task)
+
+        rename_result = _run_process(["git", "branch", "-M", base], cwd=repo_path, use_git_credentials=False)
+        _append_command(task, rename_result, label="git-branch-base")
+        if not rename_result.get("ok"):
+            task["status"] = "error"
+            task["error"] = "base branch rename failed"
+            save_task(task)
+            return public_task(task)
+
+        if branch != base:
+            switch_result = _run_process(["git", "switch", "-c", branch], cwd=repo_path, use_git_credentials=False)
+            if not switch_result.get("ok"):
+                switch_result = _run_process(["git", "checkout", "-b", branch], cwd=repo_path, use_git_credentials=False)
+            _append_command(task, switch_result, label="git-branch-work")
+            if not switch_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "working branch creation failed"
+                save_task(task)
+                return public_task(task)
+
+        task["status"] = "ready"
+        task.pop("error", None)
+        save_task(task)
+        return public_task(task)
+    except Exception as exc:
+        logger.warning("model integration task create failed id=%s error=%s", task_id, exc)
+        task["status"] = "error"
+        task["error"] = f"{type(exc).__name__}: {exc}"
         save_task(task)
         return public_task(task)
 
@@ -1342,6 +1450,43 @@ def agent_brief(task_id: str, *, coding_model: Optional[str] = None) -> Dict[str
     branch = str(task.get("branch_name") or "").strip()
     base = str(task.get("base_branch") or "").strip()
     model = str(coding_model or task.get("coding_model") or "").strip()
+    integration = task.get("integration") if isinstance(task.get("integration"), dict) else None
+    if str(task.get("kind") or "") == "model_integration" and integration is not None:
+        text = f"""Nexus coding task: {task.get("id")}
+
+Goal:
+{prompt}
+
+Model integration:
+- HuggingFace model: {integration.get("model_id")}
+- Source URL: {integration.get("source_url")}
+- Runtime: {integration.get("runtime")}
+- Route kind: {integration.get("route_kind")}
+- Containerize: {bool(integration.get("containerize"))}
+- Shim required: {bool(integration.get("shim_required"))}
+- Service name: {integration.get("service_name")}
+- Backend class: {integration.get("backend_class")}
+- Preferred coding model: {model or "default"}
+
+Workspace:
+- Base branch: {base}
+- Working branch: {branch}
+
+Use the Nexus Coding API for workspace operations. Prefer a tight loop:
+1. Review README.md, AGENT_TASK.md, and integration_request.json.
+2. Fill in the generated scaffold under services/ or host_native/.
+3. Update integration/backend-config-snippet.yaml and integration/lifecycle.backend.json.
+4. Run targeted checks with POST /v1/coding/tasks/{task.get("id")}/command.
+5. Review GET /v1/coding/tasks/{task.get("id")}/diff.
+
+Constraints:
+- Work only inside this task workspace repo.
+- Keep the resulting backend compatible with the expected OpenAI-style route.
+- Commands are argv arrays, not shell strings.
+- Blocked git operations include reset, clean, rebase, merge, restore, rm, and filter-branch.
+"""
+        return {"task": task_public, "brief": text}
+
     text = f"""Nexus coding task: {task.get("id")}
 
 Goal:
@@ -1378,11 +1523,13 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         guidance_messages = []
     out = {
         "id": task.get("id"),
+        "kind": task.get("kind") or "workspace",
         "status": task.get("status"),
         "created_at": task.get("created_at"),
         "updated_at": task.get("updated_at"),
         "owner": task.get("owner"),
         "repo_url": redact_repo_url(str(task.get("repo_url") or "")),
+        "source_url": redact_repo_url(str(task.get("source_url") or "")),
         "base_branch": task.get("base_branch"),
         "branch_name": task.get("branch_name"),
         "prompt": task.get("prompt") or "",
@@ -1418,6 +1565,8 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
             "events": agent_events[-80:],
         },
     }
+    if isinstance(task.get("integration"), dict):
+        out["integration"] = task.get("integration")
     if task.get("error"):
         out["error"] = _redact_text(str(task.get("error") or ""))
     if include_commands:
@@ -1447,4 +1596,6 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "git_token_configured": bool(_effective_git_token(git_token_value)),
         "preferred_coding_model": str(preferred_coding_model or "").strip(),
         "gh_cli_available": shutil.which("gh") is not None,
+        "model_integration_runtimes": ["auto", "mlx", "vllm", "transformers"],
+        "model_integration_route_kinds": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"],
     }
