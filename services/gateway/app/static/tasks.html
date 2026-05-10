@@ -105,6 +105,28 @@
       .tabs { display:flex; gap:6px; flex-wrap:wrap; }
       .tab { font-size: 12px; padding: 6px 9px; }
       .tab[aria-selected="true"] { border-color: rgba(111,184,255,0.56); color: #cfe7ff; }
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(5, 8, 12, 0.72);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        z-index: 40;
+      }
+      .modal-card {
+        width: min(760px, 100%);
+        max-height: min(88vh, 880px);
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: linear-gradient(180deg, rgba(17,24,33,0.98), rgba(11,16,23,0.98));
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.42);
+        padding: 14px;
+      }
+      .modal-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom: 10px; }
+      .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top: 12px; }
       [hidden] { display:none !important; }
       @media (max-width: 900px) {
         .layout, .detail-grid, .grid2, .grid3 { grid-template-columns: 1fr; }
@@ -276,8 +298,36 @@
         </section>
       </div>
     </main>
+    <div id="taskEditModal" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="taskEditTitle">
+        <div class="modal-header">
+          <div>
+            <h2 id="taskEditTitle">Edit task</h2>
+            <div id="taskEditHint" class="hint"></div>
+          </div>
+          <button id="closeTaskEditModal" type="button">Close</button>
+        </div>
+        <div id="taskEditToolsSection" hidden>
+          <label>LLM tool access</label>
+          <div class="hint" style="margin: 0 0 6px;">
+            These checkboxes grant the scheduled LLM permission to use tools while the task runs. Scheduling tools like
+            <strong>agent_task_create</strong>, <strong>agent_task_list</strong>, and <strong>agent_task_cancel</strong>
+            let the LLM manage scheduled tasks; they are not immediate UI actions.
+          </div>
+          <div id="taskEditTools" class="tools"></div>
+        </div>
+        <div id="taskEditModelSection" hidden>
+          <label for="taskEditModel">Model</label>
+          <select id="taskEditModel"></select>
+        </div>
+        <div class="modal-actions">
+          <button id="cancelTaskEdit" type="button">Cancel</button>
+          <button id="saveTaskEdit" class="primary" type="button">Save changes</button>
+        </div>
+      </div>
+    </div>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/tasks.js?v=4"></script>
+    <script src="/static/tasks.js?v=5"></script>
   </body>
 </html>

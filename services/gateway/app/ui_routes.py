@@ -2249,6 +2249,14 @@ def _scheduled_agent_spec_for_task(task: Dict[str, Any]) -> Tuple[str, Dict[str,
     return agent_name, scheduled, spec
 
 
+def _persist_task_agent_spec(task: Dict[str, Any], updates: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    agent_name, scheduled_specs, spec = _scheduled_agent_spec_for_task(task)
+    spec.update(updates)
+    scheduled_specs[agent_name] = spec
+    _write_agent_specs_json(scheduled_specs)
+    return scheduled_specs, spec
+
+
 @router.get("/ui/api/agent-tasks/capabilities", include_in_schema=False)
 async def ui_api_agent_tasks_capabilities(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
@@ -2512,11 +2520,8 @@ async def ui_api_agent_tasks_update_tools(req: Request, task_id: str) -> Dict[st
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    agent_name, scheduled_specs, spec = _scheduled_agent_spec_for_task(task)
-    spec["tools_allowlist"] = selected_tools
-    scheduled_specs[agent_name] = spec
     try:
-        _write_agent_specs_json(scheduled_specs)
+        _persist_task_agent_spec(task, {"tools_allowlist": selected_tools})
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to persist scheduled agent spec: {type(exc).__name__}: {exc}") from exc
 
@@ -2525,6 +2530,39 @@ async def ui_api_agent_tasks_update_tools(req: Request, task_id: str) -> Dict[st
     payload = agent_tasks.update_task_metadata({"id": task_id, "metadata": updated_meta})
     if not payload.get("ok"):
         raise HTTPException(status_code=400, detail=payload.get("error") or "failed to update task tools")
+    return payload
+
+
+@router.post("/ui/api/agent-tasks/{task_id}/model", include_in_schema=False)
+async def ui_api_agent_tasks_update_model(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    current = agent_tasks.get_task({"id": task_id})
+    if not current.get("ok"):
+        raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
+    task = current.get("task") if isinstance(current.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    model = str(body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+
+    try:
+        _persist_task_agent_spec(task, {"model": model})
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to persist scheduled agent spec: {type(exc).__name__}: {exc}") from exc
+
+    meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    updated_meta = dict(meta)
+    updated_meta["model"] = model
+    future = dict(updated_meta.get("future") or {}) if isinstance(updated_meta.get("future"), dict) else {}
+    future["models"] = [model]
+    updated_meta["future"] = future
+    payload = agent_tasks.update_task_metadata({"id": task_id, "metadata": updated_meta})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to update task model")
     return payload
 
 

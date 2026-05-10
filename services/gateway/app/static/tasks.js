@@ -39,6 +39,16 @@
     refreshRuns: document.getElementById("refreshRuns"),
     runNowTask: document.getElementById("runNowTask"),
     cancelTask: document.getElementById("cancelTask"),
+    taskEditModal: document.getElementById("taskEditModal"),
+    taskEditTitle: document.getElementById("taskEditTitle"),
+    taskEditHint: document.getElementById("taskEditHint"),
+    closeTaskEditModal: document.getElementById("closeTaskEditModal"),
+    cancelTaskEdit: document.getElementById("cancelTaskEdit"),
+    saveTaskEdit: document.getElementById("saveTaskEdit"),
+    taskEditToolsSection: document.getElementById("taskEditToolsSection"),
+    taskEditTools: document.getElementById("taskEditTools"),
+    taskEditModelSection: document.getElementById("taskEditModelSection"),
+    taskEditModel: document.getElementById("taskEditModel"),
   };
 
   const state = {
@@ -46,6 +56,7 @@
     models: [],
     tasks: [],
     selectedId: "",
+    taskEdit: null,
   };
 
   function setStatus(text, isError = false, diagnostic = null) {
@@ -124,6 +135,11 @@
     return button;
   }
 
+  function updateTaskInState(task) {
+    if (!task?.id) return;
+    state.tasks = state.tasks.map((item) => (item.id === task.id ? task : item));
+  }
+
   function taskMeta(task) {
     const meta = task?.metadata || {};
     const bits = [];
@@ -200,10 +216,85 @@
       }
       if (task.next_run_ts) els.detailBadges.appendChild(badgeButton(`next ${fmtTs(task.next_run_ts)}`, "enabled", editSelectedNextRun, "Edit next run time"));
       if (task.max_runs) els.detailBadges.appendChild(badge(`max ${task.max_runs}`));
+      const model = String(task.metadata?.model || "default");
+      els.detailBadges.appendChild(badgeButton(`model ${model}`, "", editSelectedModel, "Edit task model"));
       const tools = task.metadata?.tools;
       if (Array.isArray(tools)) els.detailBadges.appendChild(badgeButton(`${tools.length} tools`, "", editSelectedTools, "Edit allowed tools"));
     }
     if (els.detailPrompt) els.detailPrompt.textContent = task.prompt || "";
+  }
+
+  function renderToolList(target, tier, selected = []) {
+    if (!target || !state.capabilities) return;
+    const current = new Set(Array.isArray(selected) ? selected : []);
+    const visibleTools = (state.capabilities.tools || [])
+      .filter((tool) => Number(tool.tier) <= Number(tier || 0))
+      .sort((a, b) => {
+        const aDefault = a.default_enabled === false ? 0 : 1;
+        const bDefault = b.default_enabled === false ? 0 : 1;
+        return (bDefault - aDefault) || String(a.name || "").localeCompare(String(b.name || ""));
+      });
+    target.innerHTML = "";
+    for (const tool of visibleTools) {
+      const label = document.createElement("label");
+      label.className = "tool";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = tool.name;
+      input.checked = current.has(tool.name);
+      const text = document.createElement("span");
+      text.textContent = tool.name;
+      const details = [];
+      if (tool.category) details.push(tool.category);
+      if (tool.description) details.push(tool.description);
+      if (tool.default_enabled === false && tool.default_reason) details.push(tool.default_reason);
+      if (details.length) {
+        const small = document.createElement("small");
+        small.textContent = details.join(" - ");
+        text.appendChild(small);
+      }
+      label.appendChild(input);
+      label.appendChild(text);
+      target.appendChild(label);
+    }
+  }
+
+  function populateModelSelect(target, current = "default") {
+    if (!target) return;
+    target.innerHTML = "";
+    const preferred = ["default", "fast", "reasoning", "coder", "long"];
+    const seen = new Set();
+    const add = (id, label) => {
+      const value = String(id || "").trim();
+      if (!value || seen.has(value)) return;
+      seen.add(value);
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label || value;
+      target.appendChild(opt);
+    };
+    for (const id of preferred) add(id, id);
+    for (const model of state.models) add(model.id, model.label || model.id);
+    if (!seen.has(current)) add(current, current);
+    target.value = seen.has(current) ? current : "default";
+  }
+
+  function closeTaskEditModal() {
+    state.taskEdit = null;
+    if (els.taskEditModal) els.taskEditModal.hidden = true;
+    if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = true;
+    if (els.taskEditModelSection) els.taskEditModelSection.hidden = true;
+  }
+
+  function openTaskEditModal(config) {
+    state.taskEdit = config;
+    if (els.taskEditTitle) els.taskEditTitle.textContent = config.title || "Edit task";
+    if (els.taskEditHint) els.taskEditHint.textContent = config.hint || "";
+    if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = config.mode !== "tools";
+    if (els.taskEditModelSection) els.taskEditModelSection.hidden = config.mode !== "model";
+    if (config.mode === "tools") renderToolList(els.taskEditTools, config.tier, config.selectedTools || []);
+    if (config.mode === "model") populateModelSelect(els.taskEditModel, config.model || "default");
+    if (els.taskEditModal) els.taskEditModal.hidden = false;
   }
 
   function parseUserRunAtInput(raw) {
@@ -283,40 +374,12 @@
     if (!els.tools || !state.capabilities) return;
     const tier = Number(els.tier?.value || 0);
     const existing = new Set(Array.from(els.tools.querySelectorAll("input:checked")).map((el) => el.value));
-    const visibleTools = (state.capabilities.tools || [])
-      .filter((tool) => Number(tool.tier) <= tier)
-      .sort((a, b) => {
-        const aDefault = a.default_enabled === false ? 0 : 1;
-        const bDefault = b.default_enabled === false ? 0 : 1;
-        return (bDefault - aDefault) || String(a.name || "").localeCompare(String(b.name || ""));
-      });
-    els.tools.innerHTML = "";
-    for (const tool of visibleTools) {
-      const label = document.createElement("label");
-      label.className = "tool";
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.value = tool.name;
-      input.checked = existing.has(tool.name) || (!existing.size && tool.default_enabled !== false);
-      const text = document.createElement("span");
-      text.textContent = tool.name;
-      const details = [];
-      if (tool.category) details.push(tool.category);
-      if (tool.description) details.push(tool.description);
-      if (!existing.size && tool.default_enabled === false && tool.default_reason) details.push(tool.default_reason);
-      if (tool.description) {
-        const small = document.createElement("small");
-        small.textContent = details.join(" - ");
-        text.appendChild(small);
-      } else if (details.length) {
-        const small = document.createElement("small");
-        small.textContent = details.join(" - ");
-        text.appendChild(small);
-      }
-      label.appendChild(input);
-      label.appendChild(text);
-      els.tools.appendChild(label);
-    }
+    const selected = existing.size
+      ? Array.from(existing)
+      : (state.capabilities.tools || [])
+        .filter((tool) => Number(tool.tier) <= tier && tool.default_enabled !== false)
+        .map((tool) => tool.name);
+    renderToolList(els.tools, tier, selected);
   }
 
   function updateScheduleFields() {
@@ -329,6 +392,10 @@
 
   function selectedTools() {
     return Array.from(els.tools?.querySelectorAll("input:checked") || []).map((el) => el.value);
+  }
+
+  function selectedModalTools() {
+    return Array.from(els.taskEditTools?.querySelectorAll("input:checked") || []).map((el) => el.value);
   }
 
   function createPayload() {
@@ -379,6 +446,21 @@
       renderModels();
     } catch (error) {
       setStatus(`Failed to load models: ${error.message}`, true);
+    }
+  }
+
+  async function persistTaskDetailUpdate(message, request) {
+    try {
+      setStatus(message);
+      const payload = await request();
+      if (payload.task) updateTaskInState(payload.task);
+      renderTasks();
+      renderDetail(payload.task || state.tasks.find((task) => task.id === state.selectedId));
+      closeTaskEditModal();
+      return payload;
+    } catch (error) {
+      setStatus(error.message || String(error), true, error.stack || error);
+      throw error;
     }
   }
 
@@ -492,34 +574,25 @@
     if (!state.selectedId) return;
     const task = state.tasks.find((item) => item.id === state.selectedId);
     const meta = task?.metadata || {};
-    const tier = Number(meta.tier || 0);
-    const allowed = (state.capabilities?.tools || [])
-      .filter((tool) => Number(tool.tier) <= tier)
-      .map((tool) => tool.name)
-      .sort((a, b) => String(a).localeCompare(String(b)));
-    const current = Array.isArray(meta.tools) ? meta.tools : [];
-    const raw = window.prompt(
-      `Enter a comma-separated tool list for this task. Allowed tools for tier ${tier}:\n\n${allowed.join(", ")}`,
-      current.join(", "),
-    );
-    if (raw == null) return;
-    const tools = raw
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    try {
-      setStatus("Updating task tools...");
-      const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/tools`, {
-        method: "POST",
-        body: JSON.stringify({ tools }),
-      });
-      if (payload.task) state.tasks = state.tasks.map((item) => (item.id === state.selectedId ? payload.task : item));
-      setStatus("Task tools updated.");
-      renderTasks();
-      renderDetail(payload.task || state.tasks.find((item) => item.id === state.selectedId));
-    } catch (error) {
-      setStatus(error.message || String(error), true, error.stack || error);
-    }
+    openTaskEditModal({
+      mode: "tools",
+      title: "Edit task tools",
+      hint: `Update the allowed tools for this scheduled task. Tier ${Number(meta.tier || 0)} tools only.`,
+      tier: Number(meta.tier || 0),
+      selectedTools: Array.isArray(meta.tools) ? meta.tools : [],
+    });
+  }
+
+  async function editSelectedModel() {
+    if (!state.selectedId) return;
+    const task = state.tasks.find((item) => item.id === state.selectedId);
+    const meta = task?.metadata || {};
+    openTaskEditModal({
+      mode: "model",
+      title: "Edit task model",
+      hint: "Choose which model future runs of this task should use.",
+      model: String(meta.model || "default"),
+    });
   }
 
   async function runSelectedNow() {
@@ -534,6 +607,31 @@
       await loadRuns(state.selectedId);
     } catch (error) {
       setStatus(error.message || String(error), true, error.stack || error);
+    }
+  }
+
+  async function saveTaskEdit() {
+    if (!state.selectedId || !state.taskEdit) return;
+    if (state.taskEdit.mode === "tools") {
+      const tools = selectedModalTools();
+      await persistTaskDetailUpdate("Updating task tools...", () => fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/tools`, {
+        method: "POST",
+        body: JSON.stringify({ tools }),
+      }));
+      setStatus("Task tools updated.");
+      return;
+    }
+    if (state.taskEdit.mode === "model") {
+      const model = String(els.taskEditModel?.value || "").trim();
+      if (!model) {
+        setStatus("model is required", true);
+        return;
+      }
+      await persistTaskDetailUpdate("Updating task model...", () => fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/model`, {
+        method: "POST",
+        body: JSON.stringify({ model }),
+      }));
+      setStatus("Task model updated.");
     }
   }
 
@@ -557,6 +655,12 @@
     els.refreshRuns?.addEventListener("click", () => loadRuns().catch((error) => setStatus(error.message, true)));
     els.runNowTask?.addEventListener("click", runSelectedNow);
     els.cancelTask?.addEventListener("click", cancelSelected);
+    els.closeTaskEditModal?.addEventListener("click", closeTaskEditModal);
+    els.cancelTaskEdit?.addEventListener("click", closeTaskEditModal);
+    els.saveTaskEdit?.addEventListener("click", () => saveTaskEdit().catch(() => {}));
+    els.taskEditModal?.addEventListener("click", (event) => {
+      if (event.target === els.taskEditModal) closeTaskEditModal();
+    });
 
     try {
       setStatus("Loading scheduled tasks...");
