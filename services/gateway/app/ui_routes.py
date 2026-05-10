@@ -3929,8 +3929,12 @@ async def ui_models(req: Request) -> Dict[str, Any]:
     for alias_name in sorted(aliases.keys()):
         a = aliases[alias_name]
         item: Dict[str, Any] = {"id": alias_name, "object": "model", "created": now, "owned_by": "gateway"}
+        item["is_alias"] = True
+        item["alias_name"] = alias_name
         item["backend"] = a.backend
         item["upstream_model"] = a.upstream_model
+        item["resolved_model"] = a.upstream_model
+        item["label"] = f"{alias_name} -> {a.upstream_model} ({a.backend})"
         if a.context_window:
             item["context_window"] = a.context_window
         if a.tools is not None:

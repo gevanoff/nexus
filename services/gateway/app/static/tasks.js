@@ -135,6 +135,45 @@
     return button;
   }
 
+  function modelOptionLabel(model) {
+    if (!model || typeof model !== "object") return "";
+    const id = String(model.id || "").trim();
+    const explicit = String(model.label || "").trim();
+    if (explicit) return explicit;
+    const target = String(model.resolved_model || model.upstream_model || "").trim();
+    const backend = String(model.backend || model.backend_class || "").trim();
+    if (model.is_alias && target && backend) return `${id} -> ${target} (${backend})`;
+    if (model.is_alias && target) return `${id} -> ${target}`;
+    return id;
+  }
+
+  function orderedModelEntries(current = "") {
+    const preferred = ["default", "fast", "reasoning", "coder", "long"];
+    const byId = new Map();
+    for (const model of state.models || []) {
+      const id = String(model?.id || "").trim();
+      if (!id || byId.has(id)) continue;
+      byId.set(id, model);
+    }
+    const ordered = [];
+    for (const id of preferred) {
+      if (byId.has(id)) {
+        ordered.push(byId.get(id));
+        byId.delete(id);
+      }
+    }
+    if (current && byId.has(current)) {
+      ordered.push(byId.get(current));
+      byId.delete(current);
+    }
+    const remaining = Array.from(byId.values()).sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+    ordered.push(...remaining);
+    if (current && !ordered.some((item) => String(item?.id || "") === current)) {
+      ordered.push({ id: current, label: current });
+    }
+    return ordered;
+  }
+
   function updateTaskInState(task) {
     if (!task?.id) return;
     state.tasks = state.tasks.map((item) => (item.id === task.id ? task : item));
@@ -262,7 +301,6 @@
   function populateModelSelect(target, current = "default") {
     if (!target) return;
     target.innerHTML = "";
-    const preferred = ["default", "fast", "reasoning", "coder", "long"];
     const seen = new Set();
     const add = (id, label) => {
       const value = String(id || "").trim();
@@ -273,8 +311,7 @@
       opt.textContent = label || value;
       target.appendChild(opt);
     };
-    for (const id of preferred) add(id, id);
-    for (const model of state.models) add(model.id, model.label || model.id);
+    for (const model of orderedModelEntries(current)) add(model.id, modelOptionLabel(model) || model.id);
     if (!seen.has(current)) add(current, current);
     target.value = seen.has(current) ? current : "default";
   }
@@ -354,7 +391,6 @@
     if (!els.model) return;
     const current = els.model.value;
     els.model.innerHTML = "";
-    const preferred = ["default", "fast", "reasoning", "coder", "long"];
     const seen = new Set();
     const add = (id, label) => {
       if (!id || seen.has(id)) return;
@@ -364,8 +400,7 @@
       opt.textContent = label || id;
       els.model.appendChild(opt);
     };
-    for (const id of preferred) add(id, id);
-    for (const model of state.models) add(model.id, model.label || model.id);
+    for (const model of orderedModelEntries(current || "default")) add(model.id, modelOptionLabel(model) || model.id);
     if (current && seen.has(current)) els.model.value = current;
     else els.model.value = "default";
   }
