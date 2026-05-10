@@ -209,6 +209,55 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
     return f"{event_type} {_clip_text(json.dumps(event, ensure_ascii=False, sort_keys=True), 700)}"
 
 
+def _no_change_audit(
+    *,
+    finish_called: bool,
+    finish_success: bool,
+    finish_summary: str,
+    committed_changes: bool,
+    uncommitted_changes: bool,
+    start_head: str,
+    end_head: str,
+) -> tuple[bool, str, Optional[Dict[str, Any]]]:
+    if committed_changes or uncommitted_changes:
+        return finish_success, finish_summary, None
+    if finish_called:
+        audit_summary = (
+            "The coding agent called coding_finish, but the workspace audit found no file changes and no commits "
+            "created during the run. Marking the run failed instead of completed."
+        )
+        merged_summary = f"{audit_summary}\n\nAgent summary:\n{finish_summary}".strip() if finish_summary else audit_summary
+        return (
+            False,
+            merged_summary,
+            {
+                "type": "no_change_audit",
+                "ok": False,
+                "summary": audit_summary,
+                "start_commit": start_head,
+                "end_commit": end_head,
+            },
+        )
+    if not finish_success:
+        audit_summary = (
+            "The coding agent run ended without any file changes or commits in the workspace. "
+            "Runs should only be trusted as completed work after they actually modify files."
+        )
+        merged_summary = f"{finish_summary}\n\nNo-change audit:\n{audit_summary}".strip() if finish_summary else audit_summary
+        return (
+            False,
+            merged_summary,
+            {
+                "type": "no_change_audit",
+                "ok": False,
+                "summary": audit_summary,
+                "start_commit": start_head,
+                "end_commit": end_head,
+            },
+        )
+    return finish_success, finish_summary, None
+
+
 def _previous_run_context(task: Dict[str, Any]) -> str:
     previous_status = str(task.get("agent_previous_status") or "").strip()
     previous_run_id = str(task.get("agent_previous_run_id") or "").strip()
@@ -1168,13 +1217,6 @@ async def _run_agent(
                         "content": _clip_text(str(assistant.content or ""), 2000),
                     },
                 )
-                if no_tool_turns >= 3:
-                    finish_summary = (
-                        "The coding agent produced prose without tool calls for three consecutive turns. "
-                        "No edits were trusted as completed. Start another run to continue, or choose a stronger coding model."
-                    )
-                    finish_success = False
-                    break
                 messages.append(
                     ChatMessage(
                         role="user",
@@ -1277,24 +1319,17 @@ async def _run_agent(
             },
         )
 
-        if finish_success and not committed_changes and not uncommitted_changes:
-            audit_summary = (
-                "The coding agent called coding_finish, but the workspace audit found no file changes and no commits "
-                "created during the run. Marking the run failed instead of completed."
-            )
-            await asyncio.to_thread(
-                _append_event,
-                task_id,
-                {
-                    "type": "no_change_audit",
-                    "ok": False,
-                    "summary": audit_summary,
-                    "start_commit": start_head,
-                    "end_commit": end_head,
-                },
-            )
-            finish_summary = f"{audit_summary}\n\nAgent summary:\n{finish_summary}".strip()
-            finish_success = False
+        finish_success, finish_summary, audit_event = _no_change_audit(
+            finish_called=finish_called,
+            finish_success=finish_success,
+            finish_summary=finish_summary,
+            committed_changes=committed_changes,
+            uncommitted_changes=uncommitted_changes,
+            start_head=start_head,
+            end_head=end_head,
+        )
+        if audit_event is not None:
+            await asyncio.to_thread(_append_event, task_id, audit_event)
 
         if auto_commit and finish_success:
             msg = str(commit_message or finish_summary or "").strip()
