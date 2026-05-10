@@ -68,6 +68,82 @@ _VLLM_UNSUPPORTED_MARKERS = {
     "wav2vec",
     "whisper",
 }
+_FALLBACK_HOSTS = {
+    "ai1": {
+        "description": "Dual-GPU Linux/NVIDIA node (RTX 3090 24GB + RTX 5060 Ti 16GB) for media ingress, SDXL-Turbo, and secondary vLLM/CUDA capacity.",
+        "platform": "linux",
+        "resource_kind": "linux_nvidia",
+    },
+    "ai2": {
+        "description": "Mac M3 Ultra with 512GB unified memory for gateway/control plane, containerized TTS, and host-native MLX reasoning.",
+        "platform": "macos",
+        "resource_kind": "macos",
+    },
+    "ada2": {
+        "description": "Linux/NVIDIA node with 128GB system RAM and an RTX 6000 Ada 48GB for primary heavy vLLM plus image and video generation services.",
+        "platform": "linux",
+        "resource_kind": "linux_nvidia",
+    },
+}
+_FALLBACK_BACKENDS = {
+    "local_mlx": {
+        "display_name": "MLX",
+        "host": "ai2",
+        "estimated_vram_mb": 0,
+        "compose_managed": False,
+        "ready_path": "/models",
+    },
+    "local_vllm": {
+        "display_name": "vLLM Strong",
+        "host": "ada2",
+        "estimated_vram_mb": 28000,
+        "compose_file": "docker-compose.vllm-strong.yml",
+        "ready_path": "/models",
+        "notes": "Comparable heavy-text lane on the RTX 6000 Ada host.",
+    },
+    "local_vllm_fast": {
+        "display_name": "vLLM Fast",
+        "host": "ai1",
+        "estimated_vram_mb": 22000,
+        "compose_file": "docker-compose.vllm-fast.yml",
+        "ready_path": "/models",
+    },
+    "local_vllm_embeddings": {
+        "display_name": "vLLM Embeddings",
+        "host": "ai1",
+        "estimated_vram_mb": 12000,
+        "compose_file": "docker-compose.vllm-embeddings.yml",
+        "ready_path": "/models",
+    },
+    "gpu_heavy": {
+        "display_name": "InvokeAI Images",
+        "host": "ada2",
+        "estimated_vram_mb": 12000,
+        "compose_file": "docker-compose.invokeai.yml",
+        "ready_path": "/readyz",
+    },
+    "lighton_ocr": {
+        "display_name": "LightOn OCR",
+        "host": "ada2",
+        "estimated_vram_mb": 7000,
+        "compose_file": "docker-compose.lighton-ocr.yml",
+        "ready_path": "/readyz",
+    },
+    "skyreels_v2": {
+        "display_name": "SkyReels V2",
+        "host": "ada2",
+        "estimated_vram_mb": 18000,
+        "compose_file": "docker-compose.skyreels-v2.yml",
+        "ready_path": "/readyz",
+    },
+    "heartmula_music": {
+        "display_name": "HeartMula",
+        "host": "ada2",
+        "estimated_vram_mb": 35000,
+        "compose_file": "docker-compose.heartmula.yml",
+        "ready_path": "/readyz",
+    },
+}
 
 DOCKERFILE_TEMPLATE = """ARG PYTHON_BASE_IMAGE=python:3.11-slim
 FROM ${PYTHON_BASE_IMAGE}
@@ -495,15 +571,16 @@ def _load_backend_lifecycle() -> Dict[str, Any]:
 def _host_profile(host: str) -> Dict[str, Any]:
     topology = _load_topology_manifest()
     topology_hosts = topology.get("hosts") if isinstance(topology.get("hosts"), dict) else {}
-    host_data = topology_hosts.get(host) if isinstance(topology_hosts, dict) else {}
+    host_data = topology_hosts.get(host) if isinstance(topology_hosts, dict) and isinstance(topology_hosts.get(host), dict) else {}
     lifecycle = _load_backend_lifecycle()
     lifecycle_hosts = lifecycle.get("hosts") if isinstance(lifecycle.get("hosts"), dict) else {}
-    lifecycle_host = lifecycle_hosts.get(host) if isinstance(lifecycle_hosts, dict) else {}
+    lifecycle_host = lifecycle_hosts.get(host) if isinstance(lifecycle_hosts, dict) and isinstance(lifecycle_hosts.get(host), dict) else {}
+    fallback_host = _FALLBACK_HOSTS.get(host) if isinstance(_FALLBACK_HOSTS.get(host), dict) else {}
     return {
         "host": host,
-        "description": str(host_data.get("description") or "").strip(),
-        "platform": str(host_data.get("platform") or "").strip(),
-        "resource_kind": str(lifecycle_host.get("resource_kind") or "").strip(),
+        "description": str(host_data.get("description") or fallback_host.get("description") or "").strip(),
+        "platform": str(host_data.get("platform") or fallback_host.get("platform") or "").strip(),
+        "resource_kind": str(lifecycle_host.get("resource_kind") or fallback_host.get("resource_kind") or "").strip(),
     }
 
 
@@ -511,20 +588,23 @@ def _backend_profile(name: str) -> Dict[str, Any]:
     lifecycle = _load_backend_lifecycle()
     backends = lifecycle.get("backends") if isinstance(lifecycle.get("backends"), dict) else {}
     backend = backends.get(name) if isinstance(backends, dict) and isinstance(backends.get(name), dict) else {}
+    fallback_backend = _FALLBACK_BACKENDS.get(name) if isinstance(_FALLBACK_BACKENDS.get(name), dict) else {}
     host = str(backend.get("host") or "").strip()
+    if not host:
+        host = str(fallback_backend.get("host") or "").strip()
     host_profile = _host_profile(host) if host else {}
     return {
         "name": name,
-        "display_name": str(backend.get("display_name") or name).strip(),
+        "display_name": str(backend.get("display_name") or fallback_backend.get("display_name") or name).strip(),
         "host": host,
         "host_description": host_profile.get("description") or "",
         "platform": host_profile.get("platform") or "",
         "resource_kind": host_profile.get("resource_kind") or "",
-        "estimated_vram_mb": int(backend.get("estimated_vram_mb") or 0),
-        "compose_file": str(backend.get("compose_file") or "").strip(),
-        "ready_path": str(backend.get("ready_path") or "").strip(),
-        "notes": str(backend.get("notes") or "").strip(),
-        "compose_managed": bool(backend.get("compose_managed", True)),
+        "estimated_vram_mb": int(backend.get("estimated_vram_mb") or fallback_backend.get("estimated_vram_mb") or 0),
+        "compose_file": str(backend.get("compose_file") or fallback_backend.get("compose_file") or "").strip(),
+        "ready_path": str(backend.get("ready_path") or fallback_backend.get("ready_path") or "").strip(),
+        "notes": str(backend.get("notes") or fallback_backend.get("notes") or "").strip(),
+        "compose_managed": bool(backend.get("compose_managed", fallback_backend.get("compose_managed", True))),
     }
 
 

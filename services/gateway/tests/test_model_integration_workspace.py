@@ -75,3 +75,14 @@ def test_scaffold_workspace_writes_topology_aware_files(monkeypatch, tmp_path):
     assert "## Recommended Deployment Target" in readme
     assert "ai1" in readme
     assert (tmp_path / "services" / plan["service_name"] / "Dockerfile").exists()
+
+
+def test_integration_host_lanes_fall_back_without_topology_files(monkeypatch):
+    monkeypatch.setattr(miw, "_load_topology_manifest", lambda: {})
+    monkeypatch.setattr(miw, "_load_backend_lifecycle", lambda: {})
+
+    lanes = miw.integration_host_lanes()
+
+    assert lanes
+    assert any(lane["host"] == "ai2" and lane["runtime"] == "mlx" for lane in lanes)
+    assert any(lane["host"] == "ada2" and lane["runtime"] == "vllm" for lane in lanes)
