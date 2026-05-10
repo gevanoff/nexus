@@ -201,7 +201,12 @@
                 </div>
               </div>
               <div>
-                <label>Tools</label>
+                <label>LLM tool access</label>
+                <div class="hint" style="margin: 0 0 6px;">
+                  These checkboxes grant the scheduled LLM permission to use tools while the task runs. Scheduling tools like
+                  <strong>agent_task_create</strong>, <strong>agent_task_list</strong>, and <strong>agent_task_cancel</strong>
+                  let the LLM manage scheduled tasks; they are not immediate UI actions.
+                </div>
                 <div id="tools" class="tools"></div>
               </div>
               <div class="row">
@@ -257,6 +262,6 @@
     </main>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/tasks.js?v=2"></script>
+    <script src="/static/tasks.js?v=3"></script>
   </body>
 </html>

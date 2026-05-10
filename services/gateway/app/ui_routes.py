@@ -2126,9 +2126,49 @@ def _tool_tier(name: str) -> int:
     return 99
 
 
+def _task_tool_category(name: str) -> str:
+    if name.startswith("agent_task_"):
+        return "scheduling"
+    if name in {"list_dir", "search_files", "search_text"}:
+        return "discovery"
+    if name in {"read_file", "read_file_lines"}:
+        return "read_files"
+    if name in {"web_browse", "http_fetch", "http_fetch_local"}:
+        return "network"
+    if name in {"current_time", "tool_manifest", "noop", "cluster_resources", "system_info", "models_refresh"}:
+        return "introspection"
+    if name.startswith("memory_"):
+        return "memory"
+    if name in {"write_file", "git", "shell"}:
+        return "workspace"
+    return "specialized"
+
+
+def _task_tool_default_off_reason(name: str) -> str:
+    if name == "web_browse":
+        return "off by default: can reach arbitrary public URLs"
+    if name == "shell":
+        return "off by default: can execute configured shell commands"
+    return ""
+
+
+def _default_task_tools(tier: int) -> list[str]:
+    allowed = tools_for_tier(tier)
+    out: list[str] = []
+    for name in sorted(allowed):
+        if name not in TOOL_SCHEMAS:
+            continue
+        if _task_tool_default_off_reason(name):
+            continue
+        out.append(name)
+    if "tool_manifest" not in out and "tool_manifest" in allowed and "tool_manifest" in TOOL_SCHEMAS:
+        out.append("tool_manifest")
+    return out
+
+
 def _coerce_selected_tools(raw: Any, tier: int) -> list[str]:
     if raw is None:
-        return ["tool_manifest", "current_time", "web_browse"]
+        return _default_task_tools(tier)
     if not isinstance(raw, list):
         raise ValueError("tools must be a list")
     allowed = tools_for_tier(tier)
@@ -2179,11 +2219,15 @@ async def ui_api_agent_tasks_capabilities(req: Request) -> Dict[str, Any]:
     tools: list[Dict[str, Any]] = []
     for name in sorted(TOOL_SCHEMAS.keys()):
         schema = TOOL_SCHEMAS.get(name) or {}
+        tier = _tool_tier(name)
         tools.append(
             {
                 "name": name,
                 "description": str(schema.get("description") or ""),
-                "tier": _tool_tier(name),
+                "tier": tier,
+                "category": _task_tool_category(name),
+                "default_enabled": name in _default_task_tools(tier),
+                "default_reason": _task_tool_default_off_reason(name),
             }
         )
     return {

@@ -255,22 +255,35 @@
   function renderTools() {
     if (!els.tools || !state.capabilities) return;
     const tier = Number(els.tier?.value || 0);
-    const defaults = new Set(["tool_manifest", "current_time", "web_browse"]);
     const existing = new Set(Array.from(els.tools.querySelectorAll("input:checked")).map((el) => el.value));
+    const visibleTools = (state.capabilities.tools || [])
+      .filter((tool) => Number(tool.tier) <= tier)
+      .sort((a, b) => {
+        const aDefault = a.default_enabled === false ? 0 : 1;
+        const bDefault = b.default_enabled === false ? 0 : 1;
+        return (bDefault - aDefault) || String(a.name || "").localeCompare(String(b.name || ""));
+      });
     els.tools.innerHTML = "";
-    for (const tool of state.capabilities.tools || []) {
-      if (Number(tool.tier) > tier) continue;
+    for (const tool of visibleTools) {
       const label = document.createElement("label");
       label.className = "tool";
       const input = document.createElement("input");
       input.type = "checkbox";
       input.value = tool.name;
-      input.checked = existing.has(tool.name) || (!existing.size && defaults.has(tool.name));
+      input.checked = existing.has(tool.name) || (!existing.size && tool.default_enabled !== false);
       const text = document.createElement("span");
       text.textContent = tool.name;
+      const details = [];
+      if (tool.category) details.push(tool.category);
+      if (tool.description) details.push(tool.description);
+      if (!existing.size && tool.default_enabled === false && tool.default_reason) details.push(tool.default_reason);
       if (tool.description) {
         const small = document.createElement("small");
-        small.textContent = tool.description;
+        small.textContent = details.join(" - ");
+        text.appendChild(small);
+      } else if (details.length) {
+        const small = document.createElement("small");
+        small.textContent = details.join(" - ");
         text.appendChild(small);
       }
       label.appendChild(input);
