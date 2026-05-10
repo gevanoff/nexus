@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib import error as urlerror
@@ -11,6 +12,62 @@ from urllib.parse import quote, urlsplit
 
 ROUTE_KIND_CHOICES = {"chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"}
 RUNTIME_CHOICES = {"auto", "mlx", "vllm", "transformers"}
+_VLLM_SUPPORTED_MODEL_TYPES = {
+    "bloom",
+    "dbrx",
+    "deepseek",
+    "deepseek_v2",
+    "deepseek_v3",
+    "exaone",
+    "falcon",
+    "gemma",
+    "gemma2",
+    "glm",
+    "gpt_neox",
+    "gptj",
+    "llama",
+    "mistral",
+    "mixtral",
+    "phi",
+    "phi3",
+    "phi4",
+    "qwen2",
+    "qwen2_moe",
+    "qwen3",
+}
+_TEXT_GENERATION_PIPELINES = {"", "conversational", "text-generation"}
+_VLLM_UNSUPPORTED_MARKERS = {
+    "audio",
+    "bart",
+    "blip",
+    "clip",
+    "diffusers",
+    "donut",
+    "florence",
+    "ggml",
+    "gguf",
+    "image-text-to-text",
+    "image-to-text",
+    "llama.cpp",
+    "llava",
+    "mllama",
+    "mt5",
+    "musicgen",
+    "onnx",
+    "onnxruntime",
+    "pegasus",
+    "reranker",
+    "roberta",
+    "sam",
+    "seq2seq",
+    "siglip",
+    "speech",
+    "stable-diffusion",
+    "t5",
+    "vision",
+    "wav2vec",
+    "whisper",
+}
 
 DOCKERFILE_TEMPLATE = """ARG PYTHON_BASE_IMAGE=python:3.11-slim
 FROM ${PYTHON_BASE_IMAGE}
@@ -411,6 +468,199 @@ async def handle_capability(req: Request):
 """
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+@lru_cache(maxsize=1)
+def _load_topology_manifest() -> Dict[str, Any]:
+    path = _repo_root() / "deploy" / "topology" / "production.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+@lru_cache(maxsize=1)
+def _load_backend_lifecycle() -> Dict[str, Any]:
+    path = _repo_root() / "deploy" / "topology" / "backend_lifecycle.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _host_profile(host: str) -> Dict[str, Any]:
+    topology = _load_topology_manifest()
+    topology_hosts = topology.get("hosts") if isinstance(topology.get("hosts"), dict) else {}
+    host_data = topology_hosts.get(host) if isinstance(topology_hosts, dict) else {}
+    lifecycle = _load_backend_lifecycle()
+    lifecycle_hosts = lifecycle.get("hosts") if isinstance(lifecycle.get("hosts"), dict) else {}
+    lifecycle_host = lifecycle_hosts.get(host) if isinstance(lifecycle_hosts, dict) else {}
+    return {
+        "host": host,
+        "description": str(host_data.get("description") or "").strip(),
+        "platform": str(host_data.get("platform") or "").strip(),
+        "resource_kind": str(lifecycle_host.get("resource_kind") or "").strip(),
+    }
+
+
+def _backend_profile(name: str) -> Dict[str, Any]:
+    lifecycle = _load_backend_lifecycle()
+    backends = lifecycle.get("backends") if isinstance(lifecycle.get("backends"), dict) else {}
+    backend = backends.get(name) if isinstance(backends, dict) else {}
+    host = str(backend.get("host") or "").strip()
+    host_profile = _host_profile(host) if host else {}
+    return {
+        "name": name,
+        "display_name": str(backend.get("display_name") or name).strip(),
+        "host": host,
+        "host_description": host_profile.get("description") or "",
+        "platform": host_profile.get("platform") or "",
+        "resource_kind": host_profile.get("resource_kind") or "",
+        "estimated_vram_mb": int(backend.get("estimated_vram_mb") or 0),
+        "compose_file": str(backend.get("compose_file") or "").strip(),
+        "ready_path": str(backend.get("ready_path") or "").strip(),
+        "notes": str(backend.get("notes") or "").strip(),
+        "compose_managed": bool(backend.get("compose_managed", True)),
+    }
+
+
+def integration_host_lanes() -> list[Dict[str, Any]]:
+    lanes: list[Dict[str, Any]] = []
+    for backend_name, label, route_kinds in (
+        ("local_mlx", "ai2 / MLX", ["chat"]),
+        ("local_vllm_fast", "ai1 / vLLM Fast", ["chat", "json"]),
+        ("local_vllm_embeddings", "ai1 / vLLM Embeddings", ["embeddings"]),
+        ("local_vllm", "ada2 / vLLM Strong", ["chat", "json"]),
+        ("gpu_heavy", "ada2 / CUDA Media", ["images", "video", "music", "ocr"]),
+    ):
+        backend = _backend_profile(backend_name)
+        if not backend.get("host"):
+            continue
+        summary_bits = [backend.get("host_description") or label]
+        if backend.get("estimated_vram_mb"):
+            summary_bits.append(f"~{backend['estimated_vram_mb']} MB comparable VRAM")
+        lanes.append(
+            {
+                "id": backend_name,
+                "label": label,
+                "host": backend.get("host") or "",
+                "runtime": "mlx" if backend_name == "local_mlx" else ("vllm" if backend_name.startswith("local_vllm") else "transformers"),
+                "route_kinds": route_kinds,
+                "summary": " | ".join(bit for bit in summary_bits if bit),
+            }
+        )
+    return lanes
+
+
+def _guess_parameter_billions(model_id: str, metadata: Dict[str, Any]) -> Optional[float]:
+    tags = [str(item) for item in metadata.get("tags") or [] if str(item).strip()]
+    text = " ".join([model_id, *tags])
+    matches = []
+    for match in re.finditer(r"(?<!\d)(\d{1,3}(?:\.\d+)?)\s*(?:b|bn)(?![a-z])", text, flags=re.IGNORECASE):
+        try:
+            value = float(match.group(1))
+        except Exception:
+            continue
+        if 0.5 <= value <= 500:
+            matches.append(value)
+    if not matches:
+        return None
+    return max(matches)
+
+
+def _deployment_target_from_backend(backend_name: str, *, reason: str, deployment_mode: Optional[str] = None) -> Dict[str, Any]:
+    backend = _backend_profile(backend_name)
+    target_mode = deployment_mode or ("host_native" if not backend.get("compose_managed", True) else "compose")
+    return {
+        "host": backend.get("host") or "",
+        "host_description": backend.get("host_description") or "",
+        "platform": backend.get("platform") or "",
+        "resource_kind": backend.get("resource_kind") or "",
+        "backend_lane": backend_name,
+        "backend_display_name": backend.get("display_name") or backend_name,
+        "deployment_mode": target_mode,
+        "compose_file": "host-native" if target_mode == "host_native" else str(backend.get("compose_file") or ""),
+        "estimated_vram_mb": int(backend.get("estimated_vram_mb") or 0),
+        "ready_path": backend.get("ready_path") or "/readyz",
+        "reason": reason,
+        "notes": backend.get("notes") or "",
+    }
+
+
+def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    size_b = _guess_parameter_billions(model_id, metadata)
+    if runtime == "mlx":
+        return _deployment_target_from_backend(
+            "local_mlx",
+            reason="MLX models should stay on ai2 because that host is the Apple Silicon M3 Ultra lane with 512GB unified memory and a host-native MLX serving path.",
+            deployment_mode="host_native",
+        )
+    if runtime == "vllm":
+        if route_kind == "embeddings":
+            return _deployment_target_from_backend(
+                "local_vllm_embeddings",
+                reason="Embeddings map to the dedicated ai1 embeddings lane, which already reserves a smaller secondary GPU profile for vLLM embeddings workloads.",
+            )
+        if size_b is not None and size_b >= 24:
+            return _deployment_target_from_backend(
+                "local_vllm",
+                reason=f"The model looks roughly {size_b:g}B scale, which is better aligned with ada2's 48GB RTX 6000 Ada lane and 128GB system RAM for vLLM CPU offload headroom.",
+            )
+        return _deployment_target_from_backend(
+            "local_vllm_fast",
+            reason="Standard chat models that do not clearly need the heavy lane should start on ai1, which is the dual-NVIDIA fast vLLM path.",
+        )
+    if route_kind == "ocr":
+        return _deployment_target_from_backend(
+            "lighton_ocr",
+            reason="OCR integrations line up with the existing CUDA OCR lane on ada2.",
+        )
+    if route_kind == "video":
+        return _deployment_target_from_backend(
+            "skyreels_v2",
+            reason="Video generation belongs on ada2 because the tracked video lane already absorbs the highest CUDA and VRAM pressure in the cluster.",
+        )
+    if route_kind == "music":
+        return _deployment_target_from_backend(
+            "heartmula_music",
+            reason="Music generation is treated as a heavy CUDA workload in this cluster and should start from ada2.",
+        )
+    if route_kind == "images":
+        return _deployment_target_from_backend(
+            "gpu_heavy",
+            reason="Image-generation adapters should target the CUDA image lane on ada2 rather than the CPU or MLX hosts.",
+        )
+    if route_kind == "tts":
+        ai2 = _host_profile("ai2")
+        return {
+            "host": "ai2",
+            "host_description": ai2.get("description") or "",
+            "platform": ai2.get("platform") or "",
+            "resource_kind": ai2.get("resource_kind") or "",
+            "backend_lane": "tts_ai2",
+            "backend_display_name": "ai2 TTS lane",
+            "deployment_mode": "compose",
+            "compose_file": "docker-compose.<service>.yml",
+            "estimated_vram_mb": 0,
+            "ready_path": "/readyz",
+            "reason": "TTS services in this cluster already live on ai2, where the M3 Ultra and large unified-memory pool are a better default fit than the CUDA image/video lanes.",
+            "notes": "Promote to a CUDA host only if the selected model or runtime proves to require NVIDIA-specific acceleration.",
+        }
+    if size_b is not None and size_b >= 24:
+        return _deployment_target_from_backend(
+            "local_vllm",
+            reason=f"Even with a transformers shim, a text model around {size_b:g}B scale should assume ada2-class GPU capacity first, not the lighter ai1 lane.",
+        )
+    return _deployment_target_from_backend(
+        "local_vllm_fast",
+        reason="Fallback text/json shims should start from ai1 unless the model clearly needs the heavier ada2 lane or an MLX host-native path.",
+    )
+
+
 def parse_model_reference(value: str) -> Dict[str, str]:
     raw = str(value or "").strip()
     if not raw:
@@ -469,20 +719,36 @@ def _route_kind_from_metadata(metadata: Dict[str, Any], *, explicit: Optional[st
     return "chat"
 
 
-def _runtime_from_metadata(model_id: str, metadata: Dict[str, Any], route_kind: str, *, preferred_runtime: Optional[str] = None) -> str:
+def _runtime_from_metadata(model_id: str, metadata: Dict[str, Any], route_kind: str, *, preferred_runtime: Optional[str] = None) -> tuple[str, str]:
     preferred = str(preferred_runtime or "auto").strip().lower() or "auto"
     if preferred not in RUNTIME_CHOICES:
         raise ValueError("preferred_runtime must be one of: auto, mlx, vllm, transformers")
     if preferred != "auto":
-        return preferred
+        return preferred, f"Runtime pinned to `{preferred}` by the request."
     tags = {str(item).strip().lower() for item in metadata.get("tags") or [] if str(item).strip()}
     library_name = str(metadata.get("library_name") or "").strip().lower()
-    haystack = " ".join([model_id.lower(), library_name, *sorted(tags)])
+    config = metadata.get("config") if isinstance(metadata.get("config"), dict) else {}
+    model_type = str(config.get("model_type") or "").strip().lower()
+    pipeline_tag = str(metadata.get("pipeline_tag") or "").strip().lower()
+    architectures = [str(item).strip().lower() for item in config.get("architectures") or [] if str(item).strip()]
+    haystack = " ".join([model_id.lower(), library_name, model_type, pipeline_tag, *architectures, *sorted(tags)])
     if "mlx" in haystack:
-        return "mlx"
-    if route_kind in {"chat", "embeddings"}:
-        return "vllm"
-    return "transformers"
+        return "mlx", "Model metadata advertises an MLX-specific package or tag, so the host-native MLX path is the intended starting point."
+    if route_kind not in {"chat", "embeddings"}:
+        return "transformers", "Non-text modalities currently need the generic shim path instead of the vLLM text lanes."
+    if any(marker in haystack for marker in _VLLM_UNSUPPORTED_MARKERS):
+        return "transformers", "Model metadata points at a format or multimodal architecture that should not be treated as a plain vLLM text backend."
+    if route_kind == "embeddings":
+        return "vllm", "Text embeddings map cleanly to the existing vLLM embeddings lane on ai1."
+    if pipeline_tag not in _TEXT_GENERATION_PIPELINES:
+        return "transformers", f"Pipeline `{pipeline_tag}` is not a standard chat/text-generation lane for vLLM."
+    if any("causallm" in architecture for architecture in architectures):
+        return "vllm", "The architecture is a standard causal language model, which fits the vLLM chat lanes."
+    if model_type in _VLLM_SUPPORTED_MODEL_TYPES:
+        return "vllm", f"Model type `{model_type}` lines up with the supported vLLM text-serving lane."
+    if library_name in {"", "transformers"} and not model_type:
+        return "vllm", "Metadata looks like a standard transformers text model, so vLLM is the default runtime."
+    return "transformers", "Metadata does not confidently match the supported vLLM text lane, so the safer default is a transformers shim."
 
 
 def _safe_metadata_subset(metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -522,7 +788,7 @@ def build_integration_plan(
         warnings.append(f"metadata fetch failed: {type(exc).__name__}: {exc}")
 
     selected_route = _route_kind_from_metadata(metadata, explicit=route_kind)
-    runtime = _runtime_from_metadata(parsed["model_id"], metadata, selected_route, preferred_runtime=preferred_runtime)
+    runtime, runtime_reason = _runtime_from_metadata(parsed["model_id"], metadata, selected_route, preferred_runtime=preferred_runtime)
     normalized_service_name = _slugify(service_name or f"hf-{parsed['model_id'].replace('/', '-')}", default="hf-model-adapter")
     backend_class = normalized_service_name.replace("-", "_")
     model_tail = parsed["model_id"].split("/", 1)[-1]
@@ -531,9 +797,11 @@ def build_integration_plan(
     shim_required = runtime == "transformers"
     execution_mode = "command" if shim_required else "upstream"
     upstream_base_url = "http://127.0.0.1:8000" if execution_mode == "upstream" else ""
+    deployment_target = _recommend_deployment_target(runtime, selected_route, parsed["model_id"], metadata)
     task_prompt = (
         f"Integrate the HuggingFace model {parsed['model_id']} into Nexus as a {selected_route} backend. "
         f"Use the generated workspace scaffold. Runtime strategy: {runtime}. "
+        f"Recommended deployment target: {deployment_target.get('host') or 'unknown host'} / {deployment_target.get('backend_display_name') or deployment_target.get('backend_lane') or 'custom lane'}. "
         f"Containerize the adapter if appropriate ({'yes' if containerize else 'no'}). "
         f"Provide an industry-standard API surface compatible with OpenAI-style {selected_route} access. "
         f"Update README, env, compose or host-native launch files, backend registration snippets, and the implementation stub so the workspace is ready for Nexus integration."
@@ -547,6 +815,7 @@ def build_integration_plan(
         "source_url": parsed["source_url"],
         "route_kind": selected_route,
         "runtime": runtime,
+        "runtime_reason": runtime_reason,
         "containerize": containerize,
         "shim_required": shim_required,
         "execution_mode": execution_mode,
@@ -554,6 +823,7 @@ def build_integration_plan(
         "service_name": normalized_service_name,
         "backend_class": backend_class,
         "display_name": display_name,
+        "estimated_model_size_b": _guess_parameter_billions(parsed["model_id"], metadata),
         "api_path": {
             "chat": "/v1/chat/completions",
             "embeddings": "/v1/embeddings",
@@ -564,6 +834,7 @@ def build_integration_plan(
             "music": "/v1/music/generations",
             "json": "/v1/run",
         }[selected_route],
+        "deployment_target": deployment_target,
         "hf_metadata": _safe_metadata_subset(metadata),
         "warnings": warnings,
         "prompt": task_prompt,
@@ -608,11 +879,18 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
         f"- Source: {plan['source_url']}\n"
         f"- Route kind: `{plan['route_kind']}`\n"
         f"- Runtime strategy: `{plan['runtime']}`\n"
+        f"- Runtime rationale: {plan.get('runtime_reason') or 'n/a'}\n"
         f"- Containerize: `{str(bool(plan['containerize'])).lower()}`\n"
         f"- Shim required: `{str(bool(plan['shim_required'])).lower()}`\n"
         f"- Service name: `{plan['service_name']}`\n"
         f"- Backend class: `{plan['backend_class']}`\n"
         f"- Target API path: `{plan['api_path']}`\n\n"
+        "## Recommended Deployment Target\n\n"
+        f"- Host: `{plan.get('deployment_target', {}).get('host') or 'unknown'}`\n"
+        f"- Lane: `{plan.get('deployment_target', {}).get('backend_display_name') or plan.get('deployment_target', {}).get('backend_lane') or 'custom'}`\n"
+        f"- Deployment mode: `{plan.get('deployment_target', {}).get('deployment_mode') or 'unknown'}`\n"
+        f"- Comparable VRAM: `{plan.get('deployment_target', {}).get('estimated_vram_mb') or 0}` MB\n"
+        f"- Reason: {plan.get('deployment_target', {}).get('reason') or 'n/a'}\n\n"
         "## Metadata Notes\n\n"
         f"- library: `{plan['hf_metadata'].get('library_name') or 'unknown'}`\n"
         f"- pipeline: `{plan['hf_metadata'].get('pipeline_tag') or 'unknown'}`\n"
@@ -666,16 +944,21 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
     lifecycle = {
         str(plan["backend_class"]): {
             "display_name": plan["display_name"],
-            "host": "set-me",
+            "host": str(plan.get("deployment_target", {}).get("host") or "set-me"),
             "component": plan["service_name"],
             "tier": "optional",
             "capabilities": [plan["route_kind"]],
-            "estimated_vram_mb": 0,
+            "estimated_vram_mb": int(plan.get("deployment_target", {}).get("estimated_vram_mb") or 0),
             "auto_start": True,
             "auto_stop": True,
             "compose_file": f"docker-compose.{plan['service_name']}.yml" if bool(plan["containerize"]) else "host-native",
             "ready_path": "/readyz" if bool(plan["shim_required"]) or bool(plan["containerize"]) else "/v1/models",
-            "notes": f"Generated from HuggingFace model {plan['model_id']}. Fill in host, VRAM, secrets, and artifact requirements.",
+            "notes": (
+                f"Generated from HuggingFace model {plan['model_id']}. "
+                f"Recommended lane: {plan.get('deployment_target', {}).get('host') or 'unknown'} / "
+                f"{plan.get('deployment_target', {}).get('backend_display_name') or plan.get('deployment_target', {}).get('backend_lane') or 'custom lane'}. "
+                f"{plan.get('deployment_target', {}).get('reason') or 'Fill in host, VRAM, secrets, and artifact requirements.'}"
+            ),
         }
     }
     _write(repo_root / "integration" / "lifecycle.backend.json", json.dumps(lifecycle, indent=2, sort_keys=True) + "\n")

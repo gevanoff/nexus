@@ -7,6 +7,15 @@
     taskPrompt: document.getElementById("taskPrompt"),
     createTask: document.getElementById("createTask"),
     createAndRun: document.getElementById("createAndRun"),
+    modelIntegrationModel: document.getElementById("modelIntegrationModel"),
+    modelIntegrationRuntime: document.getElementById("modelIntegrationRuntime"),
+    modelIntegrationRouteKind: document.getElementById("modelIntegrationRouteKind"),
+    modelIntegrationServiceName: document.getElementById("modelIntegrationServiceName"),
+    modelIntegrationBranchName: document.getElementById("modelIntegrationBranchName"),
+    modelIntegrationPrompt: document.getElementById("modelIntegrationPrompt"),
+    createModelIntegration: document.getElementById("createModelIntegration"),
+    createAndRunModelIntegration: document.getElementById("createAndRunModelIntegration"),
+    modelIntegrationMeta: document.getElementById("modelIntegrationMeta"),
     agentMaxTurns: document.getElementById("agentMaxTurns"),
     agentAutoCommit: document.getElementById("agentAutoCommit"),
     configMeta: document.getElementById("configMeta"),
@@ -135,6 +144,35 @@
     if (value === "running" || value === "queued" || value === "stopping") return "running";
     if (value === "interrupted") return "error";
     return "pending";
+  }
+
+  function taskIntegration(task) {
+    return task && task.integration && typeof task.integration === "object" ? task.integration : null;
+  }
+
+  function taskTitle(task) {
+    const integration = taskIntegration(task);
+    if (integration) {
+      return integration.display_name || integration.service_name || task.branch_name || task.id;
+    }
+    return task.branch_name || task.id;
+  }
+
+  function setSelectOptions(select, options, selectedValue) {
+    if (!select) return;
+    select.innerHTML = "";
+    (options || []).forEach((entry) => {
+      const option = document.createElement("option");
+      if (entry && typeof entry === "object") {
+        option.value = entry.value;
+        option.textContent = entry.label;
+      } else {
+        option.value = String(entry || "");
+        option.textContent = String(entry || "");
+      }
+      select.appendChild(option);
+    });
+    if (selectedValue !== undefined && selectedValue !== null) select.value = String(selectedValue);
   }
 
   function selectedTask() {
@@ -319,6 +357,10 @@
       return;
     }
     for (const task of tasks) {
+      const integration = taskIntegration(task);
+      const deployment = integration && integration.deployment_target && typeof integration.deployment_target === "object"
+        ? integration.deployment_target
+        : null;
       const button = document.createElement("div");
       button.className = `task-item ${task.id === state.selectedId ? "active" : ""}`;
       button.setAttribute("role", "button");
@@ -335,13 +377,24 @@
       const title = document.createElement("div");
       title.style.marginTop = "6px";
       title.style.fontWeight = "700";
-      title.textContent = task.branch_name || task.id;
+      title.textContent = taskTitle(task);
       const meta = document.createElement("div");
       meta.className = "meta";
-      meta.textContent = `${task.base_branch || "base"} -> ${task.id || ""}`;
+      if (integration) {
+        const metaBits = [];
+        if (integration.model_id) metaBits.push(integration.model_id);
+        metaBits.push(`${integration.route_kind || "route"} via ${integration.runtime || "runtime"}`);
+        if (deployment && deployment.host) metaBits.push(`target ${deployment.host}`);
+        metaBits.push(task.branch_name || task.id || "");
+        meta.textContent = metaBits.join(" | ");
+      } else {
+        meta.textContent = `${task.base_branch || "base"} -> ${task.id || ""}`;
+      }
       const prompt = document.createElement("div");
       prompt.className = "meta";
-      prompt.textContent = String(task.prompt || "").slice(0, 140);
+      prompt.textContent = integration
+        ? String((deployment && deployment.reason) || task.prompt || "").slice(0, 160)
+        : String(task.prompt || "").slice(0, 140);
       const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
       const commitMeta = document.createElement("div");
       commitMeta.className = "meta commit-meta";
@@ -430,14 +483,30 @@
       renderWorkspaceChat(null);
       return;
     }
-    if (els.selectedTitle) els.selectedTitle.textContent = task.branch_name || task.id;
+    const integration = taskIntegration(task);
+    const deployment = integration && integration.deployment_target && typeof integration.deployment_target === "object"
+      ? integration.deployment_target
+      : null;
+    if (els.selectedTitle) els.selectedTitle.textContent = taskTitle(task);
     if (els.selectedMeta) {
-      const bits = [`${task.repo_url || ""}`, `base ${task.base_branch || ""}`, `updated ${fmtTime(task.updated_at)}`];
+      const bits = integration
+        ? [
+            integration.model_id || task.source_url || task.repo_url || "",
+            `${integration.route_kind || "route"} via ${integration.runtime || "runtime"}`,
+            deployment && deployment.host ? `target ${deployment.host}` : "",
+            deployment && deployment.backend_display_name ? deployment.backend_display_name : "",
+            `updated ${fmtTime(task.updated_at)}`,
+          ].filter(Boolean)
+        : [`${task.repo_url || ""}`, `base ${task.base_branch || ""}`, `updated ${fmtTime(task.updated_at)}`];
       const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
       if (commit) bits.push(`commit ${commit}`);
       els.selectedMeta.textContent = bits.join(" | ");
     }
-    if (els.selectedPrompt) els.selectedPrompt.textContent = task.prompt || "";
+    if (els.selectedPrompt) {
+      els.selectedPrompt.textContent = integration && deployment && deployment.reason
+        ? `${task.prompt || ""}\n\nRecommended lane: ${deployment.reason}`
+        : task.prompt || "";
+    }
     if (els.selectedStatus) {
       els.selectedStatus.className = `badge ${badgeClass(task.status)}`;
       els.selectedStatus.textContent = task.status || "unknown";
@@ -620,6 +689,16 @@
     if (els.repoUrl && !els.repoUrl.value) els.repoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
     if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 100;
+    setSelectOptions(
+      els.modelIntegrationRuntime,
+      [{ value: "auto", label: "Auto detect" }].concat((payload.model_integration_runtimes || []).filter((value) => value !== "auto").map((value) => ({ value, label: value }))),
+      "auto"
+    );
+    setSelectOptions(
+      els.modelIntegrationRouteKind,
+      [{ value: "", label: "Auto detect" }].concat((payload.model_integration_route_kinds || []).map((value) => ({ value, label: value }))),
+      ""
+    );
     if (els.configMeta) {
       const bits = [];
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
@@ -629,6 +708,14 @@
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
       els.configMeta.textContent = bits.join(" | ");
+    }
+    if (els.modelIntegrationMeta) {
+      const hostLines = Array.isArray(payload.model_integration_host_lanes)
+        ? payload.model_integration_host_lanes.map((lane) => `${lane.label}: ${lane.summary}`)
+        : [];
+      els.modelIntegrationMeta.textContent = hostLines.length
+        ? `Auto lanes: ${hostLines.join(" || ")}`
+        : "Auto detection uses the tracked Nexus topology to suggest the host lane.";
     }
   }
 
@@ -658,6 +745,62 @@
     };
     if (Number.isFinite(turns) && turns > 0) body.max_turns = Math.trunc(turns);
     return body;
+  }
+
+  function modelIntegrationBody() {
+    return {
+      model: els.modelIntegrationModel ? els.modelIntegrationModel.value.trim() : "",
+      preferred_runtime: els.modelIntegrationRuntime ? els.modelIntegrationRuntime.value.trim() : "auto",
+      route_kind: els.modelIntegrationRouteKind ? els.modelIntegrationRouteKind.value.trim() : "",
+      service_name: els.modelIntegrationServiceName ? els.modelIntegrationServiceName.value.trim() : "",
+      base_branch: els.baseBranch ? els.baseBranch.value.trim() : "",
+      branch_name: els.modelIntegrationBranchName ? els.modelIntegrationBranchName.value.trim() : "",
+      prompt: els.modelIntegrationPrompt ? els.modelIntegrationPrompt.value.trim() : "",
+    };
+  }
+
+  async function createModelIntegration() {
+    const body = modelIntegrationBody();
+    if (!body.model) throw new Error("Model is required");
+    setBusy(true);
+    try {
+      setStatus("Creating model integration workspace...");
+      const payload = await fetchJson("/ui/api/coding/model-integrations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const task = payload.task;
+      await loadTasks({ keepSelection: false });
+      if (task && task.id) selectTask(task.id);
+      setOutput("model integration", task || payload);
+      setStatus(task && task.status === "error" ? "Model integration workspace created with errors." : "Model integration workspace ready.", task && task.status === "error");
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
+  }
+
+  async function createAndRunModelIntegration() {
+    const body = { ...modelIntegrationBody(), ...agentOptionsBody() };
+    if (!body.model) throw new Error("Model is required");
+    setBusy(true);
+    try {
+      setStatus("Creating model integration workspace and starting agent...");
+      const payload = await fetchJson("/ui/api/coding/model-integrations/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const task = payload.task;
+      await loadTasks({ keepSelection: false });
+      if (task && task.id) selectTask(task.id);
+      setOutput("model integration run", task || payload);
+      setStatus(task && task.status === "error" ? "Model integration workspace created with errors." : "Model integration agent run started.", task && task.status === "error");
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
   }
 
   async function createTask() {
@@ -1105,6 +1248,8 @@
   wire("refreshTasks", async () => loadTasks({ keepSelection: true }));
   wire("createAndRun", createAndRun);
   wire("createTask", createTask);
+  wire("createAndRunModelIntegration", createAndRunModelIntegration);
+  wire("createModelIntegration", createModelIntegration);
   wire("statusBtn", runStatus);
   wire("diffBtn", runDiff);
   wire("briefBtn", runAgentBrief);

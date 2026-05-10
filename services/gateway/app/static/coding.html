@@ -322,6 +322,44 @@
             <div id="configMeta" class="hint"></div>
           </div>
 
+          <div class="card stack">
+            <h2>New Model Integration</h2>
+            <div class="hint">Start from a HuggingFace model ID or URL and seed a topology-aware Nexus integration workspace.</div>
+            <div>
+              <label for="modelIntegrationModel">Model</label>
+              <input id="modelIntegrationModel" autocomplete="off" placeholder="owner/model or https://huggingface.co/owner/model" />
+            </div>
+            <div class="two">
+              <div>
+                <label for="modelIntegrationRuntime">Runtime</label>
+                <select id="modelIntegrationRuntime"></select>
+              </div>
+              <div>
+                <label for="modelIntegrationRouteKind">Route kind</label>
+                <select id="modelIntegrationRouteKind"></select>
+              </div>
+            </div>
+            <div class="two">
+              <div>
+                <label for="modelIntegrationServiceName">Service name override</label>
+                <input id="modelIntegrationServiceName" autocomplete="off" placeholder="auto" />
+              </div>
+              <div>
+                <label for="modelIntegrationBranchName">Working branch</label>
+                <input id="modelIntegrationBranchName" autocomplete="off" placeholder="auto" />
+              </div>
+            </div>
+            <div>
+              <label for="modelIntegrationPrompt">Extra guidance</label>
+              <textarea id="modelIntegrationPrompt" placeholder="Optional implementation guidance for the coding agent"></textarea>
+            </div>
+            <div class="row">
+              <button id="createAndRunModelIntegration" type="button" data-ui-role="action">Create and run agent</button>
+              <button id="createModelIntegration" type="button" data-ui-role="secondary">Create workspace only</button>
+            </div>
+            <div id="modelIntegrationMeta" class="hint"></div>
+          </div>
+
           <div class="card">
             <div class="row" style="justify-content:space-between; margin-bottom:10px;">
               <h2 style="margin:0;">Workspaces</h2>

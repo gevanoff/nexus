@@ -1598,4 +1598,5 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "gh_cli_available": shutil.which("gh") is not None,
         "model_integration_runtimes": ["auto", "mlx", "vllm", "transformers"],
         "model_integration_route_kinds": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"],
+        "model_integration_host_lanes": miw.integration_host_lanes(),
     }
