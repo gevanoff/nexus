@@ -36,6 +36,7 @@ from app.backends import backend_provider_name, llm_backends
 from app.config import S
 from app.models import ToolExecRequest
 from app.openai_utils import new_id, now_unix
+from app.resources_snapshot import build_resources_snapshot
 
 
 router = APIRouter()
@@ -396,7 +397,7 @@ def _tool_category(name: str) -> str:
         return "read_files"
     if name in {"web_browse", "http_fetch", "http_fetch_local"}:
         return "network"
-    if name in {"current_time", "tool_manifest", "noop", "system_info", "models_refresh"}:
+    if name in {"current_time", "tool_manifest", "noop", "system_info", "models_refresh", "cluster_resources"}:
         return "introspection"
     if name.startswith("agent_task_"):
         return "scheduling"
@@ -439,6 +440,8 @@ def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[s
         guidance.append("Use web_browse for current public documentation, issue pages, and other external facts that may have changed.")
     if "current_time" in allowed:
         guidance.append("Use current_time before reasoning about freshness, schedules, or relative dates.")
+    if "cluster_resources" in allowed:
+        guidance.append("Use cluster_resources when you need current Nexus host resources, backend availability, control-plane health, or the full Resources UI snapshot.")
     if allowed.intersection({"agent_task_create", "agent_task_list", "agent_task_cancel"}):
         guidance.append("Use agent_task_create for reminders, countdowns, recurring checks, and follow-up work; use agent_task_list/cancel to inspect or stop scheduled work.")
     if allowed.intersection({"write_file", "git", "shell"}):
@@ -1424,6 +1427,44 @@ def tool_system_info(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def tool_cluster_resources(args: Dict[str, Any]) -> Dict[str, Any]:
+    if not getattr(S, "TOOLS_ALLOW_CLUSTER_RESOURCES", True):
+        return {"ok": False, "error": "cluster_resources tool disabled"}
+    refresh = bool(args.get("refresh", False))
+    include_sources = bool(args.get("include_sources", False))
+    snapshot = _run_coroutine_sync(build_resources_snapshot(refresh_lifecycle=refresh))
+    if not isinstance(snapshot, dict):
+        return {"ok": False, "error": "invalid cluster resources snapshot"}
+    resources = snapshot.get("resources") if isinstance(snapshot.get("resources"), dict) else {}
+    hosts = resources.get("hosts") if isinstance(resources.get("hosts"), list) else []
+    backends = resources.get("backends") if isinstance(resources.get("backends"), list) else []
+    control_plane = resources.get("control_plane") if isinstance(resources.get("control_plane"), list) else []
+    core_services = resources.get("core_services") if isinstance(resources.get("core_services"), list) else []
+    result: Dict[str, Any] = {
+        "ok": bool(snapshot.get("ok")) or bool(resources),
+        "resources": resources,
+        "summary": {
+            "hosts": len(hosts),
+            "backends": len(backends),
+            "control_plane": len(control_plane),
+            "core_services": len(core_services),
+            "generated_at": resources.get("generated_at"),
+            "mode": resources.get("mode"),
+        },
+    }
+    lifecycle_error = str(snapshot.get("lifecycle_error") or "").strip()
+    registry_error = str(snapshot.get("registry_error") or "").strip()
+    if lifecycle_error:
+        result["lifecycle_error"] = lifecycle_error
+    if registry_error:
+        result["registry_error"] = registry_error
+    if include_sources and isinstance(snapshot.get("sources"), dict):
+        result["sources"] = snapshot["sources"]
+    if not result["ok"]:
+        result["error"] = lifecycle_error or registry_error or "resources unavailable"
+    return result
+
+
 def tool_models_refresh(args: Dict[str, Any]) -> Dict[str, Any]:
     if not getattr(S, "TOOLS_ALLOW_MODELS_REFRESH", False):
         return {"ok": False, "error": "models_refresh tool disabled"}
@@ -1524,6 +1565,7 @@ TOOL_IMPL = {
     "tool_manifest": tool_tool_manifest,
     "git": tool_git,
     "system_info": tool_system_info,
+    "cluster_resources": tool_cluster_resources,
     "models_refresh": tool_models_refresh,
     "agent_task_create": agent_tasks.create_task,
     "agent_task_list": agent_tasks.list_tasks,
@@ -1594,6 +1636,8 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
 
     if bool(pol.get("tools_allow_system_info", getattr(S, "TOOLS_ALLOW_SYSTEM_INFO", False))):
         allowed.add("system_info")
+    if bool(pol.get("tools_allow_cluster_resources", getattr(S, "TOOLS_ALLOW_CLUSTER_RESOURCES", True))):
+        allowed.add("cluster_resources")
     if bool(pol.get("tools_allow_models_refresh", getattr(S, "TOOLS_ALLOW_MODELS_REFRESH", False))):
         allowed.add("models_refresh")
     return allowed
@@ -1826,6 +1870,20 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "cluster_resources": {
+        "name": "cluster_resources",
+        "version": "1",
+        "description": "Return the merged Nexus Resources snapshot, including hosts, RAM/disk/CPU/GPU/VRAM details when reported, core services, control-plane status, and backend availability.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "refresh": {"type": "boolean"},
+                "include_sources": {"type": "boolean"}
+            },
             "required": [],
             "additionalProperties": False,
         },

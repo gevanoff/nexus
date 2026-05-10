@@ -116,6 +116,7 @@ def tools_for_tier(tier: int) -> set[str]:
         "http_fetch_local",
         "web_browse",
         "current_time",
+        "cluster_resources",
         "tool_manifest",
         "noop",
         "agent_task_create",

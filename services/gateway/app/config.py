@@ -251,6 +251,7 @@ class Settings(BaseSettings):
     # Safe built-in tools (disabled by default; can be enabled or allowlisted).
     TOOLS_ALLOW_SYSTEM_INFO: bool = False
     TOOLS_ALLOW_MODELS_REFRESH: bool = False
+    TOOLS_ALLOW_CLUSTER_RESOURCES: bool = True
 
     # Optional explicit allowlist; if set, only these tools may be executed.
     # Example: "read_file,write_file,http_fetch"

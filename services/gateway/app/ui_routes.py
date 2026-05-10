@@ -33,7 +33,6 @@ from app.backends import (
     check_capability,
     get_admission_controller,
     get_registry,
-    get_registry_sync_status,
     get_service_record_for_backend,
     llm_backends,
 )
@@ -53,6 +52,12 @@ from app import user_store
 from app import agent_tasks
 from app.auth import configured_static_bearer_tokens
 from app.agent_runtime_v1 import tools_for_tier
+from app.resources_snapshot import (
+    build_registry_backend_status_payload,
+    call_lifecycle_manager,
+    lifecycle_manager_base_url,
+    lifecycle_timeout,
+)
 from app.tools_bus import TOOL_SCHEMAS
 
 
@@ -100,38 +105,6 @@ def _apply_model_location(item: Dict[str, Any], location: Dict[str, str]) -> Dic
     if host and not item.get("label"):
         item["label"] = f"{item['id']} @ {host}"
     return item
-
-
-def _status_exception_text(exc: Exception) -> str:
-    if isinstance(exc, HTTPException):
-        detail = exc.detail
-        if isinstance(detail, dict):
-            error = str(detail.get("error") or "").strip()
-            message = str(detail.get("message") or "").strip()
-            if error and message:
-                return f"{error}: {message}"
-            if error:
-                return error
-            if message:
-                return message
-            try:
-                return json.dumps(detail, ensure_ascii=False, sort_keys=True)
-            except Exception:
-                return str(detail)
-        if detail:
-            return str(detail)
-    return f"{type(exc).__name__}: {exc}"
-
-
-def _service_host_from_url(raw_url: str) -> str:
-    value = str(raw_url or "").strip()
-    if not value:
-        return ""
-    try:
-        parsed = urlsplit(value)
-        return (parsed.hostname or "").strip() or value
-    except Exception:
-        return value
 
 
 def _lighton_ocr_base_url() -> str:
@@ -342,47 +315,6 @@ def _personaplex_ui_url(req: Request, *, base_url: str = "") -> str:
     return urlunsplit((scheme, _format_host_port(hostname, port), "", "", ""))
 
 
-def _lifecycle_manager_base_url() -> str:
-    return (getattr(S, "LIFECYCLE_MANAGER_BASE_URL", "") or os.environ.get("LIFECYCLE_MANAGER_BASE_URL") or "").strip().rstrip("/")
-
-
-def _lifecycle_timeout() -> float:
-    try:
-        return float(getattr(S, "LIFECYCLE_MANAGER_TIMEOUT_SEC", 15.0) or 15.0)
-    except Exception:
-        return 15.0
-
-
-async def _call_lifecycle_manager(method: str, path: str, *, json_body: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None) -> Dict[str, Any]:
-    base = _lifecycle_manager_base_url()
-    if not base:
-        raise HTTPException(status_code=503, detail={"error": "lifecycle_manager_unconfigured"})
-    if not path.startswith("/"):
-        path = "/" + path
-    async with httpx.AsyncClient(timeout=timeout or _lifecycle_timeout()) as client:
-        try:
-            response = await client.request(method.upper(), f"{base}{path}", json=json_body)
-        except httpx.RequestError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"error": "lifecycle_manager_unreachable", "message": str(exc)},
-            ) from exc
-    if response.status_code >= 400:
-        detail: Any
-        try:
-            detail = response.json()
-        except Exception:
-            detail = response.text[:1000]
-        raise HTTPException(status_code=response.status_code, detail=detail)
-    try:
-        data = response.json()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail={"error": "lifecycle_manager_bad_response"}) from exc
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail={"error": "lifecycle_manager_bad_response"})
-    return data
-
-
 def _error_text(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -469,10 +401,10 @@ async def _ensure_lifecycle_capacity(
     confirmed: bool = False,
     allow_disruptive: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    if not _lifecycle_manager_base_url():
+    if not lifecycle_manager_base_url():
         return None
     try:
-        return await _call_lifecycle_manager(
+        return await call_lifecycle_manager(
             "POST",
             "/v1/lifecycle/ensure-capacity",
             json_body={
@@ -483,7 +415,7 @@ async def _ensure_lifecycle_capacity(
                 "allow_disruptive": allow_disruptive,
                 "execute": True,
             },
-            timeout=max(_lifecycle_timeout(), 300.0),
+            timeout=max(lifecycle_timeout(), 300.0),
         )
     except HTTPException as exc:
         if exc.status_code in {404, 503}:
@@ -492,10 +424,10 @@ async def _ensure_lifecycle_capacity(
 
 
 async def _notify_lifecycle_manager(backend_class: str, event: str, route_kind: str) -> None:
-    if not _lifecycle_manager_base_url():
+    if not lifecycle_manager_base_url():
         return
     try:
-        await _call_lifecycle_manager(
+        await call_lifecycle_manager(
             "POST",
             "/v1/lifecycle/notify",
             json_body={"backend_class": backend_class, "event": event, "route_kind": route_kind},
@@ -506,7 +438,7 @@ async def _notify_lifecycle_manager(backend_class: str, event: str, route_kind: 
 
 
 def _schedule_lifecycle_notify(backend_class: str, event: str, route_kind: str) -> None:
-    if not backend_class or not _lifecycle_manager_base_url():
+    if not backend_class or not lifecycle_manager_base_url():
         return
     try:
         asyncio.create_task(_notify_lifecycle_manager(backend_class, event, route_kind))
@@ -4734,331 +4666,7 @@ async def ui_chat_stream(req: Request):
 @router.get("/ui/api/backend_status", include_in_schema=False)
 async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
-    registry = get_registry()
-    checker = get_health_checker()
-    aliases = get_aliases()
-    alias_state = get_aliases_state()
-    alias_map: Dict[str, List[Dict[str, str]]] = {}
-    for alias_name, target_backend in registry.legacy_mapping.items():
-        if not isinstance(alias_name, str) or not isinstance(target_backend, str):
-            continue
-        alias_map.setdefault(target_backend, []).append(
-            {"name": alias_name, "target": target_backend, "kind": "legacy"}
-        )
-    for alias_name, alias in aliases.items():
-        resolved_backend = registry.resolve_backend_class(alias.backend)
-        alias_map.setdefault(resolved_backend, []).append(
-            {
-                "name": alias_name,
-                "target": f"{alias.backend}:{alias.upstream_model}",
-                "kind": "model",
-            }
-        )
-    lifecycle_by_backend: Dict[str, Dict[str, Any]] = {}
-    lifecycle_payload: Dict[str, Any] = {}
-    lifecycle_error = ""
-    try:
-        lifecycle_payload = await _call_lifecycle_manager("GET", "/v1/lifecycle/status", timeout=3.0)
-        lifecycle_backends = lifecycle_payload.get("backends") if isinstance(lifecycle_payload, dict) else None
-        if isinstance(lifecycle_backends, list):
-            for item in lifecycle_backends:
-                if not isinstance(item, dict):
-                    continue
-                key = str(item.get("backend_class") or "").strip()
-                if key:
-                    resolved_key = registry.resolve_backend_class(key)
-                    if resolved_key in registry.backends:
-                        lifecycle_by_backend[resolved_key] = item
-                    else:
-                        lifecycle_by_backend[key] = item
-    except Exception as exc:
-        lifecycle_error = _status_exception_text(exc)
-        lifecycle_by_backend = {}
-
-    backends = []
-    for backend_class, config in registry.backends.items():
-        entry: Dict[str, Any] = {
-            "backend_class": backend_class,
-            "provider": config.provider,
-            "description": config.description,
-            "base_url": config.base_url,
-            "capabilities": list(config.supported_capabilities),
-            "health": {
-                "liveness": config.health_liveness,
-                "readiness": config.health_readiness,
-            },
-        }
-        alias_entries = alias_map.get(backend_class)
-        if alias_entries:
-            entry["aliases"] = sorted(alias_entries, key=lambda item: item.get("name") or "")
-        location = _backend_location_details(registry, backend_class, base_url=config.base_url)
-        if location.get("host"):
-            entry["host"] = location["host"]
-        if location.get("hostname"):
-            entry["hostname"] = location["hostname"]
-        status = checker.get_status(backend_class)
-        if status is not None:
-            entry.update(
-                {
-                    "healthy": status.is_healthy,
-                    "ready": status.is_ready,
-                    "last_check": status.last_check,
-                    "error": status.error,
-                    "gateway_health": {
-                        "healthy": status.is_healthy,
-                        "ready": status.is_ready,
-                        "last_check": status.last_check,
-                        "error": status.error,
-                    },
-                }
-            )
-        lifecycle_entry = lifecycle_by_backend.get(backend_class)
-        if lifecycle_entry:
-            entry["lifecycle"] = lifecycle_entry
-            for key in (
-                "active",
-                "healthy",
-                "ready",
-                "tier",
-                "tier_rank",
-                "display_name",
-                "estimated_vram_mb",
-                "idle_observed_vram_mb",
-                "peak_observed_vram_mb",
-                "auto_start",
-                "auto_stop",
-                "requires_confirmation",
-                "compose_managed",
-                "status",
-                "status_label",
-                "status_color",
-                "status_rank",
-                "last_checked_at",
-                "last_healthy_at",
-                "last_ready_at",
-                "last_confirmed_working_at",
-                "last_unhealthy_at",
-                "last_stopped_at",
-                "last_health_error",
-                "last_action",
-                "last_action_at",
-                "last_action_error",
-                "inflight",
-            ):
-                if key in lifecycle_entry:
-                    entry[key] = lifecycle_entry[key]
-            if lifecycle_entry.get("host"):
-                entry["lifecycle_host"] = lifecycle_entry.get("host")
-        if status is not None:
-            # The lifecycle manager provides tier/action metadata, but the
-            # gateway health checker is the source of truth for whether a
-            # configured backend can currently serve gateway traffic. This is
-            # especially important for legacy names such as mlx-coder, which
-            # are aliases of local_mlx rather than independent lifecycle units.
-            entry["healthy"] = status.is_healthy
-            entry["ready"] = status.is_ready
-            entry["last_check"] = status.last_check
-            if status.error:
-                entry["error"] = status.error
-                entry["health_error"] = status.error
-            elif entry.get("health_error") and status.is_ready:
-                entry["health_error"] = ""
-            check_interval = float(getattr(checker, "check_interval", 30.0) or 30.0)
-            health_is_fresh = (time.time() - float(status.last_check or 0)) <= (check_interval * 3)
-            if status.is_ready and health_is_fresh:
-                entry["active"] = True
-                entry["status"] = "gateway_ready"
-                entry["status_label"] = "Reachable and ready"
-                entry["status_color"] = "green"
-                entry["status_rank"] = 0
-                entry["health_error"] = ""
-                entry["last_health_error"] = ""
-                entry["last_action_error"] = ""
-        backends.append(entry)
-
-    telegram_entry: Dict[str, Any] = {
-        "service_id": "telegram_bot",
-        "display_name": "Telegram Bot",
-        "host": "api.telegram.org",
-        "endpoint": "https://api.telegram.org",
-    }
-    telegram_token = (os.getenv("TELEGRAM_TOKEN") or "").strip()
-    if not telegram_token:
-        telegram_entry.update(
-            {
-                "healthy": False,
-                "ready": False,
-                "active": False,
-                "status": "unconfigured",
-                "status_label": "unconfigured",
-                "status_color": "yellow",
-                "status_rank": 1,
-                "updated_at": time.time(),
-                "error": "TELEGRAM_TOKEN not configured",
-                "notes": "TELEGRAM_TOKEN not configured",
-            }
-        )
-    else:
-        telegram_api_url = f"https://api.telegram.org/bot{telegram_token}/getMe"
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(telegram_api_url)
-            payload = resp.json() if resp.content else {}
-            ok = bool(resp.status_code == 200 and isinstance(payload, dict) and payload.get("ok") is True)
-            telegram_entry.update(
-                {
-                    "active": ok,
-                    "healthy": ok,
-                    "ready": ok,
-                    "status": "healthy" if ok else "error",
-                    "status_label": "healthy" if ok else "error",
-                    "status_color": "green" if ok else "red",
-                    "status_rank": 0 if ok else 3,
-                    "last_check": time.time(),
-                    "updated_at": time.time(),
-                }
-            )
-            if not ok:
-                telegram_entry["error"] = f"telegram getMe failed (status {resp.status_code})"
-                telegram_entry["notes"] = telegram_entry["error"]
-            else:
-                telegram_entry["notes"] = "Telegram getMe succeeded"
-        except Exception as e:
-            telegram_entry.update(
-                {
-                    "active": False,
-                    "healthy": False,
-                    "ready": False,
-                    "status": "error",
-                    "status_label": "error",
-                    "status_color": "red",
-                    "status_rank": 3,
-                    "last_check": time.time(),
-                    "updated_at": time.time(),
-                    "error": f"telegram check failed: {type(e).__name__}: {e}",
-                    "notes": f"telegram check failed: {type(e).__name__}: {e}",
-                }
-            )
-
-    now = time.time()
-    control_plane: list[Dict[str, Any]] = []
-
-    lifecycle_base = _lifecycle_manager_base_url()
-    lifecycle_hosts = lifecycle_payload.get("hosts") if isinstance(lifecycle_payload.get("hosts"), list) else []
-    lifecycle_backends_list = lifecycle_payload.get("backends") if isinstance(lifecycle_payload.get("backends"), list) else []
-    lifecycle_core = lifecycle_payload.get("core_services") if isinstance(lifecycle_payload.get("core_services"), list) else []
-    lifecycle_ok = bool(lifecycle_base) and not lifecycle_error
-    lifecycle_notes: list[str] = []
-    if lifecycle_base:
-        lifecycle_notes.append(f"endpoint {lifecycle_base}")
-    if lifecycle_ok:
-        lifecycle_notes.append(f"{len(lifecycle_hosts)} hosts")
-        lifecycle_notes.append(f"{len(lifecycle_backends_list)} backends")
-        if lifecycle_core:
-            lifecycle_notes.append(f"{len(lifecycle_core)} core services")
-    elif lifecycle_error:
-        lifecycle_notes.append(lifecycle_error)
-    control_plane.append(
-        {
-            "service_id": "lifecycle_manager",
-            "display_name": "Lifecycle Manager",
-            "host": _service_host_from_url(lifecycle_base),
-            "endpoint": lifecycle_base,
-            "active": lifecycle_ok,
-            "healthy": lifecycle_ok,
-            "ready": lifecycle_ok,
-            "status": "reachable" if lifecycle_ok else ("unconfigured" if not lifecycle_base else "error"),
-            "status_label": "reachable" if lifecycle_ok else ("unconfigured" if not lifecycle_base else "unreachable"),
-            "status_color": "green" if lifecycle_ok else ("yellow" if not lifecycle_base else "red"),
-            "status_rank": 0 if lifecycle_ok else (1 if not lifecycle_base else 2),
-            "updated_at": float(lifecycle_payload.get("generated_at") or now) if lifecycle_ok else now,
-            "notes": " · ".join(part for part in lifecycle_notes if part),
-        }
-    )
-
-    registry_sync = get_registry_sync_status()
-    etcd_url = str(registry_sync.get("etcd_url") or "").strip()
-    etcd_error = str(registry_sync.get("last_error") or "").strip()
-    etcd_enabled = bool(registry_sync.get("enabled"))
-    etcd_ok = etcd_enabled and not etcd_error and float(registry_sync.get("last_success") or 0) > 0
-    etcd_notes: list[str] = []
-    if etcd_url:
-        etcd_notes.append(f"endpoint {etcd_url}")
-    prefix = str(registry_sync.get("prefix") or "").strip()
-    if prefix:
-        etcd_notes.append(f"prefix {prefix}")
-    seeded_count = int(registry_sync.get("last_seeded_count") or 0)
-    if seeded_count:
-        etcd_notes.append(f"{seeded_count} env-seeded")
-    if etcd_enabled:
-        etcd_notes.append(f"{int(registry_sync.get('last_etcd_count') or 0)} discovered")
-    effective_count = int(registry_sync.get("last_effective_count") or 0)
-    if effective_count:
-        etcd_notes.append(f"{effective_count} active records")
-    if etcd_error:
-        etcd_notes.append(etcd_error)
-    control_plane.append(
-        {
-            "service_id": "etcd_service_discovery",
-            "display_name": "etcd Service Discovery",
-            "host": _service_host_from_url(etcd_url),
-            "endpoint": etcd_url,
-            "active": etcd_ok,
-            "healthy": etcd_ok,
-            "ready": etcd_ok,
-            "status": "healthy" if etcd_ok else ("disabled" if not etcd_enabled else ("error" if etcd_error else "pending")),
-            "status_label": "healthy" if etcd_ok else ("disabled" if not etcd_enabled else ("error" if etcd_error else "pending")),
-            "status_color": "green" if etcd_ok else ("grey" if not etcd_enabled else ("red" if etcd_error else "yellow")),
-            "status_rank": 0 if etcd_ok else (1 if not etcd_enabled else (2 if not etcd_error else 3)),
-            "updated_at": float(registry_sync.get("last_success") or registry_sync.get("last_attempt") or now),
-            "notes": " · ".join(part for part in etcd_notes if part),
-        }
-    )
-
-    checker_snapshot = checker.status_snapshot()
-    checker_running = bool(checker_snapshot.get("running"))
-    checker_notes = [
-        f"interval {float(checker_snapshot.get('check_interval') or 0):g}s",
-        f"tracking {int(checker_snapshot.get('tracked_backends') or 0)} backends",
-    ]
-    ready_count = int(checker_snapshot.get("ready_backends") or 0)
-    if ready_count > 0:
-        checker_notes.append(f"{ready_count} ready")
-    unhealthy_count = int(checker_snapshot.get("unhealthy_backends") or 0)
-    if unhealthy_count > 0:
-        checker_notes.append(f"{unhealthy_count} unhealthy")
-    control_plane.append(
-        {
-            "service_id": "gateway_health_checks",
-            "display_name": "Gateway Health Checks",
-            "host": "gateway",
-            "active": checker_running,
-            "healthy": checker_running,
-            "ready": checker_running,
-            "status": "running" if checker_running else "stopped",
-            "status_label": "running" if checker_running else "stopped",
-            "status_color": "green" if checker_running else "red",
-            "status_rank": 0 if checker_running else 2,
-            "updated_at": float(checker_snapshot.get("last_check") or now),
-            "notes": " · ".join(part for part in checker_notes if part),
-        }
-    )
-    control_plane.append(telegram_entry)
-
-    backends.sort(key=lambda item: item.get("backend_class") or "")
-    return {
-        "generated_at": time.time(),
-        "settings": {
-            "health_poll_interval_sec": getattr(checker, "check_interval", 30.0),
-        },
-        "alias_config": {
-            "source": alias_state.source,
-            "configured_path": alias_state.configured_path,
-            "error": alias_state.error,
-        },
-        "control_plane": control_plane,
-        "backends": backends,
-    }
+    return await build_registry_backend_status_payload()
 
 
 @router.get("/ui/api/lifecycle/status", include_in_schema=False)
@@ -5068,7 +4676,7 @@ async def ui_api_lifecycle_status(req: Request, refresh: bool = False) -> Dict[s
     path = "/v1/lifecycle/status"
     if refresh:
         path += "?refresh=true"
-    return await _call_lifecycle_manager("GET", path, timeout=max(_lifecycle_timeout(), 30.0))
+    return await call_lifecycle_manager("GET", path, timeout=max(lifecycle_timeout(), 30.0))
 
 
 @router.post("/ui/api/lifecycle/ensure", include_in_schema=False)
@@ -5088,7 +4696,7 @@ async def ui_api_lifecycle_ensure(req: Request) -> Dict[str, Any]:
         "confirmed": bool(body.get("confirmed") is True),
         "allow_disruptive": bool(body.get("allow_disruptive") is True),
     }
-    return await _call_lifecycle_manager("POST", "/v1/lifecycle/ensure", json_body=payload, timeout=max(_lifecycle_timeout(), 120.0))
+    return await call_lifecycle_manager("POST", "/v1/lifecycle/ensure", json_body=payload, timeout=max(lifecycle_timeout(), 120.0))
 
 
 @router.post("/ui/api/lifecycle/action", include_in_schema=False)
@@ -5110,7 +4718,7 @@ async def ui_api_lifecycle_action(req: Request) -> Dict[str, Any]:
         "confirmed": bool(body.get("confirmed") is True),
         "allow_disruptive": bool(body.get("allow_disruptive") is True),
     }
-    return await _call_lifecycle_manager("POST", "/v1/lifecycle/action", json_body=payload, timeout=max(_lifecycle_timeout(), 300.0))
+    return await call_lifecycle_manager("POST", "/v1/lifecycle/action", json_body=payload, timeout=max(lifecycle_timeout(), 300.0))
 
 
 @router.post("/ui/api/image", include_in_schema=False)
