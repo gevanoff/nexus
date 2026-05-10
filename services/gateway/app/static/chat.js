@@ -1943,6 +1943,16 @@
       return host ? `${id} @ ${host}` : id;
     }
 
+    function canonicalizeUiModelId(value) {
+      const raw = String(value || "").trim();
+      const normalized = raw.toLowerCase().replace(/-/g, "_");
+      if (!normalized) return raw;
+      if (["mlx", "local_mlx", "mlx_default"].includes(normalized)) return "mlx";
+      if (["vllm", "local_vllm", "vllm_default", "ollama", "ollama_default"].includes(normalized)) return "vllm";
+      if (["vllm_fast", "local_vllm_fast"].includes(normalized)) return "vllm_fast";
+      return raw;
+    }
+
     function setModelOptionLabels(items) {
       modelOptionLabels = new Map();
       if (!Array.isArray(items)) return;
@@ -1969,9 +1979,10 @@
     }
 
     function pickModelValue({ options, preferred, fallback }) {
-      const want = (preferred || "").trim();
+      const want = canonicalizeUiModelId(preferred);
       if (want && options.includes(want)) return want;
-      if (fallback && options.includes(fallback)) return fallback;
+      const fallbackValue = canonicalizeUiModelId(fallback);
+      if (fallbackValue && options.includes(fallbackValue)) return fallbackValue;
       if (options.includes("default")) return "default";
       return options[0] || "default";
     }
@@ -1993,7 +2004,7 @@
     }
 
     function normalizePreferredModel(preferred) {
-      const desired = (preferred || "").trim();
+      const desired = canonicalizeUiModelId(preferred);
       if (!modelOptionsCache.length) return desired || "default";
       return modelOptionsCache.includes(desired) ? desired : "default";
     }

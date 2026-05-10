@@ -142,12 +142,23 @@
     if (explicit) return explicit;
     const target = String(model.resolved_model || model.upstream_model || "").trim();
     const backend = String(model.backend || model.backend_class || "").trim();
-    if (model.is_alias && target && backend) return `${id} -> ${target} (${backend})`;
-    if (model.is_alias && target) return `${id} -> ${target}`;
+    if ((model.is_alias || model.is_runtime_selector) && target && backend) return `${id} -> ${target} (${backend})`;
+    if ((model.is_alias || model.is_runtime_selector) && target) return `${id} -> ${target}`;
     return id;
   }
 
+  function canonicalizeTaskModelId(value) {
+    const raw = String(value || "").trim();
+    const normalized = raw.toLowerCase().replace(/-/g, "_");
+    if (!normalized) return raw;
+    if (["mlx", "local_mlx", "mlx_default"].includes(normalized)) return "mlx";
+    if (["vllm", "local_vllm", "vllm_default", "ollama", "ollama_default"].includes(normalized)) return "vllm";
+    if (["vllm_fast", "local_vllm_fast"].includes(normalized)) return "vllm_fast";
+    return raw;
+  }
+
   function orderedModelEntries(current = "") {
+    const currentId = canonicalizeTaskModelId(current);
     const preferred = ["default", "fast", "reasoning", "coder", "long"];
     const byId = new Map();
     for (const model of state.models || []) {
@@ -162,14 +173,14 @@
         byId.delete(id);
       }
     }
-    if (current && byId.has(current)) {
-      ordered.push(byId.get(current));
-      byId.delete(current);
+    if (currentId && byId.has(currentId)) {
+      ordered.push(byId.get(currentId));
+      byId.delete(currentId);
     }
     const remaining = Array.from(byId.values()).sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
     ordered.push(...remaining);
-    if (current && !ordered.some((item) => String(item?.id || "") === current)) {
-      ordered.push({ id: current, label: current });
+    if (currentId && !ordered.some((item) => String(item?.id || "") === currentId)) {
+      ordered.push({ id: currentId, label: currentId });
     }
     return ordered;
   }
@@ -255,8 +266,9 @@
       }
       if (task.next_run_ts) els.detailBadges.appendChild(badgeButton(`next ${fmtTs(task.next_run_ts)}`, "enabled", editSelectedNextRun, "Edit next run time"));
       if (task.max_runs) els.detailBadges.appendChild(badge(`max ${task.max_runs}`));
-      const model = String(task.metadata?.model || "default");
-      els.detailBadges.appendChild(badgeButton(`model ${model}`, "", editSelectedModel, "Edit task model"));
+      const modelId = canonicalizeTaskModelId(String(task.metadata?.model || "default"));
+      const modelEntry = (state.models || []).find((item) => String(item?.id || "") === modelId);
+      els.detailBadges.appendChild(badgeButton(modelOptionLabel(modelEntry) || modelId, "", editSelectedModel, "Edit task model"));
       const tools = task.metadata?.tools;
       if (Array.isArray(tools)) els.detailBadges.appendChild(badgeButton(`${tools.length} tools`, "", editSelectedTools, "Edit allowed tools"));
     }
@@ -301,6 +313,7 @@
   function populateModelSelect(target, current = "default") {
     if (!target) return;
     target.innerHTML = "";
+    const currentId = canonicalizeTaskModelId(current || "default");
     const seen = new Set();
     const add = (id, label) => {
       const value = String(id || "").trim();
@@ -311,9 +324,9 @@
       opt.textContent = label || value;
       target.appendChild(opt);
     };
-    for (const model of orderedModelEntries(current)) add(model.id, modelOptionLabel(model) || model.id);
-    if (!seen.has(current)) add(current, current);
-    target.value = seen.has(current) ? current : "default";
+    for (const model of orderedModelEntries(currentId)) add(model.id, modelOptionLabel(model) || model.id);
+    if (!seen.has(currentId)) add(currentId, currentId);
+    target.value = seen.has(currentId) ? currentId : "default";
   }
 
   function closeTaskEditModal() {
@@ -389,7 +402,7 @@
 
   function renderModels() {
     if (!els.model) return;
-    const current = els.model.value;
+    const current = canonicalizeTaskModelId(els.model.value);
     els.model.innerHTML = "";
     const seen = new Set();
     const add = (id, label) => {

@@ -107,6 +107,65 @@ def _apply_model_location(item: Dict[str, Any], location: Dict[str, str]) -> Dic
     return item
 
 
+def _ui_canonical_backend_selector_id(backend_name: str) -> str:
+    normalized = (backend_name or "").strip().lower().replace("-", "_")
+    if normalized in {"mlx", "local_mlx", "mlx_default"}:
+        return "mlx"
+    if normalized in {"vllm", "local_vllm", "vllm_default", "ollama", "ollama_default"}:
+        return "vllm"
+    if normalized in {"vllm_fast", "local_vllm_fast"}:
+        return "vllm_fast"
+    return (backend_name or "").strip()
+
+
+def _ui_default_model_for_backend(backend_name: str) -> str:
+    resolved = get_registry().resolve_backend_class((backend_name or "").strip()) or (backend_name or "").strip()
+    cfg = router_cfg()
+    if resolved == "local_vllm_fast":
+        return (getattr(S, "VLLM_MODEL_FAST", "") or "").strip() or cfg.primary_fast_model
+    if resolved == "local_vllm_embeddings":
+        return (getattr(S, "VLLM_MODEL_EMBEDDINGS", "") or "").strip() or cfg.primary_fast_model
+    if resolved == "local_vllm":
+        return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
+    if resolved == "local_mlx":
+        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+    provider = backend_provider_name(resolved)
+    if provider == "mlx":
+        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+    if provider == "vllm":
+        return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
+    return cfg.primary_strong_model
+
+
+def _ui_runtime_selector_entries(registry: Any, now: int) -> list[Dict[str, Any]]:
+    entries: list[Dict[str, Any]] = []
+    for selector_id in ("mlx", "vllm", "vllm_fast"):
+        backend_name = registry.resolve_backend_class(selector_id)
+        if not backend_name:
+            continue
+        backend_cfg = registry.get_backend(backend_name)
+        if backend_cfg is None or not (backend_cfg.base_url or "").strip():
+            continue
+        location = _backend_location_details(registry, backend_name, base_url=backend_cfg.base_url)
+        host = str(location.get("hostname") or location.get("host") or "").strip()
+        resolved_model = _ui_default_model_for_backend(backend_name)
+        label = f"{selector_id} -> {resolved_model}"
+        if host:
+            label = f"{label} @ {host}"
+        item: Dict[str, Any] = {
+            "id": selector_id,
+            "object": "model",
+            "created": now,
+            "owned_by": "gateway",
+            "backend": backend_name,
+            "resolved_model": resolved_model,
+            "is_runtime_selector": True,
+            "label": label,
+        }
+        entries.append(_apply_model_location(item, location))
+    return entries
+
+
 def _lighton_ocr_base_url() -> str:
     return (
         _backend_base_url("lighton_ocr")
@@ -3909,20 +3968,8 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             data["data"].extend(items)
             source_diags[backend_name] = diag
 
-    # Add convenience backend pseudo-models.
-    for provider_name in ("vllm", "mlx"):
-        provider_backend = registry.get_backend(registry.resolve_backend_class(provider_name))
-        if provider_backend is not None and (provider_backend.base_url or "").strip():
-            item: Dict[str, Any] = {"id": provider_name, "object": "model", "created": now, "owned_by": "gateway"}
-            data["data"].append(
-                _apply_model_location(
-                    item,
-                    _backend_location_details(registry, provider_backend.backend_class, base_url=provider_backend.base_url),
-                )
-            )
-    for backend_name, cfg in llm_backends():
-        item = {"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"}
-        data["data"].append(_apply_model_location(item, _backend_location_details(registry, backend_name, base_url=cfg.base_url)))
+    # Add canonical runtime selectors for the configured chat backends.
+    data["data"].extend(_ui_runtime_selector_entries(registry, now))
 
     # Add configured aliases so the UI can select stable names (fast/coder/etc).
     aliases = get_aliases()
@@ -3934,7 +3981,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         item["backend"] = a.backend
         item["upstream_model"] = a.upstream_model
         item["resolved_model"] = a.upstream_model
-        item["label"] = f"{alias_name} -> {a.upstream_model} ({a.backend})"
+        item["label"] = f"{alias_name} -> {a.upstream_model} ({_ui_canonical_backend_selector_id(a.backend)})"
         if a.context_window:
             item["context_window"] = a.context_window
         if a.tools is not None:
