@@ -510,7 +510,7 @@ def _host_profile(host: str) -> Dict[str, Any]:
 def _backend_profile(name: str) -> Dict[str, Any]:
     lifecycle = _load_backend_lifecycle()
     backends = lifecycle.get("backends") if isinstance(lifecycle.get("backends"), dict) else {}
-    backend = backends.get(name) if isinstance(backends, dict) else {}
+    backend = backends.get(name) if isinstance(backends, dict) and isinstance(backends.get(name), dict) else {}
     host = str(backend.get("host") or "").strip()
     host_profile = _host_profile(host) if host else {}
     return {
