@@ -4877,8 +4877,10 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
         backends.append(entry)
 
     telegram_entry: Dict[str, Any] = {
-        "backend_class": "telegram_bot",
-        "capabilities": ["bridge"],
+        "service_id": "telegram_bot",
+        "display_name": "Telegram Bot",
+        "host": "api.telegram.org",
+        "endpoint": "https://api.telegram.org",
     }
     telegram_token = (os.getenv("TELEGRAM_TOKEN") or "").strip()
     if not telegram_token:
@@ -4886,7 +4888,14 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
             {
                 "healthy": False,
                 "ready": False,
+                "active": False,
+                "status": "unconfigured",
+                "status_label": "unconfigured",
+                "status_color": "yellow",
+                "status_rank": 1,
+                "updated_at": time.time(),
                 "error": "TELEGRAM_TOKEN not configured",
+                "notes": "TELEGRAM_TOKEN not configured",
             }
         )
     else:
@@ -4898,23 +4907,38 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
             ok = bool(resp.status_code == 200 and isinstance(payload, dict) and payload.get("ok") is True)
             telegram_entry.update(
                 {
+                    "active": ok,
                     "healthy": ok,
                     "ready": ok,
+                    "status": "healthy" if ok else "error",
+                    "status_label": "healthy" if ok else "error",
+                    "status_color": "green" if ok else "red",
+                    "status_rank": 0 if ok else 3,
                     "last_check": time.time(),
+                    "updated_at": time.time(),
                 }
             )
             if not ok:
                 telegram_entry["error"] = f"telegram getMe failed (status {resp.status_code})"
+                telegram_entry["notes"] = telegram_entry["error"]
+            else:
+                telegram_entry["notes"] = "Telegram getMe succeeded"
         except Exception as e:
             telegram_entry.update(
                 {
+                    "active": False,
                     "healthy": False,
                     "ready": False,
+                    "status": "error",
+                    "status_label": "error",
+                    "status_color": "red",
+                    "status_rank": 3,
                     "last_check": time.time(),
+                    "updated_at": time.time(),
                     "error": f"telegram check failed: {type(e).__name__}: {e}",
+                    "notes": f"telegram check failed: {type(e).__name__}: {e}",
                 }
             )
-    backends.append(telegram_entry)
 
     now = time.time()
     control_plane: list[Dict[str, Any]] = []
@@ -5019,6 +5043,7 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
             "notes": " · ".join(part for part in checker_notes if part),
         }
     )
+    control_plane.append(telegram_entry)
 
     backends.sort(key=lambda item: item.get("backend_class") or "")
     return {
