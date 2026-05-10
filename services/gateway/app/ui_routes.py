@@ -2226,6 +2226,29 @@ def _coerce_task_float(body: Dict[str, Any], key: str, default: float, *, min_va
     return max(min_value, min(max_value, out))
 
 
+def _scheduled_agent_spec_for_task(task: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
+    agent_name = str(task.get("agent") or "").strip()
+    if not agent_name:
+        raise HTTPException(status_code=400, detail="task agent spec missing")
+    scheduled = _load_agent_specs_json()
+    merged = _load_all_agent_specs_json()
+    spec = scheduled.get(agent_name)
+    if not isinstance(spec, dict):
+        candidate = merged.get(agent_name)
+        if isinstance(candidate, dict):
+            spec = dict(candidate)
+        else:
+            meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+            spec = {
+                "model": str(meta.get("model") or "default"),
+                "tier": int(meta.get("tier") or 0),
+                "max_turns": 20,
+                "max_runtime_sec": 300.0,
+                "max_total_tool_io_bytes": 2_000_000,
+            }
+    return agent_name, scheduled, spec
+
+
 @router.get("/ui/api/agent-tasks/capabilities", include_in_schema=False)
 async def ui_api_agent_tasks_capabilities(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
@@ -2427,6 +2450,81 @@ async def ui_api_agent_tasks_run_now(req: Request, task_id: str) -> Dict[str, An
     payload = agent_tasks.run_task_now({"id": task_id})
     if not payload.get("ok"):
         raise HTTPException(status_code=400, detail=payload.get("error") or "failed to queue task")
+    return payload
+
+
+@router.post("/ui/api/agent-tasks/{task_id}/toggle-enabled", include_in_schema=False)
+async def ui_api_agent_tasks_toggle_enabled(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    current = agent_tasks.get_task({"id": task_id})
+    if not current.get("ok"):
+        raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
+    task = current.get("task") if isinstance(current.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    status = str(task.get("status") or "")
+    if status not in {"enabled", "disabled"}:
+        raise HTTPException(status_code=400, detail=f"task status is not toggleable: {status or 'unknown'}")
+    payload = agent_tasks.set_task_enabled({"id": task_id, "enabled": status != "enabled"})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to update task state")
+    return payload
+
+
+@router.post("/ui/api/agent-tasks/{task_id}/next-run", include_in_schema=False)
+async def ui_api_agent_tasks_update_next_run(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    current = agent_tasks.get_task({"id": task_id})
+    if not current.get("ok"):
+        raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
+    task = current.get("task") if isinstance(current.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    payload = agent_tasks.update_task_next_run({"id": task_id, "run_at": body.get("run_at")})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to update next run")
+    return payload
+
+
+@router.post("/ui/api/agent-tasks/{task_id}/tools", include_in_schema=False)
+async def ui_api_agent_tasks_update_tools(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    current = agent_tasks.get_task({"id": task_id})
+    if not current.get("ok"):
+        raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
+    task = current.get("task") if isinstance(current.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    try:
+        tier = int(meta.get("tier") if meta.get("tier") is not None else 0)
+    except Exception:
+        tier = 0
+    tier = max(0, min(tier, 2))
+    try:
+        selected_tools = _coerce_selected_tools(body.get("tools"), tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    agent_name, scheduled_specs, spec = _scheduled_agent_spec_for_task(task)
+    spec["tools_allowlist"] = selected_tools
+    scheduled_specs[agent_name] = spec
+    try:
+        _write_agent_specs_json(scheduled_specs)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to persist scheduled agent spec: {type(exc).__name__}: {exc}") from exc
+
+    updated_meta = dict(meta)
+    updated_meta["tools"] = selected_tools
+    payload = agent_tasks.update_task_metadata({"id": task_id, "metadata": updated_meta})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to update task tools")
     return payload
 
 

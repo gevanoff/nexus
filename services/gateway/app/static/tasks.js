@@ -114,6 +114,16 @@
     return span;
   }
 
+  function badgeButton(text, cls = "", onClick = null, title = "") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `badge ${cls}`;
+    button.textContent = text;
+    if (title) button.title = title;
+    if (typeof onClick === "function") button.addEventListener("click", onClick);
+    return button;
+  }
+
   function taskMeta(task) {
     const meta = task?.metadata || {};
     const bits = [];
@@ -182,13 +192,27 @@
     }
     if (els.detailBadges) {
       els.detailBadges.innerHTML = "";
-      els.detailBadges.appendChild(statusBadge(task.status));
-      if (task.next_run_ts) els.detailBadges.appendChild(badge(`next ${fmtTs(task.next_run_ts)}`, "enabled"));
+      const status = String(task.status || "unknown");
+      if (["enabled", "disabled"].includes(status)) {
+        els.detailBadges.appendChild(badgeButton(status, status, toggleSelectedEnabled, `${status === "enabled" ? "Disable" : "Enable"} task`));
+      } else {
+        els.detailBadges.appendChild(statusBadge(status));
+      }
+      if (task.next_run_ts) els.detailBadges.appendChild(badgeButton(`next ${fmtTs(task.next_run_ts)}`, "enabled", editSelectedNextRun, "Edit next run time"));
       if (task.max_runs) els.detailBadges.appendChild(badge(`max ${task.max_runs}`));
       const tools = task.metadata?.tools;
-      if (Array.isArray(tools)) els.detailBadges.appendChild(badge(`${tools.length} tools`));
+      if (Array.isArray(tools)) els.detailBadges.appendChild(badgeButton(`${tools.length} tools`, "", editSelectedTools, "Edit allowed tools"));
     }
     if (els.detailPrompt) els.detailPrompt.textContent = task.prompt || "";
+  }
+
+  function parseUserRunAtInput(raw) {
+    const value = String(raw || "").trim();
+    if (!value) return "";
+    if (/^\d+$/.test(value)) return value;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) throw new Error("invalid date/time");
+    return parsed.toISOString();
   }
 
   function renderRuns(runs) {
@@ -418,6 +442,81 @@
       setStatus("Task cancelled.");
       renderTasks();
       renderDetail(payload.task || state.tasks.find((task) => task.id === state.selectedId));
+    } catch (error) {
+      setStatus(error.message || String(error), true, error.stack || error);
+    }
+  }
+
+  async function toggleSelectedEnabled() {
+    if (!state.selectedId) return;
+    try {
+      const task = state.tasks.find((item) => item.id === state.selectedId);
+      const status = String(task?.status || "");
+      if (!status || !["enabled", "disabled"].includes(status)) return;
+      setStatus(status === "enabled" ? "Disabling task..." : "Enabling task...");
+      const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/toggle-enabled`, { method: "POST" });
+      if (payload.task) state.tasks = state.tasks.map((item) => (item.id === state.selectedId ? payload.task : item));
+      setStatus(status === "enabled" ? "Task disabled." : "Task enabled.");
+      renderTasks();
+      renderDetail(payload.task || state.tasks.find((item) => item.id === state.selectedId));
+    } catch (error) {
+      setStatus(error.message || String(error), true, error.stack || error);
+    }
+  }
+
+  async function editSelectedNextRun() {
+    if (!state.selectedId) return;
+    const task = state.tasks.find((item) => item.id === state.selectedId);
+    if (!task?.next_run_ts) return;
+    const current = new Date(Number(task.next_run_ts) * 1000).toISOString();
+    const raw = window.prompt("Enter the next run time. Examples: 2026-05-10T09:30, 2026-05-10T09:30Z, or a Unix timestamp.", current);
+    if (raw == null) return;
+    try {
+      const runAt = parseUserRunAtInput(raw);
+      if (!runAt) return;
+      setStatus("Updating next run time...");
+      const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/next-run`, {
+        method: "POST",
+        body: JSON.stringify({ run_at: runAt }),
+      });
+      if (payload.task) state.tasks = state.tasks.map((item) => (item.id === state.selectedId ? payload.task : item));
+      setStatus("Next run time updated.");
+      renderTasks();
+      renderDetail(payload.task || state.tasks.find((item) => item.id === state.selectedId));
+    } catch (error) {
+      setStatus(error.message || String(error), true, error.stack || error);
+    }
+  }
+
+  async function editSelectedTools() {
+    if (!state.selectedId) return;
+    const task = state.tasks.find((item) => item.id === state.selectedId);
+    const meta = task?.metadata || {};
+    const tier = Number(meta.tier || 0);
+    const allowed = (state.capabilities?.tools || [])
+      .filter((tool) => Number(tool.tier) <= tier)
+      .map((tool) => tool.name)
+      .sort((a, b) => String(a).localeCompare(String(b)));
+    const current = Array.isArray(meta.tools) ? meta.tools : [];
+    const raw = window.prompt(
+      `Enter a comma-separated tool list for this task. Allowed tools for tier ${tier}:\n\n${allowed.join(", ")}`,
+      current.join(", "),
+    );
+    if (raw == null) return;
+    const tools = raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    try {
+      setStatus("Updating task tools...");
+      const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/tools`, {
+        method: "POST",
+        body: JSON.stringify({ tools }),
+      });
+      if (payload.task) state.tasks = state.tasks.map((item) => (item.id === state.selectedId ? payload.task : item));
+      setStatus("Task tools updated.");
+      renderTasks();
+      renderDetail(payload.task || state.tasks.find((item) => item.id === state.selectedId));
     } catch (error) {
       setStatus(error.message || String(error), true, error.stack || error);
     }

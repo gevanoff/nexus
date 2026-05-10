@@ -440,6 +440,106 @@ def cancel_task(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "cancelled": cur.rowcount > 0, "task": _task_row_to_dict(row)}
 
 
+def set_task_enabled(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    task_id = args.get("id")
+    enabled = args.get("enabled")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return {"ok": False, "error": "id must be a non-empty string"}
+    if not isinstance(enabled, bool):
+        return {"ok": False, "error": "enabled must be a boolean"}
+
+    now = _now()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        if row is None:
+            return {"ok": False, "error": "task not found"}
+        status = str(row["status"] or "")
+        if status == "running":
+            return {"ok": False, "error": "task is currently running"}
+        if enabled:
+            if status == "enabled":
+                updated = row
+            else:
+                if row["next_run_ts"] is None:
+                    return {"ok": False, "error": "task has no next run time to resume"}
+                conn.execute(
+                    "UPDATE agent_tasks SET status='enabled', updated_ts=? WHERE id=?",
+                    (now, task_id.strip()),
+                )
+                updated = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        else:
+            if status == "disabled":
+                updated = row
+            elif status in {"completed", "cancelled"}:
+                return {"ok": False, "error": f"cannot disable a {status} task"}
+            else:
+                conn.execute(
+                    "UPDATE agent_tasks SET status='disabled', updated_ts=? WHERE id=?",
+                    (now, task_id.strip()),
+                )
+                updated = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+    if updated is None:
+        return {"ok": False, "error": "task not found"}
+    return {"ok": True, "task": _task_row_to_dict(updated)}
+
+
+def update_task_next_run(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    task_id = args.get("id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return {"ok": False, "error": "id must be a non-empty string"}
+    try:
+        next_run_ts = _parse_run_at(args.get("run_at"))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    if next_run_ts is None:
+        return {"ok": False, "error": "run_at is required"}
+
+    now = _now()
+    next_run_ts = max(next_run_ts, now + _min_delay_sec())
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        if row is None:
+            return {"ok": False, "error": "task not found"}
+        status = str(row["status"] or "")
+        if status in {"running", "completed", "cancelled"}:
+            return {"ok": False, "error": f"cannot edit next run for a {status} task"}
+        run_at_ts = next_run_ts if str(row["kind"] or "") == "once" else row["run_at_ts"]
+        conn.execute(
+            "UPDATE agent_tasks SET next_run_ts=?, run_at_ts=?, updated_ts=? WHERE id=?",
+            (next_run_ts, run_at_ts, now, task_id.strip()),
+        )
+        updated = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+    if updated is None:
+        return {"ok": False, "error": "task not found"}
+    return {"ok": True, "task": _task_row_to_dict(updated)}
+
+
+def update_task_metadata(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    task_id = args.get("id")
+    metadata = args.get("metadata")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return {"ok": False, "error": "id must be a non-empty string"}
+    if not isinstance(metadata, dict):
+        return {"ok": False, "error": "metadata must be an object"}
+
+    now = _now()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        if row is None:
+            return {"ok": False, "error": "task not found"}
+        conn.execute(
+            "UPDATE agent_tasks SET metadata_json=?, updated_ts=? WHERE id=?",
+            (json.dumps(metadata, separators=(",", ":"), sort_keys=True, ensure_ascii=False), now, task_id.strip()),
+        )
+        updated = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+    if updated is None:
+        return {"ok": False, "error": "task not found"}
+    return {"ok": True, "task": _task_row_to_dict(updated)}
+
+
 def run_task_now(args: dict[str, Any]) -> dict[str, Any]:
     init_db()
     task_id = args.get("id")

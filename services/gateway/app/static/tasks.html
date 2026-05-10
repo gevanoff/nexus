@@ -76,7 +76,10 @@
       .meta { font-size: 12px; color: var(--muted); }
       .badges { display:flex; gap:6px; flex-wrap:wrap; margin-top:7px; }
       .badge { font-size: 11px; padding: 3px 7px; border-radius: 999px; border: 1px solid rgba(231,237,246,0.12); color: #cfe0f7; }
+      button.badge { background: rgba(14,19,28,0.92); }
+      button.badge:hover { border-color: rgba(111,184,255,0.44); }
       .badge.enabled { border-color: rgba(111,184,255,0.42); color: #cfe7ff; }
+      .badge.disabled { border-color: rgba(240,200,90,0.42); color: #f3dc96; }
       .badge.running { border-color: rgba(240,200,90,0.42); color: #f3dc96; }
       .badge.completed, .badge.ok { border-color: rgba(56,197,126,0.52); color: #98f0bf; }
       .badge.error, .badge.cancelled { border-color: rgba(255,133,133,0.42); color: #ffc3c3; }
@@ -233,6 +236,7 @@
               <select id="statusFilter" style="max-width:170px">
                 <option value="">All statuses</option>
                 <option value="enabled">Enabled</option>
+                <option value="disabled">Disabled</option>
                 <option value="running">Running</option>
                 <option value="completed">Completed</option>
                 <option value="error">Error</option>
@@ -274,6 +278,6 @@
     </main>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/tasks.js?v=3"></script>
+    <script src="/static/tasks.js?v=4"></script>
   </body>
 </html>
