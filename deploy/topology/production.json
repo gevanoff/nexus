@@ -132,6 +132,7 @@
         "QWEN3_TTS_DTYPE": "float16",
         "QWEN3_TTS_ATTN_IMPL": "sdpa",
         "UI_IP_ALLOWLIST": "127.0.0.1,172.28.0.1,10.10.22.0/24",
+        "TOOLS_ALLOWLIST": "echo,followyourcanvas_generate,heartmula_generate,lighton_ocr,skyreels_generate,cluster_resources",
         "DISABLED_BACKEND_CLASSES": "followyourcanvas,personaplex",
         "DEFAULT_BACKEND": "local_mlx"
       }
