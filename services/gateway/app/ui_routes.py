@@ -2415,6 +2415,21 @@ async def ui_api_agent_tasks_cancel(req: Request, task_id: str) -> Dict[str, Any
     return payload
 
 
+@router.post("/ui/api/agent-tasks/{task_id}/run-now", include_in_schema=False)
+async def ui_api_agent_tasks_run_now(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    current = agent_tasks.get_task({"id": task_id})
+    if not current.get("ok"):
+        raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
+    task = current.get("task") if isinstance(current.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    payload = agent_tasks.run_task_now({"id": task_id})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to queue task")
+    return payload
+
+
 @router.get("/ui/admin/users", include_in_schema=False)
 async def ui_admin_users(req: Request) -> HTMLResponse:
     _require_ui_access(req)

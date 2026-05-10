@@ -245,7 +245,10 @@
           <section class="card">
             <div class="row" style="justify-content:space-between">
               <h2>Task detail</h2>
-              <button id="cancelTask" class="danger" type="button" disabled>Cancel future runs</button>
+              <div class="row">
+                <button id="runNowTask" type="button" disabled>Run now</button>
+                <button id="cancelTask" class="danger" type="button" disabled>Cancel future runs</button>
+              </div>
             </div>
             <div id="detailEmpty" class="hint">Select a task.</div>
             <div id="detail" hidden class="stack">

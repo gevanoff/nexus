@@ -440,6 +440,35 @@ def cancel_task(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "cancelled": cur.rowcount > 0, "task": _task_row_to_dict(row)}
 
 
+def run_task_now(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    task_id = args.get("id")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return {"ok": False, "error": "id must be a non-empty string"}
+
+    now = _now()
+    next_due = max(now + _min_delay_sec(), now)
+    with _connect() as conn:
+        current = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        if current is None:
+            return {"ok": False, "error": "task not found"}
+        if str(current["status"] or "") == "running":
+            return {"ok": False, "error": "task is already running"}
+
+        cur = conn.execute(
+            """
+            UPDATE agent_tasks
+            SET status='enabled', next_run_ts=?, updated_ts=?
+            WHERE id=?
+            """,
+            (next_due, now, task_id.strip()),
+        )
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+    if row is None:
+        return {"ok": False, "error": "task not found"}
+    return {"ok": True, "queued": cur.rowcount > 0, "task": _task_row_to_dict(row)}
+
+
 @dataclass(frozen=True)
 class _SyntheticRequest:
     headers: dict[str, str]

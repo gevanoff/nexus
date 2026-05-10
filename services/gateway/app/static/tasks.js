@@ -37,6 +37,7 @@
     detailPrompt: document.getElementById("detailPrompt"),
     runs: document.getElementById("runs"),
     refreshRuns: document.getElementById("refreshRuns"),
+    runNowTask: document.getElementById("runNowTask"),
     cancelTask: document.getElementById("cancelTask"),
   };
 
@@ -161,11 +162,13 @@
     if (!task) {
       if (els.detailEmpty) els.detailEmpty.hidden = false;
       if (els.detail) els.detail.hidden = true;
+      if (els.runNowTask) els.runNowTask.disabled = true;
       if (els.cancelTask) els.cancelTask.disabled = true;
       return;
     }
     if (els.detailEmpty) els.detailEmpty.hidden = true;
     if (els.detail) els.detail.hidden = false;
+    if (els.runNowTask) els.runNowTask.disabled = ["running"].includes(String(task.status));
     if (els.cancelTask) els.cancelTask.disabled = ["completed", "cancelled"].includes(String(task.status));
     if (els.detailTitle) els.detailTitle.textContent = task.title || task.id;
     if (els.detailMeta) {
@@ -420,6 +423,21 @@
     }
   }
 
+  async function runSelectedNow() {
+    if (!state.selectedId) return;
+    try {
+      setStatus("Queueing task to run now...");
+      const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/run-now`, { method: "POST" });
+      if (payload.task) state.tasks = state.tasks.map((task) => (task.id === state.selectedId ? payload.task : task));
+      setStatus("Task queued to run now.");
+      renderTasks();
+      renderDetail(payload.task || state.tasks.find((task) => task.id === state.selectedId));
+      await loadRuns(state.selectedId);
+    } catch (error) {
+      setStatus(error.message || String(error), true, error.stack || error);
+    }
+  }
+
   function resetForm() {
     els.form?.reset();
     if (els.delayMinutes) els.delayMinutes.value = "10";
@@ -438,6 +456,7 @@
     els.refresh?.addEventListener("click", () => loadTasks({ keepSelection: true }).catch((error) => setStatus(error.message, true)));
     els.statusFilter?.addEventListener("change", () => loadTasks({ keepSelection: false }).catch((error) => setStatus(error.message, true)));
     els.refreshRuns?.addEventListener("click", () => loadRuns().catch((error) => setStatus(error.message, true)));
+    els.runNowTask?.addEventListener("click", runSelectedNow);
     els.cancelTask?.addEventListener("click", cancelSelected);
 
     try {
