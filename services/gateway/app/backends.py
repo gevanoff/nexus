@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from dataclasses import replace
 import json
 import os
+import time
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
@@ -59,6 +60,20 @@ class ServiceRecord:
     backend_class: str = ""
     hostname: str = ""
     source: str = "unknown"
+
+
+@dataclass
+class RegistrySyncStatus:
+    enabled: bool = True
+    etcd_url: str = ""
+    prefix: str = ""
+    poll_interval_sec: float = 0.0
+    last_attempt: float = 0.0
+    last_success: float = 0.0
+    last_error: str = ""
+    last_seeded_count: int = 0
+    last_etcd_count: int = 0
+    last_effective_count: int = 0
 
 
 @dataclass
@@ -368,19 +383,47 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
 
 async def refresh_registry_from_etcd() -> None:
     registry = get_registry()
+    _registry_sync_status.enabled = bool(getattr(S, "ETCD_ENABLED", True))
+    _registry_sync_status.etcd_url = (getattr(S, "ETCD_URL", "") or "").strip()
+    _registry_sync_status.prefix = (getattr(S, "ETCD_PREFIX", "") or "").strip() or "/nexus/services/"
+    _registry_sync_status.poll_interval_sec = float(getattr(S, "ETCD_POLL_INTERVAL", 15.0) or 15.0)
+    _registry_sync_status.last_attempt = time.time()
+    _registry_sync_status.last_error = ""
+    _registry_sync_status.last_etcd_count = 0
     service_records = _build_seed_records(registry)
+    _registry_sync_status.last_seeded_count = len(service_records)
     if getattr(S, "ETCD_ENABLED", True):
         try:
             fetched = await _fetch_etcd_service_records()
             service_records.update(fetched)
+            _registry_sync_status.last_etcd_count = len(fetched)
+            _registry_sync_status.last_success = time.time()
         except Exception as exc:
+            _registry_sync_status.last_error = f"{type(exc).__name__}: {exc}"
             logger.warning("etcd registry refresh failed: %s: %s", type(exc).__name__, exc)
     _apply_service_records(registry, service_records)
+    _registry_sync_status.last_effective_count = len(registry.service_records)
     if _admission is not None:
         _admission.sync_registry(registry)
 
 
 _registry_sync_task: Optional[asyncio.Task] = None
+_registry_sync_status = RegistrySyncStatus()
+
+
+def get_registry_sync_status() -> Dict[str, Any]:
+    return {
+        "enabled": _registry_sync_status.enabled,
+        "etcd_url": _registry_sync_status.etcd_url,
+        "prefix": _registry_sync_status.prefix,
+        "poll_interval_sec": _registry_sync_status.poll_interval_sec,
+        "last_attempt": _registry_sync_status.last_attempt,
+        "last_success": _registry_sync_status.last_success,
+        "last_error": _registry_sync_status.last_error,
+        "last_seeded_count": _registry_sync_status.last_seeded_count,
+        "last_etcd_count": _registry_sync_status.last_etcd_count,
+        "last_effective_count": _registry_sync_status.last_effective_count,
+    }
 
 
 async def _registry_sync_loop() -> None:

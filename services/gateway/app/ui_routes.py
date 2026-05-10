@@ -33,6 +33,7 @@ from app.backends import (
     check_capability,
     get_admission_controller,
     get_registry,
+    get_registry_sync_status,
     get_service_record_for_backend,
     llm_backends,
 )
@@ -99,6 +100,38 @@ def _apply_model_location(item: Dict[str, Any], location: Dict[str, str]) -> Dic
     if host and not item.get("label"):
         item["label"] = f"{item['id']} @ {host}"
     return item
+
+
+def _status_exception_text(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            error = str(detail.get("error") or "").strip()
+            message = str(detail.get("message") or "").strip()
+            if error and message:
+                return f"{error}: {message}"
+            if error:
+                return error
+            if message:
+                return message
+            try:
+                return json.dumps(detail, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                return str(detail)
+        if detail:
+            return str(detail)
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _service_host_from_url(raw_url: str) -> str:
+    value = str(raw_url or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        return (parsed.hostname or "").strip() or value
+    except Exception:
+        return value
 
 
 def _lighton_ocr_base_url() -> str:
@@ -4722,6 +4755,8 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
             }
         )
     lifecycle_by_backend: Dict[str, Dict[str, Any]] = {}
+    lifecycle_payload: Dict[str, Any] = {}
+    lifecycle_error = ""
     try:
         lifecycle_payload = await _call_lifecycle_manager("GET", "/v1/lifecycle/status", timeout=3.0)
         lifecycle_backends = lifecycle_payload.get("backends") if isinstance(lifecycle_payload, dict) else None
@@ -4736,7 +4771,8 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
                         lifecycle_by_backend[resolved_key] = item
                     else:
                         lifecycle_by_backend[key] = item
-    except Exception:
+    except Exception as exc:
+        lifecycle_error = _status_exception_text(exc)
         lifecycle_by_backend = {}
 
     backends = []
@@ -4880,6 +4916,110 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
             )
     backends.append(telegram_entry)
 
+    now = time.time()
+    control_plane: list[Dict[str, Any]] = []
+
+    lifecycle_base = _lifecycle_manager_base_url()
+    lifecycle_hosts = lifecycle_payload.get("hosts") if isinstance(lifecycle_payload.get("hosts"), list) else []
+    lifecycle_backends_list = lifecycle_payload.get("backends") if isinstance(lifecycle_payload.get("backends"), list) else []
+    lifecycle_core = lifecycle_payload.get("core_services") if isinstance(lifecycle_payload.get("core_services"), list) else []
+    lifecycle_ok = bool(lifecycle_base) and not lifecycle_error
+    lifecycle_notes: list[str] = []
+    if lifecycle_base:
+        lifecycle_notes.append(f"endpoint {lifecycle_base}")
+    if lifecycle_ok:
+        lifecycle_notes.append(f"{len(lifecycle_hosts)} hosts")
+        lifecycle_notes.append(f"{len(lifecycle_backends_list)} backends")
+        if lifecycle_core:
+            lifecycle_notes.append(f"{len(lifecycle_core)} core services")
+    elif lifecycle_error:
+        lifecycle_notes.append(lifecycle_error)
+    control_plane.append(
+        {
+            "service_id": "lifecycle_manager",
+            "display_name": "Lifecycle Manager",
+            "host": _service_host_from_url(lifecycle_base),
+            "endpoint": lifecycle_base,
+            "active": lifecycle_ok,
+            "healthy": lifecycle_ok,
+            "ready": lifecycle_ok,
+            "status": "reachable" if lifecycle_ok else ("unconfigured" if not lifecycle_base else "error"),
+            "status_label": "reachable" if lifecycle_ok else ("unconfigured" if not lifecycle_base else "unreachable"),
+            "status_color": "green" if lifecycle_ok else ("yellow" if not lifecycle_base else "red"),
+            "status_rank": 0 if lifecycle_ok else (1 if not lifecycle_base else 2),
+            "updated_at": float(lifecycle_payload.get("generated_at") or now) if lifecycle_ok else now,
+            "notes": " · ".join(part for part in lifecycle_notes if part),
+        }
+    )
+
+    registry_sync = get_registry_sync_status()
+    etcd_url = str(registry_sync.get("etcd_url") or "").strip()
+    etcd_error = str(registry_sync.get("last_error") or "").strip()
+    etcd_enabled = bool(registry_sync.get("enabled"))
+    etcd_ok = etcd_enabled and not etcd_error and float(registry_sync.get("last_success") or 0) > 0
+    etcd_notes: list[str] = []
+    if etcd_url:
+        etcd_notes.append(f"endpoint {etcd_url}")
+    prefix = str(registry_sync.get("prefix") or "").strip()
+    if prefix:
+        etcd_notes.append(f"prefix {prefix}")
+    seeded_count = int(registry_sync.get("last_seeded_count") or 0)
+    if seeded_count:
+        etcd_notes.append(f"{seeded_count} env-seeded")
+    if etcd_enabled:
+        etcd_notes.append(f"{int(registry_sync.get('last_etcd_count') or 0)} discovered")
+    effective_count = int(registry_sync.get("last_effective_count") or 0)
+    if effective_count:
+        etcd_notes.append(f"{effective_count} active records")
+    if etcd_error:
+        etcd_notes.append(etcd_error)
+    control_plane.append(
+        {
+            "service_id": "etcd_service_discovery",
+            "display_name": "etcd Service Discovery",
+            "host": _service_host_from_url(etcd_url),
+            "endpoint": etcd_url,
+            "active": etcd_ok,
+            "healthy": etcd_ok,
+            "ready": etcd_ok,
+            "status": "healthy" if etcd_ok else ("disabled" if not etcd_enabled else ("error" if etcd_error else "pending")),
+            "status_label": "healthy" if etcd_ok else ("disabled" if not etcd_enabled else ("error" if etcd_error else "pending")),
+            "status_color": "green" if etcd_ok else ("grey" if not etcd_enabled else ("red" if etcd_error else "yellow")),
+            "status_rank": 0 if etcd_ok else (1 if not etcd_enabled else (2 if not etcd_error else 3)),
+            "updated_at": float(registry_sync.get("last_success") or registry_sync.get("last_attempt") or now),
+            "notes": " · ".join(part for part in etcd_notes if part),
+        }
+    )
+
+    checker_snapshot = checker.status_snapshot()
+    checker_running = bool(checker_snapshot.get("running"))
+    checker_notes = [
+        f"interval {float(checker_snapshot.get('check_interval') or 0):g}s",
+        f"tracking {int(checker_snapshot.get('tracked_backends') or 0)} backends",
+    ]
+    ready_count = int(checker_snapshot.get("ready_backends") or 0)
+    if ready_count > 0:
+        checker_notes.append(f"{ready_count} ready")
+    unhealthy_count = int(checker_snapshot.get("unhealthy_backends") or 0)
+    if unhealthy_count > 0:
+        checker_notes.append(f"{unhealthy_count} unhealthy")
+    control_plane.append(
+        {
+            "service_id": "gateway_health_checks",
+            "display_name": "Gateway Health Checks",
+            "host": "gateway",
+            "active": checker_running,
+            "healthy": checker_running,
+            "ready": checker_running,
+            "status": "running" if checker_running else "stopped",
+            "status_label": "running" if checker_running else "stopped",
+            "status_color": "green" if checker_running else "red",
+            "status_rank": 0 if checker_running else 2,
+            "updated_at": float(checker_snapshot.get("last_check") or now),
+            "notes": " · ".join(part for part in checker_notes if part),
+        }
+    )
+
     backends.sort(key=lambda item: item.get("backend_class") or "")
     return {
         "generated_at": time.time(),
@@ -4891,6 +5031,7 @@ async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
             "configured_path": alias_state.configured_path,
             "error": alias_state.error,
         },
+        "control_plane": control_plane,
         "backends": backends,
     }
 

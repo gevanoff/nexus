@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 
@@ -180,6 +180,19 @@ class HealthChecker:
     def get_all_status(self) -> Dict[str, HealthStatus]:
         """Get status for all backends."""
         return dict(self._status)
+
+    def status_snapshot(self) -> Dict[str, Any]:
+        """Summarize checker state for UI diagnostics."""
+        statuses = list(self._status.values())
+        return {
+            "running": self._running,
+            "tracked_backends": len(statuses),
+            "ready_backends": sum(1 for item in statuses if item.is_ready),
+            "unhealthy_backends": sum(1 for item in statuses if not item.is_healthy),
+            "last_check": max((item.last_check for item in statuses), default=0.0),
+            "check_interval": self.check_interval,
+            "timeout": self.timeout,
+        }
 
 
 # Global health checker instance

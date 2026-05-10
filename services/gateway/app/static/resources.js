@@ -1,5 +1,6 @@
 (() => {
   const hostsEl = document.getElementById("hosts");
+  const controlPlaneEl = document.getElementById("control_plane");
   const coreServicesEl = document.getElementById("core_services");
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
@@ -248,6 +249,7 @@
     });
     if (merged.size > 0) base.backends = [...merged.values()];
     if (Array.isArray(lifecyclePayload?.core_services)) base.core_services = lifecyclePayload.core_services;
+    if (Array.isArray(registryPayload?.control_plane)) base.control_plane = registryPayload.control_plane;
     if (registryPayload.alias_config) base.alias_config = registryPayload.alias_config;
     base.settings = {
       ...(registryPayload.settings && typeof registryPayload.settings === "object" ? registryPayload.settings : {}),
@@ -368,6 +370,56 @@
 
       card.appendChild(left);
       coreServicesEl.appendChild(card);
+    });
+  }
+
+  function renderControlPlane(services) {
+    if (!controlPlaneEl) return;
+    controlPlaneEl.innerHTML = "";
+    if (!Array.isArray(services) || !services.length) {
+      controlPlaneEl.innerHTML = '<div class="hint">No control-plane services reported.</div>';
+      return;
+    }
+    const sorted = [...services].sort((a, b) =>
+      (Number(a.status_rank ?? 9) - Number(b.status_rank ?? 9))
+      || String(a.display_name || a.service_id || "").localeCompare(String(b.display_name || b.service_id || ""))
+    );
+    sorted.forEach((service) => {
+      const card = document.createElement("div");
+      card.className = `core-service-card ${service.active ? "active" : "problem"}`;
+      if (isStale(service.updated_at)) card.classList.add("stale");
+
+      const left = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "backend-name";
+      name.textContent = service.display_name || service.service_id || "Control-plane service";
+      left.appendChild(name);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = [service.service_id, service.host || "gateway", service.endpoint || ""].filter(Boolean).join(" · ");
+      left.appendChild(meta);
+
+      const badges = document.createElement("div");
+      badges.className = "badges";
+      badges.appendChild(badge(service.status_label || service.status || "unknown", statusBadgeClass(service)));
+      badges.appendChild(badge("control plane", "crucial"));
+      const fresh = freshnessText(service.updated_at);
+      if (fresh) badges.appendChild(badge(fresh.replace("refreshed", "checked"), "blue"));
+      const stale = staleText(service.updated_at);
+      if (stale) badges.appendChild(badge(stale, "yellow"));
+      left.appendChild(badges);
+
+      if (service.notes) {
+        const detail = document.createElement("div");
+        detail.className = service.active ? "meta" : "meta error";
+        detail.style.marginTop = "6px";
+        detail.textContent = service.notes;
+        left.appendChild(detail);
+      }
+
+      card.appendChild(left);
+      controlPlaneEl.appendChild(card);
     });
   }
 
@@ -539,6 +591,7 @@
     const opts = options || {};
     updatePollInterval(payload);
     renderHosts(payload.hosts || []);
+    renderControlPlane(payload.control_plane || []);
     renderCoreServices(payload.core_services || []);
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];
