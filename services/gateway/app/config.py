@@ -338,6 +338,7 @@ class Settings(BaseSettings):
 
     # Agent runtime v1 (single-process, deterministic)
     AGENT_SPECS_PATH: str = "/var/lib/gateway/config/agent_specs.json"
+    AGENT_TASK_SPECS_PATH: str = "/var/lib/gateway/data/agent/agent_specs.json"
     AGENT_RUNS_LOG_PATH: str = "/var/lib/gateway/data/agent/runs.jsonl"
     AGENT_RUNS_LOG_DIR: str = "/var/lib/gateway/data/agent"
     AGENT_RUNS_LOG_MODE: Literal["ndjson", "per_run", "both"] = "per_run"

@@ -2074,8 +2074,12 @@ def _agent_specs_path() -> Path:
     return Path(raw)
 
 
-def _load_agent_specs_json() -> Dict[str, Any]:
-    path = _agent_specs_path()
+def _scheduled_agent_specs_path() -> Path:
+    raw = (getattr(S, "AGENT_TASK_SPECS_PATH", "") or "/var/lib/gateway/data/agent/agent_specs.json").strip()
+    return Path(raw)
+
+
+def _load_specs_json(path: Path) -> Dict[str, Any]:
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(parsed, dict):
@@ -2083,12 +2087,22 @@ def _load_agent_specs_json() -> Dict[str, Any]:
     except FileNotFoundError:
         pass
     except Exception:
-        logger.warning("failed to load agent specs json", exc_info=True)
+        logger.warning("failed to load agent specs json from %s", path, exc_info=True)
     return {}
 
 
+def _load_agent_specs_json() -> Dict[str, Any]:
+    return _load_specs_json(_scheduled_agent_specs_path())
+
+
+def _load_all_agent_specs_json() -> Dict[str, Any]:
+    merged = _load_specs_json(_agent_specs_path())
+    merged.update(_load_specs_json(_scheduled_agent_specs_path()))
+    return merged
+
+
 def _write_agent_specs_json(specs: Dict[str, Any]) -> None:
-    path = _agent_specs_path()
+    path = _scheduled_agent_specs_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
     tmp.write_text(json.dumps(specs, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -2246,7 +2260,7 @@ async def ui_api_agent_tasks_capabilities(req: Request) -> Dict[str, Any]:
             {"id": 2, "label": "Shell-capable"},
         ],
         "tools": tools,
-        "agents": sorted(_load_agent_specs_json().keys()),
+        "agents": sorted(_load_all_agent_specs_json().keys()),
     }
 
 
@@ -2319,7 +2333,10 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
         "max_total_tool_io_bytes": max_tool_io,
         "tools_allowlist": selected_tools,
     }
-    _write_agent_specs_json(specs)
+    try:
+        _write_agent_specs_json(specs)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to persist scheduled agent spec: {type(exc).__name__}: {exc}") from exc
 
     metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
     metadata = dict(metadata)
@@ -2351,7 +2368,10 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
     if not result.get("ok"):
         specs = _load_agent_specs_json()
         specs.pop(agent_name, None)
-        _write_agent_specs_json(specs)
+        try:
+            _write_agent_specs_json(specs)
+        except Exception:
+            logger.warning("failed to clean up scheduled agent spec after task create failure", exc_info=True)
         raise HTTPException(status_code=400, detail=result.get("error") or "failed to create task")
     return result
 

@@ -181,6 +181,15 @@
               <div id="cronFields" hidden>
                 <label for="cron">Cron</label>
                 <input id="cron" placeholder="0 9 * * 1-5" />
+                <div class="hint" style="margin-top: 6px; line-height: 1.5;">
+                  Five fields in UTC: <strong>minute</strong> <strong>hour</strong> <strong>day of month</strong>
+                  <strong>month</strong> <strong>weekday</strong>.<br />
+                  Ranges: minute <code>0-59</code>, hour <code>0-23</code>, day <code>1-31</code>, month <code>1-12</code>,
+                  weekday <code>0-6</code> where <code>0</code> is Sunday.<br />
+                  Use <code>*</code> for any value, comma lists like <code>1,3,5</code>, ranges like <code>1-5</code>,
+                  and steps like <code>*/15</code>.<br />
+                  Examples: <code>0 9 * * 1-5</code> = 09:00 UTC on weekdays. <code>*/15 * * * *</code> = every 15 minutes.
+                </div>
               </div>
               <div class="grid3">
                 <div>

@@ -67,6 +67,28 @@ def _persist_run(run_id: str, payload: Dict[str, Any]) -> None:
         _write_run_file(run_id, payload)
 
 
+def _load_agent_specs_from_path(path: str) -> Dict[str, AgentSpecModel]:
+    raw_path = (path or "").strip()
+    if not raw_path:
+        return {}
+    try:
+        raw = Path(raw_path).read_text(encoding="utf-8")
+        obj = json.loads(raw)
+        if not isinstance(obj, dict):
+            return {}
+        out: Dict[str, AgentSpecModel] = {}
+        for k, v in obj.items():
+            if not isinstance(k, str) or not k.strip() or not isinstance(v, dict):
+                continue
+            try:
+                out[k.strip()] = AgentSpecModel(**v)
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return {}
+
+
 def load_agent_specs() -> Dict[str, AgentSpecModel]:
     """Load agent specs from a fixed JSON file.
 
@@ -79,24 +101,11 @@ def load_agent_specs() -> Dict[str, AgentSpecModel]:
     If the file is missing/unreadable, falls back to a minimal default spec.
     """
 
-    path = (getattr(S, "AGENT_SPECS_PATH", "") or "").strip()
-    if path:
-        try:
-            raw = Path(path).read_text(encoding="utf-8")
-            obj = json.loads(raw)
-            if isinstance(obj, dict):
-                out: Dict[str, AgentSpecModel] = {}
-                for k, v in obj.items():
-                    if not isinstance(k, str) or not k.strip() or not isinstance(v, dict):
-                        continue
-                    try:
-                        out[k.strip()] = AgentSpecModel(**v)
-                    except Exception:
-                        continue
-                if out:
-                    return out
-        except Exception:
-            pass
+    merged: Dict[str, AgentSpecModel] = {}
+    merged.update(_load_agent_specs_from_path((getattr(S, "AGENT_SPECS_PATH", "") or "").strip()))
+    merged.update(_load_agent_specs_from_path((getattr(S, "AGENT_TASK_SPECS_PATH", "") or "").strip()))
+    if merged:
+        return merged
 
     return {
         "default": AgentSpecModel(model="fast", tier=0, max_turns=100, max_runtime_sec=60.0, max_total_tool_io_bytes=2_000_000)
