@@ -292,6 +292,8 @@
                 <label for="createMode">Create mode</label>
                 <select id="createMode">
                   <option value="agent">New Agent Run</option>
+                  <option value="review_audit">New Review or Audit Run</option>
+                  <option value="ops_diagnostics">New Ops or Diagnostics Sandbox</option>
                   <option value="model_integration">New Model Integration</option>
                 </select>
               </div>
@@ -302,9 +304,10 @@
           </div>
 
           <div id="createModeAgentPanel" class="card stack create-mode-panel">
-            <h2>New Agent Run</h2>
+            <h2 id="repoModeTitle">New Agent Run</h2>
+            <div id="repoModeHint" class="hint">Create a standard repository-backed coding workspace for implementation work.</div>
             <div>
-              <label for="repoUrl">Repository</label>
+              <label id="repoUrlLabel" for="repoUrl">Repository</label>
               <input id="repoUrl" autocomplete="off" />
             </div>
             <div class="two">
@@ -318,7 +321,7 @@
               </div>
             </div>
             <div>
-              <label for="taskPrompt">Task brief</label>
+              <label id="taskPromptLabel" for="taskPrompt">Task brief</label>
               <textarea id="taskPrompt" placeholder="Describe the coding task"></textarea>
             </div>
             <div class="two">

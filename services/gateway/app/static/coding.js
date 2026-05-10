@@ -4,6 +4,10 @@
     createMode: document.getElementById("createMode"),
     createModeAgentPanel: document.getElementById("createModeAgentPanel"),
     createModeModelIntegrationPanel: document.getElementById("createModeModelIntegrationPanel"),
+    repoModeTitle: document.getElementById("repoModeTitle"),
+    repoModeHint: document.getElementById("repoModeHint"),
+    repoUrlLabel: document.getElementById("repoUrlLabel"),
+    taskPromptLabel: document.getElementById("taskPromptLabel"),
     repoUrl: document.getElementById("repoUrl"),
     baseBranch: document.getElementById("baseBranch"),
     branchName: document.getElementById("branchName"),
@@ -68,10 +72,46 @@
     config: null,
     tasks: [],
     selectedId: "",
+    createMode: "agent",
     busy: false,
     pollTimer: null,
     outputHistory: [],
     changeSummary: null,
+  };
+
+  const CREATE_MODE_PROFILES = {
+    agent: {
+      title: "New Agent Run",
+      hint: "Create a standard repository-backed coding workspace for implementation work.",
+      repoLabel: "Repository",
+      promptLabel: "Task brief",
+      promptPlaceholder: "Describe the coding task",
+      defaultPrompt: () => "",
+    },
+    review_audit: {
+      title: "New Review or Audit Run",
+      hint: "Seed a repository workspace for code review, regression hunting, change audit, or deployment-risk analysis.",
+      repoLabel: "Repository or PR checkout",
+      promptLabel: "Review scope",
+      promptPlaceholder: "What should be reviewed or audited? Leave blank to use the default review brief.",
+      defaultPrompt: () => [
+        "Review this workspace for bugs, behavioral regressions, risky assumptions, and missing tests.",
+        "Prioritize concrete findings over summaries.",
+        "Inspect relevant diffs, changed files, and targeted checks before concluding.",
+      ].join(" "),
+    },
+    ops_diagnostics: {
+      title: "New Ops or Diagnostics Sandbox",
+      hint: "Seed a repository workspace for runtime investigation, smoke tests, configuration drift checks, topology review, or deployment diagnostics.",
+      repoLabel: "Repository or ops repo",
+      promptLabel: "Investigation brief",
+      promptPlaceholder: "What should be investigated? Leave blank to use the default diagnostics brief.",
+      defaultPrompt: () => [
+        "Investigate this workspace for operational issues.",
+        "Focus on runtime health, smoke tests, config drift, logs, topology/resource alignment, and actionable remediation steps.",
+        "Prefer targeted validation commands and concise findings over broad code changes unless a fix is clearly required.",
+      ].join(" "),
+    },
   };
 
   function setStatus(text, isError) {
@@ -178,11 +218,32 @@
     if (selectedValue !== undefined && selectedValue !== null) select.value = String(selectedValue);
   }
 
+  function createModeProfile(mode) {
+    return CREATE_MODE_PROFILES[mode] || CREATE_MODE_PROFILES.agent;
+  }
+
+  function updateRepositoryModeUi(mode) {
+    const profile = createModeProfile(mode);
+    if (els.repoModeTitle) els.repoModeTitle.textContent = profile.title;
+    if (els.repoModeHint) els.repoModeHint.textContent = profile.hint;
+    if (els.repoUrlLabel) els.repoUrlLabel.textContent = profile.repoLabel;
+    if (els.taskPromptLabel) els.taskPromptLabel.textContent = profile.promptLabel;
+    if (els.taskPrompt) els.taskPrompt.placeholder = profile.promptPlaceholder;
+  }
+
+  function buildModePrompt(mode, prompt) {
+    const trimmed = String(prompt || "").trim();
+    if (trimmed) return trimmed;
+    return createModeProfile(mode).defaultPrompt();
+  }
+
   function setCreateMode(mode) {
-    const value = mode === "model_integration" ? "model_integration" : "agent";
+    const value = ["review_audit", "ops_diagnostics", "model_integration"].includes(mode) ? mode : "agent";
+    state.createMode = value;
     if (els.createMode) els.createMode.value = value;
-    if (els.createModeAgentPanel) els.createModeAgentPanel.hidden = value !== "agent";
+    if (els.createModeAgentPanel) els.createModeAgentPanel.hidden = value === "model_integration";
     if (els.createModeModelIntegrationPanel) els.createModeModelIntegrationPanel.hidden = value !== "model_integration";
+    if (value !== "model_integration") updateRepositoryModeUi(value);
   }
 
   function selectedTask() {
@@ -740,11 +801,12 @@
   }
 
   function workspaceBody() {
+    const mode = state.createMode === "model_integration" ? "agent" : state.createMode;
     return {
       repo_url: els.repoUrl ? els.repoUrl.value.trim() : "",
       base_branch: els.baseBranch ? els.baseBranch.value.trim() : "",
       branch_name: els.branchName ? els.branchName.value.trim() : "",
-      prompt: els.taskPrompt ? els.taskPrompt.value.trim() : "",
+      prompt: buildModePrompt(mode, els.taskPrompt ? els.taskPrompt.value.trim() : ""),
     };
   }
 
