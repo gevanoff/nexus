@@ -70,6 +70,7 @@
         box-shadow: 0 12px 30px rgba(6,10,16,0.35);
         padding: 12px;
       }
+      .create-mode-panel[hidden] { display:none; }
       .stack { display:flex; flex-direction:column; gap:10px; }
       .two { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
       .hint, .meta { font-size:12px; color:var(--muted); }
@@ -286,6 +287,21 @@
       <div class="layout">
         <section class="stack">
           <div class="card stack">
+            <div class="two">
+              <div>
+                <label for="createMode">Create mode</label>
+                <select id="createMode">
+                  <option value="agent">New Agent Run</option>
+                  <option value="model_integration">New Model Integration</option>
+                </select>
+              </div>
+              <div class="hint" style="align-self:end; padding-bottom:10px;">
+                Choose the type of workspace you want to seed.
+              </div>
+            </div>
+          </div>
+
+          <div id="createModeAgentPanel" class="card stack create-mode-panel">
             <h2>New Agent Run</h2>
             <div>
               <label for="repoUrl">Repository</label>
@@ -322,7 +338,7 @@
             <div id="configMeta" class="hint"></div>
           </div>
 
-          <div class="card stack">
+          <div id="createModeModelIntegrationPanel" class="card stack create-mode-panel" hidden>
             <h2>New Model Integration</h2>
             <div class="hint">Start from a HuggingFace model ID or URL and seed a topology-aware Nexus integration workspace.</div>
             <div>

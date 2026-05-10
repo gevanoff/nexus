@@ -1,6 +1,9 @@
 (() => {
   const els = {
     status: document.getElementById("status"),
+    createMode: document.getElementById("createMode"),
+    createModeAgentPanel: document.getElementById("createModeAgentPanel"),
+    createModeModelIntegrationPanel: document.getElementById("createModeModelIntegrationPanel"),
     repoUrl: document.getElementById("repoUrl"),
     baseBranch: document.getElementById("baseBranch"),
     branchName: document.getElementById("branchName"),
@@ -173,6 +176,13 @@
       select.appendChild(option);
     });
     if (selectedValue !== undefined && selectedValue !== null) select.value = String(selectedValue);
+  }
+
+  function setCreateMode(mode) {
+    const value = mode === "model_integration" ? "model_integration" : "agent";
+    if (els.createMode) els.createMode.value = value;
+    if (els.createModeAgentPanel) els.createModeAgentPanel.hidden = value !== "agent";
+    if (els.createModeModelIntegrationPanel) els.createModeModelIntegrationPanel.hidden = value !== "model_integration";
   }
 
   function selectedTask() {
@@ -1236,6 +1246,7 @@
     const params = new URLSearchParams(window.location.search);
     const prompt = params.get("prompt") || "";
     if (prompt && els.taskPrompt && !els.taskPrompt.value) els.taskPrompt.value = prompt;
+    setCreateMode(params.get("create") || "agent");
     renderSelected();
     await loadConfig();
     await loadTasks({ keepSelection: false });
@@ -1262,6 +1273,12 @@
   wire("readFile", readFile);
   wire("writeFile", writeFile);
   wire("copyOutput", copyOutput);
+
+  if (els.createMode) {
+    els.createMode.addEventListener("change", () => {
+      setCreateMode(els.createMode ? els.createMode.value : "agent");
+    });
+  }
 
   if (els.filesPanel) {
     els.filesPanel.addEventListener("toggle", () => {
