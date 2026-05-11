@@ -19,3 +19,7 @@ Integrates `nvidia/NVIDIA-Nemotron-Nano-9B-v2` into Nexus as a chat backend.
 - Lane: `vLLM Fast`
 - Deployment mode: `compose`
 - Comparable VRAM: `22000` MB
+
+
+## API Surface
+OpenAI-compatible chat completions at `/v1/chat/completions`.
