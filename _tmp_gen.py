@@ -1,1 +1,1 @@
-# ignored temp artifact
+print("ok")
