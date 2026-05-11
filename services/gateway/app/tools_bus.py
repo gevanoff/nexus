@@ -122,26 +122,15 @@ def _collapse_ws(value: str) -> str:
 
 def _run_coroutine_sync(coro: Any) -> Any:
     try:
-        asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
 
-    result: Any = None
-    error: Exception | None = None
-
-    def runner() -> None:
-        nonlocal result, error
-        try:
-            result = asyncio.run(coro)
-        except Exception as exc:
-            error = exc
-
-    thread = threading.Thread(target=runner, daemon=True)
-    thread.start()
-    thread.join()
-    if error is not None:
-        raise error
-    return result
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    try:
+        return future.result()
+    except Exception as exc:
+        raise
 
 
 def _embed_text_sync(text: str) -> list[float]:
