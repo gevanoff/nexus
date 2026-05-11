@@ -1,0 +1,38 @@
+services:
+  hf-nvidia-nvidia-nemotron-nano-9b-v2:
+    build:
+      context: ./services/hf-nvidia-nvidia-nemotron-nano-9b-v2
+    container_name: nexus-hf-nvidia-nvidia-nemotron-nano-9b-v2
+    env_file:
+      - ./services/hf-nvidia-nvidia-nemotron-nano-9b-v2/.env.example
+    ports:
+      - "8610:8610"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; port=os.environ.get('NEXUS_SERVICE_PORT', '8610'); urllib.request.urlopen(f'http://127.0.0.1:{port}/health', timeout=3).read(); print('ok')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - nexus
+
+  hf-nvidia-nvidia-nemotron-nano-9b-v2_registrar:
+    build:
+      context: ./services/service-registrar
+    container_name: nexus-hf-nvidia-nvidia-nemotron-nano-9b-v2-registrar
+    depends_on:
+      - hf-nvidia-nvidia-nemotron-nano-9b-v2
+    environment:
+      ETCD_URL: ${ETCD_URL:-http://etcd:2379}
+      NEXUS_SERVICE_NAME: hf-nvidia-nvidia-nemotron-nano-9b-v2
+      NEXUS_SERVICE_BASE_URL: http://hf-nvidia-nvidia-nemotron-nano-9b-v2:8610
+      NEXUS_SERVICE_BACKEND_CLASS: hf_nvidia_nvidia_nemotron_nano_9b_v2
+      NEXUS_SERVICE_METADATA_URL: http://hf-nvidia-nvidia-nemotron-nano-9b-v2:8610/v1/metadata
+      NEXUS_SERVICE_HEALTH_URLS: http://hf-nvidia-nvidia-nemotron-nano-9b-v2:8610/readyz,http://hf-nvidia-nvidia-nemotron-nano-9b-v2:8610/health
+    restart: unless-stopped
+    networks:
+      - nexus
+
+networks:
+  nexus:
+    external: true
