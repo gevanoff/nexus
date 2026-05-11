@@ -23,3 +23,16 @@ Integrates `nvidia/NVIDIA-Nemotron-Nano-9B-v2` into Nexus as a chat backend.
 
 ## API Surface
 OpenAI-compatible chat completions at `/v1/chat/completions`.
+
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HF_MODEL_ID` | `nvidia/NVIDIA-Nemotron-Nano-9B-v2` | Model to load |
+| `DEVICE` | `cuda` | Device for inference |
+| `MAX_NEW_TOKENS` | `2048` | Max generated tokens |
+| `TEMPERATURE` | `0.7` | Sampling temperature |
+| `TOP_P` | `0.9` | Nucleus sampling |
+| `TOP_K` | `50` | Top-k sampling |
+| `HUGGINGFACE_HUB_TOKEN` | | Required for gated models |
