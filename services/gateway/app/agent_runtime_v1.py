@@ -21,6 +21,7 @@ from app.tools_bus import TOOL_SCHEMAS, run_tool_call, tool_awareness_text
 from app.upstreams import call_backend_chat
 
 Backend = str
+_LIGHT_TIER1_TOOLS = frozenset({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene"})
 
 
 def _canonical_json(obj: Any) -> str:
@@ -172,6 +173,20 @@ def _tool_specs_for_names(names: Sequence[str]) -> List[ToolSpec]:
     return out
 
 
+def _request_is_heavy(*, tier: int, tools_allowlist: Optional[Sequence[str]] = None) -> bool:
+    if tier <= 0:
+        return False
+    if tier >= 2:
+        return True
+
+    allow = {str(name).strip() for name in (tools_allowlist or []) if str(name).strip()}
+    if not allow:
+        return True
+
+    light_tools = tools_for_tier(0) | set(_LIGHT_TIER1_TOOLS)
+    return not allow.issubset(light_tools)
+
+
 @dataclass(frozen=True)
 class AdmissionProfile:
     concurrency: int
@@ -197,9 +212,9 @@ class DeterministicAdmissionControl:
         timeout_sec = float(getattr(S, "AGENT_QUEUE_TIMEOUT_SEC", 2.0) or 2.0)
         return AdmissionProfile(concurrency=max(1, conc), queue_max=max(0, queue_max), queue_timeout_sec=max(0.0, timeout_sec))
 
-    async def acquire(self, *, backend: Backend, tier: int) -> "_AdmissionLease":
+    async def acquire(self, *, backend: Backend, tier: int, tools_allowlist: Optional[Sequence[str]] = None) -> "_AdmissionLease":
         shed = bool(getattr(S, "AGENT_SHED_HEAVY", True))
-        if shed and tier >= 1:
+        if shed and _request_is_heavy(tier=tier, tools_allowlist=tools_allowlist):
             raise HTTPException(status_code=429, detail={"error": "shed_heavy", "error_type": "rate_limited", "error_message": "heavy agents refused (shed heavy mode)"})
 
         prof = self._profile(backend)
@@ -357,7 +372,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
     upstream_model = route.model
 
     # Admission control by backend.
-    async with (await _ADMISSION.acquire(backend=backend, tier=tier)):
+    async with (await _ADMISSION.acquire(backend=backend, tier=tier, tools_allowlist=spec.tools_allowlist)):
         t0 = time.monotonic()
         run_id = new_id("run")
         request_hash = _sha256_hex(
