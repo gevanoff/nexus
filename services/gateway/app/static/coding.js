@@ -109,7 +109,7 @@
       defaultPrompt: () => [
         "Investigate this workspace for operational issues.",
         "Focus on runtime health, smoke tests, config drift, logs, topology/resource alignment, and actionable remediation steps.",
-        "Prefer targeted validation commands and concise findings over broad code changes unless a fix is clearly required.",
+        "If you identify a clear, low-risk repository fix, implement the smallest viable change and validate it instead of stopping at diagnosis alone.",
       ].join(" "),
     },
   };
