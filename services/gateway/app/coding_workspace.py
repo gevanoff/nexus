@@ -929,7 +929,6 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
             elif "R" in {x, y}:
                 kind = "renamed"
                 counts["renamed"] += 1
-                counts["modified"] += 1
             elif "A" in {x, y}:
                 kind = "added"
                 counts["added"] += 1
