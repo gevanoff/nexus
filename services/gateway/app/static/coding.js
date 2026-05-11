@@ -890,6 +890,7 @@
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
       if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
       if (payload.agent_max_turns) bits.push(`agent turns: ${payload.agent_max_turns}`);
+      bits.push(payload.agent_max_runtime_sec > 0 ? `runtime: ${payload.agent_max_runtime_sec}s` : "runtime: unlimited");
       if (payload.agent_checkpoint_commits) bits.push("checkpoint commits on");
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);

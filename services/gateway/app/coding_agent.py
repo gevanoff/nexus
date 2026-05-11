@@ -35,13 +35,15 @@ def _max_turns(requested: Optional[int] = None) -> int:
     return max(1, min(value, limit))
 
 
-def _max_runtime_sec(requested: Optional[float] = None) -> float:
-    default = float(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 1800) or 1800)
+def _max_runtime_sec(requested: Optional[float] = None) -> Optional[float]:
+    default = float(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 0) or 0)
     try:
         value = float(requested) if requested is not None else default
     except Exception:
         value = default
-    return max(30.0, min(value, max(30.0, default), 7200.0))
+    if value <= 0:
+        return None
+    return max(30.0, value)
 
 
 def _max_events() -> int:
@@ -1112,7 +1114,7 @@ async def _run_agent(
     git_token_value: Optional[str],
     model: str,
     max_turns: int,
-    max_runtime_sec: float,
+    max_runtime_sec: Optional[float],
     auto_commit: bool,
     commit_message: Optional[str],
 ) -> None:
@@ -1169,7 +1171,7 @@ async def _run_agent(
 
         for turn in range(max_turns):
             _raise_if_stopped(task_id)
-            if time.monotonic() - t0 > max_runtime_sec:
+            if max_runtime_sec is not None and time.monotonic() - t0 > max_runtime_sec:
                 raise HTTPException(status_code=408, detail="coding agent runtime budget exceeded")
             new_guidance, seen_guidance_count = await asyncio.to_thread(_new_guidance_since, task_id, seen_guidance_count)
             if new_guidance:

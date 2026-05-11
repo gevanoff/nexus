@@ -88,3 +88,11 @@ def test_max_turns_allows_up_to_ten_thousand():
     assert ca._max_turns() == 1000
     assert ca._max_turns(5000) == 5000
     assert ca._max_turns(20000) == 10000
+
+
+def test_runtime_is_unlimited_by_default():
+    assert ca._max_runtime_sec() is None
+
+
+def test_explicit_runtime_can_still_be_used_when_requested():
+    assert ca._max_runtime_sec(120) == 120

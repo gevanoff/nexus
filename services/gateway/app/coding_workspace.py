@@ -1755,7 +1755,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "file_max_bytes": file_max_bytes(),
         "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 1000) or 1000),
         "agent_max_turns_limit": int(getattr(S, "CODING_AGENT_MAX_TURNS_LIMIT", 10_000) or 10_000),
-        "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 1800) or 1800),
+        "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 0) or 0),
         "agent_max_tokens": int(getattr(S, "CODING_AGENT_MAX_TOKENS", 512) or 512),
         "agent_tool_context_chars": int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 10_000) or 10_000),
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
