@@ -16,3 +16,19 @@ TOP_K = int(os.environ.get("TOP_K", "50"))
 REPEAT_PENALTY = float(os.environ.get("REPEAT_PENALTY", "1.0"))
 DEVICE = os.environ.get("DEVICE", "cuda")
 HEALTHY = False
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    model: str = "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
+    messages: List[ChatMessage]
+    temperature: float = 0.7
+    max_tokens: Optional[int] = 2048
+    top_p: float = 0.9
+    top_k: int = 50
+    repeat_penalty: float = 1.0
+    stream: bool = False
