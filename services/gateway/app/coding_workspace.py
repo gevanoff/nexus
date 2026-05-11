@@ -822,6 +822,8 @@ def _parse_git_subcommand(argv: Sequence[str]) -> str:
     skip_next = False
     for raw in list(argv)[1:]:
         token = str(raw)
+        if token == "--":
+            break  # end of options; remaining args are not subcommands
         if skip_next:
             skip_next = False
             continue
