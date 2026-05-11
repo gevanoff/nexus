@@ -923,7 +923,6 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
             if code == "??":
                 kind = "untracked"
                 counts["untracked"] += 1
-                counts["added"] += 1
             elif "D" in {x, y}:
                 kind = "removed"
                 counts["removed"] += 1
