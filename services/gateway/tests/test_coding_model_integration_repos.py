@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
+
+from fastapi import HTTPException
+
+from app import coding_workspace as cw
+
+
+def test_create_model_integration_task_requires_github_repo_url(monkeypatch, tmp_path):
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(
+        cw.miw,
+        "build_integration_plan",
+        lambda **kwargs: {
+            "source_url": "https://huggingface.co/example/model",
+            "prompt": "Integrate model",
+        },
+    )
+
+    try:
+        cw.create_model_integration_task(
+            model="example/model",
+            repo_url="https://gitlab.com/example/model-integration.git",
+            preferred_runtime="auto",
+            route_kind="chat",
+            service_name="example-service",
+            base_branch="main",
+            branch_name="feature/test",
+            prompt="Integrate model",
+            owner="test",
+        )
+        assert False, "expected HTTPException"
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "GitHub" in str(exc.detail)
+
+
+def test_create_model_integration_task_attaches_remote_and_pushes_seed(monkeypatch, tmp_path):
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(
+        cw.miw,
+        "build_integration_plan",
+        lambda **kwargs: {
+            "source_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+            "prompt": "Add backend integration",
+            "service_name": "nemotron",
+        },
+    )
+
+    def _scaffold(repo_path, plan):
+        readme = repo_path / "README.md"
+        readme.write_text("seed", encoding="utf-8")
+        return ["README.md"]
+
+    monkeypatch.setattr(cw.miw, "scaffold_workspace", _scaffold)
+    monkeypatch.setattr(
+        cw,
+        "_ensure_github_repo_available",
+        lambda repo_url, *, git_token_value=None: {"ok": True, "created": True, "empty": True, "body": {"html_url": repo_url}},
+    )
+
+    calls: list[list[str]] = []
+
+    def _run_process(argv, **kwargs):
+        calls.append(list(argv))
+        return {
+            "ok": True,
+            "returncode": 0,
+            "argv": list(argv),
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 1,
+        }
+
+    monkeypatch.setattr(cw, "_run_process", _run_process)
+
+    task = cw.create_model_integration_task(
+        model="nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+        repo_url="https://github.com/example/nemotron-integration.git",
+        preferred_runtime="vllm",
+        route_kind="chat",
+        service_name="nemotron",
+        base_branch="main",
+        branch_name="nexus-coder/nemotron",
+        prompt="Add backend integration",
+        owner="test",
+        git_token_value="ghp_test",
+    )
+
+    assert task["status"] == "ready"
+    assert task["repo_url"] == "https://github.com/example/nemotron-integration.git"
+
+    labels = [item.get("label") for item in task.get("commands", [])]
+    assert "github-repo-ensure" in labels
+    assert "git-remote-add" in labels
+    assert "git-push-base" in labels
+    assert "git-push-branch" in labels
+
+    assert ["git", "remote", "add", "origin", "https://github.com/example/nemotron-integration.git"] in calls
+    assert ["git", "push", "-u", "origin", "main"] in calls
+    assert ["git", "push", "-u", "origin", "nexus-coder/nemotron"] in calls

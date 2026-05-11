@@ -41,6 +41,7 @@ class CodingCreateAndRunRequest(BaseModel):
 
 class CodingModelIntegrationCreateRequest(BaseModel):
     model: str
+    repo_url: Optional[str] = None
     preferred_runtime: Optional[str] = None
     route_kind: Optional[str] = None
     service_name: Optional[str] = None
@@ -238,6 +239,7 @@ async def ui_coding_create_model_integration(req: Request, body: CodingModelInte
     task = await _to_thread(
         cw.create_model_integration_task,
         model=body.model,
+        repo_url=body.repo_url,
         preferred_runtime=body.preferred_runtime,
         route_kind=body.route_kind,
         service_name=body.service_name,
@@ -246,6 +248,7 @@ async def ui_coding_create_model_integration(req: Request, body: CodingModelInte
         prompt=body.prompt,
         owner=_actor_from_user(user),
         owner_user_id=_user_id(user),
+        git_token_value=_git_token_for_user(user),
         coding_model=_coding_model_for_user(user, body.coding_model),
     )
     return {"task": task}
@@ -254,10 +257,12 @@ async def ui_coding_create_model_integration(req: Request, body: CodingModelInte
 @router.post("/ui/api/coding/model-integrations/runs", include_in_schema=False)
 async def ui_coding_create_model_integration_and_run(req: Request, body: CodingModelIntegrationRunRequest) -> Dict[str, Any]:
     user = _require_coding_ui(req)
+    token = _git_token_for_user(user)
     model = _coding_model_for_user(user, body.coding_model)
     task = await _to_thread(
         cw.create_model_integration_task,
         model=body.model,
+        repo_url=body.repo_url,
         preferred_runtime=body.preferred_runtime,
         route_kind=body.route_kind,
         service_name=body.service_name,
@@ -266,6 +271,7 @@ async def ui_coding_create_model_integration_and_run(req: Request, body: CodingM
         prompt=body.prompt,
         owner=_actor_from_user(user),
         owner_user_id=_user_id(user),
+        git_token_value=token,
         coding_model=model,
     )
     if task.get("status") == "error":
@@ -563,9 +569,11 @@ async def v1_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le
 @router.post("/v1/coding/model-integrations")
 async def v1_coding_model_integrations(req: Request, body: CodingModelIntegrationCreateRequest) -> Dict[str, Any]:
     user = _require_coding_api(req)
+    token = _git_token_for_user(user) if user is not None else None
     task = await _to_thread(
         cw.create_model_integration_task,
         model=body.model,
+        repo_url=body.repo_url,
         preferred_runtime=body.preferred_runtime,
         route_kind=body.route_kind,
         service_name=body.service_name,
@@ -574,6 +582,7 @@ async def v1_coding_model_integrations(req: Request, body: CodingModelIntegratio
         prompt=body.prompt,
         owner=_actor_from_user(user) if user is not None else "api",
         owner_user_id=_user_id(user),
+        git_token_value=token,
         coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
     )
     return {"task": task}
@@ -582,10 +591,12 @@ async def v1_coding_model_integrations(req: Request, body: CodingModelIntegratio
 @router.post("/v1/coding/model-integrations/runs")
 async def v1_coding_model_integrations_run(req: Request, body: CodingModelIntegrationRunRequest) -> Dict[str, Any]:
     user = _require_coding_api(req)
+    token = _git_token_for_user(user) if user is not None else None
     model = _coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder"
     task = await _to_thread(
         cw.create_model_integration_task,
         model=body.model,
+        repo_url=body.repo_url,
         preferred_runtime=body.preferred_runtime,
         route_kind=body.route_kind,
         service_name=body.service_name,
@@ -594,6 +605,7 @@ async def v1_coding_model_integrations_run(req: Request, body: CodingModelIntegr
         prompt=body.prompt,
         owner=_actor_from_user(user) if user is not None else "api",
         owner_user_id=_user_id(user),
+        git_token_value=token,
         coding_model=model,
     )
     if task.get("status") == "error":

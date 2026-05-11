@@ -337,6 +337,16 @@ def _resolve_repo_url(repo_url: Optional[str]) -> str:
     return repo
 
 
+def _resolve_model_integration_repo_url(repo_url: Optional[str]) -> str:
+    repo = str(repo_url or "").strip()
+    if not repo:
+        raise HTTPException(status_code=400, detail="repo_url is required for model integration workspaces")
+    _reject_url_credentials(repo)
+    if not _is_github_url(repo):
+        raise HTTPException(status_code=400, detail="model integration repo_url must be a GitHub repository URL")
+    return repo
+
+
 def _safe_branch(value: Optional[str], *, task_id: str) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -659,6 +669,7 @@ def create_task(
 def create_model_integration_task(
     *,
     model: str,
+    repo_url: Optional[str],
     preferred_runtime: Optional[str],
     route_kind: Optional[str],
     service_name: Optional[str],
@@ -667,6 +678,7 @@ def create_model_integration_task(
     prompt: Optional[str],
     owner: Optional[str],
     owner_user_id: Optional[int] = None,
+    git_token_value: Optional[str] = None,
     coding_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     _ensure_enabled()
@@ -678,6 +690,7 @@ def create_model_integration_task(
         service_name=service_name,
         prompt=prompt,
     )
+    target_repo = _resolve_model_integration_repo_url(repo_url)
     task_id = new_task_id()
     branch = _safe_branch(branch_name, task_id=task_id)
     base = _base_branch(base_branch)
@@ -692,7 +705,7 @@ def create_model_integration_task(
         "updated_at": _now(),
         "owner": owner or "unknown",
         "owner_user_id": owner_user_id,
-        "repo_url": str(plan.get("source_url") or ""),
+        "repo_url": target_repo,
         "source_url": str(plan.get("source_url") or ""),
         "base_branch": base,
         "branch_name": branch,
@@ -753,6 +766,17 @@ def create_model_integration_task(
                 save_task(task)
                 return public_task(task)
 
+        if not _attach_model_integration_remote(
+            task,
+            repo=repo_path,
+            repo_url=target_repo,
+            base_branch=base,
+            branch_name=branch,
+            git_token_value=git_token_value,
+        ):
+            save_task(task)
+            return public_task(task)
+
         task["status"] = "ready"
         task.pop("error", None)
         save_task(task)
@@ -760,7 +784,7 @@ def create_model_integration_task(
     except Exception as exc:
         logger.warning("model integration task create failed id=%s error=%s", task_id, exc)
         task["status"] = "error"
-        task["error"] = f"{type(exc).__name__}: {exc}"
+        task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc), extra_tokens=[_effective_git_token(git_token_value)])}"
         save_task(task)
         return public_task(task)
 
@@ -1402,6 +1426,145 @@ def _create_github_pr_api(
         return {"ok": False, "status": int(exc.code), "error": "GitHub API PR creation failed", "response": body_data}
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {_redact_text(str(exc))}"}
+
+
+def _github_api_request(
+    method: str,
+    path: str,
+    *,
+    git_token_value: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    token = _effective_git_token(git_token_value)
+    if not token:
+        return {"ok": False, "error": "CODING_GIT_TOKEN or GITHUB_TOKEN is required for GitHub API access"}
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "nexus-coding-workspaces",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urlrequest.Request(
+        f"https://api.github.com{path}",
+        data=data,
+        method=method.upper(),
+        headers=headers,
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            body = json.loads(raw) if raw else {}
+            return {"ok": True, "status": int(resp.status), "body": body}
+    except urlerror.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            body_data: Any = json.loads(raw) if raw else {}
+        except Exception:
+            body_data = raw
+        return {"ok": False, "status": int(exc.code), "body": body_data}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {_redact_text(str(exc))}"}
+
+
+def _ensure_github_repo_available(repo_url: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
+    owner_repo = _github_owner_repo(repo_url)
+    if owner_repo is None:
+        return {"ok": False, "error": "repo_url is not a GitHub repository URL"}
+    owner, repo = owner_repo
+    existing = _github_api_request("GET", f"/repos/{owner}/{repo}", git_token_value=git_token_value)
+    if existing.get("ok"):
+        body = existing.get("body") if isinstance(existing.get("body"), dict) else {}
+        return {"ok": True, "created": False, "empty": int(body.get("size") or 0) == 0, "body": body}
+    if int(existing.get("status") or 0) != 404:
+        return {"ok": False, "error": "GitHub repo lookup failed", "response": existing.get("body") or existing.get("error")}
+
+    viewer = _github_api_request("GET", "/user", git_token_value=git_token_value)
+    if not viewer.get("ok"):
+        return {"ok": False, "error": "GitHub user lookup failed", "response": viewer.get("body") or viewer.get("error")}
+    viewer_body = viewer.get("body") if isinstance(viewer.get("body"), dict) else {}
+    login = str(viewer_body.get("login") or "").strip().lower()
+    payload = {
+        "name": repo,
+        "description": f"Generated Nexus model integration workspace for {repo}",
+        "private": True,
+        "auto_init": False,
+    }
+    if owner.lower() == login:
+        created = _github_api_request("POST", "/user/repos", git_token_value=git_token_value, payload=payload)
+    else:
+        created = _github_api_request("POST", f"/orgs/{owner}/repos", git_token_value=git_token_value, payload=payload)
+    if not created.get("ok"):
+        return {"ok": False, "error": "GitHub repo creation failed", "response": created.get("body") or created.get("error")}
+    return {"ok": True, "created": True, "empty": True, "body": created.get("body") if isinstance(created.get("body"), dict) else {}}
+
+
+def _attach_model_integration_remote(
+    task: Dict[str, Any],
+    *,
+    repo: Path,
+    repo_url: str,
+    base_branch: str,
+    branch_name: str,
+    git_token_value: Optional[str] = None,
+) -> bool:
+    remote_meta = _ensure_github_repo_available(repo_url, git_token_value=git_token_value)
+    _append_command(
+        task,
+        {
+            "ok": remote_meta.get("ok"),
+            "returncode": 0 if remote_meta.get("ok") else 1,
+            "argv": ["github-api", "repos.ensure"],
+            "stdout": json.dumps(remote_meta.get("body") or {}, ensure_ascii=False),
+            "stderr": "" if remote_meta.get("ok") else json.dumps(remote_meta.get("response") or remote_meta.get("error") or "", ensure_ascii=False),
+            "duration_ms": 0,
+        },
+        label="github-repo-ensure",
+    )
+    if not remote_meta.get("ok"):
+        task["status"] = "error"
+        task["error"] = str(remote_meta.get("error") or "github repo ensure failed")
+        return False
+
+    remote_result = _run_process(["git", "remote", "add", "origin", repo_url], cwd=repo, use_git_credentials=False)
+    _append_command(task, remote_result, label="git-remote-add")
+    if not remote_result.get("ok"):
+        task["status"] = "error"
+        task["error"] = "git remote add failed"
+        return False
+
+    push_base = _run_process(
+        ["git", "push", "-u", "origin", base_branch],
+        cwd=repo,
+        timeout_sec=max(command_timeout_sec(), 300.0),
+        use_git_credentials=True,
+        git_token_value=git_token_value,
+    )
+    _append_command(task, push_base, label="git-push-base")
+    if not push_base.get("ok"):
+        task["status"] = "error"
+        task["error"] = "initial base branch push failed"
+        return False
+
+    if branch_name != base_branch:
+        push_branch = _run_process(
+            ["git", "push", "-u", "origin", branch_name],
+            cwd=repo,
+            timeout_sec=max(command_timeout_sec(), 300.0),
+            use_git_credentials=True,
+            git_token_value=git_token_value,
+        )
+        _append_command(task, push_branch, label="git-push-branch")
+        if not push_branch.get("ok"):
+            task["status"] = "error"
+            task["error"] = "initial working branch push failed"
+            return False
+
+    task["last_pushed_at"] = _now()
+    return True
 
 
 def create_pull_request(

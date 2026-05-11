@@ -14,6 +14,7 @@
     taskPrompt: document.getElementById("taskPrompt"),
     createTask: document.getElementById("createTask"),
     createAndRun: document.getElementById("createAndRun"),
+    modelIntegrationRepoUrl: document.getElementById("modelIntegrationRepoUrl"),
     modelIntegrationModel: document.getElementById("modelIntegrationModel"),
     modelIntegrationRuntime: document.getElementById("modelIntegrationRuntime"),
     modelIntegrationRouteKind: document.getElementById("modelIntegrationRouteKind"),
@@ -937,6 +938,7 @@
 
   function modelIntegrationBody() {
     return {
+      repo_url: els.modelIntegrationRepoUrl ? els.modelIntegrationRepoUrl.value.trim() : "",
       model: els.modelIntegrationModel ? els.modelIntegrationModel.value.trim() : "",
       preferred_runtime: els.modelIntegrationRuntime ? els.modelIntegrationRuntime.value.trim() : "auto",
       route_kind: els.modelIntegrationRouteKind ? els.modelIntegrationRouteKind.value.trim() : "",

@@ -1507,6 +1507,7 @@ def tool_models_refresh(args: Dict[str, Any]) -> Dict[str, Any]:
 def tool_coding_model_integration(args: Dict[str, Any]) -> Dict[str, Any]:
     task = coding_workspace.create_model_integration_task(
         model=str(args.get("model") or "").strip(),
+        repo_url=str(args.get("repo_url") or "").strip() or None,
         preferred_runtime=str(args.get("preferred_runtime") or "").strip() or None,
         route_kind=str(args.get("route_kind") or "").strip() or None,
         service_name=str(args.get("service_name") or "").strip() or None,
@@ -1515,6 +1516,7 @@ def tool_coding_model_integration(args: Dict[str, Any]) -> Dict[str, Any]:
         prompt=str(args.get("prompt") or "").strip() or None,
         owner="tool",
         owner_user_id=None,
+        git_token_value=str(args.get("git_token") or "").strip() or None,
         coding_model=str(args.get("coding_model") or "coder").strip() or "coder",
     )
     if bool(args.get("auto_run")) and task.get("status") != "error":
@@ -2034,12 +2036,14 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "model": {"type": "string", "description": "HuggingFace owner/model id or huggingface.co model URL."},
+                "repo_url": {"type": "string", "description": "Target GitHub repository URL where the generated integration workspace will be pushed."},
                 "preferred_runtime": {"type": "string", "enum": ["auto", "mlx", "vllm", "transformers"]},
                 "route_kind": {"type": "string", "enum": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"]},
                 "service_name": {"type": "string"},
                 "base_branch": {"type": "string"},
                 "branch_name": {"type": "string"},
                 "prompt": {"type": "string"},
+                "git_token": {"type": "string", "description": "Optional GitHub token override used to create or push the target repository."},
                 "coding_model": {"type": "string"},
                 "auto_run": {"type": "boolean"},
                 "max_turns": {"type": "integer"},
@@ -2047,7 +2051,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "auto_commit": {"type": "boolean"},
                 "commit_message": {"type": "string"}
             },
-            "required": ["model"],
+            "required": ["model", "repo_url"],
             "additionalProperties": False,
         },
     },
