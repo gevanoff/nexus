@@ -1,12 +1,9 @@
-import pathlib
-PATH = "services/hf-nevida-nevida-nemotron-nano-9b-v2/app/nexus_model_service.py"
-C = []
-def w(s): C.append(s)
-
-w\"from __future__ import annotations")
-w("import asyncio,json,os,time,uuid,logging")
-w("from typing import Any,Dict,List,Optional")
-w("from fastapi import FastAPI,HTTPException")
-w("from fastapi.responses import JSONResponse,StreamingResponse")
-w("from pydantic import BaseModel")
-w("logger=logging.getLogger(__name__)")
+#!/usr/bin/env python3
+P="services/hf-nvidia-nvidia-nemotron-nano-9b-v2/app/nexus_model_service.py"
+t=open(P).read()
+i1=t.find("@app.get(\"/v1/metadata\")")
+i2=t.rfind("@app.get(\"/v1/metadata\")")
+if i1!=i2:
+    t=t[:i2]
+open(P,"w").write(t)
+print("done")
