@@ -1,0 +1,2 @@
+import pathlib
+p="services/hf-nevida-nevida-nemotron-nano-9b-v2/app/nexus_model_service.py"
