@@ -122,7 +122,7 @@ def _collapse_ws(value: str) -> str:
 
 def _run_coroutine_sync(coro: Any) -> Any:
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
 
