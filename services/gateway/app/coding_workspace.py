@@ -58,7 +58,7 @@ def command_timeout_sec(value: Optional[float] = None) -> float:
         requested = float(value)
     except Exception:
         requested = default
-    return max(1.0, min(requested, 3600.0))
+    return max(1.0, min(requested, default, 3600.0))
 
 
 def max_output_chars() -> int:
