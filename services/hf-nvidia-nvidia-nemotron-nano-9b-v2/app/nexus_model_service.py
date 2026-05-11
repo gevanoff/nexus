@@ -144,3 +144,17 @@ async def chat_completions(req: ChatCompletionRequest):
         new=out[0][inputs["input_ids"].shape[1]:]
         content=tok.decode(new,skip_special_tokens=True)
     return ChatCompletionResponse(id=rid,created=int(time.time()),model=MODEL_ID,choices=[ChatCompletionChoice(message=ChoiceMessage(content=content),finish_reason="stop")])
+
+
+async def stream_resp(req: ChatCompletionRequest):
+    model,tok=get_model()
+    conv=[m.model_dump() for m in req.messages]
+    text=format_prompt(conv)
+    inputs=tok(text,return_tensors="pt").to(DEVICE)
+    rid=str(uuid.uuid4())
+    import torch
+    with torch.no_grad():
+        for tok_id in model.generate(**inputs,max_new_tokens=req.max_tokens or MAX_NEW_TOKENS,temperature=req.temperature or TEMPERATURE,top_p=req.top_p or TOP_P,top_k=req.top_k or TOP_K,do_sample=True,repetition_penalty=req.repeat_penalty or REPEAT_PENALTY,pad_token_id=tok.eos_token_id)[0][inputs["input_ids"].shape[1]:]:
+            w=tok.decode(tok_id)
+            yield f"data: {json.dumps({'id':rid,'object':'chat.completion.chunk','created':int(time.time()),'model':MODEL_ID,'choices':[{'index':0,'delta':{'content':w}}]})}\n\n"
+        yield f"data: {json.dumps({'id':rid,'object':'chat.completion.chunk','created':int(time.time()),'model':MODEL_ID,'choices':[{'index':0,'delta':{},'finish_reason':'stop'}]})}\n\n"
