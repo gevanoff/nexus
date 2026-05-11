@@ -172,6 +172,30 @@
       .change-chip.added { border-color:rgba(88,214,141,0.48); color:#a5f3c7; background:rgba(0,120,72,0.14); }
       .change-chip.modified { border-color:rgba(111,184,255,0.48); color:#cfe6ff; background:rgba(20,82,140,0.16); }
       .change-chip.removed { border-color:rgba(255,127,143,0.52); color:#ffc3cb; background:rgba(150,20,38,0.18); }
+      .change-chip.renamed { border-color:rgba(245,179,1,0.48); color:#f9e2a2; background:rgba(130,90,10,0.18); }
+      .change-chip.untracked { border-color:rgba(126,231,135,0.40); color:#d7ffd8; background:rgba(22,101,52,0.18); }
+      .pending-changes {
+        border:1px solid rgba(231,237,246,0.10);
+        border-radius:8px;
+        background:rgba(5,9,14,0.45);
+        padding:8px;
+        display:flex;
+        flex-direction:column;
+        gap:6px;
+        max-height:180px;
+        overflow:auto;
+      }
+      .pending-change-row {
+        display:grid;
+        grid-template-columns:auto 1fr;
+        gap:8px;
+        align-items:start;
+      }
+      .pending-change-path {
+        color:#dbe8f8;
+        font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break:break-word;
+      }
       .publish-feedback {
         min-height:22px;
         border:1px solid rgba(231,237,246,0.10);
@@ -260,6 +284,18 @@
       }
       .file-row:last-child { border-bottom:0; }
       .file-row:hover { background:rgba(111,184,255,0.08); }
+      .file-row-main {
+        display:flex;
+        align-items:center;
+        gap:8px;
+        min-width:0;
+      }
+      .file-row-name {
+        min-width:0;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
       .file-content { min-height:280px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; line-height:1.45; }
       @media (max-width: 920px) {
         .layout, .panel-grid, .two { grid-template-columns: 1fr; }
@@ -400,7 +436,7 @@
             <div id="selectedPrompt" class="meta" style="margin-top:6px;"></div>
             <div class="toolbar">
               <button id="statusBtn" type="button" data-ui-role="secondary">Git status</button>
-              <button id="diffBtn" type="button" data-ui-role="secondary">Diff</button>
+              <button id="diffBtn" type="button" data-ui-role="secondary">Diff vs Base</button>
               <button id="briefBtn" type="button" data-ui-role="secondary">Agent brief</button>
               <button id="copyOutput" type="button" data-ui-role="secondary">Copy output</button>
               </div>
@@ -480,6 +516,10 @@
               <span id="changeSummary" class="change-summary"></span>
             </summary>
             <div class="details-body stack">
+              <div>
+                <div class="meta" style="margin-bottom:6px;">Pending changes</div>
+                <div id="pendingChanges" class="pending-changes"></div>
+              </div>
               <div class="row" style="justify-content:flex-end;">
                 <input id="treePath" style="width:220px;" autocomplete="off" placeholder="path" />
                 <button id="loadTree" type="button" data-ui-role="secondary">Load</button>
@@ -501,6 +541,6 @@
     </main>
     <script src="/static/auth_client.js?v=5"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/coding.js?v=8"></script>
+    <script src="/static/coding.js?v=9"></script>
   </body>
 </html>

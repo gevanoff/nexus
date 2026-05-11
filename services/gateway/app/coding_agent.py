@@ -26,12 +26,13 @@ _RUNNING: Dict[str, asyncio.Task[Any]] = {}
 
 
 def _max_turns(requested: Optional[int] = None) -> int:
-    default = int(getattr(S, "CODING_AGENT_MAX_TURNS", 100) or 100)
+    default = int(getattr(S, "CODING_AGENT_MAX_TURNS", 1000) or 1000)
+    limit = int(getattr(S, "CODING_AGENT_MAX_TURNS_LIMIT", 10_000) or 10_000)
     try:
         value = int(requested) if requested is not None else default
     except Exception:
         value = default
-    return max(1, min(value, 1000))
+    return max(1, min(value, limit))
 
 
 def _max_runtime_sec(requested: Optional[float] = None) -> float:
@@ -299,6 +300,39 @@ def _effective_run_prompt(task: Dict[str, Any]) -> str:
     if prompt:
         return prompt
     return str(task.get("prompt") or "").strip()
+
+
+def _request_expects_workspace_edits(task: Dict[str, Any]) -> bool:
+    original = str(task.get("prompt") or "").strip().lower()
+    current = _effective_run_prompt(task).lower()
+    text = f"{original}\n{current}"
+    positive_markers = (
+        "fix",
+        "debug",
+        "repair",
+        "resolve",
+        "implement",
+        "edit",
+        "modify",
+        "update",
+        "change",
+        "patch",
+        "root cause",
+    )
+    negative_markers = (
+        "review this workspace",
+        "review scope",
+        "review only",
+        "audit",
+        "findings",
+        "behavioral regressions",
+        "missing tests",
+    )
+    if any(marker in text for marker in positive_markers):
+        return True
+    if any(marker in text for marker in negative_markers):
+        return False
+    return False
 
 
 def _guidance_context(task: Dict[str, Any], *, limit: int = 12) -> str:
@@ -884,6 +918,13 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         request_bits.append(f"Current run request:\n{current}")
     if guidance:
         request_bits.append(guidance)
+    edit_expectation = ""
+    if _request_expects_workspace_edits(task):
+        edit_expectation = (
+            "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
+            "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
+            "Do not stop at diagnosis alone when a focused fix is available. "
+        )
     return (
         "You are Nexus Coding Agent. Work autonomously toward the user's coding request inside one isolated git workspace. "
         "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
@@ -900,6 +941,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         "If the request requires code or documentation changes, make edits and inspect the diff before calling coding_finish. "
+        f"{edit_expectation}"
         f"Allowed commands are: {allowed or '(none)'}. "
         f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
         + "\n\n".join(request_bits)

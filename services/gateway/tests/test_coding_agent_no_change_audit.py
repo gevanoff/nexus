@@ -55,3 +55,36 @@ def test_no_change_audit_preserves_runs_with_edits():
     assert success is True
     assert summary == "Completed requested work."
     assert event is None
+
+
+def test_fix_oriented_request_is_marked_edit_expected():
+    task = {
+        "id": "code_test",
+        "base_branch": "main",
+        "branch_name": "nexus-coder/code_test",
+        "prompt": "Debug this failing workflow and fix the root cause in the repo.",
+    }
+
+    assert ca._request_expects_workspace_edits(task) is True
+    prompt = ca._system_prompt(task)
+    assert "This request is fix-oriented." in prompt
+    assert "Do not stop at diagnosis alone" in prompt
+
+
+def test_review_request_does_not_get_fix_oriented_prompt():
+    task = {
+        "id": "code_test",
+        "base_branch": "main",
+        "branch_name": "nexus-coder/code_test",
+        "prompt": "Review this workspace for bugs, behavioral regressions, risky assumptions, and missing tests.",
+    }
+
+    assert ca._request_expects_workspace_edits(task) is False
+    prompt = ca._system_prompt(task)
+    assert "This request is fix-oriented." not in prompt
+
+
+def test_max_turns_allows_up_to_ten_thousand():
+    assert ca._max_turns() == 1000
+    assert ca._max_turns(5000) == 5000
+    assert ca._max_turns(20000) == 10000

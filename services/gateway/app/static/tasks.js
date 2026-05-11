@@ -59,6 +59,14 @@
     taskEdit: null,
   };
 
+  function scheduledMaxTurnsDefault() {
+    return Number(state.capabilities?.max_turns_default || 1000);
+  }
+
+  function scheduledMaxTurnsLimit() {
+    return Number(state.capabilities?.max_turns_limit || 10000);
+  }
+
   function setStatus(text, isError = false, diagnostic = null) {
     if (!els.status) return;
     els.status.textContent = text || "";
@@ -455,7 +463,7 @@
       model: els.model?.value || "default",
       tier: Number(els.tier?.value || 0),
       tools: selectedTools(),
-      max_turns: Number(els.maxTurns?.value || 20),
+      max_turns: Number(els.maxTurns?.value || scheduledMaxTurnsDefault()),
       max_runtime_sec: Number(els.maxRuntime?.value || 300),
       metadata: { ui: "scheduled_tasks" },
     };
@@ -483,6 +491,10 @@
 
   async function loadCapabilities() {
     state.capabilities = await fetchJson("/ui/api/agent-tasks/capabilities");
+    if (els.maxTurns) {
+      els.maxTurns.max = String(scheduledMaxTurnsLimit());
+      if (!els.maxTurns.value) els.maxTurns.value = String(scheduledMaxTurnsDefault());
+    }
     renderTaskTypes();
     renderTools();
   }
@@ -553,7 +565,7 @@
       setStatus("Task created.");
       els.form?.reset();
       if (els.delayMinutes) els.delayMinutes.value = "10";
-      if (els.maxTurns) els.maxTurns.value = "20";
+      if (els.maxTurns) els.maxTurns.value = String(scheduledMaxTurnsDefault());
       if (els.maxRuntime) els.maxRuntime.value = "300";
       updateScheduleFields();
       renderTools();
@@ -686,7 +698,7 @@
   function resetForm() {
     els.form?.reset();
     if (els.delayMinutes) els.delayMinutes.value = "10";
-    if (els.maxTurns) els.maxTurns.value = "20";
+    if (els.maxTurns) els.maxTurns.value = String(scheduledMaxTurnsDefault());
     if (els.maxRuntime) els.maxRuntime.value = "300";
     updateScheduleFields();
     renderTools();

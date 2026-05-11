@@ -1,9 +1,16 @@
+<<<<<<< nexus-coder/code_df4ef042dc57
 # Nexus - Extensible AI-orchestration infrastructure
 
 Nexus is a container-based AI orchestration platform that combines API gateway capabilities with modular AI services. It provides a unified interface for chat, image generation, audio processing, coding agents, scheduled agent tasks, backend resources, and other AI capabilities.
 
 > This README was updated by the Nexus Coding Agent.
 
+=======
+# Nexus - Extensible AI-orchestration infrastructure 🚀
+
+Nexus is a container-based AI orchestration platform that combines API gateway capabilities with modular AI services. It provides a unified interface for chat, image generation, audio processing, coding agents, scheduled agent tasks, backend resources, and other AI capabilities.
+
+>>>>>>> main
 ## Overview
 
 Nexus transforms the monolithic AI infrastructure into a containerized microservices architecture:
