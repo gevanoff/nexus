@@ -39,7 +39,10 @@ def test_git_base_branch_diff_includes_committed_workspace_changes(tmp_path):
     assert result["base_ref"] == "main"
     assert result["compare_ref"]
     assert "README.md" in str(result["stat"].get("stdout") or "")
+    assert result["changes"]["counts"]["total"] == 1
+    assert result["changes"]["files"][0]["path"] == "README.md"
     assert "+world" in str(result["diff"].get("stdout") or "")
+    assert result["committed_changes"]["counts"]["total"] == 1
     assert "+world" in str(result["committed_diff"].get("stdout") or "")
 
 
@@ -89,4 +92,7 @@ def test_git_diff_returns_base_branch_metadata_for_task(tmp_path, monkeypatch):
     assert result["base_branch"] == "main"
     assert result["branch_name"] == "feature/task"
     assert result["compare_ref"]
+    assert result["changes"]["counts"]["total"] == 1
+    assert result["changes"]["files"][0]["path"] == "app.py"
+    assert result["committed_changes"]["counts"]["total"] == 1
     assert "+print('changed')" in str(result["diff"].get("stdout") or "")

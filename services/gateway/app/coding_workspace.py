@@ -967,6 +967,65 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
     return {"ok": bool(result.get("ok")), "counts": counts, "files": files[:500], "truncated": len(files) > 500, "raw": result}
 
 
+def _diff_kind_from_status(status: str) -> str:
+    code = str(status or "").strip().upper()
+    head = code[:1]
+    if code == "??":
+        return "untracked"
+    if head == "A":
+        return "added"
+    if head == "D":
+        return "removed"
+    if head == "R":
+        return "renamed"
+    if head in {"M", "T", "U", "C"}:
+        return "modified"
+    return "other"
+
+
+def _counts_for_change_files(files: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    counts = {"added": 0, "modified": 0, "removed": 0, "renamed": 0, "untracked": 0, "other": 0, "total": 0}
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "other")
+        if kind not in counts:
+            kind = "other"
+        counts[kind] += 1
+        counts["total"] += 1
+    return counts
+
+
+def _git_name_status_summary(repo: Path, argv: Sequence[str]) -> Dict[str, Any]:
+    result = _run_process(list(argv), cwd=repo)
+    files: List[Dict[str, Any]] = []
+    if result.get("ok"):
+        for raw_line in str(result.get("stdout") or "").splitlines():
+            line = raw_line.rstrip()
+            if not line:
+                continue
+            parts = line.split("\t")
+            status = str(parts[0] if parts else "").strip()
+            kind = _diff_kind_from_status(status)
+            path = str(parts[-1] if len(parts) >= 2 else "").strip()
+            previous_path = str(parts[1] if len(parts) >= 3 else "").strip() or None
+            files.append(
+                {
+                    "path": path,
+                    "previous_path": previous_path,
+                    "status": status,
+                    "kind": kind,
+                }
+            )
+    return {
+        "ok": bool(result.get("ok")),
+        "counts": _counts_for_change_files(files),
+        "files": files[:500],
+        "truncated": len(files) > 500,
+        "raw": result,
+    }
+
+
 def _git_ref_exists(repo: Path, ref: str) -> bool:
     candidate = str(ref or "").strip()
     if not candidate:
@@ -995,10 +1054,19 @@ def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
     compare_ref = merge_base or base_ref
     stat = _run_process(["git", "diff", "--stat", compare_ref, "--"], cwd=repo)
     diff = _run_process(["git", "diff", compare_ref, "--"], cwd=repo)
+    workspace_changes = _git_name_status_summary(repo, ["git", "diff", "--name-status", compare_ref, "--"])
     committed_stat = _run_process(["git", "diff", "--stat", compare_ref, "HEAD", "--"], cwd=repo)
     committed_diff = _run_process(["git", "diff", compare_ref, "HEAD", "--"], cwd=repo)
+    committed_changes = _git_name_status_summary(repo, ["git", "diff", "--name-status", compare_ref, "HEAD", "--"])
     return {
-        "ok": bool(stat.get("ok") and diff.get("ok") and committed_stat.get("ok") and committed_diff.get("ok")),
+        "ok": bool(
+            stat.get("ok")
+            and diff.get("ok")
+            and workspace_changes.get("ok")
+            and committed_stat.get("ok")
+            and committed_diff.get("ok")
+            and committed_changes.get("ok")
+        ),
         "scope": "base_branch",
         "base_branch": base,
         "base_ref": base_ref,
@@ -1006,8 +1074,10 @@ def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
         "compare_ref": compare_ref,
         "stat": stat,
         "diff": diff,
+        "changes": workspace_changes,
         "committed_stat": committed_stat,
         "committed_diff": committed_diff,
+        "committed_changes": committed_changes,
         "merge_base_result": merge_base_result,
     }
 
@@ -1138,8 +1208,10 @@ def git_diff(task_id: str) -> Dict[str, Any]:
         "compare_ref": str(base_diff.get("compare_ref") or ""),
         "stat": base_diff.get("stat") or {"ok": False, "stdout": "", "stderr": ""},
         "diff": base_diff.get("diff") or {"ok": False, "stdout": "", "stderr": ""},
+        "changes": base_diff.get("changes") or {"ok": False, "counts": {"total": 0}, "files": []},
         "committed_stat": base_diff.get("committed_stat") or {"ok": False, "stdout": "", "stderr": ""},
         "committed_diff": base_diff.get("committed_diff") or {"ok": False, "stdout": "", "stderr": ""},
+        "committed_changes": base_diff.get("committed_changes") or {"ok": False, "counts": {"total": 0}, "files": []},
         "worktree_stat": worktree_stat,
         "worktree_diff": worktree_diff,
         "staged_stat": staged_stat,

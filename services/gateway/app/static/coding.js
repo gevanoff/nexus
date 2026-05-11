@@ -56,6 +56,7 @@
     prBtn: document.getElementById("prBtn"),
     filesPanel: document.getElementById("filesPanel"),
     changeSummary: document.getElementById("changeSummary"),
+    workspaceChanges: document.getElementById("workspaceChanges"),
     pendingChanges: document.getElementById("pendingChanges"),
     treePath: document.getElementById("treePath"),
     loadTree: document.getElementById("loadTree"),
@@ -77,6 +78,7 @@
     busy: false,
     pollTimer: null,
     outputHistory: [],
+    diffSummary: null,
     changeSummary: null,
     lastTreePayload: null,
   };
@@ -718,15 +720,17 @@
     updatePolling();
   }
 
-  function renderChangeSummary(summary) {
+  function renderChangeSummary(diffSummary, pendingSummary) {
     if (!els.changeSummary) return;
-    const counts = summary && summary.counts && typeof summary.counts === "object" ? summary.counts : {};
+    const counts = diffSummary && diffSummary.counts && typeof diffSummary.counts === "object" ? diffSummary.counts : {};
+    const pendingCounts = pendingSummary && pendingSummary.counts && typeof pendingSummary.counts === "object" ? pendingSummary.counts : {};
     const added = Number(counts.added || 0);
     const modified = Number(counts.modified || 0);
     const removed = Number(counts.removed || 0);
     const renamed = Number(counts.renamed || 0);
     const untracked = Number(counts.untracked || 0);
     const total = Number(counts.total || 0);
+    const pendingTotal = Number(pendingCounts.total || 0);
     els.changeSummary.innerHTML = "";
     const addChip = (label, value, cls) => {
       const span = document.createElement("span");
@@ -739,11 +743,49 @@
     addChip("removed", removed, "removed");
     if (renamed) addChip("renamed", renamed, "renamed");
     if (untracked) addChip("untracked", untracked, "untracked");
-    if (!total) {
+    if (pendingTotal) addChip("pending", pendingTotal, "modified");
+    if (!total && !pendingTotal) {
       const clean = document.createElement("span");
       clean.className = "meta";
       clean.textContent = "clean";
       els.changeSummary.appendChild(clean);
+    }
+  }
+
+  function renderWorkspaceChanges(summary) {
+    if (!els.workspaceChanges) return;
+    els.workspaceChanges.innerHTML = "";
+    const files = Array.isArray(summary && summary.files) ? summary.files : [];
+    if (!files.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint";
+      empty.textContent = "No changes relative to the base branch.";
+      els.workspaceChanges.appendChild(empty);
+      return;
+    }
+    for (const item of files.slice(0, 200)) {
+      const row = document.createElement("div");
+      row.className = "pending-change-row";
+      const chip = document.createElement("span");
+      const kind = String(item.kind || "modified");
+      chip.className = `change-chip ${kind}`;
+      chip.textContent = String(item.status || kind || "M");
+      const targetPath = String(item.path || "");
+      const displayPath = item.previous_path ? `${String(item.previous_path)} -> ${targetPath}` : targetPath;
+      const removed = kind === "removed";
+      const path = document.createElement(removed ? "div" : "button");
+      if (!removed) path.type = "button";
+      path.className = "pending-change-path";
+      path.textContent = displayPath;
+      if (!removed) {
+        path.addEventListener("click", () => {
+          if (els.filePath) els.filePath.value = targetPath;
+          readFile().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
+        });
+      }
+      row.appendChild(chip);
+      row.appendChild(path);
+      els.workspaceChanges.appendChild(row);
     }
   }
 
@@ -780,26 +822,48 @@
   }
 
   function changeEntryMap() {
-    const files = Array.isArray(state.changeSummary && state.changeSummary.files) ? state.changeSummary.files : [];
     const out = new Map();
-    for (const item of files) {
-      if (!item || typeof item !== "object") continue;
-      const path = String(item.path || "");
-      if (!path) continue;
-      out.set(path, item);
-    }
+    const mergeFiles = (files) => {
+      for (const item of files) {
+        if (!item || typeof item !== "object") continue;
+        const path = String(item.path || "");
+        if (!path) continue;
+        out.set(path, item);
+      }
+    };
+    mergeFiles(Array.isArray(state.diffSummary && state.diffSummary.files) ? state.diffSummary.files : []);
+    mergeFiles(Array.isArray(state.changeSummary && state.changeSummary.files) ? state.changeSummary.files : []);
     return out;
+  }
+
+  function resetFilesPanel(taskId) {
+    state.diffSummary = null;
+    state.changeSummary = null;
+    state.lastTreePayload = null;
+    renderChangeSummary(null, null);
+    renderWorkspaceChanges(null);
+    renderPendingChanges(null);
+    if (els.fileList) {
+      els.fileList.innerHTML = "";
+      const loading = document.createElement("div");
+      loading.className = "hint";
+      loading.style.padding = "10px";
+      loading.textContent = taskId ? `Loading files for ${taskId}...` : "No workspace selected.";
+      els.fileList.appendChild(loading);
+    }
   }
 
   function selectTask(taskId) {
     state.selectedId = String(taskId || "");
     setPublishFeedback("No publish action yet.");
+    resetFilesPanel(state.selectedId);
     renderTasks();
     renderSelected();
     if (state.selectedId) {
-      loadChanges().catch((error) => setStatus(String(error.message || error), true));
+      loadDiffSummary({ taskId: state.selectedId }).catch((error) => setStatus(String(error.message || error), true));
+      loadChanges({ taskId: state.selectedId }).catch((error) => setStatus(String(error.message || error), true));
       if (els.filesPanel && els.filesPanel.open) {
-        loadTree().catch((error) => setStatus(String(error.message || error), true));
+        loadTree({ taskId: state.selectedId }).catch((error) => setStatus(String(error.message || error), true));
       }
     }
   }
@@ -972,26 +1036,54 @@
   async function refreshSelected() {
     const task = selectedTask();
     if (!task) return;
+    const taskId = String(task.id || "");
     const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}`);
     const fresh = payload.task;
+    if (state.selectedId !== taskId) return;
     state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
     renderTasks();
     renderSelected();
-    await loadChanges({ quiet: true });
+    await loadDiffSummary({ quiet: true, taskId });
+    await loadChanges({ quiet: true, taskId });
   }
 
-  async function loadChanges({ quiet = false } = {}) {
-    const task = selectedTask();
-    if (!task) {
+  async function loadDiffSummary({ quiet = false, taskId } = {}) {
+    const selectedTaskId = String(taskId || state.selectedId || "");
+    if (!selectedTaskId) {
+      state.diffSummary = null;
+      renderChangeSummary(null, state.changeSummary);
+      renderWorkspaceChanges(null);
+      return null;
+    }
+    try {
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(selectedTaskId)}/diff`);
+      if (state.selectedId !== selectedTaskId) return null;
+      state.diffSummary = payload && payload.changes ? payload.changes : null;
+      renderChangeSummary(state.diffSummary, state.changeSummary);
+      renderWorkspaceChanges(state.diffSummary);
+      if (els.filesPanel && els.filesPanel.open) {
+        renderTree(state.lastTreePayload || { path: els.treePath ? els.treePath.value.trim() : "", entries: [] });
+      }
+      return state.diffSummary;
+    } catch (error) {
+      if (!quiet) throw error;
+      return null;
+    }
+  }
+
+  async function loadChanges({ quiet = false, taskId } = {}) {
+    const selectedTaskId = String(taskId || state.selectedId || "");
+    if (!selectedTaskId) {
       state.changeSummary = null;
-      renderChangeSummary(null);
+      renderChangeSummary(state.diffSummary, null);
       renderPendingChanges(null);
       return null;
     }
     try {
-      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/changes`);
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(selectedTaskId)}/changes`);
+      if (state.selectedId !== selectedTaskId) return null;
       state.changeSummary = payload.result || null;
-      renderChangeSummary(state.changeSummary);
+      renderChangeSummary(state.diffSummary, state.changeSummary);
       renderPendingChanges(state.changeSummary);
       if (els.filesPanel && els.filesPanel.open) renderTree(state.lastTreePayload || { path: els.treePath ? els.treePath.value.trim() : "", entries: [] });
       return state.changeSummary;
@@ -1320,11 +1412,12 @@
     }
   }
 
-  async function loadTree() {
-    const task = selectedTask();
-    if (!task) return;
+  async function loadTree({ taskId } = {}) {
+    const selectedTaskId = String(taskId || state.selectedId || "");
+    if (!selectedTaskId) return;
     const path = els.treePath ? els.treePath.value.trim() : "";
-    const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/tree?path=${encodeURIComponent(path)}`);
+    const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(selectedTaskId)}/tree?path=${encodeURIComponent(path)}`);
+    if (state.selectedId !== selectedTaskId) return;
     renderTree(payload);
   }
 
@@ -1389,6 +1482,7 @@
     await loadConfig();
     await loadTasks({ keepSelection: false });
     if (state.selectedId) {
+      await loadDiffSummary({ quiet: true, taskId: state.selectedId });
       await loadChanges({ quiet: true });
       if (els.filesPanel && els.filesPanel.open) await loadTree();
     }
@@ -1421,8 +1515,10 @@
   if (els.filesPanel) {
     els.filesPanel.addEventListener("toggle", () => {
       if (els.filesPanel.open && selectedTask()) {
-        loadChanges({ quiet: true })
-          .then(() => loadTree())
+        const taskId = state.selectedId;
+        loadDiffSummary({ quiet: true, taskId })
+          .then(() => loadChanges({ quiet: true, taskId }))
+          .then(() => loadTree({ taskId }))
           .catch((error) => setStatus(String(error && error.message ? error.message : error), true));
       }
     });
