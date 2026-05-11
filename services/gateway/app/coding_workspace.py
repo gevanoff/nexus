@@ -463,6 +463,27 @@ def _redact_argv(argv: Sequence[str], *, extra_tokens: Optional[Sequence[str]] =
     return out
 
 
+def _git_safe_directory_for_cwd(cwd: Path) -> str:
+    current = Path(cwd).resolve()
+    while True:
+        if current.joinpath(".git").exists():
+            return str(current)
+        parent = current.parent
+        if parent == current:
+            return str(Path(cwd).resolve())
+        current = parent
+
+
+def _argv_with_git_safe_directory(argv: Sequence[str], *, cwd: Path) -> List[str]:
+    if not argv:
+        return [str(item) for item in argv]
+    first = Path(str(argv[0])).name.lower()
+    if first != "git":
+        return [str(item) for item in argv]
+    safe_directory = _git_safe_directory_for_cwd(cwd)
+    return [str(argv[0]), "-c", f"safe.directory={safe_directory}", *[str(item) for item in argv[1:]]]
+
+
 def _run_process(
     argv: Sequence[str],
     *,
@@ -475,11 +496,12 @@ def _run_process(
     limit = max_output_chars()
     env = _base_env()
     redaction_tokens = [_effective_git_token(git_token_value)] if use_git_credentials else []
+    effective_argv = _argv_with_git_safe_directory(argv, cwd=cwd)
     with _GitCredentialEnv(use_git_credentials, git_token_value=git_token_value) as extra_env:
         env.update(extra_env)
         try:
             proc = subprocess.run(
-                [str(item) for item in argv],
+                effective_argv,
                 cwd=str(cwd),
                 env=env,
                 text=True,
