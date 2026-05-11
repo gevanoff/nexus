@@ -2286,7 +2286,7 @@ def _coerce_task_float(body: Dict[str, Any], key: str, default: float, *, min_va
 
 
 def _scheduled_task_max_turns_default() -> int:
-    return int(getattr(S, "CODING_AGENT_MAX_TURNS", 100) or 100)
+    return int(getattr(S, "CODING_AGENT_MAX_TURNS", 1000) or 1000)
 
 
 def _scheduled_task_max_turns_limit() -> int:

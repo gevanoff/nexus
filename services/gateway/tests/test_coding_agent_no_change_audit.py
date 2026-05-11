@@ -85,6 +85,6 @@ def test_review_request_does_not_get_fix_oriented_prompt():
 
 
 def test_max_turns_allows_up_to_ten_thousand():
-    assert ca._max_turns() == 100
+    assert ca._max_turns() == 1000
     assert ca._max_turns(5000) == 5000
     assert ca._max_turns(20000) == 10000

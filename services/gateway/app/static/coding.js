@@ -810,7 +810,7 @@
     if (els.repoUrl && !els.repoUrl.value) els.repoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
     if (els.agentMaxTurns && payload.agent_max_turns_limit) els.agentMaxTurns.max = String(payload.agent_max_turns_limit);
-    if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 100;
+    if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 1000;
     setSelectOptions(
       els.modelIntegrationRuntime,
       [{ value: "auto", label: "Auto detect" }].concat((payload.model_integration_runtimes || []).filter((value) => value !== "auto").map((value) => ({ value, label: value }))),
@@ -1115,11 +1115,26 @@
     try {
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/diff`);
       const parts = [];
+      if (payload.scope === "base_branch") {
+        parts.push(
+          [
+            `branch: ${payload.branch_name || ""}`,
+            `base branch: ${payload.base_branch || ""}`,
+            `base ref: ${payload.base_ref || ""}`,
+            `merge base: ${payload.merge_base || payload.compare_ref || ""}`,
+          ].join("\n")
+        );
+      }
+      if (payload.committed_stat && payload.committed_stat.stdout) parts.push(`committed vs base stat:\n${payload.committed_stat.stdout}`);
+      if (payload.committed_diff && payload.committed_diff.stdout) parts.push(`committed vs base diff:\n${payload.committed_diff.stdout}`);
+      if (payload.stat && payload.stat.stdout) parts.push(`workspace vs base stat:\n${payload.stat.stdout}`);
+      if (payload.diff && payload.diff.stdout) parts.push(`workspace vs base diff:\n${payload.diff.stdout}`);
       if (payload.staged_stat && payload.staged_stat.stdout) parts.push(`staged stat:\n${payload.staged_stat.stdout}`);
       if (payload.staged_diff && payload.staged_diff.stdout) parts.push(`staged diff:\n${payload.staged_diff.stdout}`);
-      if (payload.stat && payload.stat.stdout) parts.push(`stat:\n${payload.stat.stdout}`);
-      if (payload.diff && payload.diff.stdout) parts.push(`diff:\n${payload.diff.stdout}`);
-      setOutput("diff", parts.join("\n\n") || JSON.stringify(payload, null, 2));
+      if (payload.worktree_stat && payload.worktree_stat.stdout) parts.push(`unstaged stat:\n${payload.worktree_stat.stdout}`);
+      if (payload.worktree_diff && payload.worktree_diff.stdout) parts.push(`unstaged diff:\n${payload.worktree_diff.stdout}`);
+      if (payload.error) parts.push(`warning:\n${payload.error}`);
+      setOutput("diff vs base", parts.join("\n\n") || JSON.stringify(payload, null, 2));
       await refreshSelected();
       await loadChanges({ quiet: true });
     } finally {

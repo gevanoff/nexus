@@ -967,6 +967,51 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
     return {"ok": bool(result.get("ok")), "counts": counts, "files": files[:500], "truncated": len(files) > 500, "raw": result}
 
 
+def _git_ref_exists(repo: Path, ref: str) -> bool:
+    candidate = str(ref or "").strip()
+    if not candidate:
+        return False
+    result = _run_process(["git", "rev-parse", "--verify", candidate], cwd=repo)
+    return bool(result.get("ok"))
+
+
+def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
+    base = _base_branch(base_branch)
+    base_ref = ""
+    for candidate in (f"origin/{base}", base):
+        if _git_ref_exists(repo, candidate):
+            base_ref = candidate
+            break
+    if not base_ref:
+        return {
+            "ok": False,
+            "scope": "base_branch",
+            "base_branch": base,
+            "error": f"base branch ref not found: {base}",
+        }
+
+    merge_base_result = _run_process(["git", "merge-base", "HEAD", base_ref], cwd=repo)
+    merge_base = str(merge_base_result.get("stdout") or "").strip() if merge_base_result.get("ok") else ""
+    compare_ref = merge_base or base_ref
+    stat = _run_process(["git", "diff", "--stat", compare_ref, "--"], cwd=repo)
+    diff = _run_process(["git", "diff", compare_ref, "--"], cwd=repo)
+    committed_stat = _run_process(["git", "diff", "--stat", compare_ref, "HEAD", "--"], cwd=repo)
+    committed_diff = _run_process(["git", "diff", compare_ref, "HEAD", "--"], cwd=repo)
+    return {
+        "ok": bool(stat.get("ok") and diff.get("ok") and committed_stat.get("ok") and committed_diff.get("ok")),
+        "scope": "base_branch",
+        "base_branch": base,
+        "base_ref": base_ref,
+        "merge_base": merge_base,
+        "compare_ref": compare_ref,
+        "stat": stat,
+        "diff": diff,
+        "committed_stat": committed_stat,
+        "committed_diff": committed_diff,
+        "merge_base_result": merge_base_result,
+    }
+
+
 def search_text(
     task_id: str,
     *,
@@ -1076,18 +1121,44 @@ def apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -
 def git_diff(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
-    stat = _run_process(["git", "diff", "--stat"], cwd=repo)
-    diff = _run_process(["git", "diff", "--"], cwd=repo)
+    branch = str(task.get("branch_name") or "").strip()
+    base_branch = str(task.get("base_branch") or "main").strip()
+    base_diff = _git_base_branch_diff(repo, base_branch=base_branch)
+    worktree_stat = _run_process(["git", "diff", "--stat"], cwd=repo)
+    worktree_diff = _run_process(["git", "diff", "--"], cwd=repo)
     staged_stat = _run_process(["git", "diff", "--cached", "--stat"], cwd=repo)
     staged_diff = _run_process(["git", "diff", "--cached", "--"], cwd=repo)
     result = {
-        "ok": bool(diff.get("ok") and stat.get("ok") and staged_diff.get("ok") and staged_stat.get("ok")),
-        "stat": stat,
-        "diff": diff,
+        "ok": bool(base_diff.get("ok") and worktree_diff.get("ok") and worktree_stat.get("ok") and staged_diff.get("ok") and staged_stat.get("ok")),
+        "scope": str(base_diff.get("scope") or "base_branch"),
+        "base_branch": base_branch,
+        "branch_name": branch,
+        "base_ref": str(base_diff.get("base_ref") or ""),
+        "merge_base": str(base_diff.get("merge_base") or ""),
+        "compare_ref": str(base_diff.get("compare_ref") or ""),
+        "stat": base_diff.get("stat") or {"ok": False, "stdout": "", "stderr": ""},
+        "diff": base_diff.get("diff") or {"ok": False, "stdout": "", "stderr": ""},
+        "committed_stat": base_diff.get("committed_stat") or {"ok": False, "stdout": "", "stderr": ""},
+        "committed_diff": base_diff.get("committed_diff") or {"ok": False, "stdout": "", "stderr": ""},
+        "worktree_stat": worktree_stat,
+        "worktree_diff": worktree_diff,
         "staged_stat": staged_stat,
         "staged_diff": staged_diff,
     }
-    _append_command(task, {"ok": result["ok"], "returncode": 0 if result["ok"] else 1, "argv": ["git", "diff"], "stdout": diff.get("stdout") or "", "stderr": diff.get("stderr") or "", "duration_ms": 0}, label="diff")
+    if base_diff.get("error"):
+        result["error"] = str(base_diff.get("error"))
+    _append_command(
+        task,
+        {
+            "ok": result["ok"],
+            "returncode": 0 if result["ok"] else 1,
+            "argv": ["git", "diff", str(result.get("compare_ref") or base_branch), "--"],
+            "stdout": str((result.get("diff") or {}).get("stdout") or ""),
+            "stderr": str((result.get("diff") or {}).get("stderr") or result.get("error") or ""),
+            "duration_ms": 0,
+        },
+        label="diff",
+    )
     save_task(task)
     return result
 
@@ -1610,7 +1681,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "command_timeout_sec": command_timeout_sec(),
         "max_output_chars": max_output_chars(),
         "file_max_bytes": file_max_bytes(),
-        "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 100) or 100),
+        "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 1000) or 1000),
         "agent_max_turns_limit": int(getattr(S, "CODING_AGENT_MAX_TURNS_LIMIT", 10_000) or 10_000),
         "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 1800) or 1800),
         "agent_max_tokens": int(getattr(S, "CODING_AGENT_MAX_TOKENS", 512) or 512),

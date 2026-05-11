@@ -60,7 +60,7 @@
   };
 
   function scheduledMaxTurnsDefault() {
-    return Number(state.capabilities?.max_turns_default || 100);
+    return Number(state.capabilities?.max_turns_default || 1000);
   }
 
   function scheduledMaxTurnsLimit() {

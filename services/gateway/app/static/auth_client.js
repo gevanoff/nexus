@@ -44,7 +44,7 @@
     agentMaxTurns: 'Set the maximum number of agent tool-use turns for a run.',
     agentAutoCommit: 'Commit workspace changes automatically when the agent finishes successfully.',
     statusBtn: 'Show git status for the selected coding workspace.',
-    diffBtn: 'Show the current diff for the selected coding workspace.',
+    diffBtn: 'Show the selected coding workspace diff against its base branch.',
     briefBtn: 'Show a copyable brief for a coding agent.',
     runCommand: 'Run the argv command inside the selected coding workspace.',
     commitBtn: 'Commit current workspace changes.',
