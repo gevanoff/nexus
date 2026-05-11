@@ -1,0 +1,36 @@
+<div id="taskEditModal" class="modal-backdrop" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="taskEditTitle">
+        <div class="modal-header">
+          <div>
+            <h2 id="taskEditTitle">Edit task</h2>
+            <div id="taskEditHint" class="hint"></div>
+          </div>
+          <button id="closeTaskEditModal" type="button">Close</button>
+        </div>
+        <div class="stack" style="gap:10px">
+          <div class="grid2">
+            <div>
+              <label for="taskEditTitleInput">Title</label>
+              <input id="taskEditTitleInput" autocomplete="off" maxlength="200" />
+            </div>
+            <div>
+              <label for="taskEditModel">Model</label>
+              <select id="taskEditModel"></select>
+            </div>
+          </div>
+          <div>
+            <label for="taskEditPrompt">Task</label>
+            <textarea id="taskEditPrompt"></textarea>
+          </div>
+          <div class="grid2">
+            <div>
+              <label for="taskEditScheduleMode">Schedule</label>
+              <select id="taskEditScheduleMode">
+                <option value="delay">Timer</option>
+                <option value="run_at">Run at time</option>
+                <option value="interval">Repeat every interval</option>
+                <option value="cron">Cron expression</option>
+              </select>
+            </div>
+            <div>
+              <label
