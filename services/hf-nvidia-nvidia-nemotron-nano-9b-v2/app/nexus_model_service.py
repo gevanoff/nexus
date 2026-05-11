@@ -51,3 +51,43 @@ class ChatCompletionResponse(BaseModel):
     created: int
     model: str
     choices: List[ChatCompletionChoice]
+
+
+# --- Lazy model loading ---
+_model = None
+_tokenizer = None
+
+
+def get_model():
+    global _model, _tokenizer
+    if _model is None:
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        logger.info(f"Loading model {MODEL_ID} on {DEVICE}...")
+        _tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+        _model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            torch_dtype="auto",
+            device_map=DEVICE,
+            trust_remote_code=True,
+        )
+        _model.eval()
+        global HEALTHY
+        HEALTHY = True
+        logger.info("Model loaded and healthy.")
+    return _model, _tokenizer
+
+
+def format_prompt(messages):
+    """Format chat messages for Nemotron using chat template."""
+    tok = get_model()[1]
+    if hasattr(tok, 'apply_chat_template') and tok.chat_template:
+        text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    else:
+        # Fallback: simple role/content formatting
+        parts = []
+        for m in messages:
+            role = m.role
+            parts.append(f"<|{role}|>\n{m.content}")
+        parts.append("<|assistant|>\n")
+        text = "".join(parts)
+    return text
