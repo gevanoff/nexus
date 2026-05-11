@@ -32,3 +32,22 @@ class ChatCompletionRequest(BaseModel):
     top_k: int = 50
     repeat_penalty: float = 1.0
     stream: bool = False
+
+
+class ChoiceMessage(BaseModel):
+    role: str = "assistant"
+    content: str
+
+
+class ChatCompletionChoice(BaseModel):
+    index: int = 0
+    message: ChoiceMessage
+    finish_reason: Optional[str] = None
+
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    object: str = "chat.completion"
+    created: int
+    model: str
+    choices: List[ChatCompletionChoice]
