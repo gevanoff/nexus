@@ -398,12 +398,16 @@ def _tool_category(name: str) -> str:
         return "read_files"
     if name in {"web_browse", "http_fetch", "http_fetch_local"}:
         return "network"
+    if name in {"coding_task_monitor", "coding_task_inspect"}:
+        return "introspection"
     if name in {"current_time", "tool_manifest", "noop", "system_info", "models_refresh", "cluster_resources"}:
         return "introspection"
     if name.startswith("agent_task_"):
         return "scheduling"
     if name.startswith("memory_"):
         return "memory"
+    if name == "coding_task_intervene":
+        return "workspace"
     if name in {"write_file", "git", "shell", "coding_model_integration"}:
         return "workspace"
     return "specialized"
@@ -445,6 +449,8 @@ def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[s
         guidance.append("Use cluster_resources when you need current Nexus host resources, backend availability, control-plane health, or the full Resources UI snapshot.")
     if allowed.intersection({"agent_task_create", "agent_task_list", "agent_task_cancel"}):
         guidance.append("Use agent_task_create for reminders, countdowns, recurring checks, and follow-up work; use agent_task_list/cancel to inspect or stop scheduled work.")
+    if allowed.intersection({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene"}):
+        guidance.append("Use coding_task_monitor to triage coding workspaces, coding_task_inspect for one workspace, and coding_task_intervene only for bounded actions like resume or guidance.")
     if allowed.intersection({"write_file", "git", "shell"}):
         guidance.append("Treat write_file, git, and shell as higher-impact tools; inspect first and keep changes scoped.")
     if "coding_model_integration" in allowed:
@@ -1528,6 +1534,86 @@ def tool_coding_model_integration(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": task.get("status") != "error", "task": task}
 
 
+def tool_coding_task_monitor(args: Dict[str, Any]) -> Dict[str, Any]:
+    limit = int(args.get("limit") or 20)
+    stalled_after_sec = float(args.get("stalled_after_sec") or 900.0)
+    only_attention = bool(args.get("only_attention"))
+    return coding_workspace.monitor_tasks(limit=limit, only_attention=only_attention, stalled_after_sec=stalled_after_sec)
+
+
+def tool_coding_task_inspect(args: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = str(args.get("task_id") or args.get("id") or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id is required"}
+    stalled_after_sec = float(args.get("stalled_after_sec") or 900.0)
+    return coding_workspace.inspect_task(task_id, stalled_after_sec=stalled_after_sec)
+
+
+def tool_coding_task_intervene(args: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = str(args.get("task_id") or args.get("id") or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id is required"}
+    action = str(args.get("action") or "").strip().lower()
+    if action not in {"resume", "guidance", "guide_and_resume", "stop"}:
+        return {"ok": False, "error": "action must be one of resume, guidance, guide_and_resume, stop"}
+    message = str(args.get("message") or "").strip()
+    actor = str(args.get("actor") or "coding-supervisor").strip() or "coding-supervisor"
+    max_turns = int(args.get("max_turns") or 0) or None
+
+    try:
+        task = coding_workspace.load_task(task_id)
+    except HTTPException as exc:
+        return {"ok": False, "error": str(exc.detail)}
+    public = coding_workspace.public_task(task, include_commands=False)
+    agent = public.get("agent") if isinstance(public.get("agent"), dict) else {}
+    active = str(agent.get("status") or "") in {"queued", "running", "stopping"}
+
+    if action == "guidance":
+        if not message:
+            return {"ok": False, "error": "message is required for guidance"}
+        updated = coding_workspace.append_guidance_message(task_id, message=message, actor=actor)
+        return {"ok": True, "action": action, "started": False, "task": updated}
+
+    if action == "resume":
+        if active:
+            return {"ok": False, "error": "coding task is already running", "task": public}
+        from app import coding_agent
+
+        updated = _run_coroutine_sync(
+            coding_agent.start_agent_run(
+                task_id,
+                prompt=message or None,
+                max_turns=max_turns,
+                actor=actor,
+            )
+        )
+        return {"ok": True, "action": action, "started": True, "task": updated}
+
+    if action == "guide_and_resume":
+        if not message:
+            return {"ok": False, "error": "message is required for guide_and_resume"}
+        coding_workspace.append_guidance_message(task_id, message=message, actor=actor)
+        if active:
+            updated = coding_workspace.public_task(coding_workspace.load_task(task_id), include_commands=False)
+            return {"ok": True, "action": action, "started": False, "task": updated}
+        from app import coding_agent
+
+        updated = _run_coroutine_sync(
+            coding_agent.start_agent_run(
+                task_id,
+                prompt=message,
+                max_turns=max_turns,
+                actor=actor,
+            )
+        )
+        return {"ok": True, "action": action, "started": True, "task": updated}
+
+    from app import coding_agent
+
+    updated = _run_coroutine_sync(coding_agent.request_stop(task_id))
+    return {"ok": True, "action": action, "started": False, "task": updated}
+
+
 def tool_git(args: Dict[str, Any]) -> Dict[str, Any]:
     if not S.TOOLS_ALLOW_GIT:
         return {"ok": False, "error": "git tool disabled"}
@@ -1601,6 +1687,9 @@ TOOL_IMPL = {
     "cluster_resources": tool_cluster_resources,
     "models_refresh": tool_models_refresh,
     "coding_model_integration": tool_coding_model_integration,
+    "coding_task_monitor": tool_coding_task_monitor,
+    "coding_task_inspect": tool_coding_task_inspect,
+    "coding_task_intervene": tool_coding_task_intervene,
     "agent_task_create": agent_tasks.create_task,
     "agent_task_list": agent_tasks.list_tasks,
     "agent_task_cancel": agent_tasks.cancel_task,
@@ -1676,6 +1765,8 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
         allowed.add("models_refresh")
     if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_model_integration", True)):
         allowed.add("coding_model_integration")
+    if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_supervision", True)):
+        allowed.update({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene"})
     return allowed
 
 
@@ -1957,6 +2048,52 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "commit_message": {"type": "string"}
             },
             "required": ["model"],
+            "additionalProperties": False,
+        },
+    },
+    "coding_task_monitor": {
+        "name": "coding_task_monitor",
+        "version": "1",
+        "description": "Inspect Nexus coding workspaces, classify stopped/stalled/failed runs, and return bounded safe actions for recovery.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Maximum coding tasks to inspect."},
+                "only_attention": {"type": "boolean", "description": "Return only tasks that currently need attention."},
+                "stalled_after_sec": {"type": "number", "description": "Age threshold for classifying a running coding task as stalled."}
+            },
+            "required": [],
+            "additionalProperties": False,
+        },
+    },
+    "coding_task_inspect": {
+        "name": "coding_task_inspect",
+        "version": "1",
+        "description": "Inspect one coding workspace in detail, including recent events, change counts, attention reasons, and safe recovery actions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Coding task id such as code_abcdef123456."},
+                "stalled_after_sec": {"type": "number", "description": "Age threshold for classifying a running coding task as stalled."}
+            },
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+    },
+    "coding_task_intervene": {
+        "name": "coding_task_intervene",
+        "version": "1",
+        "description": "Take a bounded recovery action on a coding workspace: resume a stopped run, send guidance, guide and resume, or request stop.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Coding task id such as code_abcdef123456."},
+                "action": {"type": "string", "enum": ["resume", "guidance", "guide_and_resume", "stop"]},
+                "message": {"type": "string", "description": "Guidance message for guidance or guide_and_resume. Optional prompt override for resume."},
+                "max_turns": {"type": "integer", "description": "Optional max_turns override when resuming a stopped task."},
+                "actor": {"type": "string", "description": "Actor label recorded in workspace guidance and run events."}
+            },
+            "required": ["task_id", "action"],
             "additionalProperties": False,
         },
     },

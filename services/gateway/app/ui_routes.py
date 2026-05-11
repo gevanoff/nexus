@@ -2202,6 +2202,8 @@ def _tool_tier(name: str) -> int:
 def _task_tool_category(name: str) -> str:
     if name.startswith("agent_task_"):
         return "scheduling"
+    if name.startswith("coding_task_"):
+        return "coding_supervision"
     if name in {"list_dir", "search_files", "search_text"}:
         return "discovery"
     if name in {"read_file", "read_file_lines"}:

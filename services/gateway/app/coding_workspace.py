@@ -1739,6 +1739,197 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
     return out
 
 
+def _recent_agent_events(task: Dict[str, Any], *, limit: int = 6) -> List[Dict[str, Any]]:
+    events = task.get("agent_events")
+    if not isinstance(events, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in events[-max(1, limit):]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "ts": item.get("ts"),
+                "type": str(item.get("type") or ""),
+                "summary": str(item.get("summary") or item.get("error") or item.get("content") or "")[:400],
+                "turn": int(item.get("turn") or 0),
+            }
+        )
+    return out
+
+
+def _no_tool_call_streak(task: Dict[str, Any]) -> int:
+    events = task.get("agent_events")
+    if not isinstance(events, list):
+        return 0
+    streak = 0
+    for item in reversed(events):
+        if not isinstance(item, dict):
+            continue
+        event_type = str(item.get("type") or "")
+        if event_type == "no_tool_call":
+            streak += 1
+            continue
+        if event_type in {"assistant", "tool_started", "tool_finished", "turn_started", "guidance_seen", "thinking", "started", "queued", "review", "completed", "failed", "stopped", "checkpoint", "commit"}:
+            break
+    return streak
+
+
+def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 900.0, now: Optional[float] = None) -> Dict[str, Any]:
+    public = public_task(task, include_commands=False)
+    agent = public.get("agent") if isinstance(public.get("agent"), dict) else {}
+    task_id = str(public.get("id") or "")
+    now_ts = float(now if now is not None else _now())
+    agent_status = str(agent.get("status") or "idle")
+    last_event_at = float(agent.get("last_event_at") or 0)
+    last_event_age_sec = int(max(0.0, now_ts - last_event_at)) if last_event_at > 0 else None
+    no_tool_streak = _no_tool_call_streak(task)
+    pending_summary: Dict[str, Any] = {"ok": False, "counts": {"total": 0}, "files": [], "error": ""}
+    workspace_summary: Dict[str, Any] = {"ok": False, "counts": {"total": 0}, "files": [], "error": ""}
+    committed_summary: Dict[str, Any] = {"ok": False, "counts": {"total": 0}, "files": [], "error": ""}
+    repo_error = ""
+    try:
+        pending_summary = git_change_summary(task_id)
+        repo = _repo_path(task)
+        base = _git_base_branch_diff(repo, base_branch=str(task.get("base_branch") or "main"))
+        if isinstance(base.get("changes"), dict):
+            workspace_summary = base["changes"]
+        if isinstance(base.get("committed_changes"), dict):
+            committed_summary = base["committed_changes"]
+        repo_error = str(base.get("error") or "")
+    except Exception as exc:
+        repo_error = f"{type(exc).__name__}: {exc}"
+
+    pending_total = int(((pending_summary.get("counts") or {}).get("total") or 0))
+    workspace_total = int(((workspace_summary.get("counts") or {}).get("total") or 0))
+    committed_total = int(((committed_summary.get("counts") or {}).get("total") or 0))
+
+    attention: List[str] = []
+    safe_actions: List[str] = []
+
+    if str(public.get("status") or "") == "error":
+        attention.append("workspace_error_state")
+    if agent_status in {"stopped", "interrupted"}:
+        attention.append(f"run_{agent_status}")
+        safe_actions.extend(["resume", "guide_and_resume"])
+    elif agent_status == "failed":
+        attention.append("run_failed")
+        safe_actions.extend(["resume", "guide_and_resume"])
+    elif agent_status == "running" and last_event_age_sec is not None and last_event_age_sec >= int(max(60.0, stalled_after_sec)):
+        attention.append("running_stalled")
+        safe_actions.append("guidance")
+
+    if no_tool_streak >= 3:
+        attention.append("repeated_no_tool_call")
+        if agent_status == "running":
+            safe_actions.append("guidance")
+        else:
+            safe_actions.append("guide_and_resume")
+
+    max_turns = int(agent.get("max_turns") or 0)
+    turn = int(agent.get("turn") or 0)
+    if max_turns > 0 and turn >= max(1, int(max_turns * 0.9)) and agent_status == "running":
+        attention.append("near_turn_limit")
+
+    if repo_error:
+        attention.append("repo_inspection_error")
+
+    recommended_action = ""
+    for candidate in ("guide_and_resume", "resume", "guidance"):
+        if candidate in safe_actions:
+            recommended_action = candidate
+            break
+
+    return {
+        "id": task_id,
+        "kind": str(public.get("kind") or "workspace"),
+        "status": str(public.get("status") or ""),
+        "owner": str(public.get("owner") or ""),
+        "repo_url": str(public.get("repo_url") or ""),
+        "base_branch": str(public.get("base_branch") or ""),
+        "branch_name": str(public.get("branch_name") or ""),
+        "prompt": str(public.get("prompt") or "")[:600],
+        "workspace_path": str(public.get("workspace_path") or ""),
+        "last_checkpoint_commit": str(public.get("last_checkpoint_commit") or ""),
+        "last_commit": str(public.get("last_commit") or ""),
+        "agent": {
+            "status": agent_status,
+            "turn": turn,
+            "max_turns": max_turns,
+            "started_at": agent.get("started_at"),
+            "finished_at": agent.get("finished_at"),
+            "last_event_at": agent.get("last_event_at"),
+            "last_event_age_sec": last_event_age_sec,
+            "summary": str(agent.get("summary") or "")[:600],
+            "error": str(agent.get("error") or "")[:600],
+            "model": str(agent.get("model") or ""),
+            "backend": str(agent.get("backend") or ""),
+            "upstream_model": str(agent.get("upstream_model") or ""),
+        },
+        "pending_changes": {
+            "counts": pending_summary.get("counts") if isinstance(pending_summary.get("counts"), dict) else {"total": pending_total},
+            "files": pending_summary.get("files") if isinstance(pending_summary.get("files"), list) else [],
+        },
+        "workspace_changes": {
+            "counts": workspace_summary.get("counts") if isinstance(workspace_summary.get("counts"), dict) else {"total": workspace_total},
+            "files": workspace_summary.get("files") if isinstance(workspace_summary.get("files"), list) else [],
+        },
+        "committed_changes": {
+            "counts": committed_summary.get("counts") if isinstance(committed_summary.get("counts"), dict) else {"total": committed_total},
+            "files": committed_summary.get("files") if isinstance(committed_summary.get("files"), list) else [],
+        },
+        "recent_events": _recent_agent_events(task),
+        "no_tool_call_streak": no_tool_streak,
+        "attention": attention,
+        "needs_attention": bool(attention),
+        "safe_actions": list(dict.fromkeys(safe_actions)),
+        "recommended_action": recommended_action,
+        "repo_error": repo_error,
+    }
+
+
+def monitor_tasks(*, limit: int = 20, only_attention: bool = False, stalled_after_sec: float = 900.0) -> Dict[str, Any]:
+    _ensure_enabled()
+    items: List[Dict[str, Any]] = []
+    for public in list_tasks(limit=max(1, min(int(limit or 20), 100))):
+        task_id = str(public.get("id") or "")
+        if not task_id:
+            continue
+        try:
+            task = load_task(task_id)
+            item = _task_monitor_summary(task, stalled_after_sec=stalled_after_sec)
+            if only_attention and not item.get("needs_attention"):
+                continue
+            items.append(item)
+        except Exception as exc:
+            items.append(
+                {
+                    "id": task_id,
+                    "needs_attention": True,
+                    "attention": ["monitor_read_failed"],
+                    "safe_actions": [],
+                    "recommended_action": "",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return {
+        "ok": True,
+        "tasks": items,
+        "counts": {
+            "total": len(items),
+            "attention": sum(1 for item in items if item.get("needs_attention")),
+            "running": sum(1 for item in items if ((item.get("agent") or {}).get("status") == "running")),
+            "stopped": sum(1 for item in items if ((item.get("agent") or {}).get("status") == "stopped")),
+            "failed": sum(1 for item in items if ((item.get("agent") or {}).get("status") == "failed")),
+        },
+    }
+
+
+def inspect_task(task_id: str, *, stalled_after_sec: float = 900.0) -> Dict[str, Any]:
+    task = load_task(task_id)
+    return {"ok": True, "task": _task_monitor_summary(task, stalled_after_sec=stalled_after_sec)}
+
+
 def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_model: Optional[str] = None) -> Dict[str, Any]:
     return {
         "enabled": coding_enabled(),

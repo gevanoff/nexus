@@ -136,7 +136,7 @@ def tools_for_tier(tier: int) -> set[str]:
     # Tier 1: write FS + structured DB ops.
     # Include media/music generation tools like HeartMula in tier 1 so agents configured
     # with tier >= 1 may be granted access when the agent spec explicitly allowlists them.
-    t1 = t0 | {"write_file", "memory_v2_upsert", "memory_v2_search", "memory_v2_list", "memory_v2_delete", "heartmula_generate"}
+    t1 = t0 | {"write_file", "memory_v2_upsert", "memory_v2_search", "memory_v2_list", "memory_v2_delete", "heartmula_generate", "coding_task_monitor", "coding_task_inspect", "coding_task_intervene"}
 
     # Tier 2: shell execution (highly constrained, opt-in).
     t2 = t1 | {"shell"}
