@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+L=[]
+def a(s):L.append(s)
+a("# HF NVIDIA-Nemotron-Nano-9B-v2 Nexus Integration Workspace")
+a("")
+a("Integrates `nvidia/NVIDIA-Nemotron-Nano-9B-v2` into Nexus as a chat backend.")
+a("")
+a("## Summary")
+a("")
+a("- Source: https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2")
+a("- Route kind: `chat`")
+a("- Runtime strategy: `transformers`")
+a("- Containerize: `true`")
+a("- Service name: `hf-nvidia-nvidia-nemotron-nano-9b-v2`")
+a("- Backend class: `hf_nvidia_nvidia_nemotron_nano_9b_v2`")
+a("- Target API path: `/v1/chat/completions`")
+a("")
+a("## Recommended Deployment Target")
+a("")
+a("- Host: `
