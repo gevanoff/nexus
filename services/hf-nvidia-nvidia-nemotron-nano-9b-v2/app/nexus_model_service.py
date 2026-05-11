@@ -1,0 +1,18 @@
+from __future__ import annotations
+import asyncio, json, os, time, uuid, logging
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+MODEL_ID = os.environ.get("HF_MODEL_ID", "nvidia/NVIDIA-Nemotron-Nano-9B-v2")
+MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "2048"))
+TEMPERATURE = float(os.environ.get("TEMPERATURE", "0.7"))
+TOP_P = float(os.environ.get("TOP_P", "0.9"))
+TOP_K = int(os.environ.get("TOP_K", "50"))
+REPEAT_PENALTY = float(os.environ.get("REPEAT_PENALTY", "1.0"))
+DEVICE = os.environ.get("DEVICE", "cuda")
+HEALTHY = False
