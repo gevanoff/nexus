@@ -91,3 +91,18 @@ def format_prompt(messages):
         parts.append("<|assistant|>\n")
         text = "".join(parts)
     return text
+
+
+app = FastAPI(title="NVIDIA Nemotron Nano 9B v2", version="0.1.0")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readyz():
+    if not HEALTHY:
+        raise HTTPException(status_code=503, detail="model not loaded")
+    return {"status": "ready"}
