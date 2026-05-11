@@ -1,18 +1,19 @@
-ARG PYTHON_BASE_IMAGE=python:3.11-slim
-FROM ${PYTHON_BASE_IMAGE}
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    NEXUS_SERVICE_PORT=8610
-
-ARG EXTRA_APT_PACKAGES=""
+    NEXUS_SERVICE_PORT=8610 \
+    CUDA_VISIBLE_DEVICES=0
 
 RUN apt-get update -y \
-  && apt-get install -y --no-install-recommends bash ca-certificates curl ${EXTRA_APT_PACKAGES} \
-  && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends bash ca-certificates curl python3.11 python3.11-venv python3-pip \
+  && rm -rf /var/lib/apt/lists/* \
+  && python3.11 -m venv /opt/venv \
+  && ln -sf /opt/venv/bin/python3 /usr/bin/python \
+  && ln -sf /opt/venv/bin/pip3 /usr/bin/pip
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
