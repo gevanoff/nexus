@@ -40,7 +40,7 @@ def _max_runtime_sec(requested: Optional[float] = None) -> float:
         value = float(requested) if requested is not None else default
     except Exception:
         value = default
-    return max(30.0, min(value, 7200.0))
+    return max(30.0, min(value, max(30.0, default), 7200.0))
 
 
 def _max_events() -> int:
