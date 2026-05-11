@@ -56,6 +56,7 @@
     prBtn: document.getElementById("prBtn"),
     filesPanel: document.getElementById("filesPanel"),
     changeSummary: document.getElementById("changeSummary"),
+    pendingChanges: document.getElementById("pendingChanges"),
     treePath: document.getElementById("treePath"),
     loadTree: document.getElementById("loadTree"),
     fileList: document.getElementById("fileList"),
@@ -77,6 +78,7 @@
     pollTimer: null,
     outputHistory: [],
     changeSummary: null,
+    lastTreePayload: null,
   };
 
   const CREATE_MODE_PROFILES = {
@@ -722,6 +724,8 @@
     const added = Number(counts.added || 0);
     const modified = Number(counts.modified || 0);
     const removed = Number(counts.removed || 0);
+    const renamed = Number(counts.renamed || 0);
+    const untracked = Number(counts.untracked || 0);
     const total = Number(counts.total || 0);
     els.changeSummary.innerHTML = "";
     const addChip = (label, value, cls) => {
@@ -733,12 +737,58 @@
     addChip("added", added, "added");
     addChip("modified", modified, "modified");
     addChip("removed", removed, "removed");
+    if (renamed) addChip("renamed", renamed, "renamed");
+    if (untracked) addChip("untracked", untracked, "untracked");
     if (!total) {
       const clean = document.createElement("span");
       clean.className = "meta";
       clean.textContent = "clean";
       els.changeSummary.appendChild(clean);
     }
+  }
+
+  function renderPendingChanges(summary) {
+    if (!els.pendingChanges) return;
+    els.pendingChanges.innerHTML = "";
+    const files = Array.isArray(summary && summary.files) ? summary.files : [];
+    if (!files.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint";
+      empty.textContent = "No uncommitted changes.";
+      els.pendingChanges.appendChild(empty);
+      return;
+    }
+    for (const item of files.slice(0, 200)) {
+      const row = document.createElement("div");
+      row.className = "pending-change-row";
+      const chip = document.createElement("span");
+      const kind = String(item.kind || "modified");
+      chip.className = `change-chip ${kind}`;
+      chip.textContent = String(item.status || kind || "M");
+      const path = document.createElement("button");
+      path.type = "button";
+      path.className = "pending-change-path";
+      path.textContent = String(item.path || "");
+      path.addEventListener("click", () => {
+        if (els.filePath) els.filePath.value = String(item.path || "");
+        readFile().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
+      });
+      row.appendChild(chip);
+      row.appendChild(path);
+      els.pendingChanges.appendChild(row);
+    }
+  }
+
+  function changeEntryMap() {
+    const files = Array.isArray(state.changeSummary && state.changeSummary.files) ? state.changeSummary.files : [];
+    const out = new Map();
+    for (const item of files) {
+      if (!item || typeof item !== "object") continue;
+      const path = String(item.path || "");
+      if (!path) continue;
+      out.set(path, item);
+    }
+    return out;
   }
 
   function selectTask(taskId) {
@@ -759,6 +809,7 @@
     state.config = payload;
     if (els.repoUrl && !els.repoUrl.value) els.repoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
+    if (els.agentMaxTurns && payload.agent_max_turns_limit) els.agentMaxTurns.max = String(payload.agent_max_turns_limit);
     if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 100;
     setSelectOptions(
       els.modelIntegrationRuntime,
@@ -934,12 +985,15 @@
     if (!task) {
       state.changeSummary = null;
       renderChangeSummary(null);
+      renderPendingChanges(null);
       return null;
     }
     try {
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/changes`);
       state.changeSummary = payload.result || null;
       renderChangeSummary(state.changeSummary);
+      renderPendingChanges(state.changeSummary);
+      if (els.filesPanel && els.filesPanel.open) renderTree(state.lastTreePayload || { path: els.treePath ? els.treePath.value.trim() : "", entries: [] });
       return state.changeSummary;
     } catch (error) {
       if (!quiet) throw error;
@@ -1200,8 +1254,10 @@
 
   function renderTree(payload) {
     if (!els.fileList) return;
+    state.lastTreePayload = payload || null;
     els.fileList.innerHTML = "";
     const path = String(payload.path || "");
+    const changes = changeEntryMap();
     if (path) {
       const up = path.split("/").filter(Boolean);
       up.pop();
@@ -1222,14 +1278,19 @@
       button.className = "file-row";
       const type = String(item.type || "");
       const size = item.size !== undefined ? `${item.size} B` : "";
-      button.innerHTML = `<span>${type === "dir" ? "dir" : "file"}</span><span></span><span>${size}</span>`;
-      button.children[1].textContent = item.path || item.name || "";
+      const relPath = String(item.path || item.name || "");
+      const change = changes.get(relPath);
+      const changeChip = change
+        ? `<span class="change-chip ${escapeHtml(String(change.kind || "modified"))}">${escapeHtml(String(change.status || change.kind || "M"))}</span>`
+        : "";
+      button.innerHTML = `<span>${type === "dir" ? "dir" : "file"}</span><span class="file-row-main"><span class="file-row-name"></span>${changeChip}</span><span>${size}</span>`;
+      button.querySelector(".file-row-name").textContent = relPath;
       button.addEventListener("click", () => {
         if (type === "dir") {
-          if (els.treePath) els.treePath.value = item.path || "";
+          if (els.treePath) els.treePath.value = relPath;
           loadTree().catch((error) => setStatus(String(error.message || error), true));
         } else {
-          if (els.filePath) els.filePath.value = item.path || "";
+          if (els.filePath) els.filePath.value = relPath;
           readFile().catch((error) => setStatus(String(error.message || error), true));
         }
       });
@@ -1345,7 +1406,9 @@
   if (els.filesPanel) {
     els.filesPanel.addEventListener("toggle", () => {
       if (els.filesPanel.open && selectedTask()) {
-        loadTree().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
+        loadChanges({ quiet: true })
+          .then(() => loadTree())
+          .catch((error) => setStatus(String(error && error.message ? error.message : error), true));
       }
     });
   }

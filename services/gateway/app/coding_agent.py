@@ -31,7 +31,7 @@ def _max_turns(requested: Optional[int] = None) -> int:
         value = int(requested) if requested is not None else default
     except Exception:
         value = default
-    return max(1, min(value, 1000))
+    return max(1, min(value, 10_000))
 
 
 def _max_runtime_sec(requested: Optional[float] = None) -> float:
