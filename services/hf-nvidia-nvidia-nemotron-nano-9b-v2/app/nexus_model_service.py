@@ -106,3 +106,23 @@ async def readyz():
     if not HEALTHY:
         raise HTTPException(status_code=503, detail="model not loaded")
     return {"status": "ready"}
+
+
+@app.get("/v1/metadata")
+async def metadata():
+    return {
+        "model": MODEL_ID,
+        "owner": "nvidia",
+        "backend_class": "hf_nvidia_nvidia_nemotron_nano_9b_v2",
+        "capabilities": ["chat"],
+        "runtime": "transformers",
+        "device": DEVICE,
+    }
+
+
+@app.get("/v1/models")
+async def list_models():
+    return {
+        "object": "list",
+        "data": [{"id": MODEL_ID, "object": "model", "owned_by": "nvidia"}],
+    }
