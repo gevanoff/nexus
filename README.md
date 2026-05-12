@@ -15,6 +15,10 @@ Integrates `nvidia/NVIDIA-Nemotron-Nano-9B-v2` into Nexus as a chat backend.
 
 ## Recommended Deployment Target
 
+- Deployment mode: `compose`
+- Estimated VRAM: 22GB
+- Host: `ai1`
+
 - Host: `ai1`
 - Lane: `vLLM Fast`
 - Deployment mode: `compose`
