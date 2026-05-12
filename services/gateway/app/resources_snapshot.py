@@ -189,6 +189,8 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                 "active",
                 "healthy",
                 "ready",
+                "drained",
+                "drain_reason",
                 "tier",
                 "tier_rank",
                 "display_name",
@@ -213,6 +215,16 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                 "last_action",
                 "last_action_at",
                 "last_action_error",
+                "last_restart_at",
+                "canary_enabled",
+                "canary_path",
+                "canary_method",
+                "canary_timeout_sec",
+                "canary_failure_threshold",
+                "canary_consecutive_failures",
+                "canary_last_checked_at",
+                "canary_last_success_at",
+                "canary_last_error",
                 "inflight",
             ):
                 if key in lifecycle_entry:
@@ -222,15 +234,17 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
         if status is not None:
             check_interval = float(getattr(checker, "check_interval", 30.0) or 30.0)
             health_is_fresh = (time.time() - float(status.last_check or 0)) <= (check_interval * 3)
+            lifecycle_blocks_ready = lifecycle_entry is not None and lifecycle_entry.get("ready") is False
             entry["healthy"] = status.is_healthy
-            entry["ready"] = status.is_ready
+            if not lifecycle_blocks_ready:
+                entry["ready"] = status.is_ready
             entry["last_check"] = status.last_check
             if status.error:
                 entry["error"] = status.error
                 entry["health_error"] = status.error
             elif entry.get("health_error") and status.is_ready:
                 entry["health_error"] = ""
-            if status.is_ready and health_is_fresh:
+            if status.is_ready and health_is_fresh and not lifecycle_blocks_ready:
                 entry["active"] = True
                 entry["status"] = "gateway_ready"
                 entry["status_label"] = "Reachable and ready"

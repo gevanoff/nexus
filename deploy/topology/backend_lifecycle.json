@@ -90,7 +90,31 @@
       "auto_start": false,
       "auto_stop": false,
       "compose_managed": false,
-      "ready_path": "/models"
+      "ready_path": "/models",
+      "canary": {
+        "enabled": true,
+        "method": "POST",
+        "path": "/chat/completions",
+        "timeout_sec": 8,
+        "failure_threshold": 2,
+        "payload": {
+          "model": "mlx-community/Qwen3-30B-A3B-4bit",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Reply with the single word OK."
+            }
+          ],
+          "max_tokens": 4,
+          "temperature": 0
+        }
+      },
+      "auto_restart": {
+        "enabled": true,
+        "cooldown_sec": 300,
+        "timeout_sec": 120,
+        "command": "./deploy/scripts/restart-mlx.sh --timeout-sec 60"
+      }
     },
     "telegram_bot": {
       "display_name": "Telegram Bot",

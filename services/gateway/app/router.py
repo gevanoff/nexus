@@ -108,6 +108,10 @@ def _default_model_for_backend(backend: str, cfg: RouterConfig) -> str:
     return cfg.primary_strong_model
 
 
+def default_model_for_backend(backend: str, cfg: RouterConfig) -> str:
+    return _default_model_for_backend(backend, cfg)
+
+
 def _backend_from_model_prefix(model: str) -> Optional[str]:
     m = (model or "").strip()
     if ":" not in m:

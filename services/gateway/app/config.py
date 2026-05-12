@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     OBSERVABILITY_PORT: int = 8801
     HEALTH_CHECK_INTERVAL_SEC: float = 30.0
     HEALTH_CHECK_TIMEOUT_SEC: float = 10.0
+    MLX_ACTIVE_CANARY_ENABLED: bool = True
+    MLX_ACTIVE_CANARY_TIMEOUT_SEC: float = 8.0
+    MLX_ACTIVE_CANARY_PROMPT: str = "Reply with the single word OK."
+    MLX_ACTIVE_CANARY_MAX_TOKENS: int = 4
 
     # TLS for incoming connections (gateway server)
     # When both are set, the gateway (uvicorn) can be started with these files
@@ -411,6 +415,8 @@ class Settings(BaseSettings):
     CODING_AGENT_BACKEND_RETRY_BASE_DELAY_SEC: float = 10.0
     CODING_AGENT_BACKEND_RETRY_MAX_DELAY_SEC: float = 60.0
     CODING_AGENT_BACKEND_RETRY_STATUSES: str = "500,502,503,504"
+    CODING_AGENT_QUEUE_TIMEOUT_SEC: float = 30.0
+    CODING_AGENT_QUEUE_POLL_SEC: float = 1.0
     CODING_GIT_USERNAME: str = "x-access-token"
     CODING_GIT_TOKEN: str = ""
     CODING_GIT_AUTHOR_NAME: str = "Nexus Coding Agent"

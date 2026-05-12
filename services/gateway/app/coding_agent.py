@@ -8,11 +8,14 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 
+from app.backends import backend_hostname, get_admission_controller, get_registry, llm_backends
 from app import coding_workspace as cw
 from app.config import S, logger
+from app.health_checker import get_health_checker
+from app.model_aliases import get_aliases
 from app.models import ChatCompletionRequest, ChatMessage, ToolFunction, ToolSpec
 from app.openai_utils import new_id, now_unix
-from app.router import decide_route
+from app.router import decide_route, default_model_for_backend
 from app.router_cfg import router_cfg
 from app.tools_bus import tool_web_browse
 from app.upstreams import call_backend_chat
@@ -104,6 +107,215 @@ def _backend_retry_statuses() -> set[int]:
         except Exception:
             continue
     return out or {500, 502, 503, 504}
+
+
+def _coding_queue_timeout_sec() -> float:
+    try:
+        return max(1.0, float(getattr(S, "CODING_AGENT_QUEUE_TIMEOUT_SEC", 30.0) or 30.0))
+    except Exception:
+        return 30.0
+
+
+def _coding_queue_poll_sec() -> float:
+    try:
+        return max(0.1, float(getattr(S, "CODING_AGENT_QUEUE_POLL_SEC", 1.0) or 1.0))
+    except Exception:
+        return 1.0
+
+
+def _model_is_reroutable(model: str) -> bool:
+    value = str(model or "").strip()
+    if not value:
+        return True
+    key = value.lower()
+    if key == "auto":
+        return True
+    if key in get_aliases():
+        return True
+    if ":" in value:
+        return False
+    registry = get_registry()
+    return registry.get_backend(value) is None and "/" not in value
+
+
+def _candidate_summary(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    summary = {
+        "backend": candidate.get("backend"),
+        "host": candidate.get("host"),
+        "ready": bool(candidate.get("ready")),
+        "available": int(candidate.get("available") or 0),
+        "limit": int(candidate.get("limit") or 0),
+        "inflight": int(candidate.get("inflight") or 0),
+    }
+    if candidate.get("health_error"):
+        summary["health_error"] = str(candidate.get("health_error"))
+    return summary
+
+
+def _coding_candidate_routes(request_model: str, preferred_backend: str, preferred_upstream_model: str) -> List[tuple[str, str]]:
+    out: List[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(backend_name: str, upstream_model_name: str) -> None:
+        key = str(backend_name or "").strip()
+        model_name = str(upstream_model_name or "").strip()
+        if not key or not model_name or key in seen:
+            return
+        seen.add(key)
+        out.append((key, model_name))
+
+    add(preferred_backend, preferred_upstream_model)
+    if not _model_is_reroutable(request_model):
+        return out
+
+    cfg = router_cfg()
+    for backend_name, _config in llm_backends():
+        add(backend_name, default_model_for_backend(backend_name, cfg))
+    return out
+
+
+def _rank_coding_backend_candidates(request_model: str, preferred_backend: str, preferred_upstream_model: str) -> List[Dict[str, Any]]:
+    registry = get_registry()
+    checker = get_health_checker()
+    stats = get_admission_controller().get_stats()
+
+    host_totals: Dict[str, Dict[str, int]] = {}
+    for key, stat in stats.items():
+        if not str(key).endswith(".chat") or not isinstance(stat, dict):
+            continue
+        backend_name = str(key).rsplit(".", 1)[0]
+        config = registry.get_backend(backend_name)
+        if config is None:
+            continue
+        host = backend_hostname(backend_name, registry=registry, fallback_base_url=config.base_url) or backend_name
+        bucket = host_totals.setdefault(host, {"limit": 0, "inflight": 0})
+        bucket["limit"] += max(1, int(stat.get("limit") or config.get_limit("chat")))
+        bucket["inflight"] += max(0, int(stat.get("inflight") or 0))
+
+    candidates: List[Dict[str, Any]] = []
+    for backend_name, upstream_model_name in _coding_candidate_routes(request_model, preferred_backend, preferred_upstream_model):
+        config = registry.get_backend(backend_name)
+        if config is None or not config.supports("chat"):
+            continue
+        stat = stats.get(f"{backend_name}.chat") if isinstance(stats, dict) else None
+        limit = max(1, int((stat or {}).get("limit") or config.get_limit("chat")))
+        available = max(0, int((stat or {}).get("available") or limit))
+        inflight = max(0, int((stat or {}).get("inflight") or 0))
+        host = backend_hostname(backend_name, registry=registry, fallback_base_url=config.base_url) or backend_name
+        host_bucket = host_totals.get(host) or {"limit": limit, "inflight": inflight}
+        host_limit = max(1, int(host_bucket.get("limit") or limit))
+        host_inflight = max(0, int(host_bucket.get("inflight") or inflight))
+        status = checker.get_status(backend_name)
+        ready = checker.is_ready(backend_name)
+        health_error = str(status.error or "").strip() if status is not None and status.error else ""
+        candidates.append(
+            {
+                "backend": backend_name,
+                "upstream_model": upstream_model_name,
+                "host": host,
+                "ready": ready,
+                "health_error": health_error,
+                "limit": limit,
+                "available": available,
+                "inflight": inflight,
+                "host_limit": host_limit,
+                "host_inflight": host_inflight,
+                "host_load": host_inflight / host_limit,
+                "backend_load": inflight / limit,
+                "preferred": backend_name == preferred_backend,
+            }
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            0 if item["ready"] and item["available"] > 0 else 1 if item["ready"] else 2,
+            item["host_load"],
+            item["backend_load"],
+            0 if not item["preferred"] else 1,
+            str(item["backend"]),
+        )
+    )
+    return candidates
+
+
+async def _acquire_coding_backend_slot(
+    request_model: str,
+    preferred_backend: str,
+    preferred_upstream_model: str,
+    *,
+    task_id: str,
+    turn: int,
+    attempt: int,
+) -> Dict[str, Any]:
+    admission = get_admission_controller()
+    deadline = time.monotonic() + _coding_queue_timeout_sec()
+    queued_logged = False
+    last_candidates: List[Dict[str, Any]] = []
+    last_ready_count = 0
+
+    while True:
+        candidates = _rank_coding_backend_candidates(request_model, preferred_backend, preferred_upstream_model)
+        last_candidates = candidates
+        last_ready_count = sum(1 for item in candidates if item.get("ready"))
+        for candidate in candidates:
+            if not candidate.get("ready") or int(candidate.get("available") or 0) <= 0:
+                continue
+            try:
+                await admission.acquire(str(candidate["backend"]), "chat")
+            except HTTPException as exc:
+                if int(getattr(exc, "status_code", 0) or 0) == 429:
+                    continue
+                raise
+            if attempt > 0 or str(candidate.get("backend") or "") != preferred_backend:
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "backend_selected",
+                        "turn": turn,
+                        "attempt": attempt + 1,
+                        "backend": candidate.get("backend"),
+                        "upstream_model": candidate.get("upstream_model"),
+                        "host": candidate.get("host"),
+                        "preferred_backend": preferred_backend,
+                        "preferred_upstream_model": preferred_upstream_model,
+                        "summary": (
+                            f"selected {candidate.get('backend')} on {candidate.get('host')} "
+                            f"(preferred {preferred_backend})"
+                        ),
+                    },
+                )
+            return candidate
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            status_code = 429 if last_ready_count > 0 else 503
+            raise HTTPException(
+                status_code=status_code,
+                detail={
+                    "error": "coding_backend_queue_timeout" if status_code == 429 else "coding_backend_unavailable",
+                    "message": "No healthy coding backend became available before the queue timeout elapsed",
+                    "turn": turn,
+                    "preferred_backend": preferred_backend,
+                    "candidates": [_candidate_summary(item) for item in last_candidates[:6]],
+                },
+                headers={"Retry-After": str(max(1, int(_coding_queue_poll_sec())))} if status_code == 429 else None,
+            )
+        if not queued_logged:
+            await asyncio.to_thread(
+                _append_event,
+                task_id,
+                {
+                    "type": "backend_wait",
+                    "turn": turn,
+                    "attempt": attempt + 1,
+                    "timeout_sec": round(_coding_queue_timeout_sec(), 1),
+                    "preferred_backend": preferred_backend,
+                    "candidates": [_candidate_summary(item) for item in last_candidates[:6]],
+                },
+            )
+            queued_logged = True
+        await asyncio.sleep(min(_coding_queue_poll_sec(), max(0.05, remaining)))
 
 
 def _backend_error_detail(exc: HTTPException) -> Dict[str, Any]:
@@ -205,6 +417,16 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
         return (
             f"backend_retry turn={event.get('turn') or ''} attempt={event.get('attempt') or ''}/{event.get('max_retries') or ''} "
             f"delay={event.get('delay_sec') or ''}s {_clip_text(str(event.get('error') or ''), 500)}"
+        ).strip()
+    if event_type == "backend_wait":
+        return (
+            f"backend_wait turn={event.get('turn') or ''} attempt={event.get('attempt') or ''} "
+            f"preferred={event.get('preferred_backend') or ''} timeout={event.get('timeout_sec') or ''}s"
+        ).strip()
+    if event_type == "backend_selected":
+        return (
+            f"backend_selected turn={event.get('turn') or ''} backend={event.get('backend') or ''} "
+            f"host={event.get('host') or ''} preferred={event.get('preferred_backend') or ''}"
         ).strip()
     if event_type in {"queued", "started", "turn_started", "review", "commit", "completed", "failed", "stopped"}:
         summary = str(event.get("summary") or event.get("error") or "")
@@ -499,11 +721,23 @@ async def _call_backend_chat_with_retry(
     *,
     task_id: str,
     turn: int,
-) -> Dict[str, Any]:
+) -> tuple[Dict[str, Any], str, str]:
     max_retries = _backend_retry_count()
+    admission = get_admission_controller()
     for attempt in range(max_retries + 1):
+        selected = await _acquire_coding_backend_slot(
+            req.model,
+            backend,
+            upstream_model,
+            task_id=task_id,
+            turn=turn,
+            attempt=attempt,
+        )
+        selected_backend = str(selected.get("backend") or backend)
+        selected_model = str(selected.get("upstream_model") or upstream_model)
         try:
-            return await call_backend_chat(req, backend, upstream_model)
+            resp = await call_backend_chat(req, selected_backend, selected_model)
+            return resp, selected_backend, selected_model
         except HTTPException as exc:
             if attempt >= max_retries or not _is_retryable_backend_error(exc):
                 raise
@@ -518,8 +752,8 @@ async def _call_backend_chat_with_retry(
                     "attempt": attempt + 1,
                     "max_retries": max_retries,
                     "delay_sec": round(delay, 1),
-                    "backend": backend,
-                    "upstream_model": upstream_model,
+                    "backend": selected_backend,
+                    "upstream_model": selected_model,
                     "error": _clip_text(str(detail), 1200),
                 },
             )
@@ -527,8 +761,8 @@ async def _call_backend_chat_with_retry(
                 "coding agent retrying backend task=%s turn=%s backend=%s model=%s attempt=%s/%s delay=%.1fs error=%s",
                 task_id,
                 turn,
-                backend,
-                upstream_model,
+                selected_backend,
+                selected_model,
                 attempt + 1,
                 max_retries,
                 delay,
@@ -536,6 +770,8 @@ async def _call_backend_chat_with_retry(
             )
             if delay > 0:
                 await asyncio.sleep(delay)
+        finally:
+            admission.release(selected_backend, "chat")
     raise HTTPException(status_code=502, detail={"upstream": backend, "error": "retry loop exhausted"})
 
 
@@ -1204,7 +1440,22 @@ async def _run_agent(
                 max_tokens=_max_completion_tokens(),
                 stream=False,
             )
-            resp = await _call_backend_chat_with_retry(req, backend, upstream_model, task_id=task_id, turn=turn + 1)
+            resp, backend, upstream_model = await _call_backend_chat_with_retry(
+                req,
+                backend,
+                upstream_model,
+                task_id=task_id,
+                turn=turn + 1,
+            )
+            await asyncio.to_thread(
+                _mutate_task,
+                task_id,
+                {
+                    "agent_backend": backend,
+                    "agent_upstream_model": upstream_model,
+                    "agent_last_event_at": now_unix(),
+                },
+            )
             assistant = _extract_assistant_message(resp)
             thinking = _extract_assistant_thinking(resp)
             tool_calls = _extract_tool_calls(resp)

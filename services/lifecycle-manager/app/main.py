@@ -72,6 +72,14 @@ def _float_value(value: Any, default: float) -> float:
     return parsed if parsed > 0 else default
 
 
+def _int_value(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        return default
+    return parsed if parsed > 0 else default
+
+
 def _read_json(path: Path) -> Dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -114,6 +122,16 @@ class BackendPolicy:
     health_timeout_sec: float
     ready_path: str
     base_url: str
+    canary_enabled: bool = False
+    canary_path: str = ""
+    canary_method: str = "GET"
+    canary_timeout_sec: float = 0.0
+    canary_payload: Dict[str, Any] = field(default_factory=dict)
+    canary_failure_threshold: int = 2
+    auto_restart_on_failure: bool = False
+    auto_restart_cooldown_sec: float = 300.0
+    auto_restart_timeout_sec: float = 120.0
+    auto_restart_command: str = ""
     idle_observed_vram_mb: int = 0
     peak_observed_vram_mb: int = 0
     notes: str = ""
@@ -132,6 +150,13 @@ class BackendPolicy:
     last_action: str = ""
     last_action_at: float = 0.0
     last_action_error: str = ""
+    last_restart_at: float = 0.0
+    drained: bool = False
+    drain_reason: str = ""
+    canary_consecutive_failures: int = 0
+    canary_last_checked_at: float = 0.0
+    canary_last_success_at: float = 0.0
+    canary_last_error: str = ""
     models: List[Dict[str, Any]] = field(default_factory=list)
     models_error: str = ""
     models_checked_at: float = 0.0
@@ -279,6 +304,13 @@ class LifecycleManager:
             components = _as_list(raw_cfg.get("components")) or _as_list(raw_cfg.get("component"))
             compose_files = _as_list(raw_cfg.get("compose_files")) or _as_list(raw_cfg.get("compose_file"))
             base_url = str(raw_cfg.get("base_url") or default_env.get(self._base_url_env_name(backend_class)) or "").strip()
+            canary_cfg = raw_cfg.get("canary") if isinstance(raw_cfg.get("canary"), dict) else {}
+            canary_payload = canary_cfg.get("payload") if isinstance(canary_cfg.get("payload"), dict) else {}
+            restart_cfg = raw_cfg.get("auto_restart") if isinstance(raw_cfg.get("auto_restart"), dict) else {}
+            failure_threshold = _int_value(
+                canary_cfg.get("failure_threshold") or restart_cfg.get("on_consecutive_failures"),
+                2,
+            )
             backends[backend_class] = BackendPolicy(
                 backend_class=backend_class,
                 display_name=str(raw_cfg.get("display_name") or backend_class).strip(),
@@ -299,6 +331,16 @@ class LifecycleManager:
                 health_timeout_sec=_float_value(raw_cfg.get("health_timeout_sec"), 5.0),
                 ready_path=str(raw_cfg.get("ready_path") or "/readyz").strip(),
                 base_url=base_url,
+                canary_enabled=_bool(canary_cfg.get("enabled")),
+                canary_path=str(canary_cfg.get("path") or canary_cfg.get("ready_path") or "").strip(),
+                canary_method=str(canary_cfg.get("method") or "GET").strip().upper() or "GET",
+                canary_timeout_sec=_float_value(canary_cfg.get("timeout_sec"), 0.0),
+                canary_payload=canary_payload,
+                canary_failure_threshold=failure_threshold,
+                auto_restart_on_failure=_bool(restart_cfg.get("enabled")),
+                auto_restart_cooldown_sec=_float_value(restart_cfg.get("cooldown_sec"), 300.0),
+                auto_restart_timeout_sec=_float_value(restart_cfg.get("timeout_sec"), 120.0),
+                auto_restart_command=str(restart_cfg.get("command") or "").strip(),
                 notes=str(raw_cfg.get("notes") or "").strip(),
             )
         self.backends = backends
@@ -334,8 +376,13 @@ class LifecycleManager:
             "last_stopped_at",
             "last_requested_at",
             "last_action_at",
+            "last_restart_at",
+            "canary_last_checked_at",
+            "canary_last_success_at",
         }
-        str_fields = {"last_action", "last_action_error", "last_health_error"}
+        str_fields = {"last_action", "last_action_error", "last_health_error", "drain_reason", "canary_last_error"}
+        int_fields = {"canary_consecutive_failures"}
+        bool_fields = {"drained"}
         for backend_class, state in raw_backends.items():
             backend = self.backends.get(str(backend_class))
             if backend is None or not isinstance(state, dict):
@@ -347,6 +394,13 @@ class LifecycleManager:
                     continue
             for field_name in str_fields:
                 setattr(backend, field_name, str(state.get(field_name) or ""))
+            for field_name in int_fields:
+                try:
+                    setattr(backend, field_name, int(state.get(field_name) or 0))
+                except Exception:
+                    continue
+            for field_name in bool_fields:
+                setattr(backend, field_name, _bool(state.get(field_name)))
 
     def _save_state(self) -> None:
         state = {
@@ -364,6 +418,13 @@ class LifecycleManager:
                     "last_action": backend.last_action,
                     "last_action_at": backend.last_action_at,
                     "last_action_error": backend.last_action_error,
+                    "last_restart_at": backend.last_restart_at,
+                    "drained": backend.drained,
+                    "drain_reason": backend.drain_reason,
+                    "canary_consecutive_failures": backend.canary_consecutive_failures,
+                    "canary_last_checked_at": backend.canary_last_checked_at,
+                    "canary_last_success_at": backend.canary_last_success_at,
+                    "canary_last_error": backend.canary_last_error,
                 }
                 for backend in self.backends.values()
             },
@@ -451,6 +512,9 @@ class LifecycleManager:
             tasks = [self._check_backend_health(client, backend) for backend in self.backends.values()]
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            canary_tasks = [self._check_backend_canary(client, backend) for backend in self.backends.values() if backend.canary_enabled]
+            if canary_tasks:
+                await asyncio.gather(*canary_tasks, return_exceptions=True)
             if self.model_probe_enabled:
                 model_tasks = [self._check_backend_models(client, backend) for backend in self.backends.values()]
                 if model_tasks:
@@ -461,6 +525,8 @@ class LifecycleManager:
             backend.healthy = None
             backend.ready = False
             backend.health_error = ""
+            backend.drained = False
+            backend.drain_reason = ""
             return
 
         now = time.time()
@@ -469,6 +535,8 @@ class LifecycleManager:
             backend.healthy = backend.active
             backend.ready = backend.active
             backend.health_error = "" if backend.active else "container is not running"
+            backend.drained = False if backend.active else backend.drained
+            backend.drain_reason = "" if backend.active else backend.drain_reason
             if backend.active:
                 backend.last_healthy_at = now
                 backend.last_ready_at = now
@@ -484,6 +552,8 @@ class LifecycleManager:
             backend.ready = None
             backend.health_error = "base_url not configured"
             backend.last_checked_at = now
+            backend.drained = False
+            backend.drain_reason = ""
             if backend.active:
                 backend.last_unhealthy_at = now
                 backend.last_health_error = backend.health_error
@@ -503,6 +573,9 @@ class LifecycleManager:
             backend.healthy = response.status_code < 500
             backend.ready = response.status_code == 200
             backend.health_error = "" if response.status_code == 200 else f"HTTP {response.status_code}"
+            if response.status_code == 200:
+                backend.drained = False
+                backend.drain_reason = ""
             if backend.ready:
                 backend.last_healthy_at = now
                 backend.last_ready_at = now
@@ -515,8 +588,100 @@ class LifecycleManager:
             backend.healthy = False
             backend.ready = False
             backend.health_error = f"{type(exc).__name__}: {exc}"
+            backend.drained = False
+            backend.drain_reason = ""
             backend.last_unhealthy_at = now
             backend.last_health_error = backend.health_error
+
+    @staticmethod
+    def _canary_url(backend: BackendPolicy) -> str:
+        base_url = backend.base_url.rstrip("/")
+        if not base_url:
+            return ""
+        path = backend.canary_path or backend.ready_path or ""
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{base_url}{path}"
+
+    @staticmethod
+    def _response_error_text(response: httpx.Response) -> str:
+        try:
+            detail = (response.text or "").strip()
+        except Exception:
+            detail = ""
+        if detail:
+            detail = detail.replace("\n", " ")[:600]
+            return f"HTTP {response.status_code}: {detail}"
+        return f"HTTP {response.status_code}"
+
+    @staticmethod
+    def _canary_response_ok(backend: BackendPolicy, response: httpx.Response) -> bool:
+        if response.status_code != 200:
+            return False
+        if backend.canary_method != "POST":
+            return True
+        try:
+            payload = response.json()
+        except Exception:
+            return False
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        return isinstance(choices, list) and len(choices) > 0
+
+    def _mark_backend_canary_success(self, backend: BackendPolicy, now: float) -> None:
+        backend.canary_consecutive_failures = 0
+        backend.canary_last_checked_at = now
+        backend.canary_last_success_at = now
+        backend.canary_last_error = ""
+        backend.drained = False
+        backend.drain_reason = ""
+        backend.ready = True
+        backend.last_ready_at = now
+        backend.last_healthy_at = now
+        if backend.last_health_error == backend.health_error:
+            backend.last_health_error = ""
+        backend.health_error = ""
+
+    async def _check_backend_canary(self, client: httpx.AsyncClient, backend: BackendPolicy) -> None:
+        now = time.time()
+        if not backend.canary_enabled:
+            return
+        if not backend.base_url or not backend.canary_path:
+            backend.canary_last_checked_at = now
+            backend.canary_last_error = "canary is enabled but not configured"
+            return
+        if backend.healthy is False or backend.ready is not True:
+            backend.canary_last_checked_at = now
+            return
+
+        timeout_sec = backend.canary_timeout_sec or backend.health_timeout_sec or 5.0
+        timeout = httpx.Timeout(connect=2.0, read=timeout_sec, write=2.0, pool=2.0)
+        url = self._canary_url(backend)
+        error = ""
+        try:
+            request_kwargs: Dict[str, Any] = {"timeout": timeout}
+            if backend.canary_method == "POST":
+                request_kwargs["json"] = backend.canary_payload
+            response = await client.request(backend.canary_method, url, **request_kwargs)
+            if not self._canary_response_ok(backend, response):
+                error = self._response_error_text(response)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+
+        if not error:
+            self._mark_backend_canary_success(backend, now)
+            return
+
+        backend.canary_consecutive_failures += 1
+        backend.canary_last_checked_at = now
+        backend.canary_last_error = error
+        backend.drained = True
+        backend.drain_reason = f"active canary failed: {error}"
+        backend.ready = False
+        backend.health_error = backend.drain_reason
+        backend.last_unhealthy_at = now
+        backend.last_health_error = backend.drain_reason
+        if backend.canary_consecutive_failures >= backend.canary_failure_threshold:
+            await self._maybe_auto_restart_backend(backend, reason=backend.drain_reason)
 
     @staticmethod
     def _models_url_candidates(backend: BackendPolicy) -> List[str]:
@@ -607,7 +772,7 @@ class LifecycleManager:
                 backend.active = False
                 continue
             if not backend.compose_managed:
-                backend.active = backend.ready is True
+                backend.active = bool(backend.base_url) and backend.last_checked_at > 0 and backend.healthy is not False
                 continue
             expected = [f"nexus-{component}" for component in backend.components]
             if not expected:
@@ -690,8 +855,12 @@ class LifecycleManager:
     async def action(self, req: ActionRequest) -> Dict[str, Any]:
         backend = self._backend_or_404(req.backend_class)
         action = req.action.strip().lower()
-        if action not in {"activate", "start", "deactivate", "stop"}:
-            raise HTTPException(status_code=400, detail="action must be activate/start/deactivate/stop")
+        if action not in {"activate", "start", "deactivate", "stop", "restart"}:
+            raise HTTPException(status_code=400, detail="action must be activate/start/deactivate/stop/restart")
+        if action == "restart":
+            await self._restart_backend(backend, reason="manual restart", automatic=False)
+            await self.refresh()
+            return {"ok": True, "decision": "restart", "backend": self._backend_status(backend)}
         if action in {"activate", "start"}:
             plan = self._activation_plan(backend, confirmed=req.confirmed, allow_disruptive=req.allow_disruptive)
         else:
@@ -1377,6 +1546,20 @@ class LifecycleManager:
         for backend in start_items:
             await self._compose(backend, "up -d --build")
 
+    async def _maybe_auto_restart_backend(self, backend: BackendPolicy, *, reason: str) -> None:
+        if not backend.auto_restart_on_failure:
+            return
+        now = time.time()
+        cooldown_sec = max(0.0, float(backend.auto_restart_cooldown_sec or 0.0))
+        if cooldown_sec > 0 and backend.last_restart_at > 0 and (now - backend.last_restart_at) < cooldown_sec:
+            return
+        backend.last_restart_at = now
+        self._save_state()
+        try:
+            await self._restart_backend(backend, reason=reason, automatic=True)
+        except Exception:
+            return
+
     async def _attach_llm_advice(self, plan: Dict[str, Any]) -> Dict[str, Any]:
         if not self.llm_advisor_enabled:
             return plan
@@ -1455,6 +1638,44 @@ class LifecycleManager:
             backend.last_action_error = ""
             if compose_action.strip().lower().startswith("stop"):
                 backend.last_stopped_at = time.time()
+            self._save_state()
+        except Exception as exc:
+            backend.last_action_error = f"{type(exc).__name__}: {exc}"
+            self._save_state()
+            raise
+
+    async def _restart_backend(self, backend: BackendPolicy, *, reason: str, automatic: bool) -> None:
+        if backend.compose_managed:
+            label = "auto_restart" if automatic else "restart"
+            backend.last_action = f"{label}:restart"
+            backend.last_action_at = time.time()
+            try:
+                await self._compose(backend, "restart")
+                backend.last_action = label
+                backend.last_action_error = ""
+            except Exception as exc:
+                backend.last_action = label
+                backend.last_action_error = f"{type(exc).__name__}: {exc}"
+                self._save_state()
+                raise
+            return
+
+        if not backend.auto_restart_command:
+            raise HTTPException(status_code=400, detail=f"no restart command configured for {backend.backend_class}")
+        host = self.hosts.get(backend.host)
+        if host is None:
+            raise HTTPException(status_code=400, detail=f"unknown host {backend.host}")
+        command = backend.auto_restart_command
+        if host.repo_dir:
+            command = f"cd {shlex.quote(host.repo_dir)} && {command}"
+        label = "auto_restart" if automatic else "restart"
+        backend.last_action = label
+        backend.last_action_at = time.time()
+        try:
+            await self._ssh(host, command, timeout=max(30, int(backend.auto_restart_timeout_sec or 120.0)))
+            backend.last_action_error = ""
+            backend.drained = True
+            backend.drain_reason = f"{reason}; restart requested"
             self._save_state()
         except Exception as exc:
             backend.last_action_error = f"{type(exc).__name__}: {exc}"
@@ -1660,10 +1881,17 @@ class LifecycleManager:
             "compose_managed": backend.compose_managed,
             "health_check": backend.health_check,
             "health_timeout_sec": backend.health_timeout_sec,
+            "canary_enabled": backend.canary_enabled,
+            "canary_path": backend.canary_path,
+            "canary_method": backend.canary_method,
+            "canary_timeout_sec": backend.canary_timeout_sec,
+            "canary_failure_threshold": backend.canary_failure_threshold,
             "active": backend.active,
             "healthy": backend.healthy,
             "ready": backend.ready,
             "health_error": backend.health_error,
+            "drained": backend.drained,
+            "drain_reason": backend.drain_reason,
             "status": lifecycle["status"],
             "status_label": lifecycle["status_label"],
             "status_color": lifecycle["status_color"],
@@ -1671,7 +1899,7 @@ class LifecycleManager:
             "last_checked_at": backend.last_checked_at,
             "last_healthy_at": backend.last_healthy_at,
             "last_ready_at": backend.last_ready_at,
-            "last_confirmed_working_at": backend.last_ready_at,
+            "last_confirmed_working_at": max(backend.last_ready_at, backend.canary_last_success_at),
             "last_unhealthy_at": backend.last_unhealthy_at,
             "last_stopped_at": backend.last_stopped_at,
             "last_health_error": backend.last_health_error,
@@ -1680,6 +1908,11 @@ class LifecycleManager:
             "last_action": backend.last_action,
             "last_action_at": backend.last_action_at,
             "last_action_error": backend.last_action_error,
+            "last_restart_at": backend.last_restart_at,
+            "canary_consecutive_failures": backend.canary_consecutive_failures,
+            "canary_last_checked_at": backend.canary_last_checked_at,
+            "canary_last_success_at": backend.canary_last_success_at,
+            "canary_last_error": backend.canary_last_error,
             "models": backend.models,
             "models_error": backend.models_error,
             "models_checked_at": backend.models_checked_at,
@@ -1756,6 +1989,13 @@ class LifecycleManager:
                     "status_label": "Active and ready",
                     "status_color": "green",
                     "status_rank": 0,
+                }
+            if backend.drained:
+                return {
+                    "status": "active_drained",
+                    "status_label": "Drained after canary failure",
+                    "status_color": "red",
+                    "status_rank": 3,
                 }
             if backend.ready is False or backend.healthy is False:
                 return {

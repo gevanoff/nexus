@@ -7,6 +7,7 @@ to ensure requests aren't routed to unhealthy backends.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -16,6 +17,7 @@ import httpx
 from app.config import logger
 from app.httpx_client import httpx_client as _httpx_client
 from app.backends import BackendConfig, RouteKind, _backend_host, _capability_availability, get_registry
+from app.config import S
 
 
 @dataclass
@@ -141,6 +143,11 @@ class HealthChecker:
                                     error = f"readiness returned HTTP {ready_resp.status_code}"
                         except Exception as e:
                             error = f"readiness check failed: {e}"
+                if is_ready:
+                    canary_error = await self._active_canary_error(client, backend_class, config, base_url)
+                    if canary_error:
+                        is_ready = False
+                        error = canary_error
         except Exception as e:
             error = f"health check error: {e}"
         
@@ -158,6 +165,61 @@ class HealthChecker:
             logger.warning(
                 f"Backend {backend_class} not ready: healthy={is_healthy}, ready={is_ready}, error={error}"
             )
+
+    async def _active_canary_error(
+        self,
+        client: httpx.AsyncClient,
+        backend_class: str,
+        config: BackendConfig,
+        base_url: str,
+    ) -> Optional[str]:
+        if not bool(getattr(S, "MLX_ACTIVE_CANARY_ENABLED", True)):
+            return None
+        if (config.provider or "").strip().lower() != "mlx":
+            return None
+        if "chat" not in config.supported_capabilities:
+            return None
+
+        prompt = str(getattr(S, "MLX_ACTIVE_CANARY_PROMPT", "Reply with the single word OK.") or "Reply with the single word OK.").strip()
+        max_tokens = max(1, int(getattr(S, "MLX_ACTIVE_CANARY_MAX_TOKENS", 4) or 4))
+        model = (getattr(S, "MLX_MODEL_DEFAULT", "") or getattr(S, "MLX_MODEL_STRONG", "") or "").strip()
+        if not model:
+            return "active canary is enabled but no MLX model is configured"
+        timeout_sec = max(1.0, float(getattr(S, "MLX_ACTIVE_CANARY_TIMEOUT_SEC", self.timeout) or self.timeout))
+        timeout = httpx.Timeout(connect=2.0, read=timeout_sec, write=2.0, pool=2.0)
+        try:
+            response = await client.post(
+                f"{base_url}/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
+                    "max_tokens": max_tokens,
+                    "stream": False,
+                },
+                timeout=timeout,
+            )
+        except Exception as exc:
+            return f"active canary failed: {type(exc).__name__}: {exc}"
+        if response.status_code != 200:
+            detail = ""
+            try:
+                detail = (response.text or "").strip()
+            except Exception:
+                detail = ""
+            if detail:
+                detail = detail.replace("\n", " ")[:600]
+                return f"active canary failed: HTTP {response.status_code}: {detail}"
+            return f"active canary failed: HTTP {response.status_code}"
+        try:
+            payload = response.json()
+        except Exception as exc:
+            return f"active canary failed: invalid JSON response ({type(exc).__name__}: {exc})"
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        if not isinstance(choices, list) or not choices:
+            sample = json.dumps(payload, ensure_ascii=False)[:300] if isinstance(payload, dict) else str(payload)[:300]
+            return f"active canary failed: missing choices in response ({sample})"
+        return None
     
     def get_status(self, backend_class: str) -> Optional[HealthStatus]:
         """Get current health status for a backend."""
