@@ -12,12 +12,12 @@
     },
     "coder": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen3.6-27B-4bit",
+      "model": "mlx-community/Qwen3-30B-A3B-4bit",
       "tools": true
     },
     "reasoning": {
       "backend": "local_mlx",
-      "model": "mlx-community/Qwen3.6-27B-4bit",
+      "model": "mlx-community/Qwen3-30B-A3B-4bit",
       "tools": true,
       "max_tokens_cap": 2048
     },
