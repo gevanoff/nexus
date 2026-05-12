@@ -46,6 +46,23 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _task_metadata_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        parsed = json.loads(row["metadata_json"] or "{}")
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _update_task_metadata_row(task_id: str, metadata: dict[str, Any], *, now: int | None = None) -> None:
+    updated_ts = int(now if now is not None else _now())
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE agent_tasks SET metadata_json=?, updated_ts=? WHERE id=?",
+            (json.dumps(metadata, separators=(",", ":"), sort_keys=True, ensure_ascii=False), updated_ts, task_id),
+        )
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(
@@ -574,9 +591,11 @@ class _SyntheticRequest:
     headers: dict[str, str]
 
 
-def _scheduled_prompt(row: sqlite3.Row, due_ts: int) -> str:
+def _scheduled_prompt(row: sqlite3.Row, due_ts: int, *, preface: str = "") -> str:
+    prefix = f"{preface.strip()}\n\n" if preface.strip() else ""
     return (
-        "A scheduled Nexus agent task is due.\n\n"
+        prefix
+        + "A scheduled Nexus agent task is due.\n\n"
         f"Task id: {row['id']}\n"
         f"Title: {row['title']}\n"
         f"Due at: {_iso(due_ts)}\n"
@@ -602,6 +621,110 @@ def _compute_next(row: sqlite3.Row, now: int) -> int | None:
     return None
 
 
+async def _auto_recover_coding_supervisor(row: sqlite3.Row) -> dict[str, Any]:
+    metadata = _task_metadata_from_row(row)
+    if str(metadata.get("supervisor_kind") or "").strip().lower() != "coding_workspace_supervisor":
+        return {"enabled": False, "checked": 0, "actions": [], "skipped": []}
+
+    settings = metadata.get("auto_recovery") if isinstance(metadata.get("auto_recovery"), dict) else {}
+    if settings.get("enabled") is False:
+        return {"enabled": False, "checked": 0, "actions": [], "skipped": []}
+
+    try:
+        limit = max(1, min(int(settings.get("limit") or 3), 20))
+    except Exception:
+        limit = 3
+    try:
+        stalled_after_sec = max(60.0, float(settings.get("stalled_after_sec") or 900.0))
+    except Exception:
+        stalled_after_sec = 900.0
+    try:
+        cooldown_sec = max(0, int(settings.get("cooldown_sec") or 1800))
+    except Exception:
+        cooldown_sec = 1800
+    include_failed = bool(settings.get("include_failed", True))
+
+    from app import coding_agent, coding_workspace
+
+    monitor = coding_workspace.monitor_tasks(limit=100, only_attention=True, stalled_after_sec=stalled_after_sec)
+    items = monitor.get("tasks") if isinstance(monitor.get("tasks"), list) else []
+    state = metadata.get("auto_recovery_state") if isinstance(metadata.get("auto_recovery_state"), dict) else {}
+    attempts = state.get("attempts") if isinstance(state.get("attempts"), dict) else {}
+    now = _now()
+    actions: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("id") or "").strip()
+        if not task_id:
+            continue
+        agent = item.get("agent") if isinstance(item.get("agent"), dict) else {}
+        agent_status = str(agent.get("status") or "").strip().lower()
+        if agent_status not in {"stopped", "interrupted", "failed"}:
+            continue
+        if agent_status == "failed" and not include_failed:
+            skipped.append({"task_id": task_id, "reason": "failed_disabled"})
+            continue
+        if str(item.get("status") or "").strip().lower() == "error":
+            skipped.append({"task_id": task_id, "reason": "workspace_error_state"})
+            continue
+        safe_actions = item.get("safe_actions") if isinstance(item.get("safe_actions"), list) else []
+        if "resume" not in safe_actions and "guide_and_resume" not in safe_actions:
+            skipped.append({"task_id": task_id, "reason": "resume_not_safe"})
+            continue
+
+        prior = attempts.get(task_id) if isinstance(attempts.get(task_id), dict) else {}
+        last_resume_ts = int(prior.get("last_resume_ts") or 0)
+        if cooldown_sec > 0 and last_resume_ts > 0 and (now - last_resume_ts) < cooldown_sec:
+            skipped.append(
+                {
+                    "task_id": task_id,
+                    "reason": "cooldown",
+                    "retry_after_sec": max(0, cooldown_sec - (now - last_resume_ts)),
+                }
+            )
+            continue
+
+        updated = await coding_agent.start_agent_run(task_id, actor="coding-supervisor-auto")
+        next_agent = updated.get("agent") if isinstance(updated.get("agent"), dict) else {}
+        actions.append(
+            {
+                "task_id": task_id,
+                "action": "resume",
+                "previous_status": agent_status,
+                "agent_status": str(next_agent.get("status") or ""),
+            }
+        )
+        attempts[task_id] = {
+            "attempt_count": int(prior.get("attempt_count") or 0) + 1,
+            "last_resume_ts": now,
+            "last_status": agent_status,
+        }
+        if len(actions) >= limit:
+            break
+
+    if attempts:
+        recent_attempts = sorted(
+            ((key, value) for key, value in attempts.items() if isinstance(value, dict)),
+            key=lambda item: int(item[1].get("last_resume_ts") or 0),
+            reverse=True,
+        )[:200]
+        metadata["auto_recovery_state"] = {"attempts": {key: value for key, value in recent_attempts}}
+        _update_task_metadata_row(str(row["id"]), metadata, now=now)
+
+    return {
+        "enabled": True,
+        "checked": len(items),
+        "actions": actions,
+        "skipped": skipped,
+        "limit": limit,
+        "cooldown_sec": cooldown_sec,
+        "include_failed": include_failed,
+    }
+
+
 async def _execute_task(row: sqlite3.Row) -> None:
     started = _now()
     task_id = str(row["id"])
@@ -618,14 +741,26 @@ async def _execute_task(row: sqlite3.Row) -> None:
     output_text = ""
     error = ""
     agent_run_id = ""
+    auto_recovery_summary: dict[str, Any] = {"enabled": False, "checked": 0, "actions": [], "skipped": []}
     try:
         from app.agent_runtime_v1 import run_agent_v1
+
+        auto_recovery_summary = await _auto_recover_coding_supervisor(row)
+        prompt_preface = ""
+        if auto_recovery_summary.get("enabled"):
+            prompt_preface = (
+                "Automatic coding workspace recovery prepass ran before this supervisor turn.\n"
+                f"Summary: {json.dumps(auto_recovery_summary, ensure_ascii=False, sort_keys=True)}"
+            )
 
         timeout = float(getattr(S, "AGENT_TASKS_RUN_TIMEOUT_SEC", 1800) or 1800)
         payload, _backend, _model = await asyncio.wait_for(
             run_agent_v1(
                 req=_SyntheticRequest(headers={}),  # type: ignore[arg-type]
-                run_req=AgentRunRequest(agent=str(row["agent"] or "default"), input=_scheduled_prompt(row, due_ts)),
+                run_req=AgentRunRequest(
+                    agent=str(row["agent"] or "default"),
+                    input=_scheduled_prompt(row, due_ts, preface=prompt_preface),
+                ),
             ),
             timeout=timeout,
         )
@@ -636,6 +771,14 @@ async def _execute_task(row: sqlite3.Row) -> None:
     except Exception as exc:
         ok = False
         error = f"{type(exc).__name__}: {exc}"[:20_000]
+
+    if auto_recovery_summary.get("enabled"):
+        payload.setdefault("auto_recovery", auto_recovery_summary)
+        summary_text = json.dumps(auto_recovery_summary, ensure_ascii=False, sort_keys=True)
+        if output_text:
+            output_text = f"Auto recovery summary: {summary_text}\n\n{output_text}"[:20_000]
+        elif error:
+            error = f"Auto recovery summary: {summary_text}\n\n{error}"[:20_000]
 
     finished = _now()
     next_status = "completed"
