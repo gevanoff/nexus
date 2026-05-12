@@ -603,6 +603,28 @@
                     Clear saved GitHub token
                   </label>
                 </fieldset>
+                <fieldset id="settings_telegram_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Telegram notifications</legend>
+                  <div class="hint" style="margin-bottom:8px">Use the Telegram bot commands <strong>/chatinfo</strong> and <strong>/whoami</strong> to get your chat ID and handle, then save them here for coding-workspace alerts.</div>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_telegram_notifications_enabled" style="width:auto" />
+                    Enable Telegram notifications for coding workspaces
+                  </label>
+                  <label>Telegram chat ID
+                    <input type="text" id="settings_telegram_chat_id" autocomplete="off" placeholder="e.g. 123456789 or -1001234567890" />
+                  </label>
+                  <label>Telegram username
+                    <input type="text" id="settings_telegram_username" autocomplete="off" placeholder="without the @" />
+                  </label>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_telegram_notify_attention" style="width:auto" />
+                    Notify me when a coding workspace needs attention
+                  </label>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_telegram_notify_recovery" style="width:auto" />
+                    Notify me when Nexus Sentinel auto-resumes one of my workspaces
+                  </label>
+                </fieldset>
               </section>
             </div>
           </div>

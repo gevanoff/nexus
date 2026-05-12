@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import sqlite3
@@ -624,11 +625,11 @@ def _compute_next(row: sqlite3.Row, now: int) -> int | None:
 async def _auto_recover_coding_supervisor(row: sqlite3.Row) -> dict[str, Any]:
     metadata = _task_metadata_from_row(row)
     if str(metadata.get("supervisor_kind") or "").strip().lower() != "coding_workspace_supervisor":
-        return {"enabled": False, "checked": 0, "actions": [], "skipped": []}
+        return {"enabled": False, "checked": 0, "actions": [], "skipped": [], "notifications": []}
 
     settings = metadata.get("auto_recovery") if isinstance(metadata.get("auto_recovery"), dict) else {}
     if settings.get("enabled") is False:
-        return {"enabled": False, "checked": 0, "actions": [], "skipped": []}
+        return {"enabled": False, "checked": 0, "actions": [], "skipped": [], "notifications": []}
 
     try:
         limit = max(1, min(int(settings.get("limit") or 3), 20))
@@ -643,16 +644,25 @@ async def _auto_recover_coding_supervisor(row: sqlite3.Row) -> dict[str, Any]:
     except Exception:
         cooldown_sec = 1800
     include_failed = bool(settings.get("include_failed", True))
+    try:
+        notification_cooldown_sec = max(0, int(settings.get("notification_cooldown_sec") or 6 * 60 * 60))
+    except Exception:
+        notification_cooldown_sec = 6 * 60 * 60
 
-    from app import coding_agent, coding_workspace
+    from app import coding_agent, coding_workspace, telegram_notifications
 
     monitor = coding_workspace.monitor_tasks(limit=100, only_attention=True, stalled_after_sec=stalled_after_sec)
     items = monitor.get("tasks") if isinstance(monitor.get("tasks"), list) else []
     state = metadata.get("auto_recovery_state") if isinstance(metadata.get("auto_recovery_state"), dict) else {}
     attempts = state.get("attempts") if isinstance(state.get("attempts"), dict) else {}
+    notification_state = metadata.get("notification_state") if isinstance(metadata.get("notification_state"), dict) else {}
+    notification_attempts = notification_state.get("tasks") if isinstance(notification_state.get("tasks"), dict) else {}
     now = _now()
     actions: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    notifications: list[dict[str, Any]] = []
+    action_by_task: dict[str, dict[str, Any]] = {}
+    metadata_changed = False
 
     for item in items:
         if not isinstance(item, dict):
@@ -697,21 +707,103 @@ async def _auto_recover_coding_supervisor(row: sqlite3.Row) -> dict[str, Any]:
                 "agent_status": str(next_agent.get("status") or ""),
             }
         )
+        action_by_task[task_id] = actions[-1]
         attempts[task_id] = {
             "attempt_count": int(prior.get("attempt_count") or 0) + 1,
             "last_resume_ts": now,
             "last_status": agent_status,
         }
+        metadata_changed = True
         if len(actions) >= limit:
             break
 
-    if attempts:
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("id") or "").strip()
+        if not task_id:
+            continue
+        attention = item.get("attention") if isinstance(item.get("attention"), list) else []
+        if not attention:
+            continue
+        target = telegram_notifications.resolve_notification_target(
+            user_id=item.get("owner_user_id"),
+            owner_username=item.get("owner"),
+        )
+        event_kind = "auto_resume" if task_id in action_by_task else "needs_attention"
+        if event_kind == "auto_resume" and not bool(target.get("notify_on_recovery")):
+            notifications.append({"task_id": task_id, "event": event_kind, "sent": False, "reason": "recovery_disabled"})
+            continue
+        if event_kind == "needs_attention" and not bool(target.get("notify_on_attention")):
+            notifications.append({"task_id": task_id, "event": event_kind, "sent": False, "reason": "attention_disabled"})
+            continue
+        if not bool(target.get("enabled")):
+            notifications.append({"task_id": task_id, "event": event_kind, "sent": False, "reason": str(target.get("reason") or "disabled")})
+            continue
+
+        signature_payload = {
+            "event": event_kind,
+            "attention": attention,
+            "recommended_action": str(item.get("recommended_action") or ""),
+            "agent_status": str(((item.get("agent") or {}).get("status") or "")),
+            "workspace_status": str(item.get("status") or ""),
+            "action": action_by_task.get(task_id) or {},
+        }
+        signature = hashlib.sha1(json.dumps(signature_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        previous_notice = notification_attempts.get(task_id) if isinstance(notification_attempts.get(task_id), dict) else {}
+        last_sent_ts = int(previous_notice.get("last_sent_ts") or 0)
+        if notification_cooldown_sec > 0 and last_sent_ts > 0 and (now - last_sent_ts) < notification_cooldown_sec:
+            notifications.append(
+                {
+                    "task_id": task_id,
+                    "event": event_kind,
+                    "sent": False,
+                    "reason": "cooldown",
+                    "retry_after_sec": max(0, notification_cooldown_sec - (now - last_sent_ts)),
+                }
+            )
+            continue
+
+        text = telegram_notifications.render_coding_workspace_notification(
+            item=item,
+            event_kind=event_kind,
+            mention_username=str(target.get("mention_username") or ""),
+            action=action_by_task.get(task_id),
+        )
+        send_result = await telegram_notifications.send_message(chat_id=str(target.get("chat_id") or ""), text=text)
+        notification_row = {
+            "task_id": task_id,
+            "event": event_kind,
+            "sent": bool(send_result.get("ok")),
+            "chat_id": str(target.get("chat_id") or ""),
+        }
+        if send_result.get("ok"):
+            notification_attempts[task_id] = {
+                "event": event_kind,
+                "signature": signature,
+                "last_sent_ts": now,
+            }
+            metadata_changed = True
+        else:
+            notification_row["reason"] = str(send_result.get("error") or "send_failed")
+        notifications.append(notification_row)
+
+    if attempts or notification_attempts:
         recent_attempts = sorted(
             ((key, value) for key, value in attempts.items() if isinstance(value, dict)),
             key=lambda item: int(item[1].get("last_resume_ts") or 0),
             reverse=True,
         )[:200]
         metadata["auto_recovery_state"] = {"attempts": {key: value for key, value in recent_attempts}}
+        recent_notifications = sorted(
+            ((key, value) for key, value in notification_attempts.items() if isinstance(value, dict)),
+            key=lambda item: int(item[1].get("last_sent_ts") or 0),
+            reverse=True,
+        )[:500]
+        metadata["notification_state"] = {"tasks": {key: value for key, value in recent_notifications}}
+        metadata_changed = True
+
+    if metadata_changed:
         _update_task_metadata_row(str(row["id"]), metadata, now=now)
 
     return {
@@ -719,9 +811,11 @@ async def _auto_recover_coding_supervisor(row: sqlite3.Row) -> dict[str, Any]:
         "checked": len(items),
         "actions": actions,
         "skipped": skipped,
+        "notifications": notifications,
         "limit": limit,
         "cooldown_sec": cooldown_sec,
         "include_failed": include_failed,
+        "notification_cooldown_sec": notification_cooldown_sec,
     }
 
 

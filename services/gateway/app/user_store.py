@@ -369,6 +369,13 @@ def _default_settings() -> Dict[str, Any]:
         "coding": {
             "model_preference": "coder",
         },
+        "telegram": {
+            "notifications_enabled": False,
+            "chat_id": "",
+            "username": "",
+            "notify_on_attention": True,
+            "notify_on_recovery": True,
+        },
         "profile": {"system_prompt": "", "tone": ""},
     }
 

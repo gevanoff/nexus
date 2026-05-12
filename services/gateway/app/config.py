@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     GATEWAY_HOST: str = "0.0.0.0"
     GATEWAY_PORT: int = 8800
     GATEWAY_BEARER_TOKEN: str
+    TELEGRAM_TOKEN: str = ""
+    TELEGRAM_NOTIFY_ENABLED: bool = True
+    TELEGRAM_NOTIFY_TIMEOUT_SEC: float = 10.0
 
     # Observability listener (local HTTP only)
     OBSERVABILITY_ENABLED: bool = True

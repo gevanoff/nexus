@@ -2008,6 +2008,7 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
         "kind": str(public.get("kind") or "workspace"),
         "status": str(public.get("status") or ""),
         "owner": str(public.get("owner") or ""),
+        "owner_user_id": task.get("owner_user_id"),
         "repo_url": str(public.get("repo_url") or ""),
         "base_branch": str(public.get("base_branch") or ""),
         "branch_name": str(public.get("branch_name") or ""),

@@ -8,6 +8,7 @@ import pytest
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
+import app
 from app import agent_tasks
 
 
@@ -33,6 +34,11 @@ def _insert_task(metadata: dict[str, object]) -> object:
                 agent_tasks.json.dumps(metadata, separators=(",", ":"), sort_keys=True),
             ),
         )
+        return conn.execute("SELECT * FROM agent_tasks WHERE id=?", ("task-supervisor",)).fetchone()
+
+
+def _get_row() -> object:
+    with agent_tasks._connect() as conn:
         return conn.execute("SELECT * FROM agent_tasks WHERE id=?", ("task-supervisor",)).fetchone()
 
 
@@ -150,3 +156,108 @@ async def test_auto_recover_coding_supervisor_honors_cooldown(monkeypatch, tmp_p
     assert result["enabled"] is True
     assert result["actions"] == []
     assert result["skipped"] == [{"task_id": "code_123", "reason": "cooldown", "retry_after_sec": 1740}]
+
+
+@pytest.mark.asyncio
+async def test_auto_recover_coding_supervisor_sends_recovery_notification_once(monkeypatch, tmp_path):
+    db_path = tmp_path / "tasks.sqlite"
+    monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    agent_tasks.init_db()
+
+    now = 1_700_000_000
+    monkeypatch.setattr(agent_tasks, "_now", lambda: now)
+
+    sent: list[tuple[str, str]] = []
+
+    coding_workspace = types.SimpleNamespace(
+        monitor_tasks=lambda **_: {
+            "ok": True,
+            "tasks": [
+                {
+                    "id": "code_123",
+                    "status": "ready",
+                    "owner": "alice",
+                    "owner_user_id": 7,
+                    "attention": ["run_failed"],
+                    "recommended_action": "resume",
+                    "agent": {"status": "failed"},
+                    "safe_actions": ["resume", "guide_and_resume"],
+                }
+            ],
+        }
+    )
+
+    async def _start_agent_run(task_id: str, actor: str | None = None, **_: object):
+        return {"agent": {"status": "queued"}}
+
+    async def _send(**kwargs: object):
+        sent.append((str(kwargs.get("chat_id") or ""), str(kwargs.get("text") or "")))
+        return {"ok": True}
+
+    telegram_notifications = types.SimpleNamespace(
+        resolve_notification_target=lambda **_: {
+            "enabled": True,
+            "reason": "ok",
+            "chat_id": "12345",
+            "mention_username": "alice_tg",
+            "notify_on_attention": True,
+            "notify_on_recovery": True,
+        },
+        render_coding_workspace_notification=lambda **kwargs: f"note:{kwargs.get('event_kind')}:{kwargs.get('item', {}).get('id')}",
+        send_message=_send,
+    )
+
+    coding_agent = types.SimpleNamespace(start_agent_run=_start_agent_run)
+    monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
+    monkeypatch.setitem(sys.modules, "app.coding_agent", coding_agent)
+    monkeypatch.setitem(sys.modules, "app.telegram_notifications", telegram_notifications)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+    monkeypatch.setattr(app, "coding_agent", coding_agent, raising=False)
+    monkeypatch.setattr(app, "telegram_notifications", telegram_notifications, raising=False)
+
+    row = _insert_task(
+        {
+            "supervisor_kind": "coding_workspace_supervisor",
+            "auto_recovery": {
+                "cooldown_sec": 1800,
+                "notification_cooldown_sec": 7200,
+            },
+        }
+    )
+
+    result = await agent_tasks._auto_recover_coding_supervisor(row)
+
+    assert result["actions"] == [
+        {
+            "task_id": "code_123",
+            "action": "resume",
+            "previous_status": "failed",
+            "agent_status": "queued",
+        }
+    ]
+    assert result["notifications"] == [
+        {
+            "task_id": "code_123",
+            "event": "auto_resume",
+            "sent": True,
+            "chat_id": "12345",
+        }
+    ]
+    assert sent == [("12345", "note:auto_resume:code_123")]
+
+    stored = agent_tasks.get_task({"id": "task-supervisor"})
+    assert stored["task"]["metadata"]["notification_state"]["tasks"]["code_123"]["event"] == "auto_resume"
+
+    sent.clear()
+    result_again = await agent_tasks._auto_recover_coding_supervisor(_get_row())
+
+    assert result_again["notifications"] == [
+        {
+            "task_id": "code_123",
+            "event": "needs_attention",
+            "sent": False,
+            "reason": "cooldown",
+            "retry_after_sec": 7200,
+        }
+    ]
+    assert sent == []

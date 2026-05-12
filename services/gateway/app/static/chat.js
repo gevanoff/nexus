@@ -1403,6 +1403,11 @@
       preferredCodingModel: "coder",
       codingGitTokenConfigured: false,
       codingGitTokenHint: "",
+      telegramNotificationsEnabled: false,
+      telegramChatId: "",
+      telegramUsername: "",
+      telegramNotifyAttention: true,
+      telegramNotifyRecovery: true,
     };
 
     async function loadApiKeys() {
@@ -1561,6 +1566,11 @@
           preferredCodingModel: (s.coding && s.coding.model_preference) || s.coding_model_preference || s.codingModelPreference || "coder",
           codingGitTokenConfigured: !!(s.coding && s.coding.git_token_configured),
           codingGitTokenHint: (s.coding && s.coding.git_token_hint) || "",
+          telegramNotificationsEnabled: !!(s.telegram && s.telegram.notifications_enabled),
+          telegramChatId: (s.telegram && s.telegram.chat_id) || "",
+          telegramUsername: (s.telegram && s.telegram.username) || "",
+          telegramNotifyAttention: !(s.telegram && s.telegram.notify_on_attention === false),
+          telegramNotifyRecovery: !(s.telegram && s.telegram.notify_on_recovery === false),
         };
         applyUserSettingsToUi();
       } catch (e) {
@@ -1661,6 +1671,11 @@
         const autoplay = document.getElementById('settings_autoplay_tts');
         const preferredModel = document.getElementById('settings_model_preference');
         const preferredCodingModel = document.getElementById('settings_coding_model_preference');
+        const telegramNotificationsEnabled = document.getElementById('settings_telegram_notifications_enabled');
+        const telegramChatId = document.getElementById('settings_telegram_chat_id');
+        const telegramUsername = document.getElementById('settings_telegram_username');
+        const telegramNotifyAttention = document.getElementById('settings_telegram_notify_attention');
+        const telegramNotifyRecovery = document.getElementById('settings_telegram_notify_recovery');
         // populate voice list if available from TTS voices endpoint
         try {
           if (backendSelect) {
@@ -1749,6 +1764,11 @@
               ? `Saved GitHub token: ${userSettings.codingGitTokenHint || "configured"}`
               : "No GitHub token saved for coding workspaces.";
           }
+          if (telegramNotificationsEnabled) telegramNotificationsEnabled.checked = !!userSettings.telegramNotificationsEnabled;
+          if (telegramChatId) telegramChatId.value = userSettings.telegramChatId || "";
+          if (telegramUsername) telegramUsername.value = userSettings.telegramUsername || "";
+          if (telegramNotifyAttention) telegramNotifyAttention.checked = !!userSettings.telegramNotifyAttention;
+          if (telegramNotifyRecovery) telegramNotifyRecovery.checked = !!userSettings.telegramNotifyRecovery;
         } catch (e) {}
 
         // Show password controls only when user auth is enabled and the user
@@ -1805,6 +1825,11 @@
       const tone = document.getElementById('settings_profile_tone');
       const codingGitToken = document.getElementById('settings_coding_git_token');
       const clearCodingGitToken = document.getElementById('settings_clear_coding_git_token');
+      const telegramNotificationsEnabled = document.getElementById('settings_telegram_notifications_enabled');
+      const telegramChatId = document.getElementById('settings_telegram_chat_id');
+      const telegramUsername = document.getElementById('settings_telegram_username');
+      const telegramNotifyAttention = document.getElementById('settings_telegram_notify_attention');
+      const telegramNotifyRecovery = document.getElementById('settings_telegram_notify_recovery');
       const curPwd = document.getElementById('settings_current_password');
       const newPwd = document.getElementById('settings_new_password');
       const confirmPwd = document.getElementById('settings_confirm_password');
@@ -1812,6 +1837,7 @@
       const chosenCodingModel = normalizePreferredModel(preferredCodingModel ? String(preferredCodingModel.value || "").trim() : "coder");
       const gitTokenValue = codingGitToken ? String(codingGitToken.value || "").trim() : "";
       const clearGitToken = !!(clearCodingGitToken && clearCodingGitToken.checked);
+      const telegramUsernameValue = telegramUsername ? String(telegramUsername.value || '').trim().replace(/^@+/, '') : '';
       const newSettings = {
         tts: { voice: select ? select.value : "", backend_class: backendSelect ? backendSelect.value : "" },
         ui: {
@@ -1822,6 +1848,13 @@
         profile: { system_prompt: sys ? String(sys.value || '') : '', tone: tone ? String(tone.value || '') : '' },
         chat: { model_preference: chosenModel || "default" },
         coding: { model_preference: chosenCodingModel || "coder" },
+        telegram: {
+          notifications_enabled: !!(telegramNotificationsEnabled && telegramNotificationsEnabled.checked),
+          chat_id: telegramChatId ? String(telegramChatId.value || '').trim() : '',
+          username: telegramUsernameValue,
+          notify_on_attention: !(telegramNotifyAttention && telegramNotifyAttention.checked === false),
+          notify_on_recovery: !(telegramNotifyRecovery && telegramNotifyRecovery.checked === false),
+        },
       };
       if (gitTokenValue) {
         newSettings.coding.git_token = gitTokenValue;
@@ -1868,6 +1901,11 @@
         userSettings.profileTone = newSettings.profile?.tone || "";
         userSettings.preferredModel = newSettings.chat?.model_preference || "default";
         userSettings.preferredCodingModel = newSettings.coding?.model_preference || "coder";
+        userSettings.telegramNotificationsEnabled = !!newSettings.telegram?.notifications_enabled;
+        userSettings.telegramChatId = newSettings.telegram?.chat_id || "";
+        userSettings.telegramUsername = newSettings.telegram?.username || "";
+        userSettings.telegramNotifyAttention = !(newSettings.telegram && newSettings.telegram.notify_on_attention === false);
+        userSettings.telegramNotifyRecovery = !(newSettings.telegram && newSettings.telegram.notify_on_recovery === false);
         if (clearGitToken) {
           userSettings.codingGitTokenConfigured = false;
           userSettings.codingGitTokenHint = "";
