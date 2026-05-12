@@ -10,6 +10,18 @@ This service runs as its own container via `docker-compose.telegram-bot.yml` and
 - Output: Gateway chat/image/speech/music requests
 - Auth: `GATEWAY_BEARER_TOKEN`
 
+## Linking a user chat for notifications
+
+For proactive notifications, the bot needs a Telegram `chat_id`. A username by itself is not sufficient.
+
+Use the Nexus UI to generate a one-time Telegram link command, then send that command to the bot in a private chat:
+
+- Open `Settings -> Telegram`
+- Click `Generate bot link command`
+- Send the generated `/link ...` command to the bot in a direct message
+
+The bot will bind that private chat to the signed-in Nexus user account so Gateway can deliver notifications there.
+
 ## Required configuration
 
 Set these in `nexus/.env`:

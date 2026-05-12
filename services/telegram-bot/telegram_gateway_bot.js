@@ -56,6 +56,7 @@ const COMMANDS = [
   { command: 'me', description: 'Show bot profile information' },
   { command: 'whoami', description: 'Show your chat membership status' },
   { command: 'chatinfo', description: 'Show chat metadata' },
+  { command: 'link', description: 'Link this private chat to your Nexus account: /link code' },
   { command: 'poll', description: 'Create a poll: /poll Question | option 1 | option 2' },
   { command: 'image', description: 'Generate an image: /image prompt' },
   { command: 'scan', description: 'Run OCR against an image URL: /scan https://...' },
@@ -441,6 +442,60 @@ async function handleScanCommand(ctx, imageUrl) {
   return true;
 }
 
+async function handleLinkCommand(ctx, code) {
+  const rawCode = String(code || '').trim();
+  if (!rawCode) {
+    await ctx.reply('Usage: /link <code>');
+    return true;
+  }
+  if (String(ctx.chat?.type || '') !== 'private') {
+    await ctx.reply('Run /link in a direct chat with the bot so notifications go to your private Telegram chat.');
+    return true;
+  }
+
+  const payload = {
+    code: rawCode,
+    chat_id: String(ctx.chat.id),
+    chat_type: String(ctx.chat?.type || ''),
+    telegram_user_id: ctx.from?.id ? String(ctx.from.id) : '',
+    username: ctx.from?.username || '',
+  };
+
+  try {
+    const res = await axios.post(
+      `${GATEWAY_BASE_URL}/v1/telegram/link`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: GATEWAY_SOCKET_TIMEOUT_MS,
+      },
+    );
+    const linkedUser = String(res.data?.username || '').trim();
+    if (linkedUser) {
+      await ctx.reply(`Linked this Telegram chat to Nexus user '${linkedUser}'.`);
+    } else {
+      await ctx.reply('Linked this Telegram chat to your Nexus account.');
+    }
+    return true;
+  } catch (err) {
+    let detail = 'link_failed';
+    if (axios.isAxiosError(err)) {
+      detail = String(err.response?.data?.detail || err.message || 'link_failed');
+    } else if (err) {
+      detail = err.message || String(err);
+    }
+    if (detail === 'code_invalid' || detail === 'code_expired') {
+      await ctx.reply('That link code is invalid or expired. Generate a new one from Nexus Settings and try again.');
+      return true;
+    }
+    await ctx.reply(`Unable to link this chat right now (${detail}).`);
+    return true;
+  }
+}
+
 function parseSlashCommand(text) {
   const raw = String(text || '').trim();
   const match = raw.match(/^\/([a-z0-9_]+)(?:@[a-z0-9_]+)?(?:\s+([\s\S]*))?$/i);
@@ -481,6 +536,9 @@ async function maybeHandleSlashCommand(ctx, text) {
     const imageUrl = command.args;
     await sendAck(ctx, 'Scanning image…');
     return handleScanCommand(ctx, imageUrl);
+  }
+  if (command.name === 'link') {
+    return handleLinkCommand(ctx, command.args);
   }
 
   return false;
@@ -523,7 +581,7 @@ async function queryGateway(history, message) {
 
 
 bot.command('start', async (ctx) => {
-  await ctx.reply('Welcome! Send a message to chat with the Gateway.');
+  await ctx.reply('Welcome! Send a message to chat with the Gateway. Use /link <code> from Nexus Settings to connect this private chat for notifications.');
 });
 
 bot.command('help', async (ctx) => {

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import secrets
+import time
+import hashlib
 from typing import Any, Dict, Optional
 
 from app import user_store
@@ -28,6 +31,104 @@ def _coerce_chat_id(value: Any) -> str:
     if raw.isdigit():
         return raw
     return ""
+
+
+def _link_code_ttl_sec() -> int:
+    return 15 * 60
+
+
+def _normalize_link_code(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    return "".join(ch for ch in raw if ch.isalnum())
+
+
+def _link_code_hash(value: str) -> str:
+    return hashlib.sha256(_normalize_link_code(value).encode("utf-8")).hexdigest()
+
+
+def _telegram_link_state(settings: Dict[str, Any]) -> Dict[str, Any]:
+    telegram = settings.get("telegram") if isinstance(settings, dict) else None
+    telegram = telegram if isinstance(telegram, dict) else {}
+    link = telegram.get("link") if isinstance(telegram.get("link"), dict) else {}
+    return link if isinstance(link, dict) else {}
+
+
+def create_link_code(*, user_id: int) -> Dict[str, Any]:
+    settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user_id)) or {}
+    telegram = settings.get("telegram") if isinstance(settings.get("telegram"), dict) else {}
+    telegram = dict(telegram)
+    link = _telegram_link_state(settings)
+    now_ts = int(time.time())
+    code = secrets.token_hex(4)
+    link.update(
+        {
+            "pending_code_hash": _link_code_hash(code),
+            "pending_created_ts": now_ts,
+            "pending_expires_ts": now_ts + _link_code_ttl_sec(),
+        }
+    )
+    telegram["link"] = link
+    settings["telegram"] = telegram
+    user_store.set_settings(S.USER_DB_PATH, user_id=int(user_id), settings=settings)
+    return {
+        "code": code,
+        "expires_ts": int(link.get("pending_expires_ts") or 0),
+        "command": f"/link {code}",
+    }
+
+
+def redeem_link_code(*, code: str, chat_id: Any, username: Any = None, telegram_user_id: Any = None, chat_type: Any = None) -> Dict[str, Any]:
+    normalized = _normalize_link_code(code)
+    if not normalized:
+        return {"ok": False, "error": "code_required"}
+    target_chat_id = _coerce_chat_id(chat_id)
+    if not target_chat_id:
+        return {"ok": False, "error": "chat_id_invalid"}
+
+    code_hash = _link_code_hash(normalized)
+    now_ts = int(time.time())
+    expired_match = False
+    for user in user_store.list_users(S.USER_DB_PATH):
+        try:
+            settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user.id)) or {}
+        except Exception:
+            continue
+        telegram = settings.get("telegram") if isinstance(settings.get("telegram"), dict) else {}
+        telegram = dict(telegram)
+        link = _telegram_link_state(settings)
+        pending_hash = str(link.get("pending_code_hash") or "").strip()
+        if not pending_hash:
+            continue
+        if not secrets.compare_digest(pending_hash, code_hash):
+            continue
+        expires_ts = int(link.get("pending_expires_ts") or 0)
+        if expires_ts and expires_ts < now_ts:
+            expired_match = True
+            continue
+        normalized_username = _normalize_username(username)
+        telegram["chat_id"] = target_chat_id
+        if normalized_username:
+            telegram["username"] = normalized_username
+        link.pop("pending_code_hash", None)
+        link.pop("pending_created_ts", None)
+        link.pop("pending_expires_ts", None)
+        link["linked_ts"] = now_ts
+        link["telegram_user_id"] = str(telegram_user_id or "").strip()
+        link["chat_type"] = str(chat_type or "").strip()
+        link["linked_chat_id"] = target_chat_id
+        if normalized_username:
+            link["linked_username"] = normalized_username
+        telegram["link"] = link
+        settings["telegram"] = telegram
+        user_store.set_settings(S.USER_DB_PATH, user_id=int(user.id), settings=settings)
+        return {
+            "ok": True,
+            "user_id": int(user.id),
+            "username": str(user.username or ""),
+            "chat_id": target_chat_id,
+            "telegram_username": normalized_username,
+        }
+    return {"ok": False, "error": "code_expired" if expired_match else "code_invalid"}
 
 
 def workspace_url(task_id: str) -> str:

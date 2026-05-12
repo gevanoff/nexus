@@ -578,7 +578,15 @@
               <section id="settings-telegram" class="settings-section">
                 <fieldset id="settings_telegram_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px">
                   <legend style="font-size:13px">Telegram connection</legend>
-                  <div class="hint" style="margin-bottom:8px">Use the Telegram bot commands <strong>/chatinfo</strong> and <strong>/whoami</strong> to get your chat ID and handle. Telegram-originated generations already deliver their result directly, so they do not need extra notifications.</div>
+                  <div class="hint" style="margin-bottom:8px">Username alone is not enough for proactive Telegram delivery. Use the button below to generate a one-time <strong>/link</strong> command, then send it to the bot in a private chat. Telegram-originated generations already deliver their result directly, so they do not need extra notifications.</div>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                    <button type="button" id="settings_telegram_generate_link_code" data-ui-role="secondary">Generate bot link command</button>
+                    <div id="settings_telegram_link_status" class="hint"></div>
+                  </div>
+                  <div id="settings_telegram_link_command_wrap" style="display:none;margin-bottom:8px">
+                    <div class="hint" style="margin-bottom:4px">Send this command to the Telegram bot in a direct message. It expires quickly and is shown only once.</div>
+                    <pre id="settings_telegram_link_command" style="margin:0;padding:10px;border-radius:8px;background:rgba(0,0,0,0.22);white-space:pre-wrap;word-break:break-word"></pre>
+                  </div>
                   <label style="display:flex;gap:8px;align-items:center">
                     <input type="checkbox" id="settings_telegram_notifications_enabled" style="width:auto" />
                     Enable all Telegram notifications

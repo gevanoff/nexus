@@ -50,7 +50,8 @@ from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
 from app import user_store
 from app import agent_tasks
-from app.auth import configured_static_bearer_tokens
+from app import telegram_notifications
+from app.auth import configured_static_bearer_tokens, require_bearer
 from app.agent_runtime_v1 import tools_for_tier
 from app.resources_snapshot import (
     build_registry_backend_status_payload,
@@ -824,6 +825,15 @@ def _require_user(req: Request) -> Optional[user_store.User]:
     return user
 
 
+def _require_static_bearer_service(req: Request) -> user_store.User:
+    token = _session_token_from_req(req)
+    require_bearer(req)
+    user = _static_bearer_user(token)
+    if user is None:
+        raise HTTPException(status_code=403, detail="static bearer token required")
+    return user
+
+
 def _require_admin(req: Request) -> user_store.User:
     user = _require_user(req)
     if user is None:
@@ -954,6 +964,12 @@ def _sanitize_user_settings_for_response(settings: Dict[str, Any]) -> Dict[str, 
         coding.pop("clear_git_token", None)
         coding["git_token_configured"] = bool(token)
         coding["git_token_hint"] = _token_hint(token)
+    telegram = out.get("telegram")
+    if isinstance(telegram, dict):
+        link = telegram.get("link")
+        if isinstance(link, dict):
+            link.pop("pending_code_hash", None)
+            link["has_pending_code"] = bool(int(link.get("pending_expires_ts") or 0) > int(time.time()))
     return out
 
 
@@ -3648,6 +3664,36 @@ async def ui_user_settings_put(req: Request) -> Dict[str, Any]:
     merged = _merge_user_settings_with_secrets(current if isinstance(current, dict) else {}, settings)
     user_store.set_settings(S.USER_DB_PATH, user_id=user.id, settings=merged)
     return {"ok": True, "settings": _sanitize_user_settings_for_response(merged)}
+
+
+@router.post("/ui/api/user/telegram/link-code", include_in_schema=False)
+async def ui_user_telegram_link_code(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    payload = telegram_notifications.create_link_code(user_id=int(user.id))
+    return {"ok": True, **payload}
+
+
+@router.post("/v1/telegram/link", include_in_schema=False)
+async def telegram_link_redeem(req: Request) -> Dict[str, Any]:
+    _require_static_bearer_service(req)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    result = telegram_notifications.redeem_link_code(
+        code=str(body.get("code") or "").strip(),
+        chat_id=body.get("chat_id"),
+        username=body.get("username"),
+        telegram_user_id=body.get("telegram_user_id"),
+        chat_type=body.get("chat_type"),
+    )
+    if not bool(result.get("ok")):
+        error = str(result.get("error") or "link_failed")
+        status = 400 if error in {"code_required", "chat_id_invalid", "code_invalid", "code_expired"} else 500
+        raise HTTPException(status_code=status, detail=error)
+    return result
 
 
 @router.get("/ui/api/user/api-keys", include_in_schema=False)

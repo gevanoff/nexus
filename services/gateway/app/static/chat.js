@@ -1406,6 +1406,14 @@
       telegramNotificationsEnabled: false,
       telegramChatId: "",
       telegramUsername: "",
+      telegramLink: {
+        linkedTs: 0,
+        linkedUsername: "",
+        linkedChatId: "",
+        hasPendingCode: false,
+        pendingExpiresTs: 0,
+      },
+      telegramPendingLinkCommand: "",
       telegramApps: {
         coding: { enabled: true, attention: true, recovery: true, noteworthy: true },
         image: { complete: false },
@@ -1462,6 +1470,77 @@
         const el = document.getElementById(id);
         if (el) el.disabled = !enabled;
       });
+    }
+
+    function formatUnixTimestamp(ts) {
+      const value = Number(ts || 0);
+      if (!Number.isFinite(value) || value <= 0) return '';
+      try {
+        return new Date(value * 1000).toLocaleString();
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function renderTelegramLinkState() {
+      const statusEl = document.getElementById('settings_telegram_link_status');
+      const wrapEl = document.getElementById('settings_telegram_link_command_wrap');
+      const commandEl = document.getElementById('settings_telegram_link_command');
+      if (statusEl) {
+        const linked = userSettings.telegramLink && userSettings.telegramLink.linkedChatId;
+        const linkedUsername = userSettings.telegramLink && userSettings.telegramLink.linkedUsername ? ` @${userSettings.telegramLink.linkedUsername}` : '';
+        const linkedAt = userSettings.telegramLink && userSettings.telegramLink.linkedTs ? formatUnixTimestamp(userSettings.telegramLink.linkedTs) : '';
+        const pendingAt = userSettings.telegramLink && userSettings.telegramLink.pendingExpiresTs ? formatUnixTimestamp(userSettings.telegramLink.pendingExpiresTs) : '';
+        if (linked && userSettings.telegramLink && userSettings.telegramLink.hasPendingCode) {
+          statusEl.textContent = `Linked${linkedUsername} to chat ${userSettings.telegramLink.linkedChatId}${linkedAt ? ` on ${linkedAt}` : ''}. A newer link code is pending${pendingAt ? ` until ${pendingAt}` : ''}.`;
+        } else if (linked) {
+          statusEl.textContent = `Linked${linkedUsername} to chat ${userSettings.telegramLink.linkedChatId}${linkedAt ? ` on ${linkedAt}` : ''}.`;
+        } else if (userSettings.telegramLink && userSettings.telegramLink.hasPendingCode) {
+          statusEl.textContent = `A Telegram link code is pending${pendingAt ? ` until ${pendingAt}` : ''}.`;
+        } else {
+          statusEl.textContent = 'No Telegram chat linked yet.';
+        }
+      }
+      if (wrapEl && commandEl) {
+        const command = String(userSettings.telegramPendingLinkCommand || '').trim();
+        if (command) {
+          wrapEl.style.display = 'block';
+          commandEl.textContent = command;
+        } else {
+          wrapEl.style.display = 'none';
+          commandEl.textContent = '';
+        }
+      }
+    }
+
+    async function generateTelegramLinkCode() {
+      try {
+        const button = document.getElementById('settings_telegram_generate_link_code');
+        if (button) button.disabled = true;
+        const resp = await fetch('/ui/api/user/telegram/link-code', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (handle401(resp)) return;
+        if (!resp.ok) {
+          const txt = await resp.text();
+          alert(`Failed to generate Telegram link code: ${txt || resp.status}`);
+          return;
+        }
+        const payload = await resp.json();
+        userSettings.telegramPendingLinkCommand = String(payload?.command || '').trim();
+        userSettings.telegramLink = userSettings.telegramLink || {};
+        userSettings.telegramLink.hasPendingCode = true;
+        userSettings.telegramLink.pendingExpiresTs = Number(payload?.expires_ts || 0);
+        renderTelegramLinkState();
+      } catch (e) {
+        alert(`Failed to generate Telegram link code: ${String(e)}`);
+      } finally {
+        const button = document.getElementById('settings_telegram_generate_link_code');
+        if (button) button.disabled = false;
+      }
     }
 
     async function loadApiKeys() {
@@ -1623,6 +1702,14 @@
           telegramNotificationsEnabled: !!(s.telegram && s.telegram.notifications_enabled),
           telegramChatId: (s.telegram && s.telegram.chat_id) || "",
           telegramUsername: (s.telegram && s.telegram.username) || "",
+          telegramLink: {
+            linkedTs: Number(s.telegram?.link?.linked_ts || 0),
+            linkedUsername: (s.telegram?.link?.linked_username) || (s.telegram && s.telegram.username) || "",
+            linkedChatId: (s.telegram?.link?.linked_chat_id) || (s.telegram && s.telegram.chat_id) || "",
+            hasPendingCode: !!(s.telegram?.link?.has_pending_code),
+            pendingExpiresTs: Number(s.telegram?.link?.pending_expires_ts || 0),
+          },
+          telegramPendingLinkCommand: "",
           telegramApps: loadTelegramApps(s),
         };
         applyUserSettingsToUi();
@@ -1839,6 +1926,7 @@
           if (telegramMusicComplete) telegramMusicComplete.checked = !!(userSettings.telegramApps && userSettings.telegramApps.music && userSettings.telegramApps.music.complete);
           if (telegramVideoComplete) telegramVideoComplete.checked = !!(userSettings.telegramApps && userSettings.telegramApps.video && userSettings.telegramApps.video.complete);
           setTelegramAppControlsEnabled();
+          renderTelegramLinkState();
         } catch (e) {}
 
         // Show password controls only when user auth is enabled and the user
@@ -1997,6 +2085,14 @@
         userSettings.telegramNotificationsEnabled = !!newSettings.telegram?.notifications_enabled;
         userSettings.telegramChatId = newSettings.telegram?.chat_id || "";
         userSettings.telegramUsername = newSettings.telegram?.username || "";
+        userSettings.telegramPendingLinkCommand = "";
+        userSettings.telegramLink = {
+          linkedTs: Number(userSettings.telegramLink?.linkedTs || 0),
+          linkedUsername: userSettings.telegramUsername || userSettings.telegramLink?.linkedUsername || "",
+          linkedChatId: userSettings.telegramChatId || userSettings.telegramLink?.linkedChatId || "",
+          hasPendingCode: false,
+          pendingExpiresTs: 0,
+        };
         userSettings.telegramApps = {
           coding: {
             enabled: !(newSettings.telegram?.apps?.coding && newSettings.telegram.apps.coding.enabled === false),
@@ -2864,6 +2960,7 @@
       const settingsSave = document.getElementById('settings_save');
       const settingsClose = document.getElementById('settingsClose');
       const telegramNotificationsEnabled = document.getElementById('settings_telegram_notifications_enabled');
+      const telegramGenerateLinkCode = document.getElementById('settings_telegram_generate_link_code');
       const createApiKeyBtn = document.getElementById('settings_create_api_key');
       const forgetBrowserApiKeyBtn = document.getElementById('settings_forget_browser_api_key');
       const useBrowserApiKeyBtn = document.getElementById('settings_use_browser_api_key');
@@ -2871,6 +2968,7 @@
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
       if (settingsSave) settingsSave.addEventListener('click', () => saveSettingsFromModal());
       if (telegramNotificationsEnabled) telegramNotificationsEnabled.addEventListener('change', () => setTelegramAppControlsEnabled());
+      if (telegramGenerateLinkCode) telegramGenerateLinkCode.addEventListener('click', () => void generateTelegramLinkCode());
       if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
       if (forgetBrowserApiKeyBtn) forgetBrowserApiKeyBtn.addEventListener('click', () => forgetStoredApiKey());
       if (useBrowserApiKeyBtn) useBrowserApiKeyBtn.addEventListener('click', () => void useBrowserApiKeyFromSettings());
