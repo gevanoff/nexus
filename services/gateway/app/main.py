@@ -132,6 +132,13 @@ async def lifespan(_app: FastAPI):
         await start_agent_task_scheduler()
     except Exception as e:
         logger.warning("startup: agent task scheduler unavailable (%s: %s)", type(e).__name__, e)
+
+    try:
+        from app.sentinel_runtime import start_runtime as start_sentinel_runtime
+
+        await start_sentinel_runtime()
+    except Exception as e:
+        logger.warning("startup: nexus sentinel unavailable (%s: %s)", type(e).__name__, e)
     
     await _startup_check_models()
     yield
@@ -143,6 +150,12 @@ async def lifespan(_app: FastAPI):
         await stop_agent_task_scheduler()
     except Exception as e:
         logger.info("shutdown: agent task scheduler stop skipped (%s: %s)", type(e).__name__, e)
+    try:
+        from app.sentinel_runtime import stop_runtime as stop_sentinel_runtime
+
+        await stop_sentinel_runtime()
+    except Exception as e:
+        logger.info("shutdown: nexus sentinel stop skipped (%s: %s)", type(e).__name__, e)
     await stop_health_checker()
     await stop_registry_sync()
     observability.stop()

@@ -11,6 +11,7 @@
     ["OCR / Scan", "/ui/ocr"],
     ["Coding Workspaces", "/ui/coding"],
     ["Scheduled Tasks", "/ui/tasks"],
+    ["Sentinel", "/ui/sentinel"],
     ["Resources", "/ui/resources"],
   ];
 

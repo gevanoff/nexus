@@ -357,6 +357,16 @@ class Settings(BaseSettings):
     AGENT_TASKS_MIN_DELAY_SEC: int = 5
     AGENT_TASKS_RUN_TIMEOUT_SEC: float = 1800.0
 
+    # Continuous Nexus Sentinel runtime.
+    NEXUS_SENTINEL_ENABLED: bool = True
+    NEXUS_SENTINEL_DB_PATH: str = "/var/lib/gateway/data/sentinel/sentinel.sqlite"
+    NEXUS_SENTINEL_POLL_INTERVAL_SEC: float = 15.0
+    NEXUS_SENTINEL_STALLED_AFTER_SEC: float = 900.0
+    NEXUS_SENTINEL_RESOURCE_PRESSURE_PCT: float = 0.9
+    NEXUS_SENTINEL_RESUME_COOLDOWN_SEC: int = 1800
+    NEXUS_SENTINEL_NOTIFICATION_COOLDOWN_SEC: int = 6 * 60 * 60
+    NEXUS_SENTINEL_MAX_EVENTS: int = 5000
+
     # Admission control / load shedding
     AGENT_BACKEND_CONCURRENCY_VLLM: int = 4
     AGENT_BACKEND_CONCURRENCY_MLX: int = 2

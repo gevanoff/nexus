@@ -60,6 +60,7 @@ from app.resources_snapshot import (
     lifecycle_timeout,
 )
 from app.tools_bus import TOOL_SCHEMAS
+from app import sentinel_runtime
 
 
 logger = logging.getLogger(__name__)
@@ -2134,6 +2135,14 @@ async def ui_personaplex_frontend(req: Request) -> HTMLResponse:
 async def ui_resources_frontend(req: Request) -> HTMLResponse:
     _require_ui_access(req)
     html_path = Path(__file__).with_name("static").joinpath("resources.html")
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+@router.get("/ui/sentinel", include_in_schema=False)
+async def ui_sentinel_frontend(req: Request) -> HTMLResponse:
+    _require_ui_access(req)
+    _require_admin(req)
+    html_path = Path(__file__).with_name("static").joinpath("sentinel.html")
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
@@ -4997,6 +5006,20 @@ async def ui_chat_stream(req: Request):
 async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     return await build_registry_backend_status_payload()
+
+
+@router.get("/ui/api/sentinel/status", include_in_schema=False)
+async def ui_api_sentinel_status(req: Request, limit: int = 120) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_admin(req)
+    return sentinel_runtime.status_payload(limit=limit)
+
+
+@router.post("/ui/api/sentinel/scan", include_in_schema=False)
+async def ui_api_sentinel_scan(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_admin(req)
+    return await sentinel_runtime.run_monitor_once()
 
 
 @router.get("/ui/api/lifecycle/status", include_in_schema=False)
