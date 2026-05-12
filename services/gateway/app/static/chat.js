@@ -3137,5 +3137,4 @@
   })();
   setOutput("Ready.");
   setMeta("Ctrl+Enter to send");
-  void loadModels();
 })();
