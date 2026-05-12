@@ -1406,9 +1406,63 @@
       telegramNotificationsEnabled: false,
       telegramChatId: "",
       telegramUsername: "",
-      telegramNotifyAttention: true,
-      telegramNotifyRecovery: true,
+      telegramApps: {
+        coding: { enabled: true, attention: true, recovery: true, noteworthy: true },
+        image: { complete: false },
+        music: { complete: false },
+        video: { complete: false },
+      },
     };
+
+    function defaultTelegramApps() {
+      return {
+        coding: { enabled: true, attention: true, recovery: true, noteworthy: true },
+        image: { complete: false },
+        music: { complete: false },
+        video: { complete: false },
+      };
+    }
+
+    function loadTelegramApps(settings) {
+      const telegram = settings && typeof settings.telegram === 'object' ? settings.telegram : {};
+      const apps = telegram && typeof telegram.apps === 'object' ? telegram.apps : {};
+      return {
+        coding: {
+          enabled: apps.coding && typeof apps.coding.enabled === 'boolean' ? apps.coding.enabled : true,
+          attention: apps.coding && typeof apps.coding.notify_on_attention === 'boolean' ? apps.coding.notify_on_attention : !(telegram && telegram.notify_on_attention === false),
+          recovery: apps.coding && typeof apps.coding.notify_on_recovery === 'boolean' ? apps.coding.notify_on_recovery : !(telegram && telegram.notify_on_recovery === false),
+          noteworthy: apps.coding && typeof apps.coding.notify_on_noteworthy === 'boolean' ? apps.coding.notify_on_noteworthy : !(telegram && telegram.notify_on_noteworthy === false),
+        },
+        image: {
+          complete: !!(apps.image && apps.image.notify_on_complete),
+        },
+        music: {
+          complete: !!(apps.music && apps.music.notify_on_complete),
+        },
+        video: {
+          complete: !!(apps.video && apps.video.notify_on_complete),
+        },
+      };
+    }
+
+    function setTelegramAppControlsEnabled() {
+      const master = document.getElementById('settings_telegram_notifications_enabled');
+      const enabled = !!(master && master.checked);
+      [
+        'settings_telegram_chat_id',
+        'settings_telegram_username',
+        'settings_telegram_coding_enabled',
+        'settings_telegram_coding_attention',
+        'settings_telegram_coding_recovery',
+        'settings_telegram_coding_noteworthy',
+        'settings_telegram_image_complete',
+        'settings_telegram_music_complete',
+        'settings_telegram_video_complete',
+      ].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !enabled;
+      });
+    }
 
     async function loadApiKeys() {
       try {
@@ -1569,8 +1623,7 @@
           telegramNotificationsEnabled: !!(s.telegram && s.telegram.notifications_enabled),
           telegramChatId: (s.telegram && s.telegram.chat_id) || "",
           telegramUsername: (s.telegram && s.telegram.username) || "",
-          telegramNotifyAttention: !(s.telegram && s.telegram.notify_on_attention === false),
-          telegramNotifyRecovery: !(s.telegram && s.telegram.notify_on_recovery === false),
+          telegramApps: loadTelegramApps(s),
         };
         applyUserSettingsToUi();
       } catch (e) {
@@ -1631,7 +1684,13 @@
 
     function setSettingsSection(sectionId) {
       const requested = String(sectionId || '').trim();
-      const normalized = requested === 'security' ? 'settings-security' : requested || 'settings-backends';
+      const normalized = requested === 'security'
+        ? 'settings-security'
+        : requested === 'coding'
+          ? 'settings-coding'
+          : requested === 'telegram'
+            ? 'settings-telegram'
+            : requested || 'settings-backends';
       const targetId = document.getElementById(normalized) ? normalized : 'settings-backends';
       const menuButtons = document.querySelectorAll('.settings-menu button');
       const sections = document.querySelectorAll('.settings-section');
@@ -1674,8 +1733,13 @@
         const telegramNotificationsEnabled = document.getElementById('settings_telegram_notifications_enabled');
         const telegramChatId = document.getElementById('settings_telegram_chat_id');
         const telegramUsername = document.getElementById('settings_telegram_username');
-        const telegramNotifyAttention = document.getElementById('settings_telegram_notify_attention');
-        const telegramNotifyRecovery = document.getElementById('settings_telegram_notify_recovery');
+        const telegramCodingEnabled = document.getElementById('settings_telegram_coding_enabled');
+        const telegramCodingAttention = document.getElementById('settings_telegram_coding_attention');
+        const telegramCodingRecovery = document.getElementById('settings_telegram_coding_recovery');
+        const telegramCodingNoteworthy = document.getElementById('settings_telegram_coding_noteworthy');
+        const telegramImageComplete = document.getElementById('settings_telegram_image_complete');
+        const telegramMusicComplete = document.getElementById('settings_telegram_music_complete');
+        const telegramVideoComplete = document.getElementById('settings_telegram_video_complete');
         // populate voice list if available from TTS voices endpoint
         try {
           if (backendSelect) {
@@ -1767,8 +1831,14 @@
           if (telegramNotificationsEnabled) telegramNotificationsEnabled.checked = !!userSettings.telegramNotificationsEnabled;
           if (telegramChatId) telegramChatId.value = userSettings.telegramChatId || "";
           if (telegramUsername) telegramUsername.value = userSettings.telegramUsername || "";
-          if (telegramNotifyAttention) telegramNotifyAttention.checked = !!userSettings.telegramNotifyAttention;
-          if (telegramNotifyRecovery) telegramNotifyRecovery.checked = !!userSettings.telegramNotifyRecovery;
+          if (telegramCodingEnabled) telegramCodingEnabled.checked = !!(userSettings.telegramApps && userSettings.telegramApps.coding && userSettings.telegramApps.coding.enabled);
+          if (telegramCodingAttention) telegramCodingAttention.checked = !!(userSettings.telegramApps && userSettings.telegramApps.coding && userSettings.telegramApps.coding.attention);
+          if (telegramCodingRecovery) telegramCodingRecovery.checked = !!(userSettings.telegramApps && userSettings.telegramApps.coding && userSettings.telegramApps.coding.recovery);
+          if (telegramCodingNoteworthy) telegramCodingNoteworthy.checked = !!(userSettings.telegramApps && userSettings.telegramApps.coding && userSettings.telegramApps.coding.noteworthy);
+          if (telegramImageComplete) telegramImageComplete.checked = !!(userSettings.telegramApps && userSettings.telegramApps.image && userSettings.telegramApps.image.complete);
+          if (telegramMusicComplete) telegramMusicComplete.checked = !!(userSettings.telegramApps && userSettings.telegramApps.music && userSettings.telegramApps.music.complete);
+          if (telegramVideoComplete) telegramVideoComplete.checked = !!(userSettings.telegramApps && userSettings.telegramApps.video && userSettings.telegramApps.video.complete);
+          setTelegramAppControlsEnabled();
         } catch (e) {}
 
         // Show password controls only when user auth is enabled and the user
@@ -1828,8 +1898,13 @@
       const telegramNotificationsEnabled = document.getElementById('settings_telegram_notifications_enabled');
       const telegramChatId = document.getElementById('settings_telegram_chat_id');
       const telegramUsername = document.getElementById('settings_telegram_username');
-      const telegramNotifyAttention = document.getElementById('settings_telegram_notify_attention');
-      const telegramNotifyRecovery = document.getElementById('settings_telegram_notify_recovery');
+      const telegramCodingEnabled = document.getElementById('settings_telegram_coding_enabled');
+      const telegramCodingAttention = document.getElementById('settings_telegram_coding_attention');
+      const telegramCodingRecovery = document.getElementById('settings_telegram_coding_recovery');
+      const telegramCodingNoteworthy = document.getElementById('settings_telegram_coding_noteworthy');
+      const telegramImageComplete = document.getElementById('settings_telegram_image_complete');
+      const telegramMusicComplete = document.getElementById('settings_telegram_music_complete');
+      const telegramVideoComplete = document.getElementById('settings_telegram_video_complete');
       const curPwd = document.getElementById('settings_current_password');
       const newPwd = document.getElementById('settings_new_password');
       const confirmPwd = document.getElementById('settings_confirm_password');
@@ -1852,8 +1927,26 @@
           notifications_enabled: !!(telegramNotificationsEnabled && telegramNotificationsEnabled.checked),
           chat_id: telegramChatId ? String(telegramChatId.value || '').trim() : '',
           username: telegramUsernameValue,
-          notify_on_attention: !(telegramNotifyAttention && telegramNotifyAttention.checked === false),
-          notify_on_recovery: !(telegramNotifyRecovery && telegramNotifyRecovery.checked === false),
+          apps: {
+            coding: {
+              enabled: !(telegramCodingEnabled && telegramCodingEnabled.checked === false),
+              notify_on_attention: !(telegramCodingAttention && telegramCodingAttention.checked === false),
+              notify_on_recovery: !(telegramCodingRecovery && telegramCodingRecovery.checked === false),
+              notify_on_noteworthy: !(telegramCodingNoteworthy && telegramCodingNoteworthy.checked === false),
+            },
+            image: {
+              enabled: !!(telegramImageComplete && telegramImageComplete.checked),
+              notify_on_complete: !!(telegramImageComplete && telegramImageComplete.checked),
+            },
+            music: {
+              enabled: !!(telegramMusicComplete && telegramMusicComplete.checked),
+              notify_on_complete: !!(telegramMusicComplete && telegramMusicComplete.checked),
+            },
+            video: {
+              enabled: !!(telegramVideoComplete && telegramVideoComplete.checked),
+              notify_on_complete: !!(telegramVideoComplete && telegramVideoComplete.checked),
+            },
+          },
         },
       };
       if (gitTokenValue) {
@@ -1904,8 +1997,17 @@
         userSettings.telegramNotificationsEnabled = !!newSettings.telegram?.notifications_enabled;
         userSettings.telegramChatId = newSettings.telegram?.chat_id || "";
         userSettings.telegramUsername = newSettings.telegram?.username || "";
-        userSettings.telegramNotifyAttention = !(newSettings.telegram && newSettings.telegram.notify_on_attention === false);
-        userSettings.telegramNotifyRecovery = !(newSettings.telegram && newSettings.telegram.notify_on_recovery === false);
+        userSettings.telegramApps = {
+          coding: {
+            enabled: !(newSettings.telegram?.apps?.coding && newSettings.telegram.apps.coding.enabled === false),
+            attention: !(newSettings.telegram?.apps?.coding && newSettings.telegram.apps.coding.notify_on_attention === false),
+            recovery: !(newSettings.telegram?.apps?.coding && newSettings.telegram.apps.coding.notify_on_recovery === false),
+            noteworthy: !(newSettings.telegram?.apps?.coding && newSettings.telegram.apps.coding.notify_on_noteworthy === false),
+          },
+          image: { complete: !!(newSettings.telegram?.apps?.image && newSettings.telegram.apps.image.notify_on_complete) },
+          music: { complete: !!(newSettings.telegram?.apps?.music && newSettings.telegram.apps.music.notify_on_complete) },
+          video: { complete: !!(newSettings.telegram?.apps?.video && newSettings.telegram.apps.video.notify_on_complete) },
+        };
         if (clearGitToken) {
           userSettings.codingGitTokenConfigured = false;
           userSettings.codingGitTokenHint = "";
@@ -2753,7 +2855,7 @@
         const params = new URLSearchParams(window.location.search || "");
         const requestedSettings = params.get("settings") || "";
         if (requestedSettings || window.location.hash === "#settings") {
-          const section = requestedSettings === "security" ? "settings-security" : "";
+          const section = requestedSettings ? `settings-${requestedSettings}` : "";
           window.setTimeout(() => openSettings(section), 0);
         }
       } catch (error) {}
@@ -2761,12 +2863,14 @@
       const settingsCancel = document.getElementById('settings_cancel');
       const settingsSave = document.getElementById('settings_save');
       const settingsClose = document.getElementById('settingsClose');
+      const telegramNotificationsEnabled = document.getElementById('settings_telegram_notifications_enabled');
       const createApiKeyBtn = document.getElementById('settings_create_api_key');
       const forgetBrowserApiKeyBtn = document.getElementById('settings_forget_browser_api_key');
       const useBrowserApiKeyBtn = document.getElementById('settings_use_browser_api_key');
       if (settingsCancel) settingsCancel.addEventListener('click', () => closeSettings());
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
       if (settingsSave) settingsSave.addEventListener('click', () => saveSettingsFromModal());
+      if (telegramNotificationsEnabled) telegramNotificationsEnabled.addEventListener('change', () => setTelegramAppControlsEnabled());
       if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
       if (forgetBrowserApiKeyBtn) forgetBrowserApiKeyBtn.addEventListener('click', () => forgetStoredApiKey());
       if (useBrowserApiKeyBtn) useBrowserApiKeyBtn.addEventListener('click', () => void useBrowserApiKeyFromSettings());

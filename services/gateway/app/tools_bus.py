@@ -451,6 +451,8 @@ def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[s
         guidance.append("Use agent_task_create for reminders, countdowns, recurring checks, and follow-up work; use agent_task_list/cancel to inspect or stop scheduled work.")
     if allowed.intersection({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene"}):
         guidance.append("Use coding_task_monitor to triage coding workspaces, coding_task_inspect for one workspace, and coding_task_intervene only for bounded actions like resume or guidance.")
+    if "coding_task_notify" in allowed:
+        guidance.append("Use coding_task_notify when Nexus Sentinel finds a user-facing noteworthy update that should be sent as a Telegram alert for a coding workspace owner.")
     if allowed.intersection({"write_file", "git", "shell"}):
         guidance.append("Treat write_file, git, and shell as higher-impact tools; inspect first and keep changes scoped.")
     if "coding_model_integration" in allowed:
@@ -1616,6 +1618,112 @@ def tool_coding_task_intervene(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "action": action, "started": False, "task": updated}
 
 
+def tool_coding_task_notify(args: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = str(args.get("task_id") or args.get("id") or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id is required"}
+    summary = str(args.get("summary") or args.get("message") or "").strip()
+    if not summary:
+        return {"ok": False, "error": "summary is required"}
+    severity = str(args.get("severity") or "info").strip().lower() or "info"
+    dedupe_key = str(args.get("dedupe_key") or "").strip() or hashlib.sha1(f"{severity}:{summary}".encode("utf-8")).hexdigest()
+    try:
+        cooldown_sec = max(0, int(args.get("cooldown_sec") or 6 * 60 * 60))
+    except Exception:
+        cooldown_sec = 6 * 60 * 60
+    actor = str(args.get("actor") or "Nexus Sentinel").strip() or "Nexus Sentinel"
+
+    from app import telegram_notifications
+
+    try:
+        task = coding_workspace.load_task(task_id)
+    except HTTPException as exc:
+        return {"ok": False, "error": str(exc.detail)}
+
+    public = coding_workspace.public_task(task, include_commands=False)
+    target = telegram_notifications.resolve_notification_target(
+        user_id=task.get("owner_user_id"),
+        owner_username=public.get("owner"),
+        app="coding",
+    )
+    if not bool(target.get("enabled")):
+        return {"ok": True, "sent": False, "reason": str(target.get("reason") or "disabled")}
+    if not bool(target.get("notify_on_noteworthy")):
+        return {"ok": True, "sent": False, "reason": "noteworthy_disabled"}
+
+    now_ts = time.time()
+    events = task.get("agent_events")
+    if not isinstance(events, list):
+        events = []
+    previous_ts = 0.0
+    for item in reversed(events):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "") != "telegram_notification":
+            continue
+        if str(item.get("category") or "") != "noteworthy":
+            continue
+        if str(item.get("dedupe_key") or "") != dedupe_key:
+            continue
+        try:
+            previous_ts = float(item.get("ts") or 0)
+        except Exception:
+            previous_ts = 0.0
+        break
+    if cooldown_sec > 0 and previous_ts > 0 and (now_ts - previous_ts) < cooldown_sec:
+        return {
+            "ok": True,
+            "sent": False,
+            "reason": "cooldown",
+            "retry_after_sec": max(0, cooldown_sec - int(now_ts - previous_ts)),
+        }
+
+    text = telegram_notifications.render_coding_workspace_notification(
+        item={
+            "id": public.get("id"),
+            "owner": public.get("owner"),
+            "status": public.get("status"),
+            "agent": public.get("agent") if isinstance(public.get("agent"), dict) else {},
+            "recommended_action": "",
+            "attention": [],
+        },
+        event_kind="noteworthy",
+        mention_username=str(target.get("mention_username") or ""),
+        note=summary,
+        severity=severity,
+    )
+    result = _run_coroutine_sync(
+        telegram_notifications.send_message(
+            chat_id=str(target.get("chat_id") or ""),
+            text=text,
+        )
+    )
+    sent = bool(isinstance(result, dict) and result.get("ok"))
+    if sent:
+        events.append(
+            {
+                "ts": now_ts,
+                "type": "telegram_notification",
+                "category": "noteworthy",
+                "dedupe_key": dedupe_key,
+                "severity": severity,
+                "summary": summary,
+                "actor": actor,
+            }
+        )
+        task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 120) or 120), 1000)) :]
+        task["agent_last_event_at"] = now_ts
+        coding_workspace.save_task(task)
+    return {
+        "ok": sent,
+        "sent": sent,
+        "chat_id": str(target.get("chat_id") or ""),
+        "severity": severity,
+        "dedupe_key": dedupe_key,
+        "reason": str(result.get("error") or "") if isinstance(result, dict) and not sent else "",
+    }
+
+
 def tool_git(args: Dict[str, Any]) -> Dict[str, Any]:
     if not S.TOOLS_ALLOW_GIT:
         return {"ok": False, "error": "git tool disabled"}
@@ -1692,6 +1800,7 @@ TOOL_IMPL = {
     "coding_task_monitor": tool_coding_task_monitor,
     "coding_task_inspect": tool_coding_task_inspect,
     "coding_task_intervene": tool_coding_task_intervene,
+    "coding_task_notify": tool_coding_task_notify,
     "agent_task_create": agent_tasks.create_task,
     "agent_task_list": agent_tasks.list_tasks,
     "agent_task_cancel": agent_tasks.cancel_task,
@@ -1768,7 +1877,7 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
     if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_model_integration", True)):
         allowed.add("coding_model_integration")
     if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_supervision", True)):
-        allowed.update({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene"})
+        allowed.update({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene", "coding_task_notify"})
     return allowed
 
 
@@ -2098,6 +2207,24 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "actor": {"type": "string", "description": "Actor label recorded in workspace guidance and run events."}
             },
             "required": ["task_id", "action"],
+            "additionalProperties": False,
+        },
+    },
+    "coding_task_notify": {
+        "name": "coding_task_notify",
+        "version": "1",
+        "description": "Send a structured Telegram alert for a noteworthy coding workspace update, with cooldown-based deduplication per workspace.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Coding task id such as code_abcdef123456."},
+                "summary": {"type": "string", "description": "Short user-facing update to send."},
+                "severity": {"type": "string", "enum": ["info", "warning", "critical"], "description": "Severity label included in the Telegram alert."},
+                "dedupe_key": {"type": "string", "description": "Stable dedupe key for repeated noteworthy alerts about the same issue."},
+                "cooldown_sec": {"type": "integer", "description": "Minimum seconds before another alert with the same dedupe_key may be sent."},
+                "actor": {"type": "string", "description": "Actor label recorded in workspace events."}
+            },
+            "required": ["task_id", "summary"],
             "additionalProperties": False,
         },
     },

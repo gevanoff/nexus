@@ -38,7 +38,47 @@ def workspace_url(task_id: str) -> str:
     return f"{public_base}/ui/coding?task_id={task}"
 
 
-def resolve_notification_target(*, user_id: Any = None, owner_username: Any = None) -> Dict[str, Any]:
+def _default_app_preferences() -> Dict[str, Dict[str, Any]]:
+    return {
+        "coding": {
+            "enabled": True,
+            "notify_on_attention": True,
+            "notify_on_recovery": True,
+            "notify_on_noteworthy": True,
+        },
+        "image": {
+            "enabled": False,
+            "notify_on_complete": False,
+        },
+        "music": {
+            "enabled": False,
+            "notify_on_complete": False,
+        },
+        "video": {
+            "enabled": False,
+            "notify_on_complete": False,
+        },
+    }
+
+
+def _app_preferences(telegram: Dict[str, Any], app: str) -> Dict[str, Any]:
+    defaults = _default_app_preferences().get(app, {"enabled": False})
+    out = dict(defaults)
+    apps = telegram.get("apps") if isinstance(telegram.get("apps"), dict) else {}
+    app_settings = apps.get(app) if isinstance(apps.get(app), dict) else {}
+    if app == "coding":
+        if "notify_on_attention" in telegram and "notify_on_attention" not in app_settings:
+            out["notify_on_attention"] = bool(telegram.get("notify_on_attention"))
+        if "notify_on_recovery" in telegram and "notify_on_recovery" not in app_settings:
+            out["notify_on_recovery"] = bool(telegram.get("notify_on_recovery"))
+        if "notify_on_noteworthy" in telegram and "notify_on_noteworthy" not in app_settings:
+            out["notify_on_noteworthy"] = bool(telegram.get("notify_on_noteworthy"))
+    for key, value in app_settings.items():
+        out[str(key)] = value
+    return out
+
+
+def resolve_notification_target(*, user_id: Any = None, owner_username: Any = None, app: str = "coding") -> Dict[str, Any]:
     target_user_id: Optional[int] = None
     try:
         if user_id is not None:
@@ -77,15 +117,21 @@ def resolve_notification_target(*, user_id: Any = None, owner_username: Any = No
     telegram = telegram if isinstance(telegram, dict) else {}
     chat_id = _coerce_chat_id(telegram.get("chat_id"))
     mention_username = _normalize_username(telegram.get("username") or owner)
-    enabled = bool(telegram.get("notifications_enabled")) and bool(chat_id)
+    app_name = str(app or "coding").strip().lower() or "coding"
+    app_preferences = _app_preferences(telegram, app_name)
+    globally_enabled = bool(telegram.get("notifications_enabled"))
+    enabled = globally_enabled and bool(chat_id) and bool(app_preferences.get("enabled", False))
     return {
         "enabled": enabled,
-        "reason": "ok" if enabled else ("chat_id_missing" if bool(telegram.get("notifications_enabled")) else "disabled"),
+        "reason": "ok" if enabled else ("chat_id_missing" if globally_enabled else "disabled"),
         "user_id": target_user_id,
         "chat_id": chat_id,
         "mention_username": mention_username,
-        "notify_on_attention": bool(telegram.get("notify_on_attention", True)),
-        "notify_on_recovery": bool(telegram.get("notify_on_recovery", True)),
+        "app": app_name,
+        "notify_on_attention": bool(app_preferences.get("notify_on_attention", True)),
+        "notify_on_recovery": bool(app_preferences.get("notify_on_recovery", True)),
+        "notify_on_noteworthy": bool(app_preferences.get("notify_on_noteworthy", True)),
+        "notify_on_complete": bool(app_preferences.get("notify_on_complete", False)),
     }
 
 
@@ -95,6 +141,8 @@ def render_coding_workspace_notification(
     event_kind: str,
     mention_username: str = "",
     action: Optional[Dict[str, Any]] = None,
+    note: str = "",
+    severity: str = "",
 ) -> str:
     task_id = str(item.get("id") or "").strip()
     owner = str(item.get("owner") or "").strip()
@@ -110,6 +158,8 @@ def render_coding_workspace_notification(
     lines = []
     if event_kind == "auto_resume":
         lines.append(f"{mention}Nexus Sentinel auto-resumed a coding workspace.")
+    elif event_kind == "noteworthy":
+        lines.append(f"{mention}Nexus Sentinel flagged a noteworthy coding workspace update.")
     else:
         lines.append(f"{mention}A coding workspace needs attention.")
     lines.append(f"Workspace: {task_id}")
@@ -126,6 +176,10 @@ def render_coding_workspace_notification(
         next_status = str(action.get("agent_status") or "").strip()
         if previous or next_status:
             lines.append(f"Supervisor action: {previous or 'unknown'} -> {next_status or 'unknown'}")
+    if severity:
+        lines.append(f"Severity: {severity}")
+    if note:
+        lines.append(f"Update: {note}")
     if url:
         lines.append(f"Open: {url}")
     return "\n".join(line for line in lines if line)

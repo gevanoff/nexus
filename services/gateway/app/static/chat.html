@@ -524,15 +524,14 @@
               <button type="button" data-section="settings-backends" class="active" data-ui-role="menu">Backends</button>
               <button type="button" data-section="settings-profile" data-ui-role="menu">Profile</button>
               <button type="button" data-section="settings-ui" data-ui-role="menu">UI</button>
+              <button type="button" data-section="settings-coding" data-ui-role="menu">Coding</button>
+              <button type="button" data-section="settings-telegram" data-ui-role="menu">Telegram</button>
               <button type="button" data-section="settings-security" data-ui-role="menu">Security</button>
             </nav>
             <div>
               <section id="settings-backends" class="settings-section active">
                 <label>Preferred chat model
                   <select id="settings_model_preference"></select>
-                </label>
-                <label>Preferred coding model
-                  <select id="settings_coding_model_preference"></select>
                 </label>
                 <label>Preferred TTS backend
                   <select id="settings_tts_backend"><option value="">(default)</option></select>
@@ -559,6 +558,84 @@
                 <label>Auto-play TTS
                   <input type="checkbox" id="settings_autoplay_tts" />
                 </label>
+              </section>
+              <section id="settings-coding" class="settings-section">
+                <label>Preferred coding model
+                  <select id="settings_coding_model_preference"></select>
+                </label>
+                <fieldset id="settings_coding_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Coding workspaces</legend>
+                  <div id="settings_coding_git_token_status" class="hint" style="margin-bottom:8px"></div>
+                  <label>GitHub token
+                    <input type="password" id="settings_coding_git_token" autocomplete="off" placeholder="Leave blank to keep existing token" />
+                  </label>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_clear_coding_git_token" style="width:auto" />
+                    Clear saved GitHub token
+                  </label>
+                </fieldset>
+              </section>
+              <section id="settings-telegram" class="settings-section">
+                <fieldset id="settings_telegram_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px">
+                  <legend style="font-size:13px">Telegram connection</legend>
+                  <div class="hint" style="margin-bottom:8px">Use the Telegram bot commands <strong>/chatinfo</strong> and <strong>/whoami</strong> to get your chat ID and handle. Telegram-originated generations already deliver their result directly, so they do not need extra notifications.</div>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_telegram_notifications_enabled" style="width:auto" />
+                    Enable all Telegram notifications
+                  </label>
+                  <label>Telegram chat ID
+                    <input type="text" id="settings_telegram_chat_id" autocomplete="off" placeholder="e.g. 123456789 or -1001234567890" />
+                  </label>
+                  <label>Telegram username
+                    <input type="text" id="settings_telegram_username" autocomplete="off" placeholder="without the @" />
+                  </label>
+                </fieldset>
+                <fieldset id="settings_telegram_apps_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Notification preferences by app</legend>
+                  <div class="hint" style="margin-bottom:8px">Only long-running or wait-for-generation apps are listed here.</div>
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Coding Workspaces</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_enabled" style="width:auto" />
+                        Allow Coding Workspaces notifications
+                      </label>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_attention" style="width:auto" />
+                        Needs attention
+                      </label>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_recovery" style="width:auto" />
+                        Auto-recovery updates
+                      </label>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_noteworthy" style="width:auto" />
+                        Noteworthy updates from Nexus Sentinel
+                      </label>
+                    </div>
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Image UI</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_image_complete" style="width:auto" />
+                        Notify when a UI-started image generation completes
+                      </label>
+                    </div>
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Music UI</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_music_complete" style="width:auto" />
+                        Notify when a UI-started music generation completes
+                      </label>
+                    </div>
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Video UI</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_video_complete" style="width:auto" />
+                        Notify when a UI-started video generation completes
+                      </label>
+                    </div>
+                  </div>
+                </fieldset>
               </section>
               <section id="settings-security" class="settings-section">
                 <fieldset id="settings_password_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px">
@@ -592,39 +669,6 @@
                   </div>
                   <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
                 </fieldset>
-                <fieldset id="settings_coding_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
-                  <legend style="font-size:13px">Coding workspaces</legend>
-                  <div id="settings_coding_git_token_status" class="hint" style="margin-bottom:8px"></div>
-                  <label>GitHub token
-                    <input type="password" id="settings_coding_git_token" autocomplete="off" placeholder="Leave blank to keep existing token" />
-                  </label>
-                  <label style="display:flex;gap:8px;align-items:center">
-                    <input type="checkbox" id="settings_clear_coding_git_token" style="width:auto" />
-                    Clear saved GitHub token
-                  </label>
-                </fieldset>
-                <fieldset id="settings_telegram_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
-                  <legend style="font-size:13px">Telegram notifications</legend>
-                  <div class="hint" style="margin-bottom:8px">Use the Telegram bot commands <strong>/chatinfo</strong> and <strong>/whoami</strong> to get your chat ID and handle, then save them here for coding-workspace alerts.</div>
-                  <label style="display:flex;gap:8px;align-items:center">
-                    <input type="checkbox" id="settings_telegram_notifications_enabled" style="width:auto" />
-                    Enable Telegram notifications for coding workspaces
-                  </label>
-                  <label>Telegram chat ID
-                    <input type="text" id="settings_telegram_chat_id" autocomplete="off" placeholder="e.g. 123456789 or -1001234567890" />
-                  </label>
-                  <label>Telegram username
-                    <input type="text" id="settings_telegram_username" autocomplete="off" placeholder="without the @" />
-                  </label>
-                  <label style="display:flex;gap:8px;align-items:center">
-                    <input type="checkbox" id="settings_telegram_notify_attention" style="width:auto" />
-                    Notify me when a coding workspace needs attention
-                  </label>
-                  <label style="display:flex;gap:8px;align-items:center">
-                    <input type="checkbox" id="settings_telegram_notify_recovery" style="width:auto" />
-                    Notify me when Nexus Sentinel auto-resumes one of my workspaces
-                  </label>
-                </fieldset>
               </section>
             </div>
           </div>
@@ -637,6 +681,6 @@
     </div>
 
     <script src="/static/auth_client.js?v=3"></script>
-    <script src="/static/chat.js?v=12"></script>
+    <script src="/static/chat.js?v=13"></script>
   </body>
 </html>

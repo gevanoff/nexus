@@ -729,6 +729,7 @@ async def _auto_recover_coding_supervisor(row: sqlite3.Row) -> dict[str, Any]:
         target = telegram_notifications.resolve_notification_target(
             user_id=item.get("owner_user_id"),
             owner_username=item.get("owner"),
+            app="coding",
         )
         event_kind = "auto_resume" if task_id in action_by_task else "needs_attention"
         if event_kind == "auto_resume" and not bool(target.get("notify_on_recovery")):

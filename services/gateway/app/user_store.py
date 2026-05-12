@@ -373,8 +373,26 @@ def _default_settings() -> Dict[str, Any]:
             "notifications_enabled": False,
             "chat_id": "",
             "username": "",
-            "notify_on_attention": True,
-            "notify_on_recovery": True,
+            "apps": {
+                "coding": {
+                    "enabled": True,
+                    "notify_on_attention": True,
+                    "notify_on_recovery": True,
+                    "notify_on_noteworthy": True,
+                },
+                "image": {
+                    "enabled": False,
+                    "notify_on_complete": False,
+                },
+                "music": {
+                    "enabled": False,
+                    "notify_on_complete": False,
+                },
+                "video": {
+                    "enabled": False,
+                    "notify_on_complete": False,
+                },
+            },
         },
         "profile": {"system_prompt": "", "tone": ""},
     }
