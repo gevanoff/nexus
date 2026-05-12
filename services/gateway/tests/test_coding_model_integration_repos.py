@@ -104,3 +104,77 @@ def test_create_model_integration_task_attaches_remote_and_pushes_seed(monkeypat
     assert ["git", "remote", "add", "origin", "https://github.com/example/nemotron-integration.git"] in calls
     assert ["git", "push", "-u", "origin", "main"] in calls
     assert ["git", "push", "-u", "origin", "nexus-coder/nemotron"] in calls
+
+
+def test_create_model_integration_task_clones_existing_repo_before_scaffolding(monkeypatch, tmp_path):
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(
+        cw.miw,
+        "build_integration_plan",
+        lambda **kwargs: {
+            "source_url": "https://huggingface.co/mlx-community/Qwen3.6-27B-4bit",
+            "prompt": "Add backend integration",
+            "service_name": "hf-qwen",
+        },
+    )
+
+    scaffold_paths: list[str] = []
+
+    def _scaffold(repo_path, plan):
+        scaffold_paths.append(str(repo_path))
+        readme = repo_path / "README.md"
+        readme.parent.mkdir(parents=True, exist_ok=True)
+        readme.write_text("seed", encoding="utf-8")
+        return ["README.md"]
+
+    monkeypatch.setattr(cw.miw, "scaffold_workspace", _scaffold)
+    monkeypatch.setattr(
+        cw,
+        "_ensure_github_repo_available",
+        lambda repo_url, *, git_token_value=None: {"ok": True, "created": False, "empty": False, "body": {"html_url": repo_url}},
+    )
+
+    calls: list[list[str]] = []
+
+    def _run_process(argv, **kwargs):
+        calls.append(list(argv))
+        return {
+            "ok": True,
+            "returncode": 0,
+            "argv": list(argv),
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 1,
+        }
+
+    monkeypatch.setattr(cw, "_run_process", _run_process)
+
+    task = cw.create_model_integration_task(
+        model="mlx-community/Qwen3.6-27B-4bit",
+        repo_url="https://github.com/example/existing-repo.git",
+        preferred_runtime="mlx",
+        route_kind="json",
+        service_name="hf-qwen",
+        base_branch="main",
+        branch_name="nexus-coder/qwen",
+        prompt="Add backend integration",
+        owner="test",
+        git_token_value="ghp_test",
+    )
+
+    assert task["status"] == "ready"
+    assert scaffold_paths == [str(tmp_path / "workspaces" / task["id"] / "repo")]
+
+    labels = [item.get("label") for item in task.get("commands", [])]
+    assert "github-repo-ensure" in labels
+    assert "git-clone-base" in labels
+    assert "git-branch-work" in labels
+    assert "git-add" in labels
+    assert "git-commit" in labels
+    assert "git-push-branch" in labels
+    assert "git-push-base" not in labels
+    assert "git-remote-add" not in labels
+
+    assert ["git", "clone", "--depth", "1", "--branch", "main", "https://github.com/example/existing-repo.git", str(tmp_path / "workspaces" / task["id"] / "repo")] in calls
+    assert ["git", "push", "-u", "origin", "nexus-coder/qwen"] in calls

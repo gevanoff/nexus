@@ -749,62 +749,129 @@ def create_model_integration_task(
 
     try:
         workspace.mkdir(parents=True, exist_ok=True)
-        repo_path.mkdir(parents=True, exist_ok=True)
-        init_result = _run_process(["git", "init"], cwd=repo_path, use_git_credentials=False)
-        _append_command(task, init_result, label="git-init")
-        if not init_result.get("ok"):
-            task["status"] = "error"
-            task["error"] = "git init failed"
+        remote_meta = _ensure_model_integration_remote(task, repo_url=target_repo, git_token_value=git_token_value)
+        if remote_meta is None:
             save_task(task)
             return public_task(task)
 
-        task["seed_files"] = miw.scaffold_workspace(repo_path, plan)
-
-        add_result = _run_process(["git", "add", "."], cwd=repo_path, use_git_credentials=False)
-        _append_command(task, add_result, label="git-add")
-        if not add_result.get("ok"):
-            task["status"] = "error"
-            task["error"] = "git add failed"
-            save_task(task)
-            return public_task(task)
-
-        commit_result = _run_process(["git", "commit", "-m", "Seed model integration workspace"], cwd=repo_path, use_git_credentials=False)
-        _append_command(task, commit_result, label="git-commit")
-        if not commit_result.get("ok"):
-            task["status"] = "error"
-            task["error"] = "git commit failed"
-            save_task(task)
-            return public_task(task)
-
-        rename_result = _run_process(["git", "branch", "-M", base], cwd=repo_path, use_git_credentials=False)
-        _append_command(task, rename_result, label="git-branch-base")
-        if not rename_result.get("ok"):
-            task["status"] = "error"
-            task["error"] = "base branch rename failed"
-            save_task(task)
-            return public_task(task)
-
-        if branch != base:
-            switch_result = _run_process(["git", "switch", "-c", branch], cwd=repo_path, use_git_credentials=False)
-            if not switch_result.get("ok"):
-                switch_result = _run_process(["git", "checkout", "-b", branch], cwd=repo_path, use_git_credentials=False)
-            _append_command(task, switch_result, label="git-branch-work")
-            if not switch_result.get("ok"):
+        remote_is_empty = bool(remote_meta.get("empty"))
+        if remote_is_empty:
+            repo_path.mkdir(parents=True, exist_ok=True)
+            init_result = _run_process(["git", "init"], cwd=repo_path, use_git_credentials=False)
+            _append_command(task, init_result, label="git-init")
+            if not init_result.get("ok"):
                 task["status"] = "error"
-                task["error"] = "working branch creation failed"
+                task["error"] = "git init failed"
                 save_task(task)
                 return public_task(task)
 
-        if not _attach_model_integration_remote(
-            task,
-            repo=repo_path,
-            repo_url=target_repo,
-            base_branch=base,
-            branch_name=branch,
-            git_token_value=git_token_value,
-        ):
-            save_task(task)
-            return public_task(task)
+            task["seed_files"] = miw.scaffold_workspace(repo_path, plan)
+
+            add_result = _run_process(["git", "add", "."], cwd=repo_path, use_git_credentials=False)
+            _append_command(task, add_result, label="git-add")
+            if not add_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "git add failed"
+                save_task(task)
+                return public_task(task)
+
+            commit_result = _run_process(["git", "commit", "-m", "Seed model integration workspace"], cwd=repo_path, use_git_credentials=False)
+            _append_command(task, commit_result, label="git-commit")
+            if not commit_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "git commit failed"
+                save_task(task)
+                return public_task(task)
+
+            rename_result = _run_process(["git", "branch", "-M", base], cwd=repo_path, use_git_credentials=False)
+            _append_command(task, rename_result, label="git-branch-base")
+            if not rename_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "base branch rename failed"
+                save_task(task)
+                return public_task(task)
+
+            if branch != base:
+                switch_result = _run_process(["git", "switch", "-c", branch], cwd=repo_path, use_git_credentials=False)
+                if not switch_result.get("ok"):
+                    switch_result = _run_process(["git", "checkout", "-b", branch], cwd=repo_path, use_git_credentials=False)
+                _append_command(task, switch_result, label="git-branch-work")
+                if not switch_result.get("ok"):
+                    task["status"] = "error"
+                    task["error"] = "working branch creation failed"
+                    save_task(task)
+                    return public_task(task)
+
+            if not _attach_model_integration_remote(
+                task,
+                repo=repo_path,
+                repo_url=target_repo,
+                base_branch=base,
+                branch_name=branch,
+                git_token_value=git_token_value,
+                remote_meta=remote_meta,
+            ):
+                save_task(task)
+                return public_task(task)
+        else:
+            clone_result = _run_process(
+                ["git", "clone", "--depth", "1", "--branch", base, target_repo, str(repo_path)],
+                cwd=workspace,
+                timeout_sec=max(command_timeout_sec(), 300.0),
+                use_git_credentials=True,
+                git_token_value=git_token_value,
+            )
+            _append_command(task, clone_result, label="git-clone-base")
+            if not clone_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "git clone failed"
+                save_task(task)
+                return public_task(task)
+
+            if branch != base:
+                switch_result = _run_process(["git", "switch", "-c", branch], cwd=repo_path, use_git_credentials=False)
+                if not switch_result.get("ok"):
+                    switch_result = _run_process(["git", "checkout", "-b", branch], cwd=repo_path, use_git_credentials=False)
+                _append_command(task, switch_result, label="git-branch-work")
+                if not switch_result.get("ok"):
+                    task["status"] = "error"
+                    task["error"] = "working branch creation failed"
+                    save_task(task)
+                    return public_task(task)
+
+            task["seed_files"] = miw.scaffold_workspace(repo_path, plan)
+
+            add_result = _run_process(["git", "add", "."], cwd=repo_path, use_git_credentials=False)
+            _append_command(task, add_result, label="git-add")
+            if not add_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "git add failed"
+                save_task(task)
+                return public_task(task)
+
+            commit_result = _run_process(["git", "commit", "-m", "Seed model integration workspace"], cwd=repo_path, use_git_credentials=False)
+            _append_command(task, commit_result, label="git-commit")
+            if not commit_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "git commit failed"
+                save_task(task)
+                return public_task(task)
+
+            push_target = branch or base
+            push_result = _run_process(
+                ["git", "push", "-u", "origin", push_target],
+                cwd=repo_path,
+                timeout_sec=max(command_timeout_sec(), 300.0),
+                use_git_credentials=True,
+                git_token_value=git_token_value,
+            )
+            _append_command(task, push_result, label="git-push-branch" if push_target != base else "git-push-base")
+            if not push_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = "initial working branch push failed" if push_target != base else "initial base branch push failed"
+                save_task(task)
+                return public_task(task)
+            task["last_pushed_at"] = _now()
 
         task["status"] = "ready"
         task.pop("error", None)
@@ -1531,15 +1598,12 @@ def _ensure_github_repo_available(repo_url: str, *, git_token_value: Optional[st
     return {"ok": True, "created": True, "empty": True, "body": created.get("body") if isinstance(created.get("body"), dict) else {}}
 
 
-def _attach_model_integration_remote(
+def _ensure_model_integration_remote(
     task: Dict[str, Any],
     *,
-    repo: Path,
     repo_url: str,
-    base_branch: str,
-    branch_name: str,
     git_token_value: Optional[str] = None,
-) -> bool:
+) -> Optional[Dict[str, Any]]:
     remote_meta = _ensure_github_repo_available(repo_url, git_token_value=git_token_value)
     _append_command(
         task,
@@ -1556,6 +1620,26 @@ def _attach_model_integration_remote(
     if not remote_meta.get("ok"):
         task["status"] = "error"
         task["error"] = str(remote_meta.get("error") or "github repo ensure failed")
+        return None
+    return remote_meta
+
+
+def _attach_model_integration_remote(
+    task: Dict[str, Any],
+    *,
+    repo: Path,
+    repo_url: str,
+    base_branch: str,
+    branch_name: str,
+    git_token_value: Optional[str] = None,
+    remote_meta: Optional[Dict[str, Any]] = None,
+) -> bool:
+    remote_meta = remote_meta if isinstance(remote_meta, dict) else _ensure_model_integration_remote(
+        task,
+        repo_url=repo_url,
+        git_token_value=git_token_value,
+    )
+    if remote_meta is None:
         return False
 
     remote_result = _run_process(["git", "remote", "add", "origin", repo_url], cwd=repo, use_git_credentials=False)
