@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from pathlib import Path
+import pytest
 
 from app import coding_workspace as cw
 
@@ -106,3 +107,32 @@ def test_monitor_tasks_can_filter_attention(monkeypatch):
     assert payload["ok"] is True
     assert payload["counts"]["attention"] == 1
     assert len(payload["tasks"]) == 1
+
+
+def test_set_task_coding_model_updates_stopped_workspace(monkeypatch, tmp_path):
+        task = _base_task(coding_model="local_vllm")
+
+        monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+        monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
+
+        cw.save_task(task)
+        updated = cw.set_task_coding_model(task["id"], coding_model="coder")
+
+        assert updated["coding_model"] == "coder"
+        stored = cw.load_task(task["id"])
+        assert stored["coding_model"] == "coder"
+        assert stored["agent_events"][-1]["type"] == "model_updated"
+
+
+def test_set_task_coding_model_rejects_active_workspace(monkeypatch, tmp_path):
+        task = _base_task(agent_status="running", coding_model="local_vllm")
+
+        monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+        monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
+
+        cw.save_task(task)
+
+        with pytest.raises(Exception) as exc_info:
+            cw.set_task_coding_model(task["id"], coding_model="coder")
+
+        assert getattr(exc_info.value, "status_code", None) == 409

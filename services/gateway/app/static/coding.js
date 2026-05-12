@@ -34,6 +34,8 @@
     selectedMeta: document.getElementById("selectedMeta"),
     selectedStatus: document.getElementById("selectedStatus"),
     selectedPrompt: document.getElementById("selectedPrompt"),
+    workspaceModelInput: document.getElementById("workspaceModelInput"),
+    saveWorkspaceModel: document.getElementById("saveWorkspaceModel"),
     workspaceChat: document.getElementById("workspaceChat"),
     workspaceChatInput: document.getElementById("workspaceChatInput"),
     workspaceChatMeta: document.getElementById("workspaceChatMeta"),
@@ -541,6 +543,7 @@
       els.readFile,
       els.writeFile,
       els.sendWorkspaceMessage,
+      els.saveWorkspaceModel,
     ].forEach((button) => {
       if (button) button.disabled = disabled || state.busy;
     });
@@ -551,6 +554,7 @@
       if (els.selectedTitle) els.selectedTitle.textContent = "No workspace selected";
       if (els.selectedMeta) els.selectedMeta.textContent = "";
       if (els.selectedPrompt) els.selectedPrompt.textContent = "";
+      if (els.workspaceModelInput) els.workspaceModelInput.value = "";
       if (els.selectedStatus) {
         els.selectedStatus.className = "badge pending";
         els.selectedStatus.textContent = "idle";
@@ -574,9 +578,13 @@
             `updated ${fmtTime(task.updated_at)}`,
           ].filter(Boolean)
         : [`${task.repo_url || ""}`, `base ${task.base_branch || ""}`, `updated ${fmtTime(task.updated_at)}`];
+      bits.push(`workspace model ${task.coding_model || "default"}`);
       const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
       if (commit) bits.push(`commit ${commit}`);
       els.selectedMeta.textContent = bits.join(" | ");
+    }
+    if (els.workspaceModelInput && document.activeElement !== els.workspaceModelInput) {
+      els.workspaceModelInput.value = String(task.coding_model || "");
     }
     if (els.selectedPrompt) {
       els.selectedPrompt.textContent = integration && deployment && deployment.reason
@@ -596,6 +604,7 @@
     if (els.prBody && !els.prBody.value) {
       els.prBody.value = task.prompt || "";
     }
+    if (els.saveWorkspaceModel) els.saveWorkspaceModel.disabled = state.busy || activeAgent;
     renderAgent(task);
     renderWorkspaceChat(task);
   }
@@ -609,8 +618,8 @@
     }
     if (els.workspaceChatStatus) {
       if (!task) els.workspaceChatStatus.textContent = "";
-      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = "Sent messages are read by the active agent on a later turn.";
-      else els.workspaceChatStatus.textContent = "Sending a message starts another continuation run.";
+      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = `Sent messages are read by the active agent on a later turn. Next run model: ${task.coding_model || "default"}.`;
+      else els.workspaceChatStatus.textContent = `Sending a message starts another continuation run with ${task.coding_model || "the default model"}.`;
     }
     if (!messages.length) {
       const empty = document.createElement("div");
@@ -936,6 +945,10 @@
     return body;
   }
 
+  function selectedWorkspaceModelValue() {
+    return els.workspaceModelInput ? String(els.workspaceModelInput.value || "").trim() : "";
+  }
+
   function modelIntegrationBody() {
     return {
       repo_url: els.modelIntegrationRepoUrl ? els.modelIntegrationRepoUrl.value.trim() : "",
@@ -1127,7 +1140,7 @@
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/agent-run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(agentOptionsBody()),
+        body: JSON.stringify({ ...agentOptionsBody(), coding_model: selectedWorkspaceModelValue() }),
       });
       const fresh = payload.task;
       state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
@@ -1153,7 +1166,7 @@
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, run: !active, ...agentOptionsBody() }),
+        body: JSON.stringify({ message, run: !active, coding_model: selectedWorkspaceModelValue(), ...agentOptionsBody() }),
       });
       const fresh = payload.task;
       if (fresh) state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
@@ -1162,6 +1175,30 @@
       renderSelected();
       setOutput(payload.started ? "workspace message and run" : "workspace message", fresh || payload);
       setStatus(payload.started ? "Workspace message sent and continuation run started." : "Workspace message sent.");
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
+  }
+
+  async function saveWorkspaceModel() {
+    const task = selectedTask();
+    if (!task) return;
+    const codingModel = selectedWorkspaceModelValue();
+    setBusy(true);
+    try {
+      setStatus(codingModel ? `Saving workspace model ${codingModel}...` : "Clearing workspace model override...");
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/model`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coding_model: codingModel }),
+      });
+      const fresh = payload.task;
+      if (fresh) state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
+      renderTasks();
+      renderSelected();
+      setOutput("workspace model", fresh || payload);
+      setStatus(codingModel ? "Workspace model updated." : "Workspace model override cleared.");
     } finally {
       setBusy(false);
       renderSelected();
@@ -1500,6 +1537,7 @@
   wire("diffBtn", runDiff);
   wire("briefBtn", runAgentBrief);
   wire("sendWorkspaceMessage", sendWorkspaceMessage);
+  wire("saveWorkspaceModel", saveWorkspaceModel);
   wire("runCommand", runCommand);
   wire("commitBtn", commitTask);
   wire("pushBtn", pushTask);

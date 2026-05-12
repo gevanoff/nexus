@@ -170,6 +170,35 @@ def append_guidance_message(
     return public_task(task)
 
 
+def set_task_coding_model(task_id: str, *, coding_model: Optional[str]) -> Dict[str, Any]:
+    task = load_task(task_id)
+    agent_status = str(task.get("agent_status") or "").strip().lower()
+    if agent_status in {"queued", "running", "stopping"}:
+        raise HTTPException(status_code=409, detail="cannot change coding model while the agent is active")
+
+    next_model = str(coding_model or "").strip()
+    previous_model = str(task.get("coding_model") or "").strip()
+    if previous_model == next_model:
+        return public_task(task)
+
+    task["coding_model"] = next_model
+    events = task.get("agent_events")
+    if not isinstance(events, list):
+        events = []
+    events.append(
+        {
+            "ts": _now(),
+            "type": "model_updated",
+            "summary": f"Workspace coding model set to {next_model or 'default'}.",
+            "previous_model": previous_model,
+            "model": next_model,
+        }
+    )
+    task["agent_events"] = events[-80:]
+    save_task(task)
+    return public_task(task)
+
+
 def list_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     _ensure_enabled()
     _ensure_dirs()

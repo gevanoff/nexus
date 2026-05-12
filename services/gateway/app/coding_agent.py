@@ -1275,6 +1275,7 @@ async def start_agent_run(
         _mutate_task,
         task_id,
         {
+            "coding_model": model,
             "agent_run_id": run_id,
             "agent_status": "queued",
             "agent_model": model,

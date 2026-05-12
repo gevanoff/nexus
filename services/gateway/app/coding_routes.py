@@ -77,6 +77,10 @@ class CodingGuidanceRequest(BaseModel):
     commit_message: Optional[str] = None
 
 
+class CodingTaskModelRequest(BaseModel):
+    coding_model: Optional[str] = None
+
+
 class CodingCommandRequest(BaseModel):
     argv: List[str]
     cwd: Optional[str] = None
@@ -540,6 +544,13 @@ async def ui_coding_task_message(req: Request, task_id: str, body: CodingGuidanc
     return {"task": task, "started": False}
 
 
+@router.post("/ui/api/coding/tasks/{task_id}/model", include_in_schema=False)
+async def ui_coding_task_model(req: Request, task_id: str, body: CodingTaskModelRequest) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    task = await _to_thread(cw.set_task_coding_model, task_id, coding_model=body.coding_model)
+    return {"task": task}
+
+
 @router.post("/ui/api/coding/tasks/{task_id}/agent-stop", include_in_schema=False)
 async def ui_coding_agent_stop(req: Request, task_id: str) -> Dict[str, Any]:
     _require_coding_ui(req)
@@ -868,6 +879,13 @@ async def v1_coding_task_message(req: Request, task_id: str, body: CodingGuidanc
                 raise
     task = await _to_thread(cw.append_guidance_message, task_id, message=message, actor=_actor_from_user(user) if user is not None else "api")
     return {"task": task, "started": False}
+
+
+@router.post("/v1/coding/tasks/{task_id}/model")
+async def v1_coding_task_model(req: Request, task_id: str, body: CodingTaskModelRequest) -> Dict[str, Any]:
+    _require_coding_api(req)
+    task = await _to_thread(cw.set_task_coding_model, task_id, coding_model=body.coding_model)
+    return {"task": task}
 
 
 @router.post("/v1/coding/tasks/{task_id}/agent-stop")

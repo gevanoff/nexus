@@ -438,6 +438,15 @@
               <span id="selectedStatus" class="badge pending">idle</span>
             </div>
             <div id="selectedPrompt" class="meta" style="margin-top:6px;"></div>
+            <div class="row" style="gap:10px; align-items:end; margin-top:10px; flex-wrap:wrap;">
+              <div style="min-width:280px; flex:1;">
+                <label for="workspaceModelInput">Workspace coding model</label>
+                <input id="workspaceModelInput" autocomplete="off" placeholder="Leave blank to use the default/preferred model" />
+              </div>
+              <div class="row" style="align-items:end;">
+                <button id="saveWorkspaceModel" type="button" data-ui-role="secondary">Save model</button>
+              </div>
+            </div>
             <div class="toolbar">
               <button id="statusBtn" type="button" data-ui-role="secondary">Git status</button>
               <button id="diffBtn" type="button" data-ui-role="secondary">Diff vs Base</button>
