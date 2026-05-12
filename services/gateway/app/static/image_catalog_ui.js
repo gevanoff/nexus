@@ -46,6 +46,10 @@
     backendMap: new Map(),
   };
 
+  function refreshModelMarquee() {
+    window.NexusSelectMarquee?.refresh(modelSelectEl);
+  }
+
   function escapeHtml(s) {
     return String(s)
       .replaceAll("&", "&amp;")
@@ -213,17 +217,20 @@
         modelSelectEl.value = prefill.model;
         modelCustomWrapEl.classList.add("hidden");
         modelCustomEl.value = "";
+        refreshModelMarquee();
         return;
       }
       modelSelectEl.value = "__custom__";
       modelCustomWrapEl.classList.remove("hidden");
       modelCustomEl.value = prefill.model;
+      refreshModelMarquee();
       return;
     }
 
     modelSelectEl.value = "";
     modelCustomWrapEl.classList.add("hidden");
     modelCustomEl.value = "";
+    refreshModelMarquee();
   }
 
   function applyBackendSelection(backendClass) {

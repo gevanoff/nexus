@@ -335,6 +335,7 @@
     for (const model of orderedModelEntries(currentId)) add(model.id, modelOptionLabel(model) || model.id);
     if (!seen.has(currentId)) add(currentId, currentId);
     target.value = seen.has(currentId) ? currentId : "default";
+    window.NexusSelectMarquee?.refresh(target);
   }
 
   function closeTaskEditModal() {

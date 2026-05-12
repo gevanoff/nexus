@@ -2212,6 +2212,7 @@
         opt.title = opt.textContent;
         selectEl.appendChild(opt);
       }
+      window.NexusSelectMarquee?.refresh(selectEl);
     }
 
     function pickModelValue({ options, preferred, fallback }) {
@@ -2229,6 +2230,7 @@
       populateModelSelect(select, modelOptionsCache);
       const desired = pickModelValue({ options: modelOptionsCache, preferred });
       select.value = desired;
+      window.NexusSelectMarquee?.refresh(select);
     }
 
     function syncSettingsCodingModelSelect(preferred) {
@@ -2237,6 +2239,7 @@
       populateModelSelect(select, modelOptionsCache);
       const desired = pickModelValue({ options: modelOptionsCache, preferred, fallback: "coder" });
       select.value = desired;
+      window.NexusSelectMarquee?.refresh(select);
     }
 
     function normalizePreferredModel(preferred) {
@@ -2251,7 +2254,10 @@
       modelOptionsCache = options;
       populateModelSelect(modelEl, options);
       const desired = pickModelValue({ options, preferred, fallback: prev });
-      if (modelEl) modelEl.value = desired;
+      if (modelEl) {
+        modelEl.value = desired;
+        window.NexusSelectMarquee?.refresh(modelEl);
+      }
       syncSettingsModelSelect(preferred);
       syncSettingsCodingModelSelect(userSettings.preferredCodingModel || "coder");
     }

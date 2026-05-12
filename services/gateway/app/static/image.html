@@ -81,6 +81,7 @@
       .panel-subtle { border: 1px dashed rgba(231,237,246,0.12); border-radius: 10px; padding: 10px; background: rgba(15, 20, 28, 0.45); }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
+    <link rel="stylesheet" href="/static/select_marquee.css?v=1" />
   </head>
   <body>
     <main>
@@ -131,7 +132,7 @@
 
           <label style="min-width: 280px; flex: 1 1 280px;">
             <span>Model</span>
-            <select id="modelSelect"></select>
+            <select id="modelSelect" data-marquee-select></select>
             <div id="modelHint" class="field-help"></div>
           </label>
 
@@ -238,6 +239,7 @@
     </main>
 
     <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/select_marquee.js?v=1"></script>
     <script src="/static/focused_nav.js?v=5"></script>
     <script src="/static/backend_status_panel.js?v=9"></script>
     <script src="/static/lifecycle_client.js?v=1"></script>

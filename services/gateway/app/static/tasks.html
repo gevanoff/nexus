@@ -134,6 +134,7 @@
       }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
+    <link rel="stylesheet" href="/static/select_marquee.css?v=1" />
   </head>
   <body>
     <main>
@@ -171,7 +172,7 @@
                 </div>
                 <div>
                   <label for="model">Model</label>
-                  <select id="model"></select>
+                  <select id="model" data-marquee-select></select>
                 </div>
               </div>
               <div class="grid2">
@@ -318,7 +319,7 @@
         </div>
         <div id="taskEditModelSection" hidden>
           <label for="taskEditModel">Model</label>
-          <select id="taskEditModel"></select>
+          <select id="taskEditModel" data-marquee-select></select>
         </div>
         <div class="modal-actions">
           <button id="cancelTaskEdit" type="button">Cancel</button>
@@ -327,6 +328,7 @@
       </div>
     </div>
     <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/select_marquee.js?v=1"></script>
     <script src="/static/focused_nav.js?v=5"></script>
     <script src="/static/tasks.js?v=5"></script>
   </body>

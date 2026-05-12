@@ -1,0 +1,58 @@
+.nexus-marquee-select {
+  --nexus-marquee-select-width: 26rem;
+  --nexus-marquee-distance: 0px;
+  --nexus-marquee-duration: 12s;
+  position: relative;
+  display: block;
+  width: min(100%, var(--nexus-marquee-select-width));
+  max-width: 100%;
+  min-width: 0;
+}
+
+.nexus-marquee-select > select[data-marquee-select] {
+  width: 100% !important;
+  max-width: 100%;
+  color: transparent;
+  text-shadow: none;
+}
+
+.nexus-marquee-select > select[data-marquee-select]::-ms-value {
+  color: transparent;
+}
+
+.nexus-marquee-overlay {
+  position: absolute;
+  inset: 0 2rem 0 0.75rem;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  color: inherit;
+}
+
+.nexus-marquee-label {
+  display: inline-block;
+  min-width: 100%;
+  white-space: nowrap;
+  transform: translateX(0);
+  will-change: transform;
+}
+
+.nexus-marquee-select.nexus-marquee-overflow .nexus-marquee-label {
+  animation: nexus-select-marquee var(--nexus-marquee-duration) ease-in-out 0.9s infinite alternate;
+}
+
+@keyframes nexus-select-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--nexus-marquee-distance)));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nexus-marquee-select.nexus-marquee-overflow .nexus-marquee-label {
+    animation: none;
+  }
+}

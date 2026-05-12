@@ -391,6 +391,7 @@
       }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css" />
+    <link rel="stylesheet" href="/static/select_marquee.css?v=1" />
   </head>
   <body>
     <main>
@@ -447,7 +448,7 @@
         <div class="topbar topbar-secondary">
           <span class="pill">
             <span class="hint">Model</span>
-            <select id="model"></select>
+            <select id="model" data-marquee-select data-marquee-width="24rem"></select>
             <button id="loadModels" type="button" data-ui-role="secondary">Load</button>
           </span>
           <button id="clear" type="button" data-ui-role="secondary">Clear message box</button>
@@ -531,7 +532,7 @@
             <div>
               <section id="settings-backends" class="settings-section active">
                 <label>Preferred chat model
-                  <select id="settings_model_preference"></select>
+                  <select id="settings_model_preference" data-marquee-select></select>
                 </label>
                 <label>Preferred TTS backend
                   <select id="settings_tts_backend"><option value="">(default)</option></select>
@@ -561,7 +562,7 @@
               </section>
               <section id="settings-coding" class="settings-section">
                 <label>Preferred coding model
-                  <select id="settings_coding_model_preference"></select>
+                  <select id="settings_coding_model_preference" data-marquee-select></select>
                 </label>
                 <fieldset id="settings_coding_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
                   <legend style="font-size:13px">Coding workspaces</legend>
@@ -689,6 +690,7 @@
     </div>
 
     <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/select_marquee.js?v=1"></script>
     <script src="/static/chat.js?v=13"></script>
   </body>
 </html>
