@@ -58,6 +58,20 @@ def test_no_change_audit_preserves_runs_with_edits():
     assert event is None
 
 
+def test_incomplete_text_tool_call_detection_flags_unclosed_blocks():
+    assert ca._has_incomplete_text_tool_call('<tool_call>{"name":"coding_read_file_lines"') is True
+    assert ca._has_incomplete_text_tool_call('<tool_call><function=coding_git_diff></function></tool_call>') is False
+
+
+def test_extract_text_tool_calls_parses_complete_json_block():
+    calls = ca._extract_text_tool_calls(
+        '<tool_call>{"name":"coding_read_file_lines","arguments":{"path":"README.md","start_line":1,"line_count":20}}</tool_call>'
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "coding_read_file_lines"
+
+
 def test_fix_oriented_request_is_marked_edit_expected():
     task = {
         "id": "code_test",

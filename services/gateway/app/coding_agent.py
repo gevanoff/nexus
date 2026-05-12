@@ -724,6 +724,20 @@ def _extract_text_tool_calls(content: Any) -> List[Dict[str, Any]]:
     return out
 
 
+def _has_incomplete_text_tool_call(content: Any) -> bool:
+    text = content if isinstance(content, str) else ""
+    if not text:
+        return False
+    lower = text.lower()
+    if lower.count("<tool_call>") > lower.count("</tool_call>"):
+        return True
+    if lower.count("<function=") > lower.count("</function>"):
+        return True
+    if lower.count("<parameter=") > lower.count("</parameter>"):
+        return True
+    return False
+
+
 def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> ChatMessage:
     compact = _clip_jsonable(result, _tool_context_char_limit())
     return ChatMessage(role="tool", tool_call_id=tool_call_id, content=json.dumps(compact, separators=(",", ":"), ensure_ascii=False))
@@ -1513,8 +1527,12 @@ async def _run_agent(
 
             if not tool_calls:
                 no_tool_turns += 1
+                malformed_text_tool_call = _has_incomplete_text_tool_call(assistant.content)
                 notice = (
-                    "The assistant responded without a tool call. A coding run cannot complete from prose alone; "
+                    "The assistant started a text-form tool call, but it was malformed or truncated before it could be executed. "
+                    "The next response must emit one complete workspace tool call."
+                    if malformed_text_tool_call
+                    else "The assistant responded without a tool call. A coding run cannot complete from prose alone; "
                     "it must call workspace tools and then coding_finish."
                 )
                 await asyncio.to_thread(
@@ -1525,6 +1543,7 @@ async def _run_agent(
                         "turn": turn + 1,
                         "count": no_tool_turns,
                         "summary": notice,
+                        "malformed_text_tool_call": malformed_text_tool_call,
                         "content": _clip_text(str(assistant.content or ""), 2000),
                     },
                 )
@@ -1532,7 +1551,12 @@ async def _run_agent(
                     ChatMessage(
                         role="user",
                         content=(
-                            "Your previous response did not call any workspace tool. Continue the coding task now by calling one of the "
+                            "Your previous response did not produce an executable workspace tool call. Continue the coding task now by calling one of the "
+                            "provided tools, such as coding_list_tree, coding_read_file_lines, coding_replace_text, coding_apply_patch, "
+                            "coding_git_diff, or coding_finish. Do not answer with a prose-only plan. "
+                            "If you emit a text-form tool call, respond with exactly one complete <tool_call>{...}</tool_call> block and nothing else."
+                            if malformed_text_tool_call or no_tool_turns >= 2
+                            else "Your previous response did not call any workspace tool. Continue the coding task now by calling one of the "
                             "provided tools, such as coding_read_file_lines, coding_replace_text, coding_apply_patch, "
                             "coding_git_diff, or coding_finish. Do not answer with a prose-only plan."
                         ),
