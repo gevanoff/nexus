@@ -138,6 +138,18 @@ def _model_is_reroutable(model: str) -> bool:
     return registry.get_backend(value) is None and "/" not in value
 
 
+def _backend_supports_tool_calling(backend_name: str) -> bool:
+    registry = get_registry()
+    config = registry.get_backend(backend_name)
+    if config is None:
+        return False
+    policy = config.payload_policy if isinstance(config.payload_policy, dict) else {}
+    explicit = policy.get("supports_tool_calling")
+    if explicit is not None:
+        return bool(explicit)
+    return str(config.provider or "").strip().lower() == "mlx"
+
+
 def _candidate_summary(candidate: Dict[str, Any]) -> Dict[str, Any]:
     summary = {
         "backend": candidate.get("backend"),
@@ -164,12 +176,15 @@ def _coding_candidate_routes(request_model: str, preferred_backend: str, preferr
         seen.add(key)
         out.append((key, model_name))
 
-    add(preferred_backend, preferred_upstream_model)
+    if _backend_supports_tool_calling(preferred_backend):
+        add(preferred_backend, preferred_upstream_model)
     if not _model_is_reroutable(request_model):
         return out
 
     cfg = router_cfg()
     for backend_name, _config in llm_backends():
+        if not _backend_supports_tool_calling(backend_name):
+            continue
         add(backend_name, default_model_for_backend(backend_name, cfg))
     return out
 

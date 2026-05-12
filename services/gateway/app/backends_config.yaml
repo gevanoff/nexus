@@ -14,7 +14,8 @@ backends:
     health:
       liveness: /models
       readiness: /models
-    payload_policy: {}
+    payload_policy:
+      supports_tool_calling: false
 
   local_vllm_fast:
     class: local_vllm_fast
@@ -28,7 +29,8 @@ backends:
     health:
       liveness: /models
       readiness: /models
-    payload_policy: {}
+    payload_policy:
+      supports_tool_calling: false
 
   local_vllm_embeddings:
     class: local_vllm_embeddings
@@ -42,7 +44,8 @@ backends:
     health:
       liveness: /models
       readiness: /models
-    payload_policy: {}
+    payload_policy:
+      supports_tool_calling: false
 
   local_mlx:
     class: local_mlx
@@ -61,7 +64,7 @@ backends:
       liveness: /models
       readiness: /models
     payload_policy:
-      {}
+      supports_tool_calling: true
 
   gpu_fast:
     class: gpu_fast

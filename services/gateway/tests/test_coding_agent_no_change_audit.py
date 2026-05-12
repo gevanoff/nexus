@@ -105,11 +105,34 @@ def test_model_is_reroutable_for_aliases_but_not_explicit_backend_model():
     assert ca._model_is_reroutable("local_mlx:mlx-community/Qwen3-30B-A3B-4bit") is False
 
 
+def test_backend_supports_tool_calling_prefers_payload_policy(monkeypatch):
+    class FakeBackend:
+        def __init__(self, provider: str, policy):
+            self.provider = provider
+            self.payload_policy = policy
+
+    class FakeRegistry:
+        def get_backend(self, backend_name: str):
+            return {
+                "local_mlx": FakeBackend("mlx", {"supports_tool_calling": True}),
+                "local_vllm": FakeBackend("vllm", {"supports_tool_calling": False}),
+                "legacy_mlx": FakeBackend("mlx", {}),
+            }.get(backend_name)
+
+    monkeypatch.setattr(ca, "get_registry", lambda: FakeRegistry())
+
+    assert ca._backend_supports_tool_calling("local_mlx") is True
+    assert ca._backend_supports_tool_calling("local_vllm") is False
+    assert ca._backend_supports_tool_calling("legacy_mlx") is True
+
+
 def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypatch):
     class FakeBackend:
-        def __init__(self, base_url: str, limit: int):
+        def __init__(self, base_url: str, limit: int, provider: str, policy=None):
             self.base_url = base_url
             self._limit = limit
+            self.provider = provider
+            self.payload_policy = policy if isinstance(policy, dict) else {}
 
         def supports(self, route_kind: str) -> bool:
             return route_kind == "chat"
@@ -120,9 +143,9 @@ def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypat
     class FakeRegistry:
         def __init__(self):
             self.backends = {
-                "local_mlx": FakeBackend("http://ai2:10240/v1", 2),
-                "local_vllm": FakeBackend("http://ada2:8000/v1", 4),
-                "local_vllm_fast": FakeBackend("http://ai1:8001/v1", 4),
+                "local_mlx": FakeBackend("http://ai2:10240/v1", 2, "mlx", {"supports_tool_calling": True}),
+                "local_vllm": FakeBackend("http://ada2:8000/v1", 4, "vllm", {"supports_tool_calling": False}),
+                "local_vllm_fast": FakeBackend("http://ai1:8001/v1", 4, "vllm", {"supports_tool_calling": False}),
             }
 
         def get_backend(self, backend_name: str):
@@ -152,6 +175,5 @@ def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypat
 
     ranked = ca._rank_coding_backend_candidates("coder", "local_mlx", "model-for-local_mlx")
 
-    assert [item["backend"] for item in ranked[:2]] == ["local_vllm_fast", "local_vllm"]
-    assert ranked[-1]["backend"] == "local_mlx"
-    assert ranked[-1]["ready"] is False
+    assert [item["backend"] for item in ranked] == ["local_mlx"]
+    assert ranked[0]["ready"] is False
