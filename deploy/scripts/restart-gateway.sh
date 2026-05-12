@@ -53,7 +53,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
-ns_seed_gateway_config_files "$ROOT_DIR"
+ns_seed_gateway_config_files "$ROOT_DIR" refresh
 
 if ! ns_compose_available; then
   ns_die "Docker Compose is not available"
