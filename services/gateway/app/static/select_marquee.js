@@ -23,6 +23,7 @@
     const text = selectedText(select);
     instance.label.textContent = text;
     select.title = text;
+    measure(instance);
     window.requestAnimationFrame(() => measure(instance));
   }
 
