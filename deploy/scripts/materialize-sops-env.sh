@@ -25,6 +25,9 @@ Usage: deploy/scripts/materialize-sops-env.sh --environment <dev|prod>
 Materialize tracked SOPS-encrypted dotenv overlays into generated git-ignored
 files next to the selected env file.
 
+When generated overlays already exist on a deploy host, deploy helpers will use
+them directly even if `sops` is not installed there.
+
 Secret source discovery:
   deploy/secrets/<environment>/common.env.sops
   deploy/secrets/<environment>/<topology-host>.env.sops

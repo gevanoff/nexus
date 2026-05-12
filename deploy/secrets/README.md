@@ -70,6 +70,12 @@ into generated git-ignored overlays next to the selected env file:
 
 Those generated overlays are merged before the plain `.local` overlay.
 
+For deploy targets and other local-use hosts, those generated overlays are also
+valid runtime inputs on their own. If ansible or another bootstrap step places
+`<env-file>.sops.common.local` and/or `<env-file>.sops.local` on the host,
+`deploy/scripts/deploy.sh` will reuse them even when `sops` is not installed on
+that host.
+
 ## Git policy
 
 - Track only `*.env.sops` files here.

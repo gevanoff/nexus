@@ -229,7 +229,7 @@ ns_materialize_sops_overlay_file() {
   local secret_file="$1"
   local output_file="$2"
   local sops_bin="${NEXUS_SOPS_BIN:-sops}"
-  local trust_generated_overlays="${NEXUS_TRUST_GENERATED_SOPS_OVERLAYS:-false}"
+  local trust_generated_overlays="${NEXUS_TRUST_GENERATED_SOPS_OVERLAYS:-true}"
 
   if [[ -z "${secret_file:-}" ]]; then
     return 0
@@ -237,20 +237,25 @@ ns_materialize_sops_overlay_file() {
 
   if [[ ! -f "$secret_file" ]]; then
     if [[ -n "${output_file:-}" && -f "$output_file" ]]; then
-      rm -f "$output_file"
-      ns_print_warn "Removed stale generated SOPS overlay ${output_file}"
+      ns_print_warn "Keeping existing generated SOPS overlay ${output_file} because no tracked encrypted source is present."
     fi
     return 0
   fi
 
   if ! ns_have_cmd "$sops_bin"; then
-    if [[ -f "$output_file" && "$trust_generated_overlays" == "true" ]]; then
-      ns_print_warn "Reusing existing generated SOPS overlay ${output_file} because ${sops_bin} is unavailable and NEXUS_TRUST_GENERATED_SOPS_OVERLAYS=true."
-      return 0
+    if [[ -f "$output_file" ]]; then
+      if [[ "$trust_generated_overlays" == "true" ]]; then
+        ns_print_warn "Reusing existing generated SOPS overlay ${output_file} because ${sops_bin} is unavailable."
+        return 0
+      fi
+      if [[ "$secret_file" -ot "$output_file" ]]; then
+        ns_print_warn "Reusing existing generated SOPS overlay ${output_file} because ${sops_bin} is unavailable and the overlay is newer than the encrypted source."
+        return 0
+      fi
     fi
-    if [[ -f "$output_file" && "$secret_file" -ot "$output_file" ]]; then
-      ns_print_warn "Reusing existing generated SOPS overlay ${output_file} because ${sops_bin} is unavailable."
-      return 0
+    if [[ "$trust_generated_overlays" == "true" ]]; then
+      ns_print_error "Encrypted secret file exists but ${sops_bin} is unavailable and no generated overlay is present: ${secret_file}"
+      return 1
     fi
     ns_print_error "Encrypted secret file exists but ${sops_bin} is unavailable: ${secret_file}"
     return 1
