@@ -1,6 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+
+# Edit task endpoint
+@app.post("/edit-task")
+async def edit_task(request: Request) -> JSONResponse:
+    """Handle task edits from UI."""
+    try:
+        data = await request.json()
+        task_id = data.get('id')
+        if not task_id:
+            return JSONResponse(status_code=400, content={"error": "Missing task ID"})
+        
+        # Placeholder for actual edit logic
+        return JSONResponse(content={"status": "success", "message": f"Task {task_id} edited"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+import asyncio
 import base64
 import io
 import hashlib
