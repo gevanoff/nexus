@@ -2,6 +2,27 @@ from __future__ import annotations
 
 import asyncio
 
+# Edit button route handling
+@app.post("/api/scheduled-tasks/edit")
+async def handle_edit_task(request: Request) -> JSONResponse:
+    try:
+        data = await request.json()
+        task_id = data.get('id')
+        
+        # Placeholder for actual edit logic
+        return JSONResponse({
+            'status': 'success',
+            'message': f'Edit request received for task {task_id}',
+            'data': data
+        })
+    except Exception as e:
+        return JSONResponse({
+            'status': 'error',
+            'message': str(e)
+        }, status_code=400)
+
+import asyncio
+
 # Edit task endpoint
 @app.post("/edit-task")
 async def edit_task(request: Request) -> JSONResponse:
