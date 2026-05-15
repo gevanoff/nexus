@@ -168,6 +168,10 @@ def _ui_runtime_selector_entries(registry: Any, now: int) -> list[Dict[str, Any]
             "resolved_model": resolved_model,
             "is_runtime_selector": True,
             "label": label,
+            "edit": {
+                "endpoint": "/tasks/edit",
+                "method": "POST"
+            },
         }
         entries.append(_apply_model_location(item, location))
     return entries
