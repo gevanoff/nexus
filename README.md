@@ -10,4 +10,4 @@ API Access:
 - OpenAI-compatible endpoint: http://localhost:8001/v1/chat/completions
 - Model name: `nvidia/NVIDIA-Nemotron-Nano-9B-v2`
 
-See `docker-compose.vllm-fast.yml` for deployment details.
+Deployment details are configured in `docker-compose.vllm-fast.yml`. The model is integrated as a vLLM backend for OpenAI-style chat access.
