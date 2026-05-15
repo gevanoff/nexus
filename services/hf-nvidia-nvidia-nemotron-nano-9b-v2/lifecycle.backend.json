@@ -1,0 +1,17 @@
+{
+  "hf_nvidia_nvidia_nemotron_nano_9b_v2": {
+    "auto_start": true,
+    "auto_stop": true,
+    "capabilities": [
+      "chat"
+    ],
+    "component": "hf-nvidia-nvidia-nemotron-nano-9b-v2",
+    "compose_file": "docker-compose.hf-nvidia-nvidia-nemotron-nano-9b-v2.yml",
+    "display_name": "HF NVIDIA-Nemotron-Nano-9B-v2",
+    "estimated_vram_mb": 22000,
+    "host": "ai1",
+    "notes": "Generated from HuggingFace model nvidia/NVIDIA-Nemotron-Nano-9B-v2. Recommended lane: ai1 / vLLM Fast. Fallback text/json shims should start from ai1 unless the model clearly needs the heavier ada2 lane or an MLX host-native path.",
+    "ready_path": "/readyz",
+    "tier": "optional"
+  }
+}

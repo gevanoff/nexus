@@ -1,114 +1,13 @@
-# Environment configuration
-.env
-deploy/env/.env.*
-!deploy/env/.env.*.example
-deploy/secrets/**/*.env
-!deploy/secrets/**/*.env.sops
-!deploy/secrets/**/.gitkeep
-
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Virtual environments
-venv/
-/ENV/
-/env/
-.venv
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Docker
-*.log
-
-# Repo-local container runtime (bind mounts)
-.runtime/
-
-# Data directories
-data/
-*.sqlite
-*.db
-
-# Logs
-*.out
-*.err
-logs/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Models and large files
-models/
-*.pth
-*.safetensors
-*.ckpt
-*.bin
-*.gguf
-
-# Service-specific
-services/*/data/
-services/*/.env
-services/*/env/
-!services/mlx/env/
-!services/mlx/env/*.example
-!services/luxtts/env/
-!services/luxtts/env/*.example
-!services/qwen3-tts/env/
-!services/qwen3-tts/env/*.example
-
-# Testing
 .pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Thumbnails
-._*
-
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-
-# Directories potentially created on remote AFP share
-.AppleDB
-.AppleDesktop
-Network Trash Folder
-Temporary Items
-.apdisk
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+*.pyc
+*.pyo
+*.pyd
+outputs/
+.runtime/
