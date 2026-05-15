@@ -107,9 +107,9 @@ class Settings(BaseSettings):
     UI_CHAT_SUMMARY_TRIGGER_BYTES: int = 250_000  # summarize when history grows beyond this
     UI_CHAT_SUMMARY_KEEP_LAST_MESSAGES: int = 12  # keep tail messages after summarizing
     # Chat context shaping for the UI chat endpoint.
-    # Default is multi-turn mode: prior turns are folded into system context so
+    # Default is conversational mode: prior messages are folded into system context so
     # the browser chat behaves like a normal ongoing conversation.
-    # Set false to force strict single-turn behavior.
+    # Set false to force strict single-message behavior.
     UI_CHAT_INCLUDE_PRIOR_CONTEXT: bool = True
 
     # User authentication + storage
@@ -353,7 +353,7 @@ class Settings(BaseSettings):
     # Durable agent scheduled tasks.
     # Agents can create countdown-style one-shot tasks or recurring interval/cron
     # checks. The scheduler stores state in SQLite and executes due tasks through
-    # AgentRuntimeV1, so normal agent specs, tool tiers, budgets, and run logs apply.
+    # AgentRuntimeV1, so normal agent specs, tool tiers, IO budgets, and run logs apply.
     AGENT_TASKS_ENABLED: bool = True
     AGENT_TASKS_DB_PATH: str = "/var/lib/gateway/data/agent/tasks.sqlite"
     AGENT_TASKS_POLL_INTERVAL_SEC: float = 5.0
@@ -403,9 +403,6 @@ class Settings(BaseSettings):
     CODING_COMMAND_TIMEOUT_SEC: int = 120
     CODING_MAX_OUTPUT_CHARS: int = 40_000
     CODING_FILE_MAX_BYTES: int = 500_000
-    CODING_AGENT_MAX_TURNS: int = 1000
-    CODING_AGENT_MAX_TURNS_LIMIT: int = 10_000
-    CODING_AGENT_MAX_RUNTIME_SEC: int = 0
     CODING_AGENT_MAX_EVENTS: int = 120
     CODING_AGENT_MAX_TOOL_RESULT_CHARS: int = 60_000
     CODING_AGENT_MAX_TOKENS: int = 2048

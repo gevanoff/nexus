@@ -318,8 +318,9 @@ after save.
 
 The same page can start autonomous coding runs. `POST /v1/coding/runs` creates
 a workspace and starts the background agent for the prompt; existing workspaces
-can be started with `POST /v1/coding/tasks/{task_id}/agent-run` and stopped with
-`POST /v1/coding/tasks/{task_id}/agent-stop`. Agent progress is persisted on
+can be started with `POST /v1/coding/tasks/{task_id}/agent-run` and paused with
+`POST /v1/coding/tasks/{task_id}/agent-pause` (`agent-stop` remains a
+backwards-compatible alias). Agent progress is persisted on
 the task under `task.agent.events`. The agent may inspect/search/read/write
 workspace files and run the configured allowlisted commands. Push and PR
 creation remain explicit approval steps; successful runs can optionally make a
@@ -342,7 +343,7 @@ Supported schedule modes:
 - cron (`cron`, five-field minute/hour/day/month/weekday)
 
 The task UI lets a user choose the LLM model alias, tool tier, explicit tool
-allowlist, turn/runtime budget, max runs, and schedule. Results are shown with
+allowlist, max runs, and schedule. Results are shown with
 per-run status/output. Current scheduled tasks are LLM/text tasks; the API/UI
 shape reserves task types for future coder, app, multi-model, image, music, and
 video runners.

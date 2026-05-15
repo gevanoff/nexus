@@ -173,7 +173,7 @@ def append_guidance_message(
 def set_task_coding_model(task_id: str, *, coding_model: Optional[str]) -> Dict[str, Any]:
     task = load_task(task_id)
     agent_status = str(task.get("agent_status") or "").strip().lower()
-    if agent_status in {"queued", "running", "stopping"}:
+    if agent_status in {"queued", "running", "stopping", "pausing"}:
         raise HTTPException(status_code=409, detail="cannot change coding model while the agent is active")
 
     next_model = str(coding_model or "").strip()
@@ -224,7 +224,7 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
         except Exception:
             continue
         status = str(task.get("agent_status") or "").strip().lower()
-        if status not in {"queued", "running", "stopping"}:
+        if status not in {"queued", "running", "stopping", "pausing"}:
             continue
         events = task.get("agent_events")
         if not isinstance(events, list):
@@ -367,12 +367,12 @@ def _resolve_repo_url(repo_url: Optional[str]) -> str:
 
 
 def _resolve_model_integration_repo_url(repo_url: Optional[str]) -> str:
-    repo = str(repo_url or "").strip()
+    repo = str(repo_url or "").strip() or default_repo_url()
     if not repo:
-        raise HTTPException(status_code=400, detail="repo_url is required for model integration workspaces")
+        raise HTTPException(status_code=400, detail="destination repo_url is required for model integration workspaces")
     _reject_url_credentials(repo)
     if not _is_github_url(repo):
-        raise HTTPException(status_code=400, detail="model integration repo_url must be a GitHub repository URL")
+        raise HTTPException(status_code=400, detail="model integration destination repo_url must be a GitHub repository URL")
     return repo
 
 
@@ -712,14 +712,19 @@ def create_model_integration_task(
 ) -> Dict[str, Any]:
     _ensure_enabled()
     _ensure_dirs()
-    plan = miw.build_integration_plan(
-        model=model,
-        preferred_runtime=preferred_runtime,
-        route_kind=route_kind,
-        service_name=service_name,
-        prompt=prompt,
-    )
     target_repo = _resolve_model_integration_repo_url(repo_url)
+    try:
+        plan = miw.build_integration_plan(
+            model=model,
+            preferred_runtime=preferred_runtime,
+            route_kind=route_kind,
+            service_name=service_name,
+            prompt=prompt,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"model integration plan failed: {type(exc).__name__}: {_redact_text(str(exc), extra_tokens=[_effective_git_token(git_token_value)])}") from exc
     task_id = new_task_id()
     branch = _safe_branch(branch_name, task_id=task_id)
     base = _base_branch(base_branch)
@@ -1384,7 +1389,13 @@ def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
     return {"ok": bool(commit.get("ok")), "status": status, "add": add, "commit": commit, "last_commit": task.get("last_commit")}
 
 
-def checkpoint_task(task_id: str, *, message: str, run_id: Optional[str] = None, turn: Optional[int] = None) -> Dict[str, Any]:
+def checkpoint_task(
+    task_id: str,
+    *,
+    message: str,
+    run_id: Optional[str] = None,
+    cycle: Optional[int] = None,
+) -> Dict[str, Any]:
     msg = str(message or "").strip() or "Nexus coding agent checkpoint"
     if len(msg) > 2000:
         msg = msg[:2000]
@@ -1413,7 +1424,7 @@ def checkpoint_task(task_id: str, *, message: str, run_id: Optional[str] = None,
         task["last_checkpoint_commit"] = commit_hash
         task["last_checkpoint_at"] = _now()
         task["last_checkpoint_run_id"] = str(run_id or "").strip()
-        task["last_checkpoint_turn"] = int(turn or 0)
+        task["last_checkpoint_cycle"] = int(cycle or 0)
     save_task(task)
     return {
         "ok": bool(commit.get("ok")),
@@ -1962,12 +1973,22 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
     guidance_messages = task.get("guidance_messages")
     if not isinstance(guidance_messages, list):
         guidance_messages = []
+    now = _now()
+    created_at = float(task.get("created_at") or now)
+    workspace_elapsed = int(max(0.0, now - created_at)) if created_at > 0 else 0
+    agent_started = float(task.get("agent_started_at") or 0)
+    agent_finished = float(task.get("agent_finished_at") or 0)
+    agent_elapsed = 0
+    if agent_started > 0:
+        agent_end = agent_finished if agent_finished > 0 else now
+        agent_elapsed = int(max(0.0, agent_end - agent_started))
     out = {
         "id": task.get("id"),
         "kind": task.get("kind") or "workspace",
         "status": task.get("status"),
         "created_at": task.get("created_at"),
         "updated_at": task.get("updated_at"),
+        "elapsed_runtime_sec": workspace_elapsed,
         "owner": task.get("owner"),
         "repo_url": redact_repo_url(str(task.get("repo_url") or "")),
         "source_url": redact_repo_url(str(task.get("source_url") or "")),
@@ -1983,7 +2004,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "last_commit": task.get("last_commit"),
         "last_checkpoint_commit": task.get("last_checkpoint_commit"),
         "last_checkpoint_at": task.get("last_checkpoint_at"),
-        "last_checkpoint_turn": task.get("last_checkpoint_turn"),
+        "last_checkpoint_cycle": task.get("last_checkpoint_cycle"),
         "last_pushed_at": task.get("last_pushed_at"),
         "last_pr_at": task.get("last_pr_at"),
         "last_pr_output": task.get("last_pr_output"),
@@ -1994,14 +2015,13 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
             "run_prompt": task.get("agent_run_prompt") or "",
             "backend": task.get("agent_backend") or "",
             "upstream_model": task.get("agent_upstream_model") or "",
-            "turn": int(task.get("agent_turn") or 0),
-            "max_turns": int(task.get("agent_max_turns") or 0),
             "started_at": task.get("agent_started_at"),
             "finished_at": task.get("agent_finished_at"),
+            "elapsed_runtime_sec": agent_elapsed,
             "last_event_at": task.get("agent_last_event_at"),
             "summary": task.get("agent_summary") or "",
             "error": _redact_text(str(task.get("agent_error") or "")),
-            "stop_requested": bool(task.get("agent_stop_requested")),
+            "pause_requested": bool(task.get("agent_pause_requested") or task.get("agent_stop_requested")),
             "auto_commit": bool(task.get("agent_auto_commit")),
             "events": agent_events[-80:],
         },
@@ -2028,7 +2048,7 @@ def _recent_agent_events(task: Dict[str, Any], *, limit: int = 6) -> List[Dict[s
                 "ts": item.get("ts"),
                 "type": str(item.get("type") or ""),
                 "summary": str(item.get("summary") or item.get("error") or item.get("content") or "")[:400],
-                "turn": int(item.get("turn") or 0),
+                "cycle": int(item.get("cycle") or 0),
             }
         )
     return out
@@ -2046,7 +2066,7 @@ def _no_tool_call_streak(task: Dict[str, Any]) -> int:
         if event_type == "no_tool_call":
             streak += 1
             continue
-        if event_type in {"assistant", "tool_started", "tool_finished", "turn_started", "guidance_seen", "thinking", "started", "queued", "review", "completed", "failed", "stopped", "checkpoint", "commit"}:
+        if event_type in {"assistant", "tool_started", "tool_finished", "cycle_started", "guidance_seen", "thinking", "started", "queued", "review", "completed", "failed", "paused", "stopped", "checkpoint", "commit"}:
             break
     return streak
 
@@ -2085,7 +2105,7 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
 
     if str(public.get("status") or "") == "error":
         attention.append("workspace_error_state")
-    if agent_status in {"stopped", "interrupted"}:
+    if agent_status in {"paused", "stopped", "interrupted"}:
         attention.append(f"run_{agent_status}")
         safe_actions.extend(["resume", "guide_and_resume"])
     elif agent_status == "failed":
@@ -2101,11 +2121,6 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
             safe_actions.append("guidance")
         else:
             safe_actions.append("guide_and_resume")
-
-    max_turns = int(agent.get("max_turns") or 0)
-    turn = int(agent.get("turn") or 0)
-    if max_turns > 0 and turn >= max(1, int(max_turns * 0.9)) and agent_status == "running":
-        attention.append("near_turn_limit")
 
     if repo_error:
         attention.append("repo_inspection_error")
@@ -2131,10 +2146,9 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
         "last_commit": str(public.get("last_commit") or ""),
         "agent": {
             "status": agent_status,
-            "turn": turn,
-            "max_turns": max_turns,
             "started_at": agent.get("started_at"),
             "finished_at": agent.get("finished_at"),
+            "elapsed_runtime_sec": agent.get("elapsed_runtime_sec"),
             "last_event_at": agent.get("last_event_at"),
             "last_event_age_sec": last_event_age_sec,
             "summary": str(agent.get("summary") or "")[:600],
@@ -2196,6 +2210,7 @@ def monitor_tasks(*, limit: int = 20, only_attention: bool = False, stalled_afte
             "total": len(items),
             "attention": sum(1 for item in items if item.get("needs_attention")),
             "running": sum(1 for item in items if ((item.get("agent") or {}).get("status") == "running")),
+            "paused": sum(1 for item in items if ((item.get("agent") or {}).get("status") == "paused")),
             "stopped": sum(1 for item in items if ((item.get("agent") or {}).get("status") == "stopped")),
             "failed": sum(1 for item in items if ((item.get("agent") or {}).get("status") == "failed")),
         },
@@ -2221,9 +2236,6 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "command_timeout_sec": command_timeout_sec(),
         "max_output_chars": max_output_chars(),
         "file_max_bytes": file_max_bytes(),
-        "agent_max_turns": int(getattr(S, "CODING_AGENT_MAX_TURNS", 1000) or 1000),
-        "agent_max_turns_limit": int(getattr(S, "CODING_AGENT_MAX_TURNS_LIMIT", 10_000) or 10_000),
-        "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 0) or 0),
         "agent_max_tokens": int(getattr(S, "CODING_AGENT_MAX_TOKENS", 512) or 512),
         "agent_tool_context_chars": int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 10_000) or 10_000),
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),

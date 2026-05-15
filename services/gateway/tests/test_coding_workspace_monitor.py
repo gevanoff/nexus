@@ -25,8 +25,7 @@ def _base_task(**overrides):
         "workspace_path": "/tmp/code_abcdef123456",
         "repo_path": "/tmp/code_abcdef123456/repo",
         "agent_status": "stopped",
-        "agent_turn": 5,
-        "agent_max_turns": 1000,
+        "agent_cycle": 5,
         "agent_last_event_at": 1000,
         "agent_events": [
             {"ts": 990, "type": "no_tool_call", "summary": "tool call missing"},
@@ -64,7 +63,7 @@ def test_task_monitor_summary_flags_stopped_and_repeated_no_tool_calls(monkeypat
 
 
 def test_task_monitor_summary_flags_running_stall(monkeypatch):
-    task = _base_task(agent_status="running", agent_events=[{"ts": 1000, "type": "turn_started", "turn": 1}])
+    task = _base_task(agent_status="running", agent_events=[{"ts": 1000, "type": "cycle_started", "cycle": 1}])
 
     monkeypatch.setattr(cw, "git_change_summary", lambda task_id: {"ok": True, "counts": {"total": 0}, "files": []})
     monkeypatch.setattr(cw, "_repo_path", lambda task: Path("/tmp/code_abcdef123456/repo"))

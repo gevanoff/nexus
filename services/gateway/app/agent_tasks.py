@@ -672,7 +672,7 @@ async def _auto_recover_coding_supervisor(row: sqlite3.Row) -> dict[str, Any]:
             continue
         agent = item.get("agent") if isinstance(item.get("agent"), dict) else {}
         agent_status = str(agent.get("status") or "").strip().lower()
-        if agent_status not in {"stopped", "interrupted", "failed"}:
+        if agent_status not in {"paused", "stopped", "interrupted", "failed"}:
             continue
         if agent_status == "failed" and not include_failed:
             skipped.append({"task_id": task_id, "reason": "failed_disabled"})
@@ -844,7 +844,7 @@ async def _execute_task(row: sqlite3.Row) -> None:
         prompt_preface = ""
         if auto_recovery_summary.get("enabled"):
             prompt_preface = (
-                "Automatic coding workspace recovery prepass ran before this supervisor turn.\n"
+                "Automatic coding workspace recovery prepass ran before this supervisor run.\n"
                 f"Summary: {json.dumps(auto_recovery_summary, ensure_ascii=False, sort_keys=True)}"
             )
 

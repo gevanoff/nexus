@@ -24,7 +24,6 @@
     createModelIntegration: document.getElementById("createModelIntegration"),
     createAndRunModelIntegration: document.getElementById("createAndRunModelIntegration"),
     modelIntegrationMeta: document.getElementById("modelIntegrationMeta"),
-    agentMaxTurns: document.getElementById("agentMaxTurns"),
     agentAutoCommit: document.getElementById("agentAutoCommit"),
     configMeta: document.getElementById("configMeta"),
     refreshTasks: document.getElementById("refreshTasks"),
@@ -182,6 +181,21 @@
     }
   }
 
+  function fmtDuration(seconds) {
+    const value = Math.max(0, Math.floor(Number(seconds || 0)));
+    if (!Number.isFinite(value) || value <= 0) return "0s";
+    const days = Math.floor(value / 86400);
+    const hours = Math.floor((value % 86400) / 3600);
+    const minutes = Math.floor((value % 3600) / 60);
+    const secs = value % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours) parts.push(`${hours}h`);
+    if (minutes && parts.length < 2) parts.push(`${minutes}m`);
+    if (!parts.length) parts.push(`${secs}s`);
+    return parts.join(" ");
+  }
+
   function shortCommit(value) {
     const text = String(value || "").trim();
     return text ? text.slice(0, 12) : "";
@@ -191,7 +205,7 @@
     const value = String(status || "").toLowerCase();
     if (value === "ready" || value === "completed") return "ready";
     if (value === "error" || value === "failed") return "error";
-    if (value === "running" || value === "queued" || value === "stopping") return "running";
+    if (value === "running" || value === "queued" || value === "stopping" || value === "pausing") return "running";
     if (value === "interrupted") return "error";
     return "pending";
   }
@@ -268,7 +282,7 @@
 
   function agentIsActive(task) {
     const status = String(agentInfo(task).status || "").toLowerCase();
-    return status === "queued" || status === "running" || status === "stopping";
+    return status === "queued" || status === "running" || status === "stopping" || status === "pausing";
   }
 
   function setOutput(title, value) {
@@ -397,7 +411,7 @@
     if (/^\s*thinking\b/i.test(rest)) {
       return `${head}<span class="agent-thinking">${escapeHtml(rest)}</span>`;
     }
-    const tokenRe = /(coding_[A-Za-z0-9_]+|function=[A-Za-z_][A-Za-z0-9_]*|[A-Za-z]:[\\/][A-Za-z0-9._ -]+(?:[\\/][A-Za-z0-9._ -]+)+|(?:^|[\s"'=])(?:\.{0,2}\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?:[A-Za-z0-9._-])|(?:backend|model|turns|turn|ok|path|cwd|argv|returncode|summary|error|status)=)/g;
+    const tokenRe = /(coding_[A-Za-z0-9_]+|function=[A-Za-z_][A-Za-z0-9_]*|[A-Za-z]:[\\/][A-Za-z0-9._ -]+(?:[\\/][A-Za-z0-9._ -]+)+|(?:^|[\s"'=])(?:\.{0,2}\/)?[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?:[A-Za-z0-9._-])|(?:backend|model|cycle|ok|path|cwd|argv|returncode|summary|error|status)=)/g;
     let out = head;
     let last = 0;
     for (const match of rest.matchAll(tokenRe)) {
@@ -496,10 +510,10 @@
       const stopBtn = document.createElement("button");
       stopBtn.type = "button";
       stopBtn.className = "task-icon-btn task-stop-btn";
-      stopBtn.title = "Stop agent for this workspace";
-      stopBtn.setAttribute("aria-label", "Stop agent for this workspace");
+      stopBtn.title = "Pause agent for this workspace";
+      stopBtn.setAttribute("aria-label", "Pause agent for this workspace");
       stopBtn.disabled = state.busy || !agentIsActive(task);
-      stopBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M7 7h10v10H7z'/></svg>";
+      stopBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M7 5h4v14H7V5zm6 0h4v14h-4V5z'/></svg>";
       stopBtn.addEventListener("click", (event) => runTaskButtonAction(event, () => stopAgentRun(task.id)));
       const trashBtn = document.createElement("button");
       trashBtn.type = "button";
@@ -547,6 +561,7 @@
     ].forEach((button) => {
       if (button) button.disabled = disabled || state.busy;
     });
+    if (els.workspaceChatInput) els.workspaceChatInput.disabled = disabled || state.busy;
     [els.runCommand, els.commitBtn, els.pushBtn, els.prBtn, els.writeFile].forEach((button) => {
       if (button && activeAgent) button.disabled = true;
     });
@@ -578,6 +593,7 @@
             `updated ${fmtTime(task.updated_at)}`,
           ].filter(Boolean)
         : [`${task.repo_url || ""}`, `base ${task.base_branch || ""}`, `updated ${fmtTime(task.updated_at)}`];
+      if (task.elapsed_runtime_sec !== undefined) bits.push(`workspace runtime ${fmtDuration(task.elapsed_runtime_sec)}`);
       bits.push(`workspace model ${task.coding_model || "default"}`);
       const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
       if (commit) bits.push(`commit ${commit}`);
@@ -618,7 +634,7 @@
     }
     if (els.workspaceChatStatus) {
       if (!task) els.workspaceChatStatus.textContent = "";
-      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = `Sent messages are read by the active agent on a later turn. Next run model: ${task.coding_model || "default"}.`;
+      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = `Sent messages are read by the active agent during its next work cycle. Next run model: ${task.coding_model || "default"}.`;
       else els.workspaceChatStatus.textContent = `Sending a message starts another continuation run with ${task.coding_model || "the default model"}.`;
     }
     if (!messages.length) {
@@ -653,9 +669,10 @@
     if (!event || typeof event !== "object") return "";
     const time = event.ts ? new Date(Number(event.ts) * 1000).toLocaleTimeString() : "";
     const type = String(event.type || "event");
-    if (type === "queued") return `${time} queued model=${event.model || ""} turns=${event.max_turns || ""}`;
+    const cycle = event.cycle || "";
+    if (type === "queued") return `${time} queued model=${event.model || ""}`;
     if (type === "started") return `${time} started backend=${event.backend || ""} model=${event.upstream_model || ""}`;
-    if (type === "turn_started") return `${time} turn ${event.turn || ""}`;
+    if (type === "cycle_started") return `${time} work cycle ${cycle}`;
     if (type === "assistant") {
       const calls = Array.isArray(event.tool_calls) ? event.tool_calls.map((item) => item && item.name).filter(Boolean).join(", ") : "";
       const content = String(event.content || "").trim();
@@ -681,7 +698,7 @@
     if (type === "guidance_seen") return `${time} guidance seen count=${event.count || 0}\n${event.summary || ""}`;
     if (type === "backend_retry") {
       const attempt = `${event.attempt || "?"}/${event.max_retries || "?"}`;
-      return `${time} backend retry turn=${event.turn || ""} attempt=${attempt} delay=${event.delay_sec || 0}s\n${event.error || ""}`;
+      return `${time} backend retry cycle=${cycle} attempt=${attempt} delay=${event.delay_sec || 0}s\n${event.error || ""}`;
     }
     if (type === "checkpoint") {
       const commit = String(event.commit || "").slice(0, 12);
@@ -696,8 +713,8 @@
     }
     if (type === "completed") return `${time} completed\n${event.summary || ""}`;
     if (type === "failed") return `${time} failed\n${event.summary || event.error || ""}`;
-    if (type === "stopped") return `${time} stopped\n${event.summary || ""}`;
-    if (type === "stop_requested") return `${time} stop requested`;
+    if (type === "paused" || type === "stopped") return `${time} paused\n${event.summary || ""}`;
+    if (type === "pause_requested" || type === "stop_requested") return `${time} pause requested`;
     return `${time} ${type} ${JSON.stringify(event)}`;
   }
 
@@ -713,7 +730,7 @@
       if (agent.model) bits.push(`model ${agent.model}`);
       if (agent.backend) bits.push(`backend ${agent.backend}`);
       if (agent.upstream_model) bits.push(`upstream ${agent.upstream_model}`);
-      if (agent.turn || agent.max_turns) bits.push(`turn ${agent.turn || 0}/${agent.max_turns || "?"}`);
+      if (agent.elapsed_runtime_sec !== undefined) bits.push(`run time ${fmtDuration(agent.elapsed_runtime_sec)}`);
       if (agent.last_event_at) bits.push(`updated ${fmtTime(agent.last_event_at)}`);
       if (agent.auto_commit) bits.push("auto-commit");
       const commit = shortCommit(task && (task.last_commit || task.last_checkpoint_commit));
@@ -882,9 +899,8 @@
     const payload = await fetchJson("/ui/api/coding/config");
     state.config = payload;
     if (els.repoUrl && !els.repoUrl.value) els.repoUrl.value = payload.default_repo_url || "";
+    if (els.modelIntegrationRepoUrl && !els.modelIntegrationRepoUrl.value) els.modelIntegrationRepoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
-    if (els.agentMaxTurns && payload.agent_max_turns_limit) els.agentMaxTurns.max = String(payload.agent_max_turns_limit);
-    if (els.agentMaxTurns && !els.agentMaxTurns.value) els.agentMaxTurns.value = payload.agent_max_turns || 1000;
     setSelectOptions(
       els.modelIntegrationRuntime,
       [{ value: "auto", label: "Auto detect" }].concat((payload.model_integration_runtimes || []).filter((value) => value !== "auto").map((value) => ({ value, label: value }))),
@@ -899,8 +915,6 @@
       const bits = [];
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
       if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
-      if (payload.agent_max_turns) bits.push(`agent turns: ${payload.agent_max_turns}`);
-      bits.push(payload.agent_max_runtime_sec > 0 ? `runtime: ${payload.agent_max_runtime_sec}s` : "runtime: unlimited");
       if (payload.agent_checkpoint_commits) bits.push("checkpoint commits on");
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
@@ -937,12 +951,9 @@
   }
 
   function agentOptionsBody() {
-    const turns = els.agentMaxTurns ? Number(els.agentMaxTurns.value || 0) : 0;
-    const body = {
+    return {
       auto_commit: !!(els.agentAutoCommit && els.agentAutoCommit.checked),
     };
-    if (Number.isFinite(turns) && turns > 0) body.max_turns = Math.trunc(turns);
-    return body;
   }
 
   function selectedWorkspaceModelValue() {
@@ -965,6 +976,7 @@
   async function createModelIntegration() {
     const body = modelIntegrationBody();
     if (!body.model) throw new Error("Model is required");
+    if (!body.repo_url) throw new Error("Destination GitHub repository is required for model integration workspaces.");
     setBusy(true);
     try {
       setStatus("Creating model integration workspace...");
@@ -977,7 +989,7 @@
       await loadTasks({ keepSelection: false });
       if (task && task.id) selectTask(task.id);
       setOutput("model integration", task || payload);
-      setStatus(task && task.status === "error" ? "Model integration workspace created with errors." : "Model integration workspace ready.", task && task.status === "error");
+      setStatus(task && task.status === "error" ? `Model integration workspace error: ${task.error || "see output"}` : "Model integration workspace ready.", task && task.status === "error");
     } finally {
       setBusy(false);
       renderSelected();
@@ -987,6 +999,7 @@
   async function createAndRunModelIntegration() {
     const body = { ...modelIntegrationBody(), ...agentOptionsBody() };
     if (!body.model) throw new Error("Model is required");
+    if (!body.repo_url) throw new Error("Destination GitHub repository is required for model integration workspaces.");
     setBusy(true);
     try {
       setStatus("Creating model integration workspace and starting agent...");
@@ -999,7 +1012,7 @@
       await loadTasks({ keepSelection: false });
       if (task && task.id) selectTask(task.id);
       setOutput("model integration run", task || payload);
-      setStatus(task && task.status === "error" ? "Model integration workspace created with errors." : "Model integration agent run started.", task && task.status === "error");
+      setStatus(task && task.status === "error" ? `Model integration workspace error: ${task.error || "see output"}` : "Model integration agent run started.", task && task.status === "error");
     } finally {
       setBusy(false);
       renderSelected();
@@ -1051,7 +1064,7 @@
 
   async function refreshSelected() {
     const task = selectedTask();
-    if (!task) return;
+    if (!task) throw new Error("Select a workspace first");
     const taskId = String(task.id || "");
     const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}`);
     const fresh = payload.task;
@@ -1211,14 +1224,14 @@
     state.selectedId = task.id;
     setBusy(true);
     try {
-      setStatus("Stopping coding agent...");
-      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/agent-stop`, { method: "POST" });
+      setStatus("Pausing coding agent...");
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/agent-pause`, { method: "POST" });
       const fresh = payload.task;
       state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
       renderTasks();
       renderSelected();
-      setOutput("agent stop", fresh || payload);
-      setStatus("Stop requested.");
+      setOutput("agent pause", fresh || payload);
+      setStatus("Pause requested.");
     } finally {
       setBusy(false);
       renderSelected();
@@ -1567,7 +1580,7 @@
 
   if (els.workspaceChatInput) {
     els.workspaceChatInput.addEventListener("keydown", (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
         sendWorkspaceMessage().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
       }

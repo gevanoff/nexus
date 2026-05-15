@@ -197,7 +197,7 @@ Key considerations:
 - **Etcd-backed discovery**: services register their base URLs in etcd (`/nexus/services/<name>`), and the gateway polls etcd for updates
 
 ### Agent Runtime And Tools
-- Agent specs are loaded from `AGENT_SPECS_PATH` and can set model aliases, tool tier, turn/runtime budgets, and explicit tool allowlists.
+- Agent specs are loaded from `AGENT_SPECS_PATH` and can set model aliases, tool tier, tool IO budgets, and explicit tool allowlists.
 - Tool access is tiered. Tier 0 is read/browse/scheduling oriented; tier 1 adds memory and file-write tools; tier 2 adds constrained shell execution.
 - The tools bus exposes tool metadata and execution through `/v1/tools` and includes web browsing, local file reads/search, memory operations, HeartMula music generation, and scheduled-task create/list/cancel tools.
 - Agent runs are persisted under `AGENT_RUNS_LOG_DIR` or `AGENT_RUNS_LOG_PATH`.
@@ -206,7 +206,7 @@ Key considerations:
 ### Coding Workspaces
 - Coding tasks create isolated git clones under `CODING_WORKSPACE_ROOT`.
 - The workspace API exposes bounded tree/file/search/patch/command/git operations and blocks high-risk git subcommands.
-- Autonomous coding runs can be started, stopped, resumed after gateway restarts at the metadata level, and steered with workspace messages.
+- Autonomous coding runs can be started, paused, resumed after gateway restarts at the metadata level, and steered with workspace messages.
 - Successful or in-progress agent work can create local checkpoint commits; pushing and draft PR creation remain explicit user actions.
 - Git credentials are per-user preferences when the browser/API-key user is authenticated. `CODING_GIT_TOKEN` is only a fallback for static-bearer automation.
 

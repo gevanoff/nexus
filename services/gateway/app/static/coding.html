@@ -224,7 +224,7 @@
       .agent-state { color:#fda4af; }
       .agent-thinking { color:#d8b4fe; font-style:italic; }
       .workspace-chat {
-        max-height:260px;
+        max-height:360px;
         overflow:auto;
         border:1px solid rgba(231,237,246,0.10);
         border-radius:8px;
@@ -257,8 +257,8 @@
       .workspace-chat-input { min-height:76px; }
       .output {
         margin:0;
-        min-height:320px;
-        max-height:640px;
+        min-height:160px;
+        max-height:320px;
         overflow:auto;
         white-space:pre-wrap;
         word-break:break-word;
@@ -269,6 +269,7 @@
         padding:10px;
         font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
+      .output-panel .details-body { padding-top:0; }
       .file-list { max-height:260px; overflow:auto; border:1px solid rgba(231,237,246,0.10); border-radius:8px; }
       .file-row {
         display:grid;
@@ -360,16 +361,10 @@
               <label id="taskPromptLabel" for="taskPrompt">Task brief</label>
               <textarea id="taskPrompt" placeholder="Describe the coding task"></textarea>
             </div>
-            <div class="two">
-              <div>
-                <label for="agentMaxTurns">Max turns</label>
-                <input id="agentMaxTurns" type="number" min="1" step="1" />
-              </div>
-              <label style="display:flex;gap:8px;align-items:center;margin-top:22px;">
-                <input id="agentAutoCommit" type="checkbox" style="width:auto;" />
-                Commit successful run
-              </label>
-            </div>
+            <label style="display:flex;gap:8px;align-items:center;">
+              <input id="agentAutoCommit" type="checkbox" style="width:auto;" />
+              Commit successful run
+            </label>
             <div class="row">
               <button id="createAndRun" type="button" data-ui-role="action">Create and run agent</button>
               <button id="createTask" type="button" data-ui-role="secondary">Create workspace only</button>
@@ -381,8 +376,8 @@
             <h2>New Model Integration</h2>
             <div class="hint">Start from a HuggingFace model ID or URL and seed a topology-aware Nexus integration workspace.</div>
             <div>
-              <label for="modelIntegrationRepoUrl">Target GitHub repository</label>
-              <input id="modelIntegrationRepoUrl" autocomplete="off" placeholder="https://github.com/owner/repo.git" />
+              <label for="modelIntegrationRepoUrl">Destination GitHub repository</label>
+              <input id="modelIntegrationRepoUrl" autocomplete="off" placeholder="https://github.com/gevanoff/nexus.git" />
             </div>
             <div>
               <label for="modelIntegrationModel">Model</label>
@@ -455,13 +450,15 @@
               </div>
           </div>
 
-          <div class="subpanel stack">
-            <div class="row" style="justify-content:space-between;">
+          <details class="subpanel output-panel" open>
+            <summary>
               <h3>Output</h3>
               <span id="outputTitle" class="meta"></span>
+            </summary>
+            <div class="details-body">
+              <pre id="output" class="output"></pre>
             </div>
-            <pre id="output" class="output"></pre>
-          </div>
+          </details>
 
           <div class="subpanel stack">
             <div class="row" style="justify-content:space-between;">

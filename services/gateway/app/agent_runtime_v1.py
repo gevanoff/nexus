@@ -95,7 +95,7 @@ def load_agent_specs() -> Dict[str, AgentSpecModel]:
 
     File format:
       {
-        "default": {"model": "fast", "tier": 0, "max_turns": 100, ...},
+        "default": {"model": "fast", "tier": 0, ...},
         "heavy": {"model": "coder", "tier": 2, ...}
       }
 
@@ -109,7 +109,7 @@ def load_agent_specs() -> Dict[str, AgentSpecModel]:
         return merged
 
     return {
-        "default": AgentSpecModel(model="fast", tier=0, max_turns=100, max_runtime_sec=60.0, max_total_tool_io_bytes=2_000_000)
+        "default": AgentSpecModel(model="fast", tier=0, max_total_tool_io_bytes=2_000_000)
     }
 
 
@@ -403,7 +403,6 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                 "tier": tier,
                 "backend": backend,
                 "upstream_model": upstream_model,
-                "max_turns": int(spec.max_turns),
             }
         )
 
@@ -412,11 +411,6 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
         error: Optional[str] = None
 
         try:
-            max_turns = int(spec.max_turns or 0)
-            if max_turns <= 0:
-                raise HTTPException(status_code=400, detail="agent max_turns must be > 0")
-
-            max_runtime_sec = float(spec.max_runtime_sec) if spec.max_runtime_sec is not None else None
             max_tool_io = int(spec.max_total_tool_io_bytes) if spec.max_total_tool_io_bytes is not None else None
 
             # Deterministic system prompt for the planning phase.
@@ -425,15 +419,14 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                 role="system",
                 content=(
                     "You are AgentRuntimeV1. Follow a strict loop: PLAN -> (optional TOOL) -> OBSERVE -> NEXT -> TERMINATE. "
-                    "Do not exceed the user's budgets. Be concise.\n\n"
+                    "Respect granted tools and IO budget. Be concise.\n\n"
                     f"{tool_context}"
                 ),
             )
 
-            for turn in range(max_turns):
-                if max_runtime_sec is not None and (time.monotonic() - t0) > max_runtime_sec:
-                    raise HTTPException(status_code=408, detail="agent runtime budget exceeded")
-
+            cycle = 0
+            while True:
+                cycle += 1
                 # PLAN step: no tools.
                 plan_req = ChatCompletionRequest(
                     model=spec.model,
@@ -447,7 +440,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                     {
                         "ts": now_unix(),
                         "type": "plan",
-                        "turn": turn,
+                        "cycle": cycle,
                         "message": plan_msg.model_dump(exclude_none=True),
                     }
                 )
@@ -468,7 +461,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                     {
                         "ts": now_unix(),
                         "type": "assistant",
-                        "turn": turn,
+                        "cycle": cycle,
                         "message": action_msg.model_dump(exclude_none=True),
                     }
                 )
@@ -493,9 +486,6 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                     if not isinstance(name, str) or not name.strip():
                         raise HTTPException(status_code=502, detail="invalid tool call from model")
 
-                    if max_runtime_sec is not None and (time.monotonic() - t0) > max_runtime_sec:
-                        raise HTTPException(status_code=408, detail="agent runtime budget exceeded")
-
                     tool_res = run_tool_call(name.strip(), arguments if isinstance(arguments, str) else "", allowed_tools=set(allowed))
 
                     try:
@@ -509,7 +499,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                         {
                             "ts": now_unix(),
                             "type": "tool",
-                            "turn": turn,
+                            "cycle": cycle,
                             "tool_call_id": tool_call_id,
                             "name": name.strip(),
                             "result": tool_res,
@@ -520,10 +510,6 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                         raise HTTPException(status_code=413, detail="tool IO budget exceeded")
 
                     messages.append(_tool_message_for_result(tool_call_id=tool_call_id, result=tool_res))
-
-            if not ok and error is None and not output_text:
-                # Turn limit exceeded.
-                raise HTTPException(status_code=408, detail="agent turn limit exceeded")
 
         except HTTPException as e:
             error = e.detail if isinstance(e.detail, str) else _canonical_json(e.detail)

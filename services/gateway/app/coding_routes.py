@@ -33,8 +33,6 @@ class CodingCreateAndRunRequest(BaseModel):
     branch_name: Optional[str] = None
     prompt: Optional[str] = None
     coding_model: Optional[str] = None
-    max_turns: Optional[int] = None
-    max_runtime_sec: Optional[float] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
 
@@ -52,8 +50,6 @@ class CodingModelIntegrationCreateRequest(BaseModel):
 
 
 class CodingModelIntegrationRunRequest(CodingModelIntegrationCreateRequest):
-    max_turns: Optional[int] = None
-    max_runtime_sec: Optional[float] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
 
@@ -61,8 +57,6 @@ class CodingModelIntegrationRunRequest(CodingModelIntegrationCreateRequest):
 class CodingAgentRunRequest(BaseModel):
     coding_model: Optional[str] = None
     prompt: Optional[str] = None
-    max_turns: Optional[int] = None
-    max_runtime_sec: Optional[float] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
 
@@ -71,8 +65,6 @@ class CodingGuidanceRequest(BaseModel):
     message: str
     run: bool = False
     coding_model: Optional[str] = None
-    max_turns: Optional[int] = None
-    max_runtime_sec: Optional[float] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
 
@@ -283,8 +275,6 @@ async def ui_coding_create_model_integration_and_run(req: Request, body: CodingM
     task = await ca.start_agent_run(
         str(task.get("id") or ""),
         coding_model=model,
-        max_turns=body.max_turns,
-        max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user),
@@ -331,8 +321,6 @@ async def ui_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
         str(task.get("id") or ""),
         git_token_value=token,
         coding_model=model,
-        max_turns=body.max_turns,
-        max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user),
@@ -508,8 +496,6 @@ async def ui_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         git_token_value=_git_token_for_user(user),
         coding_model=_coding_model_for_user(user, body.coding_model),
         prompt=body.prompt,
-        max_turns=body.max_turns,
-        max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user),
@@ -530,8 +516,6 @@ async def ui_coding_task_message(req: Request, task_id: str, body: CodingGuidanc
                 git_token_value=_git_token_for_user(user),
                 coding_model=_coding_model_for_user(user, body.coding_model),
                 prompt=message,
-                max_turns=body.max_turns,
-                max_runtime_sec=body.max_runtime_sec,
                 auto_commit=body.auto_commit,
                 commit_message=body.commit_message,
                 actor=_actor_from_user(user),
@@ -551,10 +535,15 @@ async def ui_coding_task_model(req: Request, task_id: str, body: CodingTaskModel
     return {"task": task}
 
 
+@router.post("/ui/api/coding/tasks/{task_id}/agent-pause", include_in_schema=False)
+async def ui_coding_agent_pause(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return {"task": await ca.request_pause(task_id)}
+
+
 @router.post("/ui/api/coding/tasks/{task_id}/agent-stop", include_in_schema=False)
 async def ui_coding_agent_stop(req: Request, task_id: str) -> Dict[str, Any]:
-    _require_coding_ui(req)
-    return {"task": await ca.request_stop(task_id)}
+    return await ui_coding_agent_pause(req, task_id)
 
 
 @router.get("/v1/coding/config")
@@ -624,8 +613,6 @@ async def v1_coding_model_integrations_run(req: Request, body: CodingModelIntegr
     task = await ca.start_agent_run(
         str(task.get("id") or ""),
         coding_model=model,
-        max_turns=body.max_turns,
-        max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user) if user is not None else "api",
@@ -673,8 +660,6 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
         str(task.get("id") or ""),
         git_token_value=token,
         coding_model=model,
-        max_turns=body.max_turns,
-        max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user) if user is not None else "api",
@@ -845,8 +830,6 @@ async def v1_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         git_token_value=_git_token_for_user(user) if user is not None else None,
         coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
         prompt=body.prompt,
-        max_turns=body.max_turns,
-        max_runtime_sec=body.max_runtime_sec,
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user) if user is not None else "api",
@@ -867,8 +850,6 @@ async def v1_coding_task_message(req: Request, task_id: str, body: CodingGuidanc
                 git_token_value=_git_token_for_user(user) if user is not None else None,
                 coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
                 prompt=message,
-                max_turns=body.max_turns,
-                max_runtime_sec=body.max_runtime_sec,
                 auto_commit=body.auto_commit,
                 commit_message=body.commit_message,
                 actor=_actor_from_user(user) if user is not None else "api",
@@ -888,7 +869,12 @@ async def v1_coding_task_model(req: Request, task_id: str, body: CodingTaskModel
     return {"task": task}
 
 
+@router.post("/v1/coding/tasks/{task_id}/agent-pause")
+async def v1_coding_agent_pause(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return {"task": await ca.request_pause(task_id)}
+
+
 @router.post("/v1/coding/tasks/{task_id}/agent-stop")
 async def v1_coding_agent_stop(req: Request, task_id: str) -> Dict[str, Any]:
-    _require_coding_api(req)
-    return {"task": await ca.request_stop(task_id)}
+    return await v1_coding_agent_pause(req, task_id)

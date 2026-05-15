@@ -39,6 +39,80 @@ def test_create_model_integration_task_requires_github_repo_url(monkeypatch, tmp
         assert "GitHub" in str(exc.detail)
 
 
+def test_create_model_integration_task_defaults_destination_repo(monkeypatch, tmp_path):
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(cw, "default_repo_url", lambda: "https://github.com/gevanoff/nexus.git")
+    monkeypatch.setattr(
+        cw.miw,
+        "build_integration_plan",
+        lambda **kwargs: {
+            "source_url": "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+            "prompt": "Add backend integration",
+            "service_name": "nemotron",
+        },
+    )
+
+    def _scaffold(repo_path, plan):
+        readme = repo_path / "README.md"
+        readme.write_text("seed", encoding="utf-8")
+        return ["README.md"]
+
+    monkeypatch.setattr(cw.miw, "scaffold_workspace", _scaffold)
+    monkeypatch.setattr(
+        cw,
+        "_ensure_github_repo_available",
+        lambda repo_url, *, git_token_value=None: {"ok": True, "created": True, "empty": True, "body": {"html_url": repo_url}},
+    )
+    monkeypatch.setattr(
+        cw,
+        "_run_process",
+        lambda argv, **kwargs: {"ok": True, "returncode": 0, "argv": list(argv), "stdout": "", "stderr": "", "duration_ms": 1},
+    )
+
+    task = cw.create_model_integration_task(
+        model="nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+        repo_url=None,
+        preferred_runtime="vllm",
+        route_kind="chat",
+        service_name="nemotron",
+        base_branch="main",
+        branch_name="nexus-coder/nemotron",
+        prompt="Add backend integration",
+        owner="test",
+    )
+
+    assert task["status"] == "ready"
+    assert task["repo_url"] == "https://github.com/gevanoff/nexus.git"
+
+
+def test_create_model_integration_task_surfaces_plan_errors(monkeypatch, tmp_path):
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+
+    def _build_integration_plan(**kwargs):
+        raise ValueError("model id could not be resolved")
+
+    monkeypatch.setattr(cw.miw, "build_integration_plan", _build_integration_plan)
+
+    try:
+        cw.create_model_integration_task(
+            model="nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+            repo_url="https://github.com/example/nemotron-integration.git",
+            preferred_runtime="auto",
+            route_kind="chat",
+            service_name="nemotron",
+            base_branch="main",
+            branch_name="feature/test",
+            prompt="Integrate model",
+            owner="test",
+        )
+        assert False, "expected HTTPException"
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        assert "model id could not be resolved" in str(exc.detail)
+
+
 def test_create_model_integration_task_attaches_remote_and_pushes_seed(monkeypatch, tmp_path):
     monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
     monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")

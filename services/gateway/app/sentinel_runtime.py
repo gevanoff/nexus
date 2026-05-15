@@ -464,7 +464,7 @@ async def _monitor_coding(state: Dict[str, Any], conn: sqlite3.Connection, *, no
         safe_actions = item.get("safe_actions") if isinstance(item.get("safe_actions"), list) else []
         agent = item.get("agent") if isinstance(item.get("agent"), dict) else {}
         agent_status = str(agent.get("status") or "").strip().lower()
-        can_resume = agent_status in {"stopped", "interrupted", "failed"} and ("resume" in safe_actions or "guide_and_resume" in safe_actions)
+        can_resume = agent_status in {"paused", "stopped", "interrupted", "failed"} and ("resume" in safe_actions or "guide_and_resume" in safe_actions)
         if not can_resume:
             continue
         previous_attempt = attempts.get(task_id) if isinstance(attempts.get(task_id), dict) else {}

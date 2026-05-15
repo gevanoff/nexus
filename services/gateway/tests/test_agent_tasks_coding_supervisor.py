@@ -82,6 +82,8 @@ async def test_auto_recover_coding_supervisor_resumes_stopped_task(monkeypatch, 
     coding_agent = types.SimpleNamespace(start_agent_run=_start_agent_run)
     monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
     monkeypatch.setitem(sys.modules, "app.coding_agent", coding_agent)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+    monkeypatch.setattr(app, "coding_agent", coding_agent, raising=False)
 
     row = _insert_task(
         {
@@ -138,6 +140,8 @@ async def test_auto_recover_coding_supervisor_honors_cooldown(monkeypatch, tmp_p
     coding_agent = types.SimpleNamespace(start_agent_run=_start_agent_run)
     monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
     monkeypatch.setitem(sys.modules, "app.coding_agent", coding_agent)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+    monkeypatch.setattr(app, "coding_agent", coding_agent, raising=False)
 
     row = _insert_task(
         {

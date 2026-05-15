@@ -1528,8 +1528,6 @@ def tool_coding_model_integration(args: Dict[str, Any]) -> Dict[str, Any]:
             coding_agent.start_agent_run(
                 str(task.get("id") or ""),
                 coding_model=str(args.get("coding_model") or task.get("coding_model") or "coder").strip() or "coder",
-                max_turns=int(args.get("max_turns") or 0) or None,
-                max_runtime_sec=float(args.get("max_runtime_sec") or 0) or None,
                 auto_commit=bool(args.get("auto_commit")),
                 commit_message=str(args.get("commit_message") or "").strip() or None,
                 actor="tool",
@@ -1558,11 +1556,10 @@ def tool_coding_task_intervene(args: Dict[str, Any]) -> Dict[str, Any]:
     if not task_id:
         return {"ok": False, "error": "task_id is required"}
     action = str(args.get("action") or "").strip().lower()
-    if action not in {"resume", "guidance", "guide_and_resume", "stop"}:
-        return {"ok": False, "error": "action must be one of resume, guidance, guide_and_resume, stop"}
+    if action not in {"resume", "guidance", "guide_and_resume", "pause", "stop"}:
+        return {"ok": False, "error": "action must be one of resume, guidance, guide_and_resume, pause"}
     message = str(args.get("message") or "").strip()
     actor = str(args.get("actor") or "coding-supervisor").strip() or "coding-supervisor"
-    max_turns = int(args.get("max_turns") or 0) or None
 
     try:
         task = coding_workspace.load_task(task_id)
@@ -1570,7 +1567,7 @@ def tool_coding_task_intervene(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": str(exc.detail)}
     public = coding_workspace.public_task(task, include_commands=False)
     agent = public.get("agent") if isinstance(public.get("agent"), dict) else {}
-    active = str(agent.get("status") or "") in {"queued", "running", "stopping"}
+    active = str(agent.get("status") or "") in {"queued", "running", "stopping", "pausing"}
 
     if action == "guidance":
         if not message:
@@ -1587,7 +1584,6 @@ def tool_coding_task_intervene(args: Dict[str, Any]) -> Dict[str, Any]:
             coding_agent.start_agent_run(
                 task_id,
                 prompt=message or None,
-                max_turns=max_turns,
                 actor=actor,
             )
         )
@@ -1606,7 +1602,6 @@ def tool_coding_task_intervene(args: Dict[str, Any]) -> Dict[str, Any]:
             coding_agent.start_agent_run(
                 task_id,
                 prompt=message,
-                max_turns=max_turns,
                 actor=actor,
             )
         )
@@ -1614,7 +1609,8 @@ def tool_coding_task_intervene(args: Dict[str, Any]) -> Dict[str, Any]:
 
     from app import coding_agent
 
-    updated = _run_coroutine_sync(coding_agent.request_stop(task_id))
+    updated = _run_coroutine_sync(coding_agent.request_pause(task_id))
+    action = "pause" if action == "stop" else action
     return {"ok": True, "action": action, "started": False, "task": updated}
 
 
@@ -2155,8 +2151,6 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "git_token": {"type": "string", "description": "Optional GitHub token override used to create or push the target repository."},
                 "coding_model": {"type": "string"},
                 "auto_run": {"type": "boolean"},
-                "max_turns": {"type": "integer"},
-                "max_runtime_sec": {"type": "number"},
                 "auto_commit": {"type": "boolean"},
                 "commit_message": {"type": "string"}
             },
@@ -2167,7 +2161,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "coding_task_monitor": {
         "name": "coding_task_monitor",
         "version": "1",
-        "description": "Inspect Nexus coding workspaces, classify stopped/stalled/failed runs, and return bounded safe actions for recovery.",
+        "description": "Inspect Nexus coding workspaces, classify paused/stopped/stalled/failed runs, and return bounded safe actions for recovery.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -2196,14 +2190,13 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "coding_task_intervene": {
         "name": "coding_task_intervene",
         "version": "1",
-        "description": "Take a bounded recovery action on a coding workspace: resume a stopped run, send guidance, guide and resume, or request stop.",
+        "description": "Take a recovery action on a coding workspace: resume a paused/stopped run, send guidance, guide and resume, or request pause.",
         "parameters": {
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Coding task id such as code_abcdef123456."},
-                "action": {"type": "string", "enum": ["resume", "guidance", "guide_and_resume", "stop"]},
+                "action": {"type": "string", "enum": ["resume", "guidance", "guide_and_resume", "pause"]},
                 "message": {"type": "string", "description": "Guidance message for guidance or guide_and_resume. Optional prompt override for resume."},
-                "max_turns": {"type": "integer", "description": "Optional max_turns override when resuming a stopped task."},
                 "actor": {"type": "string", "description": "Actor label recorded in workspace guidance and run events."}
             },
             "required": ["task_id", "action"],

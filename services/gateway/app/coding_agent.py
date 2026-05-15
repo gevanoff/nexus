@@ -21,32 +21,11 @@ from app.tools_bus import tool_web_browse
 from app.upstreams import call_backend_chat
 
 
-class _CodingAgentStopped(Exception):
+class _CodingAgentPaused(Exception):
     pass
 
 
 _RUNNING: Dict[str, asyncio.Task[Any]] = {}
-
-
-def _max_turns(requested: Optional[int] = None) -> int:
-    default = int(getattr(S, "CODING_AGENT_MAX_TURNS", 1000) or 1000)
-    limit = int(getattr(S, "CODING_AGENT_MAX_TURNS_LIMIT", 10_000) or 10_000)
-    try:
-        value = int(requested) if requested is not None else default
-    except Exception:
-        value = default
-    return max(1, min(value, limit))
-
-
-def _max_runtime_sec(requested: Optional[float] = None) -> Optional[float]:
-    default = float(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 0) or 0)
-    try:
-        value = float(requested) if requested is not None else default
-    except Exception:
-        value = default
-    if value <= 0:
-        return None
-    return max(30.0, value)
 
 
 def _max_events() -> int:
@@ -259,7 +238,7 @@ async def _acquire_coding_backend_slot(
     preferred_upstream_model: str,
     *,
     task_id: str,
-    turn: int,
+    cycle: int,
     attempt: int,
 ) -> Dict[str, Any]:
     admission = get_admission_controller()
@@ -287,7 +266,7 @@ async def _acquire_coding_backend_slot(
                     task_id,
                     {
                         "type": "backend_selected",
-                        "turn": turn,
+                        "cycle": cycle,
                         "attempt": attempt + 1,
                         "backend": candidate.get("backend"),
                         "upstream_model": candidate.get("upstream_model"),
@@ -310,7 +289,7 @@ async def _acquire_coding_backend_slot(
                 detail={
                     "error": "coding_backend_queue_timeout" if status_code == 429 else "coding_backend_unavailable",
                     "message": "No healthy coding backend became available before the queue timeout elapsed",
-                    "turn": turn,
+                    "cycle": cycle,
                     "preferred_backend": preferred_backend,
                     "candidates": [_candidate_summary(item) for item in last_candidates[:6]],
                 },
@@ -322,7 +301,7 @@ async def _acquire_coding_backend_slot(
                 task_id,
                 {
                     "type": "backend_wait",
-                    "turn": turn,
+                    "cycle": cycle,
                     "attempt": attempt + 1,
                     "timeout_sec": round(_coding_queue_timeout_sec(), 1),
                     "preferred_backend": preferred_backend,
@@ -400,11 +379,11 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
     if event_type == "checkpoint":
         commit_hash = str(event.get("commit") or "").strip()
         status = "saved" if event.get("ok") else "failed"
-        return f"checkpoint {status} turn={event.get('turn') or ''} commit={commit_hash[:12]}".strip()
+        return f"checkpoint {status} cycle={event.get('cycle') or ''} commit={commit_hash[:12]}".strip()
     if event_type == "interrupted":
         return f"interrupted {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "no_tool_call":
-        return f"no_tool_call turn={event.get('turn') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+        return f"no_tool_call cycle={event.get('cycle') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "no_change_audit":
         return f"no_change_audit {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "assistant":
@@ -430,20 +409,20 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
         return f"{event_type} {name}{detail}".strip()
     if event_type == "backend_retry":
         return (
-            f"backend_retry turn={event.get('turn') or ''} attempt={event.get('attempt') or ''}/{event.get('max_retries') or ''} "
+            f"backend_retry cycle={event.get('cycle') or ''} attempt={event.get('attempt') or ''}/{event.get('max_retries') or ''} "
             f"delay={event.get('delay_sec') or ''}s {_clip_text(str(event.get('error') or ''), 500)}"
         ).strip()
     if event_type == "backend_wait":
         return (
-            f"backend_wait turn={event.get('turn') or ''} attempt={event.get('attempt') or ''} "
+            f"backend_wait cycle={event.get('cycle') or ''} attempt={event.get('attempt') or ''} "
             f"preferred={event.get('preferred_backend') or ''} timeout={event.get('timeout_sec') or ''}s"
         ).strip()
     if event_type == "backend_selected":
         return (
-            f"backend_selected turn={event.get('turn') or ''} backend={event.get('backend') or ''} "
+            f"backend_selected cycle={event.get('cycle') or ''} backend={event.get('backend') or ''} "
             f"host={event.get('host') or ''} preferred={event.get('preferred_backend') or ''}"
         ).strip()
-    if event_type in {"queued", "started", "turn_started", "review", "commit", "completed", "failed", "stopped"}:
+    if event_type in {"queued", "started", "cycle_started", "review", "commit", "completed", "failed", "paused", "stopped"}:
         summary = str(event.get("summary") or event.get("error") or "")
         return f"{event_type} {_clip_text(summary, 700)}".strip()
     return f"{event_type} {_clip_text(json.dumps(event, ensure_ascii=False, sort_keys=True), 700)}"
@@ -749,7 +728,7 @@ async def _call_backend_chat_with_retry(
     upstream_model: str,
     *,
     task_id: str,
-    turn: int,
+    cycle: int,
 ) -> tuple[Dict[str, Any], str, str]:
     max_retries = _backend_retry_count()
     admission = get_admission_controller()
@@ -759,7 +738,7 @@ async def _call_backend_chat_with_retry(
             backend,
             upstream_model,
             task_id=task_id,
-            turn=turn,
+            cycle=cycle,
             attempt=attempt,
         )
         selected_backend = str(selected.get("backend") or backend)
@@ -777,7 +756,7 @@ async def _call_backend_chat_with_retry(
                 task_id,
                 {
                     "type": "backend_retry",
-                    "turn": turn,
+                    "cycle": cycle,
                     "attempt": attempt + 1,
                     "max_retries": max_retries,
                     "delay_sec": round(delay, 1),
@@ -787,9 +766,9 @@ async def _call_backend_chat_with_retry(
                 },
             )
             logger.warning(
-                "coding agent retrying backend task=%s turn=%s backend=%s model=%s attempt=%s/%s delay=%.1fs error=%s",
+                "coding agent retrying backend task=%s cycle=%s backend=%s model=%s attempt=%s/%s delay=%.1fs error=%s",
                 task_id,
-                turn,
+                cycle,
                 selected_backend,
                 selected_model,
                 attempt + 1,
@@ -1053,17 +1032,17 @@ def _append_event(task_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
     return ev
 
 
-def _stop_requested(task_id: str) -> bool:
+def _pause_requested(task_id: str) -> bool:
     try:
         task = cw.load_task(task_id)
-        return bool(task.get("agent_stop_requested"))
+        return bool(task.get("agent_stop_requested") or task.get("agent_pause_requested"))
     except Exception:
         return False
 
 
-def _raise_if_stopped(task_id: str) -> None:
-    if _stop_requested(task_id):
-        raise _CodingAgentStopped("coding run stop requested")
+def _raise_if_paused(task_id: str) -> None:
+    if _pause_requested(task_id):
+        raise _CodingAgentPaused("Coding run was paused. Start another run on this workspace to resume from the latest files and checkpoint.")
 
 
 def _new_guidance_since(task_id: str, seen_count: int) -> tuple[List[Dict[str, Any]], int]:
@@ -1170,9 +1149,9 @@ def _checkpoint_enabled() -> bool:
     return bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True))
 
 
-def _checkpoint_after_turn(task_id: str, *, run_id: str, turn: int) -> Dict[str, Any]:
-    msg = f"Nexus checkpoint: {task_id} turn {turn}"
-    return cw.checkpoint_task(task_id, message=msg, run_id=run_id, turn=turn)
+def _checkpoint_after_cycle(task_id: str, *, run_id: str, cycle: int) -> Dict[str, Any]:
+    msg = f"Nexus checkpoint: {task_id} cycle {cycle}"
+    return cw.checkpoint_task(task_id, message=msg, run_id=run_id, cycle=cycle)
 
 
 def _system_prompt(task: Dict[str, Any]) -> str:
@@ -1195,11 +1174,11 @@ def _system_prompt(task: Dict[str, Any]) -> str:
     return (
         "You are Nexus Coding Agent. Work autonomously toward the user's coding request inside one isolated git workspace. "
         "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
-        "Treat workspace conversation messages as additional user guidance. If new guidance arrives during a run, adjust the plan on the next turn. "
+        "Treat workspace conversation messages as additional user guidance. If new guidance arrives during a run, adjust during the next work cycle. "
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
-        "Keep assistant turns concise; call tools promptly instead of narrating long plans. "
+        "Keep assistant responses concise; call tools promptly instead of narrating long plans. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
-        "The Gateway may create local checkpoint commits between turns so interrupted runs can resume from durable git history. "
+        "The Gateway may create local checkpoint commits during the run so paused or interrupted work can resume from durable git history. "
         "Call coding_tool_manifest if you need to inspect the exact tools and guidance currently available in this workspace. "
         "Prefer coding_read_file_lines for targeted inspection. Avoid reading full large files unless needed; use coding_search_text first, then focused line ranges. "
         "Prefer coding_replace_text for exact small edits and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
@@ -1244,8 +1223,6 @@ async def start_agent_run(
     git_token_value: Optional[str] = None,
     coding_model: Optional[str] = None,
     prompt: Optional[str] = None,
-    max_turns: Optional[int] = None,
-    max_runtime_sec: Optional[float] = None,
     auto_commit: bool = False,
     commit_message: Optional[str] = None,
     actor: Optional[str] = None,
@@ -1259,8 +1236,6 @@ async def start_agent_run(
     if running is not None and not running.done():
         raise HTTPException(status_code=409, detail="coding agent is already running for this workspace")
 
-    turns = _max_turns(max_turns)
-    runtime = _max_runtime_sec(max_runtime_sec)
     run_id = new_id("coderun")
     model = _choose_model(task, coding_model)
     previous_events = task.get("agent_events")
@@ -1295,8 +1270,7 @@ async def start_agent_run(
             "agent_model": model,
             "agent_backend": "",
             "agent_upstream_model": "",
-            "agent_turn": 0,
-            "agent_max_turns": turns,
+            "agent_cycle": 0,
             "agent_started_at": now,
             "agent_finished_at": None,
             "agent_last_event_at": now_unix(),
@@ -1307,6 +1281,7 @@ async def start_agent_run(
             "agent_previous_summary": previous_summary,
             "agent_previous_error": previous_error,
             "agent_stop_requested": False,
+            "agent_pause_requested": False,
             "agent_auto_commit": bool(auto_commit),
             "agent_run_prompt": effective_prompt,
             "agent_events": previous_events[-_max_events():],
@@ -1321,8 +1296,6 @@ async def start_agent_run(
             "type": "queued",
             "run_id": run_id,
             "model": model,
-            "max_turns": turns,
-            "max_runtime_sec": runtime,
             "auto_commit": bool(auto_commit),
             "actor": actor or "",
             "continuation": bool(previous_run_id or previous_events),
@@ -1337,8 +1310,6 @@ async def start_agent_run(
             run_id=run_id,
             git_token_value=git_token_value,
             model=model,
-            max_turns=turns,
-            max_runtime_sec=runtime,
             auto_commit=bool(auto_commit),
             commit_message=commit_message,
         )
@@ -1355,22 +1326,27 @@ async def start_agent_run(
     return cw.public_task(fresh)
 
 
-async def request_stop(task_id: str) -> Dict[str, Any]:
+async def request_pause(task_id: str) -> Dict[str, Any]:
     await asyncio.to_thread(
         _mutate_task,
         task_id,
         {
             "agent_stop_requested": True,
-            "agent_status": "stopping",
+            "agent_pause_requested": True,
+            "agent_status": "pausing",
             "agent_last_event_at": now_unix(),
         },
     )
-    await asyncio.to_thread(_append_event, task_id, {"type": "stop_requested"})
+    await asyncio.to_thread(_append_event, task_id, {"type": "pause_requested"})
     running = _RUNNING.get(task_id)
     if running is not None and not running.done():
         running.cancel()
     fresh = await asyncio.to_thread(cw.load_task, task_id)
     return cw.public_task(fresh)
+
+
+async def request_stop(task_id: str) -> Dict[str, Any]:
+    return await request_pause(task_id)
 
 
 async def _run_agent(
@@ -1379,8 +1355,6 @@ async def _run_agent(
     run_id: str,
     git_token_value: Optional[str],
     model: str,
-    max_turns: int,
-    max_runtime_sec: Optional[float],
     auto_commit: bool,
     commit_message: Optional[str],
 ) -> None:
@@ -1433,12 +1407,12 @@ async def _run_agent(
         ]
         seen_guidance_count = len(_guidance_messages(task))
         tools = _tool_specs()
-        no_tool_turns = 0
+        no_tool_cycles = 0
+        cycle = 0
 
-        for turn in range(max_turns):
-            _raise_if_stopped(task_id)
-            if max_runtime_sec is not None and time.monotonic() - t0 > max_runtime_sec:
-                raise HTTPException(status_code=408, detail="coding agent runtime budget exceeded")
+        while True:
+            cycle += 1
+            _raise_if_paused(task_id)
             new_guidance, seen_guidance_count = await asyncio.to_thread(_new_guidance_since, task_id, seen_guidance_count)
             if new_guidance:
                 guidance_text = "\n\n".join(
@@ -1453,13 +1427,13 @@ async def _run_agent(
                         task_id,
                         {
                             "type": "guidance_seen",
-                            "turn": turn + 1,
+                            "cycle": cycle,
                             "count": len(new_guidance),
                             "summary": _clip_text(guidance_text, 1000),
                         },
                     )
-            await asyncio.to_thread(_mutate_task, task_id, {"agent_turn": turn + 1, "agent_last_event_at": now_unix()})
-            await asyncio.to_thread(_append_event, task_id, {"type": "turn_started", "turn": turn + 1})
+            await asyncio.to_thread(_mutate_task, task_id, {"agent_cycle": cycle, "agent_last_event_at": now_unix()})
+            await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
 
             req = ChatCompletionRequest(
                 model=model,
@@ -1475,7 +1449,7 @@ async def _run_agent(
                 backend,
                 upstream_model,
                 task_id=task_id,
-                turn=turn + 1,
+                cycle=cycle,
             )
             await asyncio.to_thread(
                 _mutate_task,
@@ -1503,7 +1477,7 @@ async def _run_agent(
                     task_id,
                     {
                         "type": "thinking",
-                        "turn": turn + 1,
+                        "cycle": cycle,
                         "thinking": _clip_text(thinking, 4000),
                     },
                 )
@@ -1512,7 +1486,7 @@ async def _run_agent(
                 task_id,
                 {
                     "type": "assistant",
-                    "turn": turn + 1,
+                    "cycle": cycle,
                     "content": _clip_text(event_content, 4000),
                     "tool_call_format": "text" if text_tool_calls else "native",
                     "tool_calls": [
@@ -1526,7 +1500,7 @@ async def _run_agent(
             )
 
             if not tool_calls:
-                no_tool_turns += 1
+                no_tool_cycles += 1
                 malformed_text_tool_call = _has_incomplete_text_tool_call(assistant.content)
                 notice = (
                     "The assistant started a text-form tool call, but it was malformed or truncated before it could be executed. "
@@ -1540,8 +1514,8 @@ async def _run_agent(
                     task_id,
                     {
                         "type": "no_tool_call",
-                        "turn": turn + 1,
-                        "count": no_tool_turns,
+                        "cycle": cycle,
+                        "count": no_tool_cycles,
                         "summary": notice,
                         "malformed_text_tool_call": malformed_text_tool_call,
                         "content": _clip_text(str(assistant.content or ""), 2000),
@@ -1555,7 +1529,7 @@ async def _run_agent(
                             "provided tools, such as coding_list_tree, coding_read_file_lines, coding_replace_text, coding_apply_patch, "
                             "coding_git_diff, or coding_finish. Do not answer with a prose-only plan. "
                             "If you emit a text-form tool call, respond with exactly one complete <tool_call>{...}</tool_call> block and nothing else."
-                            if malformed_text_tool_call or no_tool_turns >= 2
+                            if malformed_text_tool_call or no_tool_cycles >= 2
                             else "Your previous response did not call any workspace tool. Continue the coding task now by calling one of the "
                             "provided tools, such as coding_read_file_lines, coding_replace_text, coding_apply_patch, "
                             "coding_git_diff, or coding_finish. Do not answer with a prose-only plan."
@@ -1563,11 +1537,11 @@ async def _run_agent(
                     )
                 )
                 continue
-            no_tool_turns = 0
+            no_tool_cycles = 0
 
             stop_after_tools = False
             for tc in tool_calls:
-                _raise_if_stopped(task_id)
+                _raise_if_paused(task_id)
                 fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
                 name = str(fn.get("name") or "").strip()
                 args = _parse_tool_arguments(fn.get("arguments", ""))
@@ -1575,7 +1549,7 @@ async def _run_agent(
                 await asyncio.to_thread(
                     _append_event,
                     task_id,
-                    {"type": "tool_started", "turn": turn + 1, "tool_call_id": tool_call_id, "name": name, "args": _safe_args_preview(name, args)},
+                    {"type": "tool_started", "cycle": cycle, "tool_call_id": tool_call_id, "name": name, "args": _safe_args_preview(name, args)},
                 )
                 try:
                     result = await asyncio.to_thread(_run_tool, task_id, name, args, git_token_value=git_token_value)
@@ -1589,7 +1563,7 @@ async def _run_agent(
                     task_id,
                     {
                         "type": "tool_finished",
-                        "turn": turn + 1,
+                        "cycle": cycle,
                         "tool_call_id": tool_call_id,
                         "name": name,
                         "result": _event_result(result),
@@ -1605,14 +1579,14 @@ async def _run_agent(
                     break
 
             if _checkpoint_enabled():
-                checkpoint = await asyncio.to_thread(_checkpoint_after_turn, task_id, run_id=run_id, turn=turn + 1)
+                checkpoint = await asyncio.to_thread(_checkpoint_after_cycle, task_id, run_id=run_id, cycle=cycle)
                 if checkpoint.get("changed") or not checkpoint.get("ok"):
                     await asyncio.to_thread(
                         _append_event,
                         task_id,
                         {
                             "type": "checkpoint",
-                            "turn": turn + 1,
+                            "cycle": cycle,
                             "ok": bool(checkpoint.get("ok")),
                             "changed": bool(checkpoint.get("changed")),
                             "commit": str(checkpoint.get("last_commit") or ""),
@@ -1623,13 +1597,6 @@ async def _run_agent(
 
             if stop_after_tools:
                 break
-
-        if not finish_called and not finish_summary:
-            finish_summary = (
-                "Turn limit reached before the agent called coding_finish. "
-                "Start another run on this same workspace to continue from the current files and diff."
-            )
-            finish_success = False
 
         status_result = await asyncio.to_thread(cw.git_status, task_id, git_token_value=git_token_value)
         diff_result = await asyncio.to_thread(cw.git_diff, task_id)
@@ -1735,28 +1702,32 @@ async def _run_agent(
             _mutate_task,
             task_id,
             {
-                "agent_status": "stopped",
+                "agent_status": "paused",
                 "agent_error": "",
-                "agent_summary": "Coding run was stopped.",
+                "agent_summary": "Coding run was paused. Start another run on this workspace to resume from the latest files and checkpoint.",
                 "agent_finished_at": time.time(),
                 "agent_last_event_at": now_unix(),
             },
         )
-        await asyncio.to_thread(_append_event, task_id, {"type": "stopped", "summary": "Coding run was stopped."})
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {"type": "paused", "summary": "Coding run was paused. Start another run on this workspace to resume from the latest files and checkpoint."},
+        )
         raise
-    except _CodingAgentStopped as exc:
+    except _CodingAgentPaused as exc:
         await asyncio.to_thread(
             _mutate_task,
             task_id,
             {
-                "agent_status": "stopped",
+                "agent_status": "paused",
                 "agent_error": "",
                 "agent_summary": str(exc),
                 "agent_finished_at": time.time(),
                 "agent_last_event_at": now_unix(),
             },
         )
-        await asyncio.to_thread(_append_event, task_id, {"type": "stopped", "summary": str(exc)})
+        await asyncio.to_thread(_append_event, task_id, {"type": "paused", "summary": str(exc)})
     except Exception as exc:
         error = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
         logger.warning("coding agent failed task=%s backend=%s model=%s error=%s", task_id, backend, upstream_model, error)

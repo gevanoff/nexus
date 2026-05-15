@@ -2301,25 +2301,6 @@ def _coerce_task_int(body: Dict[str, Any], key: str, default: int, *, min_value:
     return max(min_value, min(max_value, out))
 
 
-def _coerce_task_float(body: Dict[str, Any], key: str, default: float, *, min_value: float, max_value: float) -> float:
-    raw = body.get(key)
-    if raw in (None, ""):
-        return default
-    try:
-        out = float(raw)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"{key} must be a number") from exc
-    return max(min_value, min(max_value, out))
-
-
-def _scheduled_task_max_turns_default() -> int:
-    return int(getattr(S, "CODING_AGENT_MAX_TURNS", 1000) or 1000)
-
-
-def _scheduled_task_max_turns_limit() -> int:
-    return int(getattr(S, "CODING_AGENT_MAX_TURNS_LIMIT", 10_000) or 10_000)
-
-
 def _scheduled_agent_spec_for_task(task: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     agent_name = str(task.get("agent") or "").strip()
     if not agent_name:
@@ -2336,8 +2317,6 @@ def _scheduled_agent_spec_for_task(task: Dict[str, Any]) -> Tuple[str, Dict[str,
             spec = {
                 "model": str(meta.get("model") or "default"),
                 "tier": int(meta.get("tier") or 0),
-                "max_turns": _scheduled_task_max_turns_default(),
-                "max_runtime_sec": 300.0,
                 "max_total_tool_io_bytes": 2_000_000,
             }
     return agent_name, scheduled, spec
@@ -2384,8 +2363,6 @@ async def ui_api_agent_tasks_capabilities(req: Request) -> Dict[str, Any]:
             {"id": 1, "label": "Read, browse, memory, and file writes"},
             {"id": 2, "label": "Shell-capable"},
         ],
-        "max_turns_default": _scheduled_task_max_turns_default(),
-        "max_turns_limit": _scheduled_task_max_turns_limit(),
         "tools": tools,
         "agents": sorted(_load_all_agent_specs_json().keys()),
     }
@@ -2433,14 +2410,6 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     agent_name = f"scheduled_llm_{secrets.token_hex(8)}"
-    max_turns = _coerce_task_int(
-        body,
-        "max_turns",
-        _scheduled_task_max_turns_default(),
-        min_value=1,
-        max_value=_scheduled_task_max_turns_limit(),
-    )
-    max_runtime_sec = _coerce_task_float(body, "max_runtime_sec", 300.0, min_value=10.0, max_value=3600.0)
     max_tool_io = _coerce_task_int(
         body,
         "max_total_tool_io_bytes",
@@ -2454,15 +2423,11 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
         specs["default"] = {
             "model": "fast",
             "tier": 0,
-            "max_turns": _scheduled_task_max_turns_default(),
-            "max_runtime_sec": 60.0,
             "max_total_tool_io_bytes": 2_000_000,
         }
     specs[agent_name] = {
         "model": model,
         "tier": tier,
-        "max_turns": max_turns,
-        "max_runtime_sec": max_runtime_sec,
         "max_total_tool_io_bytes": max_tool_io,
         "tools_allowlist": selected_tools,
     }

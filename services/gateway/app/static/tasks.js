@@ -22,8 +22,6 @@
     cronFields: document.getElementById("cronFields"),
     cron: document.getElementById("cron"),
     tier: document.getElementById("tier"),
-    maxTurns: document.getElementById("maxTurns"),
-    maxRuntime: document.getElementById("maxRuntime"),
     tools: document.getElementById("tools"),
     resetForm: document.getElementById("resetForm"),
     refresh: document.getElementById("refresh"),
@@ -58,14 +56,6 @@
     selectedId: "",
     taskEdit: null,
   };
-
-  function scheduledMaxTurnsDefault() {
-    return Number(state.capabilities?.max_turns_default || 1000);
-  }
-
-  function scheduledMaxTurnsLimit() {
-    return Number(state.capabilities?.max_turns_limit || 10000);
-  }
 
   function setStatus(text, isError = false, diagnostic = null) {
     if (!els.status) return;
@@ -464,8 +454,6 @@
       model: els.model?.value || "default",
       tier: Number(els.tier?.value || 0),
       tools: selectedTools(),
-      max_turns: Number(els.maxTurns?.value || scheduledMaxTurnsDefault()),
-      max_runtime_sec: Number(els.maxRuntime?.value || 300),
       metadata: { ui: "scheduled_tasks" },
     };
     const maxRuns = Number(els.maxRuns?.value || 0);
@@ -492,10 +480,6 @@
 
   async function loadCapabilities() {
     state.capabilities = await fetchJson("/ui/api/agent-tasks/capabilities");
-    if (els.maxTurns) {
-      els.maxTurns.max = String(scheduledMaxTurnsLimit());
-      if (!els.maxTurns.value) els.maxTurns.value = String(scheduledMaxTurnsDefault());
-    }
     renderTaskTypes();
     renderTools();
   }
@@ -566,8 +550,6 @@
       setStatus("Task created.");
       els.form?.reset();
       if (els.delayMinutes) els.delayMinutes.value = "10";
-      if (els.maxTurns) els.maxTurns.value = String(scheduledMaxTurnsDefault());
-      if (els.maxRuntime) els.maxRuntime.value = "300";
       updateScheduleFields();
       renderTools();
       await loadTasks({ keepSelection: true });
@@ -699,8 +681,6 @@
   function resetForm() {
     els.form?.reset();
     if (els.delayMinutes) els.delayMinutes.value = "10";
-    if (els.maxTurns) els.maxTurns.value = String(scheduledMaxTurnsDefault());
-    if (els.maxRuntime) els.maxRuntime.value = "300";
     updateScheduleFields();
     renderTools();
   }

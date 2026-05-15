@@ -25,11 +25,11 @@ def test_no_change_audit_fails_finish_without_edits():
     assert event["type"] == "no_change_audit"
 
 
-def test_no_change_audit_fails_turn_limit_without_edits():
+def test_no_change_audit_fails_unfinished_run_without_edits():
     success, summary, event = ca._no_change_audit(
         finish_called=False,
         finish_success=False,
-        finish_summary="Turn limit reached before the agent called coding_finish.",
+        finish_summary="Run paused before the agent called coding_finish.",
         committed_changes=False,
         uncommitted_changes=False,
         start_head="abc123",
@@ -97,20 +97,6 @@ def test_review_request_does_not_get_fix_oriented_prompt():
     assert ca._request_expects_workspace_edits(task) is False
     prompt = ca._system_prompt(task)
     assert "This request is fix-oriented." not in prompt
-
-
-def test_max_turns_allows_up_to_ten_thousand():
-    assert ca._max_turns() == 1000
-    assert ca._max_turns(5000) == 5000
-    assert ca._max_turns(20000) == 10000
-
-
-def test_runtime_is_unlimited_by_default():
-    assert ca._max_runtime_sec() is None
-
-
-def test_explicit_runtime_can_still_be_used_when_requested():
-    assert ca._max_runtime_sec(120) == 120
 
 
 def test_model_is_reroutable_for_aliases_but_not_explicit_backend_model():
