@@ -741,6 +741,37 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
     )
 
 
+def _is_existing_vllm_model_lane(runtime: str, route_kind: str) -> bool:
+    return runtime == "vllm" and route_kind in {"chat", "embeddings"}
+
+
+def _vllm_lane_env(plan: Dict[str, Any]) -> Dict[str, str]:
+    backend = str((plan.get("deployment_target") or {}).get("backend_lane") or plan.get("backend_class") or "").strip()
+    if backend == "local_vllm_embeddings":
+        return {
+            "model": "VLLM_MODEL_EMBEDDINGS",
+            "served_model_name": "VLLM_EMBEDDINGS_SERVED_MODEL_NAME",
+            "tokenizer": "VLLM_EMBEDDINGS_TOKENIZER",
+            "compose_file": "docker-compose.vllm-embeddings.yml",
+            "topology_model": "VLLM_MODEL_EMBEDDINGS",
+        }
+    if backend == "local_vllm":
+        return {
+            "model": "VLLM_MODEL_STRONG",
+            "served_model_name": "VLLM_SERVED_MODEL_NAME",
+            "tokenizer": "VLLM_TOKENIZER",
+            "compose_file": "docker-compose.vllm-strong.yml",
+            "topology_model": "VLLM_MODEL_STRONG",
+        }
+    return {
+        "model": "VLLM_MODEL_FAST",
+        "served_model_name": "VLLM_FAST_SERVED_MODEL_NAME",
+        "tokenizer": "VLLM_FAST_TOKENIZER",
+        "compose_file": "docker-compose.vllm-fast.yml",
+        "topology_model": "VLLM_MODEL_FAST",
+    }
+
+
 def parse_model_reference(value: str) -> Dict[str, str]:
     raw = str(value or "").strip()
     if not raw:
@@ -869,23 +900,44 @@ def build_integration_plan(
 
     selected_route = _route_kind_from_metadata(metadata, explicit=route_kind)
     runtime, runtime_reason = _runtime_from_metadata(parsed["model_id"], metadata, selected_route, preferred_runtime=preferred_runtime)
+    deployment_target = _recommend_deployment_target(runtime, selected_route, parsed["model_id"], metadata)
+    existing_vllm_lane = _is_existing_vllm_model_lane(runtime, selected_route)
     normalized_service_name = _slugify(service_name or f"hf-{parsed['model_id'].replace('/', '-')}", default="hf-model-adapter")
-    backend_class = normalized_service_name.replace("-", "_")
+    backend_class = (
+        str(deployment_target.get("backend_lane") or "").strip()
+        if existing_vllm_lane
+        else normalized_service_name.replace("-", "_")
+    )
+    if not backend_class:
+        backend_class = normalized_service_name.replace("-", "_")
     model_tail = parsed["model_id"].split("/", 1)[-1]
     display_name = f"HF {model_tail}"
-    containerize = runtime != "mlx"
+    containerize = runtime != "mlx" and not existing_vllm_lane
     shim_required = runtime == "transformers"
-    execution_mode = "command" if shim_required else "upstream"
+    execution_mode = "existing_vllm_lane" if existing_vllm_lane else ("command" if shim_required else "upstream")
     upstream_base_url = "http://127.0.0.1:8000" if execution_mode == "upstream" else ""
-    deployment_target = _recommend_deployment_target(runtime, selected_route, parsed["model_id"], metadata)
-    task_prompt = (
-        f"Integrate the HuggingFace model {parsed['model_id']} into Nexus as a {selected_route} backend. "
-        f"Use the generated workspace scaffold. Runtime strategy: {runtime}. "
-        f"Recommended deployment target: {deployment_target.get('host') or 'unknown host'} / {deployment_target.get('backend_display_name') or deployment_target.get('backend_lane') or 'custom lane'}. "
-        f"Containerize the adapter if appropriate ({'yes' if containerize else 'no'}). "
-        f"Provide an industry-standard API surface compatible with OpenAI-style {selected_route} access. "
-        f"Update README, env, compose or host-native launch files, backend registration snippets, and the implementation stub so the workspace is ready for Nexus integration."
-    )
+    integration_strategy = "existing_vllm_model" if existing_vllm_lane else ("new_backend_service" if containerize else "host_native_runtime")
+    if existing_vllm_lane:
+        task_prompt = (
+            f"Add the HuggingFace model {parsed['model_id']} to Nexus as an additional available model on the existing "
+            f"{deployment_target.get('backend_display_name') or deployment_target.get('backend_lane') or 'vLLM'} lane "
+            f"({backend_class}) for {selected_route}. Do not create a new backend class, service directory, registrar, "
+            "or lifecycle backend for this plain vLLM text model unless repository evidence proves the existing lane cannot serve it. "
+            f"Runtime strategy: {runtime}. Recommended deployment target: {deployment_target.get('host') or 'unknown host'} / "
+            f"{deployment_target.get('backend_display_name') or deployment_target.get('backend_lane') or 'custom lane'}. "
+            "Update the relevant vLLM env/topology/model-alias documentation or config with focused edits, preserve the existing repository README, "
+            "and document any operational caveats such as tokenizer, served-model-name, context length, GPU memory, or gated-weight requirements."
+        )
+    else:
+        task_prompt = (
+            f"Integrate the HuggingFace model {parsed['model_id']} into Nexus as a {selected_route} backend. "
+            f"Use the generated workspace scaffold. Runtime strategy: {runtime}. "
+            f"Recommended deployment target: {deployment_target.get('host') or 'unknown host'} / {deployment_target.get('backend_display_name') or deployment_target.get('backend_lane') or 'custom lane'}. "
+            f"Containerize the adapter if appropriate ({'yes' if containerize else 'no'}). "
+            f"Provide an industry-standard API surface compatible with OpenAI-style {selected_route} access. "
+            "Update env, compose or host-native launch files, backend registration snippets, implementation stubs, and focused documentation so the workspace is ready for Nexus integration. "
+            "Preserve existing repository documentation; do not replace a root README wholesale."
+        )
     extra_prompt = str(prompt or "").strip()
     if extra_prompt:
         task_prompt = f"{task_prompt}\n\nAdditional user guidance:\n{extra_prompt}"
@@ -899,9 +951,11 @@ def build_integration_plan(
         "containerize": containerize,
         "shim_required": shim_required,
         "execution_mode": execution_mode,
+        "integration_strategy": integration_strategy,
         "upstream_base_url": upstream_base_url,
         "service_name": normalized_service_name,
         "backend_class": backend_class,
+        "target_backend_class": str(deployment_target.get("backend_lane") or backend_class),
         "display_name": display_name,
         "estimated_model_size_b": _guess_parameter_billions(parsed["model_id"], metadata),
         "api_path": {
@@ -933,6 +987,14 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _seed_path(repo_root: Path, preferred: Path, fallback_name: str) -> Path:
+    if not preferred.exists():
+        return preferred
+    fallback = Path(fallback_name)
+    stem = _slugify(fallback.stem, default="model-integration")
+    return repo_root / "integration" / f"{stem}{fallback.suffix}"
+
+
 def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
     repo_root = Path(repo_root).resolve()
     replacements = {
@@ -947,11 +1009,20 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
         "__UPSTREAM_BASE_URL__": str(plan["upstream_base_url"]),
     }
     created: list[str] = []
+    strategy = str(plan.get("integration_strategy") or "").strip()
+    existing_vllm_lane = strategy == "existing_vllm_model"
 
-    _write(repo_root / ".gitignore", "__pycache__/\n.pytest_cache/\n.ruff_cache/\n.mypy_cache/\n.venv/\nvenv/\ndist/\nbuild/\n*.pyc\n*.pyo\n*.pyd\noutputs/\n.runtime/\n")
-    created.append(str(repo_root / ".gitignore"))
+    gitignore_path = repo_root / ".gitignore"
+    if not gitignore_path.exists():
+        _write(gitignore_path, "__pycache__/\n.pytest_cache/\n.ruff_cache/\n.mypy_cache/\n.venv/\nvenv/\ndist/\nbuild/\n*.pyc\n*.pyo\n*.pyd\noutputs/\n.runtime/\n")
+        created.append(str(gitignore_path))
 
     warnings = "\n".join(f"- {item}" for item in plan.get("warnings") or []) or "- none"
+    strategy_note = (
+        "Existing vLLM lane model addition. This should update model availability/configuration for the existing backend lane, not add a new backend service."
+        if existing_vllm_lane
+        else "New backend or host-native runtime integration."
+    )
     root_readme = (
         f"# {plan['display_name']} Nexus Integration Workspace\n\n"
         f"This coding workspace was generated for integrating the HuggingFace model `{plan['model_id']}` into Nexus.\n\n"
@@ -960,6 +1031,7 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
         f"- Route kind: `{plan['route_kind']}`\n"
         f"- Runtime strategy: `{plan['runtime']}`\n"
         f"- Runtime rationale: {plan.get('runtime_reason') or 'n/a'}\n"
+        f"- Integration strategy: `{strategy or 'unspecified'}` - {strategy_note}\n"
         f"- Containerize: `{str(bool(plan['containerize'])).lower()}`\n"
         f"- Shim required: `{str(bool(plan['shim_required'])).lower()}`\n"
         f"- Service name: `{plan['service_name']}`\n"
@@ -978,25 +1050,88 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
         f"- private: `{str(bool(plan['hf_metadata'].get('private'))).lower()}`\n\n"
         f"Warnings:\n{warnings}\n"
     )
-    _write(repo_root / "README.md", root_readme)
-    created.append(str(repo_root / "README.md"))
+    readme_path = _seed_path(repo_root, repo_root / "README.md", f"{plan['service_name']}-README.md")
+    _write(readme_path, root_readme)
+    created.append(str(readme_path))
 
-    agent_task = (
-        "# Coding Agent Task\n\n"
-        f"Goal:\n\n{plan['prompt']}\n\n"
-        "Constraints:\n\n"
-        "1. Reuse the generated scaffold instead of replacing it wholesale.\n"
-        f"2. Keep the backend API compatible with `{plan['api_path']}`.\n"
-        "3. If runtime is `mlx`, keep the integration host-native and do not add Docker/Compose as the primary runtime path.\n"
-        "4. If runtime is not `mlx`, provide a containerized path and keep the health/model metadata endpoints consistent with Nexus patterns.\n"
-        "5. Update `integration/backend-config-snippet.yaml` and `integration/lifecycle.backend.json` so operators can wire the backend into Nexus.\n"
-        "6. Document blockers for gated weights, unsupported architectures, or missing runtime features in the README.\n"
-    )
-    _write(repo_root / "AGENT_TASK.md", agent_task)
-    created.append(str(repo_root / "AGENT_TASK.md"))
+    if existing_vllm_lane:
+        lane_env = _vllm_lane_env(plan)
+        agent_task = (
+            "# Coding Agent Task\n\n"
+            f"Goal:\n\n{plan['prompt']}\n\n"
+            "Constraints:\n\n"
+            f"1. Treat this as a model addition for existing backend lane `{plan['backend_class']}`, not a new backend integration.\n"
+            "2. Do not create a new backend class, service directory, Dockerfile, service registrar, or lifecycle backend for this vLLM chat/embedding model unless repository evidence proves the existing lane cannot serve it.\n"
+            "3. Preserve the repository root README and other broad docs. If documentation is needed, make a focused patch or use generated integration notes.\n"
+            f"4. Inspect `{lane_env['compose_file']}`, `deploy/topology/production.json`, `.env.example`, and model alias configuration before editing.\n"
+            f"5. Prefer updating model env/defaults such as `{lane_env['model']}`, `{lane_env['served_model_name']}`, and `{lane_env['tokenizer']}` plus aliases/catalog docs as appropriate.\n"
+            "6. Run targeted validation and inspect the diff before finishing.\n"
+        )
+    else:
+        agent_task = (
+            "# Coding Agent Task\n\n"
+            f"Goal:\n\n{plan['prompt']}\n\n"
+            "Constraints:\n\n"
+            "1. Reuse the generated scaffold instead of replacing it wholesale.\n"
+            f"2. Keep the backend API compatible with `{plan['api_path']}`.\n"
+            "3. Preserve existing repository files, especially the root README; use focused patches for existing docs.\n"
+            "4. If runtime is `mlx`, keep the integration host-native and do not add Docker/Compose as the primary runtime path.\n"
+            "5. If runtime is not `mlx`, provide a containerized path and keep the health/model metadata endpoints consistent with Nexus patterns.\n"
+            "6. Update `integration/backend-config-snippet.yaml` and `integration/lifecycle.backend.json` so operators can wire the backend into Nexus.\n"
+            "7. Document blockers for gated weights, unsupported architectures, or missing runtime features in focused integration docs.\n"
+        )
+    agent_task_path = _seed_path(repo_root, repo_root / "AGENT_TASK.md", f"{plan['service_name']}-AGENT_TASK.md")
+    _write(agent_task_path, agent_task)
+    created.append(str(agent_task_path))
 
-    _write(repo_root / "integration_request.json", json.dumps(plan, indent=2, sort_keys=True) + "\n")
-    created.append(str(repo_root / "integration_request.json"))
+    request_path = _seed_path(repo_root, repo_root / "integration_request.json", f"{plan['service_name']}-integration_request.json")
+    _write(request_path, json.dumps(plan, indent=2, sort_keys=True) + "\n")
+    created.append(str(request_path))
+
+    if existing_vllm_lane:
+        lane_env = _vllm_lane_env(plan)
+        model_id = str(plan["model_id"])
+        alias_name = _slugify(model_id.split("/", 1)[-1], default="hf-model")
+        env_snippet = (
+            f"# Add `{model_id}` to the existing Nexus vLLM lane `{plan['backend_class']}`.\n"
+            "# Apply these values in the host-specific env/topology layer for the target host; do not create a new backend service.\n"
+            f"{lane_env['model']}={model_id}\n"
+            f"{lane_env['served_model_name']}={model_id}\n"
+            f"{lane_env['tokenizer']}={model_id}\n"
+        )
+        _write(repo_root / "integration" / "vllm-model-env-snippet.env", env_snippet)
+        created.append(str(repo_root / "integration" / "vllm-model-env-snippet.env"))
+
+        alias_snippet = {
+            "aliases": {
+                alias_name: {
+                    "backend": plan["backend_class"],
+                    "model": model_id,
+                    "tools": False,
+                }
+            }
+        }
+        _write(repo_root / "integration" / "model-alias-snippet.json", json.dumps(alias_snippet, indent=2, sort_keys=True) + "\n")
+        created.append(str(repo_root / "integration" / "model-alias-snippet.json"))
+
+        checklist = (
+            "# Existing vLLM Lane Checklist\n\n"
+            f"- Target backend lane: `{plan['backend_class']}`\n"
+            f"- Target host: `{plan.get('deployment_target', {}).get('host') or 'unknown'}`\n"
+            f"- Compose file: `{lane_env['compose_file']}`\n"
+            f"- Model env key: `{lane_env['model']}`\n"
+            f"- Served-model-name key: `{lane_env['served_model_name']}`\n"
+            f"- Tokenizer key: `{lane_env['tokenizer']}`\n\n"
+            "Expected implementation shape:\n\n"
+            "1. Keep the existing backend class and lifecycle entry.\n"
+            "2. Add or document the model as an available served model for that lane.\n"
+            "3. Add a model alias only if Nexus should expose a stable user-facing model name.\n"
+            "4. Update deployment/topology docs or env examples with focused patches.\n"
+            "5. Avoid new `services/<model>` scaffolding for plain vLLM text models.\n"
+        )
+        _write(repo_root / "integration" / "vllm-lane-checklist.md", checklist)
+        created.append(str(repo_root / "integration" / "vllm-lane-checklist.md"))
+        return created
 
     capability = str(plan["route_kind"])
     health_path = "/v1/models" if capability in {"chat", "embeddings"} and not bool(plan["shim_required"]) else "/readyz"

@@ -25,6 +25,23 @@ def test_no_change_audit_fails_finish_without_edits():
     assert event["type"] == "no_change_audit"
 
 
+def test_no_change_audit_allows_answer_only_run_without_edits():
+    success, summary, event = ca._no_change_audit(
+        finish_called=True,
+        finish_success=True,
+        finish_summary="The workspace is currently clean and no changes are needed.",
+        committed_changes=False,
+        uncommitted_changes=False,
+        start_head="abc123",
+        end_head="abc123",
+        expects_workspace_edits=False,
+    )
+
+    assert success is True
+    assert summary == "The workspace is currently clean and no changes are needed."
+    assert event is None
+
+
 def test_no_change_audit_fails_unfinished_run_without_edits():
     success, summary, event = ca._no_change_audit(
         finish_called=False,
@@ -97,6 +114,18 @@ def test_review_request_does_not_get_fix_oriented_prompt():
     assert ca._request_expects_workspace_edits(task) is False
     prompt = ca._system_prompt(task)
     assert "This request is fix-oriented." not in prompt
+
+
+def test_workspace_chat_question_does_not_inherit_edit_expectation():
+    task = {
+        "id": "code_test",
+        "base_branch": "main",
+        "branch_name": "nexus-coder/code_test",
+        "prompt": "Debug this failing workflow and fix the root cause in the repo.",
+        "agent_run_prompt": "What changed in the last run?",
+    }
+
+    assert ca._request_expects_workspace_edits(task) is False
 
 
 def test_model_is_reroutable_for_aliases_but_not_explicit_backend_model():

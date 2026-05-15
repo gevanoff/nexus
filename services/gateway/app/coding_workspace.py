@@ -1903,7 +1903,47 @@ def agent_brief(task_id: str, *, coding_model: Optional[str] = None) -> Dict[str
     base = str(task.get("base_branch") or "").strip()
     model = str(coding_model or task.get("coding_model") or "").strip()
     integration = task.get("integration") if isinstance(task.get("integration"), dict) else None
+    seed_files = task.get("seed_files") if isinstance(task.get("seed_files"), list) else []
+    seed_file_lines = ""
+    if seed_files:
+        seed_file_lines = "\nGenerated scaffold files:\n" + "\n".join(f"- {item}" for item in seed_files[:40]) + "\n"
     if str(task.get("kind") or "") == "model_integration" and integration is not None:
+        strategy = str(integration.get("integration_strategy") or "").strip()
+        if strategy == "existing_vllm_model":
+            text = f"""Nexus coding task: {task.get("id")}
+
+Goal:
+{prompt}
+
+Model integration:
+- HuggingFace model: {integration.get("model_id")}
+- Source URL: {integration.get("source_url")}
+- Runtime: {integration.get("runtime")}
+- Route kind: {integration.get("route_kind")}
+- Integration strategy: existing vLLM model lane
+- Existing backend lane: {integration.get("backend_class")}
+- Target host: {(integration.get("deployment_target") or {}).get("host")}
+- Preferred coding model: {model or "default"}
+
+Workspace:
+- Base branch: {base}
+- Working branch: {branch}
+{seed_file_lines}
+Use the Nexus Coding API for workspace operations. Prefer a tight loop:
+1. Review the generated task files and integration_request.json, then inspect existing vLLM lane files such as docker-compose.vllm-*.yml, deploy/topology/production.json, model_aliases.json, and relevant docs.
+2. Add the model as an available model for the existing backend lane. Do not create a new backend class, service directory, registrar, or lifecycle backend unless the existing vLLM lane is demonstrably unsuitable.
+3. Preserve existing repository files, especially README.md. Patch existing docs narrowly or use generated integration notes.
+4. Run targeted checks with POST /v1/coding/tasks/{task.get("id")}/command.
+5. Review GET /v1/coding/tasks/{task.get("id")}/diff before finishing.
+
+Constraints:
+- Work only inside this task workspace repo.
+- Treat plain vLLM chat/embedding models as model availability/configuration changes on ai1 or ada2 lanes, not new backends.
+- Commands are argv arrays, not shell strings.
+- Blocked git operations include reset, clean, rebase, merge, restore, rm, and filter-branch.
+"""
+            return {"task": task_public, "brief": text}
+
         text = f"""Nexus coding task: {task.get("id")}
 
 Goal:
@@ -1923,9 +1963,10 @@ Model integration:
 Workspace:
 - Base branch: {base}
 - Working branch: {branch}
+{seed_file_lines}
 
 Use the Nexus Coding API for workspace operations. Prefer a tight loop:
-1. Review README.md, AGENT_TASK.md, and integration_request.json.
+1. Review README.md, AGENT_TASK.md, integration_request.json, and generated integration notes. If a root README already existed, the scaffold keeps generated notes under integration/.
 2. Fill in the generated scaffold under services/ or host_native/.
 3. Update integration/backend-config-snippet.yaml and integration/lifecycle.backend.json.
 4. Run targeted checks with POST /v1/coding/tasks/{task.get("id")}/command.
@@ -1934,6 +1975,7 @@ Use the Nexus Coding API for workspace operations. Prefer a tight loop:
 Constraints:
 - Work only inside this task workspace repo.
 - Keep the resulting backend compatible with the expected OpenAI-style route.
+- Do not replace an existing root README or broad documentation file wholesale; make focused patches.
 - Commands are argv arrays, not shell strings.
 - Blocked git operations include reset, clean, rebase, merge, restore, rm, and filter-branch.
 """
@@ -1959,7 +2001,7 @@ Use the Nexus Coding API for workspace operations. Prefer a tight loop:
 
 Constraints:
 - Work only inside this task workspace clone.
-- Do not edit unrelated files or force-push.
+- Do not edit unrelated files, replace broad documentation wholesale, or force-push.
 - Commands are argv arrays, not shell strings.
 - Blocked git operations include reset, clean, rebase, merge, restore, rm, and filter-branch.
 """
@@ -1995,6 +2037,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "base_branch": task.get("base_branch"),
         "branch_name": task.get("branch_name"),
         "prompt": task.get("prompt") or "",
+        "seed_files": task.get("seed_files") if isinstance(task.get("seed_files"), list) else [],
         "guidance_messages": guidance_messages[-80:],
         "last_guidance_at": task.get("last_guidance_at"),
         "coding_model": task.get("coding_model") or "",

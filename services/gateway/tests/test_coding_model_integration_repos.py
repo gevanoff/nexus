@@ -7,6 +7,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 from fastapi import HTTPException
 
 from app import coding_workspace as cw
+from app import model_integration_workspace as miw
 
 
 def test_create_model_integration_task_requires_github_repo_url(monkeypatch, tmp_path):
@@ -252,3 +253,73 @@ def test_create_model_integration_task_clones_existing_repo_before_scaffolding(m
 
     assert ["git", "clone", "--depth", "1", "--branch", "main", "https://github.com/example/existing-repo.git", str(tmp_path / "workspaces" / task["id"] / "repo")] in calls
     assert ["git", "push", "-u", "origin", "nexus-coder/qwen"] in calls
+
+
+def test_vllm_chat_model_integration_targets_existing_lane(monkeypatch):
+    monkeypatch.setattr(
+        miw,
+        "fetch_model_metadata",
+        lambda model_id: {
+            "id": model_id,
+            "library_name": "transformers",
+            "pipeline_tag": "text-generation",
+            "tags": ["text-generation"],
+            "config": {
+                "architectures": ["NemotronForCausalLM"],
+                "model_type": "nemotron",
+            },
+        },
+    )
+
+    plan = miw.build_integration_plan(
+        model="nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+        preferred_runtime="auto",
+        route_kind="chat",
+        service_name=None,
+        prompt=None,
+    )
+
+    assert plan["runtime"] == "vllm"
+    assert plan["integration_strategy"] == "existing_vllm_model"
+    assert plan["backend_class"] == "local_vllm_fast"
+    assert plan["target_backend_class"] == "local_vllm_fast"
+    assert plan["containerize"] is False
+    assert "Do not create a new backend class" in plan["prompt"]
+
+
+def test_vllm_lane_scaffold_preserves_existing_readme_and_avoids_service(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        miw,
+        "fetch_model_metadata",
+        lambda model_id: {
+            "id": model_id,
+            "library_name": "transformers",
+            "pipeline_tag": "text-generation",
+            "tags": ["text-generation"],
+            "config": {
+                "architectures": ["NemotronForCausalLM"],
+                "model_type": "nemotron",
+            },
+        },
+    )
+    plan = miw.build_integration_plan(
+        model="nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+        preferred_runtime="auto",
+        route_kind="chat",
+        service_name=None,
+        prompt=None,
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# Existing Nexus README\n", encoding="utf-8")
+
+    created = miw.scaffold_workspace(repo, plan)
+
+    assert (repo / "README.md").read_text(encoding="utf-8") == "# Existing Nexus README\n"
+    assert not (repo / "services").exists()
+    assert not (repo / "integration" / "backend-config-snippet.yaml").exists()
+    assert not (repo / "integration" / "lifecycle.backend.json").exists()
+    assert (repo / "integration" / "vllm-model-env-snippet.env").exists()
+    assert (repo / "integration" / "model-alias-snippet.json").exists()
+    assert any("readme.md" in path.lower() and "integration" in path for path in created)
+    assert "VLLM_MODEL_FAST=nvidia/NVIDIA-Nemotron-Nano-9B-v2" in (repo / "integration" / "vllm-model-env-snippet.env").read_text(encoding="utf-8")

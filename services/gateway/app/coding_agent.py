@@ -437,8 +437,11 @@ def _no_change_audit(
     uncommitted_changes: bool,
     start_head: str,
     end_head: str,
+    expects_workspace_edits: bool = True,
 ) -> tuple[bool, str, Optional[Dict[str, Any]]]:
     if committed_changes or uncommitted_changes:
+        return finish_success, finish_summary, None
+    if not expects_workspace_edits and finish_called:
         return finish_success, finish_summary, None
     if finish_called:
         audit_summary = (
@@ -523,7 +526,6 @@ def _effective_run_prompt(task: Dict[str, Any]) -> str:
 def _request_expects_workspace_edits(task: Dict[str, Any]) -> bool:
     original = str(task.get("prompt") or "").strip().lower()
     current = _effective_run_prompt(task).lower()
-    text = f"{original}\n{current}"
     positive_markers = (
         "fix",
         "debug",
@@ -546,11 +548,90 @@ def _request_expects_workspace_edits(task: Dict[str, Any]) -> bool:
         "behavioral regressions",
         "missing tests",
     )
-    if any(marker in text for marker in positive_markers):
+
+    def has_positive(value: str) -> bool:
+        return any(marker in value for marker in positive_markers)
+
+    def has_negative(value: str) -> bool:
+        return any(marker in value for marker in negative_markers)
+
+    def looks_answer_only(value: str) -> bool:
+        stripped = value.strip()
+        if not stripped:
+            return False
+        question_starts = (
+            "what ",
+            "why ",
+            "how ",
+            "when ",
+            "where ",
+            "who ",
+            "can you explain",
+            "explain ",
+            "summarize",
+            "status",
+            "tell me",
+            "show me",
+            "did you",
+        )
+        if "?" in stripped:
+            return True
+        return stripped.startswith(question_starts) or " status" in stripped or "summary" in stripped
+
+    def has_direct_edit_intent(value: str) -> bool:
+        direct_markers = (
+            "fix ",
+            "debug ",
+            "repair ",
+            "resolve ",
+            "implement ",
+            "edit ",
+            "modify ",
+            "patch ",
+            "update the ",
+            "change the ",
+            "add ",
+            "remove ",
+        )
+        return any(marker in value for marker in direct_markers)
+
+    if current and current != original:
+        if (looks_answer_only(current) or has_negative(current)) and not has_direct_edit_intent(current):
+            return False
+        if has_positive(current):
+            return True
+        return has_positive(original) and not has_negative(original)
+
+    text = f"{original}\n{current}"
+    if has_positive(text):
         return True
-    if any(marker in text for marker in negative_markers):
+    if has_negative(text) or looks_answer_only(current or original):
         return False
     return False
+
+
+def _model_integration_context(task: Dict[str, Any]) -> str:
+    integration = task.get("integration")
+    if not isinstance(integration, dict):
+        return ""
+    strategy = str(integration.get("integration_strategy") or "").strip()
+    if strategy == "existing_vllm_model":
+        deployment = integration.get("deployment_target") if isinstance(integration.get("deployment_target"), dict) else {}
+        return (
+            "Model integration mode: existing vLLM model lane.\n"
+            f"- HuggingFace model: {integration.get('model_id') or ''}\n"
+            f"- Existing backend lane: {integration.get('backend_class') or deployment.get('backend_lane') or ''}\n"
+            f"- Target host: {deployment.get('host') or ''}\n"
+            "- Treat this as a model availability/configuration change on the existing vLLM lane. Do not create a new backend class, service directory, Dockerfile, registrar, or lifecycle backend unless repo evidence proves the existing lane cannot serve the model.\n"
+            "- Preserve the repository root README and broad documentation; make focused patches or use generated integration notes."
+        )
+    return (
+        "Model integration mode: generated backend scaffold.\n"
+        f"- HuggingFace model: {integration.get('model_id') or ''}\n"
+        f"- Runtime: {integration.get('runtime') or ''}\n"
+        f"- Route kind: {integration.get('route_kind') or ''}\n"
+        "- Preserve existing repository documentation and fill in the generated scaffold with focused edits."
+    )
 
 
 def _guidance_context(task: Dict[str, Any], *, limit: int = 12) -> str:
@@ -851,7 +932,7 @@ def _tool_specs() -> List[ToolSpec]:
         ToolSpec(
             function=ToolFunction(
                 name="coding_write_file",
-                description="Write a complete UTF-8 text file inside the coding workspace repository. Prefer coding_replace_text or coding_apply_patch for focused edits.",
+                description="Write a complete UTF-8 text file inside the coding workspace repository. Use for new files or intentional whole-file rewrites only; prefer coding_replace_text or coding_apply_patch for existing files and focused edits.",
                 parameters={
                     "type": "object",
                     "required": ["path", "content"],
@@ -1164,6 +1245,9 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         request_bits.append(f"Current run request:\n{current}")
     if guidance:
         request_bits.append(guidance)
+    integration_context = _model_integration_context(task)
+    if integration_context:
+        request_bits.append(integration_context)
     edit_expectation = ""
     if _request_expects_workspace_edits(task):
         edit_expectation = (
@@ -1182,6 +1266,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Call coding_tool_manifest if you need to inspect the exact tools and guidance currently available in this workspace. "
         "Prefer coding_read_file_lines for targeted inspection. Avoid reading full large files unless needed; use coding_search_text first, then focused line ranges. "
         "Prefer coding_replace_text for exact small edits and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
+        "Before replacing an existing file, read it and preserve unrelated content. Never overwrite a root README or other broad documentation file wholesale unless the user explicitly requested that exact rewrite. "
         "Use coding_fetch_url for public documentation or issue pages when current external information is needed. "
         "Use coding_search_text before reading many files. "
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
@@ -1629,6 +1714,7 @@ async def _run_agent(
             uncommitted_changes=uncommitted_changes,
             start_head=start_head,
             end_head=end_head,
+            expects_workspace_edits=_request_expects_workspace_edits(task),
         )
         if audit_event is not None:
             await asyncio.to_thread(_append_event, task_id, audit_event)

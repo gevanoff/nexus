@@ -625,17 +625,61 @@
     renderWorkspaceChat(task);
   }
 
+  function workspaceConversationItems(task) {
+    if (!task) return [];
+    const items = [];
+    const messages = Array.isArray(task.guidance_messages) ? task.guidance_messages : [];
+    for (const item of messages) {
+      items.push({
+        ts: Number(item.ts || 0),
+        role: "user",
+        actor: item.actor || item.role || "user",
+        content: item.content || "",
+        run_id: item.run_id || "",
+      });
+    }
+    const agent = agentInfo(task);
+    const events = Array.isArray(agent.events) ? agent.events : [];
+    for (const event of events) {
+      const type = String(event && event.type ? event.type : "");
+      if (!["completed", "failed", "paused", "stopped", "interrupted", "no_change_audit"].includes(type)) continue;
+      const summary = String((event && (event.summary || event.error)) || "").trim();
+      if (!summary) continue;
+      items.push({
+        ts: Number(event.ts || agent.finished_at || agent.last_event_at || 0),
+        role: "assistant",
+        actor: type === "completed" ? "Nexus Coding Agent" : `Nexus Coding Agent (${type})`,
+        content: summary,
+        run_id: event.run_id || agent.run_id || "",
+      });
+    }
+    if (agentIsActive(task)) {
+      const last = events.length ? events[events.length - 1] : null;
+      const lastType = last && last.type ? String(last.type) : String(agent.status || "running");
+      items.push({
+        ts: Number((last && last.ts) || agent.last_event_at || Date.now() / 1000),
+        role: "assistant",
+        actor: "Nexus Coding Agent",
+        content: `Working on this now. Latest state: ${lastType}.`,
+        run_id: agent.run_id || "",
+        transient: true,
+      });
+    }
+    items.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    return items;
+  }
+
   function renderWorkspaceChat(task) {
     if (!els.workspaceChat) return;
-    const messages = task && Array.isArray(task.guidance_messages) ? task.guidance_messages : [];
+    const messages = workspaceConversationItems(task);
     els.workspaceChat.innerHTML = "";
     if (els.workspaceChatMeta) {
-      els.workspaceChatMeta.textContent = messages.length ? `${messages.length} message${messages.length === 1 ? "" : "s"}` : "No guidance yet";
+      els.workspaceChatMeta.textContent = messages.length ? `${messages.length} message${messages.length === 1 ? "" : "s"}` : "No messages yet";
     }
     if (els.workspaceChatStatus) {
       if (!task) els.workspaceChatStatus.textContent = "";
-      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = `Sent messages are read by the active agent during its next work cycle. Next run model: ${task.coding_model || "default"}.`;
-      else els.workspaceChatStatus.textContent = `Sending a message starts another continuation run with ${task.coding_model || "the default model"}.`;
+      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = `Sent messages are read by the active agent during its next work cycle. Replies appear here. Next run model: ${task.coding_model || "default"}.`;
+      else els.workspaceChatStatus.textContent = `Sending a message starts a continuation run and the agent reply appears here. Press Enter to send, Shift+Enter for a new line.`;
     }
     if (!messages.length) {
       const empty = document.createElement("div");
@@ -646,7 +690,7 @@
     }
     for (const item of messages.slice(-40)) {
       const wrap = document.createElement("div");
-      wrap.className = "workspace-message";
+      wrap.className = `workspace-message ${item.role === "assistant" ? "workspace-message-assistant" : "workspace-message-user"}${item.transient ? " workspace-message-transient" : ""}`;
       const meta = document.createElement("div");
       meta.className = "workspace-message-meta";
       const actor = document.createElement("span");
