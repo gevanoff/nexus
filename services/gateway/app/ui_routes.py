@@ -59,6 +59,11 @@ from app.resources_snapshot import (
     lifecycle_manager_base_url,
     lifecycle_timeout,
 )
+
+@app.post("/edit-task")
+async def edit_task(task_id: str, updated_data: dict):
+    # Logic to update the task
+    return {"status": "success", "message": "Task updated"}
 from app.tools_bus import TOOL_SCHEMAS
 from app import sentinel_runtime
 
