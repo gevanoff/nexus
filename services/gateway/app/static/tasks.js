@@ -1,5 +1,5 @@
 async function handleEditTask() {
-  document.getElementById('edit-task-btn')?.addEventListener('click', handleEditTask);
+  document.getElementById('editTask')?.addEventListener('click', handleEditTask);
 
   document.getElementById('edit-task-modal').style.display = 'block';
   const taskId = state.selectedId;
@@ -18,7 +18,7 @@ async function handleEditTask() {
     setStatus('Failed to edit task', true);
   }
 }
-  document.getElementById('edit-button').addEventListener('click', async () => {
+  document.getElementById('editTask').addEventListener('click', async () => {
     const taskId = state.selectedId;
     if (!taskId) return;
 
@@ -35,7 +35,7 @@ async function handleEditTask() {
       setStatus('Failed to edit task', true);
     }
   });
-  document.getElementById('edit-button').addEventListener('click', handleEditTask);
+  document.getElementById('editTask').addEventListener('click', handleEditTask);
   const taskId = state.selectedId;
   if (!taskId) return;
 
