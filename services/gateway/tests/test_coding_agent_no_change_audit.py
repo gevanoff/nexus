@@ -165,6 +165,12 @@ def test_validation_command_classifier_ignores_inspection_commands():
     assert ca._is_validation_command(["python", "scripts/print_status.py"]) is False
 
 
+def test_validation_missing_tool_detection_does_not_treat_absent_pytest_as_test_failure():
+    assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "command not found: pytest"}) is True
+    assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "No module named pytest"}) is True
+    assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "FAILED tests/test_app.py::test_bug"}) is False
+
+
 def test_finish_gate_blocks_success_after_edits_without_validation_or_diff():
     feedback = ca._finish_gate_feedback(
         finish_success=True,

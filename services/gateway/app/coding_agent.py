@@ -551,6 +551,22 @@ def _is_validation_command(argv: Any) -> bool:
     return False
 
 
+def _validation_command_failed_due_to_missing_tool(result: Dict[str, Any]) -> bool:
+    if bool(result.get("ok")):
+        return False
+    text = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}".lower()
+    missing_markers = (
+        "command not found:",
+        "no module named pytest",
+        "no module named ruff",
+        "no module named mypy",
+        "modulenotfounderror: no module named",
+        "executable file not found",
+        "not recognized as an internal or external command",
+    )
+    return any(marker in text for marker in missing_markers)
+
+
 def _finish_gate_feedback(
     *,
     finish_success: bool,
@@ -571,7 +587,7 @@ def _finish_gate_feedback(
     if not validation_run_after_edit:
         missing.append(
             "run a targeted validation command after the latest edit, such as pytest, ruff check, "
-            "python -m py_compile, node --check, npm test, or git diff --check"
+            "python -m py_compile, node --check, npm test, or git diff --check. If one checker is unavailable, use an available fallback"
         )
     elif validation_ok_after_edit is False:
         return (
@@ -1385,6 +1401,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         "If the request requires code or documentation changes, make edits, run targeted validation, and inspect coding_git_diff before calling coding_finish. "
+        "If a preferred checker such as pytest or ruff is missing in the workspace, use an available fallback such as python -m py_compile, unittest, node --check, npm test, or git diff --check instead of stopping at the missing tool. "
         "A successful coding_finish after edits will be rejected unless validation and coding_git_diff ran after the latest edit. "
         f"{edit_expectation}"
         f"Allowed commands are: {allowed or '(none)'}. "
@@ -1802,10 +1819,14 @@ async def _run_agent(
                 elif name == "coding_git_diff" and bool(result.get("ok")):
                     diff_reviewed_after_edit = True
                 elif name == "coding_run_command" and _is_validation_command(args.get("argv")):
-                    validation_run_after_edit = True
-                    validation_ok_after_edit = bool(result.get("ok"))
-                    if not validation_ok_after_edit:
-                        validation_failed_after_edit = True
+                    if _validation_command_failed_due_to_missing_tool(result):
+                        validation_run_after_edit = False
+                        validation_ok_after_edit = None
+                    else:
+                        validation_run_after_edit = True
+                        validation_ok_after_edit = bool(result.get("ok"))
+                        if not validation_ok_after_edit:
+                            validation_failed_after_edit = True
 
                 await asyncio.to_thread(
                     _append_event,
