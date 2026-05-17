@@ -116,6 +116,21 @@ def test_review_request_does_not_get_fix_oriented_prompt():
     assert "This request is fix-oriented." not in prompt
 
 
+def test_prompt_warns_against_invented_symbols_and_requires_validation():
+    task = {
+        "id": "code_test",
+        "base_branch": "main",
+        "branch_name": "nexus-coder/code_test",
+        "prompt": "Fix the broken coding workspace behavior.",
+    }
+
+    prompt = ca._system_prompt(task)
+
+    assert "Do not invent imports" in prompt
+    assert "avoid loading the same library multiple times" in prompt
+    assert "validation and coding_git_diff" in prompt
+
+
 def test_workspace_chat_question_does_not_inherit_edit_expectation():
     task = {
         "id": "code_test",
@@ -132,6 +147,82 @@ def test_model_is_reroutable_for_aliases_but_not_explicit_backend_model():
     assert ca._model_is_reroutable("coder") is True
     assert ca._model_is_reroutable("default") is True
     assert ca._model_is_reroutable("local_mlx:mlx-community/Qwen3-30B-A3B-4bit") is False
+
+
+def test_validation_command_classifier_recognizes_common_checks():
+    assert ca._is_validation_command(["pytest", "services/gateway/tests/test_app.py"]) is True
+    assert ca._is_validation_command(["ruff", "check", "services/gateway/app"]) is True
+    assert ca._is_validation_command(["python", "-m", "py_compile", "app.py"]) is True
+    assert ca._is_validation_command(["python3", "-m", "pytest", "tests/test_app.py"]) is True
+    assert ca._is_validation_command(["node", "--check", "static/coding.js"]) is True
+    assert ca._is_validation_command(["npm", "run", "typecheck"]) is True
+    assert ca._is_validation_command(["uv", "run", "python", "-m", "pytest"]) is True
+    assert ca._is_validation_command(["git", "diff", "--check"]) is True
+
+
+def test_validation_command_classifier_ignores_inspection_commands():
+    assert ca._is_validation_command(["rg", "SomeSymbol", "services"]) is False
+    assert ca._is_validation_command(["python", "scripts/print_status.py"]) is False
+
+
+def test_finish_gate_blocks_success_after_edits_without_validation_or_diff():
+    feedback = ca._finish_gate_feedback(
+        finish_success=True,
+        workspace_modified=True,
+        diff_reviewed_after_edit=False,
+        validation_run_after_edit=False,
+        validation_ok_after_edit=None,
+    )
+
+    assert "run a targeted validation command" in feedback
+    assert "coding_git_diff" in feedback
+
+
+def test_finish_gate_blocks_success_after_failed_validation():
+    feedback = ca._finish_gate_feedback(
+        finish_success=True,
+        workspace_modified=True,
+        diff_reviewed_after_edit=True,
+        validation_run_after_edit=True,
+        validation_ok_after_edit=False,
+        validation_failed_after_edit=True,
+    )
+
+    assert "validation command failed" in feedback
+    assert "success=false" in feedback
+
+
+def test_finish_gate_does_not_hide_failed_validation_with_later_weak_check():
+    feedback = ca._finish_gate_feedback(
+        finish_success=True,
+        workspace_modified=True,
+        diff_reviewed_after_edit=True,
+        validation_run_after_edit=True,
+        validation_ok_after_edit=True,
+        validation_failed_after_edit=True,
+    )
+
+    assert "validation command failed" in feedback
+
+
+def test_finish_gate_allows_success_after_validation_and_diff():
+    feedback = ca._finish_gate_feedback(
+        finish_success=True,
+        workspace_modified=True,
+        diff_reviewed_after_edit=True,
+        validation_run_after_edit=True,
+        validation_ok_after_edit=True,
+    )
+
+    assert feedback == ""
+
+
+def test_tool_result_modified_workspace_tracks_real_edit_tools():
+    assert ca._tool_result_modified_workspace("coding_write_file", {}, {"ok": True, "bytes": 10}) is True
+    assert ca._tool_result_modified_workspace("coding_replace_text", {}, {"ok": True, "replacements": 1}) is True
+    assert ca._tool_result_modified_workspace("coding_apply_patch", {}, {"ok": True, "apply": {"ok": True}}) is True
+    assert ca._tool_result_modified_workspace("coding_apply_patch", {"check_only": True}, {"ok": True, "check_only": True}) is False
+    assert ca._tool_result_modified_workspace("coding_replace_text", {}, {"ok": False, "replacements": 0}) is False
 
 
 def test_backend_supports_tool_calling_prefers_payload_policy(monkeypatch):

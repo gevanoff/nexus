@@ -4,6 +4,7 @@ import asyncio
 import re
 import json
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -37,23 +38,23 @@ def _max_events() -> int:
 
 def _tool_result_char_limit() -> int:
     try:
-        return max(2_000, min(int(getattr(S, "CODING_AGENT_MAX_TOOL_RESULT_CHARS", 60_000) or 60_000), 500_000))
+        return max(2_000, min(int(getattr(S, "CODING_AGENT_MAX_TOOL_RESULT_CHARS", 100_000) or 100_000), 500_000))
     except Exception:
-        return 60_000
+        return 100_000
 
 
 def _max_completion_tokens() -> int:
     try:
-        return max(128, min(int(getattr(S, "CODING_AGENT_MAX_TOKENS", 512) or 512), 8192))
+        return max(128, min(int(getattr(S, "CODING_AGENT_MAX_TOKENS", 8192) or 8192), 8192))
     except Exception:
-        return 512
+        return 8192
 
 
 def _tool_context_char_limit() -> int:
     try:
-        return max(2_000, min(int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 10_000) or 10_000), 100_000))
+        return max(2_000, min(int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000) or 32_000), 100_000))
     except Exception:
-        return 10_000
+        return 32_000
 
 
 def _backend_retry_count() -> int:
@@ -386,6 +387,8 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
         return f"no_tool_call cycle={event.get('cycle') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "no_change_audit":
         return f"no_change_audit {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "finish_gate":
+        return f"finish_gate {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "assistant":
         calls = event.get("tool_calls")
         names = []
@@ -478,6 +481,108 @@ def _no_change_audit(
             },
         )
     return finish_success, finish_summary, None
+
+
+def _tool_result_modified_workspace(name: str, args: Dict[str, Any], result: Dict[str, Any]) -> bool:
+    if not bool(result.get("ok")):
+        return False
+    if name == "coding_write_file":
+        return True
+    if name == "coding_replace_text":
+        try:
+            return int(result.get("replacements") or 0) > 0
+        except Exception:
+            return True
+    if name == "coding_apply_patch":
+        if bool(args.get("check_only")) or bool(result.get("check_only")):
+            return False
+        apply_result = result.get("apply")
+        if isinstance(apply_result, dict):
+            return bool(apply_result.get("ok"))
+        return True
+    return False
+
+
+def _is_python_validation_command(parts: List[str]) -> bool:
+    if not parts:
+        return False
+    lowered = [item.lower() for item in parts]
+    if "-m" in lowered:
+        index = lowered.index("-m")
+        module = lowered[index + 1] if index + 1 < len(lowered) else ""
+        root_module = module.split(".", 1)[0]
+        return root_module in {"pytest", "unittest", "py_compile", "compileall", "ruff", "mypy"}
+    script = Path(parts[0]).name.lower()
+    if script in {"pytest", "ruff", "mypy"}:
+        return True
+    return script.startswith("test_") and script.endswith(".py")
+
+
+def _is_validation_command(argv: Any) -> bool:
+    if not isinstance(argv, list) or not argv:
+        return False
+    parts = [str(item).strip() for item in argv if str(item).strip()]
+    if not parts:
+        return False
+    cmd = Path(parts[0]).name.lower()
+    lowered = [item.lower() for item in parts]
+    if cmd in {"pytest", "ruff", "mypy"}:
+        return True
+    if cmd in {"python", "python3"}:
+        return _is_python_validation_command(parts[1:])
+    if cmd == "node":
+        return any(item in {"--check", "--test"} for item in lowered[1:])
+    if cmd == "npm":
+        if len(lowered) >= 2 and lowered[1] in {"test", "t"}:
+            return True
+        if len(lowered) >= 3 and lowered[1] == "run":
+            script = lowered[2]
+            return any(marker in script for marker in ("test", "lint", "typecheck", "check", "build"))
+        return False
+    if cmd == "uv":
+        meaningful = {item for item in lowered[1:] if not item.startswith("-")}
+        if meaningful.intersection({"pytest", "ruff", "mypy", "py_compile", "compileall", "unittest"}):
+            return True
+        if "--check" in lowered or "--test" in lowered:
+            return True
+        return any(marker in item for item in meaningful for marker in ("test", "lint", "typecheck"))
+    if cmd == "git":
+        return len(lowered) >= 3 and lowered[1] == "diff" and "--check" in lowered[2:]
+    return False
+
+
+def _finish_gate_feedback(
+    *,
+    finish_success: bool,
+    workspace_modified: bool,
+    diff_reviewed_after_edit: bool,
+    validation_run_after_edit: bool,
+    validation_ok_after_edit: Optional[bool],
+    validation_failed_after_edit: bool = False,
+) -> str:
+    if not finish_success or not workspace_modified:
+        return ""
+    if validation_failed_after_edit:
+        return (
+            "A validation command failed after the latest edit. Fix the reported issue and rerun validation, "
+            "or call coding_finish with success=false and a concrete blocker."
+        )
+    missing: List[str] = []
+    if not validation_run_after_edit:
+        missing.append(
+            "run a targeted validation command after the latest edit, such as pytest, ruff check, "
+            "python -m py_compile, node --check, npm test, or git diff --check"
+        )
+    elif validation_ok_after_edit is False:
+        return (
+            "You ran validation after editing, but it failed. Fix the reported issue and rerun validation, "
+            "or call coding_finish with success=false and a concrete blocker."
+        )
+    if not diff_reviewed_after_edit:
+        missing.append("inspect the actual workspace diff with coding_git_diff after the latest edit")
+    if not missing:
+        return ""
+    return "Before reporting success after workspace edits, " + " and ".join(missing) + "."
 
 
 def _previous_run_context(task: Dict[str, Any]) -> str:
@@ -1059,7 +1164,10 @@ def _tool_specs() -> List[ToolSpec]:
         ToolSpec(
             function=ToolFunction(
                 name="coding_finish",
-                description="Finish the autonomous run when the requested coding work is complete or blocked.",
+                description=(
+                    "Finish the autonomous run when the requested coding work is complete or blocked. "
+                    "A successful finish after edits is rejected unless a validation command and coding_git_diff ran after the latest edit."
+                ),
                 parameters={
                     "type": "object",
                     "required": ["summary"],
@@ -1080,7 +1188,10 @@ def coding_tool_manifest() -> Dict[str, Any]:
         "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
         "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
         "Use coding_fetch_url for current public documentation or issue pages.",
-        "Inspect coding_git_diff or coding_change_summary before calling coding_finish.",
+        "Do not invent imports, functions, methods, variables, or config keys; search and read definitions before using them.",
+        "Keep imports consolidated and avoid loading the same library multiple times.",
+        "After editing, run a targeted validation command such as pytest, ruff check, python -m py_compile, node --check, npm test, or git diff --check.",
+        "After editing, inspect coding_git_diff before calling coding_finish.",
     ]
     return {
         "tools": tools,
@@ -1267,11 +1378,14 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Prefer coding_read_file_lines for targeted inspection. Avoid reading full large files unless needed; use coding_search_text first, then focused line ranges. "
         "Prefer coding_replace_text for exact small edits and coding_apply_patch for multi-file diffs; use coding_write_file only for whole-file rewrites or new files. "
         "Before replacing an existing file, read it and preserve unrelated content. Never overwrite a root README or other broad documentation file wholesale unless the user explicitly requested that exact rewrite. "
+        "Do not invent imports, variables, functions, methods, classes, settings, or service names. Before using a symbol or API you are not certain exists, search the repository and read the definition or call site. "
+        "Keep imports consolidated in the existing style and avoid loading the same library multiple times. "
         "Use coding_fetch_url for public documentation or issue pages when current external information is needed. "
         "Use coding_search_text before reading many files. "
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
-        "If the request requires code or documentation changes, make edits and inspect the diff before calling coding_finish. "
+        "If the request requires code or documentation changes, make edits, run targeted validation, and inspect coding_git_diff before calling coding_finish. "
+        "A successful coding_finish after edits will be rejected unless validation and coding_git_diff ran after the latest edit. "
         f"{edit_expectation}"
         f"Allowed commands are: {allowed or '(none)'}. "
         f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
@@ -1493,6 +1607,11 @@ async def _run_agent(
         seen_guidance_count = len(_guidance_messages(task))
         tools = _tool_specs()
         no_tool_cycles = 0
+        workspace_modified = False
+        diff_reviewed_after_edit = False
+        validation_run_after_edit = False
+        validation_ok_after_edit: Optional[bool] = None
+        validation_failed_after_edit = False
         cycle = 0
 
         while True:
@@ -1643,6 +1762,51 @@ async def _run_agent(
                 except Exception as exc:
                     result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
+                if name == "coding_finish":
+                    candidate_success = bool(result.get("success", args.get("success", True)))
+                    gate_feedback = _finish_gate_feedback(
+                        finish_success=candidate_success,
+                        workspace_modified=workspace_modified,
+                        diff_reviewed_after_edit=diff_reviewed_after_edit,
+                        validation_run_after_edit=validation_run_after_edit,
+                        validation_ok_after_edit=validation_ok_after_edit,
+                        validation_failed_after_edit=validation_failed_after_edit,
+                    )
+                    if gate_feedback:
+                        result = {
+                            "ok": False,
+                            "success": False,
+                            "summary": gate_feedback,
+                            "error": gate_feedback,
+                            "required_tools": ["coding_run_command", "coding_git_diff"],
+                        }
+                        await asyncio.to_thread(
+                            _append_event,
+                            task_id,
+                            {
+                                "type": "finish_gate",
+                                "cycle": cycle,
+                                "summary": gate_feedback,
+                                "diff_reviewed_after_edit": diff_reviewed_after_edit,
+                                "validation_run_after_edit": validation_run_after_edit,
+                                "validation_ok_after_edit": validation_ok_after_edit,
+                                "validation_failed_after_edit": validation_failed_after_edit,
+                            },
+                        )
+                elif _tool_result_modified_workspace(name, args, result):
+                    workspace_modified = True
+                    diff_reviewed_after_edit = False
+                    validation_run_after_edit = False
+                    validation_ok_after_edit = None
+                    validation_failed_after_edit = False
+                elif name == "coding_git_diff" and bool(result.get("ok")):
+                    diff_reviewed_after_edit = True
+                elif name == "coding_run_command" and _is_validation_command(args.get("argv")):
+                    validation_run_after_edit = True
+                    validation_ok_after_edit = bool(result.get("ok"))
+                    if not validation_ok_after_edit:
+                        validation_failed_after_edit = True
+
                 await asyncio.to_thread(
                     _append_event,
                     task_id,
@@ -1656,7 +1820,7 @@ async def _run_agent(
                 )
                 messages.append(_tool_message_for_result(tool_call_id=tool_call_id, result=result))
 
-                if name == "coding_finish":
+                if name == "coding_finish" and bool(result.get("ok")):
                     finish_summary = str(result.get("summary") or args.get("summary") or "").strip()
                     finish_success = bool(result.get("success", args.get("success", True)))
                     finish_called = True

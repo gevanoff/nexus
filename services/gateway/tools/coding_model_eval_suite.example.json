@@ -1,0 +1,214 @@
+{
+  "name": "nexus-local-coding-model-eval-v1",
+  "description": "Synthetic but practical coding tasks for comparing local coding models, runtimes, sampler profiles, and context strategies.",
+  "tasks": [
+    {
+      "id": "single_file_bug_fix_py",
+      "class": "single-file bug fix",
+      "mode": "patch",
+      "prompt": "Fix the arithmetic bug without changing the public function names.",
+      "context_files": [
+        "calculator.py",
+        "tests/test_calculator.py"
+      ],
+      "expected_modified": [
+        "calculator.py"
+      ],
+      "test_command": [
+        "python",
+        "tests/test_calculator.py"
+      ],
+      "files": {
+        "calculator.py": "def add(a, b):\n    return a - b\n\n\ndef multiply(a, b):\n    return a * b\n",
+        "tests/test_calculator.py": "import pathlib\nimport sys\nsys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))\nfrom calculator import add, multiply\n\nassert add(2, 3) == 5\nassert add(-4, 1) == -3\nassert multiply(6, 7) == 42\nprint('ok')\n"
+      }
+    },
+    {
+      "id": "multi_file_bug_fix_py",
+      "class": "multi-file bug fix",
+      "mode": "patch",
+      "prompt": "The client module fails at import time. Fix the bug using the existing config symbol; do not rename public config values.",
+      "context_files": [
+        "app/config.py",
+        "app/client.py",
+        "tests/test_client.py"
+      ],
+      "expected_modified": [
+        "app/client.py"
+      ],
+      "test_command": [
+        "python",
+        "tests/test_client.py"
+      ],
+      "files": {
+        "app/__init__.py": "",
+        "app/config.py": "DEFAULT_TIMEOUT_SECONDS = 30\nAPI_BASE_URL = 'https://example.invalid'\n",
+        "app/client.py": "from app.config import API_BASE_URL, DEFAULT_TIMEOUT\n\n\ndef request_options():\n    return {'base_url': API_BASE_URL, 'timeout': DEFAULT_TIMEOUT}\n",
+        "tests/test_client.py": "import pathlib\nimport sys\nsys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))\nfrom app.client import request_options\n\nopts = request_options()\nassert opts['timeout'] == 30\nassert opts['base_url'].startswith('https://')\nprint('ok')\n"
+      }
+    },
+    {
+      "id": "failing_test_repair_py",
+      "class": "failing test repair",
+      "mode": "patch",
+      "prompt": "Tests for slug generation are failing. Fix the implementation while preserving lowercase ASCII slugs.",
+      "context_files": [
+        "slugify.py",
+        "tests/test_slugify.py"
+      ],
+      "expected_modified": [
+        "slugify.py"
+      ],
+      "test_command": [
+        "python",
+        "tests/test_slugify.py"
+      ],
+      "files": {
+        "slugify.py": "import re\n\n\ndef slugify(value):\n    value = value.strip().lower()\n    value = re.sub(r'[^a-z0-9]+', '-', value)\n    return value.strip('-')\n",
+        "tests/test_slugify.py": "import pathlib\nimport sys\nsys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))\nfrom slugify import slugify\n\nassert slugify('Hello, World!') == 'hello-world'\nassert slugify('many    spaces') == 'many-spaces'\nassert slugify(' Already---slug ') == 'already-slug'\nprint('ok')\n"
+      }
+    },
+    {
+      "id": "typescript_react_task",
+      "class": "TypeScript/React task",
+      "mode": "patch",
+      "prompt": "Make the component safe when user.name is missing. Preserve the exported component and use the fallback label Unknown.",
+      "context_files": [
+        "src/UserCard.tsx",
+        "tests/check-user-card.js"
+      ],
+      "expected_modified": [
+        "src/UserCard.tsx"
+      ],
+      "test_command": [
+        "node",
+        "tests/check-user-card.js"
+      ],
+      "files": {
+        "src/UserCard.tsx": "type User = {\n  name?: string;\n  email: string;\n};\n\nexport function UserCard({ user }: { user: User }) {\n  return (\n    <article>\n      <h2>{user.name.toUpperCase()}</h2>\n      <p>{user.email}</p>\n    </article>\n  );\n}\n",
+        "tests/check-user-card.js": "const fs = require('fs');\nconst text = fs.readFileSync('src/UserCard.tsx', 'utf8');\nif (!text.includes('export function UserCard')) throw new Error('component export was removed');\nif (!text.includes('Unknown')) throw new Error('fallback label missing');\nif (text.includes('user.name.toUpperCase()')) throw new Error('unsafe direct name access remains');\nconsole.log('ok');\n"
+      }
+    },
+    {
+      "id": "python_task",
+      "class": "Python task",
+      "mode": "patch",
+      "prompt": "Fix load_settings so callers receive defaults plus file overrides. Keep the function signature unchanged.",
+      "context_files": [
+        "settings.py",
+        "tests/test_settings.py"
+      ],
+      "expected_modified": [
+        "settings.py"
+      ],
+      "test_command": [
+        "python",
+        "tests/test_settings.py"
+      ],
+      "files": {
+        "settings.py": "import json\n\nDEFAULTS = {'retries': 2, 'timeout': 10}\n\n\ndef load_settings(path):\n    with open(path, 'r', encoding='utf-8') as handle:\n        return json.load(handle)\n",
+        "tests/test_settings.py": "import json\nimport pathlib\nimport sys\nimport tempfile\nsys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))\nfrom settings import load_settings\n\nwith tempfile.NamedTemporaryFile('w', delete=False, encoding='utf-8') as handle:\n    json.dump({'timeout': 30}, handle)\n    path = handle.name\nsettings = load_settings(path)\nassert settings == {'retries': 2, 'timeout': 30}\nprint('ok')\n"
+      }
+    },
+    {
+      "id": "shell_devops_task",
+      "class": "Shell/devops task",
+      "mode": "patch",
+      "prompt": "The backup script breaks when the target directory contains spaces. Fix it without changing the CLI contract.",
+      "context_files": [
+        "scripts/backup.sh",
+        "tests/check-backup.sh"
+      ],
+      "expected_modified": [
+        "scripts/backup.sh"
+      ],
+      "test_command": [
+        "bash",
+        "tests/check-backup.sh"
+      ],
+      "files": {
+        "scripts/backup.sh": "#!/usr/bin/env bash\nset -euo pipefail\n\nSOURCE_FILE=$1\nTARGET_DIR=$2\nmkdir -p $TARGET_DIR\ncp $SOURCE_FILE $TARGET_DIR/\n",
+        "tests/check-backup.sh": "#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p 'tmp/source dir'\necho data > 'tmp/source dir/input.txt'\nbash scripts/backup.sh 'tmp/source dir/input.txt' 'tmp/target dir'\ntest -f 'tmp/target dir/input.txt'\necho ok\n"
+      }
+    },
+    {
+      "id": "long_context_repo_question",
+      "class": "long-context repo question",
+      "mode": "answer",
+      "prompt": "Which file owns retry backoff behavior, and what strategy does it use?",
+      "context_files": [
+        "docs/architecture.md",
+        "services/worker/retry.py",
+        "services/worker/main.py"
+      ],
+      "required_answer_patterns": [
+        "services/worker/retry\\.py",
+        "exponential",
+        "jitter"
+      ],
+      "files": {
+        "docs/architecture.md": "Worker overview\\n\\nThe worker has queue ingestion, retry backoff, and metrics. Retry ownership is intentionally kept near the worker service rather than the gateway.\\n\\n",
+        "services/worker/retry.py": "import random\n\n\ndef next_delay(attempt):\n    base = min(60, 2 ** attempt)\n    return base + random.uniform(0, 0.25 * base)\n",
+        "services/worker/main.py": "from services.worker.retry import next_delay\n\n\ndef handle_failure(attempt):\n    return next_delay(attempt)\n"
+      }
+    },
+    {
+      "id": "refactor_preserve_behavior",
+      "class": "refactor with behavior preservation",
+      "mode": "patch",
+      "prompt": "Refactor the duplicated name normalization logic into one helper while preserving behavior.",
+      "context_files": [
+        "names.py",
+        "tests/test_names.py"
+      ],
+      "expected_modified": [
+        "names.py"
+      ],
+      "test_command": [
+        "python",
+        "tests/test_names.py"
+      ],
+      "files": {
+        "names.py": "def display_name(first, last):\n    first = ' '.join(first.strip().split())\n    last = ' '.join(last.strip().split())\n    return f'{first} {last}'.strip()\n\n\ndef sortable_name(first, last):\n    first = ' '.join(first.strip().split())\n    last = ' '.join(last.strip().split())\n    return f'{last}, {first}'.strip(', ')\n",
+        "tests/test_names.py": "import pathlib\nimport sys\nsys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))\nfrom names import display_name, sortable_name\n\nassert display_name(' Ada ', ' Lovelace ') == 'Ada Lovelace'\nassert display_name('Grace', '') == 'Grace'\nassert sortable_name(' Ada ', ' Lovelace ') == 'Lovelace, Ada'\nassert sortable_name('', ' Hopper ') == 'Hopper'\nprint('ok')\n"
+      }
+    },
+    {
+      "id": "patch_review_risk_analysis",
+      "class": "patch review / risk analysis",
+      "mode": "answer",
+      "prompt": "Review the patch for the most important correctness or security risk. Give one concise finding and a safer alternative.",
+      "context_files": [
+        "patch.diff"
+      ],
+      "required_answer_patterns": [
+        "SQL",
+        "injection|parameter"
+      ],
+      "files": {
+        "patch.diff": "diff --git a/users.py b/users.py\n--- a/users.py\n+++ b/users.py\n@@ -1,4 +1,5 @@\n def find_user(conn, email):\n-    return conn.execute('select * from users where email = ?', [email]).fetchone()\n+    query = f\"select * from users where email = '{email}'\"\n+    return conn.execute(query).fetchone()\n"
+      }
+    },
+    {
+      "id": "dependency_config_troubleshooting",
+      "class": "dependency or config troubleshooting",
+      "mode": "patch",
+      "prompt": "The service cannot find its database URL at runtime. Fix the compose environment key typo only.",
+      "context_files": [
+        "docker-compose.yml",
+        "tests/check-compose.py"
+      ],
+      "expected_modified": [
+        "docker-compose.yml"
+      ],
+      "test_command": [
+        "python",
+        "tests/check-compose.py"
+      ],
+      "files": {
+        "docker-compose.yml": "services:\n  api:\n    image: example/api:latest\n    environment:\n      - POSTGRES_URLL=postgres://db/app\n      - LOG_LEVEL=info\n",
+        "tests/check-compose.py": "from pathlib import Path\ntext = Path('docker-compose.yml').read_text(encoding='utf-8')\nassert 'POSTGRES_URL=postgres://db/app' in text\nassert 'POSTGRES_URLL' not in text\nassert 'LOG_LEVEL=info' in text\nprint('ok')\n"
+      }
+    }
+  ]
+}

@@ -30,6 +30,14 @@ class ChatCompletionRequest(BaseModel):
     tools: Optional[List[ToolSpec]] = None
     tool_choice: Optional[Any] = None
     temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    repetition_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    stop: Optional[Any] = None
+    seed: Optional[int] = None
     max_tokens: Optional[int] = None
     stream: Optional[bool] = False
 

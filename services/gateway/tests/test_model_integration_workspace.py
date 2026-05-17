@@ -65,16 +65,21 @@ def test_scaffold_workspace_writes_topology_aware_files(monkeypatch, tmp_path):
     created = miw.scaffold_workspace(tmp_path, plan)
 
     assert created
-    lifecycle = json.loads((tmp_path / "integration" / "lifecycle.backend.json").read_text(encoding="utf-8"))
-    backend_entry = lifecycle[plan["backend_class"]]
-    assert backend_entry["host"] == "ai1"
-    assert backend_entry["estimated_vram_mb"] == 12000
-    assert "Recommended lane" in backend_entry["notes"]
+    assert plan["integration_strategy"] == "existing_vllm_model"
+    assert plan["target_backend_class"] == "local_vllm_embeddings"
+    assert not (tmp_path / "integration" / "lifecycle.backend.json").exists()
+    assert not (tmp_path / "services" / plan["service_name"] / "Dockerfile").exists()
 
     readme = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "## Recommended Deployment Target" in readme
+    assert "Integration strategy: `existing_vllm_model`" in readme
+    assert "not add a new backend service" in readme
     assert "ai1" in readme
-    assert (tmp_path / "services" / plan["service_name"] / "Dockerfile").exists()
+    env_snippet = (tmp_path / "integration" / "vllm-model-env-snippet.env").read_text(encoding="utf-8")
+    assert "VLLM_MODEL_EMBEDDINGS=Qwen/Qwen3-Embedding-4B" in env_snippet
+    alias_snippet = json.loads((tmp_path / "integration" / "model-alias-snippet.json").read_text(encoding="utf-8"))
+    aliases = alias_snippet["aliases"]
+    assert list(aliases) == ["qwen3-embedding-4b"]
+    assert aliases["qwen3-embedding-4b"]["backend"] == "local_vllm_embeddings"
 
 
 def test_integration_host_lanes_fall_back_without_topology_files(monkeypatch):
