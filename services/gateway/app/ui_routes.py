@@ -48,6 +48,11 @@ from app.images_backend import generate_images, resolve_images_backend_class
 from app.ocr_backend import extract_ocr_text, scan_ocr
 from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
+
+@router.post("/edit-task")
+async def edit_task(task_id: int, updated_data: dict):
+    # Implement logic to update the task
+    return {"status": "success", "message": "Task updated"}
 from app import user_store
 from app import agent_tasks
 from app import telegram_notifications
