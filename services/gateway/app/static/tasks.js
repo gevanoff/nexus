@@ -16,7 +16,7 @@ async function handleEditTask() {
     setStatus('Failed to edit task', true);
   }
 }
-  document.getElementById('editTask').addEventListener('click', async () => {
+  document.getElementById('edit-task').addEventListener('click', async () => {
     const taskId = state.selectedId;
     if (!taskId) return;
 
