@@ -1,5 +1,7 @@
 (() => {
   const els = {
+    editButton: document.querySelector("[data-action='edit-task']") || null,
+
     status: document.getElementById("status"),
     form: document.getElementById("taskForm"),
     diagnostics: document.getElementById("diagnostics"),
