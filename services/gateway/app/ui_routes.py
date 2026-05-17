@@ -51,6 +51,7 @@ from app import ui_conversations
 from app import user_store
 from app import agent_tasks
 from app import telegram_notifications
+from app import scheduled_tasks
 from app.auth import configured_static_bearer_tokens, require_bearer
 from app.agent_runtime_v1 import tools_for_tier
 from app.resources_snapshot import (
