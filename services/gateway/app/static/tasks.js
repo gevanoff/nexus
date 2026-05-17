@@ -1,4 +1,5 @@
 async function handleEditTask() {
+  document.getElementById('edit-button').addEventListener('click', handleEditTask);
   const taskId = state.selectedId;
   if (!taskId) return;
 
