@@ -1,6 +1,4 @@
 async function handleEditTask() {
-  document.getElementById('editTask')?.addEventListener('click', handleEditTask);
-
   document.getElementById('edit-task-modal').style.display = 'block';
   const taskId = state.selectedId;
   if (!taskId) return;
