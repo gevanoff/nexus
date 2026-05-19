@@ -4,6 +4,8 @@
   "scripts": {
     "start": "node app/app.js",
 
+    "start": "node app/app.js",
+
     "test": "jest"
   },
   "dependencies": {
