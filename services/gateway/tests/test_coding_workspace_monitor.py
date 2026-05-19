@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -57,7 +58,7 @@ def test_task_monitor_summary_flags_stopped_and_repeated_no_tool_calls(monkeypat
     assert summary["needs_attention"] is True
     assert "run_stopped" in summary["attention"]
     assert "repeated_no_tool_call" in summary["attention"]
-    assert "resume" in summary["safe_actions"]
+    assert "resume" not in summary["safe_actions"]
     assert "guide_and_resume" in summary["safe_actions"]
     assert summary["workspace_changes"]["counts"]["total"] == 1
 
@@ -135,3 +136,122 @@ def test_set_task_coding_model_rejects_active_workspace(monkeypatch, tmp_path):
             cw.set_task_coding_model(task["id"], coding_model="coder")
 
         assert getattr(exc_info.value, "status_code", None) == 409
+
+
+def test_validate_command_blocks_dependency_installs():
+    with pytest.raises(Exception) as npm_exc:
+        cw.validate_command(["npm", "install"])
+    with pytest.raises(Exception) as pip_exc:
+        cw.validate_command(["python", "-m", "pip", "install", "requests"])
+    with pytest.raises(Exception) as uv_exc:
+        cw.validate_command(["uv", "add", "requests"])
+
+    assert getattr(npm_exc.value, "status_code", None) == 403
+    assert getattr(pip_exc.value, "status_code", None) == 403
+    assert getattr(uv_exc.value, "status_code", None) == 403
+
+
+def test_validate_command_allows_non_mutating_checks():
+    assert cw.validate_command(["npm", "run", "typecheck"]) == ["npm", "run", "typecheck"]
+    assert cw.validate_command(["uv", "run", "python", "-m", "pytest"]) == ["uv", "run", "python", "-m", "pytest"]
+
+
+def test_load_task_repairs_unreadable_metadata(monkeypatch, tmp_path):
+    task_id = "code_abcdef123456"
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
+
+    broken = tmp_path / f"{task_id}.json"
+    broken.write_text("{bad json", encoding="utf-8")
+
+    repaired = cw.load_task(task_id)
+
+    assert repaired["status"] == "error"
+    assert repaired["metadata_error"]["task_file"].endswith(f"{task_id}.json")
+    quarantined_path = Path(repaired["metadata_error"]["quarantined_path"])
+    assert quarantined_path.exists()
+
+    stored = json.loads(broken.read_text(encoding="utf-8"))
+    assert stored["schema"] == cw.SCHEMA
+    assert stored["status"] == "error"
+
+
+def test_archive_task_moves_task_and_workspace_for_forensics(monkeypatch, tmp_path):
+    task = _base_task(
+        workspace_path=str(tmp_path / "workspaces" / "code_abcdef123456"),
+        repo_path=str(tmp_path / "workspaces" / "code_abcdef123456" / "repo"),
+    )
+
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+
+    workspace = Path(task["workspace_path"])
+    repo = Path(task["repo_path"])
+    repo.mkdir(parents=True, exist_ok=True)
+    repo.joinpath("README.md").write_text("hello\n", encoding="utf-8")
+
+    cw.save_task(task)
+    result = cw.archive_task(task["id"], actor="tester", reason="forensics")
+
+    assert result["ok"] is True
+    assert Path(result["archived_task"]).exists()
+    assert Path(result["manifest"]).exists()
+    assert Path(result["archived_workspace"]).exists()
+    assert not (tmp_path / "tasks" / f"{task['id']}.json").exists()
+    assert not workspace.exists()
+
+
+def test_task_monitor_summary_flags_metadata_error_and_blocks_resume(monkeypatch):
+    task = _base_task(
+        status="error",
+        agent_status="failed",
+        metadata_error={"message": "broken task json"},
+        agent_events=[{"ts": 1000, "type": "failed", "summary": "broken task json"}],
+    )
+
+    monkeypatch.setattr(cw, "git_change_summary", lambda task_id: {"ok": True, "counts": {"total": 0}, "files": []})
+    monkeypatch.setattr(cw, "_repo_path", lambda task: Path("/tmp/code_abcdef123456/repo"))
+    monkeypatch.setattr(
+        cw,
+        "_git_base_branch_diff",
+        lambda repo, *, base_branch: {
+            "changes": {"counts": {"total": 0}, "files": []},
+            "committed_changes": {"counts": {"total": 0}, "files": []},
+            "error": "",
+        },
+    )
+
+    summary = cw._task_monitor_summary(task, now=2000, stalled_after_sec=300)
+
+    assert "metadata_read_failed" in summary["attention"]
+    assert "resume" not in summary["safe_actions"]
+    assert "guide_and_resume" not in summary["safe_actions"]
+
+
+def test_task_monitor_summary_flags_finish_gate_for_manual_guidance(monkeypatch):
+    task = _base_task(
+        agent_status="failed",
+        agent_events=[
+            {"ts": 995, "type": "finish_gate", "summary": "run validation first"},
+            {"ts": 1000, "type": "failed", "summary": "run validation first"},
+        ],
+    )
+
+    monkeypatch.setattr(cw, "git_change_summary", lambda task_id: {"ok": True, "counts": {"total": 0}, "files": []})
+    monkeypatch.setattr(cw, "_repo_path", lambda task: Path("/tmp/code_abcdef123456/repo"))
+    monkeypatch.setattr(
+        cw,
+        "_git_base_branch_diff",
+        lambda repo, *, base_branch: {
+            "changes": {"counts": {"total": 0}, "files": []},
+            "committed_changes": {"counts": {"total": 0}, "files": []},
+            "error": "",
+        },
+    )
+
+    summary = cw._task_monitor_summary(task, now=2000, stalled_after_sec=300)
+
+    assert "finish_gate" in summary["attention"]
+    assert "resume" not in summary["safe_actions"]
+    assert "guide_and_resume" in summary["safe_actions"]

@@ -131,6 +131,20 @@ def _tool_context_char_limit() -> int:
         return 32_000
 
 
+def _max_no_tool_call_cycles() -> int:
+    try:
+        return max(2, min(int(getattr(S, "CODING_AGENT_MAX_NO_TOOL_CYCLES", 4) or 4), 20))
+    except Exception:
+        return 4
+
+
+def _max_semantic_reroutes() -> int:
+    try:
+        return max(0, min(int(getattr(S, "CODING_AGENT_MAX_SEMANTIC_REROUTES", 1) or 1), 5))
+    except Exception:
+        return 1
+
+
 def _backend_retry_count() -> int:
     try:
         return max(0, min(int(getattr(S, "CODING_AGENT_BACKEND_RETRIES", 2) or 0), 5))
@@ -447,6 +461,31 @@ def _event_result(value: Any) -> Any:
     return _clip_jsonable(value, min(_tool_result_char_limit(), 20_000))
 
 
+def _compact_event(task: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(event)
+    event_type = str(out.get("type") or "")
+    events = task.get("agent_events")
+    last_event = events[-1] if isinstance(events, list) and events else None
+
+    if event_type == "assistant":
+        calls = out.get("tool_calls") if isinstance(out.get("tool_calls"), list) else []
+        content = _clip_text(str(out.get("content") or "").strip(), 2000 if calls else 800)
+        if not calls:
+            if isinstance(last_event, dict) and str(last_event.get("type") or "") == "assistant":
+                last_content = str(last_event.get("content") or "").strip()
+                if content and content == last_content:
+                    content = "(same unverified model output as previous cycle)"
+            out["summary"] = str(out.get("summary") or "Unverified model output before any workspace tool executed.")[:400]
+        out["content"] = content
+    elif event_type == "thinking":
+        out["thinking"] = _clip_text(str(out.get("thinking") or out.get("summary") or "").strip(), 1200)
+    elif event_type == "no_tool_call":
+        out["content"] = _clip_text(str(out.get("content") or "").strip(), 600)
+        out["summary"] = _clip_text(str(out.get("summary") or "").strip(), 700)
+
+    return out
+
+
 def _event_digest_line(event: Dict[str, Any]) -> str:
     event_type = str(event.get("type") or "event")
     if event_type == "thinking":
@@ -459,10 +498,17 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
         return f"interrupted {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "no_tool_call":
         return f"no_tool_call cycle={event.get('cycle') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "no_tool_call_limit":
+        return f"no_tool_call_limit cycle={event.get('cycle') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "no_change_audit":
         return f"no_change_audit {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "finish_gate":
         return f"finish_gate {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "semantic_reroute":
+        return (
+            f"semantic_reroute cycle={event.get('cycle') or ''} "
+            f"{event.get('previous_backend') or ''}->{event.get('backend') or ''}"
+        ).strip()
     if event_type == "assistant":
         calls = event.get("tool_calls")
         names = []
@@ -1275,11 +1321,14 @@ def coding_tool_manifest() -> Dict[str, Any]:
     tools = [spec.model_dump(exclude_none=True) for spec in _tool_specs()]
     guidance = [
         "Use coding_tool_manifest when you need to inspect your workspace tool capabilities.",
+        "Commands run inside a Linux workspace shell. Use POSIX paths, forward slashes, and Linux command/env syntax such as ls, cat, grep, python3, VAR=value cmd, and $VAR.",
+        "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace.",
         "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
         "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
         "Use coding_fetch_url for current public documentation or issue pages.",
         "Do not invent imports, functions, methods, variables, or config keys; search and read definitions before using them.",
         "Keep imports consolidated and avoid loading the same library multiple times.",
+        "If a service owns its own package root, run validation from that service directory, for example cwd=services/gateway for gateway tests that import app.",
         "After editing, run a targeted validation command such as pytest, ruff check, python -m py_compile, node --check, npm test, or git diff --check.",
         "After editing, inspect coding_git_diff before calling coding_finish.",
     ]
@@ -1306,12 +1355,30 @@ def _append_event(task_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
     events = task.get("agent_events")
     if not isinstance(events, list):
         events = []
-    ev = {"ts": now_unix(), **event}
+    ev = _compact_event(task, {"ts": now_unix(), **event})
     events.append(ev)
     task["agent_events"] = events[-_max_events():]
     task["agent_last_event_at"] = ev["ts"]
     cw.save_task(task)
     return ev
+
+
+def _semantic_reroute_candidate(
+    request_model: str,
+    backend: str,
+    upstream_model: str,
+    *,
+    excluded_backends: Optional[set[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    blocked = {str(item).strip() for item in (excluded_backends or set()) if str(item).strip()}
+    for candidate in _rank_coding_backend_candidates(request_model, backend, upstream_model):
+        candidate_backend = str(candidate.get("backend") or "").strip()
+        if not candidate_backend or candidate_backend == backend or candidate_backend in blocked:
+            continue
+        if not candidate.get("ready") or int(candidate.get("available") or 0) <= 0:
+            continue
+        return candidate
+    return None
 
 
 def _pause_requested(task_id: str) -> bool:
@@ -1459,6 +1526,9 @@ def _system_prompt(task: Dict[str, Any]) -> str:
     return (
         "You are Nexus Coding Agent. Work autonomously toward the user's coding request inside one isolated git workspace. "
         "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
+        "The coding workspace execution environment is Linux even if the chat UI is running on Windows. "
+        "Use POSIX paths and Linux command conventions: forward slashes, ls/cat/mv/cp/rm, python3, VAR=value cmd, and $VAR. "
+        "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace. "
         "Treat workspace conversation messages as additional user guidance. If new guidance arrives during a run, adjust during the next work cycle. "
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Keep assistant responses concise; call tools promptly instead of narrating long plans. "
@@ -1472,6 +1542,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Keep imports consolidated in the existing style and avoid loading the same library multiple times. "
         "Use coding_fetch_url for public documentation or issue pages when current external information is needed. "
         "Use coding_search_text before reading many files. "
+        "Repository-relative commands default to the repo root; when a project layout requires a service-local package root, set cwd to that service directory before running tests or linters. "
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         "If the request requires code or documentation changes, make edits, run targeted validation, and inspect coding_git_diff before calling coding_finish. "
@@ -1492,6 +1563,8 @@ def _task_context(task: Dict[str, Any]) -> str:
         f"Current run request:\n{current or original}\n\n"
         f"Repository: {cw.redact_repo_url(str(task.get('repo_url') or ''))}\n"
         f"Branch: {task.get('branch_name')} from {task.get('base_branch')}\n"
+        "Execution environment: Linux workspace shell with POSIX paths and Linux-style environment variables.\n"
+        "Command cwd defaults to the repo root; switch to a service directory such as services/gateway when that service owns the package/import root for tests or linters.\n"
         "Start by inspecting the repository, then proceed without waiting for more user input."
     )
     guidance = _guidance_context(task)
@@ -1706,6 +1779,8 @@ async def _run_agent(
         seen_guidance_count = len(_guidance_messages(task))
         tools = _tool_specs()
         no_tool_cycles = 0
+        semantic_reroutes = 0
+        semantic_failed_backends: set[str] = set()
         workspace_modified = False
         diff_reviewed_after_edit = False
         validation_run_after_edit = False
@@ -1824,6 +1899,68 @@ async def _run_agent(
                         "content": _clip_text(str(assistant.content or ""), 2000),
                     },
                 )
+                if not malformed_text_tool_call and no_tool_cycles >= 2 and semantic_reroutes < _max_semantic_reroutes():
+                    fallback = _semantic_reroute_candidate(
+                        model,
+                        backend,
+                        upstream_model,
+                        excluded_backends=semantic_failed_backends | {backend},
+                    )
+                    if fallback is not None:
+                        previous_backend = backend
+                        previous_model = upstream_model
+                        semantic_failed_backends.add(previous_backend)
+                        backend = str(fallback.get("backend") or backend)
+                        upstream_model = str(fallback.get("upstream_model") or upstream_model)
+                        semantic_reroutes += 1
+                        no_tool_cycles = 0
+                        reroute_notice = (
+                            "The previous coding backend kept returning prose instead of executable workspace tool calls. "
+                            f"Rerouting from {previous_backend} to {backend} for the next attempt."
+                        )
+                        await asyncio.to_thread(
+                            _append_event,
+                            task_id,
+                            {
+                                "type": "semantic_reroute",
+                                "cycle": cycle,
+                                "count": semantic_reroutes,
+                                "previous_backend": previous_backend,
+                                "previous_upstream_model": previous_model,
+                                "backend": backend,
+                                "upstream_model": upstream_model,
+                                "summary": reroute_notice,
+                            },
+                        )
+                        messages.append(
+                            ChatMessage(
+                                role="user",
+                                content=(
+                                    "The previous backend returned prose-only output instead of an executable workspace tool call. "
+                                    "Continue the coding task now with exactly one workspace tool call or coding_finish. "
+                                    "Do not answer with a prose-only summary."
+                                ),
+                            )
+                        )
+                        continue
+                if not malformed_text_tool_call and no_tool_cycles >= _max_no_tool_call_cycles():
+                    failure_message = (
+                        f"The coding model produced {no_tool_cycles} consecutive prose-only responses without an executable workspace tool call. "
+                        "Failing this run instead of looping further. Use a different coding model or provide manual guidance before resuming."
+                    )
+                    await asyncio.to_thread(
+                        _append_event,
+                        task_id,
+                        {
+                            "type": "no_tool_call_limit",
+                            "cycle": cycle,
+                            "count": no_tool_cycles,
+                            "backend": backend,
+                            "upstream_model": upstream_model,
+                            "summary": failure_message,
+                        },
+                    )
+                    raise HTTPException(status_code=409, detail=failure_message)
                 messages.append(
                     ChatMessage(
                         role="user",

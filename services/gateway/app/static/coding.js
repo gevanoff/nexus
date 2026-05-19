@@ -35,6 +35,8 @@
     selectedPrompt: document.getElementById("selectedPrompt"),
     workspaceModelInput: document.getElementById("workspaceModelInput"),
     saveWorkspaceModel: document.getElementById("saveWorkspaceModel"),
+    archiveTaskBtn: document.getElementById("archiveTaskBtn"),
+    purgeTaskBtn: document.getElementById("purgeTaskBtn"),
     workspaceChat: document.getElementById("workspaceChat"),
     workspaceChatInput: document.getElementById("workspaceChatInput"),
     workspaceChatMeta: document.getElementById("workspaceChatMeta"),
@@ -518,12 +520,12 @@
       const trashBtn = document.createElement("button");
       trashBtn.type = "button";
       trashBtn.className = "task-icon-btn task-delete-btn";
-      trashBtn.title = "Delete workspace";
-      trashBtn.setAttribute("aria-label", "Delete workspace");
+      trashBtn.title = "Archive workspace for forensics";
+      trashBtn.setAttribute("aria-label", "Archive workspace for forensics");
       trashBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M3 6h18v2H3V6zm4 4v8a2 2 0 002 2h6a2 2 0 002-2V10h-2v8h-6v-8H7zm2-4h6V5a1 1 0 00-1-1h-4a1 1 0 00-1 1v1z'/></svg>";
       trashBtn.addEventListener("click", (event) => {
         event.stopPropagation();
-        deleteTask(task.id);
+        archiveTask(task.id);
       });
       actions.appendChild(runBtn);
       actions.appendChild(stopBtn);
@@ -552,6 +554,8 @@
       els.runCommand,
       els.commitBtn,
       els.pushBtn,
+      els.archiveTaskBtn,
+      els.purgeTaskBtn,
       els.prBtn,
       els.loadTree,
       els.readFile,
@@ -603,9 +607,19 @@
       els.workspaceModelInput.value = String(task.coding_model || "");
     }
     if (els.selectedPrompt) {
-      els.selectedPrompt.textContent = integration && deployment && deployment.reason
-        ? `${task.prompt || ""}\n\nRecommended lane: ${deployment.reason}`
-        : task.prompt || "";
+      const promptBits = [];
+      if (integration && deployment && deployment.reason) promptBits.push(`${task.prompt || ""}\n\nRecommended lane: ${deployment.reason}`.trim());
+      else if (task.prompt) promptBits.push(task.prompt || "");
+      if (task.metadata_error && typeof task.metadata_error === "object") {
+        promptBits.push(
+          [
+            `Metadata repair note: ${task.metadata_error.message || "Task metadata needed repair."}`,
+            task.metadata_error.detail ? `Detail: ${task.metadata_error.detail}` : "",
+            task.metadata_error.quarantined_path ? `Quarantined original: ${task.metadata_error.quarantined_path}` : "",
+          ].filter(Boolean).join("\n")
+        );
+      }
+      els.selectedPrompt.textContent = promptBits.join("\n\n");
     }
     if (els.selectedStatus) {
       els.selectedStatus.className = `badge ${badgeClass(task.status)}`;
@@ -720,7 +734,8 @@
     if (type === "assistant") {
       const calls = Array.isArray(event.tool_calls) ? event.tool_calls.map((item) => item && item.name).filter(Boolean).join(", ") : "";
       const content = String(event.content || "").trim();
-      return `${time} assistant${calls ? ` tools=[${calls}]` : ""}${content ? `\n${content}` : ""}`;
+      const label = calls ? `assistant output tools=[${calls}]` : "assistant output (unverified)";
+      return `${time} ${label}${content ? `\n${content}` : ""}`;
     }
     if (type === "thinking") return `${time} thinking\n${event.thinking || event.summary || ""}`;
     if (type === "tool_started") return `${time} tool ${event.name || ""} ${JSON.stringify(event.args || {})}`;
@@ -738,8 +753,10 @@
     }
     if (type === "review") return `${time} reviewed status and diff`;
     if (type === "no_tool_call") return `${time} no tool call count=${event.count || ""}\n${event.summary || ""}`;
+    if (type === "no_tool_call_limit") return `${time} no tool call limit\n${event.summary || ""}`;
     if (type === "no_change_audit") return `${time} no-change audit\n${event.summary || ""}`;
     if (type === "guidance_seen") return `${time} guidance seen count=${event.count || 0}\n${event.summary || ""}`;
+    if (type === "semantic_reroute") return `${time} semantic reroute ${event.previous_backend || ""} -> ${event.backend || ""}\n${event.summary || ""}`;
     if (type === "backend_retry") {
       const attempt = `${event.attempt || "?"}/${event.max_retries || "?"}`;
       return `${time} backend retry cycle=${cycle} attempt=${attempt} delay=${event.delay_sec || 0}s\n${event.error || ""}`;
@@ -1442,12 +1459,31 @@
   async function deleteTask(taskId) {
     const task = taskId ? state.tasks.find((t) => t.id === taskId) : selectedTask();
     if (!task) return;
-    const ok = window.confirm(`Delete workspace ${task.id}?`);
+    const ok = window.confirm(`Permanently delete workspace ${task.id}? This removes the workspace and task metadata.`);
     if (!ok) return;
     setBusy(true);
     try {
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" });
       setOutput("delete", payload);
+      setPublishFeedback(`Purged ${task.id}.`, "ok");
+      if (task.id === state.selectedId) state.selectedId = "";
+      await loadTasks({ keepSelection: false });
+    } finally {
+      setBusy(false);
+      renderSelected();
+    }
+  }
+
+  async function archiveTask(taskId) {
+    const task = taskId ? state.tasks.find((t) => t.id === taskId) : selectedTask();
+    if (!task) return;
+    const ok = window.confirm(`Archive workspace ${task.id} for forensics? This removes it from the active task list but preserves the task file and workspace contents.`);
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/archive`, { method: "POST" });
+      setOutput("archive", payload);
+      setPublishFeedback(`Archived ${task.id}${payload.archive_id ? ` as ${payload.archive_id}` : "."}`, "ok");
       if (task.id === state.selectedId) state.selectedId = "";
       await loadTasks({ keepSelection: false });
     } finally {
@@ -1598,6 +1634,8 @@
   wire("runCommand", runCommand);
   wire("commitBtn", commitTask);
   wire("pushBtn", pushTask);
+  wire("archiveTaskBtn", archiveTask);
+  wire("purgeTaskBtn", deleteTask);
   wire("prBtn", openPr);
   wire("loadTree", loadTree);
   wire("readFile", readFile);

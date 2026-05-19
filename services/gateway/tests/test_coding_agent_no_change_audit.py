@@ -133,6 +133,72 @@ def test_prompt_warns_against_invented_symbols_and_requires_validation():
     assert "validation and coding_git_diff" in prompt
 
 
+def test_prompt_declares_linux_workspace_conventions():
+    task = {
+        "id": "code_test",
+        "base_branch": "main",
+        "branch_name": "nexus-coder/code_test",
+        "prompt": "Fix the broken coding workspace behavior.",
+    }
+
+    prompt = ca._system_prompt(task)
+    context = ca._task_context(task)
+
+    assert "execution environment is Linux" in prompt
+    assert "Do not assume PowerShell" in prompt
+    assert "set cwd to that service directory" in prompt
+    assert "Execution environment: Linux workspace shell" in context
+    assert "services/gateway" in context
+
+
+def test_tool_manifest_guidance_mentions_linux_shell_and_service_cwd():
+    manifest = ca.coding_tool_manifest()
+    guidance = "\n".join(manifest["guidance"])
+
+    assert "Linux workspace shell" in guidance
+    assert "Do not assume PowerShell" in guidance
+    assert "cwd=services/gateway" in guidance
+
+
+def test_semantic_reroute_candidate_uses_alternative_backend(monkeypatch):
+    monkeypatch.setattr(
+        ca,
+        "_rank_coding_backend_candidates",
+        lambda *args, **kwargs: [
+            {"backend": "local_mlx", "upstream_model": "mlx-a", "ready": True, "available": 1},
+            {"backend": "local_vllm", "upstream_model": "vllm-b", "ready": True, "available": 1},
+        ],
+    )
+
+    candidate = ca._semantic_reroute_candidate("coder", "local_mlx", "mlx-a")
+
+    assert candidate is not None
+    assert candidate["backend"] == "local_vllm"
+
+
+def test_compact_event_marks_unverified_assistant_output_and_deduplicates():
+    task = {
+        "agent_events": [
+            {
+                "type": "assistant",
+                "content": "Repeated prose-only output.",
+            }
+        ]
+    }
+
+    event = ca._compact_event(
+        task,
+        {
+            "type": "assistant",
+            "content": "Repeated prose-only output.",
+            "tool_calls": [],
+        },
+    )
+
+    assert event["summary"] == "Unverified model output before any workspace tool executed."
+    assert event["content"] == "(same unverified model output as previous cycle)"
+
+
 def test_workspace_chat_question_does_not_inherit_edit_expectation():
     task = {
         "id": "code_test",

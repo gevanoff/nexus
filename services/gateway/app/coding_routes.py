@@ -341,6 +341,12 @@ async def ui_coding_delete_task(req: Request, task_id: str) -> Dict[str, Any]:
     return await _to_thread(cw.delete_task, task_id)
 
 
+@router.post("/ui/api/coding/tasks/{task_id}/archive", include_in_schema=False)
+async def ui_coding_archive_task(req: Request, task_id: str) -> Dict[str, Any]:
+    user = _require_admin(req)
+    return await _to_thread(cw.archive_task, task_id, actor=_actor_from_user(user), reason="ui_archive")
+
+
 @router.post("/ui/api/coding/tasks/{task_id}/command", include_in_schema=False)
 async def ui_coding_command(req: Request, task_id: str, body: CodingCommandRequest) -> Dict[str, Any]:
     user = _require_coding_ui(req)
@@ -672,6 +678,14 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
 async def v1_coding_get_task(req: Request, task_id: str) -> Dict[str, Any]:
     _require_coding_api(req)
     return {"task": await ca.recover_stale_agent_run(task_id)}
+
+
+@router.post("/v1/coding/tasks/{task_id}/archive")
+async def v1_coding_archive_task(req: Request, task_id: str) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    if user is None or not bool(getattr(user, "admin", False)):
+        raise HTTPException(status_code=403, detail="admin required")
+    return await _to_thread(cw.archive_task, task_id, actor=_actor_from_user(user), reason="api_archive")
 
 
 @router.post("/v1/coding/tasks/{task_id}/command")

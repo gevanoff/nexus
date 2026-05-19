@@ -18,6 +18,8 @@ from app.resources_snapshot import build_registry_backend_status_payload, call_l
 
 log = logging.getLogger(__name__)
 
+_CODING_AUTO_RESUME_BLOCKERS = {"repeated_no_tool_call", "no_change_audit", "finish_gate", "metadata_read_failed"}
+
 _TASK_LOOP: asyncio.Task | None = None
 _STOP_EVENT: asyncio.Event | None = None
 _RUNTIME_STATUS: Dict[str, Any] = {
@@ -492,7 +494,8 @@ async def _monitor_coding(state: Dict[str, Any], conn: sqlite3.Connection, *, no
         safe_actions = item.get("safe_actions") if isinstance(item.get("safe_actions"), list) else []
         agent = item.get("agent") if isinstance(item.get("agent"), dict) else {}
         agent_status = str(agent.get("status") or "").strip().lower()
-        can_resume = agent_status in {"interrupted", "failed"} and ("resume" in safe_actions or "guide_and_resume" in safe_actions)
+        blocked_attention = _CODING_AUTO_RESUME_BLOCKERS.intersection({str(item) for item in attention})
+        can_resume = agent_status in {"interrupted", "failed"} and "resume" in safe_actions and not blocked_attention
         if not can_resume:
             continue
         previous_attempt = attempts.get(task_id) if isinstance(attempts.get(task_id), dict) else {}

@@ -110,6 +110,18 @@ def _task_path(task_id: str) -> Path:
     return tasks_dir().joinpath(f"{task_id}.json").resolve()
 
 
+def _corrupt_tasks_dir() -> Path:
+    return tasks_dir().joinpath("_corrupt").resolve()
+
+
+def _archived_tasks_dir() -> Path:
+    return tasks_dir().joinpath("_archive").resolve()
+
+
+def _archived_workspaces_dir() -> Path:
+    return workspace_root().joinpath("_archive").resolve()
+
+
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
@@ -117,16 +129,94 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def _quarantine_task_file(path: Path, raw_bytes: bytes, *, error_text: str) -> str:
+    dest_dir = _corrupt_tasks_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    suffix = path.suffix or ".json"
+    dest = dest_dir.joinpath(f"{path.stem}.{int(_now())}.{secrets.token_hex(4)}{suffix}")
+    dest.write_bytes(raw_bytes)
+    dest.with_name(f"{dest.name}.error.txt").write_text(error_text, encoding="utf-8")
+    return str(dest)
+
+
+def _metadata_error_placeholder(path: Path, *, error_text: str, quarantined_path: str) -> Dict[str, Any]:
+    task_id = path.stem if _SAFE_TASK_RE.match(path.stem) else ""
+    now = _now()
+    summary = (
+        "Coding task metadata was unreadable and the original file was moved aside for inspection. "
+        "This workspace must be recreated or repaired before another agent run can proceed."
+    )
+    repo_path = str(_repo_path_for(task_id)) if task_id else ""
+    workspace_path = str(_task_workspace(task_id)) if task_id else ""
+    return {
+        "schema": SCHEMA,
+        "id": task_id or path.stem,
+        "kind": "workspace",
+        "status": "error",
+        "created_at": now,
+        "updated_at": now,
+        "owner": "",
+        "repo_url": "",
+        "base_branch": "main",
+        "branch_name": "",
+        "prompt": "",
+        "workspace_path": workspace_path,
+        "repo_path": repo_path,
+        "commands": [],
+        "guidance_messages": [],
+        "agent_status": "failed",
+        "agent_cycle": 0,
+        "agent_last_event_at": now,
+        "agent_summary": "",
+        "agent_error": summary,
+        "agent_events": [
+            {
+                "ts": now,
+                "type": "failed",
+                "error": error_text,
+                "summary": summary,
+            }
+        ],
+        "metadata_error": {
+            "message": summary,
+            "detail": error_text,
+            "task_file": str(path),
+            "quarantined_path": quarantined_path,
+        },
+    }
+
+
+def _repair_unreadable_task_file(path: Path, *, raw_bytes: bytes, error_text: str) -> Dict[str, Any]:
+    quarantined_path = _quarantine_task_file(path, raw_bytes, error_text=error_text)
+    placeholder = _metadata_error_placeholder(path, error_text=error_text, quarantined_path=quarantined_path)
+    _write_json(path, placeholder)
+    logger.warning(
+        "coding task metadata repaired path=%s quarantine=%s error=%s",
+        path,
+        quarantined_path,
+        error_text,
+    )
+    return placeholder
+
+
 def _read_json(path: Path) -> Dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw_bytes = path.read_bytes()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="coding task not found")
     except Exception as exc:
         logger.warning("coding task read failed path=%s error=%s", path, exc)
         raise HTTPException(status_code=500, detail="coding task metadata is unreadable")
+    try:
+        text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text=f"{type(exc).__name__}: {exc}")
+    try:
+        data = json.loads(text)
+    except Exception as exc:
+        return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text=f"{type(exc).__name__}: {exc}")
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
-        raise HTTPException(status_code=500, detail="coding task metadata is invalid")
+        return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text="task metadata schema is invalid")
     return data
 
 
@@ -1010,7 +1100,42 @@ def validate_command(argv: Sequence[str]) -> List[str]:
             raise HTTPException(status_code=400, detail="git subcommand required")
         if sub in _BLOCKED_GIT_SUBCOMMANDS:
             raise HTTPException(status_code=403, detail=f"git {sub} is blocked in coding workspaces")
+    blocked_reason = _dependency_mutation_block_reason(out)
+    if blocked_reason:
+        raise HTTPException(status_code=403, detail=blocked_reason)
     return out
+
+
+def _dependency_mutation_block_reason(argv: Sequence[str]) -> str:
+    parts = [str(item).strip() for item in argv if str(item).strip()]
+    if not parts:
+        return ""
+    cmd = Path(parts[0]).name.lower()
+    lowered = [item.lower() for item in parts]
+    meaningful = [item for item in lowered[1:] if not item.startswith("-")]
+
+    if cmd == "npm" and meaningful:
+        if meaningful[0] in {"install", "i", "add", "ci", "update", "upgrade", "remove", "rm", "uninstall", "dedupe", "rebuild", "link"}:
+            return "dependency installation or mutation commands are blocked in coding workspaces"
+
+    if cmd in {"python", "python3"} and "-m" in lowered:
+        index = lowered.index("-m")
+        module = lowered[index + 1] if index + 1 < len(lowered) else ""
+        root_module = module.split(".", 1)[0]
+        sub_meaningful = [item for item in lowered[index + 2 :] if not item.startswith("-")]
+        if root_module in {"pip", "pip3"} and sub_meaningful:
+            if sub_meaningful[0] in {"install", "uninstall", "download", "wheel"}:
+                return "dependency installation or mutation commands are blocked in coding workspaces"
+
+    if cmd == "uv" and meaningful:
+        first = meaningful[0]
+        second = meaningful[1] if len(meaningful) > 1 else ""
+        if first in {"add", "remove", "sync", "lock", "venv"}:
+            return "dependency installation or mutation commands are blocked in coding workspaces"
+        if first == "pip" and second in {"install", "sync", "uninstall"}:
+            return "dependency installation or mutation commands are blocked in coding workspaces"
+
+    return ""
 
 
 def run_task_command(
@@ -1895,6 +2020,58 @@ def delete_task(task_id: str) -> Dict[str, Any]:
     return {"ok": True, "task_id": task_id, "deleted_workspace": str(path), "repo_url": redact_repo_url(str(task.get("repo_url") or ""))}
 
 
+def archive_task(task_id: str, *, actor: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
+    task = load_task(task_id)
+    task_path = _task_path(task_id)
+    workspace_path = _task_workspace(task_id)
+    archive_id = f"{task_id}.{int(_now())}.{secrets.token_hex(4)}"
+
+    _ensure_inside(tasks_dir(), task_path)
+    _ensure_inside(workspace_root(), workspace_path)
+
+    task_archive_root = _archived_tasks_dir()
+    workspace_archive_root = _archived_workspaces_dir()
+    task_archive_root.mkdir(parents=True, exist_ok=True)
+    workspace_archive_root.mkdir(parents=True, exist_ok=True)
+
+    archived_task_path = task_archive_root.joinpath(f"{archive_id}.json")
+    archived_workspace_path = workspace_archive_root.joinpath(archive_id)
+    manifest_path = task_archive_root.joinpath(f"{archive_id}.manifest.json")
+
+    if task_path.exists():
+        shutil.move(str(task_path), str(archived_task_path))
+    else:
+        archived_task_path.write_text(json.dumps(task, indent=2, sort_keys=True), encoding="utf-8")
+
+    if workspace_path.exists():
+        shutil.move(str(workspace_path), str(archived_workspace_path))
+
+    manifest = {
+        "archive_id": archive_id,
+        "task_id": task_id,
+        "archived_at": _now(),
+        "actor": str(actor or "").strip(),
+        "reason": str(reason or "manual_archive").strip() or "manual_archive",
+        "repo_url": redact_repo_url(str(task.get("repo_url") or "")),
+        "status": str(task.get("status") or ""),
+        "agent_status": str(task.get("agent_status") or ""),
+        "metadata_error": task.get("metadata_error") if isinstance(task.get("metadata_error"), dict) else None,
+        "task_path": str(archived_task_path),
+        "workspace_path": str(archived_workspace_path) if archived_workspace_path.exists() else "",
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "archive_id": archive_id,
+        "archived_task": str(archived_task_path),
+        "archived_workspace": str(archived_workspace_path) if archived_workspace_path.exists() else "",
+        "manifest": str(manifest_path),
+        "repo_url": redact_repo_url(str(task.get("repo_url") or "")),
+    }
+
+
 def agent_brief(task_id: str, *, coding_model: Optional[str] = None) -> Dict[str, Any]:
     task = load_task(task_id)
     task_public = public_task(task)
@@ -2071,6 +2248,8 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
     }
     if isinstance(task.get("integration"), dict):
         out["integration"] = task.get("integration")
+    if isinstance(task.get("metadata_error"), dict):
+        out["metadata_error"] = task.get("metadata_error")
     if task.get("error"):
         out["error"] = _redact_text(str(task.get("error") or ""))
     if include_commands:
@@ -2094,6 +2273,17 @@ def _recent_agent_events(task: Dict[str, Any], *, limit: int = 6) -> List[Dict[s
                 "cycle": int(item.get("cycle") or 0),
             }
         )
+    return out
+
+
+def _recent_agent_event_types(task: Dict[str, Any], *, limit: int = 12) -> set[str]:
+    events = task.get("agent_events")
+    if not isinstance(events, list):
+        return set()
+    out: set[str] = set()
+    for item in events[-max(1, limit):]:
+        if isinstance(item, dict):
+            out.add(str(item.get("type") or ""))
     return out
 
 
@@ -2123,6 +2313,8 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
     last_event_at = float(agent.get("last_event_at") or 0)
     last_event_age_sec = int(max(0.0, now_ts - last_event_at)) if last_event_at > 0 else None
     no_tool_streak = _no_tool_call_streak(task)
+    recent_event_types = _recent_agent_event_types(task)
+    metadata_error = task.get("metadata_error") if isinstance(task.get("metadata_error"), dict) else None
     pending_summary: Dict[str, Any] = {"ok": False, "counts": {"total": 0}, "files": [], "error": ""}
     workspace_summary: Dict[str, Any] = {"ok": False, "counts": {"total": 0}, "files": [], "error": ""}
     committed_summary: Dict[str, Any] = {"ok": False, "counts": {"total": 0}, "files": [], "error": ""}
@@ -2148,6 +2340,8 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
 
     if str(public.get("status") or "") == "error":
         attention.append("workspace_error_state")
+    if metadata_error:
+        attention.append("metadata_read_failed")
     if agent_status in {"paused", "stopped", "interrupted"}:
         attention.append(f"run_{agent_status}")
         safe_actions.extend(["resume", "guide_and_resume"])
@@ -2158,11 +2352,23 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
         attention.append("running_stalled")
         safe_actions.append("guidance")
 
-    if no_tool_streak >= 3:
+    if no_tool_streak >= 3 or "no_tool_call_limit" in recent_event_types:
         attention.append("repeated_no_tool_call")
         if agent_status == "running":
             safe_actions.append("guidance")
         else:
+            safe_actions.append("guide_and_resume")
+
+    if "no_change_audit" in recent_event_types:
+        attention.append("no_change_audit")
+    if "finish_gate" in recent_event_types:
+        attention.append("finish_gate")
+
+    if "metadata_read_failed" in attention:
+        safe_actions = []
+    elif {"repeated_no_tool_call", "no_change_audit", "finish_gate"}.intersection(attention):
+        safe_actions = [item for item in safe_actions if item != "resume"]
+        if agent_status != "running" and "guide_and_resume" not in safe_actions:
             safe_actions.append("guide_and_resume")
 
     if repo_error:
