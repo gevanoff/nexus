@@ -58,6 +58,12 @@ async def edit_task(task_id: int, updated_data: dict):
         task.update(updated_data)
         return {'status': 'success', 'task': task.dict()}
     return {'status': 'error', 'message': 'Task not found'}
+    # Update task logic
+    task = Task.get(task_id)
+    if task:
+        task.update(updated_data)
+        return {'status': 'success', 'task': task.dict()}
+    return {'status': 'error', 'message': 'Task not found'}
     task = Task.get(task_id)
     if task:
         task.update(updated_data)
