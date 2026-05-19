@@ -7,7 +7,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 import pytest
 
-from services.gateway.app import coding_workspace as cw
+from app import coding_workspace as cw
 
 
 def _base_task(**overrides):
