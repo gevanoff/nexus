@@ -430,6 +430,20 @@
     if (danger) btn.dataset.danger = "true";
     btn.addEventListener("click", () => { handleEditTask(task.id); });
 
+function handleEditTask(taskId) {
+  // Open edit modal or call backend API
+  console.log(`Editing task ${taskId}`);
+  // Example: Open modal
+  const modal = document.createElement("div");
+  modal.innerHTML = `<div>Edit Task ${taskId} <button onclick="submitEdit(${taskId})">Save</button></div>`;
+  document.body.appendChild(modal);
+}
+
+function submitEdit(taskId) {
+  // Handle save logic
+  console.log(`Saved changes for task ${taskId}`);
+}
+
     // Add edit functionality
     if (action === 'edit') {
       void handleEditTask(task.id);
@@ -443,6 +457,20 @@
     btn.textContent = label;
     if (danger) btn.dataset.danger = "true";
     btn.addEventListener("click", () => { handleEditTask(task.id); });
+
+function handleEditTask(taskId) {
+  // Open edit modal or call backend API
+  console.log(`Editing task ${taskId}`);
+  // Example: Open modal
+  const modal = document.createElement("div");
+  modal.innerHTML = `<div>Edit Task ${taskId} <button onclick="submitEdit(${taskId})">Save</button></div>`;
+  document.body.appendChild(modal);
+}
+
+function submitEdit(taskId) {
+  // Handle save logic
+  console.log(`Saved changes for task ${taskId}`);
+}
 
 function handleEditTask(taskId) {
   // Open edit modal or call backend API
