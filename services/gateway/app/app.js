@@ -1,3 +1,5 @@
+const express = require('express');
+const app = express();
 app.post('/api/tasks/edit', async (req, res) => {
   // Existing edit logic
   const { taskId, ...updates } = req.body;
