@@ -1,17 +1,11 @@
 {
   "name": "gateway",
   "version": "1.0.0",
+  "private": true,
   "scripts": {
-    "start": "node app/app.js",
-
-    "start": "node app/app.js",
-
-    "test": "jest"
+    "start": "node app.js"
   },
   "dependencies": {
     "express": "^4.18.2"
-  },
-  "devDependencies": {
-    "jest": "^29.7.0"
   }
 }
