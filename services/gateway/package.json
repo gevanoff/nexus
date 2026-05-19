@@ -2,6 +2,8 @@
   "name": "gateway",
   "version": "1.0.0",
   "scripts": {
+    "start": "node app/app.js",
+
     "test": "jest"
   },
   "dependencies": {
