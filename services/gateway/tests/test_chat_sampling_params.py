@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from app import upstreams
+from .. import upstreams
 from app.models import ChatCompletionRequest, ChatMessage
 
 
