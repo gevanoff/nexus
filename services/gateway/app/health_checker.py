@@ -23,12 +23,19 @@ from app.config import S
 @dataclass
 class HealthStatus:
     """Health status for a single backend."""
-    
+
     backend_class: str
     is_healthy: bool
     is_ready: bool
     last_check: float
     error: Optional[str] = None
+    consecutive_failures: int = 0
+    first_failure_at: float = 0.0
+    last_success_at: float = 0.0
+    raw_healthy: bool = True
+    raw_ready: bool = True
+    raw_error: Optional[str] = None
+    suppressed_error: Optional[str] = None
 
 
 class HealthChecker:
@@ -40,6 +47,96 @@ class HealthChecker:
         self._status: Dict[str, HealthStatus] = {}
         self._task: Optional[asyncio.Task] = None
         self._running = False
+
+    def _failure_threshold(self) -> int:
+        try:
+            return max(1, int(getattr(S, "HEALTH_CHECK_FAILURE_THRESHOLD", 3) or 3))
+        except Exception:
+            return 3
+
+    def _failure_grace_sec(self) -> float:
+        try:
+            return max(0.0, float(getattr(S, "HEALTH_CHECK_FAILURE_GRACE_SEC", 60.0) or 0.0))
+        except Exception:
+            return 60.0
+
+    def _failure_ready_to_publish(self, *, consecutive_failures: int, first_failure_at: float, now: float) -> bool:
+        return consecutive_failures >= self._failure_threshold() and (now - first_failure_at) >= self._failure_grace_sec()
+
+    def _record_status(
+        self,
+        backend_class: str,
+        *,
+        is_healthy: bool,
+        is_ready: bool,
+        error: Optional[str],
+        now: Optional[float] = None,
+        immediate: bool = False,
+    ) -> HealthStatus:
+        checked_at = time.time() if now is None else float(now)
+        previous = self._status.get(backend_class)
+        raw_ok = bool(is_healthy and is_ready)
+        if raw_ok:
+            status = HealthStatus(
+                backend_class=backend_class,
+                is_healthy=True,
+                is_ready=True,
+                last_check=checked_at,
+                error=None,
+                consecutive_failures=0,
+                first_failure_at=0.0,
+                last_success_at=checked_at,
+                raw_healthy=True,
+                raw_ready=True,
+                raw_error=None,
+                suppressed_error=None,
+            )
+            self._status[backend_class] = status
+            return status
+
+        consecutive_failures = (int(previous.consecutive_failures) + 1) if previous is not None else 1
+        first_failure_at = (
+            float(previous.first_failure_at or checked_at)
+            if previous is not None and int(previous.consecutive_failures or 0) > 0
+            else checked_at
+        )
+        publish_failure = bool(immediate or self._failure_ready_to_publish(
+            consecutive_failures=consecutive_failures,
+            first_failure_at=first_failure_at,
+            now=checked_at,
+        ))
+        if publish_failure:
+            status = HealthStatus(
+                backend_class=backend_class,
+                is_healthy=is_healthy,
+                is_ready=is_ready,
+                last_check=checked_at,
+                error=error,
+                consecutive_failures=consecutive_failures,
+                first_failure_at=first_failure_at,
+                last_success_at=float(previous.last_success_at or 0.0) if previous is not None else 0.0,
+                raw_healthy=is_healthy,
+                raw_ready=is_ready,
+                raw_error=error,
+                suppressed_error=None,
+            )
+        else:
+            status = HealthStatus(
+                backend_class=backend_class,
+                is_healthy=previous.is_healthy if previous is not None else True,
+                is_ready=previous.is_ready if previous is not None else True,
+                last_check=checked_at,
+                error=previous.error if previous is not None else None,
+                consecutive_failures=consecutive_failures,
+                first_failure_at=first_failure_at,
+                last_success_at=float(previous.last_success_at or 0.0) if previous is not None else 0.0,
+                raw_healthy=is_healthy,
+                raw_ready=is_ready,
+                raw_error=error,
+                suppressed_error=error,
+            )
+        self._status[backend_class] = status
+        return status
     
     async def start(self):
         """Start background health checking."""
@@ -92,14 +189,13 @@ class HealthChecker:
         
         # If base_url isn't configured (e.g. env-var placeholder not set), mark not-ready.
         if not base_url or not (base_url.startswith("http://") or base_url.startswith("https://")):
-            status = HealthStatus(
-                backend_class=backend_class,
+            self._record_status(
+                backend_class,
                 is_healthy=False,
                 is_ready=False,
-                last_check=time.time(),
                 error="base_url not configured",
+                immediate=True,
             )
-            self._status[backend_class] = status
             return
 
         try:
@@ -151,17 +247,14 @@ class HealthChecker:
         except Exception as e:
             error = f"health check error: {e}"
         
-        status = HealthStatus(
-            backend_class=backend_class,
+        status = self._record_status(
+            backend_class,
             is_healthy=is_healthy,
             is_ready=is_ready,
-            last_check=time.time(),
             error=error,
         )
-        
-        self._status[backend_class] = status
-        
-        if not is_ready:
+
+        if not status.is_ready and not status.suppressed_error:
             logger.warning(
                 f"Backend {backend_class} not ready: healthy={is_healthy}, ready={is_ready}, error={error}"
             )
@@ -251,9 +344,13 @@ class HealthChecker:
             "tracked_backends": len(statuses),
             "ready_backends": sum(1 for item in statuses if item.is_ready),
             "unhealthy_backends": sum(1 for item in statuses if not item.is_healthy),
+            "raw_unhealthy_backends": sum(1 for item in statuses if not item.raw_healthy),
+            "suppressed_failures": sum(1 for item in statuses if item.suppressed_error),
             "last_check": max((item.last_check for item in statuses), default=0.0),
             "check_interval": self.check_interval,
             "timeout": self.timeout,
+            "failure_threshold": self._failure_threshold(),
+            "failure_grace_sec": self._failure_grace_sec(),
         }
 
 

@@ -84,6 +84,34 @@ def _resource_pressure_pct() -> float:
         return 0.9
 
 
+def _backend_issue_min_polls() -> int:
+    try:
+        return max(1, int(getattr(S, "NEXUS_SENTINEL_BACKEND_ISSUE_MIN_POLLS", 3) or 3))
+    except Exception:
+        return 3
+
+
+def _backend_issue_min_sec() -> int:
+    try:
+        return max(0, int(getattr(S, "NEXUS_SENTINEL_BACKEND_ISSUE_MIN_SEC", 60) or 0))
+    except Exception:
+        return 60
+
+
+def _backend_issue_state(previous: Dict[str, Any], *, fingerprint: str, now: int) -> Dict[str, Any]:
+    same_issue = isinstance(previous, dict) and previous.get("fingerprint") == fingerprint
+    first_seen_ts = int(previous.get("first_seen_ts") or now) if same_issue else now
+    seen_count = int(previous.get("seen_count") or 0) + 1 if same_issue else 1
+    alert_ready = seen_count >= _backend_issue_min_polls() and (now - first_seen_ts) >= _backend_issue_min_sec()
+    return {
+        "fingerprint": fingerprint,
+        "first_seen_ts": first_seen_ts,
+        "seen_count": seen_count,
+        "alerted": bool(previous.get("alerted")) if same_issue else False,
+        "alert_ready": alert_ready,
+    }
+
+
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(
@@ -731,8 +759,15 @@ async def _monitor_resources(state: Dict[str, Any], conn: sqlite3.Connection, *,
         if not issue_bits:
             continue
         fingerprint = _fingerprint({"issues": issue_bits, "error": backend.get("error"), "status": backend.get("status")})
-        current_backend[backend_class] = {"fingerprint": fingerprint}
-        if previous_backend.get(backend_class, {}).get("fingerprint") != fingerprint:
+        previous_issue = previous_backend.get(backend_class) if isinstance(previous_backend.get(backend_class), dict) else {}
+        issue_state = _backend_issue_state(previous_issue, fingerprint=fingerprint, now=now)
+        should_alert = bool(issue_state.get("alert_ready"))
+        current_backend[backend_class] = {
+            key: value
+            for key, value in issue_state.items()
+            if key != "alert_ready"
+        }
+        if should_alert and not bool(previous_issue.get("alerted")):
             _record_event(
                 conn,
                 ts=now,
@@ -755,10 +790,14 @@ async def _monitor_resources(state: Dict[str, Any], conn: sqlite3.Connection, *,
                 fingerprint=fingerprint,
                 details={"backend": backend},
             )
-        summary["backend_issues"] += 1
+            current_backend[backend_class]["alerted"] = True
+        if should_alert or bool(current_backend[backend_class].get("alerted")):
+            summary["backend_issues"] += 1
 
     for backend_class, previous in previous_backend.items():
         if backend_class in current_backend:
+            continue
+        if isinstance(previous, dict) and not bool(previous.get("alerted")):
             continue
         _record_event(
             conn,

@@ -95,8 +95,8 @@
         "enabled": true,
         "method": "POST",
         "path": "/chat/completions",
-        "timeout_sec": 8,
-        "failure_threshold": 2,
+        "timeout_sec": 15,
+        "failure_threshold": 4,
         "payload": {
           "model": "mlx-community/Qwen3-30B-A3B-4bit",
           "messages": [

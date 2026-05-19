@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 
+import pytest
+
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_agent as ca
@@ -169,6 +171,42 @@ def test_validation_missing_tool_detection_does_not_treat_absent_pytest_as_test_
     assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "command not found: pytest"}) is True
     assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "No module named pytest"}) is True
     assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "FAILED tests/test_app.py::test_bug"}) is False
+
+
+@pytest.mark.asyncio
+async def test_request_pause_recovers_stale_active_state_without_runner(monkeypatch):
+    stored = {
+        "schema": "nexus_coding_task.v1",
+        "id": "code_123",
+        "status": "ready",
+        "agent_status": "pausing",
+        "agent_stop_requested": True,
+        "agent_pause_requested": True,
+        "agent_events": [],
+        "created_at": 1.0,
+        "updated_at": 1.0,
+    }
+
+    def load_task(task_id: str):
+        assert task_id == "code_123"
+        return dict(stored)
+
+    def save_task(task):
+        stored.clear()
+        stored.update(task)
+        return task
+
+    monkeypatch.setattr(ca, "_RUNNING", {})
+    monkeypatch.setattr(ca.cw, "load_task", load_task)
+    monkeypatch.setattr(ca.cw, "save_task", save_task)
+
+    result = await ca.request_pause("code_123")
+
+    assert stored["agent_status"] == "paused"
+    assert stored["agent_stop_requested"] is False
+    assert stored["agent_pause_requested"] is False
+    assert result["agent"]["status"] == "paused"
+    assert any(item.get("type") == "stale_agent_recovered" for item in stored["agent_events"])
 
 
 def test_finish_gate_blocks_success_after_edits_without_validation_or_diff():

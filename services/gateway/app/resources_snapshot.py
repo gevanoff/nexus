@@ -174,11 +174,25 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                     "ready": status.is_ready,
                     "last_check": status.last_check,
                     "error": status.error,
+                    "consecutive_failures": status.consecutive_failures,
+                    "first_failure_at": status.first_failure_at,
+                    "last_success_at": status.last_success_at,
+                    "raw_healthy": status.raw_healthy,
+                    "raw_ready": status.raw_ready,
+                    "raw_error": status.raw_error,
+                    "suppressed_error": status.suppressed_error,
                     "gateway_health": {
                         "healthy": status.is_healthy,
                         "ready": status.is_ready,
                         "last_check": status.last_check,
                         "error": status.error,
+                        "consecutive_failures": status.consecutive_failures,
+                        "first_failure_at": status.first_failure_at,
+                        "last_success_at": status.last_success_at,
+                        "raw_healthy": status.raw_healthy,
+                        "raw_ready": status.raw_ready,
+                        "raw_error": status.raw_error,
+                        "suppressed_error": status.suppressed_error,
                     },
                 }
             )
@@ -429,6 +443,9 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
         "generated_at": time.time(),
         "settings": {
             "health_poll_interval_sec": getattr(checker, "check_interval", 30.0),
+            "health_timeout_sec": getattr(checker, "timeout", 0.0),
+            "health_failure_threshold": checker_snapshot.get("failure_threshold"),
+            "health_failure_grace_sec": checker_snapshot.get("failure_grace_sec"),
         },
         "alias_config": {
             "source": alias_state.source,

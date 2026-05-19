@@ -309,7 +309,7 @@ class LifecycleManager:
             restart_cfg = raw_cfg.get("auto_restart") if isinstance(raw_cfg.get("auto_restart"), dict) else {}
             failure_threshold = _int_value(
                 canary_cfg.get("failure_threshold") or restart_cfg.get("on_consecutive_failures"),
-                2,
+                3,
             )
             backends[backend_class] = BackendPolicy(
                 backend_class=backend_class,
@@ -326,9 +326,9 @@ class LifecycleManager:
                 auto_start=_bool(raw_cfg.get("auto_start")),
                 auto_stop=_bool(raw_cfg.get("auto_stop")),
                 requires_confirmation=_bool(raw_cfg.get("requires_confirmation")),
-                compose_managed=not (raw_cfg.get("compose_managed") is False),
+                compose_managed=raw_cfg.get("compose_managed") is not False,
                 health_check=str(raw_cfg.get("health_check") or "http").strip().lower(),
-                health_timeout_sec=_float_value(raw_cfg.get("health_timeout_sec"), 5.0),
+                health_timeout_sec=_float_value(raw_cfg.get("health_timeout_sec"), 10.0),
                 ready_path=str(raw_cfg.get("ready_path") or "/readyz").strip(),
                 base_url=base_url,
                 canary_enabled=_bool(canary_cfg.get("enabled")),
@@ -674,14 +674,15 @@ class LifecycleManager:
         backend.canary_consecutive_failures += 1
         backend.canary_last_checked_at = now
         backend.canary_last_error = error
+        if backend.canary_consecutive_failures < backend.canary_failure_threshold:
+            return
         backend.drained = True
         backend.drain_reason = f"active canary failed: {error}"
         backend.ready = False
         backend.health_error = backend.drain_reason
         backend.last_unhealthy_at = now
         backend.last_health_error = backend.drain_reason
-        if backend.canary_consecutive_failures >= backend.canary_failure_threshold:
-            await self._maybe_auto_restart_backend(backend, reason=backend.drain_reason)
+        await self._maybe_auto_restart_backend(backend, reason=backend.drain_reason)
 
     @staticmethod
     def _models_url_candidates(backend: BackendPolicy) -> List[str]:

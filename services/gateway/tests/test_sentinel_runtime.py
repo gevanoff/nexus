@@ -9,6 +9,7 @@ import pytest
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
+import app
 from app import sentinel_runtime
 
 
@@ -70,6 +71,21 @@ def _agent_tasks_db(tmp_path, monkeypatch):
     return db_path
 
 
+def test_backend_issue_state_waits_for_poll_and_duration_thresholds(monkeypatch):
+    monkeypatch.setattr(sentinel_runtime.S, "NEXUS_SENTINEL_BACKEND_ISSUE_MIN_POLLS", 3, raising=False)
+    monkeypatch.setattr(sentinel_runtime.S, "NEXUS_SENTINEL_BACKEND_ISSUE_MIN_SEC", 60, raising=False)
+
+    first = sentinel_runtime._backend_issue_state({}, fingerprint="abc", now=1000)
+    second = sentinel_runtime._backend_issue_state(first, fingerprint="abc", now=1030)
+    third = sentinel_runtime._backend_issue_state(second, fingerprint="abc", now=1060)
+
+    assert first["alert_ready"] is False
+    assert second["alert_ready"] is False
+    assert third["alert_ready"] is True
+    assert third["seen_count"] == 3
+    assert third["first_seen_ts"] == 1000
+
+
 @pytest.mark.asyncio
 async def test_sentinel_records_coding_attention_and_auto_resume(monkeypatch, tmp_path):
     _sentinel_events(tmp_path, monkeypatch)
@@ -120,6 +136,9 @@ async def test_sentinel_records_coding_attention_and_auto_resume(monkeypatch, tm
     monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
     monkeypatch.setitem(sys.modules, "app.coding_agent", coding_agent)
     monkeypatch.setitem(sys.modules, "app.telegram_notifications", telegram_notifications)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+    monkeypatch.setattr(app, "coding_agent", coding_agent, raising=False)
+    monkeypatch.setattr(app, "telegram_notifications", telegram_notifications, raising=False)
 
     result = await sentinel_runtime.run_monitor_once()
 

@@ -226,6 +226,7 @@ async def ui_coding_tools(req: Request) -> Dict[str, Any]:
 @router.get("/ui/api/coding/tasks", include_in_schema=False)
 async def ui_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, Any]:
     _require_coding_ui(req)
+    await ca.recover_stale_agent_runs()
     return {"tasks": await _to_thread(cw.list_tasks, limit)}
 
 
@@ -331,8 +332,7 @@ async def ui_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
 @router.get("/ui/api/coding/tasks/{task_id}", include_in_schema=False)
 async def ui_coding_get_task(req: Request, task_id: str) -> Dict[str, Any]:
     _require_coding_ui(req)
-    task = await _to_thread(cw.load_task, task_id)
-    return {"task": cw.public_task(task)}
+    return {"task": await ca.recover_stale_agent_run(task_id)}
 
 
 @router.delete("/ui/api/coding/tasks/{task_id}", include_in_schema=False)
@@ -563,6 +563,7 @@ async def v1_coding_tools(req: Request) -> Dict[str, Any]:
 @router.get("/v1/coding/tasks")
 async def v1_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, Any]:
     _require_coding_api(req)
+    await ca.recover_stale_agent_runs()
     return {"tasks": await _to_thread(cw.list_tasks, limit)}
 
 
@@ -670,8 +671,7 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
 @router.get("/v1/coding/tasks/{task_id}")
 async def v1_coding_get_task(req: Request, task_id: str) -> Dict[str, Any]:
     _require_coding_api(req)
-    task = await _to_thread(cw.load_task, task_id)
-    return {"task": cw.public_task(task)}
+    return {"task": await ca.recover_stale_agent_run(task_id)}
 
 
 @router.post("/v1/coding/tasks/{task_id}/command")

@@ -27,6 +27,7 @@ class _CodingAgentPaused(Exception):
 
 
 _RUNNING: Dict[str, asyncio.Task[Any]] = {}
+_ACTIVE_AGENT_STATUSES = {"queued", "running", "stopping", "pausing"}
 
 
 def _max_events() -> int:
@@ -34,6 +35,79 @@ def _max_events() -> int:
         return max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 120) or 120), 1000))
     except Exception:
         return 120
+
+
+def _active_runner(task_id: str) -> Optional[asyncio.Task[Any]]:
+    running = _RUNNING.get(task_id)
+    if running is not None and not running.done():
+        return running
+    if running is not None and running.done():
+        _RUNNING.pop(task_id, None)
+    return None
+
+
+def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    task = task if isinstance(task, dict) else cw.load_task(task_id)
+    previous_status = str(task.get("agent_status") or "").strip().lower()
+    if previous_status not in _ACTIVE_AGENT_STATUSES:
+        return task
+    summary = (
+        "No active coding runner is attached to this workspace. "
+        "The persisted run state was marked paused so manual commands and a later resume can proceed."
+    )
+    task.update(
+        {
+            "agent_status": "paused",
+            "agent_stop_requested": False,
+            "agent_pause_requested": False,
+            "agent_summary": summary,
+            "agent_error": "",
+            "agent_finished_at": time.time(),
+            "agent_last_event_at": now_unix(),
+        }
+    )
+    cw.save_task(task)
+    _append_event(
+        task_id,
+        {
+            "type": "stale_agent_recovered",
+            "previous_status": previous_status,
+            "summary": summary,
+        },
+    )
+    return cw.load_task(task_id)
+
+
+async def recover_stale_agent_run(task_id: str) -> Dict[str, Any]:
+    task = await asyncio.to_thread(cw.load_task, task_id)
+    status = str(task.get("agent_status") or "").strip().lower()
+    if status in _ACTIVE_AGENT_STATUSES and _active_runner(task_id) is None:
+        task = await asyncio.to_thread(_mark_stale_agent_paused, task_id, task)
+    return cw.public_task(task)
+
+
+async def recover_stale_agent_runs() -> Dict[str, Any]:
+    if not cw.coding_enabled():
+        return {"ok": True, "recovered": 0, "tasks": []}
+    recovered: List[str] = []
+
+    def _recover_all() -> List[str]:
+        cw._ensure_dirs()
+        changed: List[str] = []
+        for path in cw.tasks_dir().glob("code_*.json"):
+            try:
+                task = cw._read_json(path)
+            except Exception:
+                continue
+            task_id = str(task.get("id") or path.stem)
+            status = str(task.get("agent_status") or "").strip().lower()
+            if status in _ACTIVE_AGENT_STATUSES and _active_runner(task_id) is None:
+                _mark_stale_agent_paused(task_id, task)
+                changed.append(task_id)
+        return changed
+
+    recovered = await asyncio.to_thread(_recover_all)
+    return {"ok": True, "recovered": len(recovered), "tasks": recovered}
 
 
 def _tool_result_char_limit() -> int:
@@ -1448,9 +1522,12 @@ async def start_agent_run(
     status = str(task.get("status") or "")
     if status == "error":
         raise HTTPException(status_code=409, detail="workspace is in error state")
-    running = _RUNNING.get(task_id)
-    if running is not None and not running.done():
+    running = _active_runner(task_id)
+    if running is not None:
         raise HTTPException(status_code=409, detail="coding agent is already running for this workspace")
+    persisted_status = str(task.get("agent_status") or "").strip().lower()
+    if persisted_status in _ACTIVE_AGENT_STATUSES:
+        task = await asyncio.to_thread(_mark_stale_agent_paused, task_id, task)
 
     run_id = new_id("coderun")
     model = _choose_model(task, coding_model)
@@ -1543,6 +1620,13 @@ async def start_agent_run(
 
 
 async def request_pause(task_id: str) -> Dict[str, Any]:
+    task = await asyncio.to_thread(cw.load_task, task_id)
+    running = _active_runner(task_id)
+    if running is None:
+        status = str(task.get("agent_status") or "").strip().lower()
+        if status in _ACTIVE_AGENT_STATUSES:
+            task = await asyncio.to_thread(_mark_stale_agent_paused, task_id, task)
+        return cw.public_task(task)
     await asyncio.to_thread(
         _mutate_task,
         task_id,
@@ -1554,9 +1638,7 @@ async def request_pause(task_id: str) -> Dict[str, Any]:
         },
     )
     await asyncio.to_thread(_append_event, task_id, {"type": "pause_requested"})
-    running = _RUNNING.get(task_id)
-    if running is not None and not running.done():
-        running.cancel()
+    running.cancel()
     fresh = await asyncio.to_thread(cw.load_task, task_id)
     return cw.public_task(fresh)
 
