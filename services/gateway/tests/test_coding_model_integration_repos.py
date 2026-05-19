@@ -6,7 +6,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from fastapi import HTTPException
 
-from services.app import coding_workspace as cw
+from gateway.app import coding_workspace as cw
 from app import model_integration_workspace as miw
 
 

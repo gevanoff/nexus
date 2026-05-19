@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from services.app import telegram_notifications, user_store
+from gateway.app import telegram_notifications, user_store
 
 
 def test_resolve_notification_target_uses_app_scoped_coding_preferences(tmp_path, monkeypatch):
