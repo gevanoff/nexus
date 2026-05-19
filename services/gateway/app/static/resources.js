@@ -431,6 +431,12 @@
     btn.addEventListener("click", () => { handleEditTask(task.id); });
 
 function handleEditTask(taskId) {
+  // Implement edit logic here
+  alert(`Edit task ${taskId}`);
+  // Or call backend API: fetch('/api/tasks/edit', { method: 'POST', body: JSON.stringify({ id: taskId }) });
+}
+
+function handleEditTask(taskId) {
   // Open edit modal or call backend API
   console.log(`Edit task ${taskId}`);
   // Example: Open modal
