@@ -429,7 +429,11 @@
     btn.textContent = label;
     if (danger) btn.dataset.danger = "true";
     btn.addEventListener("click", () => {
-      void runAction(backendClass, action, false);
+      if (action === 'edit') {
+        void handleEditTask(task.id);
+      } else {
+        void runAction(backendClass, action, false);
+      }
     });
     return btn;
   }
