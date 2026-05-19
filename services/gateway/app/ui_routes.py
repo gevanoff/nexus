@@ -50,8 +50,15 @@ from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
 
 @router.post("/edit-task")
+from app.models import Task
+
+@router.post("/edit-task")
 async def edit_task(task_id: int, updated_data: dict):
-    # Implement logic to update the task
+    task = await Task.get(task_id)
+    if not task:
+        return {"error": "Task not found"}
+    await task.update(updated_data)
+    return {"success": True, "task": task.dict()}
     return {"status": "success", "message": "Task updated"}
 from app import user_store
 from app import agent_tasks
