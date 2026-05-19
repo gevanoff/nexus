@@ -430,6 +430,15 @@
     if (danger) btn.dataset.danger = "true";
     btn.addEventListener("click", () => { handleEditTask(task.id); });
 
+function handleEditTask(taskId) {
+  // Implement edit logic here (e.g., open modal or API call)
+  console.log(`Edit task ${taskId}`);
+  // Example: Open edit modal
+  // showEditModal(taskId);
+  // Or make API call:
+  // fetch(`/api/tasks/edit/${taskId}`);
+}
+
   function handleEditTask(taskId) {
     console.log("Edit task:", taskId);
     // Implement modal or API call here
