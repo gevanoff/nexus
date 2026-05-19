@@ -428,7 +428,7 @@
     btn.type = "button";
     btn.textContent = label;
     if (danger) btn.dataset.danger = "true";
-    btn.addEventListener("click", () => { handleEditTask(); });
+    btn.addEventListener("click", () => { handleEditTask(task.id); });
       if (action === 'edit') {
         void handleEditTask(task.id);
       } else {
