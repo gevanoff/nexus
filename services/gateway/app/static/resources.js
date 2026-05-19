@@ -430,6 +430,20 @@
     if (danger) btn.dataset.danger = "true";
     btn.addEventListener("click", () => { handleEditTask(task.id); });
 
+    // Define handleEditTask function
+    function handleEditTask(taskId) {
+      console.log(`Edit task ${taskId}`);
+      // Add modal or API call here
+    }
+
+    return btn;
+  }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    if (danger) btn.dataset.danger = "true";
+    btn.addEventListener("click", () => { handleEditTask(task.id); });
+
 function handleEditTask(taskId) {
   // Open edit modal or call backend API
   console.log(`Editing task ${taskId}`);
