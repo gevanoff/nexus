@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from services.gateway.app import agent_runtime_v1 as ar
+from app import agent_runtime_v1 as ar
 
 
 def test_request_is_heavy_for_unbounded_tier_one():
