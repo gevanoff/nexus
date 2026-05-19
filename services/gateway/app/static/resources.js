@@ -432,7 +432,7 @@
       if (action === 'edit') {
         void handleEditTask(task.id);
       } else {
-        void runAction(backendClass, action, false);
+        void runAction(backendClass, 'edit', false);
       }
     });
     return btn;
