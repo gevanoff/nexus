@@ -58,7 +58,7 @@
     if (!total) return false;
     const row = document.createElement("div");
     row.style.marginTop = "10px";
-    row.innerHTML = `<div class="meta">System RAM · ${fmtMb(used)} / ${fmtMb(total)}</div>`;
+    row.innerHTML = `<div class="meta">System RAM - ${fmtMb(used)} / ${fmtMb(total)}</div>`;
     row.appendChild(bar(used, total));
     card.appendChild(row);
     return true;
