@@ -202,3 +202,58 @@ async def test_sentinel_records_scheduled_task_failures(monkeypatch, tmp_path):
     await sentinel_runtime.run_monitor_once()
     events = sentinel_runtime.list_events(limit=20, category="scheduled_tasks")
     assert any(item["event_type"] == "failed" and item["subject_id"] == "task-1" for item in events)
+
+
+@pytest.mark.asyncio
+async def test_sentinel_does_not_auto_resume_paused_workspaces(monkeypatch, tmp_path):
+    _sentinel_events(tmp_path, monkeypatch)
+    _agent_tasks_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(sentinel_runtime, "_now", lambda: 1_700_000_000)
+
+    resumed = []
+    coding_workspace = types.SimpleNamespace(
+        monitor_tasks=lambda **_: {
+            "counts": {"total": 1, "attention": 1},
+            "tasks": [
+                {
+                    "id": "code_paused",
+                    "status": "ready",
+                    "owner": "alice",
+                    "owner_user_id": 7,
+                    "needs_attention": True,
+                    "attention": ["run_paused"],
+                    "safe_actions": ["resume", "guide_and_resume"],
+                    "recommended_action": "resume",
+                    "recent_events": [{"type": "paused", "summary": "paused"}],
+                    "agent": {"status": "paused", "last_event_age_sec": 300},
+                }
+            ],
+        }
+    )
+
+    async def _start_agent_run(task_id: str, actor: str | None = None, **_: object):
+        resumed.append((task_id, actor))
+        return {"agent": {"status": "queued"}}
+
+    async def _send_message(**_: object):
+        return {"ok": True}
+
+    coding_agent = types.SimpleNamespace(start_agent_run=_start_agent_run)
+    telegram_notifications = types.SimpleNamespace(
+        resolve_notification_target=lambda **_: {"enabled": False, "reason": "test"},
+        render_coding_workspace_notification=lambda **_: "",
+        send_message=_send_message,
+    )
+
+    monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
+    monkeypatch.setitem(sys.modules, "app.coding_agent", coding_agent)
+    monkeypatch.setitem(sys.modules, "app.telegram_notifications", telegram_notifications)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+    monkeypatch.setattr(app, "coding_agent", coding_agent, raising=False)
+    monkeypatch.setattr(app, "telegram_notifications", telegram_notifications, raising=False)
+
+    result = await sentinel_runtime.run_monitor_once()
+
+    assert result["summary"]["coding"]["attention"] == 1
+    assert result["summary"]["coding"]["actions"] == 0
+    assert resumed == []
