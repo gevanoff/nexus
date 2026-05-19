@@ -6,7 +6,7 @@ import subprocess
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from app import coding_workspace as cw
+from services.app import coding_workspace as cw
 
 
 def _git(repo, *args):
