@@ -627,6 +627,11 @@
   }
 
   async function editSelectedModel() {
+  const taskId = document.querySelector('#edit-button').dataset.taskId;
+  if (taskId) {
+    await fetchJson('/api/tasks/edit', { method: 'POST', body: JSON.stringify({ id: taskId }) });
+    await fetchTasks();
+  }
   document.getElementById('edit-button').addEventListener('click', editSelectedModel);
     if (!state.selectedId) return;
     const task = state.tasks.find((item) => item.id === state.selectedId);
