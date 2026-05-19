@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from .. import coding_workspace as cw
+from app import coding_workspace as cw
 
 
 def test_git_commands_get_safe_directory_from_repo_root(tmp_path):

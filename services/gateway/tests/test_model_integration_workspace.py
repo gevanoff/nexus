@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .. import model_integration_workspace as miw
+from app import model_integration_workspace as miw
 
 
 def test_build_integration_plan_routes_large_chat_model_to_ada2(monkeypatch):
