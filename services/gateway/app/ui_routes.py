@@ -53,6 +53,7 @@ from app import ui_conversations
 from app.models import Task
 
 @router.post("/edit-task")
+@router.post("/edit-task")
 async def edit_task(task_id: int, updated_data: dict):
     task = await Task.get(task_id)
     if not task:
