@@ -8,7 +8,7 @@ import pytest
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from services.gateway.app import app
+from services.gateway.app from services.gateway.app import app
 from app import agent_tasks
 
 
