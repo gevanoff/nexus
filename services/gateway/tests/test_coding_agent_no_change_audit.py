@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from gateway.app import coding_agent as ca
+from services.app import coding_agent as ca
 
 
 def test_no_change_audit_fails_finish_without_edits():

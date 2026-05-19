@@ -9,7 +9,7 @@ import pytest
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from gateway.app import sentinel_runtime
+from services.app import sentinel_runtime
 
 
 def _sentinel_events(tmp_path, monkeypatch):
