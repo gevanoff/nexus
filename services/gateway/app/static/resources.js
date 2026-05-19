@@ -446,6 +446,17 @@
     btn.textContent = label;
     if (danger) btn.dataset.danger = "true";
     btn.addEventListener("click", () => { handleEditTask(task.id); });
+    // Define handleEditTask function
+    function handleEditTask(taskId) {
+      console.log(`Edit task ${taskId}`);
+      // Add modal or API call here
+    }
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    if (danger) btn.dataset.danger = "true";
+    btn.addEventListener("click", () => { handleEditTask(task.id); });
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = label;
