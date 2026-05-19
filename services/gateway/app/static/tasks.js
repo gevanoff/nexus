@@ -627,6 +627,7 @@
   }
 
   async function editSelectedModel() {
+  document.getElementById('edit-button').addEventListener('click', editSelectedModel);
     if (!state.selectedId) return;
     const task = state.tasks.find((item) => item.id === state.selectedId);
     const meta = task?.metadata || {};
