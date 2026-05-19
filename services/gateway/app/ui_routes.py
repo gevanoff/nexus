@@ -51,8 +51,12 @@ from app import ui_conversations
 
 @router.post("/edit-task")
 async def edit_task(task_id: int, updated_data: dict):
-    # Implement logic to update the task
-    return {"status": "success"}@router.post("/edit-task")
+    from app.models import Task
+    task = Task.get(task_id)
+    if task:
+        task.update(updated_data)
+        return {"status": "success", "task": task.dict()}
+    return {"status": "error", "message": "Task not found"}    return {"status": "success"}@router.post("/edit-task")
 @router.post("/edit-task")
 async def edit_task(task_id: int, updated_data: dict):
     task = await Task.get(task_id)
