@@ -429,6 +429,11 @@
     btn.textContent = label;
     if (danger) btn.dataset.danger = "true";
     btn.addEventListener("click", () => { handleEditTask(task.id); });
+
+  function handleEditTask(taskId) {
+    console.log("Edit task:", taskId);
+    // Implement modal or API call here
+  }
       if (action === 'edit') {
         void handleEditTask(task.id);
       } else {
