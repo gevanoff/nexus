@@ -1,4 +1,9 @@
 app.post('/api/tasks/edit', async (req, res) => {
+  // Existing edit logic
+  const { taskId, ...updates } = req.body;
+  const updatedTask = await Task.findByIdAndUpdate(taskId, updates, { new: true });
+  res.json({ success: true, task: updatedTask });
+
   console.log('Edit task request received:', req.body);
   try {
   try {
