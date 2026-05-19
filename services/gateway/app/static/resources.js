@@ -432,6 +432,12 @@
 
 function handleEditTask(taskId) {
   // Open edit modal or call backend API
+  alert(`Edit task ${taskId}`);
+  // Example: Implement modal logic or API call here
+}
+
+function handleEditTask(taskId) {
+  // Open edit modal or call backend API
   console.log(`Editing task ${taskId}`);
   // Example: Fetch task data and open modal
   // fetch(`/api/tasks/edit/${taskId}`)
