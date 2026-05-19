@@ -6,7 +6,6 @@ app.post('/api/tasks/edit', async (req, res) => {
 
   console.log('Edit task request received:', req.body);
   try {
-  try {
     const { taskId, ...updates } = req.body;
     // Example: Update task in a database
     const updatedTask = await Task.findByIdAndUpdate(taskId, updates, { new: true });
