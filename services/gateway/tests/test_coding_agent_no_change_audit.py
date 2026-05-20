@@ -131,6 +131,8 @@ def test_prompt_warns_against_invented_symbols_and_requires_validation():
     assert "Do not invent imports" in prompt
     assert "avoid loading the same library multiple times" in prompt
     assert "validation and coding_git_diff" in prompt
+    assert "Do not invent package.json files" in prompt
+    assert "do not count as a fix" in prompt
 
 
 def test_prompt_declares_linux_workspace_conventions():
@@ -158,6 +160,8 @@ def test_tool_manifest_guidance_mentions_linux_shell_and_service_cwd():
     assert "Linux workspace shell" in guidance
     assert "Do not assume PowerShell" in guidance
     assert "cwd=services/gateway" in guidance
+    assert "Do not invent package.json files" in guidance
+    assert "do not count as a fix" in guidance
 
 
 def test_semantic_reroute_candidate_uses_alternative_backend(monkeypatch):
@@ -217,6 +221,14 @@ def test_model_is_reroutable_for_aliases_but_not_explicit_backend_model():
     assert ca._model_is_reroutable("local_mlx:mlx-community/Qwen3-30B-A3B-4bit") is False
 
 
+def test_choose_model_remaps_default_alias_to_coder_lane():
+    task = {"coding_model": "default"}
+
+    assert ca._choose_model(task, None) == "coder"
+    assert ca._choose_model(task, "default") == "coder"
+    assert ca._choose_model(task, "local_vllm:custom") == "local_vllm:custom"
+
+
 def test_validation_command_classifier_recognizes_common_checks():
     assert ca._is_validation_command(["pytest", "services/gateway/tests/test_app.py"]) is True
     assert ca._is_validation_command(["ruff", "check", "services/gateway/app"]) is True
@@ -237,6 +249,58 @@ def test_validation_missing_tool_detection_does_not_treat_absent_pytest_as_test_
     assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "command not found: pytest"}) is True
     assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "No module named pytest"}) is True
     assert ca._validation_command_failed_due_to_missing_tool({"ok": False, "stderr": "FAILED tests/test_app.py::test_bug"}) is False
+
+
+def test_finish_gate_rejects_placeholder_diff_content():
+    task = {
+        "prompt": "Fix the broken Scheduled Tasks edit button.",
+        "agent_run_prompt": "",
+    }
+
+    feedback = ca._finish_gate_feedback(
+        task=task,
+        finish_success=True,
+        workspace_modified=True,
+        diff_reviewed_after_edit=True,
+        validation_run_after_edit=True,
+        validation_ok_after_edit=True,
+        diff_result_after_edit={
+            "diff": {
+                "stdout": "+++ b/services/gateway/app/static/tasks.js\n+function editSelectedTask() { /* Add logic to edit task */ }\n"
+            }
+        },
+        validation_argv_after_edit=["node", "--check", "services/gateway/app/static/tasks.js"],
+    )
+
+    assert "placeholder or stub text" in feedback
+
+
+def test_finish_gate_rejects_invented_package_manifest_for_npm_validation():
+    task = {
+        "prompt": "Scheduled tasks in the Scheduled Tasks UI have an Edit button that does nothing. Fix it so it works!",
+        "agent_run_prompt": "",
+    }
+
+    feedback = ca._finish_gate_feedback(
+        task=task,
+        finish_success=True,
+        workspace_modified=True,
+        diff_reviewed_after_edit=True,
+        validation_run_after_edit=True,
+        validation_ok_after_edit=True,
+        diff_result_after_edit={
+            "changes": {
+                "files": [
+                    {"path": "services/gateway/package.json", "status": "A"},
+                    {"path": "services/gateway/app/static/tasks.js", "status": "M"},
+                ]
+            },
+            "diff": {"stdout": "+++ b/services/gateway/package.json\n+{\"name\":\"gateway\",\"scripts\":{\"test\":\"vitest\"}}\n"},
+        },
+        validation_argv_after_edit=["npm", "test"],
+    )
+
+    assert "introduced services/gateway/package.json only to support npm-based validation" in feedback
 
 
 @pytest.mark.asyncio
@@ -277,6 +341,7 @@ async def test_request_pause_recovers_stale_active_state_without_runner(monkeypa
 
 def test_finish_gate_blocks_success_after_edits_without_validation_or_diff():
     feedback = ca._finish_gate_feedback(
+        task={"prompt": "Fix the broken route.", "agent_run_prompt": ""},
         finish_success=True,
         workspace_modified=True,
         diff_reviewed_after_edit=False,
@@ -290,6 +355,7 @@ def test_finish_gate_blocks_success_after_edits_without_validation_or_diff():
 
 def test_finish_gate_blocks_success_after_failed_validation():
     feedback = ca._finish_gate_feedback(
+        task={"prompt": "Fix the broken route.", "agent_run_prompt": ""},
         finish_success=True,
         workspace_modified=True,
         diff_reviewed_after_edit=True,
@@ -304,6 +370,7 @@ def test_finish_gate_blocks_success_after_failed_validation():
 
 def test_finish_gate_does_not_hide_failed_validation_with_later_weak_check():
     feedback = ca._finish_gate_feedback(
+        task={"prompt": "Fix the broken route.", "agent_run_prompt": ""},
         finish_success=True,
         workspace_modified=True,
         diff_reviewed_after_edit=True,
@@ -317,6 +384,7 @@ def test_finish_gate_does_not_hide_failed_validation_with_later_weak_check():
 
 def test_finish_gate_allows_success_after_validation_and_diff():
     feedback = ca._finish_gate_feedback(
+        task={"prompt": "Fix the broken route.", "agent_run_prompt": ""},
         finish_success=True,
         workspace_modified=True,
         diff_reviewed_after_edit=True,

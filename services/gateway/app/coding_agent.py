@@ -5,7 +5,7 @@ import re
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import HTTPException
 
@@ -687,17 +687,101 @@ def _validation_command_failed_due_to_missing_tool(result: Dict[str, Any]) -> bo
     return any(marker in text for marker in missing_markers)
 
 
+def _request_text(task: Dict[str, Any]) -> str:
+    return "\n".join(
+        part
+        for part in [
+            str(task.get("prompt") or "").strip(),
+            _effective_run_prompt(task),
+        ]
+        if part
+    ).lower()
+
+
+def _diff_added_lines(diff_text: str) -> List[str]:
+    lines: List[str] = []
+    for raw in str(diff_text or "").splitlines():
+        if not raw.startswith("+") or raw.startswith("+++"):
+            continue
+        lines.append(raw[1:])
+    return lines
+
+
+def _finish_gate_placeholder_feedback(diff_result: Optional[Dict[str, Any]]) -> str:
+    diff_text = str((((diff_result or {}).get("diff") or {}).get("stdout") or ""))
+    if not diff_text:
+        return ""
+    placeholder_markers = (
+        "add logic to",
+        "no tests yet",
+        "placeholder",
+        "todo",
+        "stub",
+    )
+    for line in _diff_added_lines(diff_text):
+        lowered = line.strip().lower()
+        if any(marker in lowered for marker in placeholder_markers):
+            return (
+                "The latest diff still contains placeholder or stub text instead of a concrete implementation. "
+                "Replace placeholder handlers or fake tests with real logic before reporting success."
+            )
+    return ""
+
+
+def _finish_gate_manifest_feedback(
+    task: Dict[str, Any],
+    *,
+    diff_result: Optional[Dict[str, Any]],
+    validation_argv_after_edit: Optional[Sequence[str]],
+) -> str:
+    changes = (diff_result or {}).get("changes") if isinstance(diff_result, dict) else {}
+    files = changes.get("files") if isinstance(changes, dict) else []
+    if not isinstance(files, list):
+        return ""
+    added_files = {
+        str(item.get("path") or "")
+        for item in files
+        if isinstance(item, dict) and str(item.get("status") or "").upper() == "A"
+    }
+    if "services/gateway/package.json" not in added_files:
+        return ""
+    request_text = _request_text(task)
+    node_markers = ("package.json", "npm", "node", "javascript", "typescript", "frontend", "webapp")
+    if any(marker in request_text for marker in node_markers):
+        return ""
+    argv = [str(item).strip().lower() for item in (validation_argv_after_edit or []) if str(item).strip()]
+    if argv and Path(argv[0]).name.lower() == "npm":
+        return (
+            "The latest edits introduced services/gateway/package.json only to support npm-based validation, but this request did not ask for Node project scaffolding. "
+            "Remove the invented package manifest and validate the real change with an existing checker such as node --check, pytest, or git diff --check."
+        )
+    return ""
+
+
 def _finish_gate_feedback(
     *,
+    task: Dict[str, Any],
     finish_success: bool,
     workspace_modified: bool,
     diff_reviewed_after_edit: bool,
     validation_run_after_edit: bool,
     validation_ok_after_edit: Optional[bool],
     validation_failed_after_edit: bool = False,
+    diff_result_after_edit: Optional[Dict[str, Any]] = None,
+    validation_argv_after_edit: Optional[Sequence[str]] = None,
 ) -> str:
     if not finish_success or not workspace_modified:
         return ""
+    placeholder_feedback = _finish_gate_placeholder_feedback(diff_result_after_edit)
+    if placeholder_feedback:
+        return placeholder_feedback
+    manifest_feedback = _finish_gate_manifest_feedback(
+        task,
+        diff_result=diff_result_after_edit,
+        validation_argv_after_edit=validation_argv_after_edit,
+    )
+    if manifest_feedback:
+        return manifest_feedback
     if validation_failed_after_edit:
         return (
             "A validation command failed after the latest edit. Fix the reported issue and rerun validation, "
@@ -1330,6 +1414,8 @@ def coding_tool_manifest() -> Dict[str, Any]:
         "Keep imports consolidated and avoid loading the same library multiple times.",
         "If a service owns its own package root, run validation from that service directory, for example cwd=services/gateway for gateway tests that import app.",
         "After editing, run a targeted validation command such as pytest, ruff check, python -m py_compile, node --check, npm test, or git diff --check.",
+        "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to make validation pass. Only add project-manifest or dependency files when the user explicitly asked for that scaffolding or the target service already uses it.",
+        "Placeholder handlers or comments like 'Add logic to ...' do not count as a fix.",
         "After editing, inspect coding_git_diff before calling coding_finish.",
     ]
     return {
@@ -1546,6 +1632,8 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
         "If the request requires code or documentation changes, make edits, run targeted validation, and inspect coding_git_diff before calling coding_finish. "
+        "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to satisfy validation. Only add project manifests or dependency files when the user explicitly requested that scaffolding or the target service already uses it. "
+        "Placeholder handlers or comments such as 'Add logic to ...' do not count as a fix. "
         "If a preferred checker such as pytest or ruff is missing in the workspace, use an available fallback such as python -m py_compile, unittest, node --check, npm test, or git diff --check instead of stopping at the missing tool. "
         "A successful coding_finish after edits will be rejected unless validation and coding_git_diff ran after the latest edit. "
         f"{edit_expectation}"
@@ -1577,7 +1665,10 @@ def _task_context(task: Dict[str, Any]) -> str:
 
 
 def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
-    return str(requested_model or task.get("coding_model") or "coder").strip() or "coder"
+    model = str(requested_model or task.get("coding_model") or "coder").strip() or "coder"
+    if model.lower() == "default":
+        return "coder"
+    return model
 
 
 async def start_agent_run(
@@ -1786,6 +1877,8 @@ async def _run_agent(
         validation_run_after_edit = False
         validation_ok_after_edit: Optional[bool] = None
         validation_failed_after_edit = False
+        diff_result_after_edit: Optional[Dict[str, Any]] = None
+        validation_argv_after_edit: Optional[List[str]] = None
         cycle = 0
 
         while True:
@@ -2001,12 +2094,15 @@ async def _run_agent(
                 if name == "coding_finish":
                     candidate_success = bool(result.get("success", args.get("success", True)))
                     gate_feedback = _finish_gate_feedback(
+                        task=task,
                         finish_success=candidate_success,
                         workspace_modified=workspace_modified,
                         diff_reviewed_after_edit=diff_reviewed_after_edit,
                         validation_run_after_edit=validation_run_after_edit,
                         validation_ok_after_edit=validation_ok_after_edit,
                         validation_failed_after_edit=validation_failed_after_edit,
+                        diff_result_after_edit=diff_result_after_edit,
+                        validation_argv_after_edit=validation_argv_after_edit,
                     )
                     if gate_feedback:
                         result = {
@@ -2035,9 +2131,13 @@ async def _run_agent(
                     validation_run_after_edit = False
                     validation_ok_after_edit = None
                     validation_failed_after_edit = False
+                    diff_result_after_edit = None
+                    validation_argv_after_edit = None
                 elif name == "coding_git_diff" and bool(result.get("ok")):
                     diff_reviewed_after_edit = True
+                    diff_result_after_edit = result
                 elif name == "coding_run_command" and _is_validation_command(args.get("argv")):
+                    validation_argv_after_edit = [str(item) for item in (args.get("argv") or []) if str(item)]
                     if _validation_command_failed_due_to_missing_tool(result):
                         validation_run_after_edit = False
                         validation_ok_after_edit = None

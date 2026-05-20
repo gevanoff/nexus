@@ -35,6 +35,7 @@
     detailPrompt: document.getElementById("detailPrompt"),
     runs: document.getElementById("runs"),
     refreshRuns: document.getElementById("refreshRuns"),
+    editTask: document.getElementById("editTask"),
     runNowTask: document.getElementById("runNowTask"),
     cancelTask: document.getElementById("cancelTask"),
     taskEditModal: document.getElementById("taskEditModal"),
@@ -236,12 +237,14 @@
     if (!task) {
       if (els.detailEmpty) els.detailEmpty.hidden = false;
       if (els.detail) els.detail.hidden = true;
+      if (els.editTask) els.editTask.disabled = true;
       if (els.runNowTask) els.runNowTask.disabled = true;
       if (els.cancelTask) els.cancelTask.disabled = true;
       return;
     }
     if (els.detailEmpty) els.detailEmpty.hidden = true;
     if (els.detail) els.detail.hidden = false;
+    if (els.editTask) els.editTask.disabled = false;
     if (els.runNowTask) els.runNowTask.disabled = ["running"].includes(String(task.status));
     if (els.cancelTask) els.cancelTask.disabled = ["completed", "cancelled"].includes(String(task.status));
     if (els.detailTitle) els.detailTitle.textContent = task.title || task.id;
@@ -337,12 +340,14 @@
 
   function openTaskEditModal(config) {
     state.taskEdit = config;
+    const showTools = config.mode === "tools" || config.mode === "task";
+    const showModel = config.mode === "model" || config.mode === "task";
     if (els.taskEditTitle) els.taskEditTitle.textContent = config.title || "Edit task";
     if (els.taskEditHint) els.taskEditHint.textContent = config.hint || "";
-    if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = config.mode !== "tools";
-    if (els.taskEditModelSection) els.taskEditModelSection.hidden = config.mode !== "model";
-    if (config.mode === "tools") renderToolList(els.taskEditTools, config.tier, config.selectedTools || []);
-    if (config.mode === "model") populateModelSelect(els.taskEditModel, config.model || "default");
+    if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = !showTools;
+    if (els.taskEditModelSection) els.taskEditModelSection.hidden = !showModel;
+    if (showTools) renderToolList(els.taskEditTools, config.tier, config.selectedTools || []);
+    if (showModel) populateModelSelect(els.taskEditModel, config.model || "default");
     if (els.taskEditModal) els.taskEditModal.hidden = false;
   }
 
@@ -626,6 +631,20 @@
     });
   }
 
+  async function editSelectedTask() {
+    if (!state.selectedId) return;
+    const task = state.tasks.find((item) => item.id === state.selectedId);
+    const meta = task?.metadata || {};
+    openTaskEditModal({
+      mode: "task",
+      title: "Edit task settings",
+      hint: "Update the model and tool access for future runs. Use the next-run badge to edit the schedule timestamp directly.",
+      tier: Number(meta.tier || 0),
+      selectedTools: Array.isArray(meta.tools) ? meta.tools : [],
+      model: String(meta.model || "default"),
+    });
+  }
+
   async function editSelectedModel() {
     if (!state.selectedId) return;
     const task = state.tasks.find((item) => item.id === state.selectedId);
@@ -655,6 +674,53 @@
 
   async function saveTaskEdit() {
     if (!state.selectedId || !state.taskEdit) return;
+    if (state.taskEdit.mode === "task") {
+      const task = state.tasks.find((item) => item.id === state.selectedId);
+      const meta = task?.metadata || {};
+      const nextModel = String(els.taskEditModel?.value || "").trim();
+      const nextTools = selectedModalTools();
+      const currentModel = String(meta.model || "default").trim() || "default";
+      const currentTools = Array.isArray(meta.tools) ? meta.tools : [];
+      const modelChanged = Boolean(nextModel) && nextModel !== currentModel;
+      const toolsChanged = JSON.stringify(nextTools) !== JSON.stringify(currentTools);
+      if (!modelChanged && !toolsChanged) {
+        closeTaskEditModal();
+        setStatus("No task settings changed.");
+        return;
+      }
+      try {
+        setStatus("Updating task settings...");
+        let latestTask = task;
+        if (modelChanged) {
+          const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/model`, {
+            method: "POST",
+            body: JSON.stringify({ model: nextModel }),
+          });
+          if (payload.task) {
+            updateTaskInState(payload.task);
+            latestTask = payload.task;
+          }
+        }
+        if (toolsChanged) {
+          const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/tools`, {
+            method: "POST",
+            body: JSON.stringify({ tools: nextTools }),
+          });
+          if (payload.task) {
+            updateTaskInState(payload.task);
+            latestTask = payload.task;
+          }
+        }
+        renderTasks();
+        renderDetail(latestTask || state.tasks.find((item) => item.id === state.selectedId));
+        closeTaskEditModal();
+        setStatus("Task settings updated.");
+      } catch (error) {
+        setStatus(error.message || String(error), true, error.stack || error);
+        throw error;
+      }
+      return;
+    }
     if (state.taskEdit.mode === "tools") {
       const tools = selectedModalTools();
       await persistTaskDetailUpdate("Updating task tools...", () => fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/tools`, {
@@ -694,6 +760,7 @@
     els.refresh?.addEventListener("click", () => loadTasks({ keepSelection: true }).catch((error) => setStatus(error.message, true)));
     els.statusFilter?.addEventListener("change", () => loadTasks({ keepSelection: false }).catch((error) => setStatus(error.message, true)));
     els.refreshRuns?.addEventListener("click", () => loadRuns().catch((error) => setStatus(error.message, true)));
+    els.editTask?.addEventListener("click", () => editSelectedTask().catch((error) => setStatus(error.message || String(error), true)));
     els.runNowTask?.addEventListener("click", runSelectedNow);
     els.cancelTask?.addEventListener("click", cancelSelected);
     els.closeTaskEditModal?.addEventListener("click", closeTaskEditModal);

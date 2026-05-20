@@ -283,7 +283,22 @@ def decide_route(
 
     provider = backend_provider_name(backend)
 
+    hdr_req_type = (headers.get("x-request-type") or "").strip().lower()
+    is_coding = False
+    if enable_request_type:
+        if hdr_req_type in {"coding", "code", "dev"}:
+            is_coding = True
+        elif hdr_req_type in {"chat", "general"}:
+            is_coding = False
+        else:
+            is_coding = _is_probably_coding_request(messages or [])
+
     if has_tools:
+        if is_coding:
+            a = get_alias("coder")
+            if a and a.tools is not False:
+                b = _resolved_backend_name(a.backend) or a.backend
+                return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->coding->alias:coder")
         a = get_alias("default")
         if a and a.tools is not False:
             b = _resolved_backend_name(a.backend) or a.backend
@@ -303,16 +318,6 @@ def decide_route(
         if cfg.primary_strong_model:
             return RouteDecision(backend=primary_backend, model=cfg.primary_strong_model, reason="policy:long_context->primary")
         return RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:long_context->strong")
-
-    hdr_req_type = (headers.get("x-request-type") or "").strip().lower()
-    is_coding = False
-    if enable_request_type:
-        if hdr_req_type in {"coding", "code", "dev"}:
-            is_coding = True
-        elif hdr_req_type in {"chat", "general"}:
-            is_coding = False
-        else:
-            is_coding = _is_probably_coding_request(messages or [])
 
     if is_coding:
         a = get_alias("coder")

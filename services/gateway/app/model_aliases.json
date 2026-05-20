@@ -11,8 +11,8 @@
       "tools": true
     },
     "coder": {
-      "backend": "local_mlx",
-      "model": "mlx-community/Qwen3-30B-A3B-4bit",
+      "backend": "local_vllm",
+      "model": "unsloth/Qwen3-30B-A3B-FP8",
       "tools": true
     },
     "reasoning": {

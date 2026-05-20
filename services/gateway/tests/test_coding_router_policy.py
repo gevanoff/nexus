@@ -1,0 +1,36 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from app import router
+
+
+def test_tool_bearing_coding_requests_prefer_coder_alias(monkeypatch):
+    aliases = {
+        "default": SimpleNamespace(backend="local_mlx", upstream_model="default-model", tools=True),
+        "coder": SimpleNamespace(backend="local_vllm", upstream_model="coder-model", tools=True),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: {})
+    monkeypatch.setattr(router, "get_alias", lambda name: aliases.get(name))
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "vllm" if "vllm" in backend else "mlx")
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_mlx",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="auto",
+        headers={"x-request-type": "coding"},
+        messages=[{"role": "user", "content": "Fix the broken Edit button in tasks.js"}],
+        has_tools=True,
+        enable_policy=True,
+        enable_request_type=True,
+    )
+
+    assert decision.backend == "local_vllm"
+    assert decision.model == "coder-model"
+    assert decision.reason == "policy:tools->coding->alias:coder"
