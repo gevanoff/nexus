@@ -339,15 +339,22 @@ def _archive_diff_snapshot(task: Dict[str, Any], manifest: Dict[str, Any], *, ma
     if not repo.joinpath(".git").exists():
         return {"ok": False, "repo_path": str(repo), "error": "archived repo does not contain .git metadata", "stat": "", "diff": "", "files": []}
     base = _git_base_branch_diff(repo, base_branch=str(task.get("base_branch") or "main"))
-    diff_stdout = str(((base.get("diff") or {}).get("stdout") or ""))
+    workspace_diff = str(((base.get("diff") or {}).get("stdout") or ""))
+    committed_diff = str(((base.get("committed_diff") or {}).get("stdout") or ""))
+    workspace_files = (base.get("changes") or {}).get("files") if isinstance(base.get("changes"), dict) else []
+    committed_files = (base.get("committed_changes") or {}).get("files") if isinstance(base.get("committed_changes"), dict) else []
+    use_committed = not workspace_diff.strip() and bool(committed_diff.strip() or committed_files)
+    diff_stdout = committed_diff if use_committed else workspace_diff
     if len(diff_stdout) > max_diff_chars:
         diff_stdout = diff_stdout[:max_diff_chars]
-    files = (base.get("changes") or {}).get("files") if isinstance(base.get("changes"), dict) else []
+    stat_payload = (base.get("committed_stat") or {}) if use_committed else (base.get("stat") or {})
+    files = committed_files if use_committed else workspace_files
     return {
         "ok": bool(base.get("diff", {}).get("ok", False) or base.get("changes")),
         "repo_path": str(repo),
         "base_branch": str(task.get("base_branch") or "main"),
-        "stat": str(((base.get("stat") or {}).get("stdout") or "")),
+        "scope": "committed" if use_committed else "workspace",
+        "stat": str((stat_payload.get("stdout") or "")),
         "diff": diff_stdout,
         "files": files if isinstance(files, list) else [],
         "error": str(base.get("error") or ((base.get("diff") or {}).get("stderr") or "")),

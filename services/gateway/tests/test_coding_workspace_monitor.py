@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
@@ -247,6 +248,78 @@ def test_archived_task_settings_list_and_cleanup(monkeypatch, tmp_path):
     assert cleanup["count"] == 1
     assert cleanup["purged"][0]["archive_id"] == archive_id
     assert cw.list_archived_tasks(limit=10) == []
+
+
+def test_inspect_archived_task_uses_committed_diff_when_workspace_is_clean(monkeypatch, tmp_path):
+    task = _base_task(
+        prompt="Scheduled tasks in the Scheduled Tasks UI have an Edit button that does nothing. Fix it so it works!",
+        workspace_path=str(tmp_path / "workspaces" / "code_abcdef123456"),
+        repo_path=str(tmp_path / "workspaces" / "code_abcdef123456" / "repo"),
+    )
+
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+
+    repo = Path(task["repo_path"])
+    static_dir = repo / "services" / "gateway" / "app" / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    (static_dir / "tasks.html").write_text('<button id="editTask">Edit</button>\n', encoding="utf-8")
+    (static_dir / "tasks.js").write_text('function editSelectedTask() {}\n', encoding="utf-8")
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "checkout", "-b", task["branch_name"]], cwd=repo, check=True, capture_output=True, text=True)
+
+    (static_dir / "tasks.js").write_text(
+        'function editSelectedTask() {}\n// Add logic to edit task\n',
+        encoding="utf-8",
+    )
+    package_json = repo / "services" / "gateway" / "package.json"
+    package_json.parent.mkdir(parents=True, exist_ok=True)
+    package_json.write_text('{"name":"gateway","scripts":{"test":"vitest"}}\n', encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "bad fix"], cwd=repo, check=True, capture_output=True, text=True)
+
+    cw.save_task(task)
+    archived = cw.archive_task(task["id"], actor="tester", reason="forensics")
+
+    snapshot = cw.inspect_archived_task(archived["archive_id"], max_diff_chars=4000)
+
+    assert "services/gateway/package.json" in snapshot["diff"]["diff"]
+    codes = {item["code"] for item in snapshot["heuristics"]}
+    assert "placeholder_fix" in codes
+    assert "invented_node_manifest" in codes
+
+
+def test_archive_diff_snapshot_falls_back_to_committed_changes(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    repo.joinpath(".git").mkdir()
+    manifest = {"workspace_path": str(tmp_path), "task_id": "code_abcdef123456"}
+    task = {"repo_path": str(repo), "base_branch": "main"}
+
+    monkeypatch.setattr(
+        cw,
+        "_git_base_branch_diff",
+        lambda repo_path, *, base_branch: {
+            "diff": {"ok": True, "stdout": ""},
+            "stat": {"stdout": ""},
+            "changes": {"ok": True, "files": []},
+            "committed_diff": {"ok": True, "stdout": "+// Add logic to edit task\n+services/gateway/package.json\n"},
+            "committed_stat": {"stdout": " services/gateway/package.json | 7 +++++++"},
+            "committed_changes": {"ok": True, "files": [{"path": "services/gateway/package.json", "status": "A", "kind": "added"}]},
+        },
+    )
+
+    snapshot = cw._archive_diff_snapshot(task, manifest, max_diff_chars=4000)
+
+    assert snapshot["scope"] == "committed"
+    assert "services/gateway/package.json" in snapshot["diff"]
+    assert snapshot["files"][0]["path"] == "services/gateway/package.json"
 
 
 def test_task_monitor_summary_flags_metadata_error_and_blocks_resume(monkeypatch):
