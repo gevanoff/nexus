@@ -13,6 +13,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate registry-backed CI prerequisites
+        env:
+          CONTAINER_REGISTRY: ${{ secrets.CONTAINER_REGISTRY }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          missing=0
+          for name in CONTAINER_REGISTRY REGISTRY_USERNAME REGISTRY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::This workflow is only for the optional registry-backed CI deploy path. Standard Nexus deployment is commit, push, then deploy the intended branch on the target host with deploy/scripts/deploy.sh or deploy/scripts/remote-deploy.sh."
+            exit 1
+          fi
+
       - name: Login to registry
         uses: docker/login-action@v3
         with:

@@ -18,8 +18,9 @@
 - Instead, begin porting that backend into Nexus (service directory, container image, compose component, env/docs/diagnostics updates) and treat any legacy usage as temporary migration context only.
 
 ## Commit and distribution policy
-- If code updates require user changes on test/production hosts, commit and push to `origin`.
+- If code updates require user changes on test/production hosts, the standard completion path is commit, push to `origin`, and deploy the intended branch with the repository deployment path when it is safe and within scope.
 - If you would otherwise mention that changes have not yet been committed and pushed, commit and push them instead whenever it is safe and within the user's requested scope.
+- If the user's request is operational and the repository already provides a standard deploy path, use it instead of stopping at code changes or workflow edits alone unless the user explicitly limits the task.
 - Do not stop at recommendations when practical code/docs updates can be completed safely.
 
 ## Cross-platform script guidance (Linux + macOS)

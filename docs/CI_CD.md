@@ -1,14 +1,20 @@
 # CI/CD and Branch-Based Deployments
 
-This guide outlines a dev → main deployment workflow without exposing secrets in the repository.
+This guide describes the current Nexus deployment standard and the optional registry-backed CI workflows included in this repository.
 
-> Temporary status: GitHub Actions build/deploy workflows are currently manual-only (`workflow_dispatch`) until image upload target/registry configuration is finalized.
+## Standard Deployment Flow
 
-## Automatic Build & Deploy (Suggested Flow)
+The standard Nexus path for tracked code changes is:
 
-1. **CI build**: build and tag images on pushes to `dev` and `main`.
-2. **Artifact registry**: push images to a private registry (GHCR, ECR, GCR, etc.).
-3. **Host deploy**: target hosts pull images and restart services using environment-specific config.
+1. Commit the change from a development checkout.
+2. Push the intended branch to `origin`.
+3. Deploy that branch on the target host with `deploy/scripts/deploy.sh` or `deploy/scripts/remote-deploy.sh`.
+
+This is the default operational path. Do not treat GitHub Actions image build/push workflows as the required deployment mechanism for ordinary Nexus updates.
+
+## Registry-Backed CI Workflows
+
+This repository also includes manual GitHub Actions workflows that build and push container images before running the remote deploy step. Those workflows are only valid when the registry secrets are configured.
 
 ## Secrets Management
 
@@ -24,7 +30,7 @@ This repository includes example workflows:
 - `.github/workflows/build-and-deploy-dev.yml`
 - `.github/workflows/build-and-deploy-prod.yml`
 
-They expect the following GitHub Secrets:
+They require the following GitHub Secrets:
 
 - `CONTAINER_REGISTRY`
 - `REGISTRY_USERNAME`
@@ -32,7 +38,9 @@ They expect the following GitHub Secrets:
 - `DEV_SSH_HOST`, `DEV_SSH_USER`, `DEV_SSH_KEY`
 - `PROD_SSH_HOST`, `PROD_SSH_USER`, `PROD_SSH_KEY`
 
-Update the workflows to build/push the service images you run in your deployment (gateway, images, tts). Note that Ollama typically uses the upstream `ollama/ollama` image and may not be built in CI.
+If those secrets are not configured, the workflows now fail immediately with an explicit message explaining that the standard Nexus deployment path is commit, push, and host deploy.
+
+These workflows are for the optional registry-backed CI path only. They are not the source of truth for how Nexus is normally deployed.
 
 ## Convenience Scripts
 
@@ -83,5 +91,5 @@ Create `deploy/env/.env.prod` by copying from `./.env.example` (see `deploy/env/
 
 - The deploy scripts assume the host has docker compose installed.
 - Nexus is operated on macOS/Linux hosts. If you develop on Windows, run deploy scripts and SSH from within WSL.
-- Use an external registry and `docker compose pull` if you want to avoid building on hosts.
+- A registry-backed CI flow is optional and only applies if you intentionally configure the required registry secrets.
 - Gate production deploys behind manual approval and/or a protected branch policy.

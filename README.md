@@ -471,7 +471,7 @@ docker compose restart gateway
 
 ### CI/CD and Dev Branch Deployments
 
-Temporary status: GitHub Actions build/deploy workflows are currently manual-only (`workflow_dispatch`) until the image upload target/registry configuration is finalized.
+Tracked Nexus changes should be committed, pushed, and then deployed with the repository deployment scripts on the target host. The GitHub Actions build-and-deploy workflows are optional registry-backed automation, not the default deployment path.
 
 See [docs/CI_CD.md](docs/CI_CD.md) for automated build/deploy guidance, secrets handling, and dev branch workflows.
 See [docs/INITIAL_ROLLOUT.md](docs/INITIAL_ROLLOUT.md) for first-time rollout order and implicit requirements.
