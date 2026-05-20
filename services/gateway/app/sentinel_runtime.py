@@ -420,6 +420,7 @@ def _archive_analysis_prompt(snapshot: Dict[str, Any]) -> str:
             continue
         argv = item.get("argv") if isinstance(item.get("argv"), list) else []
         command_lines.append(f"- {' '.join(str(part) for part in argv)} | ok={bool(item.get('ok'))}")
+    command_text = "\n".join(command_lines) or "- none"
     return (
         "Analyze this archived Nexus coding workspace failure. Focus on root cause, fabricated validation, placeholder edits, and the smallest real fix. "
         "Cite concrete evidence from the archived diff, commands, and agent events. End with a short guardrail recommendation.\n\n"
@@ -431,7 +432,7 @@ def _archive_analysis_prompt(snapshot: Dict[str, Any]) -> str:
         f"Workspace path: {((archive.get('paths') or {}).get('workspace') if isinstance(archive.get('paths'), dict) else '') or ''}\n"
         f"Heuristic findings:\n{_archive_heuristics_text(heuristics) or '- none'}\n\n"
         f"Recent agent events:\n{_archive_event_lines(recent_events) or '- none'}\n\n"
-        f"Recent commands:\n{'\n'.join(command_lines) or '- none'}\n\n"
+        f"Recent commands:\n{command_text}\n\n"
         f"Diff stat:\n{str(diff.get('stat') or '')[:4000]}\n\n"
         f"Diff excerpt:\n{str(diff.get('diff') or '')[:12000]}"
     )
