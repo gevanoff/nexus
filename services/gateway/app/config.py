@@ -374,6 +374,7 @@ class Settings(BaseSettings):
     NEXUS_SENTINEL_RESUME_COOLDOWN_SEC: int = 1800
     NEXUS_SENTINEL_NOTIFICATION_COOLDOWN_SEC: int = 6 * 60 * 60
     NEXUS_SENTINEL_MAX_EVENTS: int = 5000
+    NEXUS_SENTINEL_ARCHIVE_ANALYSIS_MAX_DIFF_CHARS: int = 12_000
 
     # Admission control / load shedding
     AGENT_BACKEND_CONCURRENCY_VLLM: int = 4
@@ -405,6 +406,7 @@ class Settings(BaseSettings):
     CODING_BRANCH_PREFIX: str = "nexus-coder"
     CODING_ALLOWED_COMMANDS: str = "git,rg,python,python3,node,npm,pytest,ruff,uv,gh"
     CODING_COMMAND_TIMEOUT_SEC: int = 120
+    CODING_ARCHIVE_RETENTION_SEC: int = 7 * 24 * 60 * 60
     CODING_MAX_OUTPUT_CHARS: int = 40_000
     CODING_FILE_MAX_BYTES: int = 500_000
     CODING_AGENT_MAX_EVENTS: int = 120

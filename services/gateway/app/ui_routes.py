@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.backends import (
     _capability_availability,
@@ -61,10 +62,19 @@ from app.resources_snapshot import (
 )
 from app.tools_bus import TOOL_SCHEMAS
 from app import sentinel_runtime
+from app import coding_workspace as cw
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class SentinelArchiveUpdateRequest(BaseModel):
+    preserve: Optional[bool] = None
+    delete_after_ts: Optional[float] = None
+    analysis_mode: Optional[Literal["manual", "idle", "immediate"]] = None
+    analysis_target: Optional[Literal["local", "external", "human", "none"]] = None
+    analysis_model: Optional[str] = None
 
 _UI_MODELS_CACHE_LOCK = asyncio.Lock()
 _UI_MODELS_CACHE_VALUE: Optional[Dict[str, Any]] = None
@@ -4985,6 +4995,36 @@ async def ui_api_sentinel_scan(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     _require_admin(req)
     return await sentinel_runtime.run_monitor_once()
+
+
+@router.get("/ui/api/sentinel/archives", include_in_schema=False)
+async def ui_api_sentinel_archives(req: Request, limit: int = 120) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_admin(req)
+    cap = max(1, min(int(limit or 120), 500))
+    return {"ok": True, "archives": cw.list_archived_tasks(limit=cap)}
+
+
+@router.post("/ui/api/sentinel/archives/{archive_id}", include_in_schema=False)
+async def ui_api_sentinel_archive_update(req: Request, archive_id: str, body: SentinelArchiveUpdateRequest) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_admin(req)
+    archive = cw.update_archived_task_settings(
+        archive_id,
+        preserve=body.preserve,
+        delete_after_ts=body.delete_after_ts,
+        analysis_mode=body.analysis_mode,
+        analysis_target=body.analysis_target,
+        analysis_model=body.analysis_model,
+    )
+    return {"ok": True, "archive": archive}
+
+
+@router.delete("/ui/api/sentinel/archives/{archive_id}", include_in_schema=False)
+async def ui_api_sentinel_archive_delete(req: Request, archive_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_admin(req)
+    return cw.purge_archived_task(archive_id)
 
 
 @router.get("/ui/api/lifecycle/status", include_in_schema=False)

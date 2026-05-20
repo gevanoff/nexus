@@ -200,6 +200,53 @@ def test_archive_task_moves_task_and_workspace_for_forensics(monkeypatch, tmp_pa
     assert Path(result["archived_workspace"]).exists()
     assert not (tmp_path / "tasks" / f"{task['id']}.json").exists()
     assert not workspace.exists()
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    assert manifest["analysis"]["requested_mode"] == "idle"
+    assert manifest["analysis"]["target"] == "local"
+    assert manifest["retention"]["preserve"] is False
+    assert int(manifest["retention"]["delete_after_ts"] or 0) > int(manifest["archived_at"])
+    assert manifest["findings_path"].endswith(".findings.jsonl")
+
+
+def test_archived_task_settings_list_and_cleanup(monkeypatch, tmp_path):
+    task = _base_task(
+        workspace_path=str(tmp_path / "workspaces" / "code_abcdef123456"),
+        repo_path=str(tmp_path / "workspaces" / "code_abcdef123456" / "repo"),
+    )
+
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+
+    workspace = Path(task["workspace_path"])
+    repo = Path(task["repo_path"])
+    repo.mkdir(parents=True, exist_ok=True)
+    repo.joinpath("README.md").write_text("hello\n", encoding="utf-8")
+
+    cw.save_task(task)
+    archived = cw.archive_task(task["id"], actor="tester", reason="forensics")
+    archive_id = archived["archive_id"]
+
+    updated = cw.update_archived_task_settings(
+        archive_id,
+        preserve=True,
+        analysis_mode="manual",
+        analysis_target="human",
+    )
+    assert updated["retention"]["preserve"] is True
+    assert updated["analysis"]["requested_mode"] == "manual"
+    assert updated["analysis"]["target"] == "human"
+
+    archives = cw.list_archived_tasks(limit=10)
+    assert len(archives) == 1
+    assert archives[0]["archive_id"] == archive_id
+    assert archives[0]["paths"]["workspace"].endswith(archive_id)
+
+    cw.update_archived_task_settings(archive_id, preserve=False, delete_after_ts=1, analysis_target="local", analysis_model="coder")
+    cleanup = cw.cleanup_archived_tasks(now=2)
+    assert cleanup["count"] == 1
+    assert cleanup["purged"][0]["archive_id"] == archive_id
+    assert cw.list_archived_tasks(limit=10) == []
 
 
 def test_task_monitor_summary_flags_metadata_error_and_blocks_resume(monkeypatch):

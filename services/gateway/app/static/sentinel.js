@@ -4,6 +4,7 @@
   const summaryGridEl = document.getElementById("summaryGrid");
   const recurringEl = document.getElementById("recurring");
   const eventsEl = document.getElementById("events");
+  const archivesEl = document.getElementById("archives");
   const refreshEl = document.getElementById("refresh");
   const scanNowEl = document.getElementById("scanNow");
   const categoryFilterEl = document.getElementById("categoryFilter");
@@ -29,7 +30,11 @@
   function fmtTs(ts) {
     const value = Number(ts || 0);
     if (!Number.isFinite(value) || value <= 0) return "never";
-    try { return new Date(value * 1000).toLocaleString(); } catch (error) { return String(ts); }
+    try {
+      return new Date(value * 1000).toLocaleString();
+    } catch (error) {
+      return String(ts);
+    }
   }
 
   function badge(text, cls) {
@@ -37,6 +42,28 @@
     span.className = `badge ${cls || "info"}`;
     span.textContent = text;
     return span;
+  }
+
+  function createSelect(options, value) {
+    const select = document.createElement("select");
+    options.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      select.appendChild(option);
+    });
+    select.value = value;
+    return select;
+  }
+
+  function createControlLabel(text, control) {
+    const label = document.createElement("label");
+    label.className = "control";
+    const title = document.createElement("span");
+    title.textContent = text;
+    label.appendChild(title);
+    label.appendChild(control);
+    return label;
   }
 
   async function fetchJson(url, options = {}) {
@@ -56,12 +83,12 @@
     const cards = [
       ["Coding attention", summary?.coding?.attention ?? 0],
       ["Auto-resumes", summary?.coding?.actions ?? 0],
+      ["Archived pending", summary?.archives?.pending ?? 0],
+      ["Archived analyzed", summary?.archives?.analyzed ?? 0],
+      ["Archived purged", summary?.archives?.purged ?? 0],
       ["Task failures", summary?.scheduled_tasks?.failed ?? 0],
-      ["Overdue tasks", summary?.scheduled_tasks?.overdue ?? 0],
       ["Backend issues", summary?.resources?.backend_issues ?? 0],
-      ["Resource pressure", summary?.resources?.resource_pressure ?? 0],
       ["Queue pressure", summary?.resources?.queue_pressure ?? 0],
-      ["Notifications", summary?.coding?.notifications ?? 0],
     ];
     cards.forEach(([label, value]) => {
       const card = document.createElement("div");
@@ -161,6 +188,216 @@
     });
   }
 
+  async function saveArchiveSettings(archiveId, body, { runScan = false, successText = "Archive settings updated." } = {}) {
+    await fetchJson(`/ui/api/sentinel/archives/${encodeURIComponent(archiveId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (runScan) {
+      await fetchJson("/ui/api/sentinel/scan", { method: "POST" });
+    }
+    await loadStatus();
+    setStatus(successText);
+  }
+
+  async function purgeArchive(archiveId) {
+    const ok = window.confirm(`Permanently erase archived workspace ${archiveId}? This deletes the archived workspace tree, task metadata, and findings log.`);
+    if (!ok) return;
+    await fetchJson(`/ui/api/sentinel/archives/${encodeURIComponent(archiveId)}`, { method: "DELETE" });
+    await loadStatus();
+    setStatus(`Archived workspace ${archiveId} was erased.`);
+  }
+
+  function renderArchiveFindings(items) {
+    const wrap = document.createElement("div");
+    wrap.className = "archive-findings";
+    if (!Array.isArray(items) || !items.length) {
+      const empty = document.createElement("div");
+      empty.className = "archive-empty";
+      empty.textContent = "No findings recorded yet.";
+      wrap.appendChild(empty);
+      return wrap;
+    }
+    items.slice(0, 4).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "archive-finding";
+      const meta = document.createElement("div");
+      meta.className = "hint";
+      meta.textContent = `${fmtTs(item.ts)} · ${item.kind || item.actor || "finding"}`;
+      const summary = document.createElement("div");
+      summary.className = "summary";
+      summary.textContent = item.summary || item.text || "";
+      row.appendChild(meta);
+      row.appendChild(summary);
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  function renderArchives(items, modelChoices) {
+    if (!archivesEl) return;
+    archivesEl.innerHTML = "";
+    const models = Array.isArray(modelChoices) && modelChoices.length ? modelChoices : ["coder", "default", "fast"];
+    if (!Array.isArray(items) || !items.length) {
+      const empty = document.createElement("div");
+      empty.className = "archive-empty";
+      empty.textContent = "No archived workspaces recorded yet.";
+      archivesEl.appendChild(empty);
+      return;
+    }
+    items.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "archive-card";
+
+      const top = document.createElement("div");
+      top.className = "event-top";
+      const left = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "archive-title";
+      title.textContent = item.archive_id || item.task_id || "Archived workspace";
+      const meta = document.createElement("div");
+      meta.className = "hint";
+      meta.style.marginTop = "4px";
+      meta.textContent = [
+        item.task_id || "",
+        item.owner ? `owner ${item.owner}` : "",
+        item.reason || "",
+        `archived ${fmtTs(item.archived_at)}`,
+      ].filter(Boolean).join(" · ");
+      left.appendChild(title);
+      left.appendChild(meta);
+      top.appendChild(left);
+      top.appendChild(badge((item.analysis || {}).status || "pending", ((item.analysis || {}).status || "pending").includes("failed") ? "error" : "info"));
+      card.appendChild(top);
+
+      if (item.prompt) {
+        const prompt = document.createElement("div");
+        prompt.className = "summary";
+        prompt.textContent = item.prompt;
+        card.appendChild(prompt);
+      }
+
+      const paths = document.createElement("div");
+      paths.className = "archive-paths";
+      const pathValues = item.paths && typeof item.paths === "object" ? item.paths : {};
+      [
+        ["Workspace", pathValues.workspace],
+        ["Task file", pathValues.task],
+        ["Manifest", pathValues.manifest],
+        ["Findings", pathValues.findings],
+      ].forEach(([label, value]) => {
+        const line = document.createElement("div");
+        line.className = "archive-path";
+        line.textContent = `${label}: ${value || "missing"}`;
+        paths.appendChild(line);
+      });
+      card.appendChild(paths);
+
+      const controls = document.createElement("div");
+      controls.className = "archive-controls";
+      const analysis = item.analysis && typeof item.analysis === "object" ? item.analysis : {};
+      const retention = item.retention && typeof item.retention === "object" ? item.retention : {};
+      const modeSelect = createSelect(
+        [
+          { value: "manual", label: "Manual only" },
+          { value: "idle", label: "Analyze on idle" },
+          { value: "immediate", label: "Analyze immediately" },
+        ],
+        analysis.requested_mode || "idle"
+      );
+      const targetSelect = createSelect(
+        [
+          { value: "local", label: "Local model" },
+          { value: "human", label: "Human follow-up" },
+          { value: "external", label: "External agent" },
+          { value: "none", label: "Do not analyze" },
+        ],
+        analysis.target || "local"
+      );
+      const modelSelect = createSelect(
+        models.map((value) => ({ value, label: value })),
+        analysis.local_model || "coder"
+      );
+      const preserveWrap = document.createElement("label");
+      preserveWrap.className = "control";
+      const preserveText = document.createElement("span");
+      preserveText.textContent = "Preserve archive";
+      const preserveBox = document.createElement("input");
+      preserveBox.type = "checkbox";
+      preserveBox.checked = Boolean(retention.preserve);
+      preserveWrap.appendChild(preserveText);
+      preserveWrap.appendChild(preserveBox);
+      controls.appendChild(createControlLabel("Analysis mode", modeSelect));
+      controls.appendChild(createControlLabel("Analysis target", targetSelect));
+      controls.appendChild(createControlLabel("Local model", modelSelect));
+      controls.appendChild(preserveWrap);
+      card.appendChild(controls);
+
+      const retentionMeta = document.createElement("div");
+      retentionMeta.className = "hint";
+      retentionMeta.style.marginTop = "8px";
+      retentionMeta.textContent = retention.preserve
+        ? "Retention: preserved until manually erased."
+        : `Retention: delete after ${fmtTs(retention.delete_after_ts)}.`;
+      card.appendChild(retentionMeta);
+
+      const findingsTitle = document.createElement("div");
+      findingsTitle.className = "hint";
+      findingsTitle.style.marginTop = "10px";
+      findingsTitle.textContent = "Findings log";
+      card.appendChild(findingsTitle);
+      card.appendChild(renderArchiveFindings(item.findings));
+
+      const actions = document.createElement("div");
+      actions.className = "archive-actions";
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.textContent = "Save settings";
+      saveBtn.addEventListener("click", () => {
+        void saveArchiveSettings(item.archive_id, {
+          analysis_mode: modeSelect.value,
+          analysis_target: targetSelect.value,
+          analysis_model: modelSelect.value,
+          preserve: preserveBox.checked,
+        });
+      });
+      const analyzeBtn = document.createElement("button");
+      analyzeBtn.type = "button";
+      analyzeBtn.textContent = "Analyze now";
+      analyzeBtn.addEventListener("click", async () => {
+        const body = {
+          analysis_mode: "immediate",
+          analysis_target: targetSelect.value,
+          analysis_model: modelSelect.value,
+          preserve: preserveBox.checked,
+        };
+        if (targetSelect.value !== "local") {
+          await saveArchiveSettings(item.archive_id, body, {
+            runScan: false,
+            successText: "Archive updated. Automatic immediate analysis currently runs only for target=local.",
+          });
+          return;
+        }
+        await saveArchiveSettings(item.archive_id, body, {
+          runScan: true,
+          successText: `Sentinel queued immediate analysis for ${item.archive_id}.`,
+        });
+      });
+      const purgeBtn = document.createElement("button");
+      purgeBtn.type = "button";
+      purgeBtn.textContent = "Erase archive";
+      purgeBtn.addEventListener("click", () => {
+        void purgeArchive(item.archive_id).catch((error) => setStatus(String(error), true));
+      });
+      actions.appendChild(saveBtn);
+      actions.appendChild(analyzeBtn);
+      actions.appendChild(purgeBtn);
+      card.appendChild(actions);
+      archivesEl.appendChild(card);
+    });
+  }
+
   function renderPayload(payload) {
     currentPayload = payload;
     const runtime = payload?.runtime && typeof payload.runtime === "object" ? payload.runtime : {};
@@ -175,12 +412,13 @@
     renderSummary(runtime.last_summary || {});
     renderRecurring(payload?.recurring || []);
     renderEvents(payload?.events || []);
+    renderArchives(payload?.archives || [], payload?.archive_model_choices || []);
   }
 
   async function loadStatus() {
     setStatus("Loading Sentinel status...");
     try {
-      const payload = await fetchJson("/ui/api/sentinel/status?limit=160");
+      const payload = await fetchJson("/ui/api/sentinel/status?limit=200");
       renderPayload(payload);
       setStatus("");
     } catch (error) {

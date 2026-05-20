@@ -22,6 +22,7 @@ from app import model_integration_workspace as miw
 
 SCHEMA = "nexus_coding_task.v1"
 _SAFE_TASK_RE = re.compile(r"^code_[a-f0-9]{12}$")
+_SAFE_ARCHIVE_RE = re.compile(r"^code_[a-f0-9]{12}\.\d+\.[a-f0-9]+$")
 _SAFE_REF_RE = re.compile(r"[^A-Za-z0-9._/-]+")
 _BLOCKED_GIT_SUBCOMMANDS = {
     "clean",
@@ -36,6 +37,8 @@ _BLOCKED_GIT_SUBCOMMANDS = {
     "worktree",
 }
 _TREE_SKIP = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
+_ARCHIVE_ANALYSIS_MODES = {"manual", "idle", "immediate"}
+_ARCHIVE_ANALYSIS_TARGETS = {"local", "external", "human", "none"}
 
 
 def coding_enabled() -> bool:
@@ -120,6 +123,307 @@ def _archived_tasks_dir() -> Path:
 
 def _archived_workspaces_dir() -> Path:
     return workspace_root().joinpath("_archive").resolve()
+
+
+def _legacy_archived_tasks_dir() -> Path:
+    return tasks_dir().parent.joinpath("archived", "tasks").resolve()
+
+
+def _legacy_archived_workspaces_dir() -> Path:
+    return workspace_root().parent.joinpath("archived", "workspaces").resolve()
+
+
+def _archive_retention_sec() -> int:
+    try:
+        return max(3600, int(getattr(S, "CODING_ARCHIVE_RETENTION_SEC", 7 * 24 * 3600) or (7 * 24 * 3600)))
+    except Exception:
+        return 7 * 24 * 3600
+
+
+def _default_archive_delete_after(archived_at: float) -> int:
+    return int(max(0.0, float(archived_at or 0)) + float(_archive_retention_sec()))
+
+
+def _archive_task_roots() -> List[Path]:
+    roots = [_archived_tasks_dir(), _legacy_archived_tasks_dir()]
+    out: List[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(root)
+    return out
+
+
+def _archive_workspace_roots() -> List[Path]:
+    roots = [_archived_workspaces_dir(), _legacy_archived_workspaces_dir()]
+    out: List[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(root)
+    return out
+
+
+def _validate_archive_id(archive_id: str) -> str:
+    value = str(archive_id or "").strip()
+    if not _SAFE_ARCHIVE_RE.match(value):
+        raise HTTPException(status_code=404, detail="archived coding task not found")
+    return value
+
+
+def _archive_manifest_path(archive_id: str) -> Path:
+    archive_id = _validate_archive_id(archive_id)
+    for root in _archive_task_roots():
+        path = root.joinpath(f"{archive_id}.manifest.json")
+        if path.exists():
+            return path.resolve()
+    return _archived_tasks_dir().joinpath(f"{archive_id}.manifest.json").resolve()
+
+
+def _archive_task_json_path(archive_id: str) -> Path:
+    archive_id = _validate_archive_id(archive_id)
+    for root in _archive_task_roots():
+        path = root.joinpath(f"{archive_id}.json")
+        if path.exists():
+            return path.resolve()
+    return _archived_tasks_dir().joinpath(f"{archive_id}.json").resolve()
+
+
+def _archive_findings_path(archive_id: str) -> Path:
+    manifest_path = _archive_manifest_path(archive_id)
+    return manifest_path.with_name(f"{archive_id}.findings.jsonl").resolve()
+
+
+def _archive_workspace_path(archive_id: str) -> Path:
+    archive_id = _validate_archive_id(archive_id)
+    for root in _archive_workspace_roots():
+        path = root.joinpath(archive_id)
+        if path.exists():
+            return path.resolve()
+    return _archived_workspaces_dir().joinpath(archive_id).resolve()
+
+
+def _read_findings_log(path: Path, *, limit: int = 20) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    out: List[Dict[str, Any]] = []
+    for raw in lines[-max(1, limit) :]:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            item = json.loads(raw)
+        except Exception:
+            continue
+        if isinstance(item, dict):
+            out.append(item)
+    return out
+
+
+def _archive_prompt_mentions_node(prompt: str) -> bool:
+    lowered = str(prompt or "").lower()
+    return any(token in lowered for token in ("package.json", "npm", "node", "javascript", "typescript", "frontend", "webapp"))
+
+
+def _archive_default_analysis(task: Dict[str, Any], *, archived_at: float, analysis: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    analysis = dict(analysis or {})
+    requested_mode = str(analysis.get("requested_mode") or "idle").strip().lower()
+    if requested_mode not in _ARCHIVE_ANALYSIS_MODES:
+        requested_mode = "idle"
+    target = str(analysis.get("target") or "local").strip().lower()
+    if target not in _ARCHIVE_ANALYSIS_TARGETS:
+        target = "local"
+    local_model = str(analysis.get("local_model") or task.get("coding_model") or "coder").strip() or "coder"
+    if local_model.lower() == "default":
+        local_model = "coder"
+    status = str(analysis.get("status") or "").strip().lower()
+    if not status:
+        if target == "none":
+            status = "disabled"
+        elif target == "human" or requested_mode == "manual":
+            status = "manual"
+        elif target == "external":
+            status = "external_pending"
+        else:
+            status = "pending"
+    return {
+        "requested_mode": requested_mode,
+        "target": target,
+        "local_model": local_model if target == "local" else "",
+        "status": status,
+        "last_requested_at": float(analysis.get("last_requested_at") or archived_at or _now()),
+        "last_started_at": float(analysis.get("last_started_at") or 0),
+        "last_finished_at": float(analysis.get("last_finished_at") or 0),
+        "last_summary": str(analysis.get("last_summary") or "")[:2000],
+        "last_error": str(analysis.get("last_error") or "")[:4000],
+        "findings_count": int(analysis.get("findings_count") or 0),
+    }
+
+
+def _archive_default_retention(*, archived_at: float, retention: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    retention = dict(retention or {})
+    preserve = bool(retention.get("preserve"))
+    delete_after_ts = retention.get("delete_after_ts")
+    try:
+        delete_after_int = int(delete_after_ts or 0)
+    except Exception:
+        delete_after_int = 0
+    if preserve:
+        delete_after_int = 0
+    elif delete_after_int <= 0:
+        delete_after_int = _default_archive_delete_after(archived_at)
+    return {
+        "preserve": preserve,
+        "delete_after_ts": delete_after_int,
+        "retention_sec": int(retention.get("retention_sec") or _archive_retention_sec()),
+    }
+
+
+def _load_archived_task_json(path: Path) -> Dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _normalize_archive_manifest(manifest: Dict[str, Any], *, manifest_path: Path, task: Dict[str, Any]) -> Dict[str, Any]:
+    archive_id = _validate_archive_id(str(manifest.get("archive_id") or manifest_path.name[: -len(".manifest.json")]))
+    archived_at = float(manifest.get("archived_at") or _now())
+    findings_path = str(manifest.get("findings_path") or manifest_path.with_name(f"{archive_id}.findings.jsonl"))
+    normalized = dict(manifest)
+    normalized.update(
+        {
+            "archive_id": archive_id,
+            "task_id": str(manifest.get("task_id") or task.get("id") or archive_id.split(".", 1)[0]),
+            "archived_at": archived_at,
+            "actor": str(manifest.get("actor") or "").strip(),
+            "reason": str(manifest.get("reason") or "manual_archive").strip() or "manual_archive",
+            "repo_url": redact_repo_url(str(manifest.get("repo_url") or task.get("repo_url") or "")),
+            "status": str(manifest.get("status") or task.get("status") or ""),
+            "agent_status": str(manifest.get("agent_status") or task.get("agent_status") or ""),
+            "task_path": str(manifest.get("task_path") or _archive_task_json_path(archive_id)),
+            "workspace_path": str(manifest.get("workspace_path") or _archive_workspace_path(archive_id)),
+            "findings_path": findings_path,
+            "manifest_path": str(manifest_path),
+            "analysis": _archive_default_analysis(task, archived_at=archived_at, analysis=manifest.get("analysis") if isinstance(manifest.get("analysis"), dict) else None),
+            "retention": _archive_default_retention(archived_at=archived_at, retention=manifest.get("retention") if isinstance(manifest.get("retention"), dict) else None),
+        }
+    )
+    return normalized
+
+
+def _archived_repo_path(manifest: Dict[str, Any], task: Dict[str, Any]) -> Path:
+    workspace = Path(str(manifest.get("workspace_path") or "")).resolve()
+    repo_hint = Path(str(task.get("repo_path") or "repo")).name or "repo"
+    for candidate in (workspace.joinpath(repo_hint), workspace.joinpath("repo"), workspace):
+        if candidate.exists():
+            return candidate.resolve()
+    return workspace.joinpath(repo_hint).resolve()
+
+
+def _archive_diff_snapshot(task: Dict[str, Any], manifest: Dict[str, Any], *, max_diff_chars: int = 12000) -> Dict[str, Any]:
+    repo = _archived_repo_path(manifest, task)
+    if not repo.exists() or not repo.is_dir():
+        return {"ok": False, "repo_path": str(repo), "error": "archived repo is missing", "stat": "", "diff": "", "files": []}
+    if not repo.joinpath(".git").exists():
+        return {"ok": False, "repo_path": str(repo), "error": "archived repo does not contain .git metadata", "stat": "", "diff": "", "files": []}
+    base = _git_base_branch_diff(repo, base_branch=str(task.get("base_branch") or "main"))
+    diff_stdout = str(((base.get("diff") or {}).get("stdout") or ""))
+    if len(diff_stdout) > max_diff_chars:
+        diff_stdout = diff_stdout[:max_diff_chars]
+    files = (base.get("changes") or {}).get("files") if isinstance(base.get("changes"), dict) else []
+    return {
+        "ok": bool(base.get("diff", {}).get("ok", False) or base.get("changes")),
+        "repo_path": str(repo),
+        "base_branch": str(task.get("base_branch") or "main"),
+        "stat": str(((base.get("stat") or {}).get("stdout") or "")),
+        "diff": diff_stdout,
+        "files": files if isinstance(files, list) else [],
+        "error": str(base.get("error") or ((base.get("diff") or {}).get("stderr") or "")),
+    }
+
+
+def _archive_heuristic_findings(task: Dict[str, Any], manifest: Dict[str, Any], diff_snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
+    diff_text = str(diff_snapshot.get("diff") or "")
+    added_lines = [line[1:] for line in diff_text.splitlines() if line.startswith("+") and not line.startswith("+++")]
+    lowered_prompt = str(task.get("prompt") or "")
+    commands = task.get("commands") if isinstance(task.get("commands"), list) else []
+    files = diff_snapshot.get("files") if isinstance(diff_snapshot.get("files"), list) else []
+    added_paths = {str(item.get("path") or "") for item in files if isinstance(item, dict) and str(item.get("status") or "").upper() == "A"}
+    findings: List[Dict[str, Any]] = []
+
+    placeholder_lines = [line.strip() for line in added_lines if any(marker in line.lower() for marker in ("add logic to", "placeholder", "todo", "stub", "no tests yet"))]
+    if placeholder_lines:
+        findings.append(
+            {
+                "severity": "warn",
+                "code": "placeholder_fix",
+                "summary": "The archived diff added placeholder or stub text instead of a concrete implementation.",
+                "evidence": placeholder_lines[:5],
+            }
+        )
+
+    if "services/gateway/package.json" in added_paths and not _archive_prompt_mentions_node(lowered_prompt):
+        npm_commands = []
+        for item in commands:
+            if not isinstance(item, dict):
+                continue
+            argv = item.get("argv") if isinstance(item.get("argv"), list) else []
+            argv_text = " ".join(str(part) for part in argv)
+            if argv and str(argv[0]).lower() == "npm":
+                npm_commands.append(argv_text)
+        findings.append(
+            {
+                "severity": "error",
+                "code": "invented_node_manifest",
+                "summary": "The archived workspace introduced services/gateway/package.json for a task that did not ask for Node scaffolding.",
+                "evidence": npm_commands[:5] or ["services/gateway/package.json was added in the workspace diff."],
+            }
+        )
+
+    repo = _archived_repo_path(manifest, task)
+    if "edit button" in str(task.get("prompt") or "").lower():
+        tasks_js = repo.joinpath("services", "gateway", "app", "static", "tasks.js")
+        tasks_html = repo.joinpath("services", "gateway", "app", "static", "tasks.html")
+        try:
+            js_text = tasks_js.read_text(encoding="utf-8") if tasks_js.exists() else ""
+        except Exception:
+            js_text = ""
+        try:
+            html_text = tasks_html.read_text(encoding="utf-8") if tasks_html.exists() else ""
+        except Exception:
+            html_text = ""
+        if 'id="editTask"' in html_text and 'document.getElementById("editTask")' not in js_text:
+            findings.append(
+                {
+                    "severity": "warn",
+                    "code": "unwired_edit_button",
+                    "summary": "The underlying bug was that tasks.html exposed editTask but tasks.js did not wire it into the UI state or event handlers.",
+                    "evidence": ['tasks.html contains id="editTask" while tasks.js lacks document.getElementById("editTask")'],
+                }
+            )
+
+    if not findings:
+        findings.append(
+            {
+                "severity": "info",
+                "code": "no_obvious_static_signature",
+                "summary": "No high-confidence static anti-pattern was detected from the archived diff snapshot.",
+                "evidence": [],
+            }
+        )
+    return findings
 
 
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
@@ -2046,20 +2350,25 @@ def archive_task(task_id: str, *, actor: Optional[str] = None, reason: Optional[
     if workspace_path.exists():
         shutil.move(str(workspace_path), str(archived_workspace_path))
 
-    manifest = {
-        "archive_id": archive_id,
-        "task_id": task_id,
-        "archived_at": _now(),
-        "actor": str(actor or "").strip(),
-        "reason": str(reason or "manual_archive").strip() or "manual_archive",
-        "repo_url": redact_repo_url(str(task.get("repo_url") or "")),
-        "status": str(task.get("status") or ""),
-        "agent_status": str(task.get("agent_status") or ""),
-        "metadata_error": task.get("metadata_error") if isinstance(task.get("metadata_error"), dict) else None,
-        "task_path": str(archived_task_path),
-        "workspace_path": str(archived_workspace_path) if archived_workspace_path.exists() else "",
-    }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    archived_at = _now()
+    manifest = _normalize_archive_manifest(
+        {
+            "archive_id": archive_id,
+            "task_id": task_id,
+            "archived_at": archived_at,
+            "actor": str(actor or "").strip(),
+            "reason": str(reason or "manual_archive").strip() or "manual_archive",
+            "repo_url": redact_repo_url(str(task.get("repo_url") or "")),
+            "status": str(task.get("status") or ""),
+            "agent_status": str(task.get("agent_status") or ""),
+            "metadata_error": task.get("metadata_error") if isinstance(task.get("metadata_error"), dict) else None,
+            "task_path": str(archived_task_path),
+            "workspace_path": str(archived_workspace_path) if archived_workspace_path.exists() else "",
+        },
+        manifest_path=manifest_path,
+        task=task,
+    )
+    _write_json(manifest_path, manifest)
 
     return {
         "ok": True,
@@ -2069,6 +2378,260 @@ def archive_task(task_id: str, *, actor: Optional[str] = None, reason: Optional[
         "archived_workspace": str(archived_workspace_path) if archived_workspace_path.exists() else "",
         "manifest": str(manifest_path),
         "repo_url": redact_repo_url(str(task.get("repo_url") or "")),
+    }
+
+
+def list_archived_tasks(limit: int = 100) -> List[Dict[str, Any]]:
+    _ensure_enabled()
+    items: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for root in _archive_task_roots():
+        if not root.exists():
+            continue
+        for manifest_path in root.glob("code_*.manifest.json"):
+            archive_id = manifest_path.name[: -len(".manifest.json")]
+            if archive_id in seen:
+                continue
+            seen.add(archive_id)
+            try:
+                raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                raw_manifest = {}
+            task_path = manifest_path.with_name(f"{archive_id}.json")
+            task = _load_archived_task_json(task_path)
+            manifest = _normalize_archive_manifest(raw_manifest if isinstance(raw_manifest, dict) else {}, manifest_path=manifest_path, task=task)
+            if manifest != raw_manifest:
+                _write_json(manifest_path, manifest)
+            findings = _read_findings_log(Path(str(manifest.get("findings_path") or "")), limit=12)
+            analysis = manifest.get("analysis") if isinstance(manifest.get("analysis"), dict) else {}
+            retention = manifest.get("retention") if isinstance(manifest.get("retention"), dict) else {}
+            items.append(
+                {
+                    "archive_id": archive_id,
+                    "task_id": str(manifest.get("task_id") or task.get("id") or ""),
+                    "archived_at": manifest.get("archived_at"),
+                    "actor": manifest.get("actor") or "",
+                    "reason": manifest.get("reason") or "",
+                    "owner": str(task.get("owner") or ""),
+                    "owner_user_id": task.get("owner_user_id"),
+                    "prompt": str(task.get("prompt") or "")[:1200],
+                    "coding_model": str(task.get("coding_model") or ""),
+                    "status": str(manifest.get("status") or task.get("status") or ""),
+                    "agent_status": str(manifest.get("agent_status") or task.get("agent_status") or ""),
+                    "repo_url": str(manifest.get("repo_url") or task.get("repo_url") or ""),
+                    "base_branch": str(task.get("base_branch") or ""),
+                    "branch_name": str(task.get("branch_name") or ""),
+                    "paths": {
+                        "manifest": str(manifest_path),
+                        "task": str(manifest.get("task_path") or task_path),
+                        "workspace": str(manifest.get("workspace_path") or ""),
+                        "findings": str(manifest.get("findings_path") or ""),
+                    },
+                    "analysis": analysis,
+                    "retention": retention,
+                    "findings": findings,
+                }
+            )
+    items.sort(key=lambda item: float(item.get("archived_at") or 0), reverse=True)
+    return items[: max(1, min(int(limit or 100), 500))]
+
+
+def get_archived_task(archive_id: str) -> Dict[str, Any]:
+    archive_id = _validate_archive_id(archive_id)
+    for item in list_archived_tasks(limit=500):
+        if str(item.get("archive_id") or "") == archive_id:
+            return item
+    raise HTTPException(status_code=404, detail="archived coding task not found")
+
+
+def update_archived_task_settings(
+    archive_id: str,
+    *,
+    preserve: Optional[bool] = None,
+    delete_after_ts: Optional[float] = None,
+    analysis_mode: Optional[str] = None,
+    analysis_target: Optional[str] = None,
+    analysis_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    manifest_path = _archive_manifest_path(archive_id)
+    raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    task = _load_archived_task_json(_archive_task_json_path(archive_id))
+    manifest = _normalize_archive_manifest(raw_manifest if isinstance(raw_manifest, dict) else {}, manifest_path=manifest_path, task=task)
+    retention = dict(manifest.get("retention") if isinstance(manifest.get("retention"), dict) else {})
+    analysis = dict(manifest.get("analysis") if isinstance(manifest.get("analysis"), dict) else {})
+
+    if preserve is not None:
+        retention["preserve"] = bool(preserve)
+        if retention["preserve"]:
+            retention["delete_after_ts"] = 0
+        elif int(retention.get("delete_after_ts") or 0) <= 0:
+            retention["delete_after_ts"] = _default_archive_delete_after(float(manifest.get("archived_at") or _now()))
+
+    if delete_after_ts is not None and not bool(retention.get("preserve")):
+        try:
+            retention["delete_after_ts"] = max(0, int(float(delete_after_ts)))
+        except Exception:
+            raise HTTPException(status_code=400, detail="delete_after_ts must be a number")
+
+    if analysis_mode is not None:
+        mode = str(analysis_mode or "").strip().lower()
+        if mode not in _ARCHIVE_ANALYSIS_MODES:
+            raise HTTPException(status_code=400, detail="analysis_mode must be one of manual, idle, immediate")
+        analysis["requested_mode"] = mode
+        analysis["last_requested_at"] = _now()
+        if mode == "manual" and str(analysis.get("target") or "local") != "local":
+            analysis["status"] = "manual"
+        elif str(analysis.get("target") or "local") == "local":
+            analysis["status"] = "pending"
+
+    if analysis_target is not None:
+        target = str(analysis_target or "").strip().lower()
+        if target not in _ARCHIVE_ANALYSIS_TARGETS:
+            raise HTTPException(status_code=400, detail="analysis_target must be one of local, external, human, none")
+        analysis["target"] = target
+        analysis["last_requested_at"] = _now()
+        if target == "local":
+            analysis["status"] = "pending"
+        elif target == "external":
+            analysis["status"] = "external_pending"
+            analysis["local_model"] = ""
+        elif target == "human":
+            analysis["status"] = "manual"
+            analysis["local_model"] = ""
+        else:
+            analysis["status"] = "disabled"
+            analysis["local_model"] = ""
+
+    if analysis_model is not None:
+        model = str(analysis_model or "").strip()
+        analysis["local_model"] = "coder" if model.lower() == "default" else model
+        if str(analysis.get("target") or "local") == "local" and analysis.get("local_model"):
+            analysis["status"] = "pending"
+            analysis["last_requested_at"] = _now()
+
+    manifest["retention"] = _archive_default_retention(archived_at=float(manifest.get("archived_at") or _now()), retention=retention)
+    manifest["analysis"] = _archive_default_analysis(task, archived_at=float(manifest.get("archived_at") or _now()), analysis=analysis)
+    _write_json(manifest_path, manifest)
+    return get_archived_task(archive_id)
+
+
+def mark_archived_analysis(
+    archive_id: str,
+    *,
+    status: str,
+    summary: str = "",
+    error: str = "",
+    started_at: Optional[float] = None,
+    finished_at: Optional[float] = None,
+    findings_count: Optional[int] = None,
+) -> Dict[str, Any]:
+    manifest_path = _archive_manifest_path(archive_id)
+    raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    task = _load_archived_task_json(_archive_task_json_path(archive_id))
+    manifest = _normalize_archive_manifest(raw_manifest if isinstance(raw_manifest, dict) else {}, manifest_path=manifest_path, task=task)
+    analysis = dict(manifest.get("analysis") if isinstance(manifest.get("analysis"), dict) else {})
+    analysis["status"] = str(status or analysis.get("status") or "pending")
+    if started_at is not None:
+        analysis["last_started_at"] = float(started_at)
+    if finished_at is not None:
+        analysis["last_finished_at"] = float(finished_at)
+    if summary:
+        analysis["last_summary"] = str(summary)[:2000]
+    if error:
+        analysis["last_error"] = str(error)[:4000]
+    if findings_count is not None:
+        analysis["findings_count"] = int(findings_count)
+    manifest["analysis"] = _archive_default_analysis(task, archived_at=float(manifest.get("archived_at") or _now()), analysis=analysis)
+    _write_json(manifest_path, manifest)
+    return get_archived_task(archive_id)
+
+
+def append_archived_finding(archive_id: str, *, entry: Dict[str, Any]) -> Dict[str, Any]:
+    archive = get_archived_task(archive_id)
+    findings_path = Path(str(((archive.get("paths") or {}).get("findings") or ""))).resolve()
+    findings_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(entry)
+    payload.setdefault("ts", _now())
+    with findings_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    findings = _read_findings_log(findings_path, limit=500)
+    summary = str(payload.get("summary") or payload.get("text") or "")[:2000]
+    return mark_archived_analysis(
+        archive_id,
+        status=str(payload.get("status") or "completed"),
+        summary=summary,
+        error=str(payload.get("error") or ""),
+        finished_at=float(payload.get("ts") or _now()),
+        findings_count=len(findings),
+    )
+
+
+def purge_archived_task(archive_id: str) -> Dict[str, Any]:
+    archive = get_archived_task(archive_id)
+    paths = archive.get("paths") if isinstance(archive.get("paths"), dict) else {}
+    removed: List[str] = []
+    for key in ("task", "manifest", "findings"):
+        path = Path(str(paths.get(key) or "")).resolve()
+        if not path.exists():
+            continue
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except FileNotFoundError:
+            continue
+    workspace = Path(str(paths.get("workspace") or "")).resolve()
+    if workspace.exists():
+        shutil.rmtree(workspace)
+        removed.append(str(workspace))
+    return {"ok": True, "archive_id": archive_id, "removed": removed}
+
+
+def cleanup_archived_tasks(*, now: Optional[float] = None) -> Dict[str, Any]:
+    current = float(now if now is not None else _now())
+    purged: List[Dict[str, Any]] = []
+    for item in list_archived_tasks(limit=500):
+        retention = item.get("retention") if isinstance(item.get("retention"), dict) else {}
+        if bool(retention.get("preserve")):
+            continue
+        delete_after_ts = int(retention.get("delete_after_ts") or 0)
+        if delete_after_ts <= 0 or delete_after_ts > int(current):
+            continue
+        result = purge_archived_task(str(item.get("archive_id") or ""))
+        purged.append(
+            {
+                "archive_id": item.get("archive_id"),
+                "task_id": item.get("task_id"),
+                "workspace_path": ((item.get("paths") or {}).get("workspace") if isinstance(item.get("paths"), dict) else ""),
+                "removed": result.get("removed") if isinstance(result, dict) else [],
+            }
+        )
+    return {"ok": True, "purged": purged, "count": len(purged)}
+
+
+def inspect_archived_task(archive_id: str, *, max_diff_chars: int = 12000) -> Dict[str, Any]:
+    archive = get_archived_task(archive_id)
+    task = _load_archived_task_json(Path(str(((archive.get("paths") or {}).get("task") or ""))))
+    manifest_path = Path(str(((archive.get("paths") or {}).get("manifest") or "")))
+    raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    manifest = _normalize_archive_manifest(raw_manifest if isinstance(raw_manifest, dict) else {}, manifest_path=manifest_path, task=task)
+    diff_snapshot = _archive_diff_snapshot(task, manifest, max_diff_chars=max_diff_chars)
+    return {
+        "ok": True,
+        "archive": archive,
+        "task": {
+            "id": task.get("id") or archive.get("task_id"),
+            "prompt": str(task.get("prompt") or ""),
+            "status": str(task.get("status") or manifest.get("status") or ""),
+            "agent_status": str(task.get("agent_status") or manifest.get("agent_status") or ""),
+            "coding_model": str(task.get("coding_model") or ""),
+            "owner": str(task.get("owner") or ""),
+            "base_branch": str(task.get("base_branch") or "main"),
+            "branch_name": str(task.get("branch_name") or ""),
+            "commands": task.get("commands")[-12:] if isinstance(task.get("commands"), list) else [],
+            "agent_events": task.get("agent_events")[-20:] if isinstance(task.get("agent_events"), list) else [],
+        },
+        "diff": diff_snapshot,
+        "heuristics": _archive_heuristic_findings(task, manifest, diff_snapshot),
     }
 
 

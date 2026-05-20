@@ -520,12 +520,12 @@
       const trashBtn = document.createElement("button");
       trashBtn.type = "button";
       trashBtn.className = "task-icon-btn task-delete-btn";
-      trashBtn.title = "Archive workspace for forensics";
-      trashBtn.setAttribute("aria-label", "Archive workspace for forensics");
+      trashBtn.title = "Delete workspace";
+      trashBtn.setAttribute("aria-label", "Delete workspace");
       trashBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M3 6h18v2H3V6zm4 4v8a2 2 0 002 2h6a2 2 0 002-2V10h-2v8h-6v-8H7zm2-4h6V5a1 1 0 00-1-1h-4a1 1 0 00-1 1v1z'/></svg>";
       trashBtn.addEventListener("click", (event) => {
         event.stopPropagation();
-        archiveTask(task.id);
+        deleteTask(task.id);
       });
       actions.appendChild(runBtn);
       actions.appendChild(stopBtn);
@@ -1459,13 +1459,13 @@
   async function deleteTask(taskId) {
     const task = taskId ? state.tasks.find((t) => t.id === taskId) : selectedTask();
     if (!task) return;
-    const ok = window.confirm(`Permanently delete workspace ${task.id}? This removes the workspace and task metadata.`);
+    const ok = window.confirm(`Delete workspace ${task.id}? This removes the workspace and task metadata and cannot be undone.`);
     if (!ok) return;
     setBusy(true);
     try {
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" });
       setOutput("delete", payload);
-      setPublishFeedback(`Purged ${task.id}.`, "ok");
+      setPublishFeedback(`Deleted ${task.id}.`, "ok");
       if (task.id === state.selectedId) state.selectedId = "";
       await loadTasks({ keepSelection: false });
     } finally {

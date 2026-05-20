@@ -312,3 +312,71 @@ async def test_sentinel_does_not_auto_resume_repeated_no_tool_call_failures(monk
     assert result["summary"]["coding"]["attention"] == 1
     assert result["summary"]["coding"]["actions"] == 0
     assert resumed == []
+
+
+@pytest.mark.asyncio
+async def test_sentinel_analyzes_pending_archived_workspace_and_records_purge(monkeypatch, tmp_path):
+    _sentinel_events(tmp_path, monkeypatch)
+    monkeypatch.setattr(sentinel_runtime, "_now", lambda: 1_700_000_000)
+
+    archive_item = {
+        "archive_id": "code_abcdef123456.1700000000.deadbeef",
+        "task_id": "code_abcdef123456",
+        "prompt": "Scheduled tasks in the Scheduled Tasks UI have an Edit button that does nothing. Fix it so it works!",
+        "paths": {"workspace": "/tmp/archive-workspace"},
+        "analysis": {"requested_mode": "immediate", "target": "local", "status": "pending", "local_model": "coder"},
+        "retention": {"preserve": False, "delete_after_ts": 1_800_000_000},
+    }
+    appended = []
+
+    coding_workspace = types.SimpleNamespace(
+        cleanup_archived_tasks=lambda **_: {
+            "count": 1,
+            "purged": [
+                {
+                    "archive_id": "code_old.1700000000.deadbeef",
+                    "task_id": "code_old",
+                    "workspace_path": "/tmp/old-workspace",
+                    "removed": ["/tmp/old-workspace"],
+                }
+            ],
+        },
+        list_archived_tasks=lambda **_: [archive_item],
+        get_archived_task=lambda archive_id: archive_item,
+        mark_archived_analysis=lambda archive_id, **kwargs: archive_item,
+        inspect_archived_task=lambda archive_id, max_diff_chars=12000: {
+            "archive": archive_item,
+            "task": {
+                "prompt": archive_item["prompt"],
+                "agent_events": [{"type": "failed", "summary": "workspace claimed success with placeholder changes"}],
+                "commands": [{"argv": ["npm", "test"], "ok": True}],
+            },
+            "diff": {"stat": " services/gateway/package.json | 5 +++++", "diff": "+{\"scripts\":{\"test\":\"vitest\"}}\n+function editSelectedTask() { /* Add logic to edit task */ }"},
+            "heuristics": [{"summary": "The archived diff added placeholder or stub text instead of a concrete implementation.", "evidence": ["Add logic to edit task"]}],
+        },
+        append_archived_finding=lambda archive_id, entry: appended.append((archive_id, entry)) or archive_item,
+    )
+
+    monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+    monkeypatch.setattr(
+        sentinel_runtime,
+        "_call_archive_analysis_model",
+        lambda **_: pytest.MonkeyPatch().context,
+    )
+
+    async def _fake_call_archive_analysis_model(**_: object):
+        return ("The workspace fabricated a package manifest and left placeholder logic in tasks.js.", "local_vllm", "unsloth/Qwen3-30B-A3B-FP8")
+
+    monkeypatch.setattr(sentinel_runtime, "_call_archive_analysis_model", _fake_call_archive_analysis_model)
+
+    with sentinel_runtime._connect() as conn:
+        summary = await sentinel_runtime._monitor_archived_workspaces({}, conn, now=1_700_000_000, resources_summary={"resource_pressure": 0, "queue_pressure": 0})
+
+    assert summary["analyzed"] == 1
+    assert summary["purged"] == 1
+    assert appended and appended[0][0] == archive_item["archive_id"]
+    events = sentinel_runtime.list_events(limit=20, category="archives")
+    kinds = {(item["category"], item["event_type"]) for item in events}
+    assert ("archives", "purged") in kinds
+    assert ("archives", "analysis_completed") in kinds

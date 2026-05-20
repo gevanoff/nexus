@@ -57,6 +57,16 @@
       .recurring-list { display:flex; flex-direction:column; gap:8px; }
       .recurring-item { border:1px solid rgba(231,237,246,0.08); border-radius:8px; background: rgba(10,16,24,0.52); padding:10px; }
       .filters { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+      .archive-list { display:flex; flex-direction:column; gap:10px; }
+      .archive-card { border:1px solid rgba(231,237,246,0.10); border-radius:8px; background: rgba(10,16,24,0.62); padding:12px; }
+      .archive-title { font-weight:650; }
+      .archive-paths, .archive-findings { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+      .archive-path { font-size:12px; color: var(--muted); word-break:break-all; }
+      .archive-controls { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:8px; margin-top:10px; }
+      .archive-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+      .archive-finding { border-top:1px solid rgba(231,237,246,0.08); padding-top:8px; }
+      .archive-empty { color: var(--muted); font-size:12px; }
+      label.control { display:flex; flex-direction:column; gap:6px; font-size:12px; color: var(--muted); }
       select, button { font: inherit; }
       select, button {
         padding: 8px 10px;
@@ -65,10 +75,12 @@
         background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95));
         color: var(--text);
       }
+      input[type="checkbox"] { accent-color: var(--accent); }
       button { cursor: pointer; }
       button:hover { border-color: rgba(111,184,255,0.44); }
       @media (max-width: 980px) {
         .layout, .meta-grid { grid-template-columns: 1fr; }
+        .archive-controls { grid-template-columns: 1fr; }
       }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
@@ -111,6 +123,7 @@
               <select id="categoryFilter">
                 <option value="">All categories</option>
                 <option value="coding">Coding</option>
+                <option value="archives">Archives</option>
                 <option value="scheduled_tasks">Scheduled Tasks</option>
                 <option value="resources">Resources</option>
               </select>
@@ -125,10 +138,18 @@
           <div id="events" class="event-list"></div>
         </section>
       </div>
+
+      <section class="card" style="margin-top:12px;">
+        <div class="row" style="justify-content:space-between; margin-bottom:10px;">
+          <h2>Archived Workspaces</h2>
+          <div class="hint">Filesystem paths, retention, findings log, and Sentinel follow-up controls.</div>
+        </div>
+        <div id="archives" class="archive-list"></div>
+      </section>
     </main>
 
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/sentinel.js?v=1"></script>
+    <script src="/static/sentinel.js?v=2"></script>
   </body>
 </html>

@@ -348,11 +348,323 @@ def recurring_issues(*, limit: int = 20, since_sec: int = 7 * 24 * 3600) -> List
 
 
 def status_payload(*, limit: int = 120) -> Dict[str, Any]:
+    archives: List[Dict[str, Any]] = []
+    archive_model_choices: List[str] = []
+    try:
+        from app import coding_workspace
+
+        archives = coding_workspace.list_archived_tasks(limit=120)
+    except Exception:
+        archives = []
+    try:
+        from app.model_aliases import get_aliases
+
+        archive_model_choices = sorted(get_aliases().keys())
+    except Exception:
+        archive_model_choices = []
     return {
         "runtime": dict(_RUNTIME_STATUS),
         "events": list_events(limit=limit),
         "recurring": recurring_issues(),
+        "archives": archives,
+        "archive_model_choices": archive_model_choices,
     }
+
+
+def _archive_analysis_should_wait_for_idle(resources_summary: Dict[str, Any]) -> bool:
+    return bool(
+        int(resources_summary.get("resource_pressure") or 0) > 0
+        or int(resources_summary.get("queue_pressure") or 0) > 0
+    )
+
+
+def _archive_heuristics_text(items: List[Dict[str, Any]]) -> str:
+    lines: List[str] = []
+    for item in items[:8]:
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary") or "").strip()
+        if not summary:
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
+        bits = [f"- {summary}"]
+        if evidence:
+            bits.append("  Evidence: " + " | ".join(str(entry) for entry in evidence[:3]))
+        lines.append("\n".join(bits))
+    return "\n".join(lines)
+
+
+def _archive_event_lines(events: List[Dict[str, Any]]) -> str:
+    lines: List[str] = []
+    for item in events[:10]:
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary") or item.get("error") or item.get("content") or "").strip()
+        if not summary:
+            continue
+        event_type = str(item.get("type") or "event")
+        lines.append(f"- {event_type}: {summary[:240]}")
+    return "\n".join(lines)
+
+
+def _archive_analysis_prompt(snapshot: Dict[str, Any]) -> str:
+    archive = snapshot.get("archive") if isinstance(snapshot.get("archive"), dict) else {}
+    task = snapshot.get("task") if isinstance(snapshot.get("task"), dict) else {}
+    diff = snapshot.get("diff") if isinstance(snapshot.get("diff"), dict) else {}
+    heuristics = snapshot.get("heuristics") if isinstance(snapshot.get("heuristics"), list) else []
+    recent_events = task.get("agent_events") if isinstance(task.get("agent_events"), list) else []
+    commands = task.get("commands") if isinstance(task.get("commands"), list) else []
+    command_lines: List[str] = []
+    for item in commands[-8:]:
+        if not isinstance(item, dict):
+            continue
+        argv = item.get("argv") if isinstance(item.get("argv"), list) else []
+        command_lines.append(f"- {' '.join(str(part) for part in argv)} | ok={bool(item.get('ok'))}")
+    return (
+        "Analyze this archived Nexus coding workspace failure. Focus on root cause, fabricated validation, placeholder edits, and the smallest real fix. "
+        "Cite concrete evidence from the archived diff, commands, and agent events. End with a short guardrail recommendation.\n\n"
+        f"Archive id: {archive.get('archive_id') or ''}\n"
+        f"Task id: {archive.get('task_id') or ''}\n"
+        f"Original prompt: {task.get('prompt') or ''}\n"
+        f"Repo URL: {archive.get('repo_url') or ''}\n"
+        f"Base branch: {task.get('base_branch') or ''}\n"
+        f"Workspace path: {((archive.get('paths') or {}).get('workspace') if isinstance(archive.get('paths'), dict) else '') or ''}\n"
+        f"Heuristic findings:\n{_archive_heuristics_text(heuristics) or '- none'}\n\n"
+        f"Recent agent events:\n{_archive_event_lines(recent_events) or '- none'}\n\n"
+        f"Recent commands:\n{'\n'.join(command_lines) or '- none'}\n\n"
+        f"Diff stat:\n{str(diff.get('stat') or '')[:4000]}\n\n"
+        f"Diff excerpt:\n{str(diff.get('diff') or '')[:12000]}"
+    )
+
+
+def _assistant_text(resp: Dict[str, Any]) -> str:
+    msg = ((resp.get("choices") or [{}])[0].get("message") or {})
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except Exception:
+        return str(content)
+
+
+async def _call_archive_analysis_model(*, request_model: str, prompt: str) -> tuple[str, str, str]:
+    from app.backends import check_capability, get_registry
+    from app.health_checker import check_backend_ready
+    from app.models import ChatCompletionRequest, ChatMessage
+    from app.router import decide_route
+    from app.router_cfg import router_cfg
+    from app.upstreams import call_backend_chat
+
+    messages = [
+        ChatMessage(
+            role="system",
+            content=(
+                "You are Nexus Sentinel analyzing an archived coding workspace failure. "
+                "Be concrete, evidence-based, and concise."
+            ),
+        ),
+        ChatMessage(role="user", content=prompt),
+    ]
+    route = decide_route(
+        cfg=router_cfg(),
+        request_model=request_model,
+        headers={"x-request-type": "coding"},
+        messages=[message.model_dump(exclude_none=True) for message in messages],
+        has_tools=False,
+        enable_policy=False,
+    )
+    backend = route.backend
+    upstream_model = route.model
+    registry = get_registry()
+    backend_class = registry.resolve_backend_class(backend)
+    check_backend_ready(backend_class, route_kind="chat")
+    await check_capability(backend_class, "chat")
+    admission = get_admission_controller()
+    await admission.acquire(backend_class, "chat")
+    try:
+        resp = await call_backend_chat(
+            ChatCompletionRequest(model=request_model, messages=messages, stream=False),
+            backend,
+            upstream_model,
+        )
+    finally:
+        admission.release(backend_class, "chat")
+    return _assistant_text(resp), backend_class, upstream_model
+
+
+async def _run_archived_local_analysis(archive_id: str) -> Dict[str, Any]:
+    from app import coding_workspace
+
+    started = _now()
+    archive = coding_workspace.get_archived_task(archive_id)
+    analysis = archive.get("analysis") if isinstance(archive.get("analysis"), dict) else {}
+    model_name = str(analysis.get("local_model") or "coder").strip() or "coder"
+    coding_workspace.mark_archived_analysis(archive_id, status="running", started_at=started, summary="Sentinel local archive analysis started.")
+    snapshot = coding_workspace.inspect_archived_task(
+        archive_id,
+        max_diff_chars=max(2000, int(getattr(S, "NEXUS_SENTINEL_ARCHIVE_ANALYSIS_MAX_DIFF_CHARS", 12000) or 12000)),
+    )
+    heuristics = snapshot.get("heuristics") if isinstance(snapshot.get("heuristics"), list) else []
+    heuristic_text = _archive_heuristics_text(heuristics)
+    local_text = ""
+    backend = ""
+    upstream_model = ""
+    error_text = ""
+    try:
+        local_text, backend, upstream_model = await _call_archive_analysis_model(
+            request_model=model_name,
+            prompt=_archive_analysis_prompt(snapshot),
+        )
+    except Exception as exc:
+        error_text = f"{type(exc).__name__}: {exc}"
+
+    combined = []
+    if heuristic_text:
+        combined.append("Static findings:\n" + heuristic_text)
+    if local_text:
+        combined.append(f"Local model analysis ({model_name}, backend={backend}, upstream={upstream_model}):\n{local_text}")
+    elif error_text:
+        combined.append(f"Local model analysis unavailable for {model_name}: {error_text}")
+    summary = heuristics[0].get("summary") if heuristics and isinstance(heuristics[0], dict) else (local_text.splitlines()[0] if local_text else "Archived workspace analysis recorded.")
+    coding_workspace.append_archived_finding(
+        archive_id,
+        entry={
+            "ts": _now(),
+            "kind": "sentinel_archive_analysis",
+            "actor": "nexus-sentinel",
+            "status": "completed" if combined else "failed",
+            "summary": str(summary or "Archived workspace analysis recorded.")[:2000],
+            "text": "\n\n".join(part for part in combined if part),
+            "heuristics": heuristics,
+            "analysis_model": model_name,
+            "backend": backend,
+            "upstream_model": upstream_model,
+            "error": error_text,
+        },
+    )
+    return {
+        "ok": bool(combined),
+        "summary": str(summary or "Archived workspace analysis recorded."),
+        "analysis_model": model_name,
+        "backend": backend,
+        "upstream_model": upstream_model,
+        "error": error_text,
+    }
+
+
+async def _monitor_archived_workspaces(
+    state: Dict[str, Any],
+    conn: sqlite3.Connection,
+    *,
+    now: int,
+    resources_summary: Dict[str, Any],
+) -> Dict[str, Any]:
+    from app import coding_workspace
+
+    if not hasattr(coding_workspace, "list_archived_tasks") or not hasattr(coding_workspace, "cleanup_archived_tasks"):
+        return {"total": 0, "pending": 0, "analyzed": 0, "purged": 0, "preserved": 0}
+
+    cleanup = coding_workspace.cleanup_archived_tasks(now=now)
+    purged = cleanup.get("purged") if isinstance(cleanup.get("purged"), list) else []
+    for item in purged:
+        if not isinstance(item, dict):
+            continue
+        archive_id = str(item.get("archive_id") or "")
+        _record_event(
+            conn,
+            ts=now,
+            level="info",
+            category="archives",
+            event_type="purged",
+            subject_type="archived_coding_task",
+            subject_id=archive_id,
+            title=f"Archived workspace purged: {archive_id}",
+            summary="Archived workspace was deleted after reaching its retention threshold.",
+            reasoning=f"Workspace path: {item.get('workspace_path') or 'missing'}",
+            dedupe_key=f"archive:{archive_id}:purged",
+            fingerprint=_fingerprint(item),
+            details=item,
+        )
+
+    items = coding_workspace.list_archived_tasks(limit=200)
+    summary = {
+        "total": len(items),
+        "pending": 0,
+        "analyzed": 0,
+        "purged": len(purged),
+        "preserved": 0,
+    }
+    wait_for_idle = _archive_analysis_should_wait_for_idle(resources_summary)
+    previous_active = state.get("archived_analysis_active") if isinstance(state.get("archived_analysis_active"), dict) else {}
+    current_active: Dict[str, Any] = {}
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        archive_id = str(item.get("archive_id") or "").strip()
+        if not archive_id:
+            continue
+        retention = item.get("retention") if isinstance(item.get("retention"), dict) else {}
+        analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+        if bool(retention.get("preserve")):
+            summary["preserved"] += 1
+        target = str(analysis.get("target") or "local").strip().lower()
+        mode = str(analysis.get("requested_mode") or "idle").strip().lower()
+        status = str(analysis.get("status") or "pending").strip().lower()
+        should_run = target == "local" and status == "pending" and mode in {"idle", "immediate"}
+        if not should_run:
+            continue
+        summary["pending"] += 1
+        fingerprint = _fingerprint({"archive_id": archive_id, "target": target, "mode": mode, "status": status, "model": analysis.get("local_model")})
+        current_active[archive_id] = {"fingerprint": fingerprint, "status": status}
+        if mode == "idle" and wait_for_idle:
+            continue
+        result = await _run_archived_local_analysis(archive_id)
+        summary["analyzed"] += 1
+        details = {"archive": item, "result": result}
+        _record_event(
+            conn,
+            ts=now,
+            level="info" if result.get("ok") else "warn",
+            category="archives",
+            event_type="analysis_completed" if result.get("ok") else "analysis_failed",
+            subject_type="archived_coding_task",
+            subject_id=archive_id,
+            title=f"Archived workspace analysis {'completed' if result.get('ok') else 'degraded'}: {archive_id}",
+            summary=str(result.get("summary") or result.get("error") or "Archived workspace analysis finished."),
+            reasoning=(
+                f"Mode: {mode}\n"
+                f"Target: {target}\n"
+                f"Model: {analysis.get('local_model') or 'coder'}\n"
+                f"Workspace: {((item.get('paths') or {}).get('workspace') if isinstance(item.get('paths'), dict) else '') or ''}"
+            ),
+            dedupe_key=f"archive:{archive_id}:analysis",
+            fingerprint=_fingerprint(details),
+            details=details,
+        )
+
+    for archive_id, previous in previous_active.items():
+        if archive_id in current_active:
+            continue
+        _record_event(
+            conn,
+            ts=now,
+            level="info",
+            category="archives",
+            event_type="analysis_queue_resolved",
+            subject_type="archived_coding_task",
+            subject_id=archive_id,
+            title=f"Archived workspace analysis queue cleared: {archive_id}",
+            summary="Previously queued archive analysis no longer needs Sentinel action.",
+            reasoning="The archive is no longer pending local Sentinel analysis in the current monitor pass.",
+            dedupe_key=f"archive:{archive_id}:resolved",
+            fingerprint=str((previous or {}).get("fingerprint") or ""),
+            details={},
+        )
+
+    state["archived_analysis_active"] = current_active
+    return summary
 
 
 def _format_recent_event_lines(events: List[Dict[str, Any]]) -> str:
@@ -968,10 +1280,12 @@ async def run_monitor_once() -> Dict[str, Any]:
     _RUNTIME_STATUS["last_error"] = ""
     with _connect() as conn:
         state = _load_state(conn)
+        resources_summary = await _monitor_resources(state, conn, now=started)
         summary = {
             "coding": await _monitor_coding(state, conn, now=started),
             "scheduled_tasks": _monitor_scheduled_tasks(state, conn, now=started),
-            "resources": await _monitor_resources(state, conn, now=started),
+            "resources": resources_summary,
+            "archives": await _monitor_archived_workspaces(state, conn, now=started, resources_summary=resources_summary),
         }
         _save_state(conn, state)
     finished = _now()
