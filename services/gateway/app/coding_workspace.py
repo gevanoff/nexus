@@ -324,12 +324,27 @@ def _normalize_archive_manifest(manifest: Dict[str, Any], *, manifest_path: Path
 
 
 def _archived_repo_path(manifest: Dict[str, Any], task: Dict[str, Any]) -> Path:
-    workspace = Path(str(manifest.get("workspace_path") or "")).resolve()
     repo_hint = Path(str(task.get("repo_path") or "repo")).name or "repo"
-    for candidate in (workspace.joinpath(repo_hint), workspace.joinpath("repo"), workspace):
-        if candidate.exists():
-            return candidate.resolve()
-    return workspace.joinpath(repo_hint).resolve()
+    candidates: List[Path] = []
+    raw_workspace = str(manifest.get("workspace_path") or "").strip()
+    if raw_workspace:
+        candidates.append(Path(raw_workspace).resolve())
+    archive_id = str(manifest.get("archive_id") or "").strip()
+    if archive_id:
+        candidates.append(_archive_workspace_path(archive_id))
+
+    seen: set[str] = set()
+    for workspace in candidates:
+        key = str(workspace)
+        if key in seen:
+            continue
+        seen.add(key)
+        for candidate in (workspace.joinpath(repo_hint), workspace.joinpath("repo"), workspace):
+            if candidate.exists():
+                return candidate.resolve()
+
+    fallback_workspace = candidates[-1] if candidates else _archive_workspace_path(archive_id)
+    return fallback_workspace.joinpath(repo_hint).resolve()
 
 
 def _archive_diff_snapshot(task: Dict[str, Any], manifest: Dict[str, Any], *, max_diff_chars: int = 12000) -> Dict[str, Any]:

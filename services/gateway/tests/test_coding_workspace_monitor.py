@@ -322,6 +322,24 @@ def test_archive_diff_snapshot_falls_back_to_committed_changes(monkeypatch, tmp_
     assert snapshot["files"][0]["path"] == "services/gateway/package.json"
 
 
+def test_archived_repo_path_falls_back_from_host_manifest_path(monkeypatch, tmp_path):
+    archived_workspace = tmp_path / "workspaces" / "code_abcdef123456.1700000000.deadbeef"
+    repo = archived_workspace / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(cw, "_archive_workspace_path", lambda archive_id: archived_workspace)
+
+    manifest = {
+        "archive_id": "code_abcdef123456.1700000000.deadbeef",
+        "workspace_path": "/Users/ai/ai/nexus/.runtime/gateway/data/coding/archived/workspaces/code_abcdef123456.1700000000.deadbeef",
+    }
+    task = {"repo_path": str(repo)}
+
+    resolved = cw._archived_repo_path(manifest, task)
+
+    assert resolved == repo.resolve()
+
+
 def test_task_monitor_summary_flags_metadata_error_and_blocks_resume(monkeypatch):
     task = _base_task(
         status="error",
