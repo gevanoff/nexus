@@ -273,4 +273,4 @@ fi
 EOS
 )
 
-ssh "${ssh_opts[@]}" "$host" bash -lc "${remote_cmd}" -- "$environment" "$branch" "$REMOTE_REPO_DIR" "$TOPOLOGY_HOST" "${DEPLOY_OPTIONS[@]}"
+ssh "${ssh_opts[@]}" "$host" bash -s -- "$environment" "$branch" "$REMOTE_REPO_DIR" "$TOPOLOGY_HOST" "${DEPLOY_OPTIONS[@]}" <<<"$remote_cmd"
