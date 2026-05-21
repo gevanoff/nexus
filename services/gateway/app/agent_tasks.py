@@ -52,7 +52,23 @@ def _task_metadata_from_row(row: sqlite3.Row) -> dict[str, Any]:
         parsed = json.loads(row["metadata_json"] or "{}")
     except Exception:
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return _normalize_task_metadata(parsed if isinstance(parsed, dict) else {})
+
+
+def _task_is_protected_metadata(metadata: dict[str, Any]) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    if bool(metadata.get("protected")):
+        return True
+    return str(metadata.get("supervisor_kind") or "").strip().lower() == "coding_workspace_supervisor"
+
+
+def _normalize_task_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    out = dict(metadata) if isinstance(metadata, dict) else {}
+    if _task_is_protected_metadata(out):
+        out["protected"] = True
+        out.setdefault("protected_reason", "Protected supervisor task. You can pause, resume, and edit it, but not cancel or manually queue it.")
+    return out
 
 
 def _update_task_metadata_row(task_id: str, metadata: dict[str, Any], *, now: int | None = None) -> None:
@@ -224,13 +240,7 @@ def _min_delay_sec() -> int:
 
 
 def _task_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
-    meta: dict[str, Any] = {}
-    try:
-        parsed = json.loads(row["metadata_json"] or "{}")
-        if isinstance(parsed, dict):
-            meta = parsed
-    except Exception:
-        meta = {}
+    meta = _task_metadata_from_row(row)
     return {
         "id": row["id"],
         "title": row["title"],
@@ -323,7 +333,7 @@ def create_task(args: dict[str, Any]) -> dict[str, Any]:
     if next_run_ts < min_due:
         next_run_ts = min_due
 
-    metadata = args.get("metadata") if isinstance(args.get("metadata"), dict) else {}
+    metadata = _normalize_task_metadata(args.get("metadata") if isinstance(args.get("metadata"), dict) else {})
     task_id = new_id("task")
     with _connect() as conn:
         conn.execute(
@@ -448,6 +458,11 @@ def cancel_task(args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "id must be a non-empty string"}
     now = _now()
     with _connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        if row is None:
+            return {"ok": False, "error": "task not found"}
+        if _task_is_protected_metadata(_task_metadata_from_row(row)):
+            return {"ok": False, "error": "protected tasks cannot be cancelled"}
         cur = conn.execute(
             "UPDATE agent_tasks SET status='cancelled', next_run_ts=NULL, updated_ts=? WHERE id=? AND status NOT IN ('completed','cancelled')",
             (now, task_id.strip()),
@@ -542,6 +557,7 @@ def update_task_metadata(args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "id must be a non-empty string"}
     if not isinstance(metadata, dict):
         return {"ok": False, "error": "metadata must be an object"}
+    metadata = _normalize_task_metadata(metadata)
 
     now = _now()
     with _connect() as conn:
@@ -570,6 +586,8 @@ def run_task_now(args: dict[str, Any]) -> dict[str, Any]:
         current = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
         if current is None:
             return {"ok": False, "error": "task not found"}
+        if _task_is_protected_metadata(_task_metadata_from_row(current)):
+            return {"ok": False, "error": "protected tasks cannot be queued manually"}
         if str(current["status"] or "") == "running":
             return {"ok": False, "error": "task is already running"}
 
@@ -585,6 +603,38 @@ def run_task_now(args: dict[str, Any]) -> dict[str, Any]:
     if row is None:
         return {"ok": False, "error": "task not found"}
     return {"ok": True, "queued": cur.rowcount > 0, "task": _task_row_to_dict(row)}
+
+
+def update_task_prompt(args: dict[str, Any]) -> dict[str, Any]:
+    init_db()
+    task_id = args.get("id")
+    prompt = args.get("prompt")
+    if not isinstance(task_id, str) or not task_id.strip():
+        return {"ok": False, "error": "id must be a non-empty string"}
+    if not isinstance(prompt, str) or not prompt.strip():
+        return {"ok": False, "error": "prompt must be a non-empty string"}
+    prompt = prompt.strip()
+    if len(prompt) > 20_000:
+        return {"ok": False, "error": "prompt is too long"}
+
+    now = _now()
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+        if row is None:
+            return {"ok": False, "error": "task not found"}
+        current_prompt = str(row["prompt"] or "")
+        current_title = str(row["title"] or "")
+        next_title = current_title
+        if current_title == current_prompt[:80]:
+            next_title = prompt[:80]
+        conn.execute(
+            "UPDATE agent_tasks SET prompt=?, title=?, updated_ts=? WHERE id=?",
+            (prompt, next_title, now, task_id.strip()),
+        )
+        updated = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id.strip(),)).fetchone()
+    if updated is None:
+        return {"ok": False, "error": "task not found"}
+    return {"ok": True, "task": _task_row_to_dict(updated)}
 
 
 @dataclass(frozen=True)

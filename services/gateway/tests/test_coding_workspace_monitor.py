@@ -250,6 +250,41 @@ def test_archived_task_settings_list_and_cleanup(monkeypatch, tmp_path):
     assert cw.list_archived_tasks(limit=10) == []
 
 
+def test_archived_finding_review_marks_visible_finding(monkeypatch, tmp_path):
+    task = _base_task(
+        workspace_path=str(tmp_path / "workspaces" / "code_abcdef123456"),
+        repo_path=str(tmp_path / "workspaces" / "code_abcdef123456" / "repo"),
+    )
+
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path / "tasks")
+    monkeypatch.setattr(cw, "workspace_root", lambda: tmp_path / "workspaces")
+
+    repo = Path(task["repo_path"])
+    repo.mkdir(parents=True, exist_ok=True)
+    repo.joinpath("README.md").write_text("hello\n", encoding="utf-8")
+
+    cw.save_task(task)
+    archived = cw.archive_task(task["id"], actor="tester", reason="forensics")
+    archive_id = archived["archive_id"]
+    cw.append_archived_finding(
+        archive_id,
+        entry={"ts": 1234, "kind": "sentinel_archive_analysis", "status": "completed", "summary": "Original finding"},
+    )
+
+    reviewed = cw.review_archived_finding(
+        archive_id,
+        finding_ts=1234,
+        verdict="superseded",
+        note="Replaced by a newer analysis",
+        actor="tester",
+    )
+
+    assert reviewed["findings"][0]["summary"] == "Original finding"
+    assert reviewed["findings"][0]["review"]["verdict"] == "superseded"
+    assert reviewed["findings"][0]["review"]["note"] == "Replaced by a newer analysis"
+
+
 def test_inspect_archived_task_uses_committed_diff_when_workspace_is_clean(monkeypatch, tmp_path):
     task = _base_task(
         prompt="Scheduled tasks in the Scheduled Tasks UI have an Edit button that does nothing. Fix it so it works!",

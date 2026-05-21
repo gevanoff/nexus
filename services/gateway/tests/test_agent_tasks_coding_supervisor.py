@@ -53,6 +53,33 @@ def test_scheduled_prompt_includes_preface(tmp_path, monkeypatch):
     assert prompt.startswith("Automatic preface\n\nA scheduled Nexus agent task is due.")
 
 
+def test_coding_supervisor_tasks_are_protected(tmp_path, monkeypatch):
+    db_path = tmp_path / "tasks.sqlite"
+    monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    agent_tasks.init_db()
+    _insert_task({"supervisor_kind": "coding_workspace_supervisor"})
+
+    task = agent_tasks.get_task({"id": "task-supervisor"})["task"]
+
+    assert task["metadata"]["protected"] is True
+    assert "Protected supervisor task" in task["metadata"]["protected_reason"]
+
+
+def test_coding_supervisor_cannot_be_cancelled_or_run_manually(tmp_path, monkeypatch):
+    db_path = tmp_path / "tasks.sqlite"
+    monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    agent_tasks.init_db()
+    _insert_task({"supervisor_kind": "coding_workspace_supervisor"})
+
+    cancel = agent_tasks.cancel_task({"id": "task-supervisor"})
+    run_now = agent_tasks.run_task_now({"id": "task-supervisor"})
+
+    assert cancel["ok"] is False
+    assert "protected" in cancel["error"]
+    assert run_now["ok"] is False
+    assert "protected" in run_now["error"]
+
+
 @pytest.mark.asyncio
 async def test_auto_recover_coding_supervisor_resumes_stopped_task(monkeypatch, tmp_path):
     db_path = tmp_path / "tasks.sqlite"

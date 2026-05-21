@@ -8,8 +8,9 @@ def test_coding_ui_trash_button_deletes_not_archives():
 
     assert 'trashBtn.title = "Delete workspace"' in source
     assert 'trashBtn.setAttribute("aria-label", "Delete workspace")' in source
+    assert 'archiveBtn.title = "Archive workspace for forensics"' in source
+    assert 'archiveTask(task.id);' in source
     assert 'deleteTask(task.id);' in source
-    assert 'Archive workspace for forensics' not in source
 
 
 def test_sentinel_ui_lists_archives_and_actions():
@@ -21,4 +22,9 @@ def test_sentinel_ui_lists_archives_and_actions():
     assert 'category="archives"' not in js
     assert 'Analyze now' in js
     assert 'Erase archive' in js
+    assert 'Human follow-up' in js
+    assert 'Flag for external agent' in js
+    assert 'Mark superseded' in js
+    assert 'Mark invalid' in js
+    assert 'Analysis target' not in js
     assert 'Retention: delete after' in js

@@ -517,6 +517,16 @@
       stopBtn.disabled = state.busy || !agentIsActive(task);
       stopBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M7 5h4v14H7V5zm6 0h4v14h-4V5z'/></svg>";
       stopBtn.addEventListener("click", (event) => runTaskButtonAction(event, () => stopAgentRun(task.id)));
+      const archiveBtn = document.createElement("button");
+      archiveBtn.type = "button";
+      archiveBtn.className = "task-icon-btn task-archive-btn";
+      archiveBtn.title = "Archive workspace for forensics";
+      archiveBtn.setAttribute("aria-label", "Archive workspace for forensics");
+      archiveBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M4 4h16v4H4V4zm1 6h14v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9zm4 2v2h6v-2H9z'/></svg>";
+      archiveBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        archiveTask(task.id);
+      });
       const trashBtn = document.createElement("button");
       trashBtn.type = "button";
       trashBtn.className = "task-icon-btn task-delete-btn";
@@ -529,6 +539,7 @@
       });
       actions.appendChild(runBtn);
       actions.appendChild(stopBtn);
+      actions.appendChild(archiveBtn);
       actions.appendChild(trashBtn);
       button.appendChild(actions);
       button.addEventListener("click", () => selectTask(task.id));

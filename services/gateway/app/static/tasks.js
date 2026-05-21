@@ -44,6 +44,8 @@
     closeTaskEditModal: document.getElementById("closeTaskEditModal"),
     cancelTaskEdit: document.getElementById("cancelTaskEdit"),
     saveTaskEdit: document.getElementById("saveTaskEdit"),
+    taskEditPromptSection: document.getElementById("taskEditPromptSection"),
+    taskEditPrompt: document.getElementById("taskEditPrompt"),
     taskEditToolsSection: document.getElementById("taskEditToolsSection"),
     taskEditTools: document.getElementById("taskEditTools"),
     taskEditModelSection: document.getElementById("taskEditModelSection"),
@@ -225,6 +227,7 @@
       badges.appendChild(statusBadge(task.status));
       badges.appendChild(badge(`${task.run_count || 0} run${Number(task.run_count || 0) === 1 ? "" : "s"}`, task.last_ok ? "ok" : ""));
       if (task.last_ok === false) badges.appendChild(badge("last failed", "error"));
+      if (taskProtected(task)) badges.appendChild(badge("Protected", "enabled"));
       btn.appendChild(title);
       btn.appendChild(meta);
       btn.appendChild(badges);
@@ -242,11 +245,18 @@
       if (els.cancelTask) els.cancelTask.disabled = true;
       return;
     }
+    const protectedTask = taskProtected(task);
     if (els.detailEmpty) els.detailEmpty.hidden = true;
     if (els.detail) els.detail.hidden = false;
     if (els.editTask) els.editTask.disabled = false;
-    if (els.runNowTask) els.runNowTask.disabled = ["running"].includes(String(task.status));
-    if (els.cancelTask) els.cancelTask.disabled = ["completed", "cancelled"].includes(String(task.status));
+    if (els.runNowTask) {
+      els.runNowTask.disabled = protectedTask || ["running"].includes(String(task.status));
+      els.runNowTask.title = protectedTask ? taskProtectedReason(task) : "";
+    }
+    if (els.cancelTask) {
+      els.cancelTask.disabled = protectedTask || ["completed", "cancelled"].includes(String(task.status));
+      els.cancelTask.title = protectedTask ? taskProtectedReason(task) : "";
+    }
     if (els.detailTitle) els.detailTitle.textContent = task.title || task.id;
     if (els.detailMeta) {
       const meta = task.metadata || {};
@@ -267,6 +277,7 @@
       }
       if (task.next_run_ts) els.detailBadges.appendChild(badgeButton(`next ${fmtTs(task.next_run_ts)}`, "enabled", editSelectedNextRun, "Edit next run time"));
       if (task.max_runs) els.detailBadges.appendChild(badge(`max ${task.max_runs}`));
+      if (protectedTask) els.detailBadges.appendChild(badge("Protected", "enabled"));
       const modelId = canonicalizeTaskModelId(String(task.metadata?.model || "default"));
       const modelEntry = (state.models || []).find((item) => String(item?.id || "") === modelId);
       els.detailBadges.appendChild(badgeButton(modelOptionLabel(modelEntry) || modelId, "", editSelectedModel, "Edit task model"));
@@ -334,21 +345,35 @@
   function closeTaskEditModal() {
     state.taskEdit = null;
     if (els.taskEditModal) els.taskEditModal.hidden = true;
+    if (els.taskEditPromptSection) els.taskEditPromptSection.hidden = true;
     if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = true;
     if (els.taskEditModelSection) els.taskEditModelSection.hidden = true;
   }
 
   function openTaskEditModal(config) {
     state.taskEdit = config;
+    const showPrompt = config.mode === "task";
     const showTools = config.mode === "tools" || config.mode === "task";
     const showModel = config.mode === "model" || config.mode === "task";
     if (els.taskEditTitle) els.taskEditTitle.textContent = config.title || "Edit task";
     if (els.taskEditHint) els.taskEditHint.textContent = config.hint || "";
+    if (els.taskEditPromptSection) els.taskEditPromptSection.hidden = !showPrompt;
     if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = !showTools;
     if (els.taskEditModelSection) els.taskEditModelSection.hidden = !showModel;
+    if (showPrompt && els.taskEditPrompt) els.taskEditPrompt.value = config.prompt || "";
     if (showTools) renderToolList(els.taskEditTools, config.tier, config.selectedTools || []);
     if (showModel) populateModelSelect(els.taskEditModel, config.model || "default");
     if (els.taskEditModal) els.taskEditModal.hidden = false;
+  }
+
+  function taskProtected(task) {
+    const meta = task?.metadata || {};
+    return Boolean(meta.protected) || String(meta.supervisor_kind || "").trim().toLowerCase() === "coding_workspace_supervisor";
+  }
+
+  function taskProtectedReason(task) {
+    const meta = task?.metadata || {};
+    return String(meta.protected_reason || "Protected supervisor task. You can pause, resume, and edit it, but not cancel or manually queue it.");
   }
 
   function parseUserRunAtInput(raw) {
@@ -638,10 +663,13 @@
     openTaskEditModal({
       mode: "task",
       title: "Edit task settings",
-      hint: "Update the model and tool access for future runs. Use the next-run badge to edit the schedule timestamp directly.",
+      hint: taskProtected(task)
+        ? `${taskProtectedReason(task)} Use the next-run badge to edit the schedule timestamp directly.`
+        : "Update the prompt, model, and tool access for future runs. Use the next-run badge to edit the schedule timestamp directly.",
       tier: Number(meta.tier || 0),
       selectedTools: Array.isArray(meta.tools) ? meta.tools : [],
       model: String(meta.model || "default"),
+      prompt: String(task?.prompt || ""),
     });
   }
 
@@ -677,13 +705,16 @@
     if (state.taskEdit.mode === "task") {
       const task = state.tasks.find((item) => item.id === state.selectedId);
       const meta = task?.metadata || {};
+      const nextPrompt = String(els.taskEditPrompt?.value || "").trim();
       const nextModel = String(els.taskEditModel?.value || "").trim();
       const nextTools = selectedModalTools();
+      const currentPrompt = String(task?.prompt || "").trim();
       const currentModel = String(meta.model || "default").trim() || "default";
       const currentTools = Array.isArray(meta.tools) ? meta.tools : [];
+      const promptChanged = Boolean(nextPrompt) && nextPrompt !== currentPrompt;
       const modelChanged = Boolean(nextModel) && nextModel !== currentModel;
       const toolsChanged = JSON.stringify(nextTools) !== JSON.stringify(currentTools);
-      if (!modelChanged && !toolsChanged) {
+      if (!promptChanged && !modelChanged && !toolsChanged) {
         closeTaskEditModal();
         setStatus("No task settings changed.");
         return;
@@ -691,6 +722,16 @@
       try {
         setStatus("Updating task settings...");
         let latestTask = task;
+        if (promptChanged) {
+          const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/prompt`, {
+            method: "POST",
+            body: JSON.stringify({ prompt: nextPrompt }),
+          });
+          if (payload.task) {
+            updateTaskInState(payload.task);
+            latestTask = payload.task;
+          }
+        }
         if (modelChanged) {
           const payload = await fetchJson(`/ui/api/agent-tasks/${encodeURIComponent(state.selectedId)}/model`, {
             method: "POST",

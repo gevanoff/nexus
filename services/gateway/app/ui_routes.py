@@ -76,6 +76,12 @@ class SentinelArchiveUpdateRequest(BaseModel):
     analysis_target: Optional[Literal["local", "external", "human", "none"]] = None
     analysis_model: Optional[str] = None
 
+
+class SentinelArchiveFindingReviewRequest(BaseModel):
+    finding_ts: float
+    verdict: Literal["invalid", "superseded"]
+    note: Optional[str] = None
+
 _UI_MODELS_CACHE_LOCK = asyncio.Lock()
 _UI_MODELS_CACHE_VALUE: Optional[Dict[str, Any]] = None
 _UI_MODELS_CACHE_EXPIRES_AT: float = 0.0
@@ -2227,6 +2233,18 @@ def _require_task_visible(task: Dict[str, Any], user: Optional[user_store.User])
         raise HTTPException(status_code=404, detail="task not found")
 
 
+def _task_is_protected(task: Dict[str, Any]) -> bool:
+    meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    if bool(meta.get("protected")):
+        return True
+    return str(meta.get("supervisor_kind") or "").strip().lower() == "coding_workspace_supervisor"
+
+
+def _task_protected_reason(task: Dict[str, Any]) -> str:
+    meta = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    return str(meta.get("protected_reason") or "Protected tasks can be paused and edited, but not cancelled or manually queued.").strip()
+
+
 def _tool_tier(name: str) -> int:
     for tier in (0, 1, 2):
         if name in tools_for_tier(tier):
@@ -2517,6 +2535,8 @@ async def ui_api_agent_tasks_cancel(req: Request, task_id: str) -> Dict[str, Any
         raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
     task = current.get("task") if isinstance(current.get("task"), dict) else {}
     _require_task_visible(task, user)
+    if _task_is_protected(task):
+        raise HTTPException(status_code=403, detail=_task_protected_reason(task))
     payload = agent_tasks.cancel_task({"id": task_id})
     if not payload.get("ok"):
         raise HTTPException(status_code=400, detail=payload.get("error") or "failed to cancel task")
@@ -2532,6 +2552,8 @@ async def ui_api_agent_tasks_run_now(req: Request, task_id: str) -> Dict[str, An
         raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
     task = current.get("task") if isinstance(current.get("task"), dict) else {}
     _require_task_visible(task, user)
+    if _task_is_protected(task):
+        raise HTTPException(status_code=403, detail=_task_protected_reason(task))
     payload = agent_tasks.run_task_now({"id": task_id})
     if not payload.get("ok"):
         raise HTTPException(status_code=400, detail=payload.get("error") or "failed to queue task")
@@ -2640,6 +2662,27 @@ async def ui_api_agent_tasks_update_model(req: Request, task_id: str) -> Dict[st
     payload = agent_tasks.update_task_metadata({"id": task_id, "metadata": updated_meta})
     if not payload.get("ok"):
         raise HTTPException(status_code=400, detail=payload.get("error") or "failed to update task model")
+    return payload
+
+
+@router.post("/ui/api/agent-tasks/{task_id}/prompt", include_in_schema=False)
+async def ui_api_agent_tasks_update_prompt(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    current = agent_tasks.get_task({"id": task_id})
+    if not current.get("ok"):
+        raise HTTPException(status_code=404, detail=current.get("error") or "task not found")
+    task = current.get("task") if isinstance(current.get("task"), dict) else {}
+    _require_task_visible(task, user)
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    payload = agent_tasks.update_task_prompt({"id": task_id, "prompt": prompt})
+    if not payload.get("ok"):
+        raise HTTPException(status_code=400, detail=payload.get("error") or "failed to update task prompt")
     return payload
 
 
@@ -5016,6 +5059,20 @@ async def ui_api_sentinel_archive_update(req: Request, archive_id: str, body: Se
         analysis_mode=body.analysis_mode,
         analysis_target=body.analysis_target,
         analysis_model=body.analysis_model,
+    )
+    return {"ok": True, "archive": archive}
+
+
+@router.post("/ui/api/sentinel/archives/{archive_id}/findings/review", include_in_schema=False)
+async def ui_api_sentinel_archive_finding_review(req: Request, archive_id: str, body: SentinelArchiveFindingReviewRequest) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_admin(req)
+    archive = cw.review_archived_finding(
+        archive_id,
+        finding_ts=body.finding_ts,
+        verdict=body.verdict,
+        note=body.note or "",
+        actor=str(getattr(user, "username", "nexus-admin") or "nexus-admin"),
     )
     return {"ok": True, "archive": archive}
 

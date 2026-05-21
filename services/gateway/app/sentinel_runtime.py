@@ -422,8 +422,8 @@ def _archive_analysis_prompt(snapshot: Dict[str, Any]) -> str:
         command_lines.append(f"- {' '.join(str(part) for part in argv)} | ok={bool(item.get('ok'))}")
     command_text = "\n".join(command_lines) or "- none"
     return (
-        "Analyze this archived Nexus coding workspace failure. Focus on root cause, fabricated validation, placeholder edits, and the smallest real fix. "
-        "Cite concrete evidence from the archived diff, commands, and agent events. End with a short guardrail recommendation.\n\n"
+        "Analyze this archived Nexus coding workspace failure using only the evidence included below. Do not invent files, commands, tests, or repository state that are not present in the heuristics, event log, or diff excerpt. "
+        "If the evidence is insufficient, say so explicitly. Provide a concrete repair plan with exact file-level next steps, and recommend escalation to a stronger coding or review agent only when the fix clearly exceeds the available evidence or local model confidence.\n\n"
         f"Archive id: {archive.get('archive_id') or ''}\n"
         f"Task id: {archive.get('task_id') or ''}\n"
         f"Original prompt: {task.get('prompt') or ''}\n"
@@ -434,7 +434,14 @@ def _archive_analysis_prompt(snapshot: Dict[str, Any]) -> str:
         f"Recent agent events:\n{_archive_event_lines(recent_events) or '- none'}\n\n"
         f"Recent commands:\n{command_text}\n\n"
         f"Diff stat:\n{str(diff.get('stat') or '')[:4000]}\n\n"
-        f"Diff excerpt:\n{str(diff.get('diff') or '')[:12000]}"
+        f"Diff excerpt:\n{str(diff.get('diff') or '')[:12000]}\n\n"
+        "Required response structure:\n"
+        "1. Root cause\n"
+        "2. Concrete problems found\n"
+        "3. Exact fix steps\n"
+        "4. Validation steps\n"
+        "5. Escalation recommendation\n"
+        "6. Guardrail recommendation"
     )
 
 
@@ -462,7 +469,7 @@ async def _call_archive_analysis_model(*, request_model: str, prompt: str) -> tu
             role="system",
             content=(
                 "You are Nexus Sentinel analyzing an archived coding workspace failure. "
-                "Be concrete, evidence-based, and concise."
+                "Be concrete, evidence-based, and grounded strictly in the supplied archive evidence."
             ),
         ),
         ChatMessage(role="user", content=prompt),

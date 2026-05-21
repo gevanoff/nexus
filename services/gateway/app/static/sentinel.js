@@ -66,6 +66,30 @@
     return label;
   }
 
+  function archiveModeValue(analysis) {
+    const mode = String(analysis?.requested_mode || "idle").trim().toLowerCase();
+    const target = String(analysis?.target || "local").trim().toLowerCase();
+    if (target === "local") return mode === "immediate" ? "immediate_local" : "idle_local";
+    if (target === "external") return "external_agent";
+    return "human_followup";
+  }
+
+  function archiveModePayload(value) {
+    if (value === "immediate_local") return { analysis_mode: "immediate", analysis_target: "local" };
+    if (value === "idle_local") return { analysis_mode: "idle", analysis_target: "local" };
+    if (value === "external_agent") return { analysis_mode: "manual", analysis_target: "external" };
+    return { analysis_mode: "manual", analysis_target: "human" };
+  }
+
+  function syncArchiveModeUi(modeSelect, modelSelect, analyzeBtn) {
+    const localMode = ["immediate_local", "idle_local"].includes(String(modeSelect?.value || ""));
+    if (modelSelect) modelSelect.disabled = !localMode;
+    if (analyzeBtn) {
+      analyzeBtn.disabled = !localMode;
+      analyzeBtn.title = localMode ? "Run local Sentinel analysis now" : "Immediate analysis is available only for local-model modes.";
+    }
+  }
+
   async function fetchJson(url, options = {}) {
     const resp = await fetch(url, { credentials: "same-origin", ...options });
     if (handle401(resp)) throw new Error("authentication required");
@@ -209,7 +233,18 @@
     setStatus(`Archived workspace ${archiveId} was erased.`);
   }
 
-  function renderArchiveFindings(items) {
+  async function reviewArchiveFinding(archiveId, findingTs, verdict) {
+    const note = window.prompt(`Add an optional note for marking this finding ${verdict}.`, "") || "";
+    await fetchJson(`/ui/api/sentinel/archives/${encodeURIComponent(archiveId)}/findings/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ finding_ts: findingTs, verdict, note }),
+    });
+    await loadStatus();
+    setStatus(`Finding marked ${verdict}.`);
+  }
+
+  function renderArchiveFindings(items, archiveId) {
     const wrap = document.createElement("div");
     wrap.className = "archive-findings";
     if (!Array.isArray(items) || !items.length) {
@@ -219,17 +254,48 @@
       wrap.appendChild(empty);
       return wrap;
     }
-    items.slice(0, 4).forEach((item) => {
+    items.slice(0, 6).forEach((item) => {
       const row = document.createElement("div");
       row.className = "archive-finding";
+      const head = document.createElement("div");
+      head.className = "archive-finding-head";
       const meta = document.createElement("div");
       meta.className = "hint";
       meta.textContent = `${fmtTs(item.ts)} · ${item.kind || item.actor || "finding"}`;
+      head.appendChild(meta);
+      if (item.review && typeof item.review === "object") {
+        head.appendChild(badge(`reviewed: ${item.review.verdict || "reviewed"}`, "warn"));
+      }
       const summary = document.createElement("div");
       summary.className = "summary";
       summary.textContent = item.summary || item.text || "";
-      row.appendChild(meta);
+      row.appendChild(head);
       row.appendChild(summary);
+      if (item.review && typeof item.review === "object") {
+        const review = document.createElement("div");
+        review.className = "archive-finding-review";
+        review.textContent = `${item.review.verdict || "reviewed"} by ${item.review.actor || "admin"} at ${fmtTs(item.review.ts)}${item.review.note ? ` · ${item.review.note}` : ""}`;
+        row.appendChild(review);
+      }
+      if (item.ts) {
+        const actions = document.createElement("div");
+        actions.className = "archive-finding-actions";
+        const supersedeBtn = document.createElement("button");
+        supersedeBtn.type = "button";
+        supersedeBtn.textContent = "Mark superseded";
+        supersedeBtn.addEventListener("click", () => {
+          void reviewArchiveFinding(archiveId, item.ts, "superseded").catch((error) => setStatus(String(error), true));
+        });
+        const invalidBtn = document.createElement("button");
+        invalidBtn.type = "button";
+        invalidBtn.textContent = "Mark invalid";
+        invalidBtn.addEventListener("click", () => {
+          void reviewArchiveFinding(archiveId, item.ts, "invalid").catch((error) => setStatus(String(error), true));
+        });
+        actions.appendChild(supersedeBtn);
+        actions.appendChild(invalidBtn);
+        row.appendChild(actions);
+      }
       wrap.appendChild(row);
     });
     return wrap;
@@ -286,7 +352,9 @@
         ["Task file", pathValues.task],
         ["Manifest", pathValues.manifest],
         ["Findings", pathValues.findings],
+        ["External brief", pathValues.external_brief],
       ].forEach(([label, value]) => {
+        if (!value) return;
         const line = document.createElement("div");
         line.className = "archive-path";
         line.textContent = `${label}: ${value || "missing"}`;
@@ -300,20 +368,12 @@
       const retention = item.retention && typeof item.retention === "object" ? item.retention : {};
       const modeSelect = createSelect(
         [
-          { value: "manual", label: "Manual only" },
-          { value: "idle", label: "Analyze on idle" },
-          { value: "immediate", label: "Analyze immediately" },
+          { value: "immediate_local", label: "Analyze immediately (Local model)" },
+          { value: "idle_local", label: "Analyze on idle (Local model)" },
+          { value: "human_followup", label: "Human follow-up" },
+          { value: "external_agent", label: "Flag for external agent" },
         ],
-        analysis.requested_mode || "idle"
-      );
-      const targetSelect = createSelect(
-        [
-          { value: "local", label: "Local model" },
-          { value: "human", label: "Human follow-up" },
-          { value: "external", label: "External agent" },
-          { value: "none", label: "Do not analyze" },
-        ],
-        analysis.target || "local"
+        archiveModeValue(analysis)
       );
       const modelSelect = createSelect(
         models.map((value) => ({ value, label: value })),
@@ -329,7 +389,6 @@
       preserveWrap.appendChild(preserveText);
       preserveWrap.appendChild(preserveBox);
       controls.appendChild(createControlLabel("Analysis mode", modeSelect));
-      controls.appendChild(createControlLabel("Analysis target", targetSelect));
       controls.appendChild(createControlLabel("Local model", modelSelect));
       controls.appendChild(preserveWrap);
       card.appendChild(controls);
@@ -347,7 +406,7 @@
       findingsTitle.style.marginTop = "10px";
       findingsTitle.textContent = "Findings log";
       card.appendChild(findingsTitle);
-      card.appendChild(renderArchiveFindings(item.findings));
+      card.appendChild(renderArchiveFindings(item.findings, item.archive_id));
 
       const actions = document.createElement("div");
       actions.className = "archive-actions";
@@ -355,10 +414,11 @@
       saveBtn.type = "button";
       saveBtn.textContent = "Save settings";
       saveBtn.addEventListener("click", () => {
+        const modePayload = archiveModePayload(modeSelect.value);
         void saveArchiveSettings(item.archive_id, {
-          analysis_mode: modeSelect.value,
-          analysis_target: targetSelect.value,
-          analysis_model: modelSelect.value,
+          analysis_mode: modePayload.analysis_mode,
+          analysis_target: modePayload.analysis_target,
+          analysis_model: modelSelect.disabled ? "" : modelSelect.value,
           preserve: preserveBox.checked,
         });
       });
@@ -366,24 +426,21 @@
       analyzeBtn.type = "button";
       analyzeBtn.textContent = "Analyze now";
       analyzeBtn.addEventListener("click", async () => {
+        const modePayload = archiveModePayload(modeSelect.value);
+        if (modePayload.analysis_target !== "local") return;
         const body = {
           analysis_mode: "immediate",
-          analysis_target: targetSelect.value,
+          analysis_target: "local",
           analysis_model: modelSelect.value,
           preserve: preserveBox.checked,
         };
-        if (targetSelect.value !== "local") {
-          await saveArchiveSettings(item.archive_id, body, {
-            runScan: false,
-            successText: "Archive updated. Automatic immediate analysis currently runs only for target=local.",
-          });
-          return;
-        }
         await saveArchiveSettings(item.archive_id, body, {
           runScan: true,
           successText: `Sentinel queued immediate analysis for ${item.archive_id}.`,
         });
       });
+      modeSelect.addEventListener("change", () => syncArchiveModeUi(modeSelect, modelSelect, analyzeBtn));
+      syncArchiveModeUi(modeSelect, modelSelect, analyzeBtn);
       const purgeBtn = document.createElement("button");
       purgeBtn.type = "button";
       purgeBtn.textContent = "Erase archive";

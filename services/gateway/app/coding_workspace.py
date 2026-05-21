@@ -39,6 +39,7 @@ _BLOCKED_GIT_SUBCOMMANDS = {
 _TREE_SKIP = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules"}
 _ARCHIVE_ANALYSIS_MODES = {"manual", "idle", "immediate"}
 _ARCHIVE_ANALYSIS_TARGETS = {"local", "external", "human", "none"}
+_FINDING_REVIEW_VERDICTS = {"invalid", "superseded"}
 
 
 def coding_enabled() -> bool:
@@ -200,6 +201,11 @@ def _archive_findings_path(archive_id: str) -> Path:
     return manifest_path.with_name(f"{archive_id}.findings.jsonl").resolve()
 
 
+def _archive_external_brief_path(archive_id: str) -> Path:
+    manifest_path = _archive_manifest_path(archive_id)
+    return manifest_path.with_name(f"{archive_id}.external-agent.md").resolve()
+
+
 def _archive_workspace_path(archive_id: str) -> Path:
     archive_id = _validate_archive_id(archive_id)
     for root in _archive_workspace_roots():
@@ -228,6 +234,46 @@ def _read_findings_log(path: Path, *, limit: int = 20) -> List[Dict[str, Any]]:
         if isinstance(item, dict):
             out.append(item)
     return out
+
+
+def _apply_finding_reviews(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    reviews: Dict[int, Dict[str, Any]] = {}
+    visible: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("kind") or "") == "sentinel_archive_review":
+            try:
+                target_ts = int(float(item.get("reviewed_finding_ts") or 0))
+            except Exception:
+                target_ts = 0
+            if target_ts > 0:
+                previous = reviews.get(target_ts)
+                try:
+                    item_ts = int(float(item.get("ts") or 0))
+                except Exception:
+                    item_ts = 0
+                try:
+                    previous_ts = int(float((previous or {}).get("ts") or 0))
+                except Exception:
+                    previous_ts = 0
+                if previous is None or item_ts >= previous_ts:
+                    reviews[target_ts] = {
+                        "verdict": str(item.get("review_verdict") or "").strip(),
+                        "note": str(item.get("note") or "").strip(),
+                        "actor": str(item.get("actor") or "").strip(),
+                        "ts": item.get("ts"),
+                    }
+            continue
+        visible.append(dict(item))
+    for item in visible:
+        try:
+            finding_ts = int(float(item.get("ts") or 0))
+        except Exception:
+            finding_ts = 0
+        if finding_ts > 0 and finding_ts in reviews:
+            item["review"] = dict(reviews[finding_ts])
+    return visible
 
 
 def _archive_prompt_mentions_node(prompt: str) -> bool:
@@ -315,12 +361,61 @@ def _normalize_archive_manifest(manifest: Dict[str, Any], *, manifest_path: Path
             "task_path": str(manifest.get("task_path") or _archive_task_json_path(archive_id)),
             "workspace_path": str(manifest.get("workspace_path") or _archive_workspace_path(archive_id)),
             "findings_path": findings_path,
+            "external_brief_path": str(manifest.get("external_brief_path") or _archive_external_brief_path(archive_id)),
             "manifest_path": str(manifest_path),
             "analysis": _archive_default_analysis(task, archived_at=archived_at, analysis=manifest.get("analysis") if isinstance(manifest.get("analysis"), dict) else None),
             "retention": _archive_default_retention(archived_at=archived_at, retention=manifest.get("retention") if isinstance(manifest.get("retention"), dict) else None),
         }
     )
     return normalized
+
+
+def _write_archive_external_brief(archive_id: str, manifest: Dict[str, Any], task: Dict[str, Any]) -> str:
+    diff_snapshot = _archive_diff_snapshot(task, manifest, max_diff_chars=8000)
+    heuristics = _archive_heuristic_findings(task, manifest, diff_snapshot)
+    path = Path(str(manifest.get("external_brief_path") or _archive_external_brief_path(archive_id))).resolve()
+    lines = [
+        f"# External Agent Follow-up: {archive_id}",
+        "",
+        "Use this archive as read-only forensic input. Inspect the archived workspace path directly; do not assume the current live repository matches it.",
+        "",
+        f"- Archive id: {archive_id}",
+        f"- Task id: {task.get('id') or manifest.get('task_id') or ''}",
+        f"- Workspace path: {manifest.get('workspace_path') or ''}",
+        f"- Findings log: {manifest.get('findings_path') or ''}",
+        f"- Original prompt: {str(task.get('prompt') or '').strip()}",
+        f"- Base branch: {str(task.get('base_branch') or 'main').strip()}",
+        "",
+        "## Known Findings",
+    ]
+    if heuristics:
+        for item in heuristics[:8]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {str(item.get('summary') or '').strip()}")
+            evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
+            for entry in evidence[:4]:
+                lines.append(f"  - Evidence: {entry}")
+    else:
+        lines.append("- No static findings were extracted automatically.")
+    lines.extend(
+        [
+            "",
+            "## Diff Stat",
+            "```text",
+            str(diff_snapshot.get("stat") or "")[:4000],
+            "```",
+            "",
+            "## Instructions",
+            "1. Open the archived workspace path above, not the live repo.",
+            "2. Verify the diff against the recorded base branch.",
+            "3. Produce a concrete repair plan with exact files, code changes, and validation steps.",
+            "4. Escalate to a stronger coding/review agent if the fix requires broader repository knowledge or cross-file reasoning beyond the archived diff.",
+        ]
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    return str(path)
 
 
 def _archived_repo_path(manifest: Dict[str, Any], task: Dict[str, Any]) -> Path:
@@ -2424,7 +2519,7 @@ def list_archived_tasks(limit: int = 100) -> List[Dict[str, Any]]:
             manifest = _normalize_archive_manifest(raw_manifest if isinstance(raw_manifest, dict) else {}, manifest_path=manifest_path, task=task)
             if manifest != raw_manifest:
                 _write_json(manifest_path, manifest)
-            findings = _read_findings_log(Path(str(manifest.get("findings_path") or "")), limit=12)
+            findings = _apply_finding_reviews(_read_findings_log(Path(str(manifest.get("findings_path") or "")), limit=200))
             analysis = manifest.get("analysis") if isinstance(manifest.get("analysis"), dict) else {}
             retention = manifest.get("retention") if isinstance(manifest.get("retention"), dict) else {}
             items.append(
@@ -2448,6 +2543,7 @@ def list_archived_tasks(limit: int = 100) -> List[Dict[str, Any]]:
                         "task": str(manifest.get("task_path") or task_path),
                         "workspace": str(manifest.get("workspace_path") or ""),
                         "findings": str(manifest.get("findings_path") or ""),
+                        "external_brief": str(manifest.get("external_brief_path") or ""),
                     },
                     "analysis": analysis,
                     "retention": retention,
@@ -2534,6 +2630,8 @@ def update_archived_task_settings(
     manifest["retention"] = _archive_default_retention(archived_at=float(manifest.get("archived_at") or _now()), retention=retention)
     manifest["analysis"] = _archive_default_analysis(task, archived_at=float(manifest.get("archived_at") or _now()), analysis=analysis)
     _write_json(manifest_path, manifest)
+    if str(manifest["analysis"].get("target") or "").strip().lower() == "external":
+        _write_archive_external_brief(archive_id, manifest, task)
     return get_archived_task(archive_id)
 
 
@@ -2588,11 +2686,54 @@ def append_archived_finding(archive_id: str, *, entry: Dict[str, Any]) -> Dict[s
     )
 
 
+def review_archived_finding(
+    archive_id: str,
+    *,
+    finding_ts: float,
+    verdict: str,
+    note: str = "",
+    actor: str = "nexus-admin",
+) -> Dict[str, Any]:
+    review_verdict = str(verdict or "").strip().lower()
+    if review_verdict not in _FINDING_REVIEW_VERDICTS:
+        raise HTTPException(status_code=400, detail="verdict must be invalid or superseded")
+    archive = get_archived_task(archive_id)
+    findings_path = Path(str(((archive.get("paths") or {}).get("findings") or ""))).resolve()
+    raw_items = _read_findings_log(findings_path, limit=1000)
+    try:
+        target_ts = int(float(finding_ts))
+    except Exception:
+        raise HTTPException(status_code=400, detail="finding_ts must be a number")
+    target_exists = any(
+        isinstance(item, dict)
+        and str(item.get("kind") or "") != "sentinel_archive_review"
+        and int(float(item.get("ts") or 0)) == target_ts
+        for item in raw_items
+        if isinstance(item, dict)
+    )
+    if not target_exists:
+        raise HTTPException(status_code=404, detail="finding not found in archive log")
+    payload = {
+        "ts": _now(),
+        "kind": "sentinel_archive_review",
+        "actor": str(actor or "nexus-admin").strip() or "nexus-admin",
+        "status": "reviewed",
+        "reviewed_finding_ts": target_ts,
+        "review_verdict": review_verdict,
+        "note": str(note or "").strip()[:2000],
+        "summary": f"Finding marked {review_verdict}.",
+    }
+    findings_path.parent.mkdir(parents=True, exist_ok=True)
+    with findings_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    return get_archived_task(archive_id)
+
+
 def purge_archived_task(archive_id: str) -> Dict[str, Any]:
     archive = get_archived_task(archive_id)
     paths = archive.get("paths") if isinstance(archive.get("paths"), dict) else {}
     removed: List[str] = []
-    for key in ("task", "manifest", "findings"):
+    for key in ("task", "manifest", "findings", "external_brief"):
         path = Path(str(paths.get(key) or "")).resolve()
         if not path.exists():
             continue
