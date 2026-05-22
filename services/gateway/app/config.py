@@ -208,6 +208,8 @@ class Settings(BaseSettings):
     LIFECYCLE_MANAGER_TIMEOUT_SEC: float = 15.0
     NEXUS_HARDWARE_REFRESH_ON_STARTUP: bool = True
     NEXUS_HARDWARE_REFRESH_TIMEOUT_SEC: float = 45.0
+    NEXUS_HARDWARE_REFRESH_ATTEMPTS: int = 3
+    NEXUS_HARDWARE_REFRESH_RETRY_DELAY_SEC: float = 5.0
     NEXUS_HARDWARE_SNAPSHOT_PATH: str = "/var/lib/gateway/data/nexus_hardware_snapshot.json"
 
     # Optional comma-separated backend classes to omit from the active registry.

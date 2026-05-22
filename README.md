@@ -55,6 +55,7 @@ Gateway startup hardware context:
 - On startup, the gateway asks lifecycle-manager for a refreshed hardware-capacity snapshot and caches it at `NEXUS_HARDWARE_SNAPSHOT_PATH` (default: `/var/lib/gateway/data/nexus_hardware_snapshot.json`).
 - Scheduled agent prompts use the refreshed snapshot when available, fall back to the last cached snapshot if host probing fails, and finally fall back to the checked-in baseline above.
 - Hardware refresh uses `NEXUS_HARDWARE_REFRESH_TIMEOUT_SEC` (default: `45`) so lifecycle-manager has enough time to SSH-probe the production hosts.
+- If lifecycle-manager is not ready yet, startup retries `NEXUS_HARDWARE_REFRESH_ATTEMPTS` times (default: `3`) with `NEXUS_HARDWARE_REFRESH_RETRY_DELAY_SEC` seconds between attempts (default: `5`).
 - The snapshot is for stable host-fit reasoning only. Live load and transient memory/VRAM pressure still come from Resources/lifecycle status checks.
 
 ### Prerequisites

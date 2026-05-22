@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
@@ -258,15 +259,30 @@ async def refresh_hardware_snapshot_from_lifecycle() -> dict[str, Any]:
     if not base_url:
         return _fallback_snapshot(reason="lifecycle manager URL is not configured; using cached snapshot or checked-in baseline")
 
-    timeout = float(getattr(S, "NEXUS_HARDWARE_REFRESH_TIMEOUT_SEC", 15.0) or 15.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(f"{base_url}/v1/lifecycle/status", params={"refresh": "true"})
-            response.raise_for_status()
-            payload = response.json()
-    except Exception as exc:
+    timeout = float(getattr(S, "NEXUS_HARDWARE_REFRESH_TIMEOUT_SEC", 45.0) or 45.0)
+    attempts = max(1, int(getattr(S, "NEXUS_HARDWARE_REFRESH_ATTEMPTS", 3) or 3))
+    retry_delay = max(0.0, float(getattr(S, "NEXUS_HARDWARE_REFRESH_RETRY_DELAY_SEC", 5.0) or 5.0))
+    last_exc: Exception | None = None
+    payload: Any = None
+    for attempt in range(1, attempts + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(f"{base_url}/v1/lifecycle/status", params={"refresh": "true"})
+                response.raise_for_status()
+                payload = response.json()
+            last_exc = None
+            break
+        except httpx.ReadTimeout as exc:
+            last_exc = exc
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            await asyncio.sleep(retry_delay)
+    if last_exc is not None:
         return _fallback_snapshot(
-            reason=f"lifecycle hardware refresh failed ({type(exc).__name__}: {exc}); using cached snapshot or checked-in baseline"
+            reason=f"lifecycle hardware refresh failed ({type(last_exc).__name__}: {last_exc}); using cached snapshot or checked-in baseline"
         )
     if not isinstance(payload, dict):
         return _fallback_snapshot(reason="lifecycle hardware refresh returned a non-object payload; using cached snapshot or checked-in baseline")
