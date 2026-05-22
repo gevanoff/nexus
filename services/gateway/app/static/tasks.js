@@ -711,7 +711,11 @@
       const currentPrompt = String(task?.prompt || "").trim();
       const currentModel = String(meta.model || "default").trim() || "default";
       const currentTools = Array.isArray(meta.tools) ? meta.tools : [];
-      const promptChanged = Boolean(nextPrompt) && nextPrompt !== currentPrompt;
+      if (!nextPrompt) {
+        setStatus("task prompt is required", true);
+        return;
+      }
+      const promptChanged = nextPrompt !== currentPrompt;
       const modelChanged = Boolean(nextModel) && nextModel !== currentModel;
       const toolsChanged = JSON.stringify(nextTools) !== JSON.stringify(currentTools);
       if (!promptChanged && !modelChanged && !toolsChanged) {
