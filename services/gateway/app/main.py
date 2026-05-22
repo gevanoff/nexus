@@ -127,6 +127,21 @@ async def lifespan(_app: FastAPI):
     await start_health_checker()
 
     try:
+        from app.nexus_hardware import hardware_snapshot_summary, refresh_hardware_snapshot_from_lifecycle
+
+        hardware_snapshot = await refresh_hardware_snapshot_from_lifecycle()
+        hardware_summary = hardware_snapshot_summary(hardware_snapshot)
+        logger.info(
+            "startup: hardware context source=%s refreshed_at=%s hosts=%s warnings=%s",
+            hardware_summary["source"],
+            hardware_summary["refreshed_at"] or "-",
+            ",".join(hardware_summary["hosts"]),
+            len(hardware_summary["warnings"]),
+        )
+    except Exception as e:
+        logger.info("startup: hardware context refresh skipped (%s: %s)", type(e).__name__, e)
+
+    try:
         from app.agent_tasks import start_scheduler as start_agent_task_scheduler
 
         await start_agent_task_scheduler()

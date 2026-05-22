@@ -97,6 +97,7 @@ class HostPolicy:
     resource_kind: str
     remote_shell: str = "bash -lc"
     error: str = ""
+    cpu: Dict[str, Any] = field(default_factory=dict)
     memory: Dict[str, Any] = field(default_factory=dict)
     gpus: List[Dict[str, Any]] = field(default_factory=list)
     containers: Dict[str, str] = field(default_factory=dict)
@@ -1772,6 +1773,17 @@ class LifecycleManager:
     @classmethod
     def _linux_probe_command(cls) -> str:
         return (
+            "printf '__CPU__\\n'; "
+            "if command -v lscpu >/dev/null 2>&1; then "
+            "lscpu | awk -F: '/^Model name:/ {gsub(/^[ \\t]+/,\"\",$2); print \"model_name=\" $2} "
+            "/^CPU\\(s\\):/ {gsub(/^[ \\t]+/,\"\",$2); print \"logical_cpus=\" $2} "
+            "/^Core\\(s\\) per socket:/ {gsub(/^[ \\t]+/,\"\",$2); print \"cores_per_socket=\" $2} "
+            "/^Socket\\(s\\):/ {gsub(/^[ \\t]+/,\"\",$2); print \"sockets=\" $2} "
+            "/^Thread\\(s\\) per core:/ {gsub(/^[ \\t]+/,\"\",$2); print \"threads_per_core=\" $2}'; "
+            "else "
+            "awk -F: '/^model name/ {gsub(/^[ \\t]+/,\"\",$2); print \"model_name=\" $2; exit}' /proc/cpuinfo 2>/dev/null || true; "
+            "printf 'logical_cpus=%s\\n' \"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0)\"; "
+            "fi; "
             "printf '__GPU__\\n'; "
             "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu "
             "--format=csv,noheader,nounits 2>/dev/null || true; "
@@ -1783,6 +1795,15 @@ class LifecycleManager:
     @classmethod
     def _macos_probe_command(cls) -> str:
         return (
+            "printf '__CPU__\\n'; "
+            "cpu_name=\"$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)\"; "
+            "if [ -z \"$cpu_name\" ] && command -v system_profiler >/dev/null 2>&1; then "
+            "cpu_name=\"$(system_profiler SPHardwareDataType 2>/dev/null | awk -F: '/Chip:/ {gsub(/^[ \\t]+/,\"\",$2); print $2; exit}')\"; "
+            "fi; "
+            "if [ -z \"$cpu_name\" ]; then cpu_name=\"$(sysctl -n hw.model 2>/dev/null || echo Apple Silicon)\"; fi; "
+            "printf 'model_name=%s\\n' \"$cpu_name\"; "
+            "printf 'logical_cpus=%s\\n' \"$(sysctl -n hw.ncpu 2>/dev/null || echo 0)\"; "
+            "printf 'physical_cpus=%s\\n' \"$(sysctl -n hw.physicalcpu 2>/dev/null || echo 0)\"; "
             "printf '__MEM__\\n'; "
             "if command -v python3 >/dev/null 2>&1; then "
             "python3 -c \"import re,subprocess; "
@@ -1803,6 +1824,7 @@ class LifecycleManager:
 
     def _parse_linux_probe(self, host: HostPolicy, raw: str) -> None:
         sections = self._sections(raw)
+        host.cpu = self._parse_key_values(sections.get("CPU", []))
         host.gpus = []
         for line in sections.get("GPU", []):
             parts = [part.strip() for part in line.split(",")]
@@ -1830,6 +1852,7 @@ class LifecycleManager:
 
     def _parse_macos_probe(self, host: HostPolicy, raw: str) -> None:
         sections = self._sections(raw)
+        host.cpu = self._parse_key_values(sections.get("CPU", []))
         mem_lines = sections.get("MEM", [])
         if mem_lines:
             bits = mem_lines[0].split()
@@ -1850,6 +1873,27 @@ class LifecycleManager:
             elif current:
                 sections.setdefault(current, []).append(line)
         return sections
+
+    @staticmethod
+    def _parse_key_values(lines: List[str]) -> Dict[str, Any]:
+        values: Dict[str, Any] = {}
+        int_fields = {"logical_cpus", "physical_cpus", "cores_per_socket", "sockets", "threads_per_core"}
+        for line in lines:
+            key, sep, value = line.partition("=")
+            if not sep:
+                continue
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if key in int_fields:
+                try:
+                    values[key] = int(value)
+                    continue
+                except Exception:
+                    pass
+            values[key] = value
+        return values
 
     @staticmethod
     def _parse_containers(raw: str) -> Dict[str, str]:
@@ -2059,6 +2103,7 @@ class LifecycleManager:
                     "platform": host.platform,
                     "resource_kind": host.resource_kind,
                     "error": host.error,
+                    "cpu": host.cpu,
                     "memory": host.memory,
                     "gpus": host.gpus,
                     "containers": host.containers,

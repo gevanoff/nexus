@@ -10,6 +10,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 import app
 from app import agent_tasks
+from app import nexus_hardware
 
 
 def _insert_task(metadata: dict[str, object]) -> object:
@@ -45,12 +46,21 @@ def _get_row() -> object:
 def test_scheduled_prompt_includes_preface(tmp_path, monkeypatch):
     db_path = tmp_path / "tasks.sqlite"
     monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    monkeypatch.setattr(nexus_hardware, "_RUNTIME_SNAPSHOT", None)
+    monkeypatch.setattr(nexus_hardware.S, "NEXUS_HARDWARE_SNAPSHOT_PATH", str(tmp_path / "missing_hardware_snapshot.json"))
     agent_tasks.init_db()
     row = _insert_task({})
 
     prompt = agent_tasks._scheduled_prompt(row, 1_700_000_000, preface="Automatic preface")
 
     assert prompt.startswith("Automatic preface\n\nA scheduled Nexus agent task is due.")
+    assert "Nexus production host hardware context" in prompt
+    assert "ai2: macos_arm64; Apple M3 Ultra" in prompt
+    assert "ai1: linux_x86_64; 12th Gen Intel Core i7-12700F" in prompt
+    assert "NVIDIA GeForce RTX 3090 24 GiB; NVIDIA GeForce RTX 3090 24 GiB" in prompt
+    assert "ada2: linux_x86_64; 13th Gen Intel Core i7-13700K" in prompt
+    assert "ai3: macos_arm64; Apple M2" in prompt
+    assert "not part of the current production model-serving topology" in prompt
 
 
 def test_coding_supervisor_tasks_are_protected(tmp_path, monkeypatch):

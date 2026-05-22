@@ -206,6 +206,9 @@ class Settings(BaseSettings):
     # Optional backend lifecycle/resource manager.
     LIFECYCLE_MANAGER_BASE_URL: str = ""
     LIFECYCLE_MANAGER_TIMEOUT_SEC: float = 15.0
+    NEXUS_HARDWARE_REFRESH_ON_STARTUP: bool = True
+    NEXUS_HARDWARE_REFRESH_TIMEOUT_SEC: float = 15.0
+    NEXUS_HARDWARE_SNAPSHOT_PATH: str = "/var/lib/gateway/data/nexus_hardware_snapshot.json"
 
     # Optional comma-separated backend classes to omit from the active registry.
     # Useful when a backend exists in static config but is intentionally not

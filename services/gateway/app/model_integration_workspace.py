@@ -70,7 +70,7 @@ _VLLM_UNSUPPORTED_MARKERS = {
 }
 _FALLBACK_HOSTS = {
     "ai1": {
-        "description": "Dual-GPU Linux/NVIDIA node (RTX 3090 24GB + RTX 5060 Ti 16GB) for media ingress, SDXL-Turbo, and secondary vLLM/CUDA capacity.",
+        "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, SDXL-Turbo, embeddings, and secondary vLLM/CUDA capacity.",
         "platform": "linux",
         "resource_kind": "linux_nvidia",
     },

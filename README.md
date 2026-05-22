@@ -39,16 +39,22 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - The current `vllm` compose profile is GPU-bound (`gpus: all`) and should only be assigned to GPU-capable hosts.
 - NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
 
-### Current Host Inventory (2026-05-07)
+### Current Host Inventory (verified 2026-05-21)
 
 - `ai2` (Mac M3 Ultra, macOS 15.6, 512GB unified memory): primary control-plane host, gateway/nginx/etcd/lifecycle-manager host, host-native `mlx` node, and current home for the containerized TTS stack.
-- `ai1` (Ubuntu Linux, Intel Core Ultra 5 250K, 64GB RAM, NVIDIA GeForce RTX 3090 24GB in the PCIe x16 slot plus NVIDIA GeForce RTX 5060 Ti 16GB in the PCIe x4 slot): dual-GPU Linux/NVIDIA node used for media ingress and secondary `vllm`/CUDA capacity.
-- `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, 128GB RAM, NVIDIA RTX 6000 Ada 48GB): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
+- `ai1` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x NVIDIA GeForce RTX 3090 24GB): dual-GPU Linux/NVIDIA node used for media ingress, embeddings, and secondary `vllm`/CUDA capacity.
+- `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, NVIDIA RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
+- `ai3` is a known macOS SSH alias (Apple M2, 8GB unified memory), but it is not part of the current production model-serving topology.
 
 Operational implication:
 - Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
 - Treat `ai1` and `ada2` as the Linux/NVIDIA `vllm` hosts; use `deploy/topology/production.json` to decide the active live placement.
 - Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `ai1` for media ingress, secondary `vllm` capacity, and overflow CUDA work.
+
+Gateway startup hardware context:
+- On startup, the gateway asks lifecycle-manager for a refreshed hardware-capacity snapshot and caches it at `NEXUS_HARDWARE_SNAPSHOT_PATH` (default: `/var/lib/gateway/data/nexus_hardware_snapshot.json`).
+- Scheduled agent prompts use the refreshed snapshot when available, fall back to the last cached snapshot if host probing fails, and finally fall back to the checked-in baseline above.
+- The snapshot is for stable host-fit reasoning only. Live load and transient memory/VRAM pressure still come from Resources/lifecycle status checks.
 
 ### Prerequisites
 

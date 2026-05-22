@@ -13,6 +13,7 @@ from typing import Any
 
 from app.config import S
 from app.models import AgentRunRequest
+from app.nexus_hardware import scheduled_task_hardware_context
 from app.openai_utils import new_id
 
 
@@ -651,6 +652,7 @@ def _scheduled_prompt(row: sqlite3.Row, due_ts: int, *, preface: str = "") -> st
         f"Title: {row['title']}\n"
         f"Due at: {_iso(due_ts)}\n"
         f"Run count before this run: {row['run_count']}\n\n"
+        f"{scheduled_task_hardware_context()}\n\n"
         "Task prompt:\n"
         f"{row['prompt']}"
     )
