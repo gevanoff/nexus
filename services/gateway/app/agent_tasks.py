@@ -645,6 +645,17 @@ class _SyntheticRequest:
 
 def _scheduled_prompt(row: sqlite3.Row, due_ts: int, *, preface: str = "") -> str:
     prefix = f"{preface.strip()}\n\n" if preface.strip() else ""
+    metadata = _task_metadata_from_row(row)
+    task_type = str(metadata.get("task_type") or "").strip().lower()
+    type_instructions = ""
+    if task_type == "coder":
+        type_instructions = (
+            "\n\nCoder task instructions:\n"
+            "- Create a Nexus coding workspace by calling coding_task_create.\n"
+            "- Use the Task prompt below as the coding workspace prompt.\n"
+            "- Set auto_run=true unless the prompt explicitly says to create only the workspace.\n"
+            "- Only pass repo_url, base_branch, or branch_name when the prompt specifies them; otherwise use configured defaults."
+        )
     return (
         prefix
         + "A scheduled Nexus agent task is due.\n\n"
@@ -652,7 +663,8 @@ def _scheduled_prompt(row: sqlite3.Row, due_ts: int, *, preface: str = "") -> st
         f"Title: {row['title']}\n"
         f"Due at: {_iso(due_ts)}\n"
         f"Run count before this run: {row['run_count']}\n\n"
-        f"{scheduled_task_hardware_context()}\n\n"
+        f"{scheduled_task_hardware_context()}"
+        f"{type_instructions}\n\n"
         "Task prompt:\n"
         f"{row['prompt']}"
     )

@@ -287,15 +287,52 @@
     if (els.detailPrompt) els.detailPrompt.textContent = task.prompt || "";
   }
 
-  function renderToolList(target, tier, selected = []) {
+  function taskTypeConfig(id = "") {
+    const typeId = String(id || els.taskType?.value || "llm").trim() || "llm";
+    return (state.capabilities?.task_types || []).find((item) => String(item?.id || "") === typeId) || null;
+  }
+
+  function requiredToolsForTaskType(id = "") {
+    const config = taskTypeConfig(id);
+    return new Set(Array.isArray(config?.required_tools) ? config.required_tools : []);
+  }
+
+  function requiredTierForTaskType(id = "") {
+    let requiredTier = 0;
+    for (const name of requiredToolsForTaskType(id)) {
+      const tool = (state.capabilities?.tools || []).find((item) => String(item?.name || "") === String(name || ""));
+      if (tool) requiredTier = Math.max(requiredTier, Number(tool.tier || 0));
+    }
+    return requiredTier;
+  }
+
+  function defaultToolsForTaskType(tier, id = "") {
+    const config = taskTypeConfig(id);
+    const configured = Array.isArray(config?.default_tools) ? config.default_tools : null;
+    const defaultTier = Number(config?.default_tier || 0);
+    const useConfigured = configured && (String(config?.id || "") === "coder" || Number(tier || 0) === defaultTier);
+    if (useConfigured) return configured.filter((name) => {
+      const tool = (state.capabilities?.tools || []).find((item) => String(item?.name || "") === String(name || ""));
+      return tool && Number(tool.tier) <= Number(tier || 0);
+    });
+    return (state.capabilities.tools || [])
+      .filter((tool) => Number(tool.tier) <= Number(tier || 0) && tool.default_enabled !== false)
+      .map((tool) => tool.name);
+  }
+
+  function renderToolList(target, tier, selected = [], options = {}) {
     if (!target || !state.capabilities) return;
-    const current = new Set(Array.isArray(selected) ? selected : []);
+    const taskType = String(options.taskType || els.taskType?.value || "llm").trim() || "llm";
+    const required = requiredToolsForTaskType(taskType);
+    const current = new Set([...(Array.isArray(selected) ? selected : []), ...required]);
     const visibleTools = (state.capabilities.tools || [])
       .filter((tool) => Number(tool.tier) <= Number(tier || 0))
       .sort((a, b) => {
+        const aSelected = current.has(a.name) ? 1 : 0;
+        const bSelected = current.has(b.name) ? 1 : 0;
         const aDefault = a.default_enabled === false ? 0 : 1;
         const bDefault = b.default_enabled === false ? 0 : 1;
-        return (bDefault - aDefault) || String(a.name || "").localeCompare(String(b.name || ""));
+        return (bSelected - aSelected) || (bDefault - aDefault) || String(a.name || "").localeCompare(String(b.name || ""));
       });
     target.innerHTML = "";
     for (const tool of visibleTools) {
@@ -305,9 +342,11 @@
       input.type = "checkbox";
       input.value = tool.name;
       input.checked = current.has(tool.name);
+      input.disabled = required.has(tool.name);
       const text = document.createElement("span");
       text.textContent = tool.name;
       const details = [];
+      if (required.has(tool.name)) details.push(`required for ${taskType} tasks`);
       if (tool.category) details.push(tool.category);
       if (tool.description) details.push(tool.description);
       if (tool.default_enabled === false && tool.default_reason) details.push(tool.default_reason);
@@ -361,7 +400,7 @@
     if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = !showTools;
     if (els.taskEditModelSection) els.taskEditModelSection.hidden = !showModel;
     if (showPrompt && els.taskEditPrompt) els.taskEditPrompt.value = config.prompt || "";
-    if (showTools) renderToolList(els.taskEditTools, config.tier, config.selectedTools || []);
+    if (showTools) renderToolList(els.taskEditTools, config.tier, config.selectedTools || [], { taskType: config.taskType || "llm" });
     if (showModel) populateModelSelect(els.taskEditModel, config.model || "default");
     if (els.taskEditModal) els.taskEditModal.hidden = false;
   }
@@ -429,6 +468,20 @@
     }
   }
 
+  function setModelSelectValue(value) {
+    if (!els.model) return;
+    const desired = String(value || "").trim();
+    if (!desired) return;
+    if (!Array.from(els.model.options || []).some((opt) => opt.value === desired)) {
+      const opt = document.createElement("option");
+      opt.value = desired;
+      opt.textContent = desired;
+      els.model.appendChild(opt);
+    }
+    els.model.value = desired;
+    window.NexusSelectMarquee?.refresh(els.model);
+  }
+
   function renderModels() {
     if (!els.model) return;
     const current = canonicalizeTaskModelId(els.model.value);
@@ -447,16 +500,33 @@
     else els.model.value = "default";
   }
 
-  function renderTools() {
+  function renderTools(options = {}) {
     if (!els.tools || !state.capabilities) return;
-    const tier = Number(els.tier?.value || 0);
+    const taskType = els.taskType?.value || "llm";
+    let tier = Number(els.tier?.value || 0);
+    const minTier = requiredTierForTaskType(taskType);
+    if (els.tier && tier < minTier) {
+      tier = minTier;
+      els.tier.value = String(minTier);
+    }
     const existing = new Set(Array.from(els.tools.querySelectorAll("input:checked")).map((el) => el.value));
-    const selected = existing.size
+    const selected = existing.size && !options.reset
       ? Array.from(existing)
-      : (state.capabilities.tools || [])
-        .filter((tool) => Number(tool.tier) <= tier && tool.default_enabled !== false)
-        .map((tool) => tool.name);
-    renderToolList(els.tools, tier, selected);
+      : defaultToolsForTaskType(tier);
+    renderToolList(els.tools, tier, selected, { taskType });
+  }
+
+  function applyTaskTypeDefaults() {
+    const config = taskTypeConfig();
+    if (!config) {
+      renderTools({ reset: true });
+      return;
+    }
+    if (els.tier && config.default_tier !== undefined && config.default_tier !== null) {
+      els.tier.value = String(config.default_tier);
+    }
+    if (config.default_model) setModelSelectValue(config.default_model);
+    renderTools({ reset: true });
   }
 
   function updateScheduleFields() {
@@ -511,7 +581,7 @@
   async function loadCapabilities() {
     state.capabilities = await fetchJson("/ui/api/agent-tasks/capabilities");
     renderTaskTypes();
-    renderTools();
+    applyTaskTypeDefaults();
   }
 
   async function loadModels() {
@@ -581,7 +651,7 @@
       els.form?.reset();
       if (els.delayMinutes) els.delayMinutes.value = "10";
       updateScheduleFields();
-      renderTools();
+      applyTaskTypeDefaults();
       await loadTasks({ keepSelection: true });
     } catch (error) {
       setStatus(error.message || String(error), true, error.stack || error);
@@ -652,6 +722,7 @@
       title: "Edit task tools",
       hint: `Update the allowed tools for this scheduled task. Tier ${Number(meta.tier || 0)} tools only.`,
       tier: Number(meta.tier || 0),
+      taskType: String(meta.task_type || "llm"),
       selectedTools: Array.isArray(meta.tools) ? meta.tools : [],
     });
   }
@@ -667,6 +738,7 @@
         ? `${taskProtectedReason(task)} Use the next-run badge to edit the schedule timestamp directly.`
         : "Update the prompt, model, and tool access for future runs. Use the next-run badge to edit the schedule timestamp directly.",
       tier: Number(meta.tier || 0),
+      taskType: String(meta.task_type || "llm"),
       selectedTools: Array.isArray(meta.tools) ? meta.tools : [],
       model: String(meta.model || "default"),
       prompt: String(task?.prompt || ""),
@@ -793,13 +865,14 @@
     els.form?.reset();
     if (els.delayMinutes) els.delayMinutes.value = "10";
     updateScheduleFields();
-    renderTools();
+    applyTaskTypeDefaults();
   }
 
   async function init() {
     updateScheduleFields();
     els.scheduleMode?.addEventListener("change", updateScheduleFields);
-    els.tier?.addEventListener("change", renderTools);
+    els.taskType?.addEventListener("change", applyTaskTypeDefaults);
+    els.tier?.addEventListener("change", () => renderTools());
     els.form?.addEventListener("submit", createTask);
     els.resetForm?.addEventListener("click", resetForm);
     els.refresh?.addEventListener("click", () => loadTasks({ keepSelection: true }).catch((error) => setStatus(error.message, true)));

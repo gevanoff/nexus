@@ -228,9 +228,10 @@
                 </div>
               </div>
               <div>
-                <label>LLM tool access</label>
+                <label>Tool access</label>
                 <div class="hint" style="margin: 0 0 6px;">
-                  These checkboxes grant the scheduled LLM permission to use tools while the task runs. Scheduling tools like
+                  These checkboxes grant the scheduled task permission to use tools while it runs. Coder tasks require
+                  <strong>coding_task_create</strong> to create coding workspaces. Scheduling tools like
                   <strong>agent_task_create</strong>, <strong>agent_task_list</strong>, and <strong>agent_task_cancel</strong>
                   let the LLM manage scheduled tasks; they are not immediate UI actions.
                 </div>
@@ -306,9 +307,10 @@
           <textarea id="taskEditPrompt" required maxlength="20000"></textarea>
         </div>
         <div id="taskEditToolsSection" hidden>
-          <label>LLM tool access</label>
+          <label>Tool access</label>
           <div class="hint" style="margin: 0 0 6px;">
-            These checkboxes grant the scheduled LLM permission to use tools while the task runs. Scheduling tools like
+            These checkboxes grant the scheduled task permission to use tools while it runs. Coder tasks require
+            <strong>coding_task_create</strong> to create coding workspaces. Scheduling tools like
             <strong>agent_task_create</strong>, <strong>agent_task_list</strong>, and <strong>agent_task_cancel</strong>
             let the LLM manage scheduled tasks; they are not immediate UI actions.
           </div>
@@ -327,6 +329,6 @@
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/select_marquee.js?v=1"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/tasks.js?v=6"></script>
+    <script src="/static/tasks.js?v=7"></script>
   </body>
 </html>

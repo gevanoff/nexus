@@ -2322,6 +2322,41 @@ def _coerce_selected_tools(raw: Any, tier: int) -> list[str]:
     return out
 
 
+def _task_type_default_tools(task_type: str, tier: int) -> list[str]:
+    normalized = str(task_type or "llm").strip().lower() or "llm"
+    if normalized == "coder":
+        return _coerce_selected_tools(["coding_task_create"], max(1, int(tier or 1)))
+    return _default_task_tools(tier)
+
+
+def _task_type_capabilities() -> list[Dict[str, Any]]:
+    return [
+        {
+            "id": "llm",
+            "label": "LLM task",
+            "enabled": True,
+            "default_model": "default",
+            "default_tier": 0,
+            "default_tools": _task_type_default_tools("llm", 0),
+            "required_tools": [],
+        },
+        {
+            "id": "coder",
+            "label": "Coder task",
+            "enabled": True,
+            "default_model": "coder",
+            "default_tier": 1,
+            "default_tools": _task_type_default_tools("coder", 1),
+            "required_tools": ["coding_task_create"],
+        },
+        {"id": "image", "label": "Image generation", "enabled": False},
+        {"id": "music", "label": "Music generation", "enabled": False},
+        {"id": "video", "label": "Video generation", "enabled": False},
+        {"id": "app", "label": "App workflow", "enabled": False},
+        {"id": "multi_model", "label": "Multiple models", "enabled": False},
+    ]
+
+
 def _coerce_task_int(body: Dict[str, Any], key: str, default: int, *, min_value: int, max_value: int) -> int:
     raw = body.get(key)
     if raw in (None, ""):
@@ -2381,15 +2416,7 @@ async def ui_api_agent_tasks_capabilities(req: Request) -> Dict[str, Any]:
             }
         )
     return {
-        "task_types": [
-            {"id": "llm", "label": "LLM task", "enabled": True},
-            {"id": "coder", "label": "Coder task", "enabled": False},
-            {"id": "image", "label": "Image generation", "enabled": False},
-            {"id": "music", "label": "Music generation", "enabled": False},
-            {"id": "video", "label": "Video generation", "enabled": False},
-            {"id": "app", "label": "App workflow", "enabled": False},
-            {"id": "multi_model", "label": "Multiple models", "enabled": False},
-        ],
+        "task_types": _task_type_capabilities(),
         "tool_tiers": [
             {"id": 0, "label": "Read and browse"},
             {"id": 1, "label": "Read, browse, memory, and file writes"},
@@ -2419,9 +2446,15 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be an object")
 
-    task_type = str(body.get("task_type") or "llm").strip().lower()
-    if task_type != "llm":
-        raise HTTPException(status_code=400, detail="only llm scheduled tasks are enabled currently")
+    task_type = str(body.get("task_type") or "llm").strip().lower() or "llm"
+    enabled_task_types = {
+        str(item.get("id") or ""): item
+        for item in _task_type_capabilities()
+        if isinstance(item, dict) and bool(item.get("enabled"))
+    }
+    task_type_config = enabled_task_types.get(task_type)
+    if not isinstance(task_type_config, dict):
+        raise HTTPException(status_code=400, detail=f"scheduled task type is not enabled: {task_type}")
 
     prompt = str(body.get("prompt") or "").strip()
     title = str(body.get("title") or "").strip()
@@ -2430,18 +2463,36 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
     if not title:
         title = prompt[:80]
 
-    model = str(body.get("model") or "default").strip() or "default"
+    default_model = str(task_type_config.get("default_model") or "default").strip() or "default"
+    model = str(body.get("model") or default_model).strip() or default_model
     try:
-        tier = int(body.get("tier") if body.get("tier") is not None else 0)
+        default_tier = int(task_type_config.get("default_tier") or 0)
+        tier = int(body.get("tier") if body.get("tier") is not None else default_tier)
     except Exception:
         raise HTTPException(status_code=400, detail="tier must be an integer")
     tier = max(0, min(tier, 2))
+    if task_type == "coder":
+        tier = max(1, tier)
+    raw_tools = body.get("tools")
+    if raw_tools is None or (task_type == "coder" and raw_tools == []):
+        raw_tools = _task_type_default_tools(task_type, tier)
     try:
-        selected_tools = _coerce_selected_tools(body.get("tools"), tier)
+        selected_tools = _coerce_selected_tools(raw_tools, tier)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    required_tools = [
+        str(item).strip()
+        for item in (task_type_config.get("required_tools") or [])
+        if isinstance(item, str) and str(item).strip()
+    ]
+    missing_required = [name for name in required_tools if name not in selected_tools]
+    if missing_required:
+        try:
+            selected_tools = _coerce_selected_tools(selected_tools + missing_required, tier)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    agent_name = f"scheduled_llm_{secrets.token_hex(8)}"
+    agent_name = f"scheduled_{task_type}_{secrets.token_hex(8)}"
     max_tool_io = _coerce_task_int(
         body,
         "max_total_tool_io_bytes",
@@ -2480,7 +2531,11 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
             "tools": selected_tools,
             "tier": tier,
             "agent_spec": agent_name,
-            "future": {"apps": [], "models": [model], "outputs": ["text"]},
+            "future": {
+                "apps": [],
+                "models": [model],
+                "outputs": ["coding_workspace"] if task_type == "coder" else ["text"],
+            },
         }
     )
 

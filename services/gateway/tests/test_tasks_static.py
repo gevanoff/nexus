@@ -14,3 +14,16 @@ def test_tasks_ui_edit_button_is_wired_to_task_settings_modal():
     assert 'setStatus("task prompt is required", true)' in source
     assert 'taskProtected(task)' in source
     assert 'Task settings updated.' in source
+
+
+def test_tasks_ui_coder_type_applies_coding_tool_defaults():
+    root = Path(__file__).resolve().parent.parent.joinpath("app", "static")
+    js = root.joinpath("tasks.js").read_text(encoding="utf-8")
+    html = root.joinpath("tasks.html").read_text(encoding="utf-8")
+
+    assert "applyTaskTypeDefaults" in js
+    assert 'els.taskType?.addEventListener("change", applyTaskTypeDefaults)' in js
+    assert "requiredToolsForTaskType" in js
+    assert "requiredTierForTaskType" in js
+    assert "coding_task_create" in html
+    assert 'tasks.js?v=7' in html

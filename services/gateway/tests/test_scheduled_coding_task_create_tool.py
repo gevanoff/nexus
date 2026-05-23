@@ -5,12 +5,23 @@ import os
 import sys
 import types
 
+import pytest
+
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 import app
 from app import agent_runtime_v1 as ar
+from app import agent_tasks
 from app import tools_bus
 from app import ui_routes
+
+
+class _JsonRequest:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    async def json(self) -> dict[str, object]:
+        return self._payload
 
 
 def test_coding_task_create_is_selectable_but_default_off_for_scheduled_tasks():
@@ -22,6 +33,83 @@ def test_coding_task_create_is_selectable_but_default_off_for_scheduled_tasks():
 
     assert selected == ["coding_task_create", "tool_manifest"]
     assert ar._request_is_heavy(tier=1, tools_allowlist=selected) is False
+
+
+def test_coder_task_type_is_enabled_and_requires_create_tool():
+    task_types = {item["id"]: item for item in ui_routes._task_type_capabilities()}
+
+    assert task_types["coder"]["enabled"] is True
+    assert task_types["coder"]["default_model"] == "coder"
+    assert task_types["coder"]["default_tier"] == 1
+    assert task_types["coder"]["required_tools"] == ["coding_task_create"]
+    assert task_types["coder"]["default_tools"] == ["coding_task_create", "tool_manifest"]
+
+
+@pytest.mark.asyncio
+async def test_create_coder_scheduled_task_persists_coding_tool_defaults(tmp_path, monkeypatch):
+    db_path = tmp_path / "tasks.sqlite"
+    specs_path = tmp_path / "agent_specs.json"
+    monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    monkeypatch.setattr(ui_routes, "_scheduled_agent_specs_path", lambda: specs_path)
+    monkeypatch.setattr(ui_routes, "_require_ui_access", lambda req: None)
+    monkeypatch.setattr(
+        ui_routes,
+        "_require_user",
+        lambda req: types.SimpleNamespace(id=42, username="paper", admin=True),
+    )
+    agent_tasks.init_db()
+
+    result = await ui_routes.ui_api_agent_tasks_create(
+        _JsonRequest(
+            {
+                "task_type": "coder",
+                "title": "Scheduled implementation",
+                "prompt": "Implement the requested repository change.",
+                "delay_seconds": 60,
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    task = result["task"]
+    meta = task["metadata"]
+    assert meta["task_type"] == "coder"
+    assert meta["model"] == "coder"
+    assert meta["tier"] == 1
+    assert meta["tools"] == ["coding_task_create", "tool_manifest"]
+    assert meta["future"]["outputs"] == ["coding_workspace"]
+    assert task["agent"].startswith("scheduled_coder_")
+
+    specs = json.loads(specs_path.read_text(encoding="utf-8"))
+    spec = specs[meta["agent_spec"]]
+    assert spec["model"] == "coder"
+    assert spec["tier"] == 1
+    assert spec["tools_allowlist"] == ["coding_task_create", "tool_manifest"]
+
+
+def test_scheduled_coder_prompt_instructs_workspace_creation(tmp_path, monkeypatch):
+    db_path = tmp_path / "tasks.sqlite"
+    monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    agent_tasks.init_db()
+    created = agent_tasks.create_task(
+        {
+            "title": "Coder run",
+            "prompt": "Fix the failing tests.",
+            "agent": "scheduled_coder_test",
+            "delay_seconds": 60,
+            "metadata": {"task_type": "coder"},
+        }
+    )
+    assert created["ok"] is True
+
+    with agent_tasks._connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (created["task"]["id"],)).fetchone()
+
+    prompt = agent_tasks._scheduled_prompt(row, 1_700_000_000)
+
+    assert "Coder task instructions:" in prompt
+    assert "coding_task_create" in prompt
+    assert "Set auto_run=true" in prompt
 
 
 def test_coding_task_create_tool_creates_workspace(monkeypatch):
