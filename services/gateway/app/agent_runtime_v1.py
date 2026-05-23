@@ -21,7 +21,9 @@ from app.tools_bus import TOOL_SCHEMAS, run_tool_call, tool_awareness_text
 from app.upstreams import call_backend_chat
 
 Backend = str
-_LIGHT_TIER1_TOOLS = frozenset({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene", "coding_task_notify"})
+_LIGHT_TIER1_TOOLS = frozenset(
+    {"coding_task_create", "coding_task_monitor", "coding_task_inspect", "coding_task_intervene", "coding_task_notify"}
+)
 
 
 def _canonical_json(obj: Any) -> str:
@@ -137,7 +139,19 @@ def tools_for_tier(tier: int) -> set[str]:
     # Tier 1: write FS + structured DB ops.
     # Include media/music generation tools like HeartMula in tier 1 so agents configured
     # with tier >= 1 may be granted access when the agent spec explicitly allowlists them.
-    t1 = t0 | {"write_file", "memory_v2_upsert", "memory_v2_search", "memory_v2_list", "memory_v2_delete", "heartmula_generate", "coding_task_monitor", "coding_task_inspect", "coding_task_intervene", "coding_task_notify"}
+    t1 = t0 | {
+        "write_file",
+        "memory_v2_upsert",
+        "memory_v2_search",
+        "memory_v2_list",
+        "memory_v2_delete",
+        "heartmula_generate",
+        "coding_task_create",
+        "coding_task_monitor",
+        "coding_task_inspect",
+        "coding_task_intervene",
+        "coding_task_notify",
+    }
 
     # Tier 2: shell execution (highly constrained, opt-in).
     t2 = t1 | {"shell"}

@@ -2255,6 +2255,8 @@ def _tool_tier(name: str) -> int:
 def _task_tool_category(name: str) -> str:
     if name.startswith("agent_task_"):
         return "scheduling"
+    if name == "coding_task_create":
+        return "coding_workspace"
     if name.startswith("coding_task_"):
         return "coding_supervision"
     if name in {"list_dir", "search_files", "search_text"}:
@@ -2275,6 +2277,8 @@ def _task_tool_category(name: str) -> str:
 def _task_tool_default_off_reason(name: str) -> str:
     if name == "web_browse":
         return "off by default: can reach arbitrary public URLs"
+    if name == "coding_task_create":
+        return "off by default: can create coding workspaces and optionally start coding agents"
     if name == "shell":
         return "off by default: can execute configured shell commands"
     return ""

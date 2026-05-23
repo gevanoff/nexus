@@ -18,6 +18,10 @@ def test_request_is_light_for_coding_supervision_allowlist():
     ) is False
 
 
+def test_request_is_light_for_selected_coding_workspace_create_tool():
+    assert ar._request_is_heavy(tier=1, tools_allowlist=["tool_manifest", "coding_task_create"]) is False
+
+
 def test_request_is_heavy_for_shell_tier():
     assert ar._request_is_heavy(tier=2, tools_allowlist=["shell"]) is True
 

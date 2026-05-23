@@ -406,7 +406,7 @@ def _tool_category(name: str) -> str:
         return "scheduling"
     if name.startswith("memory_"):
         return "memory"
-    if name == "coding_task_intervene":
+    if name in {"coding_task_create", "coding_task_intervene"}:
         return "workspace"
     if name in {"write_file", "git", "shell", "coding_model_integration"}:
         return "workspace"
@@ -451,6 +451,8 @@ def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[s
         guidance.append("Use agent_task_create for reminders, countdowns, recurring checks, and follow-up work; use agent_task_list/cancel to inspect or stop scheduled work.")
     if allowed.intersection({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene"}):
         guidance.append("Use coding_task_monitor to triage coding workspaces, coding_task_inspect for one workspace, and coding_task_intervene only for bounded actions like resume or guidance.")
+    if "coding_task_create" in allowed:
+        guidance.append("Use coding_task_create to create a general coding workspace only when the scheduled task has a concrete implementation prompt and target repository.")
     if "coding_task_notify" in allowed:
         guidance.append("Use coding_task_notify when Nexus Sentinel finds a user-facing noteworthy update that should be sent as a Telegram alert for a coding workspace owner.")
     if allowed.intersection({"write_file", "git", "shell"}):
@@ -1536,6 +1538,39 @@ def tool_coding_model_integration(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": task.get("status") != "error", "task": task}
 
 
+def tool_coding_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
+    prompt = str(args.get("prompt") or "").strip()
+    if not prompt:
+        return {"ok": False, "error": "prompt is required"}
+
+    git_token_value = str(args.get("git_token") or "").strip() or None
+    coding_model = str(args.get("coding_model") or "coder").strip() or "coder"
+    task = coding_workspace.create_task(
+        repo_url=str(args.get("repo_url") or "").strip() or None,
+        base_branch=str(args.get("base_branch") or "").strip() or None,
+        branch_name=str(args.get("branch_name") or "").strip() or None,
+        prompt=prompt,
+        owner="scheduled-task-tool",
+        owner_user_id=None,
+        git_token_value=git_token_value,
+        coding_model=coding_model,
+    )
+    if bool(args.get("auto_run")) and task.get("status") != "error":
+        from app import coding_agent
+
+        task = _run_coroutine_sync(
+            coding_agent.start_agent_run(
+                str(task.get("id") or ""),
+                git_token_value=git_token_value,
+                coding_model=str(args.get("coding_model") or task.get("coding_model") or "coder").strip() or "coder",
+                auto_commit=bool(args.get("auto_commit")),
+                commit_message=str(args.get("commit_message") or "").strip() or None,
+                actor="scheduled-task-tool",
+            )
+        )
+    return {"ok": task.get("status") != "error", "task": task}
+
+
 def tool_coding_task_monitor(args: Dict[str, Any]) -> Dict[str, Any]:
     limit = int(args.get("limit") or 20)
     stalled_after_sec = float(args.get("stalled_after_sec") or 900.0)
@@ -1793,6 +1828,7 @@ TOOL_IMPL = {
     "cluster_resources": tool_cluster_resources,
     "models_refresh": tool_models_refresh,
     "coding_model_integration": tool_coding_model_integration,
+    "coding_task_create": tool_coding_task_create,
     "coding_task_monitor": tool_coding_task_monitor,
     "coding_task_inspect": tool_coding_task_inspect,
     "coding_task_intervene": tool_coding_task_intervene,
@@ -2155,6 +2191,45 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "commit_message": {"type": "string"}
             },
             "required": ["model", "repo_url"],
+            "additionalProperties": False,
+        },
+    },
+    "coding_task_create": {
+        "name": "coding_task_create",
+        "version": "1",
+        "description": (
+            "Create a general Nexus coding workspace for a repository and implementation prompt. "
+            "Optionally queue the coding agent after the workspace is created."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "repo_url": {
+                    "type": "string",
+                    "description": "Target Git repository URL. Defaults to the configured Nexus coding repository when omitted.",
+                },
+                "base_branch": {
+                    "type": "string",
+                    "description": "Branch to clone from. Defaults to the configured coding base branch.",
+                },
+                "branch_name": {"type": "string", "description": "Branch name to create for the workspace."},
+                "prompt": {"type": "string", "description": "Implementation prompt for the coding workspace."},
+                "git_token": {
+                    "type": "string",
+                    "description": "Optional Git token override used for clone and later push operations.",
+                },
+                "coding_model": {"type": "string", "description": "Coding model alias to use when auto_run is enabled."},
+                "auto_run": {"type": "boolean", "description": "If true, queue the coding agent immediately after workspace creation."},
+                "auto_commit": {
+                    "type": "boolean",
+                    "description": "If true, allow the coding agent to auto-commit its changes during the run.",
+                },
+                "commit_message": {
+                    "type": "string",
+                    "description": "Optional commit message used when auto_commit is enabled.",
+                },
+            },
+            "required": ["prompt"],
             "additionalProperties": False,
         },
     },
