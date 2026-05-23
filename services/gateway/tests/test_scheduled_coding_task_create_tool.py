@@ -41,8 +41,17 @@ def test_coder_task_type_is_enabled_and_requires_create_tool():
     assert task_types["coder"]["enabled"] is True
     assert task_types["coder"]["default_model"] == "coder"
     assert task_types["coder"]["default_tier"] == 1
-    assert task_types["coder"]["required_tools"] == ["coding_task_create"]
+    assert task_types["coder"]["required_tools"] == []
     assert task_types["coder"]["default_tools"] == ["coding_task_create", "tool_manifest"]
+    modes = {item["id"]: item for item in task_types["coder"]["coding_modes"]}
+    assert modes["agent"]["required_tools"] == ["coding_task_create"]
+    assert modes["review_audit"]["required_tools"] == ["coding_task_create"]
+    assert modes["ops_diagnostics"]["required_tools"] == ["coding_task_create"]
+    assert modes["model_integration"]["required_tools"] == ["coding_model_integration"]
+    assert ui_routes._task_type_default_tools("coder", 1, coding_mode="model_integration") == [
+        "coding_model_integration",
+        "tool_manifest",
+    ]
 
 
 @pytest.mark.asyncio
@@ -110,6 +119,84 @@ def test_scheduled_coder_prompt_instructs_workspace_creation(tmp_path, monkeypat
     assert "Coder task instructions:" in prompt
     assert "coding_task_create" in prompt
     assert "Set auto_run=true" in prompt
+
+
+@pytest.mark.asyncio
+async def test_create_model_integration_scheduled_task_uses_model_integration_tool(tmp_path, monkeypatch):
+    db_path = tmp_path / "tasks.sqlite"
+    specs_path = tmp_path / "agent_specs.json"
+    monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    monkeypatch.setattr(ui_routes, "_scheduled_agent_specs_path", lambda: specs_path)
+    monkeypatch.setattr(ui_routes, "_require_ui_access", lambda req: None)
+    monkeypatch.setattr(
+        ui_routes,
+        "_require_user",
+        lambda req: types.SimpleNamespace(id=42, username="paper", admin=True),
+    )
+    agent_tasks.init_db()
+
+    result = await ui_routes.ui_api_agent_tasks_create(
+        _JsonRequest(
+            {
+                "task_type": "coder",
+                "coding_mode": "model_integration",
+                "title": "Scheduled model integration",
+                "prompt": "",
+                "delay_seconds": 60,
+                "model_integration": {
+                    "model": "owner/model",
+                    "repo_url": "https://github.com/gevanoff/nexus.git",
+                    "preferred_runtime": "vllm",
+                    "route_kind": "chat",
+                },
+            }
+        )
+    )
+
+    assert result["ok"] is True
+    task = result["task"]
+    meta = task["metadata"]
+    assert task["prompt"] == "Integrate the specified model into Nexus."
+    assert meta["coding_mode"] == "model_integration"
+    assert meta["tools"] == ["coding_model_integration", "tool_manifest"]
+    assert meta["future"]["outputs"] == ["model_integration_workspace"]
+    assert meta["model_integration"]["model"] == "owner/model"
+
+    specs = json.loads(specs_path.read_text(encoding="utf-8"))
+    assert specs[meta["agent_spec"]]["tools_allowlist"] == ["coding_model_integration", "tool_manifest"]
+
+
+def test_scheduled_model_integration_prompt_instructs_model_integration_tool(tmp_path, monkeypatch):
+    db_path = tmp_path / "tasks.sqlite"
+    monkeypatch.setattr(agent_tasks, "_db_path", lambda: str(db_path))
+    agent_tasks.init_db()
+    created = agent_tasks.create_task(
+        {
+            "title": "Model integration",
+            "prompt": "Keep the route OpenAI-compatible.",
+            "agent": "scheduled_coder_test",
+            "delay_seconds": 60,
+            "metadata": {
+                "task_type": "coder",
+                "coding_mode": "model_integration",
+                "model_integration": {
+                    "model": "owner/model",
+                    "repo_url": "https://github.com/gevanoff/nexus.git",
+                    "preferred_runtime": "vllm",
+                },
+            },
+        }
+    )
+    assert created["ok"] is True
+
+    with agent_tasks._connect() as conn:
+        row = conn.execute("SELECT * FROM agent_tasks WHERE id=?", (created["task"]["id"],)).fetchone()
+
+    prompt = agent_tasks._scheduled_prompt(row, 1_700_000_000)
+
+    assert "coding_model_integration" in prompt
+    assert '"model":"owner/model"' in prompt
+    assert '"repo_url":"https://github.com/gevanoff/nexus.git"' in prompt
 
 
 def test_coding_task_create_tool_creates_workspace(monkeypatch):

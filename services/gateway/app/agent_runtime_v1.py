@@ -22,7 +22,14 @@ from app.upstreams import call_backend_chat
 
 Backend = str
 _LIGHT_TIER1_TOOLS = frozenset(
-    {"coding_task_create", "coding_task_monitor", "coding_task_inspect", "coding_task_intervene", "coding_task_notify"}
+    {
+        "coding_model_integration",
+        "coding_task_create",
+        "coding_task_monitor",
+        "coding_task_inspect",
+        "coding_task_intervene",
+        "coding_task_notify",
+    }
 )
 
 
@@ -146,6 +153,7 @@ def tools_for_tier(tier: int) -> set[str]:
         "memory_v2_list",
         "memory_v2_delete",
         "heartmula_generate",
+        "coding_model_integration",
         "coding_task_create",
         "coding_task_monitor",
         "coding_task_inspect",

@@ -175,6 +175,61 @@
                   <select id="model" data-marquee-select></select>
                 </div>
               </div>
+              <div id="codingModeFields" hidden>
+                <label for="codingMode">Coding workspace mode</label>
+                <select id="codingMode"></select>
+              </div>
+              <div id="modelIntegrationFields" class="stack" hidden>
+                <div class="grid2">
+                  <div>
+                    <label for="modelIntegrationModel">Model</label>
+                    <input id="modelIntegrationModel" autocomplete="off" placeholder="owner/model or https://huggingface.co/owner/model" />
+                  </div>
+                  <div>
+                    <label for="modelIntegrationRepoUrl">Destination GitHub repository</label>
+                    <input id="modelIntegrationRepoUrl" autocomplete="off" placeholder="https://github.com/gevanoff/nexus.git" />
+                  </div>
+                </div>
+                <div class="grid3">
+                  <div>
+                    <label for="modelIntegrationRuntime">Runtime</label>
+                    <select id="modelIntegrationRuntime">
+                      <option value="auto">Auto detect</option>
+                      <option value="mlx">mlx</option>
+                      <option value="vllm">vllm</option>
+                      <option value="transformers">transformers</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="modelIntegrationRouteKind">Route kind</label>
+                    <select id="modelIntegrationRouteKind">
+                      <option value="">Auto detect</option>
+                      <option value="chat">chat</option>
+                      <option value="embeddings">embeddings</option>
+                      <option value="images">images</option>
+                      <option value="tts">tts</option>
+                      <option value="ocr">ocr</option>
+                      <option value="video">video</option>
+                      <option value="music">music</option>
+                      <option value="json">json</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="modelIntegrationServiceName">Service name</label>
+                    <input id="modelIntegrationServiceName" autocomplete="off" placeholder="auto" />
+                  </div>
+                </div>
+                <div class="grid2">
+                  <div>
+                    <label for="modelIntegrationBaseBranch">Base branch</label>
+                    <input id="modelIntegrationBaseBranch" autocomplete="off" placeholder="main" />
+                  </div>
+                  <div>
+                    <label for="modelIntegrationBranchName">Working branch</label>
+                    <input id="modelIntegrationBranchName" autocomplete="off" placeholder="auto" />
+                  </div>
+                </div>
+              </div>
               <div class="grid2">
                 <div>
                   <label for="scheduleMode">Schedule</label>
@@ -329,6 +384,6 @@
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/select_marquee.js?v=1"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/tasks.js?v=7"></script>
+    <script src="/static/tasks.js?v=8"></script>
   </body>
 </html>

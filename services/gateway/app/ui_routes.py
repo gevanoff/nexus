@@ -2255,7 +2255,7 @@ def _tool_tier(name: str) -> int:
 def _task_tool_category(name: str) -> str:
     if name.startswith("agent_task_"):
         return "scheduling"
-    if name == "coding_task_create":
+    if name in {"coding_model_integration", "coding_task_create"}:
         return "coding_workspace"
     if name.startswith("coding_task_"):
         return "coding_supervision"
@@ -2277,6 +2277,8 @@ def _task_tool_category(name: str) -> str:
 def _task_tool_default_off_reason(name: str) -> str:
     if name == "web_browse":
         return "off by default: can reach arbitrary public URLs"
+    if name == "coding_model_integration":
+        return "off by default: can create model-integration coding workspaces and optionally start coding agents"
     if name == "coding_task_create":
         return "off by default: can create coding workspaces and optionally start coding agents"
     if name == "shell":
@@ -2322,10 +2324,51 @@ def _coerce_selected_tools(raw: Any, tier: int) -> list[str]:
     return out
 
 
-def _task_type_default_tools(task_type: str, tier: int) -> list[str]:
+_CODING_WORKSPACE_MODES: list[Dict[str, Any]] = [
+    {
+        "id": "agent",
+        "label": "New Agent Run",
+        "default_tools": ["coding_task_create"],
+        "required_tools": ["coding_task_create"],
+    },
+    {
+        "id": "review_audit",
+        "label": "New Review or Audit Run",
+        "default_tools": ["coding_task_create"],
+        "required_tools": ["coding_task_create"],
+    },
+    {
+        "id": "ops_diagnostics",
+        "label": "New Ops or Diagnostics Sandbox",
+        "default_tools": ["coding_task_create"],
+        "required_tools": ["coding_task_create"],
+    },
+    {
+        "id": "model_integration",
+        "label": "New Model Integration",
+        "default_tools": ["coding_model_integration"],
+        "required_tools": ["coding_model_integration"],
+        "requires_model_integration": True,
+    },
+]
+
+
+def _coding_mode_config(mode: str) -> Dict[str, Any]:
+    normalized = str(mode or "agent").strip().lower() or "agent"
+    for item in _CODING_WORKSPACE_MODES:
+        if str(item.get("id") or "") == normalized:
+            return item
+    return _CODING_WORKSPACE_MODES[0]
+
+
+def _task_type_default_tools(task_type: str, tier: int, *, coding_mode: str = "agent") -> list[str]:
     normalized = str(task_type or "llm").strip().lower() or "llm"
     if normalized == "coder":
-        return _coerce_selected_tools(["coding_task_create"], max(1, int(tier or 1)))
+        mode_config = _coding_mode_config(coding_mode)
+        return _coerce_selected_tools(
+            list(mode_config.get("default_tools") or ["coding_task_create"]),
+            max(1, int(tier or 1)),
+        )
     return _default_task_tools(tier)
 
 
@@ -2347,7 +2390,8 @@ def _task_type_capabilities() -> list[Dict[str, Any]]:
             "default_model": "coder",
             "default_tier": 1,
             "default_tools": _task_type_default_tools("coder", 1),
-            "required_tools": ["coding_task_create"],
+            "required_tools": [],
+            "coding_modes": _CODING_WORKSPACE_MODES,
         },
         {"id": "image", "label": "Image generation", "enabled": False},
         {"id": "music", "label": "Music generation", "enabled": False},
@@ -2456,8 +2500,45 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
     if not isinstance(task_type_config, dict):
         raise HTTPException(status_code=400, detail=f"scheduled task type is not enabled: {task_type}")
 
+    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    metadata = dict(metadata)
+    coding_mode_config: Dict[str, Any] = {}
+    coding_mode = ""
+    model_integration: Dict[str, Any] = {}
+    if task_type == "coder":
+        coding_mode_config = _coding_mode_config(
+            str(body.get("coding_mode") or metadata.get("coding_mode") or "agent")
+        )
+        coding_mode = str(coding_mode_config.get("id") or "agent")
+        raw_integration = body.get("model_integration")
+        if not isinstance(raw_integration, dict):
+            raw_integration = (
+                metadata.get("model_integration")
+                if isinstance(metadata.get("model_integration"), dict)
+                else {}
+            )
+        model_integration = dict(raw_integration) if isinstance(raw_integration, dict) else {}
+        if bool(coding_mode_config.get("requires_model_integration")):
+            model_id = str(model_integration.get("model") or model_integration.get("model_id") or "").strip()
+            repo_url = str(model_integration.get("repo_url") or "").strip()
+            if not model_id:
+                raise HTTPException(status_code=400, detail="model is required for model integration scheduled coder tasks")
+            if not repo_url:
+                raise HTTPException(status_code=400, detail="repo_url is required for model integration scheduled coder tasks")
+            model_integration = {
+                "model": model_id,
+                "repo_url": repo_url,
+                "preferred_runtime": str(model_integration.get("preferred_runtime") or "auto").strip() or "auto",
+                "route_kind": str(model_integration.get("route_kind") or "").strip(),
+                "service_name": str(model_integration.get("service_name") or "").strip(),
+                "base_branch": str(model_integration.get("base_branch") or "").strip(),
+                "branch_name": str(model_integration.get("branch_name") or "").strip(),
+            }
+
     prompt = str(body.get("prompt") or "").strip()
     title = str(body.get("title") or "").strip()
+    if not prompt and task_type == "coder" and coding_mode == "model_integration":
+        prompt = "Integrate the specified model into Nexus."
     if not prompt:
         raise HTTPException(status_code=400, detail="task prompt required")
     if not title:
@@ -2475,14 +2556,15 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
         tier = max(1, tier)
     raw_tools = body.get("tools")
     if raw_tools is None or (task_type == "coder" and raw_tools == []):
-        raw_tools = _task_type_default_tools(task_type, tier)
+        raw_tools = _task_type_default_tools(task_type, tier, coding_mode=coding_mode or "agent")
     try:
         selected_tools = _coerce_selected_tools(raw_tools, tier)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    required_source = coding_mode_config if task_type == "coder" else task_type_config
     required_tools = [
         str(item).strip()
-        for item in (task_type_config.get("required_tools") or [])
+        for item in (required_source.get("required_tools") or [])
         if isinstance(item, str) and str(item).strip()
     ]
     missing_required = [name for name in required_tools if name not in selected_tools]
@@ -2519,8 +2601,13 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to persist scheduled agent spec: {type(exc).__name__}: {exc}") from exc
 
-    metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
-    metadata = dict(metadata)
+    if coding_mode == "model_integration":
+        future_outputs = ["model_integration_workspace"]
+    elif task_type == "coder":
+        future_outputs = ["coding_workspace"]
+    else:
+        future_outputs = ["text"]
+
     metadata.update(
         {
             "task_type": task_type,
@@ -2534,10 +2621,14 @@ async def ui_api_agent_tasks_create(req: Request) -> Dict[str, Any]:
             "future": {
                 "apps": [],
                 "models": [model],
-                "outputs": ["coding_workspace"] if task_type == "coder" else ["text"],
+                "outputs": future_outputs,
             },
         }
     )
+    if task_type == "coder":
+        metadata["coding_mode"] = coding_mode or "agent"
+        if model_integration:
+            metadata["model_integration"] = model_integration
 
     args: Dict[str, Any] = {
         "title": title,

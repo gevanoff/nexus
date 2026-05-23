@@ -6,6 +6,16 @@
     title: document.getElementById("taskTitle"),
     prompt: document.getElementById("taskPrompt"),
     taskType: document.getElementById("taskType"),
+    codingModeFields: document.getElementById("codingModeFields"),
+    codingMode: document.getElementById("codingMode"),
+    modelIntegrationFields: document.getElementById("modelIntegrationFields"),
+    modelIntegrationModel: document.getElementById("modelIntegrationModel"),
+    modelIntegrationRepoUrl: document.getElementById("modelIntegrationRepoUrl"),
+    modelIntegrationRuntime: document.getElementById("modelIntegrationRuntime"),
+    modelIntegrationRouteKind: document.getElementById("modelIntegrationRouteKind"),
+    modelIntegrationServiceName: document.getElementById("modelIntegrationServiceName"),
+    modelIntegrationBaseBranch: document.getElementById("modelIntegrationBaseBranch"),
+    modelIntegrationBranchName: document.getElementById("modelIntegrationBranchName"),
     model: document.getElementById("model"),
     scheduleMode: document.getElementById("scheduleMode"),
     maxRuns: document.getElementById("maxRuns"),
@@ -278,6 +288,7 @@
       if (task.next_run_ts) els.detailBadges.appendChild(badgeButton(`next ${fmtTs(task.next_run_ts)}`, "enabled", editSelectedNextRun, "Edit next run time"));
       if (task.max_runs) els.detailBadges.appendChild(badge(`max ${task.max_runs}`));
       if (protectedTask) els.detailBadges.appendChild(badge("Protected", "enabled"));
+      if (meta.coding_mode) els.detailBadges.appendChild(badge(String(meta.coding_mode).replace(/_/g, " ")));
       const modelId = canonicalizeTaskModelId(String(task.metadata?.model || "default"));
       const modelEntry = (state.models || []).find((item) => String(item?.id || "") === modelId);
       els.detailBadges.appendChild(badgeButton(modelOptionLabel(modelEntry) || modelId, "", editSelectedModel, "Edit task model"));
@@ -292,25 +303,41 @@
     return (state.capabilities?.task_types || []).find((item) => String(item?.id || "") === typeId) || null;
   }
 
-  function requiredToolsForTaskType(id = "") {
+  function codingModeConfig(id = "") {
+    const config = taskTypeConfig("coder");
+    const modes = Array.isArray(config?.coding_modes) ? config.coding_modes : [];
+    const modeId = String(id || els.codingMode?.value || "agent").trim() || "agent";
+    return modes.find((item) => String(item?.id || "") === modeId) || modes[0] || null;
+  }
+
+  function requiredToolsForTaskType(id = "", modeId = "") {
     const config = taskTypeConfig(id);
+    const taskType = String(id || els.taskType?.value || "llm").trim() || "llm";
+    if (taskType === "coder") {
+      const mode = codingModeConfig(modeId);
+      return new Set(Array.isArray(mode?.required_tools) ? mode.required_tools : []);
+    }
     return new Set(Array.isArray(config?.required_tools) ? config.required_tools : []);
   }
 
-  function requiredTierForTaskType(id = "") {
+  function requiredTierForTaskType(id = "", modeId = "") {
     let requiredTier = 0;
-    for (const name of requiredToolsForTaskType(id)) {
+    for (const name of requiredToolsForTaskType(id, modeId)) {
       const tool = (state.capabilities?.tools || []).find((item) => String(item?.name || "") === String(name || ""));
       if (tool) requiredTier = Math.max(requiredTier, Number(tool.tier || 0));
     }
     return requiredTier;
   }
 
-  function defaultToolsForTaskType(tier, id = "") {
+  function defaultToolsForTaskType(tier, id = "", modeId = "") {
     const config = taskTypeConfig(id);
-    const configured = Array.isArray(config?.default_tools) ? config.default_tools : null;
+    const taskType = String(id || els.taskType?.value || "llm").trim() || "llm";
+    const mode = taskType === "coder" ? codingModeConfig(modeId) : null;
+    const configured = Array.isArray(mode?.default_tools)
+      ? mode.default_tools
+      : Array.isArray(config?.default_tools) ? config.default_tools : null;
     const defaultTier = Number(config?.default_tier || 0);
-    const useConfigured = configured && (String(config?.id || "") === "coder" || Number(tier || 0) === defaultTier);
+    const useConfigured = configured && (taskType === "coder" || Number(tier || 0) === defaultTier);
     if (useConfigured) return configured.filter((name) => {
       const tool = (state.capabilities?.tools || []).find((item) => String(item?.name || "") === String(name || ""));
       return tool && Number(tool.tier) <= Number(tier || 0);
@@ -323,7 +350,7 @@
   function renderToolList(target, tier, selected = [], options = {}) {
     if (!target || !state.capabilities) return;
     const taskType = String(options.taskType || els.taskType?.value || "llm").trim() || "llm";
-    const required = requiredToolsForTaskType(taskType);
+    const required = requiredToolsForTaskType(taskType, options.codingMode || "");
     const current = new Set([...(Array.isArray(selected) ? selected : []), ...required]);
     const visibleTools = (state.capabilities.tools || [])
       .filter((tool) => Number(tool.tier) <= Number(tier || 0))
@@ -400,7 +427,12 @@
     if (els.taskEditToolsSection) els.taskEditToolsSection.hidden = !showTools;
     if (els.taskEditModelSection) els.taskEditModelSection.hidden = !showModel;
     if (showPrompt && els.taskEditPrompt) els.taskEditPrompt.value = config.prompt || "";
-    if (showTools) renderToolList(els.taskEditTools, config.tier, config.selectedTools || [], { taskType: config.taskType || "llm" });
+    if (showTools) {
+      renderToolList(els.taskEditTools, config.tier, config.selectedTools || [], {
+        taskType: config.taskType || "llm",
+        codingMode: config.codingMode || "agent",
+      });
+    }
     if (showModel) populateModelSelect(els.taskEditModel, config.model || "default");
     if (els.taskEditModal) els.taskEditModal.hidden = false;
   }
@@ -468,6 +500,21 @@
     }
   }
 
+  function renderCodingModes() {
+    if (!els.codingMode || !state.capabilities) return;
+    const config = taskTypeConfig("coder");
+    const modes = Array.isArray(config?.coding_modes) ? config.coding_modes : [];
+    const current = String(els.codingMode.value || "agent");
+    els.codingMode.innerHTML = "";
+    for (const item of modes) {
+      const opt = document.createElement("option");
+      opt.value = String(item?.id || "");
+      opt.textContent = String(item?.label || item?.id || "");
+      els.codingMode.appendChild(opt);
+    }
+    els.codingMode.value = modes.some((item) => String(item?.id || "") === current) ? current : "agent";
+  }
+
   function setModelSelectValue(value) {
     if (!els.model) return;
     const desired = String(value || "").trim();
@@ -503,8 +550,9 @@
   function renderTools(options = {}) {
     if (!els.tools || !state.capabilities) return;
     const taskType = els.taskType?.value || "llm";
+    const codingMode = els.codingMode?.value || "agent";
     let tier = Number(els.tier?.value || 0);
-    const minTier = requiredTierForTaskType(taskType);
+    const minTier = requiredTierForTaskType(taskType, codingMode);
     if (els.tier && tier < minTier) {
       tier = minTier;
       els.tier.value = String(minTier);
@@ -512,12 +560,16 @@
     const existing = new Set(Array.from(els.tools.querySelectorAll("input:checked")).map((el) => el.value));
     const selected = existing.size && !options.reset
       ? Array.from(existing)
-      : defaultToolsForTaskType(tier);
-    renderToolList(els.tools, tier, selected, { taskType });
+      : defaultToolsForTaskType(tier, taskType, codingMode);
+    renderToolList(els.tools, tier, selected, { taskType, codingMode });
   }
 
   function applyTaskTypeDefaults() {
     const config = taskTypeConfig();
+    const isCoder = String(els.taskType?.value || "") === "coder";
+    const isModelIntegration = isCoder && String(els.codingMode?.value || "agent") === "model_integration";
+    if (els.codingModeFields) els.codingModeFields.hidden = !isCoder;
+    if (els.modelIntegrationFields) els.modelIntegrationFields.hidden = !isModelIntegration;
     if (!config) {
       renderTools({ reset: true });
       return;
@@ -527,6 +579,18 @@
     }
     if (config.default_model) setModelSelectValue(config.default_model);
     renderTools({ reset: true });
+  }
+
+  function modelIntegrationPayload() {
+    return {
+      model: els.modelIntegrationModel?.value.trim() || "",
+      repo_url: els.modelIntegrationRepoUrl?.value.trim() || "",
+      preferred_runtime: els.modelIntegrationRuntime?.value.trim() || "auto",
+      route_kind: els.modelIntegrationRouteKind?.value.trim() || "",
+      service_name: els.modelIntegrationServiceName?.value.trim() || "",
+      base_branch: els.modelIntegrationBaseBranch?.value.trim() || "",
+      branch_name: els.modelIntegrationBranchName?.value.trim() || "",
+    };
   }
 
   function updateScheduleFields() {
@@ -556,6 +620,17 @@
       tools: selectedTools(),
       metadata: { ui: "scheduled_tasks" },
     };
+    if (payload.task_type === "coder") {
+      payload.coding_mode = els.codingMode?.value || "agent";
+      payload.metadata.coding_mode = payload.coding_mode;
+      if (payload.coding_mode === "model_integration") {
+        payload.model_integration = modelIntegrationPayload();
+        payload.metadata.model_integration = payload.model_integration;
+        if (!payload.model_integration.model) throw new Error("model is required");
+        if (!payload.model_integration.repo_url) throw new Error("destination repository is required");
+        if (!payload.prompt) payload.prompt = "Integrate the specified model into Nexus.";
+      }
+    }
     const maxRuns = Number(els.maxRuns?.value || 0);
     if (maxRuns > 0) payload.max_runs = maxRuns;
     if (mode === "delay") {
@@ -581,6 +656,7 @@
   async function loadCapabilities() {
     state.capabilities = await fetchJson("/ui/api/agent-tasks/capabilities");
     renderTaskTypes();
+    renderCodingModes();
     applyTaskTypeDefaults();
   }
 
@@ -723,6 +799,7 @@
       hint: `Update the allowed tools for this scheduled task. Tier ${Number(meta.tier || 0)} tools only.`,
       tier: Number(meta.tier || 0),
       taskType: String(meta.task_type || "llm"),
+      codingMode: String(meta.coding_mode || "agent"),
       selectedTools: Array.isArray(meta.tools) ? meta.tools : [],
     });
   }
@@ -739,6 +816,7 @@
         : "Update the prompt, model, and tool access for future runs. Use the next-run badge to edit the schedule timestamp directly.",
       tier: Number(meta.tier || 0),
       taskType: String(meta.task_type || "llm"),
+      codingMode: String(meta.coding_mode || "agent"),
       selectedTools: Array.isArray(meta.tools) ? meta.tools : [],
       model: String(meta.model || "default"),
       prompt: String(task?.prompt || ""),
@@ -872,6 +950,7 @@
     updateScheduleFields();
     els.scheduleMode?.addEventListener("change", updateScheduleFields);
     els.taskType?.addEventListener("change", applyTaskTypeDefaults);
+    els.codingMode?.addEventListener("change", applyTaskTypeDefaults);
     els.tier?.addEventListener("change", () => renderTools());
     els.form?.addEventListener("submit", createTask);
     els.resetForm?.addEventListener("click", resetForm);

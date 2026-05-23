@@ -649,13 +649,45 @@ def _scheduled_prompt(row: sqlite3.Row, due_ts: int, *, preface: str = "") -> st
     task_type = str(metadata.get("task_type") or "").strip().lower()
     type_instructions = ""
     if task_type == "coder":
-        type_instructions = (
-            "\n\nCoder task instructions:\n"
-            "- Create a Nexus coding workspace by calling coding_task_create.\n"
-            "- Use the Task prompt below as the coding workspace prompt.\n"
-            "- Set auto_run=true unless the prompt explicitly says to create only the workspace.\n"
-            "- Only pass repo_url, base_branch, or branch_name when the prompt specifies them; otherwise use configured defaults."
-        )
+        coding_mode = str(metadata.get("coding_mode") or "agent").strip().lower() or "agent"
+        mode_label = {
+            "agent": "standard agent run",
+            "review_audit": "review or audit run",
+            "ops_diagnostics": "ops or diagnostics sandbox",
+            "model_integration": "model integration workspace",
+        }.get(coding_mode, "standard agent run")
+        if coding_mode == "model_integration":
+            integration = metadata.get("model_integration") if isinstance(metadata.get("model_integration"), dict) else {}
+            safe_integration = {
+                key: str(integration.get(key) or "").strip()
+                for key in ("model", "repo_url", "preferred_runtime", "route_kind", "service_name", "base_branch", "branch_name")
+                if str(integration.get(key) or "").strip()
+            }
+            type_instructions = (
+                "\n\nCoder task instructions:\n"
+                f"- Coding workspace mode: {mode_label}.\n"
+                "- Create the workspace by calling coding_model_integration.\n"
+                "- Use the model integration parameters below as the tool arguments; omit empty optional fields.\n"
+                "- Use the Task prompt below as extra guidance for the generated integration workspace.\n"
+                "- Set auto_run=true unless the prompt explicitly says to create only the workspace.\n"
+                f"- Model integration parameters: {json.dumps(safe_integration, separators=(',', ':'), sort_keys=True)}"
+            )
+        else:
+            if coding_mode == "review_audit":
+                mode_guidance = "Preserve review/audit focus: prioritize concrete bugs, regressions, risks, and missing tests."
+            elif coding_mode == "ops_diagnostics":
+                mode_guidance = "Preserve ops/diagnostics focus: prioritize runtime health, config drift, topology, logs, and small validated fixes."
+            else:
+                mode_guidance = "Use the standard implementation-workspace workflow."
+            type_instructions = (
+                "\n\nCoder task instructions:\n"
+                f"- Coding workspace mode: {mode_label}.\n"
+                "- Create a Nexus coding workspace by calling coding_task_create.\n"
+                "- Use the Task prompt below as the coding workspace prompt.\n"
+                f"- {mode_guidance}\n"
+                "- Set auto_run=true unless the prompt explicitly says to create only the workspace.\n"
+                "- Only pass repo_url, base_branch, or branch_name when the prompt specifies them; otherwise use configured defaults."
+            )
     return (
         prefix
         + "A scheduled Nexus agent task is due.\n\n"
