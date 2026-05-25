@@ -73,7 +73,7 @@ def test_scaffold_workspace_writes_topology_aware_files(monkeypatch, tmp_path):
     readme = (tmp_path / "README.md").read_text(encoding="utf-8")
     assert "Integration strategy: `existing_vllm_model`" in readme
     assert "not add a new backend service" in readme
-    assert "ai1" in readme
+    assert "meltdown" in readme
     env_snippet = (tmp_path / "integration" / "vllm-model-env-snippet.env").read_text(encoding="utf-8")
     assert "VLLM_MODEL_EMBEDDINGS=Qwen/Qwen3-Embedding-4B" in env_snippet
     alias_snippet = json.loads((tmp_path / "integration" / "model-alias-snippet.json").read_text(encoding="utf-8"))
@@ -91,3 +91,4 @@ def test_integration_host_lanes_fall_back_without_topology_files(monkeypatch):
     assert lanes
     assert any(lane["host"] == "ai2" and lane["runtime"] == "mlx" for lane in lanes)
     assert any(lane["host"] == "ada2" and lane["runtime"] == "vllm" for lane in lanes)
+    assert any(lane["host"] == "meltdown" and lane["id"] == "local_vllm_embeddings" for lane in lanes)

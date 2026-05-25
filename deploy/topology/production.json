@@ -31,8 +31,8 @@
       "VLLM_ADVERTISE_BASE_URL": "http://ada2:8003/v1",
       "VLLM_FAST_BASE_URL": "http://ai1:8001/v1",
       "VLLM_FAST_ADVERTISE_BASE_URL": "http://ai1:8001/v1",
-      "VLLM_EMBEDDINGS_BASE_URL": "http://ai1:8002/v1",
-      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://ai1:8002/v1",
+      "VLLM_EMBEDDINGS_BASE_URL": "http://meltdown:8002/v1",
+      "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://meltdown:8002/v1",
       "VLLM_PORT": "8003",
       "IMAGES_BACKEND": "http_openai_images",
       "IMAGES_BACKEND_CLASS": "gpu_heavy",
@@ -41,8 +41,8 @@
       "IMAGES_SHIM_INVOKEAI_BASE_URL": "http://invokeai:9090",
       "INVOKEAI_BASE_URL": "http://ada2:9090",
       "INVOKEAI_ADVERTISE_BASE_URL": "http://ada2:9090",
-      "SDXL_TURBO_BASE_URL": "http://ai1:9050",
-      "SDXL_TURBO_ADVERTISE_BASE_URL": "http://ai1:9050",
+      "SDXL_TURBO_BASE_URL": "http://meltdown:9050",
+      "SDXL_TURBO_ADVERTISE_BASE_URL": "http://meltdown:9050",
       "LIGHTON_OCR_API_BASE_URL": "http://ada2:9155",
       "LIGHTON_OCR_ADVERTISE_BASE_URL": "http://ada2:9155",
       "PERSONAPLEX_BASE_URL": "http://ada2:9160",
@@ -79,35 +79,23 @@
   },
   "hosts": {
     "ai1": {
-      "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, SDXL-Turbo, embeddings, and secondary vLLM/CUDA capacity.",
+      "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress and secondary vLLM/CUDA capacity.",
       "platform": "linux",
       "resource_kind": "linux_nvidia",
       "ssh_target": "ai@ai1",
       "components": [
         "mediamtx",
-        "sdxl-turbo",
-        "vllm-fast",
-        "vllm-embeddings"
+        "vllm-fast"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
-        "SDXL_TURBO_DEVICE": "cuda",
-        "SDXL_TURBO_CUDA_VISIBLE_DEVICES": "1",
-        "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
-        "SDXL_TURBO_ENABLE_SEQUENTIAL_CPU_OFFLOAD": "true",
-        "SDXL_TURBO_MAX_GUIDANCE_SCALE": "0.0",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "VLLM_FAST_SERVICE_NAME": "vllm-fast",
         "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
         "VLLM_FAST_TOKENIZER": "Qwen/Qwen3-30B-A3B",
         "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.82",
         "VLLM_FAST_MAX_MODEL_LEN": "2048",
-        "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0",
-        "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings",
-        "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
-        "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.72",
-        "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "2048",
-        "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "1"
+        "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0"
       }
     },
     "ai2": {
@@ -170,9 +158,23 @@
       "platform": "linux",
       "resource_kind": "linux_nvidia",
       "ssh_target": "ai@meltdown",
-      "components": [],
+      "components": [
+        "sdxl-turbo",
+        "vllm-embeddings"
+      ],
       "env": {
-        "ETCD_URL": "http://ai2:2379"
+        "ETCD_URL": "http://ai2:2379",
+        "SDXL_TURBO_DEVICE": "cuda",
+        "SDXL_TURBO_CUDA_VISIBLE_DEVICES": "all",
+        "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
+        "SDXL_TURBO_ENABLE_SEQUENTIAL_CPU_OFFLOAD": "true",
+        "SDXL_TURBO_MAX_GUIDANCE_SCALE": "0.0",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "VLLM_EMBEDDINGS_SERVICE_NAME": "vllm-embeddings",
+        "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
+        "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.70",
+        "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "2048",
+        "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "all"
       }
     }
   }

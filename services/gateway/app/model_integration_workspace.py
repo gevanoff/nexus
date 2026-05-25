@@ -70,7 +70,7 @@ _VLLM_UNSUPPORTED_MARKERS = {
 }
 _FALLBACK_HOSTS = {
     "ai1": {
-        "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, SDXL-Turbo, embeddings, and secondary vLLM/CUDA capacity.",
+        "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress and secondary vLLM/CUDA capacity.",
         "platform": "linux",
         "resource_kind": "linux_nvidia",
     },
@@ -115,10 +115,17 @@ _FALLBACK_BACKENDS = {
     },
     "local_vllm_embeddings": {
         "display_name": "vLLM Embeddings",
-        "host": "ai1",
+        "host": "meltdown",
         "estimated_vram_mb": 12000,
         "compose_file": "docker-compose.vllm-embeddings.yml",
         "ready_path": "/models",
+    },
+    "gpu_fast": {
+        "display_name": "SDXL-Turbo",
+        "host": "meltdown",
+        "estimated_vram_mb": 7000,
+        "compose_file": "docker-compose.sdxl-turbo.yml",
+        "ready_path": "/readyz",
     },
     "gpu_heavy": {
         "display_name": "InvokeAI Images",
@@ -618,8 +625,9 @@ def integration_host_lanes() -> list[Dict[str, Any]]:
     for backend_name, label, route_kinds in (
         ("local_mlx", "ai2 / MLX", ["chat"]),
         ("local_vllm_fast", "ai1 / vLLM Fast", ["chat", "json"]),
-        ("local_vllm_embeddings", "ai1 / vLLM Embeddings", ["embeddings"]),
+        ("local_vllm_embeddings", "meltdown / vLLM Embeddings", ["embeddings"]),
         ("local_vllm", "ada2 / vLLM Strong", ["chat", "json"]),
+        ("gpu_fast", "meltdown / SDXL-Turbo", ["images"]),
         ("gpu_heavy", "ada2 / CUDA Media", ["images", "video", "music", "ocr"]),
     ):
         backend = _backend_profile(backend_name)
@@ -688,7 +696,7 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
         if route_kind == "embeddings":
             return _deployment_target_from_backend(
                 "local_vllm_embeddings",
-                reason="Embeddings map to the dedicated ai1 embeddings lane, which already reserves a smaller secondary GPU profile for vLLM embeddings workloads.",
+                reason="Embeddings map to the dedicated meltdown embeddings lane, which uses the lighter 16GB CUDA host while leaving the larger chat lanes on ai1 and ada2.",
             )
         if size_b is not None and size_b >= 24:
             return _deployment_target_from_backend(

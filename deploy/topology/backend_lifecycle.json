@@ -161,7 +161,7 @@
     },
     "local_vllm_embeddings": {
       "display_name": "vLLM Embeddings",
-      "host": "ai1",
+      "host": "meltdown",
       "component": "vllm-embeddings",
       "tier": "crucial",
       "capabilities": ["embeddings"],
@@ -169,11 +169,12 @@
       "auto_start": true,
       "auto_stop": false,
       "compose_file": "docker-compose.vllm-embeddings.yml",
-      "ready_path": "/models"
+      "ready_path": "/models",
+      "notes": "Assigned to meltdown's 16GB RTX 5060 Ti as the lightweight vLLM embeddings lane. Keep chat lanes on ai1/ada2 unless measurements prove they fit."
     },
     "gpu_fast": {
       "display_name": "SDXL-Turbo",
-      "host": "ai1",
+      "host": "meltdown",
       "component": "sdxl-turbo",
       "tier": "high",
       "capabilities": ["images"],
@@ -181,7 +182,8 @@
       "auto_start": true,
       "auto_stop": true,
       "compose_file": "docker-compose.sdxl-turbo.yml",
-      "ready_path": "/readyz"
+      "ready_path": "/readyz",
+      "notes": "Assigned to meltdown as the lightweight fast image lane; keep heavy InvokeAI and video generation on ada2."
     },
     "gpu_heavy": {
       "display_name": "InvokeAI Images",

@@ -20,9 +20,21 @@ def test_meltdown_is_tracked_as_linux_nvidia_topology_host() -> None:
     assert meltdown["platform"] == "linux"
     assert meltdown["resource_kind"] == "linux_nvidia"
     assert meltdown["ssh_target"] == "ai@meltdown"
-    assert meltdown["components"] == []
+    assert meltdown["components"] == ["sdxl-turbo", "vllm-embeddings"]
     assert lifecycle["hosts"]["meltdown"]["resource_kind"] == "linux_nvidia"
     assert lifecycle["hosts"]["meltdown"]["env_file"] == "deploy/env/.env.prod.meltdown"
+
+
+def test_meltdown_owns_lightweight_gpu_backends() -> None:
+    topology = json.loads(_read("deploy/topology/production.json"))
+    lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
+
+    assert "sdxl-turbo" not in topology["hosts"]["ai1"]["components"]
+    assert "vllm-embeddings" not in topology["hosts"]["ai1"]["components"]
+    assert topology["defaults"]["env"]["SDXL_TURBO_BASE_URL"] == "http://meltdown:9050"
+    assert topology["defaults"]["env"]["VLLM_EMBEDDINGS_BASE_URL"] == "http://meltdown:8002/v1"
+    assert lifecycle["backends"]["gpu_fast"]["host"] == "meltdown"
+    assert lifecycle["backends"]["local_vllm_embeddings"]["host"] == "meltdown"
 
 
 def test_meltdown_container_alias_is_available_to_control_plane_compose() -> None:
