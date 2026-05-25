@@ -32,10 +32,12 @@ Set these in `nexus/.env`:
 Recommended defaults:
 
 - `TELEGRAM_GATEWAY_BASE_URL=http://gateway:8800`
-- `TELEGRAM_GATEWAY_MODEL=auto`
+- `TELEGRAM_GATEWAY_MODEL=fast`
 - `TELEGRAM_MAX_HISTORY=20`
 - `TELEGRAM_MAX_MESSAGE=3900`
 - `TELEGRAM_LOG_LEVEL=info`
+
+The Telegram bot defaults to the `fast` alias rather than `auto` so direct chat traffic stays on the user-facing fast tier instead of the default MLX reasoning lane.
 
 ## Start / restart
 

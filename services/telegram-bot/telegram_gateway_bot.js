@@ -9,13 +9,23 @@ const GATEWAY_BASE_URL_RAW = String(process.env.GATEWAY_BASE_URL || '').trim();
 const GATEWAY_BASE_URL = GATEWAY_BASE_URL_RAW || `${GATEWAY_SCHEME}://${GATEWAY_HOST}:${GATEWAY_PORT}`;
 const GATEWAY_URL = `${GATEWAY_BASE_URL}/v1/chat/completions`;
 const GATEWAY_BEARER_TOKEN = process.env.GATEWAY_BEARER_TOKEN;
-const GATEWAY_MODEL = process.env.GATEWAY_MODEL || 'auto';
+const GATEWAY_MODEL = process.env.GATEWAY_MODEL || 'fast';
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
 const MAX_HISTORY = Number.parseInt(process.env.MAX_HISTORY || '20', 10);
 const TELEGRAM_MAX_MESSAGE = Number.parseInt(process.env.TELEGRAM_MAX_MESSAGE || '3900', 10);
 const LOG_LEVEL = String(process.env.LOG_LEVEL || 'info').toLowerCase();
 const LOG_PREVIEW_CHARS = Number.parseInt(process.env.LOG_PREVIEW_CHARS || '320', 10);
 const GATEWAY_SOCKET_TIMEOUT_MS = 60000;
+const FALLBACK_CLARIFICATION_REPLY = 'I need a bit more context to answer reliably. Please clarify what you want to know or share the earlier message.';
+const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
+const THINK_TAG_RE = /<\/?think>/gi;
+const INTERNAL_SCRATCHPAD_PATTERNS = [
+  /\bmaybe the user is asking\b/i,
+  /\bthe previous messages? (?:are|were) not clear\b/i,
+  /\b(?:i need to|i should|let me)\b[\s\S]{0,80}\bclarif(?:y|ication)\b/i,
+  /\b(?:i need to|i should|let me)\b[\s\S]{0,80}\bask\b[\s\S]{0,80}\buser\b/i,
+  /\b(?:internal reasoning|chain[- ]of[- ]thought|scratchpad)\b/i,
+];
 
 if (!TELEGRAM_TOKEN) {
   throw new Error('Missing TELEGRAM_TOKEN');
@@ -174,10 +184,216 @@ function splitMessage(text, maxLen) {
   return chunks;
 }
 
+function splitReplySegments(text) {
+  const segments = [];
+  const lines = String(text || '').split(/\n+/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const parts = trimmed.match(/[^.!?]+[.!?]?/g);
+    if (Array.isArray(parts) && parts.length) {
+      for (const part of parts) {
+        const segment = part.trim();
+        if (segment) {
+          segments.push(segment);
+        }
+      }
+      continue;
+    }
+    segments.push(trimmed);
+  }
+  return segments;
+}
+
+function normalizeSegment(text) {
+  return String(text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function collapseRepeatedSegments(text) {
+  const segments = splitReplySegments(text);
+  if (segments.length < 4) {
+    return { text: String(text || '').trim(), repeatedSegment: '', repeatedCount: 0 };
+  }
+
+  const counts = new Map();
+  for (const segment of segments) {
+    const key = normalizeSegment(segment);
+    if (!key) {
+      continue;
+    }
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+
+  let repeatedSegment = '';
+  let repeatedCount = 0;
+  for (const [key, count] of counts.entries()) {
+    if (count > repeatedCount) {
+      repeatedSegment = key;
+      repeatedCount = count;
+    }
+  }
+
+  if (repeatedCount < 4 || repeatedCount / Math.max(1, segments.length) < 0.5) {
+    return { text: String(text || '').trim(), repeatedSegment: '', repeatedCount: 0 };
+  }
+
+  const collapsed = [];
+  let previousKey = '';
+  for (const segment of segments) {
+    const key = normalizeSegment(segment);
+    if (!key) {
+      continue;
+    }
+    if (key === previousKey) {
+      continue;
+    }
+    collapsed.push(segment.trim());
+    previousKey = key;
+  }
+
+  return {
+    text: collapsed.join('\n').trim(),
+    repeatedSegment,
+    repeatedCount,
+  };
+}
+
+function looksLikeInternalScratchpad(text) {
+  const normalized = String(text || '').trim();
+  if (!normalized) {
+    return true;
+  }
+  let matches = 0;
+  for (const pattern of INTERNAL_SCRATCHPAD_PATTERNS) {
+    if (pattern.test(normalized)) {
+      matches += 1;
+    }
+  }
+  return matches >= 2;
+}
+
+function stripLeadingScratchpadParagraphs(text) {
+  const paragraphs = String(text || '').split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean);
+  if (paragraphs.length < 2) {
+    return { text: String(text || '').trim(), droppedCount: 0 };
+  }
+
+  let index = 0;
+  while (index < paragraphs.length - 1 && looksLikeInternalScratchpad(paragraphs[index])) {
+    index += 1;
+  }
+
+  if (!index) {
+    return { text: String(text || '').trim(), droppedCount: 0 };
+  }
+
+  return {
+    text: paragraphs.slice(index).join('\n\n').trim(),
+    droppedCount: index,
+  };
+}
+
+function sanitizeAssistantReply(text) {
+  const raw = String(text || '');
+  const strippedThinkBlocks = THINK_BLOCK_RE.test(raw);
+  let content = raw.replace(THINK_BLOCK_RE, ' ').replace(THINK_TAG_RE, ' ').trim();
+  const strippedScratchpad = stripLeadingScratchpadParagraphs(content);
+  content = strippedScratchpad.text;
+  const repetition = collapseRepeatedSegments(content);
+  content = repetition.text;
+
+  let replacedWithFallback = false;
+  if (!content || looksLikeInternalScratchpad(content)) {
+    content = FALLBACK_CLARIFICATION_REPLY;
+    replacedWithFallback = true;
+  }
+
+  return {
+    content,
+    meta: {
+      strippedThinkBlocks,
+      droppedScratchpadParagraphs: strippedScratchpad.droppedCount,
+      repeatedSegment: repetition.repeatedSegment,
+      repeatedCount: repetition.repeatedCount,
+      replacedWithFallback,
+    },
+  };
+}
+
+function extractTextFromContentParts(content) {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    const parts = [];
+    for (const item of content) {
+      if (typeof item === 'string' && item.trim()) {
+        parts.push(item.trim());
+        continue;
+      }
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const kind = String(item.type || '').trim().toLowerCase();
+      const text = typeof item.text === 'string' ? item.text.trim() : '';
+      if (text && (!kind || kind === 'text' || kind === 'output_text' || kind === 'input_text')) {
+        parts.push(text);
+      }
+    }
+    return parts.join('\n').trim();
+  }
+  if (content && typeof content === 'object') {
+    if (typeof content.text === 'string' && content.text.trim()) {
+      return content.text.trim();
+    }
+    if (Array.isArray(content.content)) {
+      return extractTextFromContentParts(content.content);
+    }
+  }
+  return '';
+}
+
+function extractAssistantText(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  const message = payload.choices?.[0]?.message;
+  if (message && typeof message === 'object') {
+    const contentText = extractTextFromContentParts(message.content);
+    if (contentText) {
+      return contentText;
+    }
+    if (typeof message.refusal === 'string' && message.refusal.trim()) {
+      return message.refusal.trim();
+    }
+  }
+
+  if (Array.isArray(payload.output)) {
+    for (const item of payload.output) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const contentText = extractTextFromContentParts(item.content);
+      if (contentText) {
+        return contentText;
+      }
+    }
+  }
+
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  return '';
+}
+
 async function replyLongText(ctx, text) {
   const content = String(text || '');
   if (!content.trim()) {
-    await ctx.reply('No response content.');
+    await ctx.reply(FALLBACK_CLARIFICATION_REPLY);
     return;
   }
 
@@ -560,7 +776,7 @@ async function queryGateway(history, message) {
       timeout: GATEWAY_SOCKET_TIMEOUT_MS,
     });
 
-    return res.data?.choices?.[0]?.message?.content || '';
+    return extractAssistantText(res.data);
   } catch (err) {
     if (axios.isAxiosError(err)) {
       log('error', 'Gateway request failed', {
@@ -652,7 +868,9 @@ async function handleIncomingText(ctx, text, source) {
     if (await maybeHandleSlashCommand(ctx, userText)) {
       return;
     }
-    const answer = await queryGateway(history, userText);
+    const gatewayAnswer = await queryGateway(history, userText);
+    const sanitized = sanitizeAssistantReply(gatewayAnswer);
+    const answer = sanitized.content;
     history.push({ role: 'user', content: userText });
     history.push({ role: 'assistant', content: answer });
     histories.set(ctx.chat.id, trimHistory(history));
@@ -660,6 +878,10 @@ async function handleIncomingText(ctx, text, source) {
       chatId: ctx.chat?.id,
       userId: ctx.from?.id,
       textPreview: previewText(answer),
+      strippedThinkBlocks: sanitized.meta.strippedThinkBlocks,
+      droppedScratchpadParagraphs: sanitized.meta.droppedScratchpadParagraphs,
+      repeatedSegmentCount: sanitized.meta.repeatedCount,
+      replacedWithFallback: sanitized.meta.replacedWithFallback,
     });
     await replyLongText(ctx, answer);
   } catch (err) {
