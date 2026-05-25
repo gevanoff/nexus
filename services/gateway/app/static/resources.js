@@ -1,6 +1,8 @@
 (() => {
   const hostsEl = document.getElementById("hosts");
+  const controlPlaneSectionEl = document.getElementById("control_plane_section");
   const controlPlaneEl = document.getElementById("control_plane");
+  const coreServicesSectionEl = document.getElementById("core_services_section");
   const coreServicesEl = document.getElementById("core_services");
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
@@ -195,6 +197,46 @@
     target.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
+  const controlPlaneCoreServiceIds = new Set(["gateway", "etcd", "lifecycle_manager", "telegram_bot"]);
+  const serviceIdAliases = new Map([
+    ["etcd_service_discovery", "etcd"],
+    ["gateway_health_checks", "gateway"],
+    ["gateway_health_check", "gateway"],
+    ["lifecycle", "lifecycle_manager"],
+    ["telegram", "telegram_bot"],
+  ]);
+
+  function serviceIdentity(service) {
+    const raw = String(service?.service_id || service?.id || service?.display_name || "").trim().toLowerCase();
+    const normalized = raw.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return serviceIdAliases.get(normalized) || normalized;
+  }
+
+  function splitCoreServicesForResourceUi(controlPlane, coreServices) {
+    const controlItems = Array.isArray(controlPlane) ? controlPlane : [];
+    const coreItems = Array.isArray(coreServices) ? coreServices : [];
+    const controlCoreServices = coreItems.filter((service) => controlPlaneCoreServiceIds.has(serviceIdentity(service)));
+    if (!controlCoreServices.length) {
+      return { controlPlane: controlItems, coreServices: coreItems, controlPlaneUsesCoreCards: false };
+    }
+
+    const represented = new Set(controlCoreServices.map((service) => serviceIdentity(service)).filter(Boolean));
+    const uniqueControlItems = controlItems.filter((service) => {
+      const key = serviceIdentity(service);
+      return key && !represented.has(key);
+    });
+    const remainingCoreServices = coreItems.filter((service) => {
+      const key = serviceIdentity(service);
+      return !key || !represented.has(key);
+    });
+
+    return {
+      controlPlane: [...controlCoreServices, ...uniqueControlItems],
+      coreServices: remainingCoreServices,
+      controlPlaneUsesCoreCards: true,
+    };
+  }
+
   const backendGroups = [
     { id: "chat", label: "Chat & Reasoning", capabilities: ["chat", "transcription"] },
     { id: "embeddings", label: "Embeddings", capabilities: ["embeddings"] },
@@ -311,13 +353,21 @@
     });
   }
 
-  function renderCoreServices(services) {
-    if (!coreServicesEl) return;
-    coreServicesEl.innerHTML = "";
+  function renderCoreServices(services, targetEl, options) {
+    const el = targetEl || coreServicesEl;
+    const opts = options || {};
+    const sectionEl = opts.sectionEl || (el === coreServicesEl ? coreServicesSectionEl : null);
+    if (!el) return;
+    el.innerHTML = "";
     if (!Array.isArray(services) || !services.length) {
-      coreServicesEl.innerHTML = '<div class="hint">No core services reported.</div>';
+      if (sectionEl && opts.hideWhenEmpty) sectionEl.hidden = true;
+      else {
+        if (sectionEl) sectionEl.hidden = false;
+        el.innerHTML = `<div class="hint">${opts.emptyText || "No services reported."}</div>`;
+      }
       return;
     }
+    if (sectionEl) sectionEl.hidden = false;
     const sorted = [...services].sort((a, b) =>
       (Number(a.status_rank ?? 9) - Number(b.status_rank ?? 9))
       || String(a.host || "").localeCompare(String(b.host || ""))
@@ -369,7 +419,7 @@
       }
 
       card.appendChild(left);
-      coreServicesEl.appendChild(card);
+      el.appendChild(card);
     });
   }
 
@@ -377,9 +427,11 @@
     if (!controlPlaneEl) return;
     controlPlaneEl.innerHTML = "";
     if (!Array.isArray(services) || !services.length) {
+      if (controlPlaneSectionEl) controlPlaneSectionEl.hidden = false;
       controlPlaneEl.innerHTML = '<div class="hint">No control-plane services reported.</div>';
       return;
     }
+    if (controlPlaneSectionEl) controlPlaneSectionEl.hidden = false;
     const sorted = [...services].sort((a, b) =>
       (Number(a.status_rank ?? 9) - Number(b.status_rank ?? 9))
       || String(a.display_name || a.service_id || "").localeCompare(String(b.display_name || b.service_id || ""))
@@ -591,8 +643,19 @@
     const opts = options || {};
     updatePollInterval(payload);
     renderHosts(payload.hosts || []);
-    renderControlPlane(payload.control_plane || []);
-    renderCoreServices(payload.core_services || []);
+    const serviceSections = splitCoreServicesForResourceUi(payload.control_plane || [], payload.core_services || []);
+    if (serviceSections.controlPlaneUsesCoreCards) {
+      renderCoreServices(serviceSections.controlPlane, controlPlaneEl, {
+        sectionEl: controlPlaneSectionEl,
+        emptyText: "No control-plane services reported.",
+      });
+    } else {
+      renderControlPlane(serviceSections.controlPlane);
+    }
+    renderCoreServices(serviceSections.coreServices, coreServicesEl, {
+      sectionEl: coreServicesSectionEl,
+      hideWhenEmpty: true,
+    });
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];
     if (opts.cached) statusParts.push("showing cached data");

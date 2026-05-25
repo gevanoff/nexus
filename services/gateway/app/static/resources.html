@@ -84,6 +84,7 @@
       button:disabled { opacity: 0.6; cursor: default; }
       .status { margin-bottom: 12px; min-height: 18px; }
       .section-title { margin-top: 16px; }
+      .resource-subsection[hidden] { display: none; }
       .error { color: #ffb6b6; }
       .decision { white-space: pre-wrap; word-break: break-word; }
       @media (max-width: 850px) { .layout { grid-template-columns: 1fr; } }
@@ -107,10 +108,14 @@
         <section class="card">
           <h2>Hosts</h2>
           <div id="hosts" class="host-list"></div>
-          <h2 class="section-title">Control Plane</h2>
-          <div id="control_plane" class="control-plane-list"></div>
-          <h2 class="section-title">Core Services</h2>
-          <div id="core_services" class="core-service-list"></div>
+          <section id="control_plane_section" class="resource-subsection">
+            <h2 class="section-title">Control Plane</h2>
+            <div id="control_plane" class="control-plane-list"></div>
+          </section>
+          <section id="core_services_section" class="resource-subsection" hidden>
+            <h2 class="section-title">Core Services</h2>
+            <div id="core_services" class="core-service-list"></div>
+          </section>
         </section>
         <section class="card">
           <h2>Backends</h2>
@@ -120,6 +125,6 @@
     </main>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/resources.js?v=9"></script>
+    <script src="/static/resources.js?v=10"></script>
   </body>
 </html>
