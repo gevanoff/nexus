@@ -33,6 +33,8 @@ def test_meltdown_owns_lightweight_gpu_backends() -> None:
     assert "vllm-embeddings" not in topology["hosts"]["ai1"]["components"]
     assert topology["defaults"]["env"]["SDXL_TURBO_BASE_URL"] == "http://meltdown:9050"
     assert topology["defaults"]["env"]["VLLM_EMBEDDINGS_BASE_URL"] == "http://meltdown:8002/v1"
+    assert topology["hosts"]["meltdown"]["env"]["SDXL_TURBO_CUDA_VISIBLE_DEVICES"] == "0"
+    assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES"] == "0"
     assert lifecycle["backends"]["gpu_fast"]["host"] == "meltdown"
     assert lifecycle["backends"]["local_vllm_embeddings"]["host"] == "meltdown"
 
