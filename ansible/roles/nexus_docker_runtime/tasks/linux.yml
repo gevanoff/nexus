@@ -207,7 +207,11 @@
 
 - name: Probe Docker NVIDIA runtime configuration
   ansible.builtin.raw: |
-    if docker info 2>/dev/null | grep -qi nvidia; then
+    if docker info --format '{{ "{{json .Runtimes}}" }}' 2>/dev/null | grep -q '"nvidia"'; then
+      echo present
+      exit 0
+    fi
+    if [ -f /etc/docker/daemon.json ] && grep -q '"nvidia"' /etc/docker/daemon.json; then
       echo present
     fi
   register: nexus_linux_docker_nvidia_runtime_probe

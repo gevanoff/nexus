@@ -60,5 +60,6 @@ def test_meltdown_bootstrap_uses_managed_checkout_and_gpu_runtime_validation() -
     assert "docker-compose-plugin" in group_vars
     assert "https://download.docker.com/linux/${repo_os}" in linux_docker_role
     assert "https://nvidia.github.io/libnvidia-container" in linux_docker_role
+    assert "docker info --format" in linux_docker_role
     assert "docker run --rm --gpus all" in linux_docker_role
     assert "become: true" in linux_docker_role
