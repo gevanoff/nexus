@@ -9,6 +9,7 @@ and environment-specific secret overlays.
 - `deploy/secrets/prod/ai1.env.sops`
 - `deploy/secrets/prod/ai2.env.sops`
 - `deploy/secrets/prod/ada2.env.sops`
+- `deploy/secrets/prod/meltdown.env.sops`
 - `deploy/secrets/dev/default.env.sops`
 
 Use `common.env.sops` for values shared by every host in an environment.

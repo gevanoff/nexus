@@ -91,6 +91,7 @@ def _build_inventory(topology_file: Path, payload: dict[str, Any]) -> dict[str, 
         native_services = [item for item in raw_host.get("native_services", []) if isinstance(item, str) and item.strip()]
         merged_env = _merged_env(defaults, raw_host)
         platform = _merged_platform(defaults, raw_host)
+        resource_kind = str(raw_host.get("resource_kind") or ("linux_nvidia" if platform == "linux" else platform)).strip()
         explicit_repo_dir = _explicit_repo_dir(defaults, raw_host)
 
         hostvars: dict[str, Any] = {
@@ -106,6 +107,8 @@ def _build_inventory(topology_file: Path, payload: dict[str, Any]) -> dict[str, 
             hostvars["ansible_user"] = ssh_user
         if platform:
             hostvars["nexus_host_platform"] = platform
+        if resource_kind:
+            hostvars["nexus_resource_kind"] = resource_kind
         if explicit_repo_dir:
             hostvars["nexus_repo_dir"] = explicit_repo_dir
 
@@ -128,6 +131,10 @@ def _build_inventory(topology_file: Path, payload: dict[str, Any]) -> dict[str, 
 
         if platform:
             group_name = _safe_group_name("platform", platform)
+            inventory.setdefault(group_name, {"hosts": []})
+            inventory[group_name]["hosts"].append(host_name)
+        if resource_kind:
+            group_name = _safe_group_name("resource", resource_kind)
             inventory.setdefault(group_name, {"hosts": []})
             inventory[group_name]["hosts"].append(host_name)
 

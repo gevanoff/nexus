@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "nexus-production",
-  "description": "Canonical multi-host production placement for ai1, ai2, and ada2.",
+  "description": "Canonical multi-host production placement for ai1, ai2, ada2, and meltdown.",
   "defaults": {
     "repo_dir_by_platform": {
       "macos": "/Users/ai/ai/nexus",
@@ -81,6 +81,7 @@
     "ai1": {
       "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, SDXL-Turbo, embeddings, and secondary vLLM/CUDA capacity.",
       "platform": "linux",
+      "resource_kind": "linux_nvidia",
       "ssh_target": "ai@ai1",
       "components": [
         "mediamtx",
@@ -112,6 +113,7 @@
     "ai2": {
       "description": "Mac M3 Ultra with 512GB unified memory for gateway/control plane, containerized TTS, and host-native MLX reasoning.",
       "platform": "macos",
+      "resource_kind": "macos",
       "ssh_target": "ai@ai2",
       "components": [
         "gateway",
@@ -142,6 +144,7 @@
     "ada2": {
       "description": "Linux/NVIDIA node with 128GB system RAM and an RTX 6000 Ada 48GB for primary heavy vLLM plus image and video generation services.",
       "platform": "linux",
+      "resource_kind": "linux_nvidia",
       "ssh_target": "ai@ada2",
       "components": [
         "images",
@@ -160,6 +163,16 @@
         "VLLM_CPU_OFFLOAD_GB": "8",
         "VLLM_GPU_MEMORY_UTILIZATION": "0.55",
         "VLLM_MAX_MODEL_LEN": "2048"
+      }
+    },
+    "meltdown": {
+      "description": "Ubuntu 22.04 Linux/NVIDIA node with Intel Core i7-5930K, about 47 GiB system RAM, and a GeForce RTX 5060 Ti 16GB for lighter CUDA overflow and staging.",
+      "platform": "linux",
+      "resource_kind": "linux_nvidia",
+      "ssh_target": "ai@meltdown",
+      "components": [],
+      "env": {
+        "ETCD_URL": "http://ai2:2379"
       }
     }
   }

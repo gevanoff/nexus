@@ -54,12 +54,28 @@ def _live_payload() -> dict[str, object]:
                 "updated_at": 1_700_000_003,
             },
             {
+                "name": "meltdown",
+                "cpu": {"model_name": "Test Meltdown Host", "logical_cpus": 12},
+                "memory": {"total_mb": 48100, "used_mb": 2000, "available_mb": 46000},
+                "gpus": [
+                    {
+                        "index": 0,
+                        "name": "NVIDIA GeForce RTX 5060 Ti",
+                        "memory_total_mb": 16311,
+                        "memory_used_mb": 1024,
+                        "memory_free_mb": 15287,
+                        "utilization_gpu_pct": 1,
+                    }
+                ],
+                "updated_at": 1_700_000_004,
+            },
+            {
                 "name": "ai3",
                 "error": "ssh unavailable",
                 "cpu": {},
                 "memory": {},
                 "gpus": [],
-                "updated_at": 1_700_000_004,
+                "updated_at": 1_700_000_005,
             },
         ],
     }
@@ -80,6 +96,8 @@ def test_lifecycle_payload_updates_runtime_and_cached_snapshot(tmp_path, monkeyp
     assert "source: live_lifecycle_refresh" in prompt_context
     assert "ai1: linux_x86_64; Test Intel Workstation; 64 logical CPUs" in prompt_context
     assert "NVIDIA Test GPU 80 GiB" in prompt_context
+    assert "meltdown: linux_x86_64; Test Meltdown Host; 12 logical CPUs" in prompt_context
+    assert "NVIDIA GeForce RTX 5060 Ti 15.9 GiB" in prompt_context
     assert "ai3: macos_arm64; Apple M2" in prompt_context
     assert "lifecycle probe failed" in prompt_context
 
@@ -96,6 +114,7 @@ def test_scheduled_context_uses_last_cached_snapshot_when_runtime_is_empty(tmp_p
     assert "source: last_cached_snapshot" in prompt_context
     assert "Test Intel Workstation" in prompt_context
     assert "NVIDIA Test GPU 80 GiB" in prompt_context
+    assert "Test Meltdown Host" in prompt_context
 
 
 @pytest.mark.asyncio
@@ -109,4 +128,5 @@ async def test_startup_refresh_falls_back_to_baseline_when_lifecycle_is_unconfig
 
     assert snapshot["source"] == "checked_in_baseline"
     assert snapshot["hosts"]["ai1"]["cpu"] == "12th Gen Intel Core i7-12700F"
+    assert snapshot["hosts"]["meltdown"]["cpu"] == "Intel Core i7-5930K"
     assert "lifecycle manager URL is not configured" in " ".join(snapshot["warnings"])

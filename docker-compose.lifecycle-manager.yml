@@ -28,6 +28,8 @@ services:
       - "ai3.embrient.com:${NEXUS_HOST_AI3_IP}"
       - "ada2:${NEXUS_HOST_ADA2_IP}"
       - "ada2.embrient.com:${NEXUS_HOST_ADA2_IP}"
+      - "meltdown:${NEXUS_HOST_MELTDOWN_IP}"
+      - "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}"
       - "adada:${NEXUS_HOST_ADADA_IP}"
       - "adada.embrient.com:${NEXUS_HOST_ADADA_IP}"
     networks:

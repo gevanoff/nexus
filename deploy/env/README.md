@@ -17,13 +17,13 @@ Then create one of:
 
 - `deploy/env/.env.dev` (for `deploy/scripts/deploy.sh dev ...`)
 - `deploy/env/.env.prod` (for `deploy/scripts/deploy.sh prod ...`)
-- `deploy/env/.env.prod.ai1`, `deploy/env/.env.prod.ai2`, `deploy/env/.env.prod.ada2` when using topology-driven multi-host deploys
+- `deploy/env/.env.prod.ai1`, `deploy/env/.env.prod.ai2`, `deploy/env/.env.prod.ada2`, `deploy/env/.env.prod.meltdown` when using topology-driven multi-host deploys
 
 Optional untracked overlays:
 
 - `deploy/env/.env.dev.local`
 - `deploy/env/.env.prod.local`
-- `deploy/env/.env.prod.ai1.local`, `deploy/env/.env.prod.ai2.local`, `deploy/env/.env.prod.ada2.local`
+- `deploy/env/.env.prod.ai1.local`, `deploy/env/.env.prod.ai2.local`, `deploy/env/.env.prod.ada2.local`, `deploy/env/.env.prod.meltdown.local`
 
 These `.local` files are git-ignored and are applied after the tracked template/topology env is rendered. Use them for host-local secrets, allowlists, reference-file paths, and other values that should not live in the repo.
 
@@ -31,7 +31,7 @@ Generated SOPS overlays:
 
 - `deploy/env/.env.dev.sops.common.local`
 - `deploy/env/.env.prod.sops.common.local`
-- `deploy/env/.env.prod.ai1.sops.local`, `deploy/env/.env.prod.ai2.sops.local`, `deploy/env/.env.prod.ada2.sops.local`
+- `deploy/env/.env.prod.ai1.sops.local`, `deploy/env/.env.prod.ai2.sops.local`, `deploy/env/.env.prod.ada2.sops.local`, `deploy/env/.env.prod.meltdown.sops.local`
 
 These generated `.sops*.local` files are also git-ignored. They are materialized from tracked encrypted secret files in `deploy/secrets/` and then merged before the plain `.local` overlay. Precedence is:
 

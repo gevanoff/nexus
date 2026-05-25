@@ -18,7 +18,7 @@ Do not treat etcd as the deployment plan. etcd is the live runtime registry:
 
 Current tracked topology:
 
-- `production.json`: canonical placement for `ai1`, `ai2`, and `ada2`
+- `production.json`: canonical placement for `ai1`, `ai2`, `ada2`, and `meltdown`
 
 Typical workflow:
 
@@ -57,3 +57,4 @@ Compatibility note:
 - The tracked `vllm` defaults may require Hugging Face auth or higher rate limits, so set `HUGGING_FACE_HUB_TOKEN` on the destination host when needed.
 - `ai1` has two RTX 3090 24GB GPUs. Treat it as two separate 24GB VRAM lanes, not as one large-memory device.
 - `ada2` has 128GB system RAM and a 48GB RTX 6000 Ada. Use the RAM for vLLM CPU offload and startup headroom, but continue to schedule CUDA services by VRAM pressure.
+- `meltdown` has Ubuntu 22.04, about 47GB system RAM, and a 16GB RTX 5060 Ti. Treat it as a lighter CUDA overflow/staging host, not a replacement for `ada2`.

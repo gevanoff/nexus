@@ -141,7 +141,7 @@ Important gateway data under `./.runtime/gateway/data` includes:
   - `agent_specs.json` (seeded from `services/gateway/env/agent_specs.json.example`)
 - No image rebuild is required after edits; restart the gateway container if you want a clean reload.
 
-For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `ai1`, or `ada2`. Commit and push from a development checkout, then deploy by pulling the intended branch on the target host with `deploy/scripts/deploy.sh` or the remote deploy wrapper. The runtime directories above are host state and are the exception.
+For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `ai1`, `ada2`, or `meltdown`. Commit and push from a development checkout, then deploy by pulling the intended branch on the target host with `deploy/scripts/deploy.sh` or the remote deploy wrapper. The runtime directories above are host state and are the exception.
 
 ## Deployment Scripts
 

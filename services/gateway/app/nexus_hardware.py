@@ -12,9 +12,9 @@ import httpx
 from app.config import S
 
 
-NEXUS_HARDWARE_VERIFIED_AT = "2026-05-21"
+NEXUS_HARDWARE_VERIFIED_AT = "2026-05-25"
 NEXUS_HARDWARE_SNAPSHOT_VERSION = 1
-PRODUCTION_CONTEXT_HOSTS = ("ai2", "ai1", "ada2")
+PRODUCTION_CONTEXT_HOSTS = ("ai2", "ai1", "ada2", "meltdown")
 KNOWN_NON_PRODUCTION_HOSTS = ("ai3",)
 
 
@@ -48,6 +48,15 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
         "accelerators": ["NVIDIA RTX 6000 Ada Generation, 48 GB class GPU with 46 GiB reported VRAM"],
         "role": "Primary heavy CUDA host for vLLM strong and high-VRAM image/video/music/OCR workloads.",
         "notes": "System RAM helps CPU offload and startup headroom, but VRAM contention remains the scheduling constraint.",
+    },
+    "meltdown": {
+        "platform": "linux_x86_64",
+        "cpu": "Intel Core i7-5930K",
+        "cpu_cores": "12 logical CPUs",
+        "memory": "about 47 GiB system RAM observed",
+        "accelerators": ["NVIDIA GeForce RTX 5060 Ti 16 GB class GPU with 15.9 GiB reported VRAM"],
+        "role": "Linux/NVIDIA overflow and staging host for lighter CUDA workloads.",
+        "notes": "Use for smaller models or test deployments; avoid assuming ada2-class VRAM. Docker and NVIDIA Container Toolkit must be bootstrapped before Compose GPU workloads.",
     },
     "ai3": {
         "platform": "macos_arm64",
@@ -321,18 +330,19 @@ def scheduled_task_hardware_context() -> str:
         "Use this for model/backend host-fit reasoning before choosing where a model should run. "
         "This is hardware capacity, not current load; check live resource tools for transient pressure.",
     ]
-    for host in ("ai2", "ai1", "ada2"):
+    for host in PRODUCTION_CONTEXT_HOSTS:
         spec = hosts.get(host) if isinstance(hosts.get(host), dict) else NEXUS_HOST_HARDWARE[host]
         accelerators = "; ".join(str(item) for item in spec["accelerators"])
         lines.append(
             f"- {host}: {spec['platform']}; {spec['cpu']}; {spec['cpu_cores']}; "
             f"{spec['memory']}; accelerators: {accelerators}. {spec['role']} {spec['notes']}"
         )
-    ai3 = hosts.get("ai3") if isinstance(hosts.get("ai3"), dict) else NEXUS_HOST_HARDWARE["ai3"]
-    lines.append(
-        f"- ai3: {ai3['platform']}; {ai3['cpu']}; {ai3['cpu_cores']}; {ai3['memory']}. "
-        f"{ai3['role']} {ai3['notes']}"
-    )
+    for host in KNOWN_NON_PRODUCTION_HOSTS:
+        spec = hosts.get(host) if isinstance(hosts.get(host), dict) else NEXUS_HOST_HARDWARE[host]
+        lines.append(
+            f"- {host}: {spec['platform']}; {spec['cpu']}; {spec['cpu_cores']}; {spec['memory']}. "
+            f"{spec['role']} {spec['notes']}"
+        )
     warnings = snapshot.get("warnings")
     if isinstance(warnings, list) and warnings:
         lines.append("Hardware context warnings: " + " | ".join(str(item) for item in warnings if str(item).strip()))

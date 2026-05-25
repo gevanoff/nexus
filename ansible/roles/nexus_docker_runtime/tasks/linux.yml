@@ -92,6 +92,125 @@
     - nexus_manage_docker_runtime | bool
     - not ansible_check_mode or (nexus_linux_docker_service_probe.stdout | trim) != ""
 
+- name: Probe for NVIDIA GPU availability on Linux
+  ansible.builtin.raw: |
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+      echo present
+    fi
+  register: nexus_linux_nvidia_gpu_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_manage_nvidia_container_runtime | bool
+    - (nexus_resource_kind | default('')) == "linux_nvidia"
+
+- name: Probe for NVIDIA Container Toolkit on Linux
+  ansible.builtin.raw: |
+    if command -v nvidia-ctk >/dev/null 2>&1 || command -v nvidia-container-cli >/dev/null 2>&1; then
+      echo present
+    fi
+  register: nexus_linux_nvidia_container_toolkit_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_manage_nvidia_container_runtime | bool
+    - (nexus_resource_kind | default('')) == "linux_nvidia"
+    - (nexus_linux_nvidia_gpu_probe.stdout | default('') | trim) == "present"
+
+- name: Install NVIDIA Container Toolkit on apt-based Linux GPU hosts
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if ! command -v apt-get >/dev/null 2>&1; then
+      echo "Automatic NVIDIA Container Toolkit install currently supports apt-based Linux hosts only." >&2
+      exit 1
+    fi
+    if [[ ! -r /etc/os-release ]]; then
+      echo "Cannot read /etc/os-release; unable to detect NVIDIA Container Toolkit repository." >&2
+      exit 1
+    fi
+    . /etc/os-release
+    distribution="${ID}${VERSION_ID}"
+    install -d -m 0755 /usr/share/keyrings
+    rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg.tmp
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+      | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg.tmp
+    mv /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg.tmp /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    curl -fsSL "https://nvidia.github.io/libnvidia-container/${distribution}/libnvidia-container.list" \
+      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' \
+      > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    apt-get update
+    apt-get install -y nvidia-container-toolkit
+  args:
+    executable: /bin/bash
+  become: true
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_manage_nvidia_container_runtime | bool
+    - not ansible_check_mode
+    - (nexus_resource_kind | default('')) == "linux_nvidia"
+    - (nexus_linux_nvidia_gpu_probe.stdout | default('') | trim) == "present"
+    - (nexus_linux_nvidia_container_toolkit_probe.stdout | default('') | trim) == ""
+
+- name: Probe Docker NVIDIA runtime configuration
+  ansible.builtin.raw: |
+    if docker info 2>/dev/null | grep -qi nvidia; then
+      echo present
+    fi
+  register: nexus_linux_docker_nvidia_runtime_probe
+  changed_when: false
+  check_mode: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_manage_nvidia_container_runtime | bool
+    - (nexus_resource_kind | default('')) == "linux_nvidia"
+    - (nexus_linux_nvidia_gpu_probe.stdout | default('') | trim) == "present"
+
+- name: Configure Docker to use NVIDIA Container Toolkit
+  ansible.builtin.shell: |
+    set -euo pipefail
+    nvidia-ctk runtime configure --runtime=docker
+  args:
+    executable: /bin/bash
+  become: true
+  changed_when: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_manage_nvidia_container_runtime | bool
+    - not ansible_check_mode
+    - (nexus_resource_kind | default('')) == "linux_nvidia"
+    - (nexus_linux_nvidia_gpu_probe.stdout | default('') | trim) == "present"
+    - (nexus_linux_docker_nvidia_runtime_probe.stdout | default('') | trim) == ""
+
+- name: Restart Docker after NVIDIA runtime configuration
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+  become: true
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_manage_nvidia_container_runtime | bool
+    - not ansible_check_mode
+    - (nexus_resource_kind | default('')) == "linux_nvidia"
+    - (nexus_linux_nvidia_gpu_probe.stdout | default('') | trim) == "present"
+    - (nexus_linux_docker_nvidia_runtime_probe.stdout | default('') | trim) == ""
+
+- name: Optionally validate NVIDIA runtime with a CUDA container
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_manage_nvidia_container_runtime | bool
+    - nexus_nvidia_container_runtime_validate | bool
+    - not ansible_check_mode
+    - (nexus_resource_kind | default('')) == "linux_nvidia"
+    - (nexus_linux_nvidia_gpu_probe.stdout | default('') | trim) == "present"
+
 - name: Ensure the runtime user is in the docker group
   ansible.builtin.user:
     name: "{{ nexus_runtime_user }}"

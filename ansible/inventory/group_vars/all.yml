@@ -7,6 +7,8 @@ nexus_sync_existing_checkout: true
 nexus_manage_sops_secrets: true
 nexus_manage_host_prereqs: true
 nexus_manage_docker_runtime: true
+nexus_manage_nvidia_container_runtime: true
+nexus_nvidia_container_runtime_validate: false
 nexus_manage_mlx_host_prep: true
 nexus_sops_age_key_file: "{{ lookup('env', 'SOPS_AGE_KEY_FILE') | default('', true) }}"
 nexus_runtime_user: "{{ ansible_user | default('ai') }}"
@@ -19,6 +21,7 @@ nexus_controller_env_file: "{{ nexus_controller_repo_dir }}/deploy/env/.env.{{ n
 nexus_linux_common_packages:
   - git
   - curl
+  - gpg
   - lsof
   - ca-certificates
   - python3

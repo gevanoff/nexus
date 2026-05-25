@@ -84,6 +84,11 @@ _FALLBACK_HOSTS = {
         "platform": "linux",
         "resource_kind": "linux_nvidia",
     },
+    "meltdown": {
+        "description": "Ubuntu 22.04 Linux/NVIDIA node with about 47GB system RAM and a GeForce RTX 5060 Ti 16GB for lighter CUDA overflow and staging.",
+        "platform": "linux",
+        "resource_kind": "linux_nvidia",
+    },
 }
 _FALLBACK_BACKENDS = {
     "local_mlx": {

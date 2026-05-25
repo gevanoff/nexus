@@ -47,6 +47,10 @@
     "ada2": {
       "resource_kind": "linux_nvidia",
       "env_file": "deploy/env/.env.prod.ada2"
+    },
+    "meltdown": {
+      "resource_kind": "linux_nvidia",
+      "env_file": "deploy/env/.env.prod.meltdown"
     }
   },
   "core_services": {

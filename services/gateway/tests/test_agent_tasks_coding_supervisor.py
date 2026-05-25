@@ -59,6 +59,8 @@ def test_scheduled_prompt_includes_preface(tmp_path, monkeypatch):
     assert "ai1: linux_x86_64; 12th Gen Intel Core i7-12700F" in prompt
     assert "NVIDIA GeForce RTX 3090 24 GiB; NVIDIA GeForce RTX 3090 24 GiB" in prompt
     assert "ada2: linux_x86_64; 13th Gen Intel Core i7-13700K" in prompt
+    assert "meltdown: linux_x86_64; Intel Core i7-5930K" in prompt
+    assert "NVIDIA GeForce RTX 5060 Ti" in prompt
     assert "ai3: macos_arm64; Apple M2" in prompt
     assert "not part of the current production model-serving topology" in prompt
 

@@ -39,17 +39,19 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - The current `vllm` compose profile is GPU-bound (`gpus: all`) and should only be assigned to GPU-capable hosts.
 - NVIDIA-accelerated backends should run on dedicated Linux/NVIDIA hosts.
 
-### Current Host Inventory (verified 2026-05-21)
+### Current Host Inventory (verified 2026-05-25)
 
 - `ai2` (Mac M3 Ultra, macOS 15.6, 512GB unified memory): primary control-plane host, gateway/nginx/etcd/lifecycle-manager host, host-native `mlx` node, and current home for the containerized TTS stack.
 - `ai1` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x NVIDIA GeForce RTX 3090 24GB): dual-GPU Linux/NVIDIA node used for media ingress, embeddings, and secondary `vllm`/CUDA capacity.
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, NVIDIA RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
+- `meltdown` (Ubuntu 22.04.5, Intel Core i7-5930K, about 47 GiB observed system RAM, NVIDIA GeForce RTX 5060 Ti 16GB class / 15.9 GiB reported VRAM): lighter Linux/NVIDIA overflow and staging host for CUDA workloads.
 - `ai3` is a known macOS SSH alias (Apple M2, 8GB unified memory), but it is not part of the current production model-serving topology.
 
 Operational implication:
 - Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
-- Treat `ai1` and `ada2` as the Linux/NVIDIA `vllm` hosts; use `deploy/topology/production.json` to decide the active live placement.
+- Treat `ai1`, `ada2`, and `meltdown` as Linux/NVIDIA hosts; use `deploy/topology/production.json` to decide the active live placement.
 - Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `ai1` for media ingress, secondary `vllm` capacity, and overflow CUDA work.
+- Use `meltdown` for lighter CUDA overflow, staging, or future small-model profiles; do not assume it can run workloads sized for `ada2`.
 
 Gateway startup hardware context:
 - On startup, the gateway asks lifecycle-manager for a refreshed hardware-capacity snapshot and caches it at `NEXUS_HARDWARE_SNAPSHOT_PATH` (default: `/var/lib/gateway/data/nexus_hardware_snapshot.json`).
