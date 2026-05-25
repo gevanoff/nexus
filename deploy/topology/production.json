@@ -9,7 +9,7 @@
     },
     "env": {
       "VLLM_MODEL_STRONG": "unsloth/Qwen3-30B-A3B-FP8",
-      "VLLM_MODEL_FAST": "/root/.cache/huggingface/Qwen3-30B-A3B-Q4_K_M.gguf",
+      "VLLM_MODEL_FAST": "/root/.cache/huggingface/hub/models--unsloth--Qwen3-30B-A3B-GGUF/snapshots/d5b1d57bd0b504ac62ae6c725904e96ef228dc74/Qwen3-30B-A3B-Q4_K_M.gguf",
       "VLLM_FAST_LOAD_FORMAT": "gguf",
       "VLLM_FAST_SERVED_MODEL_NAME": "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M",
       "VLLM_MODEL_DEFAULT": "unsloth/Qwen3-30B-A3B-FP8",
