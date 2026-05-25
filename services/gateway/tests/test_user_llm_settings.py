@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
@@ -89,6 +91,87 @@ def test_user_llm_model_entries_require_enabled_key_and_models():
     disabled = _settings("sk-test-value")
     disabled["commercial_llms"]["enabled"] = False
     assert user_llm.model_entries(disabled, created=123) == []
+
+
+def test_user_llm_extract_model_ids_accepts_openai_shape():
+    assert user_llm.extract_model_ids(
+        {
+            "object": "list",
+            "data": [
+                {"id": "gpt-test"},
+                {"id": "gpt-next"},
+                {"id": "gpt-test"},
+                {"name": "fallback-name"},
+            ],
+        }
+    ) == ["gpt-test", "gpt-next", "fallback-name"]
+
+
+@pytest.mark.asyncio
+async def test_user_llm_discovers_provider_models(monkeypatch):
+    captured = {}
+
+    class Resp:
+        text = '{"data":[{"id":"gpt-test"},{"id":"gpt-next"}]}'
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "gpt-test"}, {"id": "gpt-next"}]}
+
+    class Client:
+        async def get(self, url, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            return Resp()
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        captured["timeout"] = timeout
+        yield Client()
+
+    monkeypatch.setattr(user_llm, "_httpx_client", fake_client)
+
+    models = await user_llm.discover_provider_models(
+        provider="openai",
+        settings={},
+        api_key="sk-test-value",
+        base_url="https://api.openai.com/v1",
+    )
+
+    assert models == ["gpt-test", "gpt-next"]
+    assert captured["url"] == "https://api.openai.com/v1/models"
+    assert captured["headers"]["Authorization"] == "Bearer sk-test-value"
+    assert captured["timeout"] == 30
+
+
+@pytest.mark.asyncio
+async def test_user_llm_discover_models_rejects_unknown_provider():
+    with pytest.raises(HTTPException) as exc:
+        await user_llm.discover_provider_models(
+            provider="not_a_provider",
+            settings={},
+            api_key="sk-test-value",
+            base_url="https://example.invalid/v1",
+        )
+    assert getattr(exc.value, "status_code", None) == 400
+
+
+def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
+    root = os.path.join(os.path.dirname(__file__), "..", "app", "static")
+    with open(os.path.join(root, "chat.html"), encoding="utf-8") as f:
+        html = f.read()
+    with open(os.path.join(root, "chat.js"), encoding="utf-8") as f:
+        js = f.read()
+
+    assert ".user-llm-provider-card.key-saved" in html
+    assert "settings_user_llm_openai_load_models" in html
+    assert "settings_user_llm_openrouter_load_models" in html
+    assert "settings_user_llm_custom_openai_load_models" in html
+    assert "/ui/api/user/llms/models" in js
+    assert "loadCommercialLlmModels(provider.id)" in js
 
 
 @pytest.mark.asyncio

@@ -3874,6 +3874,30 @@ async def ui_user_settings_put(req: Request) -> Dict[str, Any]:
     return {"ok": True, "settings": _sanitize_user_settings_for_response(merged)}
 
 
+@router.post("/ui/api/user/llms/models", include_in_schema=False)
+async def ui_user_llm_models(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    if user is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    body = await req.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be an object")
+    provider = user_llm.normalize_provider_id(str(body.get("provider") or ""))
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider required")
+    api_key = str(body.get("api_key") or "").strip()
+    base_url = str(body.get("base_url") or "").strip()
+    settings = user_store.get_settings(S.USER_DB_PATH, user_id=user.id) or {}
+    models = await user_llm.discover_provider_models(provider=provider, settings=settings, api_key=api_key, base_url=base_url)
+    return {
+        "ok": True,
+        "provider": provider,
+        "models": models,
+        "count": len(models),
+    }
+
+
 @router.post("/ui/api/user/telegram/link-code", include_in_schema=False)
 async def ui_user_telegram_link_code(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)

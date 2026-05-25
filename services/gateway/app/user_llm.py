@@ -46,6 +46,10 @@ def normalize_provider_id(provider: str) -> str:
     return value
 
 
+def supported_provider_ids() -> set[str]:
+    return set(_PROVIDER_DEFAULTS.keys())
+
+
 def provider_label(provider: str) -> str:
     pid = normalize_provider_id(provider)
     configured = _PROVIDER_DEFAULTS.get(pid)
@@ -225,6 +229,76 @@ def _headers(provider: str, api_key: str, *, stream: bool = False) -> Dict[str, 
     if normalize_provider_id(provider) == "openrouter":
         headers["X-Title"] = "Nexus"
     return headers
+
+
+def extract_model_ids(payload: Any) -> List[str]:
+    if isinstance(payload, dict):
+        raw_items = payload.get("data")
+    else:
+        raw_items = payload
+    if not isinstance(raw_items, list):
+        return []
+
+    out: List[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        model_id = ""
+        if isinstance(item, dict):
+            model_id = str(item.get("id") or item.get("name") or "").strip()
+        elif isinstance(item, str):
+            model_id = item.strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        out.append(model_id)
+    return out
+
+
+async def discover_provider_models(
+    *,
+    provider: str,
+    settings: Dict[str, Any],
+    api_key: str = "",
+    base_url: str = "",
+) -> List[str]:
+    pid = normalize_provider_id(provider)
+    if pid not in _PROVIDER_DEFAULTS:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "user_llm_unknown_provider", "provider": pid, "message": "Unknown external LLM provider"},
+        )
+    key = str(api_key or "").strip() or _api_key(settings, pid)
+    if not key:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "user_llm_api_key_missing", "provider": pid, "message": f"{provider_label(pid)} API key is required to load models"},
+        )
+
+    target_base = str(base_url or "").strip().rstrip("/") or _base_url(settings, pid)
+    if not target_base:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "user_llm_base_url_missing", "provider": pid, "message": f"{provider_label(pid)} base URL is required to load models"},
+        )
+
+    async with _httpx_client(timeout=30) as client:
+        try:
+            r = await client.get(f"{target_base}/models", headers=_headers(pid, key, stream=False))
+            r.raise_for_status()
+            models = extract_model_ids(r.json())
+            if not models:
+                raise HTTPException(
+                    status_code=502,
+                    detail={"upstream": user_backend_name(pid), "error": "No model IDs returned by provider /models endpoint"},
+                )
+            return models[:1000]
+        except HTTPException:
+            raise
+        except httpx.HTTPStatusError as e:
+            detail = {"upstream": user_backend_name(pid), "status": e.response.status_code, "body": e.response.text[:5000]}
+            raise HTTPException(status_code=502, detail=detail) from e
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail={"upstream": user_backend_name(pid), "error": str(e)}) from e
 
 
 async def call_user_chat(req: ChatCompletionRequest, *, model_id: str, settings: Dict[str, Any]) -> Dict[str, Any]:

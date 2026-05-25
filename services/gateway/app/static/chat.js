@@ -1474,24 +1474,154 @@
       return out;
     }
 
+    function commercialLlmElements(providerId) {
+      return {
+        card: document.getElementById(`settings_user_llm_${providerId}_card`),
+        enabled: document.getElementById(`settings_user_llm_${providerId}_enabled`),
+        status: document.getElementById(`settings_user_llm_${providerId}_status`),
+        key: document.getElementById(`settings_user_llm_${providerId}_key`),
+        clear: document.getElementById(`settings_user_llm_${providerId}_clear`),
+        base: document.getElementById(`settings_user_llm_${providerId}_base_url`),
+        models: document.getElementById(`settings_user_llm_${providerId}_models`),
+        loadModels: document.getElementById(`settings_user_llm_${providerId}_load_models`),
+        modelsStatus: document.getElementById(`settings_user_llm_${providerId}_models_status`),
+      };
+    }
+
+    function setCommercialLlmKeyVisual(providerId, state, text) {
+      const els = commercialLlmElements(providerId);
+      const normalized = ["key-saved", "key-missing", "key-pending"].includes(state) ? state : "key-missing";
+      [els.card, els.key].forEach((el) => {
+        if (!el) return;
+        el.classList.remove("key-saved", "key-missing", "key-pending");
+        el.classList.add(normalized);
+      });
+      if (els.status) {
+        els.status.className = `hint user-llm-key-status ${normalized === "key-saved" ? "ok" : normalized === "key-pending" ? "pending" : "bad"}`;
+        els.status.textContent = text || "";
+      }
+    }
+
+    function updateCommercialLlmDirtyState(providerId) {
+      const els = commercialLlmElements(providerId);
+      const typedKey = String(els.key?.value || "").trim();
+      const cfg = userSettings.commercialLlms?.providers?.[providerId] || {};
+      if (typedKey) {
+        setCommercialLlmKeyVisual(providerId, "key-pending", "New key entered. Save settings to keep it.");
+      } else if (cfg.apiKeyConfigured) {
+        setCommercialLlmKeyVisual(providerId, "key-saved", `Saved key: ${cfg.apiKeyHint || "configured"}`);
+      } else {
+        setCommercialLlmKeyVisual(providerId, "key-missing", "No API key saved.");
+      }
+    }
+
     function setCommercialLlmControls() {
       const llms = userSettings.commercialLlms || defaultCommercialLlms();
       const master = document.getElementById("settings_user_llm_enabled");
       if (master) master.checked = !!llms.enabled;
       for (const provider of USER_LLM_PROVIDERS) {
         const cfg = llms.providers?.[provider.id] || {};
-        const enabled = document.getElementById(`settings_user_llm_${provider.id}_enabled`);
-        const status = document.getElementById(`settings_user_llm_${provider.id}_status`);
-        const key = document.getElementById(`settings_user_llm_${provider.id}_key`);
-        const clear = document.getElementById(`settings_user_llm_${provider.id}_clear`);
-        const base = document.getElementById(`settings_user_llm_${provider.id}_base_url`);
-        const models = document.getElementById(`settings_user_llm_${provider.id}_models`);
-        if (enabled) enabled.checked = !!cfg.enabled;
-        if (status) status.textContent = cfg.apiKeyConfigured ? `Saved key: ${cfg.apiKeyHint || "configured"}` : "No API key saved.";
-        if (key) key.value = "";
-        if (clear) clear.checked = false;
-        if (base) base.value = cfg.baseUrl || provider.defaultBaseUrl || "";
-        if (models) models.value = Array.isArray(cfg.models) ? cfg.models.join("\n") : "";
+        const els = commercialLlmElements(provider.id);
+        if (els.enabled) els.enabled.checked = !!cfg.enabled;
+        if (els.key) els.key.value = "";
+        if (els.clear) els.clear.checked = false;
+        if (els.base) els.base.value = cfg.baseUrl || provider.defaultBaseUrl || "";
+        if (els.models) els.models.value = Array.isArray(cfg.models) ? cfg.models.join("\n") : "";
+        if (els.modelsStatus) els.modelsStatus.textContent = "";
+        setCommercialLlmKeyVisual(
+          provider.id,
+          cfg.apiKeyConfigured ? "key-saved" : "key-missing",
+          cfg.apiKeyConfigured ? `Saved key: ${cfg.apiKeyHint || "configured"}` : "No API key saved.",
+        );
+      }
+    }
+
+    async function userLlmErrorText(resp) {
+      try {
+        const payload = await resp.json();
+        const detail = payload?.detail;
+        if (typeof detail === "string") return detail;
+        if (detail && typeof detail.message === "string") return detail.message;
+        if (detail && typeof detail.error === "string") return detail.error;
+        if (detail && typeof detail.body === "string") return detail.body.slice(0, 300);
+      } catch (e) {}
+      try {
+        const text = await resp.text();
+        if (text) return text.slice(0, 300);
+      } catch (e) {}
+      return `HTTP ${resp.status}`;
+    }
+
+    async function loadCommercialLlmModels(providerId) {
+      const provider = USER_LLM_PROVIDERS.find((item) => item.id === providerId);
+      if (!provider) return;
+      const els = commercialLlmElements(providerId);
+      const typedKey = String(els.key?.value || "").trim();
+      const cfg = userSettings.commercialLlms?.providers?.[providerId] || {};
+      const baseUrl = String(els.base?.value || provider.defaultBaseUrl || "").trim();
+
+      if (!typedKey && !cfg.apiKeyConfigured) {
+        setCommercialLlmKeyVisual(providerId, "key-missing", "Enter an API key before loading models.");
+        if (els.modelsStatus) {
+          els.modelsStatus.className = "hint user-llm-key-status bad";
+          els.modelsStatus.textContent = "No key available.";
+        }
+        return;
+      }
+      if (!baseUrl) {
+        if (els.modelsStatus) {
+          els.modelsStatus.className = "hint user-llm-key-status bad";
+          els.modelsStatus.textContent = "Base URL is required.";
+        }
+        return;
+      }
+
+      if (els.loadModels) els.loadModels.disabled = true;
+      if (els.modelsStatus) {
+        els.modelsStatus.className = "hint user-llm-key-status pending";
+        els.modelsStatus.textContent = "Loading models...";
+      }
+      try {
+        const resp = await fetch("/ui/api/user/llms/models", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: providerId, api_key: typedKey, base_url: baseUrl }),
+        });
+        if (handle401(resp)) return;
+        if (!resp.ok) {
+          const message = await userLlmErrorText(resp);
+          if (els.modelsStatus) {
+            els.modelsStatus.className = "hint user-llm-key-status bad";
+            els.modelsStatus.textContent = `Could not load models: ${message}`;
+          }
+          if (typedKey) setCommercialLlmKeyVisual(providerId, "key-pending", "New key entered, but model loading failed.");
+          return;
+        }
+        const payload = await resp.json();
+        const models = Array.isArray(payload?.models) ? payload.models.map((item) => String(item || "").trim()).filter(Boolean) : [];
+        if (els.models) els.models.value = models.join("\n");
+        if (els.enabled) els.enabled.checked = true;
+        const master = document.getElementById("settings_user_llm_enabled");
+        if (master) master.checked = true;
+        if (els.modelsStatus) {
+          els.modelsStatus.className = "hint user-llm-key-status ok";
+          els.modelsStatus.textContent = models.length
+            ? `Loaded ${models.length} model${models.length === 1 ? "" : "s"}. Save settings to make them selectable.`
+            : "No models returned.";
+        }
+        if (typedKey) {
+          setCommercialLlmKeyVisual(providerId, "key-pending", "Key worked. Save settings to keep it.");
+        } else {
+          setCommercialLlmKeyVisual(providerId, "key-saved", `Saved key: ${cfg.apiKeyHint || "configured"}`);
+        }
+      } catch (e) {
+        if (els.modelsStatus) {
+          els.modelsStatus.className = "hint user-llm-key-status bad";
+          els.modelsStatus.textContent = `Could not load models: ${String(e)}`;
+        }
+      } finally {
+        if (els.loadModels) els.loadModels.disabled = false;
       }
     }
 
@@ -3088,6 +3218,28 @@
       if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
       if (forgetBrowserApiKeyBtn) forgetBrowserApiKeyBtn.addEventListener('click', () => forgetStoredApiKey());
       if (useBrowserApiKeyBtn) useBrowserApiKeyBtn.addEventListener('click', () => void useBrowserApiKeyFromSettings());
+      for (const provider of USER_LLM_PROVIDERS) {
+        const llmEls = commercialLlmElements(provider.id);
+        if (llmEls.loadModels) {
+          llmEls.loadModels.addEventListener("click", () => void loadCommercialLlmModels(provider.id));
+        }
+        if (llmEls.key) {
+          llmEls.key.addEventListener("input", () => updateCommercialLlmDirtyState(provider.id));
+          llmEls.key.addEventListener("change", () => {
+            updateCommercialLlmDirtyState(provider.id);
+            if (String(llmEls.key.value || "").trim()) void loadCommercialLlmModels(provider.id);
+          });
+        }
+        if (llmEls.clear) {
+          llmEls.clear.addEventListener("change", () => {
+            if (llmEls.clear.checked) {
+              setCommercialLlmKeyVisual(provider.id, "key-missing", "Saved key will be cleared when settings are saved.");
+            } else {
+              updateCommercialLlmDirtyState(provider.id);
+            }
+          });
+        }
+      }
       if (backendStatusPanel) {
         backendStatusPanel.open = true;
         backendStatusPanel.addEventListener('toggle', () => {

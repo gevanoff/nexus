@@ -355,6 +355,41 @@
       .settings-content { min-height: 0; overflow-y: auto; max-height: calc(100vh - 178px); padding-right: 4px; }
       .settings-section { display: none; flex-direction: column; gap: 8px; }
       .settings-section.active { display: flex; }
+      .user-llm-provider-card {
+        border: 1px solid rgba(231,237,246,0.08);
+        border-radius: 8px;
+        padding: 10px;
+        margin-top: 8px;
+        background: rgba(12,18,27,0.40);
+      }
+      .user-llm-provider-card.key-saved {
+        border-color: rgba(56,197,126,0.64);
+        background: rgba(20,95,58,0.18);
+      }
+      .user-llm-provider-card.key-missing {
+        border-color: rgba(255,133,133,0.38);
+        background: rgba(100,22,34,0.14);
+      }
+      .user-llm-provider-card.key-pending {
+        border-color: rgba(240,200,90,0.52);
+        background: rgba(96,74,22,0.16);
+      }
+      input.user-llm-key-input.key-saved {
+        border-color: rgba(56,197,126,0.72);
+        box-shadow: 0 0 0 1px rgba(56,197,126,0.20), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      input.user-llm-key-input.key-missing {
+        border-color: rgba(255,133,133,0.62);
+        box-shadow: 0 0 0 1px rgba(255,133,133,0.15), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      input.user-llm-key-input.key-pending {
+        border-color: rgba(240,200,90,0.72);
+        box-shadow: 0 0 0 1px rgba(240,200,90,0.18), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      .user-llm-key-status.ok { color: #98f0bf; }
+      .user-llm-key-status.bad { color: #ffc3c3; }
+      .user-llm-key-status.pending { color: #f3dc96; }
+      .user-llm-model-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
       .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
       header > div:first-child { flex: 1 1 420px; min-width: 220px; }
       .header-right { flex: 0 0 auto; max-width: 62%; }
@@ -597,14 +632,14 @@
                   </label>
                   <div class="hint" style="margin-bottom:8px">OpenRouter can expose Anthropic, Google, and other commercial models through one OpenAI-compatible API.</div>
 
-                  <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px;margin-top:8px">
+                  <div id="settings_user_llm_openai_card" class="user-llm-provider-card">
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_openai_enabled" style="width:auto" />
                       OpenAI
                     </label>
                     <div id="settings_user_llm_openai_status" class="hint" style="margin-bottom:6px"></div>
                     <label>API key
-                      <input type="password" id="settings_user_llm_openai_key" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                      <input type="password" id="settings_user_llm_openai_key" class="user-llm-key-input" autocomplete="off" placeholder="Leave blank to keep existing key" />
                     </label>
                     <label>Base URL
                       <input type="text" id="settings_user_llm_openai_base_url" autocomplete="off" placeholder="https://api.openai.com/v1" />
@@ -612,20 +647,24 @@
                     <label>Model IDs
                       <textarea id="settings_user_llm_openai_models" rows="2" placeholder="One per line or comma-separated"></textarea>
                     </label>
+                    <div class="user-llm-model-actions">
+                      <button type="button" id="settings_user_llm_openai_load_models" data-ui-role="secondary">Load models</button>
+                      <span id="settings_user_llm_openai_models_status" class="hint"></span>
+                    </div>
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_openai_clear" style="width:auto" />
                       Clear saved OpenAI key
                     </label>
                   </div>
 
-                  <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px;margin-top:8px">
+                  <div id="settings_user_llm_openrouter_card" class="user-llm-provider-card">
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_openrouter_enabled" style="width:auto" />
                       OpenRouter
                     </label>
                     <div id="settings_user_llm_openrouter_status" class="hint" style="margin-bottom:6px"></div>
                     <label>API key
-                      <input type="password" id="settings_user_llm_openrouter_key" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                      <input type="password" id="settings_user_llm_openrouter_key" class="user-llm-key-input" autocomplete="off" placeholder="Leave blank to keep existing key" />
                     </label>
                     <label>Base URL
                       <input type="text" id="settings_user_llm_openrouter_base_url" autocomplete="off" placeholder="https://openrouter.ai/api/v1" />
@@ -633,20 +672,24 @@
                     <label>Model IDs
                       <textarea id="settings_user_llm_openrouter_models" rows="2" placeholder="One per line or comma-separated"></textarea>
                     </label>
+                    <div class="user-llm-model-actions">
+                      <button type="button" id="settings_user_llm_openrouter_load_models" data-ui-role="secondary">Load models</button>
+                      <span id="settings_user_llm_openrouter_models_status" class="hint"></span>
+                    </div>
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_openrouter_clear" style="width:auto" />
                       Clear saved OpenRouter key
                     </label>
                   </div>
 
-                  <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px;margin-top:8px">
+                  <div id="settings_user_llm_custom_openai_card" class="user-llm-provider-card">
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_custom_openai_enabled" style="width:auto" />
                       Custom OpenAI-compatible
                     </label>
                     <div id="settings_user_llm_custom_openai_status" class="hint" style="margin-bottom:6px"></div>
                     <label>API key
-                      <input type="password" id="settings_user_llm_custom_openai_key" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                      <input type="password" id="settings_user_llm_custom_openai_key" class="user-llm-key-input" autocomplete="off" placeholder="Leave blank to keep existing key" />
                     </label>
                     <label>Base URL
                       <input type="text" id="settings_user_llm_custom_openai_base_url" autocomplete="off" placeholder="https://example.com/v1" />
@@ -654,6 +697,10 @@
                     <label>Model IDs
                       <textarea id="settings_user_llm_custom_openai_models" rows="2" placeholder="One per line or comma-separated"></textarea>
                     </label>
+                    <div class="user-llm-model-actions">
+                      <button type="button" id="settings_user_llm_custom_openai_load_models" data-ui-role="secondary">Load models</button>
+                      <span id="settings_user_llm_custom_openai_models_status" class="hint"></span>
+                    </div>
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_custom_openai_clear" style="width:auto" />
                       Clear saved custom key
@@ -776,6 +823,6 @@
 
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/select_marquee.js?v=1"></script>
-    <script src="/static/chat.js?v=14"></script>
+    <script src="/static/chat.js?v=15"></script>
   </body>
 </html>
