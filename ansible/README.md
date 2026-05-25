@@ -86,6 +86,8 @@ Common overrides:
 Use `inventory/host_vars/<host>.yml` for host-specific overrides such as a different repo path on `ai2`.
 Use `inventory/group_vars/platform_macos.yml` and `inventory/group_vars/platform_linux.yml` for per-hosttype defaults.
 
+Linux Docker defaults prefer Docker's official apt repository on Debian/Ubuntu hosts so fresh hosts get current `docker-ce`, `docker-compose-plugin`, and `docker-buildx-plugin` packages rather than older distro snapshots. Set `nexus_linux_docker_official_apt_enabled=false` only when a host must stay on distribution Docker packages.
+
 ## Notes
 
 - This scaffold now covers the main non-interactive host bootstrap path. `deploy/scripts/install-host-deps.sh` remains available as a manual fallback for one-off host prep.
@@ -95,5 +97,5 @@ Use `inventory/group_vars/platform_macos.yml` and `inventory/group_vars/platform
 - Inventory also exposes `resource_linux_nvidia` for CUDA-capable Linux hosts such as `ai1`, `ada2`, and `meltdown`.
 - Mixed Linux/macOS roles dispatch into platform-specific task files (`linux.yml`, `macos.yml`) from a shared entrypoint and fail clearly on unsupported platforms.
 - The bootstrap playbook now covers the main non-interactive host setup path: Python bootstrap, common packages, Linux Docker engine setup, macOS Colima setup, and optional MLX pf allowlisting.
-- Linux/NVIDIA bootstrap installs and configures NVIDIA Container Toolkit when a GPU is visible and `nexus_manage_nvidia_container_runtime=true`.
+- Linux/NVIDIA bootstrap installs and configures NVIDIA Container Toolkit from NVIDIA's package repository when a GPU is visible and `nexus_manage_nvidia_container_runtime=true`.
 - Homebrew itself is not auto-installed. On macOS hosts, install Homebrew first or override the Docker/bootstrap strategy in `host_vars`.

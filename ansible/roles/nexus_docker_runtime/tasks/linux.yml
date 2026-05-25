@@ -39,13 +39,65 @@
   check_mode: false
   when: nexus_manage_docker_runtime | bool
 
-- name: Install Docker engine packages on Linux
+- name: Configure official Docker apt repository on Debian-family Linux
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [[ "{{ ansible_distribution | lower }}" == "ubuntu" ]]; then
+      repo_os="ubuntu"
+    elif [[ "{{ ansible_distribution | lower }}" == "debian" ]]; then
+      repo_os="debian"
+    else
+      echo "Unsupported Debian-family distribution for official Docker packages: {{ ansible_distribution }}" >&2
+      exit 1
+    fi
+    case "{{ ansible_architecture }}" in
+      x86_64) repo_arch="amd64" ;;
+      aarch64|arm64) repo_arch="arm64" ;;
+      armv7l) repo_arch="armhf" ;;
+      *) repo_arch="{{ ansible_architecture }}" ;;
+    esac
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL "https://download.docker.com/linux/${repo_os}/gpg" -o /etc/apt/keyrings/docker.asc.tmp
+    chmod a+r /etc/apt/keyrings/docker.asc.tmp
+    mv /etc/apt/keyrings/docker.asc.tmp /etc/apt/keyrings/docker.asc
+    desired="deb [arch=${repo_arch} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${repo_os} {{ ansible_distribution_release }} stable"
+    current="$(cat /etc/apt/sources.list.d/docker.list 2>/dev/null || true)"
+    if [[ "$current" != "$desired" ]]; then
+      printf '%s\n' "$desired" > /etc/apt/sources.list.d/docker.list
+      echo changed
+    fi
+    apt-get update
+  args:
+    executable: /bin/bash
+  become: true
+  register: nexus_linux_docker_official_apt_repo
+  changed_when: "'changed' in nexus_linux_docker_official_apt_repo.stdout"
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_linux_docker_official_apt_enabled | bool
+    - ansible_os_family == "Debian"
+    - (nexus_linux_docker_cli_probe.stdout | trim) == ""
+
+- name: Install official Docker engine packages on Debian-family Linux
+  ansible.builtin.apt:
+    name: "{{ nexus_linux_docker_official_apt_packages }}"
+    state: present
+    update_cache: false
+  become: true
+  when:
+    - nexus_manage_docker_runtime | bool
+    - nexus_linux_docker_official_apt_enabled | bool
+    - ansible_os_family == "Debian"
+    - (nexus_linux_docker_cli_probe.stdout | trim) == ""
+
+- name: Install Docker engine packages on Linux from distro repositories
   ansible.builtin.package:
     name: "{{ nexus_linux_docker_engine_packages.get(ansible_os_family, nexus_linux_docker_engine_packages.get('Debian', [])) }}"
     state: present
   become: true
   when:
     - nexus_manage_docker_runtime | bool
+    - not (nexus_linux_docker_official_apt_enabled | bool and ansible_os_family == "Debian")
     - (nexus_linux_docker_cli_probe.stdout | trim) == ""
 
 - name: Ensure Docker Compose is available on Linux

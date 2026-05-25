@@ -25,6 +25,13 @@ nexus_linux_common_packages:
   - lsof
   - ca-certificates
   - python3
+nexus_linux_docker_official_apt_enabled: true
+nexus_linux_docker_official_apt_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
 nexus_linux_docker_engine_packages:
   Debian:
     - docker.io

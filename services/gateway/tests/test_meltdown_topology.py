@@ -45,3 +45,18 @@ def test_ansible_wrapper_exposes_meltdown_host() -> None:
 
     assert "ai1|ai2|ada2|meltdown" in wrapper
     assert "bootstrap meltdown" in wrapper
+
+
+def test_meltdown_bootstrap_uses_managed_checkout_and_gpu_runtime_validation() -> None:
+    host_vars = _read("ansible/inventory/host_vars/meltdown.yml")
+    group_vars = _read("ansible/inventory/group_vars/all.yml")
+    linux_docker_role = _read("ansible/roles/nexus_docker_runtime/tasks/linux.yml")
+
+    assert "nexus_manage_checkout: true" in host_vars
+    assert "nexus_repo_url: https://github.com/gevanoff/nexus.git" in host_vars
+    assert "nexus_nvidia_container_runtime_validate: true" in host_vars
+    assert "nexus_linux_docker_official_apt_enabled: true" in group_vars
+    assert "docker-ce" in group_vars
+    assert "docker-compose-plugin" in group_vars
+    assert "https://download.docker.com/linux/${repo_os}" in linux_docker_role
+    assert "https://nvidia.github.io/libnvidia-container" in linux_docker_role

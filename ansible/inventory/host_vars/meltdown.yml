@@ -1,0 +1,3 @@
+nexus_manage_checkout: true
+nexus_repo_url: https://github.com/gevanoff/nexus.git
+nexus_nvidia_container_runtime_validate: true
