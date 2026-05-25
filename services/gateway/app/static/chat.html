@@ -194,8 +194,9 @@
       .modal-panel {
         position: relative;
         width: 100%;
-        max-width: 560px;
-        margin: 6vh auto;
+        max-width: 760px;
+        max-height: calc(100vh - 32px);
+        margin: 16px auto;
         background: linear-gradient(180deg, rgba(13,20,30,0.96), rgba(9,14,22,0.96));
         border-radius: 12px;
         padding: 16px;
@@ -203,9 +204,13 @@
         color: var(--text);
         z-index: 1210;
         box-shadow: 0 20px 40px rgba(0,0,0,0.45);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
       .modal-panel h3 { font-size: 16px; }
       .modal-panel label { display:block; font-size:13px; }
+      #settingsForm { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
       /* Apps dropdown menu */
       .apps-menu {
         position: absolute;
@@ -343,10 +348,11 @@
       .attachment-row button { padding: 4px 8px; font-size: 11px; }
       .message-attachments { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
       .message-attachments a { color: #9fc2ff; }
-      .settings-layout { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: start; }
+      .settings-layout { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: start; min-height: 0; overflow: hidden; }
       .settings-menu { display: flex; flex-direction: column; gap: 6px; }
       .settings-menu button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; }
       .settings-menu button.active { background: rgba(111,184,255,0.16); border-color: rgba(111,184,255,0.4); }
+      .settings-content { min-height: 0; overflow-y: auto; max-height: calc(100vh - 178px); padding-right: 4px; }
       .settings-section { display: none; flex-direction: column; gap: 8px; }
       .settings-section.active { display: flex; }
       .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
@@ -388,10 +394,14 @@
       }
       @media (max-width: 760px) {
         .header-right { max-width: 100%; }
+        .settings-layout { grid-template-columns: 1fr; }
+        .settings-menu { flex-direction: row; flex-wrap: wrap; }
+        .settings-menu button { width: auto; }
+        .settings-content { max-height: calc(100vh - 250px); }
       }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css" />
-    <link rel="stylesheet" href="/static/select_marquee.css?v=1" />
+    <link rel="stylesheet" href="/static/select_marquee.css?v=2" />
   </head>
   <body>
     <main>
@@ -527,10 +537,11 @@
               <button type="button" data-section="settings-profile" data-ui-role="menu">Profile</button>
               <button type="button" data-section="settings-ui" data-ui-role="menu">UI</button>
               <button type="button" data-section="settings-coding" data-ui-role="menu">Coding</button>
+              <button type="button" data-section="settings-llms" data-ui-role="menu">LLMs</button>
               <button type="button" data-section="settings-telegram" data-ui-role="menu">Telegram</button>
               <button type="button" data-section="settings-security" data-ui-role="menu">Security</button>
             </nav>
-            <div>
+            <div class="settings-content">
               <section id="settings-backends" class="settings-section active">
                 <label>Preferred chat model
                   <select id="settings_model_preference" data-marquee-select></select>
@@ -576,6 +587,8 @@
                     Clear saved GitHub token
                   </label>
                 </fieldset>
+              </section>
+              <section id="settings-llms" class="settings-section">
                 <fieldset id="settings_user_llm_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
                   <legend style="font-size:13px">Commercial LLM API keys</legend>
                   <label style="display:flex;gap:8px;align-items:center">
@@ -763,6 +776,6 @@
 
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/select_marquee.js?v=1"></script>
-    <script src="/static/chat.js?v=13"></script>
+    <script src="/static/chat.js?v=14"></script>
   </body>
 </html>

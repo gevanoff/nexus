@@ -20,6 +20,12 @@
   color: transparent;
 }
 
+.nexus-marquee-select > select[data-marquee-select] option,
+.nexus-marquee-select > select[data-marquee-select] optgroup {
+  color: var(--text, #e7edf6);
+  background: var(--panel, #0f151f);
+}
+
 .nexus-marquee-overlay {
   position: absolute;
   inset: 0 2rem 0 0.75rem;

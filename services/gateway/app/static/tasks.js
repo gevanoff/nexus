@@ -255,6 +255,7 @@
       if (els.cancelTask) els.cancelTask.disabled = true;
       return;
     }
+    const meta = task.metadata || {};
     const protectedTask = taskProtected(task);
     if (els.detailEmpty) els.detailEmpty.hidden = true;
     if (els.detail) els.detail.hidden = false;
@@ -269,7 +270,6 @@
     }
     if (els.detailTitle) els.detailTitle.textContent = task.title || task.id;
     if (els.detailMeta) {
-      const meta = task.metadata || {};
       els.detailMeta.textContent = [
         `id ${task.id}`,
         `agent ${task.agent || ""}`,
@@ -545,6 +545,7 @@
     for (const model of orderedModelEntries(current || "default")) add(model.id, modelOptionLabel(model) || model.id);
     if (current && seen.has(current)) els.model.value = current;
     else els.model.value = "default";
+    window.NexusSelectMarquee?.refresh(els.model);
   }
 
   function renderTools(options = {}) {

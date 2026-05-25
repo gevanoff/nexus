@@ -1871,9 +1871,11 @@
         ? 'settings-security'
         : requested === 'coding'
           ? 'settings-coding'
-          : requested === 'telegram'
-            ? 'settings-telegram'
-            : requested || 'settings-backends';
+          : requested === 'llms'
+            ? 'settings-llms'
+            : requested === 'telegram'
+              ? 'settings-telegram'
+              : requested || 'settings-backends';
       const targetId = document.getElementById(normalized) ? normalized : 'settings-backends';
       const menuButtons = document.querySelectorAll('.settings-menu button');
       const sections = document.querySelectorAll('.settings-section');
@@ -1883,6 +1885,8 @@
       sections.forEach((section) => {
         section.classList.toggle('active', section.id === targetId);
       });
+      const content = document.querySelector('.settings-content');
+      if (content) content.scrollTop = 0;
     }
 
     function forgetStoredApiKey() {
