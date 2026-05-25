@@ -1,7 +1,7 @@
 services:
   # vLLM services: strong chat, fast chat, and embeddings.
   vllm:
-    image: vllm/vllm-openai:latest
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.10.2}
     container_name: nexus-vllm
     gpus: all
     ports:
@@ -46,7 +46,7 @@ services:
       start_period: 45s
 
   vllm-fast:
-    image: vllm/vllm-openai:latest
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.10.2}
     container_name: nexus-vllm-fast
     gpus: all
     ports:
@@ -91,7 +91,7 @@ services:
       start_period: 45s
 
   vllm-embeddings:
-    image: vllm/vllm-openai:latest
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.10.2}
     container_name: nexus-vllm-embeddings
     gpus: all
     ports:

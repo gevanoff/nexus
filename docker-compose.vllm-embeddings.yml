@@ -1,6 +1,6 @@
 services:
   vllm-embeddings:
-    image: vllm/vllm-openai:latest
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.10.2}
     container_name: nexus-vllm-embeddings
     gpus: all
     ports:
