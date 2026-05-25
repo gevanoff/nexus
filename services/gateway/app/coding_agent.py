@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.backends import backend_hostname, get_admission_controller, get_registry, llm_backends
 from app import coding_workspace as cw
+from app import user_llm, user_store
 from app.config import S, logger
 from app.health_checker import get_health_checker
 from app.model_aliases import get_aliases
@@ -1135,7 +1136,15 @@ async def _call_backend_chat_with_retry(
     *,
     task_id: str,
     cycle: int,
+    user_settings: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, Any], str, str]:
+    if user_llm.is_user_model_id(req.model):
+        parsed = user_llm.parse_user_model_id(req.model)
+        provider, selected_model = parsed if parsed is not None else ("user", upstream_model)
+        selected_backend = user_llm.user_backend_name(provider)
+        resp = await user_llm.call_user_chat(req, model_id=req.model, settings=user_settings or {})
+        return resp, selected_backend, selected_model
+
     max_retries = _backend_retry_count()
     admission = get_admission_controller()
     for attempt in range(max_retries + 1):
@@ -1671,6 +1680,17 @@ def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
     return model
 
 
+def _settings_for_task_owner(task: Dict[str, Any]) -> Dict[str, Any]:
+    user_id = task.get("owner_user_id")
+    try:
+        if user_id is None:
+            return {}
+        settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user_id))
+        return settings if isinstance(settings, dict) else {}
+    except Exception:
+        return {}
+
+
 async def start_agent_run(
     task_id: str,
     *,
@@ -1828,19 +1848,28 @@ async def _run_agent(
     upstream_model = ""
     try:
         task = await asyncio.to_thread(cw.load_task, task_id)
+        user_settings = _settings_for_task_owner(task)
         start_head_result = await asyncio.to_thread(cw.git_head, task_id)
         start_head = str(start_head_result.get("commit") or "")
-        route = decide_route(
-            cfg=router_cfg(),
-            request_model=model,
-            headers={"x-request-type": "coding"},
-            messages=[{"role": "user", "content": _effective_run_prompt(task)}],
-            has_tools=True,
-            enable_policy=getattr(S, "ROUTER_ENABLE_POLICY", True),
-            enable_request_type=True,
-        )
-        backend = route.backend
-        upstream_model = route.model
+        route_reason = ""
+        if user_llm.is_user_model_id(model):
+            parsed = user_llm.parse_user_model_id(model)
+            provider, upstream_model = parsed if parsed is not None else ("user", model)
+            backend = user_llm.user_backend_name(provider)
+            route_reason = "user_llm_settings"
+        else:
+            route = decide_route(
+                cfg=router_cfg(),
+                request_model=model,
+                headers={"x-request-type": "coding"},
+                messages=[{"role": "user", "content": _effective_run_prompt(task)}],
+                has_tools=True,
+                enable_policy=getattr(S, "ROUTER_ENABLE_POLICY", True),
+                enable_request_type=True,
+            )
+            backend = route.backend
+            upstream_model = route.model
+            route_reason = route.reason
         await asyncio.to_thread(
             _mutate_task,
             task_id,
@@ -1859,7 +1888,7 @@ async def _run_agent(
                 "run_id": run_id,
                 "backend": backend,
                 "upstream_model": upstream_model,
-                "route_reason": route.reason,
+                "route_reason": route_reason,
             },
         )
 
@@ -1921,6 +1950,7 @@ async def _run_agent(
                 upstream_model,
                 task_id=task_id,
                 cycle=cycle,
+                user_settings=user_settings,
             )
             await asyncio.to_thread(
                 _mutate_task,
@@ -1992,7 +2022,12 @@ async def _run_agent(
                         "content": _clip_text(str(assistant.content or ""), 2000),
                     },
                 )
-                if not malformed_text_tool_call and no_tool_cycles >= 2 and semantic_reroutes < _max_semantic_reroutes():
+                if (
+                    not malformed_text_tool_call
+                    and not user_llm.is_user_model_id(model)
+                    and no_tool_cycles >= 2
+                    and semantic_reroutes < _max_semantic_reroutes()
+                ):
                     fallback = _semantic_reroute_candidate(
                         model,
                         backend,

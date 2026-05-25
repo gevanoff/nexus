@@ -1403,6 +1403,14 @@
       preferredCodingModel: "coder",
       codingGitTokenConfigured: false,
       codingGitTokenHint: "",
+      commercialLlms: {
+        enabled: false,
+        providers: {
+          openai: { enabled: false, apiKeyConfigured: false, apiKeyHint: "", baseUrl: "https://api.openai.com/v1", models: [] },
+          openrouter: { enabled: false, apiKeyConfigured: false, apiKeyHint: "", baseUrl: "https://openrouter.ai/api/v1", models: [] },
+          custom_openai: { enabled: false, apiKeyConfigured: false, apiKeyHint: "", baseUrl: "", models: [] },
+        },
+      },
       telegramNotificationsEnabled: false,
       telegramChatId: "",
       telegramUsername: "",
@@ -1421,6 +1429,93 @@
         video: { complete: false },
       },
     };
+
+    const USER_LLM_PROVIDERS = [
+      { id: "openai", label: "OpenAI", defaultBaseUrl: "https://api.openai.com/v1" },
+      { id: "openrouter", label: "OpenRouter", defaultBaseUrl: "https://openrouter.ai/api/v1" },
+      { id: "custom_openai", label: "custom", defaultBaseUrl: "" },
+    ];
+
+    function defaultCommercialLlms() {
+      return {
+        enabled: false,
+        providers: {
+          openai: { enabled: false, apiKeyConfigured: false, apiKeyHint: "", baseUrl: "https://api.openai.com/v1", models: [] },
+          openrouter: { enabled: false, apiKeyConfigured: false, apiKeyHint: "", baseUrl: "https://openrouter.ai/api/v1", models: [] },
+          custom_openai: { enabled: false, apiKeyConfigured: false, apiKeyHint: "", baseUrl: "", models: [] },
+        },
+      };
+    }
+
+    function splitModelIds(value) {
+      return String(value || "")
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .filter((item, index, arr) => arr.indexOf(item) === index);
+    }
+
+    function loadCommercialLlms(settings) {
+      const defaults = defaultCommercialLlms();
+      const llms = settings && typeof settings.commercial_llms === "object" ? settings.commercial_llms : {};
+      const providers = llms && typeof llms.providers === "object" ? llms.providers : {};
+      const out = defaultCommercialLlms();
+      out.enabled = !!llms.enabled;
+      for (const provider of USER_LLM_PROVIDERS) {
+        const raw = providers && typeof providers[provider.id] === "object" ? providers[provider.id] : {};
+        out.providers[provider.id] = {
+          enabled: !!raw.enabled,
+          apiKeyConfigured: !!raw.api_key_configured,
+          apiKeyHint: String(raw.api_key_hint || ""),
+          baseUrl: String(raw.base_url || defaults.providers[provider.id]?.baseUrl || provider.defaultBaseUrl || ""),
+          models: Array.isArray(raw.models) ? raw.models.map((item) => String(item || "").trim()).filter(Boolean) : splitModelIds(raw.models || ""),
+        };
+      }
+      return out;
+    }
+
+    function setCommercialLlmControls() {
+      const llms = userSettings.commercialLlms || defaultCommercialLlms();
+      const master = document.getElementById("settings_user_llm_enabled");
+      if (master) master.checked = !!llms.enabled;
+      for (const provider of USER_LLM_PROVIDERS) {
+        const cfg = llms.providers?.[provider.id] || {};
+        const enabled = document.getElementById(`settings_user_llm_${provider.id}_enabled`);
+        const status = document.getElementById(`settings_user_llm_${provider.id}_status`);
+        const key = document.getElementById(`settings_user_llm_${provider.id}_key`);
+        const clear = document.getElementById(`settings_user_llm_${provider.id}_clear`);
+        const base = document.getElementById(`settings_user_llm_${provider.id}_base_url`);
+        const models = document.getElementById(`settings_user_llm_${provider.id}_models`);
+        if (enabled) enabled.checked = !!cfg.enabled;
+        if (status) status.textContent = cfg.apiKeyConfigured ? `Saved key: ${cfg.apiKeyHint || "configured"}` : "No API key saved.";
+        if (key) key.value = "";
+        if (clear) clear.checked = false;
+        if (base) base.value = cfg.baseUrl || provider.defaultBaseUrl || "";
+        if (models) models.value = Array.isArray(cfg.models) ? cfg.models.join("\n") : "";
+      }
+    }
+
+    function commercialLlmsFromModal() {
+      const master = document.getElementById("settings_user_llm_enabled");
+      const out = { enabled: !!(master && master.checked), providers: {} };
+      for (const provider of USER_LLM_PROVIDERS) {
+        const enabled = document.getElementById(`settings_user_llm_${provider.id}_enabled`);
+        const key = document.getElementById(`settings_user_llm_${provider.id}_key`);
+        const clear = document.getElementById(`settings_user_llm_${provider.id}_clear`);
+        const base = document.getElementById(`settings_user_llm_${provider.id}_base_url`);
+        const models = document.getElementById(`settings_user_llm_${provider.id}_models`);
+        const cfg = {
+          enabled: !!(enabled && enabled.checked),
+          base_url: base ? String(base.value || "").trim() : provider.defaultBaseUrl,
+          models: splitModelIds(models ? models.value : ""),
+        };
+        const keyValue = key ? String(key.value || "").trim() : "";
+        if (keyValue) cfg.api_key = keyValue;
+        if (clear && clear.checked) cfg.clear_api_key = true;
+        out.providers[provider.id] = cfg;
+      }
+      return out;
+    }
 
     function defaultTelegramApps() {
       return {
@@ -1699,6 +1794,7 @@
           preferredCodingModel: (s.coding && s.coding.model_preference) || s.coding_model_preference || s.codingModelPreference || "coder",
           codingGitTokenConfigured: !!(s.coding && s.coding.git_token_configured),
           codingGitTokenHint: (s.coding && s.coding.git_token_hint) || "",
+          commercialLlms: loadCommercialLlms(s),
           telegramNotificationsEnabled: !!(s.telegram && s.telegram.notifications_enabled),
           telegramChatId: (s.telegram && s.telegram.chat_id) || "",
           telegramUsername: (s.telegram && s.telegram.username) || "",
@@ -1915,6 +2011,7 @@
               ? `Saved GitHub token: ${userSettings.codingGitTokenHint || "configured"}`
               : "No GitHub token saved for coding workspaces.";
           }
+          setCommercialLlmControls();
           if (telegramNotificationsEnabled) telegramNotificationsEnabled.checked = !!userSettings.telegramNotificationsEnabled;
           if (telegramChatId) telegramChatId.value = userSettings.telegramChatId || "";
           if (telegramUsername) telegramUsername.value = userSettings.telegramUsername || "";
@@ -2011,6 +2108,7 @@
         profile: { system_prompt: sys ? String(sys.value || '') : '', tone: tone ? String(tone.value || '') : '' },
         chat: { model_preference: chosenModel || "default" },
         coding: { model_preference: chosenCodingModel || "coder" },
+        commercial_llms: commercialLlmsFromModal(),
         telegram: {
           notifications_enabled: !!(telegramNotificationsEnabled && telegramNotificationsEnabled.checked),
           chat_id: telegramChatId ? String(telegramChatId.value || '').trim() : '',
@@ -2072,19 +2170,25 @@
           alert('Failed to save settings');
           return;
         }
+        let savedSettings = newSettings;
+        try {
+          const savedPayload = await put.json();
+          if (savedPayload && savedPayload.settings) savedSettings = savedPayload.settings;
+        } catch (e) {}
         // update local copy
-        userSettings.ttsVoice = newSettings.tts.voice || "";
-        userSettings.ttsBackend = newSettings.tts.backend_class || "";
-        userSettings.showTimestamps = !!newSettings.ui.showTimestamps;
-        userSettings.audioVolume = Number(newSettings.audioVolume || 1.0);
-        userSettings.autoPlayTTS = !!newSettings.autoPlayTTS;
-        userSettings.systemPrompt = newSettings.profile?.system_prompt || "";
-        userSettings.profileTone = newSettings.profile?.tone || "";
-        userSettings.preferredModel = newSettings.chat?.model_preference || "default";
-        userSettings.preferredCodingModel = newSettings.coding?.model_preference || "coder";
-        userSettings.telegramNotificationsEnabled = !!newSettings.telegram?.notifications_enabled;
-        userSettings.telegramChatId = newSettings.telegram?.chat_id || "";
-        userSettings.telegramUsername = newSettings.telegram?.username || "";
+        userSettings.ttsVoice = savedSettings.tts?.voice || newSettings.tts.voice || "";
+        userSettings.ttsBackend = savedSettings.tts?.backend_class || newSettings.tts.backend_class || "";
+        userSettings.showTimestamps = !!(savedSettings.ui?.showTimestamps ?? newSettings.ui.showTimestamps);
+        userSettings.audioVolume = Number(savedSettings.audioVolume || newSettings.audioVolume || 1.0);
+        userSettings.autoPlayTTS = !!(savedSettings.audio?.autoPlayTTS || savedSettings.autoPlayTTS || newSettings.autoPlayTTS);
+        userSettings.systemPrompt = savedSettings.profile?.system_prompt || newSettings.profile?.system_prompt || "";
+        userSettings.profileTone = savedSettings.profile?.tone || newSettings.profile?.tone || "";
+        userSettings.preferredModel = savedSettings.chat?.model_preference || newSettings.chat?.model_preference || "default";
+        userSettings.preferredCodingModel = savedSettings.coding?.model_preference || newSettings.coding?.model_preference || "coder";
+        userSettings.commercialLlms = loadCommercialLlms(savedSettings);
+        userSettings.telegramNotificationsEnabled = !!(savedSettings.telegram?.notifications_enabled ?? newSettings.telegram?.notifications_enabled);
+        userSettings.telegramChatId = savedSettings.telegram?.chat_id || newSettings.telegram?.chat_id || "";
+        userSettings.telegramUsername = savedSettings.telegram?.username || newSettings.telegram?.username || "";
         userSettings.telegramPendingLinkCommand = "";
         userSettings.telegramLink = {
           linkedTs: Number(userSettings.telegramLink?.linkedTs || 0),
@@ -2111,6 +2215,8 @@
           userSettings.codingGitTokenConfigured = true;
           userSettings.codingGitTokenHint = gitTokenValue.length > 10 ? `${gitTokenValue.slice(0, 4)}...${gitTokenValue.slice(-4)}` : "***";
         }
+        setCommercialLlmControls();
+        await loadModels();
         syncSettingsModelSelect(userSettings.preferredModel);
         syncSettingsCodingModelSelect(userSettings.preferredCodingModel);
         applyUserSettingsToUi();

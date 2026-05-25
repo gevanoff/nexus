@@ -19,6 +19,7 @@ from app.router import decide_route
 from app.router_cfg import router_cfg
 from app.tools_bus import TOOL_SCHEMAS, run_tool_call, tool_awareness_text
 from app.upstreams import call_backend_chat
+from app import user_llm
 
 Backend = str
 _LIGHT_TIER1_TOOLS = frozenset(
@@ -31,6 +32,14 @@ _LIGHT_TIER1_TOOLS = frozenset(
         "coding_task_notify",
     }
 )
+
+
+class _NullAdmissionLease:
+    async def __aenter__(self) -> "_NullAdmissionLease":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        return False
 
 
 def _canonical_json(obj: Any) -> str:
@@ -353,7 +362,12 @@ def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> Ch
     return ChatMessage(role="tool", tool_call_id=tool_call_id, content=json.dumps(result, separators=(",", ":"), ensure_ascii=False))
 
 
-async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[str, Any], Backend, str]:
+async def run_agent_v1(
+    *,
+    req: Request,
+    run_req: AgentRunRequest,
+    user_settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], Backend, str]:
     specs = load_agent_specs()
     spec = specs.get(run_req.agent) or specs.get("default")
     if spec is None:
@@ -379,22 +393,38 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
 
     tools = _tool_specs_for_names(sorted(allowed)) if allowed else None
 
-    # Route once, and stick to a fixed backend/model for determinism.
-    hdrs = {k.lower(): v for k, v in req.headers.items()}
-    route = decide_route(
-        cfg=router_cfg(),
-        request_model=spec.model,
-        headers=hdrs,
-        messages=[m.model_dump(exclude_none=True) for m in messages],
-        has_tools=bool(tools),
-        enable_policy=getattr(S, "ROUTER_ENABLE_POLICY", True),
-        enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
-    )
-    backend: Backend = route.backend
-    upstream_model = route.model
+    use_user_llm = user_llm.is_user_model_id(spec.model)
+    route_reason = ""
+    if use_user_llm:
+        parsed = user_llm.parse_user_model_id(spec.model)
+        provider, upstream_model = parsed if parsed is not None else ("user", spec.model)
+        backend = user_llm.user_backend_name(provider)
+        route_reason = "user_llm_settings"
+        admission_lease = _NullAdmissionLease()
+    else:
+        # Route once, and stick to a fixed backend/model for determinism.
+        hdrs = {k.lower(): v for k, v in req.headers.items()}
+        route = decide_route(
+            cfg=router_cfg(),
+            request_model=spec.model,
+            headers=hdrs,
+            messages=[m.model_dump(exclude_none=True) for m in messages],
+            has_tools=bool(tools),
+            enable_policy=getattr(S, "ROUTER_ENABLE_POLICY", True),
+            enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
+        )
+        backend = route.backend
+        upstream_model = route.model
+        route_reason = route.reason
+        admission_lease = await _ADMISSION.acquire(backend=backend, tier=tier, tools_allowlist=spec.tools_allowlist)
+
+    async def _call_chat(chat_req: ChatCompletionRequest) -> Dict[str, Any]:
+        if use_user_llm:
+            return await user_llm.call_user_chat(chat_req, model_id=spec.model, settings=user_settings or {})
+        return await call_backend_chat(chat_req, backend, upstream_model)
 
     # Admission control by backend.
-    async with (await _ADMISSION.acquire(backend=backend, tier=tier, tools_allowlist=spec.tools_allowlist)):
+    async with admission_lease:
         t0 = time.monotonic()
         run_id = new_id("run")
         request_hash = _sha256_hex(
@@ -425,6 +455,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                 "tier": tier,
                 "backend": backend,
                 "upstream_model": upstream_model,
+                "route_reason": route_reason,
             }
         )
 
@@ -456,7 +487,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                     stream=False,
                 )
 
-                plan_resp = await call_backend_chat(plan_req, backend, upstream_model)
+                plan_resp = await _call_chat(plan_req)
                 plan_msg = _extract_assistant_message(plan_resp)
                 _emit(
                     {
@@ -476,7 +507,7 @@ async def run_agent_v1(*, req: Request, run_req: AgentRunRequest) -> Tuple[Dict[
                     stream=False,
                 )
 
-                action_resp = await call_backend_chat(action_req, backend, upstream_model)
+                action_resp = await _call_chat(action_req)
 
                 action_msg = _extract_assistant_message(action_resp)
                 _emit(

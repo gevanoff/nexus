@@ -15,6 +15,7 @@ from app.config import S
 from app.models import AgentRunRequest
 from app.nexus_hardware import scheduled_task_hardware_context
 from app.openai_utils import new_id
+from app import user_store
 
 
 log = logging.getLogger(__name__)
@@ -79,6 +80,18 @@ def _update_task_metadata_row(task_id: str, metadata: dict[str, Any], *, now: in
             "UPDATE agent_tasks SET metadata_json=?, updated_ts=? WHERE id=?",
             (json.dumps(metadata, separators=(",", ":"), sort_keys=True, ensure_ascii=False), updated_ts, task_id),
         )
+
+
+def _settings_for_task_owner(row: sqlite3.Row) -> dict[str, Any]:
+    metadata = _task_metadata_from_row(row)
+    user_id = metadata.get("user_id") or metadata.get("owner_user_id")
+    try:
+        if user_id is None:
+            return {}
+        settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user_id))
+        return settings if isinstance(settings, dict) else {}
+    except Exception:
+        return {}
 
 
 def init_db() -> None:
@@ -952,6 +965,7 @@ async def _execute_task(row: sqlite3.Row) -> None:
                     agent=str(row["agent"] or "default"),
                     input=_scheduled_prompt(row, due_ts, preface=prompt_preface),
                 ),
+                user_settings=_settings_for_task_owner(row),
             ),
             timeout=timeout,
         )

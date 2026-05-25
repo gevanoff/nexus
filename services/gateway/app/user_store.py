@@ -369,6 +369,26 @@ def _default_settings() -> Dict[str, Any]:
         "coding": {
             "model_preference": "coder",
         },
+        "commercial_llms": {
+            "enabled": False,
+            "providers": {
+                "openai": {
+                    "enabled": False,
+                    "base_url": "https://api.openai.com/v1",
+                    "models": [],
+                },
+                "openrouter": {
+                    "enabled": False,
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "models": [],
+                },
+                "custom_openai": {
+                    "enabled": False,
+                    "base_url": "",
+                    "models": [],
+                },
+            },
+        },
         "telegram": {
             "notifications_enabled": False,
             "chat_id": "",

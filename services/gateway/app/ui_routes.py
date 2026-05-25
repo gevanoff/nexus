@@ -50,6 +50,7 @@ from app.ocr_backend import extract_ocr_text, scan_ocr
 from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import ui_conversations
 from app import user_store
+from app import user_llm
 from app import agent_tasks
 from app import telegram_notifications
 from app.auth import configured_static_bearer_tokens, require_bearer
@@ -729,6 +730,34 @@ def _clone_ui_models_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _settings_for_optional_user(user: Optional[user_store.User]) -> Dict[str, Any]:
+    try:
+        if user is None:
+            return user_store.get_settings(S.USER_DB_PATH, user_id=-1) or {}
+        return user_store.get_settings(S.USER_DB_PATH, user_id=user.id) or {}
+    except Exception:
+        return {}
+
+
+def _append_user_llm_model_entries(payload: Dict[str, Any], user: Optional[user_store.User], now: int) -> Dict[str, Any]:
+    out = _clone_ui_models_payload(payload)
+    entries = user_llm.model_entries(_settings_for_optional_user(user), created=now)
+    if entries:
+        existing = {str(item.get("id") or "") for item in out.get("data", []) if isinstance(item, dict)}
+        for entry in entries:
+            if str(entry.get("id") or "") not in existing:
+                out.setdefault("data", []).append(entry)
+    diagnostics = out.get("diagnostics") if isinstance(out.get("diagnostics"), dict) else {}
+    diagnostics["user_llms"] = {"enabled_models": len(entries)}
+    out["diagnostics"] = diagnostics
+    return out
+
+
+class _StaticRouteReason:
+    def __init__(self, reason: str):
+        self.reason = reason
+
+
 async def _probe_models_for_backend(
     client: httpx.AsyncClient,
     registry: Any,
@@ -987,11 +1016,13 @@ def _sanitize_user_settings_for_response(settings: Dict[str, Any]) -> Dict[str, 
         if isinstance(link, dict):
             link.pop("pending_code_hash", None)
             link["has_pending_code"] = bool(int(link.get("pending_expires_ts") or 0) > int(time.time()))
+    out = user_llm.sanitize_settings(out)
     return out
 
 
 def _merge_user_settings_with_secrets(current: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
     merged = _merge_user_settings(current if isinstance(current, dict) else {}, patch if isinstance(patch, dict) else {})
+    merged = user_llm.merge_settings_with_secrets(current if isinstance(current, dict) else {}, patch if isinstance(patch, dict) else {}, merged)
     patch_coding = patch.get("coding") if isinstance(patch, dict) else None
     if not isinstance(patch_coding, dict):
         return merged
@@ -4178,7 +4209,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             "expires_in_sec": max(0.0, round(_UI_MODELS_CACHE_EXPIRES_AT - now_monotonic, 3)),
         }
         cached["diagnostics"] = diagnostics
-        return cached
+        return _append_user_llm_model_entries(cached, user, now)
 
     async with _UI_MODELS_CACHE_LOCK:
         now_monotonic = time.time()
@@ -4191,7 +4222,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
                 "expires_in_sec": max(0.0, round(_UI_MODELS_CACHE_EXPIRES_AT - now_monotonic, 3)),
             }
             cached["diagnostics"] = diagnostics
-            return cached
+            return _append_user_llm_model_entries(cached, user, now)
 
         registry = get_registry()
         async with _httpx_client(timeout=probe_timeout_sec) as client:
@@ -4276,7 +4307,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         _UI_MODELS_CACHE_VALUE = _clone_ui_models_payload(data)
         _UI_MODELS_CACHE_EXPIRES_AT = time.time() + cache_ttl_sec
 
-    return data
+    return _append_user_llm_model_entries(data, user, now)
 
 
 @router.post("/ui/api/chat", include_in_schema=False)
@@ -4304,6 +4335,22 @@ async def ui_chat(req: Request) -> Dict[str, Any]:
     except Exception:
         pass
 
+    if user_llm.is_user_model_id(cc.model):
+        parsed = user_llm.parse_user_model_id(cc.model)
+        provider, upstream_model = parsed if parsed is not None else ("user", cc.model)
+        resp = await user_llm.call_user_chat(cc, model_id=cc.model, settings=_settings_for_optional_user(user))
+        if isinstance(resp, dict):
+            resp.setdefault("_gateway", {})
+            if isinstance(resp.get("_gateway"), dict):
+                resp["_gateway"].update(
+                    {
+                        "backend": user_llm.user_backend_name(provider),
+                        "model": upstream_model,
+                        "reason": "user_llm_settings",
+                    }
+                )
+        return resp
+
     route = decide_route(
         cfg=router_cfg(),
         request_model=cc.model,
@@ -4327,7 +4374,8 @@ async def ui_chat(req: Request) -> Dict[str, Any]:
     try:
         resp = await call_backend_chat(cc, backend, upstream_model)
     finally:
-        admission.release(backend_class, "chat")
+        if admission is not None and backend_class:
+            admission.release(backend_class, "chat")
 
     # Include routing metadata so the UI can display it.
     if isinstance(resp, dict):
@@ -5123,6 +5171,30 @@ async def ui_chat_stream(req: Request):
         messages=messages,
         stream=True,
     )
+
+    if user_llm.is_user_model_id(cc.model):
+        parsed = user_llm.parse_user_model_id(cc.model)
+        provider, upstream_model = parsed if parsed is not None else ("user", cc.model)
+        backend = user_llm.user_backend_name(provider)
+        upstream_gen = user_llm.stream_user_chat_as_openai(cc, model_id=cc.model, settings=_settings_for_optional_user(user))
+        out = StreamingResponse(
+            _stream_ui_chat(
+                upstream_gen=upstream_gen,
+                backend=backend,
+                upstream_model=upstream_model,
+                route=_StaticRouteReason("user_llm_settings"),
+                conversation_id=conversation_id,
+                user=user,
+                backend_class="",
+                admission=None,
+                pre_events=pre_events,
+            ),
+            media_type="text/event-stream",
+        )
+        out.headers["X-Backend-Used"] = backend
+        out.headers["X-Model-Used"] = upstream_model
+        out.headers["X-Router-Reason"] = "user_llm_settings"
+        return out
 
     route = decide_route(
         cfg=router_cfg(),

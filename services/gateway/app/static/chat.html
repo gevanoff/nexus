@@ -576,6 +576,77 @@
                     Clear saved GitHub token
                   </label>
                 </fieldset>
+                <fieldset id="settings_user_llm_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Commercial LLM API keys</legend>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_user_llm_enabled" style="width:auto" />
+                    Enable user API-key models
+                  </label>
+                  <div class="hint" style="margin-bottom:8px">OpenRouter can expose Anthropic, Google, and other commercial models through one OpenAI-compatible API.</div>
+
+                  <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px;margin-top:8px">
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openai_enabled" style="width:auto" />
+                      OpenAI
+                    </label>
+                    <div id="settings_user_llm_openai_status" class="hint" style="margin-bottom:6px"></div>
+                    <label>API key
+                      <input type="password" id="settings_user_llm_openai_key" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                    </label>
+                    <label>Base URL
+                      <input type="text" id="settings_user_llm_openai_base_url" autocomplete="off" placeholder="https://api.openai.com/v1" />
+                    </label>
+                    <label>Model IDs
+                      <textarea id="settings_user_llm_openai_models" rows="2" placeholder="One per line or comma-separated"></textarea>
+                    </label>
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openai_clear" style="width:auto" />
+                      Clear saved OpenAI key
+                    </label>
+                  </div>
+
+                  <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px;margin-top:8px">
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openrouter_enabled" style="width:auto" />
+                      OpenRouter
+                    </label>
+                    <div id="settings_user_llm_openrouter_status" class="hint" style="margin-bottom:6px"></div>
+                    <label>API key
+                      <input type="password" id="settings_user_llm_openrouter_key" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                    </label>
+                    <label>Base URL
+                      <input type="text" id="settings_user_llm_openrouter_base_url" autocomplete="off" placeholder="https://openrouter.ai/api/v1" />
+                    </label>
+                    <label>Model IDs
+                      <textarea id="settings_user_llm_openrouter_models" rows="2" placeholder="One per line or comma-separated"></textarea>
+                    </label>
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openrouter_clear" style="width:auto" />
+                      Clear saved OpenRouter key
+                    </label>
+                  </div>
+
+                  <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px;margin-top:8px">
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_custom_openai_enabled" style="width:auto" />
+                      Custom OpenAI-compatible
+                    </label>
+                    <div id="settings_user_llm_custom_openai_status" class="hint" style="margin-bottom:6px"></div>
+                    <label>API key
+                      <input type="password" id="settings_user_llm_custom_openai_key" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                    </label>
+                    <label>Base URL
+                      <input type="text" id="settings_user_llm_custom_openai_base_url" autocomplete="off" placeholder="https://example.com/v1" />
+                    </label>
+                    <label>Model IDs
+                      <textarea id="settings_user_llm_custom_openai_models" rows="2" placeholder="One per line or comma-separated"></textarea>
+                    </label>
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_custom_openai_clear" style="width:auto" />
+                      Clear saved custom key
+                    </label>
+                  </div>
+                </fieldset>
               </section>
               <section id="settings-telegram" class="settings-section">
                 <fieldset id="settings_telegram_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px">
