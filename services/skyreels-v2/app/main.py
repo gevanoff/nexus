@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -19,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 app = FastAPI(title="SkyReels V2 Shim", version="0.1")
 logger = logging.getLogger(__name__)
 _SAFE_JOB_RE = re.compile(r"^skyreels_[A-Fa-f0-9]{32}$")
+_CUDA_PROBE_CACHE: Dict[str, Any] = {"checked_at": 0.0, "error": None}
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -35,6 +37,16 @@ def _int_env(name: str, default: int) -> int:
         return default
     try:
         return int(raw)
+    except ValueError:
+        return default
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = _env(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
     except ValueError:
         return default
 
@@ -57,6 +69,57 @@ def _workdir() -> str:
 
 def _output_root() -> Path:
     return Path(_env("SKYREELS_OUTPUT_ROOT", "/data/outputs") or "/data/outputs")
+
+
+def _cuda_probe_error() -> Optional[Dict[str, str]]:
+    ttl_sec = max(0.0, _float_env("SKYREELS_CUDA_PROBE_CACHE_TTL_SEC", 30.0))
+    now = time.monotonic()
+    if ttl_sec > 0 and _CUDA_PROBE_CACHE["checked_at"] and now - float(_CUDA_PROBE_CACHE["checked_at"]) < ttl_sec:
+        cached_error = _CUDA_PROBE_CACHE["error"]
+        return cached_error if isinstance(cached_error, dict) else None
+
+    code = "\n".join(
+        [
+            "import torch",
+            "if not torch.cuda.is_available() or torch.cuda.device_count() <= 0:",
+            "    raise SystemExit('cuda_unavailable')",
+            "torch.cuda.init()",
+        ]
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=max(1.0, _float_env("SKYREELS_CUDA_PROBE_TIMEOUT_SEC", 15.0)),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        error: Optional[Dict[str, str]] = {
+            "reason": "cuda_check_timeout",
+            "detail": "Timed out while verifying CUDA availability in a child Python process.",
+        }
+    except Exception as exc:
+        error = {
+            "reason": "cuda_check_failed",
+            "detail": f"Unable to verify CUDA availability: {type(exc).__name__}: {exc}",
+        }
+    else:
+        if proc.returncode == 0:
+            error = None
+        else:
+            stderr = (proc.stderr or proc.stdout or "").strip()
+            detail = "SkyReels requires CUDA, but no CUDA GPU is visible inside a child Python process."
+            if stderr:
+                detail = f"{detail} Probe output: {stderr[-1000:]}"
+            error = {
+                "reason": "cuda_unavailable",
+                "detail": detail,
+            }
+
+    _CUDA_PROBE_CACHE["checked_at"] = now
+    _CUDA_PROBE_CACHE["error"] = error
+    return error
 
 
 def _writable_dir_error(path: Path) -> Optional[Dict[str, str]]:
@@ -110,19 +173,9 @@ def _runtime_error() -> Optional[Dict[str, str]]:
                 "detail": f"Required Python module {module_name!r} is unavailable: {type(exc).__name__}: {exc}",
             }
 
-    try:
-        import torch
-
-        if not torch.cuda.is_available() or torch.cuda.device_count() <= 0:
-            return {
-                "reason": "cuda_unavailable",
-                "detail": "SkyReels requires CUDA, but no CUDA GPU is visible inside the container.",
-            }
-    except Exception as exc:
-        return {
-            "reason": "cuda_check_failed",
-            "detail": f"Unable to verify CUDA availability: {type(exc).__name__}: {exc}",
-        }
+    cuda_error = _cuda_probe_error()
+    if cuda_error is not None:
+        return cuda_error
 
     if not (workdir / "generate_video.py").exists():
         return {
