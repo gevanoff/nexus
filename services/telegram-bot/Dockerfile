@@ -6,6 +6,9 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY telegram_gateway_bot.js healthcheck.js ./
+RUN chown -R node:node /app \
+  && chmod 755 /app \
+  && chmod 644 /app/package.json /app/telegram_gateway_bot.js /app/healthcheck.js
 
 USER node
 
