@@ -24,6 +24,8 @@ services:
       - ${VLLM_TOKENIZER:-${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}}
       - --generation-config
       - vllm
+      - --load-format
+      - "${VLLM_LOAD_FORMAT:-auto}"
       - --tensor-parallel-size
       - "${VLLM_TENSOR_PARALLEL_SIZE:-1}"
       - --gpu-memory-utilization

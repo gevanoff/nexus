@@ -24,6 +24,8 @@ services:
       - ${VLLM_EMBEDDINGS_TOKENIZER:-${VLLM_MODEL_EMBEDDINGS:-unsloth/Qwen3-Embedding-4B}}
       - --generation-config
       - vllm
+      - --load-format
+      - "${VLLM_EMBEDDINGS_LOAD_FORMAT:-auto}"
       - --tensor-parallel-size
       - "${VLLM_EMBEDDINGS_TENSOR_PARALLEL_SIZE:-1}"
       - --gpu-memory-utilization

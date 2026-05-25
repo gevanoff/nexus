@@ -9,7 +9,8 @@
     },
     "env": {
       "VLLM_MODEL_STRONG": "unsloth/Qwen3-30B-A3B-FP8",
-      "VLLM_MODEL_FAST": "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M",
+      "VLLM_MODEL_FAST": "unsloth/Qwen3-30B-A3B-GGUF/Qwen3-30B-A3B-Q4_K_M.gguf",
+      "VLLM_FAST_LOAD_FORMAT": "gguf",
       "VLLM_MODEL_DEFAULT": "unsloth/Qwen3-30B-A3B-FP8",
       "VLLM_MODEL_EMBEDDINGS": "unsloth/Qwen3-Embedding-4B",
       "VLLM_GPU_MEMORY_UTILIZATION": "0.72",

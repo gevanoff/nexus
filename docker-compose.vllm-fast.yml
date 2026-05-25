@@ -24,6 +24,8 @@ services:
       - ${VLLM_FAST_TOKENIZER:-${VLLM_MODEL_FAST:-unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M}}
       - --generation-config
       - vllm
+      - --load-format
+      - "${VLLM_FAST_LOAD_FORMAT:-auto}"
       - --tensor-parallel-size
       - "${VLLM_FAST_TENSOR_PARALLEL_SIZE:-1}"
       - --gpu-memory-utilization

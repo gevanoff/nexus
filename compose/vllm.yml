@@ -18,6 +18,8 @@ services:
       - ${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}}
       - --generation-config
       - vllm
+      - --load-format
+      - "${VLLM_LOAD_FORMAT:-auto}"
       - --max-model-len
       - ${VLLM_MAX_MODEL_LEN:-32768}
     volumes:
