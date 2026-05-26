@@ -8,9 +8,15 @@ from app.backends import backend_provider_name
 from app.config import S
 
 
-def _hf_repo_cache_dir(model_id: str, cache_dir: str) -> Path:
+def _hf_repo_cache_name(model_id: str) -> str:
     safe_id = (model_id or "").strip().replace("/", "--")
-    return Path(cache_dir) / "hub" / f"models--{safe_id}"
+    return f"models--{safe_id}"
+
+
+def _hf_repo_cache_dirs(model_id: str, cache_dir: str) -> list[Path]:
+    name = _hf_repo_cache_name(model_id)
+    root = Path(cache_dir)
+    return [root / "hub" / name, root / name]
 
 
 def hf_model_cache_state(model_id: str, cache_dir: str | None = None) -> Optional[str]:
@@ -25,18 +31,21 @@ def hf_model_cache_state(model_id: str, cache_dir: str | None = None) -> Optiona
     if not model or not root.exists():
         return None
 
-    repo = _hf_repo_cache_dir(model, str(root))
-    if not repo.exists():
+    repos = [repo for repo in _hf_repo_cache_dirs(model, str(root)) if repo.exists()]
+    if not repos:
         return "missing"
-    if any(repo.glob("blobs/*.incomplete")):
-        return "fetching"
 
-    snapshots = repo / "snapshots"
-    try:
-        if any(path.is_file() for path in snapshots.glob("*/*")):
-            return "cached"
-    except Exception:
-        return None
+    for repo in repos:
+        if any(repo.glob("blobs/*.incomplete")):
+            return "fetching"
+
+    for repo in repos:
+        snapshots = repo / "snapshots"
+        try:
+            if any(True for _path in snapshots.glob("*/*")):
+                return "cached"
+        except Exception:
+            return None
     return "missing"
 
 
