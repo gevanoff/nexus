@@ -7,11 +7,13 @@
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
+  const copyHostsEl = document.getElementById("copy_hosts");
   const CACHE_KEY = "nexus.resources.status.v1";
   const POLL_INTERVAL_MS = 30000;
   const STALE_AFTER_POLLS = 3;
   let currentUserIsAdmin = false;
   let currentPollIntervalSec = POLL_INTERVAL_MS / 1000;
+  let latestPayload = null;
 
   function setStatus(text, isError) {
     if (!statusEl) return;
@@ -32,6 +34,11 @@
     const mb = Number(value || 0);
     if (!Number.isFinite(mb) || mb <= 0) return "0 GB";
     return `${(mb / 1024).toFixed(mb >= 10240 ? 0 : 1)} GB`;
+  }
+
+  function fmtValue(value) {
+    const text = String(value ?? "").trim();
+    return text || "unknown";
   }
 
   function pct(used, total) {
@@ -83,6 +90,16 @@
     }
   }
 
+  function formatDateTime(tsSeconds) {
+    const ts = Number(tsSeconds || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return "";
+    try {
+      return new Date(ts * 1000).toISOString();
+    } catch (error) {
+      return "";
+    }
+  }
+
   function freshnessText(tsSeconds) {
     const ts = Number(tsSeconds || 0);
     if (!Number.isFinite(ts) || ts <= 0) return "";
@@ -101,6 +118,12 @@
     const settings = payload?.settings && typeof payload.settings === "object" ? payload.settings : {};
     const value = Number(settings.poll_interval_sec || settings.health_poll_interval_sec || 0);
     if (Number.isFinite(value) && value > 0) currentPollIntervalSec = value;
+  }
+
+  function updateCopyHostsButton(payload) {
+    if (!copyHostsEl) return;
+    const hosts = Array.isArray(payload?.hosts) ? payload.hosts : [];
+    copyHostsEl.disabled = hosts.length === 0;
   }
 
   function isStale(tsSeconds) {
@@ -143,6 +166,122 @@
       window.localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
     } catch (error) {
       // Ignore storage quota/private-mode failures. The live view still works.
+    }
+  }
+
+  function hostCpuText(cpu) {
+    const data = cpu && typeof cpu === "object" ? cpu : {};
+    const parts = [];
+    if (data.model_name) parts.push(String(data.model_name));
+    if (data.logical_cpus) parts.push(`${data.logical_cpus} logical CPUs`);
+    if (data.physical_cpus) parts.push(`${data.physical_cpus} physical CPUs`);
+    if (data.sockets) parts.push(`${data.sockets} socket${Number(data.sockets) === 1 ? "" : "s"}`);
+    if (data.cores_per_socket) parts.push(`${data.cores_per_socket} cores/socket`);
+    if (data.threads_per_core) parts.push(`${data.threads_per_core} threads/core`);
+    return parts.length ? parts.join(", ") : "unknown";
+  }
+
+  function hostOsText(os, host) {
+    const data = os && typeof os === "object" ? os : {};
+    const name = String(data.name || "").trim();
+    const version = String(data.version_id || "").trim();
+    if (name) return name;
+    const platform = String(host?.platform || "").trim();
+    return version && platform ? `${platform} ${version}` : (platform || "unknown");
+  }
+
+  function hostMemoryText(memory) {
+    const data = memory && typeof memory === "object" ? memory : {};
+    const total = Number(data.total_mb || 0);
+    const used = Number(data.used_mb || 0);
+    const available = Number(data.available_mb || 0);
+    if (!total) return "unknown";
+    const parts = [`${fmtMb(total)} total`];
+    if (used) parts.push(`${fmtMb(used)} used`);
+    if (available) parts.push(`${fmtMb(available)} available`);
+    return parts.join(", ");
+  }
+
+  function hostGpuLines(gpus) {
+    const list = Array.isArray(gpus) ? gpus : [];
+    if (!list.length) return ["  - none reported"];
+    return list.map((gpu) => {
+      const index = gpu.index ?? "?";
+      const name = fmtValue(gpu.name || `GPU ${index}`);
+      const used = fmtMb(gpu.memory_used_mb);
+      const total = fmtMb(gpu.memory_total_mb);
+      const free = fmtMb(gpu.memory_free_mb);
+      const util = Number(gpu.utilization_gpu_pct || 0);
+      return `  - [${index}] ${name}: ${used} / ${total} used, ${free} free, ${Number.isFinite(util) ? util : 0}% util`;
+    });
+  }
+
+  function hostContainerLines(containers) {
+    const data = containers && typeof containers === "object" ? containers : {};
+    const entries = Object.entries(data).sort((a, b) => a[0].localeCompare(b[0]));
+    if (!entries.length) return ["  - none reported"];
+    return entries.map(([name, status]) => `  - ${name}: ${status}`);
+  }
+
+  function buildHostInfoText(payload) {
+    const hosts = Array.isArray(payload?.hosts) ? payload.hosts : [];
+    const generated = formatDateTime(payload?.generated_at);
+    const lines = ["# Nexus Host Information"];
+    if (generated) lines.push(`Generated: ${generated}`);
+    lines.push("");
+    hosts.forEach((host, index) => {
+      if (index > 0) lines.push("");
+      lines.push(`## ${fmtValue(host?.name)}`);
+      lines.push(`Hostname: ${fmtValue(host?.name)}`);
+      if (host?.ssh_target) lines.push(`SSH target: ${host.ssh_target}`);
+      lines.push(`OS: ${hostOsText(host?.os, host)}`);
+      lines.push(`Platform: ${[host?.platform, host?.resource_kind].map(fmtValue).filter((part) => part !== "unknown").join(" / ") || "unknown"}`);
+      lines.push(`Processor: ${hostCpuText(host?.cpu)}`);
+      lines.push(`Memory: ${hostMemoryText(host?.memory)}`);
+      const updated = formatDateTime(host?.updated_at);
+      if (updated) lines.push(`Last hardware probe: ${updated}`);
+      if (host?.error) lines.push(`Probe error: ${host.error}`);
+      lines.push("GPUs:");
+      lines.push(...hostGpuLines(host?.gpus));
+      lines.push("Containers:");
+      lines.push(...hostContainerLines(host?.containers));
+    });
+    if (!hosts.length) lines.push("No hosts reported.");
+    return `${lines.join("\n").trim()}\n`;
+  }
+
+  function fallbackCopyText(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      return document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    return fallbackCopyText(text);
+  }
+
+  async function copyHostInfo() {
+    const text = buildHostInfoText(latestPayload);
+    try {
+      const ok = await copyTextToClipboard(text);
+      if (!ok) throw new Error("clipboard write was not accepted");
+      setStatus("Copied host information.", false);
+    } catch (error) {
+      setStatus(`Copy failed: ${String(error?.message || error)}`, true);
     }
   }
 
@@ -641,6 +780,8 @@
 
   function renderPayload(payload, options) {
     const opts = options || {};
+    latestPayload = payload && typeof payload === "object" ? payload : null;
+    updateCopyHostsButton(latestPayload);
     updatePollInterval(payload);
     renderHosts(payload.hosts || []);
     const serviceSections = splitCoreServicesForResourceUi(payload.control_plane || [], payload.core_services || []);
@@ -729,6 +870,7 @@
   }
 
   if (refreshEl) refreshEl.addEventListener("click", () => void loadStatus(true));
+  if (copyHostsEl) copyHostsEl.addEventListener("click", () => void copyHostInfo());
   window.addEventListener("hashchange", () => focusRequestedBackend());
   void (async () => {
     await loadCurrentUser();

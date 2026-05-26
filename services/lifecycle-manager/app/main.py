@@ -97,6 +97,7 @@ class HostPolicy:
     resource_kind: str
     remote_shell: str = "bash -lc"
     error: str = ""
+    os: Dict[str, Any] = field(default_factory=dict)
     cpu: Dict[str, Any] = field(default_factory=dict)
     memory: Dict[str, Any] = field(default_factory=dict)
     gpus: List[Dict[str, Any]] = field(default_factory=list)
@@ -1773,6 +1774,16 @@ class LifecycleManager:
     @classmethod
     def _linux_probe_command(cls) -> str:
         return (
+            "printf '__OS__\\n'; "
+            "if [ -r /etc/os-release ]; then "
+            ". /etc/os-release; "
+            "printf 'name=%s\\n' \"${PRETTY_NAME:-${NAME:-Linux}}\"; "
+            "printf 'id=%s\\n' \"${ID:-linux}\"; "
+            "printf 'version_id=%s\\n' \"${VERSION_ID:-}\"; "
+            "else "
+            "printf 'name=%s\\n' \"$(uname -sr 2>/dev/null || echo Linux)\"; "
+            "printf 'id=linux\\n'; "
+            "fi; "
             "printf '__CPU__\\n'; "
             "if command -v lscpu >/dev/null 2>&1; then "
             "lscpu | awk -F: '/^Model name:/ {gsub(/^[ \\t]+/,\"\",$2); print \"model_name=\" $2} "
@@ -1795,6 +1806,16 @@ class LifecycleManager:
     @classmethod
     def _macos_probe_command(cls) -> str:
         return (
+            "printf '__OS__\\n'; "
+            "if command -v sw_vers >/dev/null 2>&1; then "
+            "printf 'name=%s %s\\n' \"$(sw_vers -productName 2>/dev/null || echo macOS)\" \"$(sw_vers -productVersion 2>/dev/null || true)\"; "
+            "printf 'id=macos\\n'; "
+            "printf 'version_id=%s\\n' \"$(sw_vers -productVersion 2>/dev/null || true)\"; "
+            "printf 'build=%s\\n' \"$(sw_vers -buildVersion 2>/dev/null || true)\"; "
+            "else "
+            "printf 'name=%s\\n' \"$(uname -sr 2>/dev/null || echo macOS)\"; "
+            "printf 'id=macos\\n'; "
+            "fi; "
             "printf '__CPU__\\n'; "
             "cpu_name=\"$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)\"; "
             "if [ -z \"$cpu_name\" ] && command -v system_profiler >/dev/null 2>&1; then "
@@ -1824,6 +1845,7 @@ class LifecycleManager:
 
     def _parse_linux_probe(self, host: HostPolicy, raw: str) -> None:
         sections = self._sections(raw)
+        host.os = self._parse_key_values(sections.get("OS", []))
         host.cpu = self._parse_key_values(sections.get("CPU", []))
         host.gpus = []
         for line in sections.get("GPU", []):
@@ -1852,6 +1874,7 @@ class LifecycleManager:
 
     def _parse_macos_probe(self, host: HostPolicy, raw: str) -> None:
         sections = self._sections(raw)
+        host.os = self._parse_key_values(sections.get("OS", []))
         host.cpu = self._parse_key_values(sections.get("CPU", []))
         mem_lines = sections.get("MEM", [])
         if mem_lines:
@@ -2103,6 +2126,7 @@ class LifecycleManager:
                     "platform": host.platform,
                     "resource_kind": host.resource_kind,
                     "error": host.error,
+                    "os": host.os,
                     "cpu": host.cpu,
                     "memory": host.memory,
                     "gpus": host.gpus,
