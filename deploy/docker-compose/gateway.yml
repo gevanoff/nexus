@@ -42,7 +42,7 @@ services:
     volumes:
       - ../../.runtime/gateway/data:/var/lib/gateway/data
       - ../../.runtime/gateway/config:/var/lib/gateway/config:ro
-      - ${MLX_HF_CACHE_HOST_DIR:-/var/lib/mlx/cache/huggingface}:/var/lib/gateway/mlx_hf_cache:ro
+      - ${MLX_HF_CACHE_HOST_DIR:-../../.runtime/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
       - ../../.env:/var/lib/gateway/app/.env:ro
     networks:
       - nexus

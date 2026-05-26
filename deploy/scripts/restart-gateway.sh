@@ -54,6 +54,11 @@ fi
 
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
 ns_seed_gateway_config_files "$ROOT_DIR" refresh
+if [[ -x "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh" ]]; then
+  if ! "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh"; then
+    ns_print_warn "Failed to refresh MLX cache status mirror; model availability may be stale"
+  fi
+fi
 
 if ! ns_compose_available; then
   ns_die "Docker Compose is not available"

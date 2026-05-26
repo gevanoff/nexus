@@ -77,7 +77,7 @@ services:
       - ./.runtime/gateway/data:/var/lib/gateway/data
       - ./.runtime/tts_refs:/var/lib/tts_refs
       - ./.runtime/gateway/config:/var/lib/gateway/config:ro
-      - ${MLX_HF_CACHE_HOST_DIR:-/var/lib/mlx/cache/huggingface}:/var/lib/gateway/mlx_hf_cache:ro
+      - ${MLX_HF_CACHE_HOST_DIR:-./.runtime/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
       - type: bind
         source: ./.env
         target: /var/lib/gateway/app/.env
