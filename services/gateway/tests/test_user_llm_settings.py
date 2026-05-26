@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -11,7 +12,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 from app import user_llm
 from app import ui_routes
 from app.agent_runtime_v1 import run_agent_v1
-from app.models import AgentRunRequest, AgentSpecModel
+from app.models import AgentRunRequest, AgentSpecModel, ChatCompletionRequest, ChatMessage
 
 
 def _settings(api_key: str = "sk-test-value") -> dict:
@@ -174,6 +175,41 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "loadCommercialLlmModels(provider.id)" in js
 
 
+def test_ui_model_alias_hides_fetching_models_and_falls_back(monkeypatch):
+    fallback = "mlx-community/Phi-4-reasoning-plus-4bit"
+    primary = "mlx-community/MiniMax-M2.5-8bit"
+    monkeypatch.setattr(ui_routes.S, "MLX_FALLBACK_MODEL", fallback, raising=False)
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return "local_mlx"
+
+    def unavailable(_backend, model):
+        return "fetching" if model == primary else None
+
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", unavailable)
+    alias = SimpleNamespace(backend="local_mlx", upstream_model=primary)
+
+    show, display_model, reason = ui_routes._ui_alias_display_model("mlx", alias, Registry())
+    assert show is True
+    assert display_model == fallback
+    assert reason == "fetching"
+
+    show, display_model, reason = ui_routes._ui_alias_display_model("reasoning", alias, Registry())
+    assert show is False
+    assert display_model == primary
+    assert reason == "fetching"
+
+
+def test_ui_model_alias_hides_embedding_selectors():
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return backend
+
+    alias = SimpleNamespace(backend="local_vllm_embeddings", upstream_model="embedding-model")
+    assert ui_routes._ui_alias_is_chat_selector("embeddings", alias, Registry()) is False
+
+
 @pytest.mark.asyncio
 async def test_agent_runtime_uses_user_llm_without_local_router(monkeypatch):
     from app import agent_runtime_v1
@@ -223,3 +259,73 @@ async def test_agent_runtime_uses_user_llm_without_local_router(monkeypatch):
     assert payload["output_text"] == "done"
     assert len(calls) == 2
     assert all(call[1] == "user_llm:openai:gpt-test" for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_user_llm_stream_adapts_non_sse_json(monkeypatch):
+    class Resp:
+        headers = {"content-type": "application/json"}
+
+        def raise_for_status(self):
+            return None
+
+        async def aread(self):
+            return b'{"choices":[{"message":{"role":"assistant","content":"hello"}}]}'
+
+    class StreamCtx:
+        async def __aenter__(self):
+            return Resp()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class Client:
+        def stream(self, *args, **kwargs):
+            return StreamCtx()
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        yield Client()
+
+    monkeypatch.setattr(user_llm, "_httpx_client", fake_client)
+
+    req = ChatCompletionRequest(
+        model="user_llm:openai:gpt-test",
+        messages=[ChatMessage(role="user", content="hi")],
+        stream=True,
+    )
+    chunks = [chunk async for chunk in user_llm.stream_user_chat_as_openai(req, model_id=req.model, settings=_settings())]
+
+    assert any(b'"delta":{"content":"hello"}' in chunk for chunk in chunks)
+    assert chunks[-1] == b"data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_ui_stream_reports_empty_upstream_response():
+    async def upstream():
+        yield b"data: [DONE]\n\n"
+
+    class Admission:
+        released = False
+
+        def release(self, backend_class, route_kind):
+            self.released = True
+
+    admission = Admission()
+    chunks = [
+        chunk
+        async for chunk in ui_routes._stream_ui_chat(
+            upstream(),
+            backend="user_llm:openai",
+            upstream_model="gpt-test",
+            route=SimpleNamespace(reason="user_llm_settings"),
+            conversation_id="",
+            user=None,
+            backend_class="user_llm:openai",
+            admission=admission,
+        )
+    ]
+
+    assert any(b'"type":"empty_response"' in chunk for chunk in chunks)
+    assert chunks[-1] == b"data: [DONE]\n\n"
+    assert admission.released is True

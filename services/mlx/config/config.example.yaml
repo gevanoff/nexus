@@ -37,6 +37,16 @@ models:
     on_demand: true
     on_demand_idle_timeout: 300
 
+  # Higher-quality coding profile. Keep on-demand and route to it only after
+  # the repo is fully prefetched.
+  - served_model_name: mlx-community/GLM-5-8bit-MXFP8
+    model_path: mlx-community/GLM-5-8bit-MXFP8
+    model_type: lm
+    tool_call_parser: glm4_moe
+    reasoning_parser: glm4_moe
+    on_demand: true
+    on_demand_idle_timeout: 300
+
   # Smaller reasoning fallback.
   - served_model_name: mlx-community/Phi-4-reasoning-plus-4bit
     model_path: mlx-community/Phi-4-reasoning-plus-4bit

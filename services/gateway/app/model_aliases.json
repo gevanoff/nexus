@@ -32,34 +32,6 @@
       "context_window": 65536,
       "tools": false
     },
-    "minimax-m2.5-8bit": {
-      "backend": "local_mlx",
-      "model": "mlx-community/MiniMax-M2.5-8bit",
-      "tools": true
-    },
-    "deepseek-r1-0528-4bit": {
-      "backend": "local_mlx",
-      "model": "mlx-community/DeepSeek-R1-0528-4bit",
-      "tools": true,
-      "max_tokens_cap": 2048
-    },
-    "glm-5-4bit": {
-      "backend": "local_mlx",
-      "model": "mlx-community/GLM-5-4bit",
-      "tools": true
-    },
-    "phi-4-reasoning-plus": {
-      "backend": "local_mlx",
-      "model": "mlx-community/Phi-4-reasoning-plus-4bit",
-      "tools": true,
-      "max_tokens_cap": 2048
-    },
-    "phi-4-reasoning-plus-4bit": {
-      "backend": "local_mlx",
-      "model": "mlx-community/Phi-4-reasoning-plus-4bit",
-      "tools": true,
-      "max_tokens_cap": 2048
-    },
     "embeddings": {
       "backend": "local_vllm_embeddings",
       "model": "unsloth/Qwen3-Embedding-4B",

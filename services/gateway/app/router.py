@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, Optional
 from app.backends import backend_provider_name, get_registry
 from app.config import S
 from app.model_aliases import get_alias, get_aliases
+from app.model_availability import route_with_model_fallback
 
 Backend = str
 
@@ -244,7 +245,7 @@ def decide_route(
     hdr_backend = _known_backend_name((headers.get("x-backend") or "").strip())
     if hdr_backend:
         normalized = _normalize_model(request_model, hdr_backend, cfg)
-        return RouteDecision(backend=hdr_backend, model=normalized, reason="override:x-backend")
+        return route_with_model_fallback(RouteDecision(backend=hdr_backend, model=normalized, reason="override:x-backend"))
 
     request_model_norm = (request_model or "").strip()
     request_model_key = request_model_norm.lower()
@@ -259,7 +260,7 @@ def decide_route(
         a = aliases[alias_key]
         backend = _resolved_backend_name(a.backend) or a.backend
         normalized = _normalize_model(a.upstream_model, backend, cfg)
-        return RouteDecision(backend=backend, model=normalized, reason="alias:model")
+        return route_with_model_fallback(RouteDecision(backend=backend, model=normalized, reason="alias:model"))
 
     backend = _choose_backend_by_model(request_model_norm, cfg.default_backend)
 
@@ -270,11 +271,11 @@ def decide_route(
 
     if explicitly_pinned:
         normalized = _normalize_model(request_model_norm, backend, cfg)
-        return RouteDecision(backend=backend, model=normalized, reason="pinned:model")
+        return route_with_model_fallback(RouteDecision(backend=backend, model=normalized, reason="pinned:model"))
 
     if not enable_policy:
         normalized = _normalize_model(request_model_norm, backend, cfg)
-        return RouteDecision(backend=backend, model=normalized, reason="direct:model")
+        return route_with_model_fallback(RouteDecision(backend=backend, model=normalized, reason="direct:model"))
 
     size = _approx_text_size(messages or [])
 
@@ -298,37 +299,37 @@ def decide_route(
             a = get_alias("coder")
             if a and a.tools is not False:
                 b = _resolved_backend_name(a.backend) or a.backend
-                return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->coding->alias:coder")
+                return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->coding->alias:coder"))
         a = get_alias("default")
         if a and a.tools is not False:
             b = _resolved_backend_name(a.backend) or a.backend
-            return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:default")
+            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:default"))
         a = get_alias("coder")
         if a and a.tools is not False:
             b = _resolved_backend_name(a.backend) or a.backend
-            return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:coder")
-        return RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:tools->strong")
+            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:coder"))
+        return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:tools->strong"))
 
     if size >= long_threshold:
         a = get_alias("long")
         if a:
             b = _resolved_backend_name(a.backend) or a.backend
-            return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:long_context->alias:long")
+            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:long_context->alias:long"))
         primary_backend = _provider_default_backend("mlx")
         if cfg.primary_strong_model:
-            return RouteDecision(backend=primary_backend, model=cfg.primary_strong_model, reason="policy:long_context->primary")
-        return RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:long_context->strong")
+            return route_with_model_fallback(RouteDecision(backend=primary_backend, model=cfg.primary_strong_model, reason="policy:long_context->primary"))
+        return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:long_context->strong"))
 
     if is_coding:
         a = get_alias("coder")
         if a:
             b = _resolved_backend_name(a.backend) or a.backend
-            return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:coding->alias:coder")
-        return RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:coding->strong")
+            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:coding->alias:coder"))
+        return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:coding->strong"))
 
     a = get_alias("fast")
     if a:
         b = _resolved_backend_name(a.backend) or a.backend
-        return RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:fast->alias:fast")
+        return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:fast->alias:fast"))
 
-    return RouteDecision(backend=backend, model=cfg.primary_fast_model, reason="policy:fast")
+    return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_fast_model, reason="policy:fast"))

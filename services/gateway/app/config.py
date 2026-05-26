@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     HEALTH_CHECK_TIMEOUT_SEC: float = 15.0
     HEALTH_CHECK_FAILURE_THRESHOLD: int = 3
     HEALTH_CHECK_FAILURE_GRACE_SEC: float = 60.0
-    MLX_ACTIVE_CANARY_ENABLED: bool = True
+    MLX_ACTIVE_CANARY_ENABLED: bool = False
     MLX_ACTIVE_CANARY_TIMEOUT_SEC: float = 15.0
     MLX_ACTIVE_CANARY_PROMPT: str = "Reply with the single word OK."
     MLX_ACTIVE_CANARY_MAX_TOKENS: int = 4
@@ -238,6 +238,8 @@ class Settings(BaseSettings):
     MLX_MODEL_STRONG: str = "mlx-community/MiniMax-M2.5-8bit"
     MLX_MODEL_FAST: str = "mlx-community/MiniMax-M2.5-8bit"
     MLX_MODEL_DEFAULT: str = "mlx-community/MiniMax-M2.5-8bit"
+    MLX_FALLBACK_MODEL: str = "mlx-community/Phi-4-reasoning-plus-4bit"
+    MLX_HF_CACHE_DIR: str = "/var/lib/gateway/mlx_hf_cache"
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 

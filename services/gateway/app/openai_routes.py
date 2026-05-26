@@ -134,22 +134,29 @@ async def list_models(req: Request):
 
     now = now_unix()
     data: Dict[str, Any] = {"object": "list", "data": []}
+    seen_ids: set[str] = set()
+
+    def add_model_item(item: Dict[str, Any]) -> None:
+        model_id = str(item.get("id") or "").strip()
+        if not model_id or model_id in seen_ids:
+            return
+        seen_ids.add(model_id)
+        data["data"].append(item)
 
     async with httpx.AsyncClient(timeout=30) as client:
         for backend_name, cfg in llm_backends():
             try:
-                data["data"].extend(await _probe_models_for_backend(client, backend_name, cfg.base_url, now))
+                for item in await _probe_models_for_backend(client, backend_name, cfg.base_url, now):
+                    add_model_item(item)
             except Exception:
                 pass
 
-    data["data"].append({"id": "auto", "object": "model", "created": now, "owned_by": "gateway"})
+    add_model_item({"id": "auto", "object": "model", "created": now, "owned_by": "gateway"})
     registry = get_registry()
-    for provider_name in ("vllm", "mlx"):
+    for provider_name in ("vllm", "vllm_fast", "mlx"):
         provider_backend = registry.get_backend(registry.resolve_backend_class(provider_name))
         if provider_backend is not None and (provider_backend.base_url or "").strip():
-            data["data"].append({"id": provider_name, "object": "model", "created": now, "owned_by": "gateway"})
-    for backend_name, _cfg in llm_backends():
-        data["data"].append({"id": backend_name, "object": "model", "created": now, "owned_by": "gateway"})
+            add_model_item({"id": provider_name, "object": "model", "created": now, "owned_by": "gateway"})
 
     # Add configured aliases so clients can discover stable names.
     aliases = get_aliases()
@@ -167,7 +174,7 @@ async def list_models(req: Request):
             item["max_tokens_cap"] = a.max_tokens_cap
         if a.temperature_cap is not None:
             item["temperature_cap"] = a.temperature_cap
-        data["data"].append(item)
+        add_model_item(item)
 
     return data
 

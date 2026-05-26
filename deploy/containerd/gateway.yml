@@ -30,6 +30,7 @@ services:
       - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
       - USER_DB_PATH=/var/lib/gateway/data/users.sqlite
       - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+      - MLX_HF_CACHE_DIR=/var/lib/gateway/mlx_hf_cache
       - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
       - CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
       - CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
@@ -41,6 +42,7 @@ services:
     volumes:
       - ../../.runtime/gateway/data:/var/lib/gateway/data
       - ../../.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ${MLX_HF_CACHE_HOST_DIR:-/var/lib/mlx/cache/huggingface}:/var/lib/gateway/mlx_hf_cache:ro
       - ../../.env:/var/lib/gateway/app/.env:ro
     networks:
       - nexus

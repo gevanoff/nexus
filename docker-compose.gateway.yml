@@ -55,6 +55,7 @@ services:
       - UI_IMAGE_DIR=/var/lib/gateway/data/ui_images
       - VOICE_LIBRARY_DIR=/var/lib/tts_refs
       - MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
+      - MLX_HF_CACHE_DIR=/var/lib/gateway/mlx_hf_cache
       - AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
       - CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
       - CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
@@ -76,6 +77,7 @@ services:
       - ./.runtime/gateway/data:/var/lib/gateway/data
       - ./.runtime/tts_refs:/var/lib/tts_refs
       - ./.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ${MLX_HF_CACHE_HOST_DIR:-/var/lib/mlx/cache/huggingface}:/var/lib/gateway/mlx_hf_cache:ro
       - type: bind
         source: ./.env
         target: /var/lib/gateway/app/.env

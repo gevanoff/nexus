@@ -40,6 +40,7 @@ from app.backends import (
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
+from app.model_availability import model_unavailable_reason
 from app.models import ChatCompletionRequest, ChatMessage
 from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
@@ -168,6 +169,8 @@ def _ui_runtime_selector_entries(registry: Any, now: int) -> list[Dict[str, Any]
         location = _backend_location_details(registry, backend_name, base_url=backend_cfg.base_url)
         host = str(location.get("hostname") or location.get("host") or "").strip()
         resolved_model = _ui_default_model_for_backend(backend_name)
+        if model_unavailable_reason(backend_name, resolved_model):
+            continue
         label = f"{selector_id} -> {resolved_model}"
         if host:
             label = f"{label} @ {host}"
@@ -183,6 +186,28 @@ def _ui_runtime_selector_entries(registry: Any, now: int) -> list[Dict[str, Any]
         }
         entries.append(_apply_model_location(item, location))
     return entries
+
+
+def _ui_alias_is_chat_selector(alias_name: str, alias: Any, registry: Any) -> bool:
+    resolved = registry.resolve_backend_class(alias.backend) or alias.backend
+    normalized = str(resolved or "").strip().lower()
+    if "embedding" in normalized:
+        return False
+    if str(alias_name or "").strip().lower().startswith("embeddings"):
+        return False
+    return True
+
+
+def _ui_alias_display_model(alias_name: str, alias: Any, registry: Any) -> tuple[bool, str, Optional[str]]:
+    unavailable = model_unavailable_reason(registry.resolve_backend_class(alias.backend) or alias.backend, alias.upstream_model)
+    if not unavailable:
+        return True, alias.upstream_model, None
+
+    fallback = (getattr(S, "MLX_FALLBACK_MODEL", "") or "").strip()
+    fallback_unavailable = model_unavailable_reason(registry.resolve_backend_class(alias.backend) or alias.backend, fallback)
+    if str(alias_name or "").strip().lower() in {"default", "mlx"} and fallback and not fallback_unavailable:
+        return True, fallback, unavailable
+    return False, alias.upstream_model, unavailable
 
 
 def _lighton_ocr_base_url() -> str:
@@ -4260,24 +4285,46 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             if isinstance(result, Exception):
                 source_diags[backend_name] = {"backend": backend_name, "ok": False, "error": str(result)}
                 continue
-            items, diag = result
-            data["data"].extend(items)
+            _items, diag = result
             source_diags[backend_name] = diag
 
     # Add canonical runtime selectors for the configured chat backends.
-    data["data"].extend(_ui_runtime_selector_entries(registry, now))
+    seen_model_ids: set[str] = set()
+
+    def add_ui_model_item(item: Dict[str, Any]) -> None:
+        model_id = str(item.get("id") or "").strip()
+        if not model_id or model_id in seen_model_ids:
+            return
+        seen_model_ids.add(model_id)
+        data["data"].append(item)
+
+    for item in _ui_runtime_selector_entries(registry, now):
+        add_ui_model_item(item)
 
     # Add configured aliases so the UI can select stable names (fast/coder/etc).
     aliases = get_aliases()
     for alias_name in sorted(aliases.keys()):
         a = aliases[alias_name]
+        if not _ui_alias_is_chat_selector(alias_name, a, registry):
+            continue
+        show_alias, display_model, unavailable = _ui_alias_display_model(alias_name, a, registry)
+        if not show_alias:
+            source_diags.setdefault("hidden_aliases", {})[alias_name] = {
+                "model": a.upstream_model,
+                "reason": unavailable or "unavailable",
+            }
+            continue
         item: Dict[str, Any] = {"id": alias_name, "object": "model", "created": now, "owned_by": "gateway"}
         item["is_alias"] = True
         item["alias_name"] = alias_name
         item["backend"] = a.backend
         item["upstream_model"] = a.upstream_model
-        item["resolved_model"] = a.upstream_model
-        item["label"] = f"{alias_name} -> {a.upstream_model} ({_ui_canonical_backend_selector_id(a.backend)})"
+        item["resolved_model"] = display_model
+        if unavailable:
+            item["primary_model_unavailable"] = unavailable
+            item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(a.backend)} fallback; {a.upstream_model} {unavailable})"
+        else:
+            item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(a.backend)})"
         if a.context_window:
             item["context_window"] = a.context_window
         if a.tools is not None:
@@ -4287,7 +4334,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         if a.temperature_cap is not None:
             item["temperature_cap"] = a.temperature_cap
         backend_cfg = registry.get_backend(a.backend)
-        data["data"].append(
+        add_ui_model_item(
             _apply_model_location(
                 item,
                 _backend_location_details(
@@ -4605,10 +4652,20 @@ async def _stream_ui_chat(
     pre_events: list | None = None,
 ):
     try:
+        full_text = ""
+        emitted_error = False
+        has_visible_output = False
+        done_seen = False
+
         # Emit any pre-collected events from server-side command handling.
         if pre_events:
             for ev in pre_events:
                 try:
+                    if isinstance(ev, dict):
+                        if ev.get("type") in {"delta", "audio"}:
+                            has_visible_output = True
+                        if ev.get("type") == "error":
+                            emitted_error = True
                     yield sse(ev)
                 except Exception:
                     # best-effort: skip malformed pre-events
@@ -4617,17 +4674,14 @@ async def _stream_ui_chat(
         # Announce routing info first
         yield sse({"type": "route", "backend": backend, "model": upstream_model, "reason": route.reason})
 
-        full_text = ""
-
         async for chunk in upstream_gen:
             for line in chunk.splitlines():
                 if not line.startswith(b"data:"):
                     continue
                 data = line[len(b"data:") :].strip()
                 if data == b"[DONE]":
-                    yield sse({"type": "done"})
-                    yield sse_done()
-                    return
+                    done_seen = True
+                    break
 
                 try:
                     j = json.loads(data)
@@ -4635,6 +4689,7 @@ async def _stream_ui_chat(
                     continue
 
                 if isinstance(j, dict) and isinstance(j.get("error"), dict):
+                    emitted_error = True
                     yield sse({"type": "error", "error": j.get("error")})
                     continue
 
@@ -4656,10 +4711,28 @@ async def _stream_ui_chat(
 
                 if isinstance(text, str) and text:
                     full_text += text
+                    has_visible_output = True
                     yield sse({"type": "delta", "delta": text})
+            if done_seen:
+                break
+
+        if not has_visible_output and not emitted_error:
+            emitted_error = True
+            yield sse(
+                {
+                    "type": "error",
+                    "error": {
+                        "message": "Upstream completed without assistant content.",
+                        "type": "empty_response",
+                        "param": None,
+                        "code": None,
+                        "detail": {"backend": backend, "model": upstream_model, "reason": route.reason},
+                    },
+                }
+            )
 
         # After streaming completes, persist assistant message (if any)
-        if conversation_id:
+        if conversation_id and full_text:
             try:
                 if user is None:
                     ui_conversations.append_message(

@@ -266,7 +266,7 @@ class HealthChecker:
         config: BackendConfig,
         base_url: str,
     ) -> Optional[str]:
-        if not bool(getattr(S, "MLX_ACTIVE_CANARY_ENABLED", True)):
+        if not bool(getattr(S, "MLX_ACTIVE_CANARY_ENABLED", False)):
             return None
         if (config.provider or "").strip().lower() != "mlx":
             return None
@@ -275,7 +275,12 @@ class HealthChecker:
 
         prompt = str(getattr(S, "MLX_ACTIVE_CANARY_PROMPT", "Reply with the single word OK.") or "Reply with the single word OK.").strip()
         max_tokens = max(1, int(getattr(S, "MLX_ACTIVE_CANARY_MAX_TOKENS", 4) or 4))
-        model = (getattr(S, "MLX_MODEL_DEFAULT", "") or getattr(S, "MLX_MODEL_STRONG", "") or "").strip()
+        model = (
+            getattr(S, "MLX_FALLBACK_MODEL", "")
+            or getattr(S, "MLX_MODEL_DEFAULT", "")
+            or getattr(S, "MLX_MODEL_STRONG", "")
+            or ""
+        ).strip()
         if not model:
             return "active canary is enabled but no MLX model is configured"
         timeout_sec = max(1.0, float(getattr(S, "MLX_ACTIVE_CANARY_TIMEOUT_SEC", self.timeout) or self.timeout))

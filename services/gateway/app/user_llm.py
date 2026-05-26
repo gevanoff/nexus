@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
@@ -7,7 +8,7 @@ from fastapi import HTTPException
 
 from app.httpx_client import httpx_client as _httpx_client
 from app.models import ChatCompletionRequest
-from app.openai_utils import sanitize_chat_choices, sse, sse_done
+from app.openai_utils import new_id, now_unix, sanitize_chat_choices, sse, sse_done
 from app.streaming import passthrough_sse
 from app.upstreams import _normalize_messages_for_openai_backend
 
@@ -346,6 +347,79 @@ async def stream_user_chat_as_openai(req: ChatCompletionRequest, *, model_id: st
                 headers=_headers(provider, target["api_key"], stream=True),
             ) as r:
                 r.raise_for_status()
+                content_type = (r.headers.get("content-type") or "").lower()
+                if content_type and "text/event-stream" not in content_type:
+                    raw = await r.aread()
+                    try:
+                        out = json.loads(raw.decode("utf-8", errors="replace"))
+                    except Exception:
+                        detail = {
+                            "upstream": user_backend_name(provider),
+                            "content_type": content_type,
+                            "body": raw[:1000].decode("utf-8", errors="replace"),
+                        }
+                        yield sse(
+                            {
+                                "error": {
+                                    "message": "Upstream returned a non-streaming response that was not valid JSON",
+                                    "type": "upstream_error",
+                                    "param": None,
+                                    "code": None,
+                                    "detail": detail,
+                                }
+                            }
+                        )
+                        yield sse_done()
+                        return
+
+                    if isinstance(out, dict) and isinstance(out.get("error"), (dict, str)):
+                        yield sse(
+                            {
+                                "error": {
+                                    "message": "Upstream error",
+                                    "type": "upstream_error",
+                                    "param": None,
+                                    "code": None,
+                                    "detail": {"upstream": user_backend_name(provider), "error": out.get("error")},
+                                }
+                            }
+                        )
+                        yield sse_done()
+                        return
+
+                    if isinstance(out, dict):
+                        sanitize_chat_choices(out)
+                        choices = out.get("choices")
+                        message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
+                        content = message.get("content") if isinstance(message, dict) else None
+                        if isinstance(content, str) and content:
+                            yield sse(
+                                {
+                                    "id": new_id("chatcmpl"),
+                                    "object": "chat.completion.chunk",
+                                    "created": now_unix(),
+                                    "model": model_id,
+                                    "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+                                }
+                            )
+                            yield sse_done()
+                            return
+
+                    detail = {"upstream": user_backend_name(provider), "content_type": content_type}
+                    yield sse(
+                        {
+                            "error": {
+                                "message": "Upstream completed without assistant content",
+                                "type": "empty_response",
+                                "param": None,
+                                "code": None,
+                                "detail": detail,
+                            }
+                        }
+                    )
+                    yield sse_done()
+                    return
+
                 async for chunk in passthrough_sse(r):
                     yield chunk
         except httpx.HTTPStatusError as e:
