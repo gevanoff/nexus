@@ -3,45 +3,48 @@ server:
   port: 10240
 
 models:
-  # Primary text/chat model
-  - served_model_name: mlx-community/Qwen3-30B-A3B-4bit
-    model_path: mlx-community/Qwen3-30B-A3B-4bit
-    model_type: lm
-
   # Dedicated embeddings model
   - served_model_name: mlx-community/bge-small-en-v1.5-8bit
     model_path: mlx-community/bge-small-en-v1.5-8bit
     model_type: embeddings
 
-  # Optional multimodal model for image/audio-aware chat
-  # - served_model_name: mlx-community/Qwen2-VL-7B-Instruct-4bit
-  #   model_path: mlx-community/Qwen2-VL-7B-Instruct-4bit
-  #   model_type: multimodal
+  # Primary text/chat model for ai2. Keep very large LM entries on-demand so
+  # one model can be loaded at a time instead of keeping all resident.
+  - served_model_name: mlx-community/MiniMax-M2.5-8bit
+    model_path: mlx-community/MiniMax-M2.5-8bit
+    model_type: lm
+    trust_remote_code: true
+    tool_call_parser: minimax_m2
+    reasoning_parser: minimax_m2
+    on_demand: true
+    on_demand_idle_timeout: 300
 
-  # Add large optional models incrementally. Multi-handler mode loads every
-  # configured model during startup, so one slow or incompatible model can keep
-  # the whole service from binding its port.
+  # Deep reasoning profile.
+  - served_model_name: mlx-community/DeepSeek-R1-0528-4bit
+    model_path: mlx-community/DeepSeek-R1-0528-4bit
+    model_type: lm
+    reasoning_parser: qwen3
+    on_demand: true
+    on_demand_idle_timeout: 300
+    default_max_tokens: 2048
 
-  # Optional lower-latency text tier if you want a second general model on the same host.
-  # - served_model_name: mlx-community/Qwen3-4B-8bit
-  #   model_path: mlx-community/Qwen3-4B-8bit
-  #   model_type: lm
+  # Coding profile.
+  - served_model_name: mlx-community/GLM-5-4bit
+    model_path: mlx-community/GLM-5-4bit
+    model_type: lm
+    tool_call_parser: glm4_moe
+    reasoning_parser: glm4_moe
+    on_demand: true
+    on_demand_idle_timeout: 300
 
-  # Optional coder alias target. Gateway points `coder` at local_mlx with this
-  # served model name. Keep text/code models on the `lm` handler; use
-  # `multimodal` only for MLX-VLM converted repos.
-  # - served_model_name: mlx-community/Qwen3.6-27B-4bit
-  #   model_path: mlx-community/Qwen3.6-27B-4bit
-  #   model_type: lm
+  # Smaller reasoning fallback.
+  - served_model_name: mlx-community/Phi-4-reasoning-plus-4bit
+    model_path: mlx-community/Phi-4-reasoning-plus-4bit
+    model_type: lm
+    default_max_tokens: 2048
 
-  # Optional high-capacity reasoning experiment. This currently requires an
-  # MLX-LM build with DeepSeek V4 support, is expensive to keep resident, and
-  # should be validated for repetition/collapse before live routing.
-  # - served_model_name: mlx-community/DeepSeek-V4-Flash-4bit
-  #   model_path: mlx-community/DeepSeek-V4-Flash-4bit
-  #   model_type: lm
-  #   default_max_tokens: 2048
-  #   default_temperature: 0.2
+  # Add large optional models incrementally. Use on_demand for very large models
+  # so first request pays the load cost and idle models are unloaded later.
 
   # Optional image generation model. Uncomment after installing the image extras
   # for mlx-openai-server and selecting a config_name supported by that model.
@@ -50,12 +53,6 @@ models:
   #   model_type: image-generation
   #   config_name: flux2-klein-4b
   #   quantize: 4
-
-  # Optional image editing model.
-  # - served_model_name: qwen-image-edit
-  #   model_path: mlx-community/Qwen-Image-Edit-4bit
-  #   model_type: image-edit
-  #   config_name: qwen-image-edit
 
   # Optional Whisper transcription model (requires ffmpeg on the host).
   # - served_model_name: mlx-community/whisper-large-v3-mlx

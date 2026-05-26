@@ -102,7 +102,7 @@
         "timeout_sec": 15,
         "failure_threshold": 4,
         "payload": {
-          "model": "mlx-community/Qwen3-30B-A3B-4bit",
+          "model": "mlx-community/Phi-4-reasoning-plus-4bit",
           "messages": [
             {
               "role": "user",

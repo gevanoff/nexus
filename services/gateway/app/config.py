@@ -235,9 +235,9 @@ class Settings(BaseSettings):
     VLLM_MODEL_EMBEDDINGS: str = "unsloth/Qwen3-Embedding-4B"
 
     # MLX-hosted reasoning models, typically on ai2.
-    MLX_MODEL_STRONG: str = "mlx-community/Qwen3-30B-A3B-4bit"
-    MLX_MODEL_FAST: str = "mlx-community/Qwen3-30B-A3B-4bit"
-    MLX_MODEL_DEFAULT: str = "mlx-community/Qwen3-30B-A3B-4bit"
+    MLX_MODEL_STRONG: str = "mlx-community/MiniMax-M2.5-8bit"
+    MLX_MODEL_FAST: str = "mlx-community/MiniMax-M2.5-8bit"
+    MLX_MODEL_DEFAULT: str = "mlx-community/MiniMax-M2.5-8bit"
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 
@@ -252,7 +252,7 @@ class Settings(BaseSettings):
 
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
-    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/Qwen3.6-27B-4bit"}}}'
+    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/GLM-5-4bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 

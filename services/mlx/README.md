@@ -32,7 +32,7 @@ Nexus Gateway reaches it over HTTP via `MLX_BASE_URL`.
 See `env/mlx.env.example` for primary variables:
 
 - `MLX_PORT` (default `10240`)
-- `MLX_MODEL_PATH` (default `mlx-community/Qwen3-30B-A3B-4bit`)
+- `MLX_MODEL_PATH` (default `mlx-community/MiniMax-M2.5-8bit`)
 - `MLX_MODEL_TYPE` (default `lm`)
 - `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
 - `XDG_CACHE_HOME` / `HF_HOME` (optional; move MLX/Hugging Face caches to a larger volume)
@@ -53,10 +53,10 @@ Example config template:
 
 Operational note:
 
-- `mlx-openai-server` multi-handler mode eagerly initializes every model listed in the config during server startup.
-- If any configured model is extremely large, slow to download, or incompatible, the whole MLX service can fail startup even if the other models are valid.
+- `mlx-openai-server` supports `on_demand: true` for large models in config mode; these models are advertised in `/v1/models` but loaded only when requested.
+- Only one idle on-demand model is kept loaded at a time, so this is the preferred pattern for 200GB+ MLX models on `ai2`.
+- Non-on-demand models are initialized during server startup. Keep at least one small known-good chat model or embeddings model available for health checks.
 - Add optional models incrementally and keep a known-good minimal config available for rollback.
-- In practice, start with one `lm` model plus `embeddings`, then add `multimodal`, then add image/transcription models one at a time.
 
 Recommended host/runtime path for operators:
 
@@ -119,7 +119,7 @@ After first install, the native launchd job reads runtime settings from `/var/li
 To change models later, update that file and restart the service without rewriting the plist:
 
 ```bash
-sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/Qwen3-30B-A3B-4bit#' /var/lib/mlx/mlx.env
+sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/MiniMax-M2.5-8bit#' /var/lib/mlx/mlx.env
 ./deploy/scripts/restart-mlx.sh
 ```
 
@@ -175,42 +175,43 @@ Gateway integration pattern:
 
 ## Recommended Model Strategy for `ai2` (512GB)
 
-With 512GB unified memory, `ai2` can run much larger MLX models than typical Mac deployments. Best-practice routing is still tiered by latency target:
+With 512GB unified memory, `ai2` can run very large MLX models, but the current large-model profile should use `on_demand: true` so only one heavy model is resident at a time:
 
-- `fast` (interactive/lowest latency): 7B–14B instruct models on MLX.
-- `default` (best quality for general chat): 32B–72B instruct models (MLX or Ollama, choose by measured latency/quality).
-- `coder` (tool-heavy/codegen): coding-specialized 14B–32B model, usually Ollama first for broader catalog.
-- `long` (large context sessions): MLX model profile with raised `context_window` and conservative concurrency.
+- `default` / `mlx`: `mlx-community/MiniMax-M2.5-8bit`
+- `reasoning`: `mlx-community/DeepSeek-R1-0528-4bit`
+- `coder`: `mlx-community/GLM-5-4bit`
+- `phi-4-reasoning-plus`: `mlx-community/Phi-4-reasoning-plus-4bit` as the smaller reasoning fallback and lightweight chat health model
+- `long`: `mlx-community/MiniMax-M2.5-8bit` with raised `context_window`
 
-Recommended `ai2` alias-to-model mapping (starting point):
+Recommended `ai2` alias-to-model mapping:
 
 ```json
 {
 	"aliases": {
-		"fast": {
-			"backend": "mlx",
-			"model": "mlx-community/Qwen3-4B-8bit",
-			"tools": false
-		},
 		"default": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen3-30B-A3B-4bit",
+			"model": "mlx-community/MiniMax-M2.5-8bit",
+			"tools": true
+		},
+		"mlx": {
+			"backend": "mlx",
+			"model": "mlx-community/MiniMax-M2.5-8bit",
 			"tools": true
 		},
 		"coder": {
 			"backend": "local_mlx",
-			"model": "mlx-community/Qwen3.6-27B-4bit",
+			"model": "mlx-community/GLM-5-4bit",
 			"tools": true
 		},
 		"reasoning": {
 			"backend": "local_mlx",
-			"model": "mlx-community/Qwen3.6-27B-4bit",
+			"model": "mlx-community/DeepSeek-R1-0528-4bit",
 			"tools": true,
 			"max_tokens_cap": 2048
 		},
 		"long": {
 			"backend": "mlx",
-			"model": "mlx-community/Qwen3-30B-A3B-4bit",
+			"model": "mlx-community/MiniMax-M2.5-8bit",
 			"context_window": 65536,
 			"tools": false
 		}
@@ -218,75 +219,20 @@ Recommended `ai2` alias-to-model mapping (starting point):
 }
 ```
 
-`ai2` quality-max profile (higher latency, higher quality):
-
-```json
-{
-	"aliases": {
-		"fast": {
-			"backend": "mlx",
-			"model": "mlx-community/Qwen3-4B-8bit",
-			"tools": false
-		},
-		"default": {
-			"backend": "mlx",
-			"model": "mlx-community/Qwen3-30B-A3B-4bit",
-			"tools": true
-		},
-		"coder": {
-			"backend": "local_mlx",
-			"model": "mlx-community/Qwen3.6-27B-4bit",
-			"tools": true
-		},
-		"reasoning": {
-			"backend": "local_mlx",
-			"model": "mlx-community/Qwen3.6-27B-4bit",
-			"tools": true,
-			"max_tokens_cap": 2048
-		},
-		"long": {
-			"backend": "mlx",
-			"model": "mlx-community/Qwen3-30B-A3B-4bit",
-			"context_window": 131072,
-			"tools": false
-		}
-	}
-}
-```
-
-Alias-by-alias alternatives (if available and validated in your environment):
-
-- `fast` (lowest latency):
-	- Primary: `mlx-community/Qwen3-4B-8bit`
-	- Alternatives: `mlx-community/Llama-3.1-8B-Instruct-4bit`, `mlx-community/Gemma-2-9B-it-4bit`
-- `default` (best overall quality):
-	- Primary: `mlx-community/Qwen3-30B-A3B-4bit`
-	- Alternatives: `mlx-community/Qwen3-32B-8bit`, `mlx-community/Llama-3.3-70B-Instruct-4bit`
-- `coder` (code + tools):
-	- Primary: `local_mlx` on `ai2` serving `mlx-community/Qwen3.6-27B-4bit`
-	- Secondary checks: remote Ollama aliases such as `coder-ai1` and `coder-ada2`
-	- Dedicated MLX candidates if preferred: `mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit`
-- `reasoning` (higher-latency deep reasoning):
-	- Primary: `local_mlx` on `ai2` serving `mlx-community/Qwen3.6-27B-4bit`
-	- Experimental candidate: `mlx-community/DeepSeek-V4-Flash-4bit`. It requires an MLX-LM build with `deepseek_v4` support, uses about 150 GB resident memory when loaded, and has shown early repetition/collapse in local MLX testing.
-- `long` (extended context):
-	- Primary: `mlx-community/Qwen3-30B-A3B-4bit` with `context_window` `65536`
-	- Alternatives: use the same family as `default` with reduced concurrency, or a lower-parameter instruct model for higher sustained throughput.
-
-If a specific MLX model identifier is unavailable, keep alias names and routing shape, then swap only `model` values.
-
 Operational note for `ai2`:
 
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
-- Add `mlx-community/Qwen3.6-27B-4bit` to `/var/lib/mlx/config/config.yaml` before routing live coder traffic to it. For text/code use, configure it with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
-- Treat `mlx-community/DeepSeek-V4-Flash-4bit` as experimental until local smoke tests can produce stable multi-paragraph answers without repetition. On current MLX builds this model may require installing an MLX-LM branch with DeepSeek V4 support and avoiding handler-created prompt cache state in `mlx-openai-server`.
+- Configure MiniMax, DeepSeek, and GLM with `on_demand: true`; first request loads the model, later requests reuse it until the idle timeout, and switching to another on-demand model unloads the idle one.
+- For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
+- MiniMax uses custom model code, so its config should set `trust_remote_code: true`.
 
 ## Are these models already configured?
 
-Not by default in a fresh checkout.
+Yes, in the current packaged Gateway alias file and MLX config example.
 
-- These model mappings are documentation examples until you place one profile into `nexus/.runtime/gateway/config/model_aliases.json` on the host running Gateway.
-- In the current workspace, that runtime file does not exist yet, so these aliases are not active.
+- The packaged aliases live in `services/gateway/app/model_aliases.json`.
+- Runtime Gateway aliases still live in `nexus/.runtime/gateway/config/model_aliases.json`; refresh or deploy Gateway after changing the packaged file.
+- Runtime MLX model serving still depends on `/var/lib/mlx/config/config.yaml` on the MLX host.
 
 ## Do you need to prewarm?
 
@@ -295,9 +241,10 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 - Prewarm MLX aliases/models:
 
 ```bash
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen3-4B-8bit
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen3-30B-A3B-4bit
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Qwen3.6-27B-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/MiniMax-M2.5-8bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/DeepSeek-R1-0528-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Phi-4-reasoning-plus-4bit
 ```
 
 - Prewarm remote Ollama checker models:
