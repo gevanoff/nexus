@@ -157,7 +157,12 @@ def _ui_default_model_for_backend(backend_name: str) -> str:
     return cfg.primary_strong_model
 
 
-def _ui_runtime_selector_entries(registry: Any, now: int) -> list[Dict[str, Any]]:
+def _ui_runtime_selector_entries(
+    registry: Any,
+    now: int,
+    *,
+    advertised_models_by_backend: Optional[Dict[str, set[str]]] = None,
+) -> list[Dict[str, Any]]:
     entries: list[Dict[str, Any]] = []
     for selector_id in ("mlx", "vllm", "vllm_fast"):
         backend_name = registry.resolve_backend_class(selector_id)
@@ -169,7 +174,11 @@ def _ui_runtime_selector_entries(registry: Any, now: int) -> list[Dict[str, Any]
         location = _backend_location_details(registry, backend_name, base_url=backend_cfg.base_url)
         host = str(location.get("hostname") or location.get("host") or "").strip()
         resolved_model = _ui_default_model_for_backend(backend_name)
-        if model_unavailable_reason(backend_name, resolved_model):
+        if _ui_model_unavailable_reason(
+            backend_name,
+            resolved_model,
+            advertised_models_by_backend=advertised_models_by_backend,
+        ):
             continue
         label = f"{selector_id} -> {resolved_model}"
         if host:
@@ -188,6 +197,46 @@ def _ui_runtime_selector_entries(registry: Any, now: int) -> list[Dict[str, Any]
     return entries
 
 
+def _ui_advertised_models_by_backend(items: list[Dict[str, Any]]) -> Dict[str, set[str]]:
+    advertised: Dict[str, set[str]] = {}
+    for item in items:
+        backend_name = str(item.get("backend") or "").strip()
+        upstream_model = str(item.get("upstream_model") or "").strip()
+        if not backend_name or not upstream_model:
+            continue
+        advertised.setdefault(backend_name, set()).add(upstream_model)
+    return advertised
+
+
+def _ui_is_advertised_model(
+    advertised_models_by_backend: Optional[Dict[str, set[str]]],
+    backend_name: str,
+    model_name: str,
+) -> bool:
+    if not advertised_models_by_backend:
+        return False
+    advertised = advertised_models_by_backend.get((backend_name or "").strip())
+    if not advertised:
+        return False
+    return (model_name or "").strip() in advertised
+
+
+def _ui_model_unavailable_reason(
+    backend_name: str,
+    model_name: str,
+    *,
+    advertised_models_by_backend: Optional[Dict[str, set[str]]] = None,
+) -> Optional[str]:
+    if _ui_is_advertised_model(advertised_models_by_backend, backend_name, model_name):
+        return None
+    unavailable = model_unavailable_reason(backend_name, model_name)
+    if unavailable:
+        return unavailable
+    if advertised_models_by_backend and (backend_name or "").strip() in advertised_models_by_backend:
+        return "not_advertised"
+    return None
+
+
 def _ui_alias_is_chat_selector(alias_name: str, alias: Any, registry: Any) -> bool:
     resolved = registry.resolve_backend_class(alias.backend) or alias.backend
     normalized = str(resolved or "").strip().lower()
@@ -198,16 +247,31 @@ def _ui_alias_is_chat_selector(alias_name: str, alias: Any, registry: Any) -> bo
     return True
 
 
-def _ui_alias_display_model(alias_name: str, alias: Any, registry: Any) -> tuple[bool, str, Optional[str]]:
-    unavailable = model_unavailable_reason(registry.resolve_backend_class(alias.backend) or alias.backend, alias.upstream_model)
+def _ui_alias_display_model(
+    alias_name: str,
+    alias: Any,
+    registry: Any,
+    *,
+    advertised_models_by_backend: Optional[Dict[str, set[str]]] = None,
+) -> tuple[bool, str, Optional[str]]:
+    backend_name = registry.resolve_backend_class(alias.backend) or alias.backend
+    unavailable = _ui_model_unavailable_reason(
+        backend_name,
+        alias.upstream_model,
+        advertised_models_by_backend=advertised_models_by_backend,
+    )
     if not unavailable:
         return True, alias.upstream_model, None
 
     fallback = (getattr(S, "MLX_FALLBACK_MODEL", "") or "").strip()
-    fallback_unavailable = model_unavailable_reason(registry.resolve_backend_class(alias.backend) or alias.backend, fallback)
+    fallback_unavailable = _ui_model_unavailable_reason(
+        backend_name,
+        fallback,
+        advertised_models_by_backend=advertised_models_by_backend,
+    )
     if str(alias_name or "").strip().lower() in {"default", "mlx"} and fallback and not fallback_unavailable:
         return True, fallback, unavailable
-    return False, alias.upstream_model, unavailable
+    return True, alias.upstream_model, unavailable
 
 
 def _lighton_ocr_base_url() -> str:
@@ -4281,12 +4345,15 @@ async def ui_models(req: Request) -> Dict[str, Any]:
                 return_exceptions=True,
             )
         source_diags: Dict[str, Any] = {}
+        probed_items: list[Dict[str, Any]] = []
         for (backend_name, _cfg), result in zip(probe_defs, probe_results):
             if isinstance(result, Exception):
                 source_diags[backend_name] = {"backend": backend_name, "ok": False, "error": str(result)}
                 continue
             _items, diag = result
+            probed_items.extend(_items)
             source_diags[backend_name] = diag
+        advertised_models_by_backend = _ui_advertised_models_by_backend(probed_items)
 
     # Add canonical runtime selectors for the configured chat backends.
     seen_model_ids: set[str] = set()
@@ -4298,7 +4365,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         seen_model_ids.add(model_id)
         data["data"].append(item)
 
-    for item in _ui_runtime_selector_entries(registry, now):
+    for item in _ui_runtime_selector_entries(registry, now, advertised_models_by_backend=advertised_models_by_backend):
         add_ui_model_item(item)
 
     # Add configured aliases so the UI can select stable names (fast/coder/etc).
@@ -4307,7 +4374,12 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         a = aliases[alias_name]
         if not _ui_alias_is_chat_selector(alias_name, a, registry):
             continue
-        show_alias, display_model, unavailable = _ui_alias_display_model(alias_name, a, registry)
+        show_alias, display_model, unavailable = _ui_alias_display_model(
+            alias_name,
+            a,
+            registry,
+            advertised_models_by_backend=advertised_models_by_backend,
+        )
         if not show_alias:
             source_diags.setdefault("hidden_aliases", {})[alias_name] = {
                 "model": a.upstream_model,
@@ -4344,6 +4416,9 @@ async def ui_models(req: Request) -> Dict[str, Any]:
                 ),
             )
         )
+
+    for item in probed_items:
+        add_ui_model_item(item)
 
     diagnostics: Dict[str, Any] = {
         "probe_timeout_sec": probe_timeout_sec,

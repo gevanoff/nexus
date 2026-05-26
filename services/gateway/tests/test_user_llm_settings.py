@@ -196,9 +196,123 @@ def test_ui_model_alias_hides_fetching_models_and_falls_back(monkeypatch):
     assert reason == "fetching"
 
     show, display_model, reason = ui_routes._ui_alias_display_model("reasoning", alias, Registry())
-    assert show is False
+    assert show is True
     assert display_model == primary
     assert reason == "fetching"
+
+
+def test_ui_model_alias_prefers_live_advertised_model_over_cache_heuristic(monkeypatch):
+    primary = "mlx-community/DeepSeek-R1-0528-4bit"
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return "local_mlx"
+
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda *_args, **_kwargs: "missing")
+    alias = SimpleNamespace(backend="local_mlx", upstream_model=primary)
+
+    show, display_model, reason = ui_routes._ui_alias_display_model(
+        "reasoning",
+        alias,
+        Registry(),
+        advertised_models_by_backend={"local_mlx": {primary}},
+    )
+
+    assert show is True
+    assert display_model == primary
+    assert reason is None
+
+
+def test_ui_runtime_selector_prefers_live_advertised_model_over_cache_heuristic(monkeypatch):
+    primary = "mlx-community/MiniMax-M2.5-8bit"
+
+    class Backend:
+        base_url = "http://ai2:10240/v1"
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return "local_mlx" if backend == "mlx" else backend
+
+        def get_backend(self, backend):
+            return Backend() if backend == "local_mlx" else None
+
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda *_args, **_kwargs: "missing")
+    monkeypatch.setattr(ui_routes, "_backend_location_details", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(ui_routes.S, "MLX_MODEL_STRONG", primary, raising=False)
+
+    entries = ui_routes._ui_runtime_selector_entries(
+        Registry(),
+        123,
+        advertised_models_by_backend={"local_mlx": {primary}},
+    )
+
+    assert [entry["id"] for entry in entries] == ["mlx"]
+
+
+def test_ui_advertised_models_by_backend_collects_probe_items():
+    items = [
+        {"backend": "local_mlx", "upstream_model": "model-a"},
+        {"backend": "local_mlx", "upstream_model": "model-b"},
+        {"backend": "local_vllm", "upstream_model": "model-c"},
+        {"backend": "", "upstream_model": "ignored"},
+    ]
+
+    advertised = ui_routes._ui_advertised_models_by_backend(items)
+
+    assert advertised == {
+        "local_mlx": {"model-a", "model-b"},
+        "local_vllm": {"model-c"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_ui_models_includes_probed_backend_models(monkeypatch):
+    class Backend:
+        base_url = "http://ai2:10240/v1"
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return backend
+
+        def get_backend(self, backend):
+            return Backend() if backend == "local_mlx" else None
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        yield object()
+
+    async def fake_probe(_client, _registry, backend_name, _base_url, now):
+        return (
+            [
+                {
+                    "id": "local_mlx:model-a",
+                    "object": "model",
+                    "created": now,
+                    "owned_by": "local",
+                    "backend": backend_name,
+                    "upstream_model": "model-a",
+                }
+            ],
+            {"backend": backend_name, "ok": True, "count": 1},
+        )
+
+    monkeypatch.setattr(ui_routes, "_require_ui_access", lambda _req: None)
+    monkeypatch.setattr(ui_routes, "_require_user", lambda _req: SimpleNamespace(id=1))
+    monkeypatch.setattr(ui_routes, "now_unix", lambda: 123)
+    monkeypatch.setattr(ui_routes, "_ui_models_cache_ttl_sec", lambda: 0)
+    monkeypatch.setattr(ui_routes, "_ui_models_probe_timeout_sec", lambda: 1)
+    monkeypatch.setattr(ui_routes, "_httpx_client", fake_client)
+    monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ui_routes, "llm_backends", lambda: [("local_mlx", Backend())])
+    monkeypatch.setattr(ui_routes, "_probe_models_for_backend", fake_probe)
+    monkeypatch.setattr(ui_routes, "get_aliases", lambda: {})
+    monkeypatch.setattr(ui_routes, "get_health_checker", lambda: SimpleNamespace(get_status=lambda _name: None))
+    monkeypatch.setattr(ui_routes, "_settings_for_optional_user", lambda _user: {})
+    monkeypatch.setattr(ui_routes.user_llm, "model_entries", lambda _settings, created: [])
+
+    payload = await ui_routes.ui_models(SimpleNamespace())
+
+    assert [item["id"] for item in payload["data"]] == ["local_mlx:model-a"]
 
 
 def test_ui_model_alias_hides_embedding_selectors():
