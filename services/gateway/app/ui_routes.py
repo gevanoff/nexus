@@ -174,12 +174,16 @@ def _ui_runtime_selector_entries(
         location = _backend_location_details(registry, backend_name, base_url=backend_cfg.base_url)
         host = str(location.get("hostname") or location.get("host") or "").strip()
         resolved_model = _ui_default_model_for_backend(backend_name)
-        if _ui_model_unavailable_reason(
+        unavailable = _ui_model_unavailable_reason(
             backend_name,
             resolved_model,
             advertised_models_by_backend=advertised_models_by_backend,
-        ):
-            continue
+        )
+        if unavailable:
+            advertised = sorted((advertised_models_by_backend or {}).get(backend_name, set()))
+            if not advertised:
+                continue
+            resolved_model = advertised[0]
         label = f"{selector_id} -> {resolved_model}"
         if host:
             label = f"{label} @ {host}"

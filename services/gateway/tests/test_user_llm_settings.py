@@ -249,6 +249,32 @@ def test_ui_runtime_selector_prefers_live_advertised_model_over_cache_heuristic(
     assert [entry["id"] for entry in entries] == ["mlx"]
 
 
+def test_ui_runtime_selector_falls_back_to_advertised_model_id(monkeypatch):
+    served = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
+
+    class Backend:
+        base_url = "http://ai1:8001/v1"
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return "local_vllm_fast" if backend == "vllm_fast" else backend
+
+        def get_backend(self, backend):
+            return Backend() if backend == "local_vllm_fast" else None
+
+    monkeypatch.setattr(ui_routes, "_backend_location_details", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(ui_routes.S, "VLLM_MODEL_FAST", "/root/models/qwen-fast.gguf", raising=False)
+
+    entries = ui_routes._ui_runtime_selector_entries(
+        Registry(),
+        123,
+        advertised_models_by_backend={"local_vllm_fast": {served}},
+    )
+
+    assert [entry["id"] for entry in entries] == ["vllm_fast"]
+    assert entries[0]["resolved_model"] == served
+
+
 def test_ui_advertised_models_by_backend_collects_probe_items():
     items = [
         {"backend": "local_mlx", "upstream_model": "model-a"},
