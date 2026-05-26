@@ -143,6 +143,78 @@ def configured_models(settings: Dict[str, Any], provider: str) -> List[str]:
     return _coerce_models(_provider_config(settings, provider).get("models"))
 
 
+def available_models(settings: Dict[str, Any], provider: str) -> List[str]:
+    cfg = _provider_config(settings, provider)
+    available = _coerce_models(cfg.get("available_models"))
+    configured = configured_models(settings, provider)
+    out: List[str] = []
+    seen: set[str] = set()
+    for model in [*available, *configured]:
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        out.append(model)
+    return out
+
+
+def _extract_text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            text = _extract_text_from_content(item)
+            if text:
+                parts.append(text)
+        return "".join(parts)
+    if isinstance(content, dict):
+        for key in ("text", "content", "value", "delta", "output_text"):
+            text = _extract_text_from_content(content.get(key))
+            if text:
+                return text
+    return ""
+
+
+def extract_assistant_text(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+
+    top_level = _extract_text_from_content(payload.get("output_text"))
+    if top_level:
+        return top_level
+
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            if isinstance(message, dict):
+                text = _extract_text_from_content(message.get("content"))
+                if text:
+                    return text
+            delta = choice.get("delta")
+            if isinstance(delta, dict):
+                text = _extract_text_from_content(delta.get("content"))
+                if text:
+                    return text
+
+    output = payload.get("output")
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            text = _extract_text_from_content(item.get("content"))
+            if text:
+                return text
+
+    message = payload.get("message")
+    if isinstance(message, dict):
+        return _extract_text_from_content(message.get("content"))
+
+    return ""
+
+
 def model_entries(settings: Dict[str, Any], *, created: int) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     llms = _llm_settings(settings)
@@ -389,9 +461,7 @@ async def stream_user_chat_as_openai(req: ChatCompletionRequest, *, model_id: st
 
                     if isinstance(out, dict):
                         sanitize_chat_choices(out)
-                        choices = out.get("choices")
-                        message = choices[0].get("message") if isinstance(choices, list) and choices and isinstance(choices[0], dict) else None
-                        content = message.get("content") if isinstance(message, dict) else None
+                        content = extract_assistant_text(out)
                         if isinstance(content, str) and content:
                             yield sse(
                                 {
@@ -450,6 +520,8 @@ def sanitize_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         pid = normalize_provider_id(str(raw_provider or ""))
         raw_cfg.setdefault("label", provider_label(pid))
         raw_cfg.setdefault("base_url", default_base_url(pid))
+        raw_cfg["models"] = _coerce_models(raw_cfg.get("models"))
+        raw_cfg["available_models"] = available_models({"commercial_llms": {"enabled": True, "providers": {pid: raw_cfg}}}, pid)
     return settings
 
 
@@ -503,6 +575,12 @@ def merge_settings_with_secrets(current: Dict[str, Any], patch: Dict[str, Any], 
             merged_cfg["models"] = models
         elif "models" in merged_cfg:
             merged_cfg["models"] = []
+
+        available = _coerce_models(merged_cfg.get("available_models"))
+        if available or models:
+            merged_cfg["available_models"] = list(dict.fromkeys([*available, *models]))
+        elif "available_models" in merged_cfg:
+            merged_cfg["available_models"] = []
 
         if "base_url" in merged_cfg:
             merged_cfg["base_url"] = str(merged_cfg.get("base_url") or "").strip()

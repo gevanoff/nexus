@@ -53,6 +53,23 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
                 yield f"{line}\n\n".encode("utf-8")
                 continue
 
+            if isinstance(obj, dict) and str(obj.get("type") or "") == "response.output_text.delta":
+                visible = str(obj.get("delta") or "")
+                delta: Dict[str, Any] = {}
+                if visible:
+                    delta["content"] = visible
+                if delta:
+                    yield sse(
+                        {
+                            "id": new_id("chatcmpl"),
+                            "object": "chat.completion.chunk",
+                            "created": now_unix(),
+                            "model": "",
+                            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                        }
+                    )
+                continue
+
             yield sse(sanitize_chat_choices(obj, stream_parser=parser))
     except asyncio.CancelledError:
         return

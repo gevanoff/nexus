@@ -390,6 +390,30 @@
       .user-llm-key-status.bad { color: #ffc3c3; }
       .user-llm-key-status.pending { color: #f3dc96; }
       .user-llm-model-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+      .user-llm-model-summary { margin-top: 6px; }
+      .user-llm-model-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+        max-height: 220px;
+        overflow-y: auto;
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(231,237,246,0.08);
+        background: rgba(7,12,20,0.32);
+      }
+      .user-llm-model-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.03);
+        line-height: 1.3;
+        word-break: break-word;
+      }
+      .user-llm-model-option input { width: auto; margin-top: 2px; }
       .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
       header > div:first-child { flex: 1 1 420px; min-width: 220px; }
       .header-right { flex: 0 0 auto; max-width: 62%; }
@@ -644,13 +668,14 @@
                     <label>Base URL
                       <input type="text" id="settings_user_llm_openai_base_url" autocomplete="off" placeholder="https://api.openai.com/v1" />
                     </label>
-                    <label>Model IDs
-                      <textarea id="settings_user_llm_openai_models" rows="2" placeholder="One per line or comma-separated"></textarea>
-                    </label>
                     <div class="user-llm-model-actions">
                       <button type="button" id="settings_user_llm_openai_load_models" data-ui-role="secondary">Load models</button>
+                      <button type="button" id="settings_user_llm_openai_select_all_models" data-ui-role="secondary">Select all</button>
+                      <button type="button" id="settings_user_llm_openai_clear_models" data-ui-role="secondary">Clear all</button>
                       <span id="settings_user_llm_openai_models_status" class="hint"></span>
                     </div>
+                    <div id="settings_user_llm_openai_models_summary" class="hint user-llm-model-summary"></div>
+                    <div id="settings_user_llm_openai_models_list" class="user-llm-model-list"></div>
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_openai_clear" style="width:auto" />
                       Clear saved OpenAI key
@@ -669,13 +694,14 @@
                     <label>Base URL
                       <input type="text" id="settings_user_llm_openrouter_base_url" autocomplete="off" placeholder="https://openrouter.ai/api/v1" />
                     </label>
-                    <label>Model IDs
-                      <textarea id="settings_user_llm_openrouter_models" rows="2" placeholder="One per line or comma-separated"></textarea>
-                    </label>
                     <div class="user-llm-model-actions">
                       <button type="button" id="settings_user_llm_openrouter_load_models" data-ui-role="secondary">Load models</button>
+                      <button type="button" id="settings_user_llm_openrouter_select_all_models" data-ui-role="secondary">Select all</button>
+                      <button type="button" id="settings_user_llm_openrouter_clear_models" data-ui-role="secondary">Clear all</button>
                       <span id="settings_user_llm_openrouter_models_status" class="hint"></span>
                     </div>
+                    <div id="settings_user_llm_openrouter_models_summary" class="hint user-llm-model-summary"></div>
+                    <div id="settings_user_llm_openrouter_models_list" class="user-llm-model-list"></div>
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_openrouter_clear" style="width:auto" />
                       Clear saved OpenRouter key
@@ -694,13 +720,14 @@
                     <label>Base URL
                       <input type="text" id="settings_user_llm_custom_openai_base_url" autocomplete="off" placeholder="https://example.com/v1" />
                     </label>
-                    <label>Model IDs
-                      <textarea id="settings_user_llm_custom_openai_models" rows="2" placeholder="One per line or comma-separated"></textarea>
-                    </label>
                     <div class="user-llm-model-actions">
                       <button type="button" id="settings_user_llm_custom_openai_load_models" data-ui-role="secondary">Load models</button>
+                      <button type="button" id="settings_user_llm_custom_openai_select_all_models" data-ui-role="secondary">Select all</button>
+                      <button type="button" id="settings_user_llm_custom_openai_clear_models" data-ui-role="secondary">Clear all</button>
                       <span id="settings_user_llm_custom_openai_models_status" class="hint"></span>
                     </div>
+                    <div id="settings_user_llm_custom_openai_models_summary" class="hint user-llm-model-summary"></div>
+                    <div id="settings_user_llm_custom_openai_models_list" class="user-llm-model-list"></div>
                     <label style="display:flex;gap:8px;align-items:center">
                       <input type="checkbox" id="settings_user_llm_custom_openai_clear" style="width:auto" />
                       Clear saved custom key

@@ -1455,6 +1455,26 @@
         .filter((item, index, arr) => arr.indexOf(item) === index);
     }
 
+    function normalizeModelIdList(value) {
+      if (Array.isArray(value)) {
+        return value
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+          .filter((item, index, arr) => arr.indexOf(item) === index);
+      }
+      return splitModelIds(value || "");
+    }
+
+    function unionModelIdLists(...lists) {
+      const out = [];
+      for (const list of lists) {
+        for (const item of normalizeModelIdList(list)) {
+          if (!out.includes(item)) out.push(item);
+        }
+      }
+      return out;
+    }
+
     function loadCommercialLlms(settings) {
       const defaults = defaultCommercialLlms();
       const llms = settings && typeof settings.commercial_llms === "object" ? settings.commercial_llms : {};
@@ -1468,7 +1488,8 @@
           apiKeyConfigured: !!raw.api_key_configured,
           apiKeyHint: String(raw.api_key_hint || ""),
           baseUrl: String(raw.base_url || defaults.providers[provider.id]?.baseUrl || provider.defaultBaseUrl || ""),
-          models: Array.isArray(raw.models) ? raw.models.map((item) => String(item || "").trim()).filter(Boolean) : splitModelIds(raw.models || ""),
+          models: normalizeModelIdList(raw.models || []),
+          availableModels: unionModelIdLists(raw.available_models || [], raw.models || []),
         };
       }
       return out;
@@ -1482,10 +1503,110 @@
         key: document.getElementById(`settings_user_llm_${providerId}_key`),
         clear: document.getElementById(`settings_user_llm_${providerId}_clear`),
         base: document.getElementById(`settings_user_llm_${providerId}_base_url`),
-        models: document.getElementById(`settings_user_llm_${providerId}_models`),
         loadModels: document.getElementById(`settings_user_llm_${providerId}_load_models`),
+        selectAllModels: document.getElementById(`settings_user_llm_${providerId}_select_all_models`),
+        clearModels: document.getElementById(`settings_user_llm_${providerId}_clear_models`),
+        modelsSummary: document.getElementById(`settings_user_llm_${providerId}_models_summary`),
+        modelsList: document.getElementById(`settings_user_llm_${providerId}_models_list`),
         modelsStatus: document.getElementById(`settings_user_llm_${providerId}_models_status`),
       };
+    }
+
+    function commercialLlmProviderConfig(providerId) {
+      const llms = userSettings.commercialLlms || defaultCommercialLlms();
+      if (!llms.providers) llms.providers = {};
+      if (!llms.providers[providerId]) {
+        llms.providers[providerId] = {
+          enabled: false,
+          apiKeyConfigured: false,
+          apiKeyHint: "",
+          baseUrl: "",
+          models: [],
+          availableModels: [],
+        };
+      }
+      userSettings.commercialLlms = llms;
+      return llms.providers[providerId];
+    }
+
+    function getCommercialLlmSelectedModels(providerId) {
+      const els = commercialLlmElements(providerId);
+      if (!els.modelsList) return normalizeModelIdList(commercialLlmProviderConfig(providerId).models || []);
+      return Array.from(els.modelsList.querySelectorAll('input[type="checkbox"][data-model-id]:checked'))
+        .map((input) => String(input.getAttribute("data-model-id") || "").trim())
+        .filter(Boolean);
+    }
+
+    function getCommercialLlmAvailableModels(providerId) {
+      const els = commercialLlmElements(providerId);
+      if (!els.modelsList) return unionModelIdLists(commercialLlmProviderConfig(providerId).availableModels || [], commercialLlmProviderConfig(providerId).models || []);
+      const fromUi = Array.from(els.modelsList.querySelectorAll('input[type="checkbox"][data-model-id]'))
+        .map((input) => String(input.getAttribute("data-model-id") || "").trim())
+        .filter(Boolean);
+      return unionModelIdLists(fromUi, commercialLlmProviderConfig(providerId).availableModels || [], commercialLlmProviderConfig(providerId).models || []);
+    }
+
+    function updateCommercialLlmModelSummary(providerId) {
+      const els = commercialLlmElements(providerId);
+      const selected = getCommercialLlmSelectedModels(providerId);
+      const available = getCommercialLlmAvailableModels(providerId);
+      if (els.modelsSummary) {
+        els.modelsSummary.textContent = available.length
+          ? `Showing ${selected.length} of ${available.length} discovered model${available.length === 1 ? "" : "s"} in the dropdowns.`
+          : "Load models to choose which ones appear in the dropdowns.";
+      }
+      if (els.selectAllModels) els.selectAllModels.disabled = available.length === 0;
+      if (els.clearModels) els.clearModels.disabled = available.length === 0;
+    }
+
+    function renderCommercialLlmModelOptions(providerId) {
+      const els = commercialLlmElements(providerId);
+      const cfg = commercialLlmProviderConfig(providerId);
+      const available = unionModelIdLists(cfg.availableModels || [], cfg.models || []);
+      const selected = new Set(normalizeModelIdList(cfg.models || []));
+      if (!els.modelsList) return;
+      els.modelsList.innerHTML = "";
+      if (!available.length) {
+        const empty = document.createElement("div");
+        empty.className = "hint";
+        empty.textContent = "No provider models loaded yet.";
+        els.modelsList.appendChild(empty);
+        updateCommercialLlmModelSummary(providerId);
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for (const modelId of available) {
+        const label = document.createElement("label");
+        label.className = "user-llm-model-option";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = selected.has(modelId);
+        input.setAttribute("data-model-id", modelId);
+        input.addEventListener("change", () => {
+          cfg.models = getCommercialLlmSelectedModels(providerId);
+          updateCommercialLlmModelSummary(providerId);
+        });
+        const text = document.createElement("span");
+        text.textContent = modelId;
+        label.appendChild(input);
+        label.appendChild(text);
+        frag.appendChild(label);
+      }
+      els.modelsList.appendChild(frag);
+      updateCommercialLlmModelSummary(providerId);
+    }
+
+    function setCommercialLlmModelSelection(providerId, selectedModels, availableModels) {
+      const cfg = commercialLlmProviderConfig(providerId);
+      cfg.availableModels = unionModelIdLists(availableModels || [], cfg.availableModels || [], cfg.models || []);
+      cfg.models = normalizeModelIdList(selectedModels || []);
+      renderCommercialLlmModelOptions(providerId);
+    }
+
+    function toggleCommercialLlmModelSelection(providerId, checked) {
+      const cfg = commercialLlmProviderConfig(providerId);
+      cfg.models = checked ? getCommercialLlmAvailableModels(providerId).slice() : [];
+      renderCommercialLlmModelOptions(providerId);
     }
 
     function setCommercialLlmKeyVisual(providerId, state, text) {
@@ -1505,7 +1626,7 @@
     function updateCommercialLlmDirtyState(providerId) {
       const els = commercialLlmElements(providerId);
       const typedKey = String(els.key?.value || "").trim();
-      const cfg = userSettings.commercialLlms?.providers?.[providerId] || {};
+      const cfg = commercialLlmProviderConfig(providerId);
       if (typedKey) {
         setCommercialLlmKeyVisual(providerId, "key-pending", "New key entered. Save settings to keep it.");
       } else if (cfg.apiKeyConfigured) {
@@ -1526,8 +1647,8 @@
         if (els.key) els.key.value = "";
         if (els.clear) els.clear.checked = false;
         if (els.base) els.base.value = cfg.baseUrl || provider.defaultBaseUrl || "";
-        if (els.models) els.models.value = Array.isArray(cfg.models) ? cfg.models.join("\n") : "";
         if (els.modelsStatus) els.modelsStatus.textContent = "";
+        setCommercialLlmModelSelection(provider.id, cfg.models || [], cfg.availableModels || []);
         setCommercialLlmKeyVisual(
           provider.id,
           cfg.apiKeyConfigured ? "key-saved" : "key-missing",
@@ -1557,7 +1678,7 @@
       if (!provider) return;
       const els = commercialLlmElements(providerId);
       const typedKey = String(els.key?.value || "").trim();
-      const cfg = userSettings.commercialLlms?.providers?.[providerId] || {};
+      const cfg = commercialLlmProviderConfig(providerId);
       const baseUrl = String(els.base?.value || provider.defaultBaseUrl || "").trim();
 
       if (!typedKey && !cfg.apiKeyConfigured) {
@@ -1600,7 +1721,10 @@
         }
         const payload = await resp.json();
         const models = Array.isArray(payload?.models) ? payload.models.map((item) => String(item || "").trim()).filter(Boolean) : [];
-        if (els.models) els.models.value = models.join("\n");
+        const currentSelection = getCommercialLlmSelectedModels(providerId);
+        let selectedModels = currentSelection.length ? currentSelection.filter((item) => models.includes(item)) : models.slice();
+        if (!selectedModels.length && models.length) selectedModels = models.slice();
+        setCommercialLlmModelSelection(providerId, selectedModels, models);
         if (els.enabled) els.enabled.checked = true;
         const master = document.getElementById("settings_user_llm_enabled");
         if (master) master.checked = true;
@@ -1633,11 +1757,11 @@
         const key = document.getElementById(`settings_user_llm_${provider.id}_key`);
         const clear = document.getElementById(`settings_user_llm_${provider.id}_clear`);
         const base = document.getElementById(`settings_user_llm_${provider.id}_base_url`);
-        const models = document.getElementById(`settings_user_llm_${provider.id}_models`);
         const cfg = {
           enabled: !!(enabled && enabled.checked),
           base_url: base ? String(base.value || "").trim() : provider.defaultBaseUrl,
-          models: splitModelIds(models ? models.value : ""),
+          models: getCommercialLlmSelectedModels(provider.id),
+          available_models: getCommercialLlmAvailableModels(provider.id),
         };
         const keyValue = key ? String(key.value || "").trim() : "";
         if (keyValue) cfg.api_key = keyValue;
@@ -3222,6 +3346,12 @@
         const llmEls = commercialLlmElements(provider.id);
         if (llmEls.loadModels) {
           llmEls.loadModels.addEventListener("click", () => void loadCommercialLlmModels(provider.id));
+        }
+        if (llmEls.selectAllModels) {
+          llmEls.selectAllModels.addEventListener("click", () => toggleCommercialLlmModelSelection(provider.id, true));
+        }
+        if (llmEls.clearModels) {
+          llmEls.clearModels.addEventListener("click", () => toggleCommercialLlmModelSelection(provider.id, false));
         }
         if (llmEls.key) {
           llmEls.key.addEventListener("input", () => updateCommercialLlmDirtyState(provider.id));

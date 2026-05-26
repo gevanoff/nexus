@@ -38,6 +38,7 @@ def test_user_llm_settings_sanitize_hides_keys():
     assert "api_key" not in provider
     assert provider["api_key_configured"] is True
     assert provider["api_key_hint"] == "sk-s...1234"
+    assert provider["available_models"] == ["gpt-test"]
 
 
 def test_user_llm_settings_merge_preserves_and_clears_keys():
@@ -59,6 +60,7 @@ def test_user_llm_settings_merge_preserves_and_clears_keys():
     provider = merged["commercial_llms"]["providers"]["openai"]
     assert provider["api_key"] == "sk-existing-1234"
     assert provider["models"] == ["gpt-test", "gpt-next"]
+    assert provider["available_models"] == ["gpt-test", "gpt-next"]
 
     clear_patch = {
         "commercial_llms": {
@@ -173,6 +175,28 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "settings_user_llm_custom_openai_load_models" in html
     assert "/ui/api/user/llms/models" in js
     assert "loadCommercialLlmModels(provider.id)" in js
+    assert "settings_user_llm_openai_models_list" in html
+    assert "settings_user_llm_openai_select_all_models" in html
+    assert "available_models" in js
+
+
+def test_user_llm_available_models_include_selected_models():
+    settings = {
+        "commercial_llms": {
+            "enabled": True,
+            "providers": {
+                "openai": {
+                    "enabled": True,
+                    "api_key": "sk-test",
+                    "base_url": "https://api.openai.com/v1",
+                    "models": ["gpt-picked"],
+                    "available_models": ["gpt-other"],
+                }
+            },
+        }
+    }
+
+    assert user_llm.available_models(settings, "openai") == ["gpt-other", "gpt-picked"]
 
 
 def test_ui_model_alias_hides_fetching_models_and_falls_back(monkeypatch):
@@ -410,7 +434,50 @@ async def test_user_llm_stream_adapts_non_sse_json(monkeypatch):
             return None
 
         async def aread(self):
-            return b'{"choices":[{"message":{"role":"assistant","content":"hello"}}]}'
+            return b'{"output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}]}'
+
+    class StreamCtx:
+        async def __aenter__(self):
+            return Resp()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class Client:
+        def stream(self, *args, **kwargs):
+            return StreamCtx()
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        yield Client()
+
+    monkeypatch.setattr(user_llm, "_httpx_client", fake_client)
+
+    req = ChatCompletionRequest(
+        model="user_llm:openai:gpt-test",
+        messages=[ChatMessage(role="user", content="hi")],
+        stream=True,
+    )
+    chunks = [chunk async for chunk in user_llm.stream_user_chat_as_openai(req, model_id=req.model, settings=_settings())]
+
+    assert any(b'"delta":{"content":"hello"}' in chunk for chunk in chunks)
+    assert chunks[-1] == b"data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_user_llm_stream_adapts_response_output_text_sse(monkeypatch):
+    class Resp:
+        headers = {"content-type": "text/event-stream"}
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            for line in (
+                'data: {"type":"response.output_text.delta","delta":"hello"}',
+                'data: [DONE]',
+            ):
+                yield line
 
     class StreamCtx:
         async def __aenter__(self):
