@@ -7,13 +7,11 @@
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
-  const copyHostsEl = document.getElementById("copy_hosts");
   const CACHE_KEY = "nexus.resources.status.v1";
   const POLL_INTERVAL_MS = 30000;
   const STALE_AFTER_POLLS = 3;
   let currentUserIsAdmin = false;
   let currentPollIntervalSec = POLL_INTERVAL_MS / 1000;
-  let latestPayload = null;
 
   function setStatus(text, isError) {
     if (!statusEl) return;
@@ -120,12 +118,6 @@
     if (Number.isFinite(value) && value > 0) currentPollIntervalSec = value;
   }
 
-  function updateCopyHostsButton(payload) {
-    if (!copyHostsEl) return;
-    const hosts = Array.isArray(payload?.hosts) ? payload.hosts : [];
-    copyHostsEl.disabled = hosts.length === 0;
-  }
-
   function isStale(tsSeconds) {
     const ts = Number(tsSeconds || 0);
     if (!Number.isFinite(ts) || ts <= 0) return false;
@@ -223,30 +215,24 @@
     return entries.map(([name, status]) => `  - ${name}: ${status}`);
   }
 
-  function buildHostInfoText(payload) {
-    const hosts = Array.isArray(payload?.hosts) ? payload.hosts : [];
-    const generated = formatDateTime(payload?.generated_at);
-    const lines = ["# Nexus Host Information"];
+  function buildHostInfoText(host, generatedAt) {
+    const generated = formatDateTime(generatedAt);
+    const lines = [`# Nexus Host Configuration: ${fmtValue(host?.name)}`];
     if (generated) lines.push(`Generated: ${generated}`);
     lines.push("");
-    hosts.forEach((host, index) => {
-      if (index > 0) lines.push("");
-      lines.push(`## ${fmtValue(host?.name)}`);
-      lines.push(`Hostname: ${fmtValue(host?.name)}`);
-      if (host?.ssh_target) lines.push(`SSH target: ${host.ssh_target}`);
-      lines.push(`OS: ${hostOsText(host?.os, host)}`);
-      lines.push(`Platform: ${[host?.platform, host?.resource_kind].map(fmtValue).filter((part) => part !== "unknown").join(" / ") || "unknown"}`);
-      lines.push(`Processor: ${hostCpuText(host?.cpu)}`);
-      lines.push(`Memory: ${hostMemoryText(host?.memory)}`);
-      const updated = formatDateTime(host?.updated_at);
-      if (updated) lines.push(`Last hardware probe: ${updated}`);
-      if (host?.error) lines.push(`Probe error: ${host.error}`);
-      lines.push("GPUs:");
-      lines.push(...hostGpuLines(host?.gpus));
-      lines.push("Containers:");
-      lines.push(...hostContainerLines(host?.containers));
-    });
-    if (!hosts.length) lines.push("No hosts reported.");
+    lines.push(`Hostname: ${fmtValue(host?.name)}`);
+    if (host?.ssh_target) lines.push(`SSH target: ${host.ssh_target}`);
+    lines.push(`OS: ${hostOsText(host?.os, host)}`);
+    lines.push(`Platform: ${[host?.platform, host?.resource_kind].map(fmtValue).filter((part) => part !== "unknown").join(" / ") || "unknown"}`);
+    lines.push(`Processor: ${hostCpuText(host?.cpu)}`);
+    lines.push(`Memory: ${hostMemoryText(host?.memory)}`);
+    const updated = formatDateTime(host?.updated_at);
+    if (updated) lines.push(`Last hardware probe: ${updated}`);
+    if (host?.error) lines.push(`Probe error: ${host.error}`);
+    lines.push("GPUs:");
+    lines.push(...hostGpuLines(host?.gpus));
+    lines.push("Containers:");
+    lines.push(...hostContainerLines(host?.containers));
     return `${lines.join("\n").trim()}\n`;
   }
 
@@ -274,12 +260,12 @@
     return fallbackCopyText(text);
   }
 
-  async function copyHostInfo() {
-    const text = buildHostInfoText(latestPayload);
+  async function copyHostInfo(host, generatedAt) {
+    const text = buildHostInfoText(host, generatedAt);
     try {
       const ok = await copyTextToClipboard(text);
       if (!ok) throw new Error("clipboard write was not accepted");
-      setStatus("Copied host information.", false);
+      setStatus(`Copied host information for ${fmtValue(host?.name)}.`, false);
     } catch (error) {
       setStatus(`Copy failed: ${String(error?.message || error)}`, true);
     }
@@ -440,7 +426,7 @@
     return base;
   }
 
-  function renderHosts(hosts) {
+  function renderHosts(hosts, generatedAt) {
     if (!hostsEl) return;
     hostsEl.innerHTML = "";
     if (!Array.isArray(hosts) || !hosts.length) {
@@ -451,10 +437,24 @@
       const card = document.createElement("div");
       card.className = "card";
       if (isStale(host.updated_at)) card.classList.add("stale");
+
+      const header = document.createElement("div");
+      header.className = "host-card-header";
+      const title = document.createElement("div");
+      title.className = "host-card-title";
       const name = document.createElement("div");
       name.className = "host-name";
       name.textContent = host.name || "unknown";
-      card.appendChild(name);
+      title.appendChild(name);
+      const copyButton = document.createElement("button");
+      copyButton.type = "button";
+      copyButton.className = "host-copy-button";
+      copyButton.textContent = "Copy";
+      copyButton.title = `Copy ${host.name || "host"} configuration`;
+      copyButton.addEventListener("click", () => void copyHostInfo(host, generatedAt));
+      header.appendChild(title);
+      header.appendChild(copyButton);
+      card.appendChild(header);
 
       const meta = document.createElement("div");
       meta.className = "meta";
@@ -780,10 +780,8 @@
 
   function renderPayload(payload, options) {
     const opts = options || {};
-    latestPayload = payload && typeof payload === "object" ? payload : null;
-    updateCopyHostsButton(latestPayload);
     updatePollInterval(payload);
-    renderHosts(payload.hosts || []);
+    renderHosts(payload.hosts || [], payload.generated_at);
     const serviceSections = splitCoreServicesForResourceUi(payload.control_plane || [], payload.core_services || []);
     if (serviceSections.controlPlaneUsesCoreCards) {
       renderCoreServices(serviceSections.controlPlane, controlPlaneEl, {
@@ -870,7 +868,6 @@
   }
 
   if (refreshEl) refreshEl.addEventListener("click", () => void loadStatus(true));
-  if (copyHostsEl) copyHostsEl.addEventListener("click", () => void copyHostInfo());
   window.addEventListener("hashchange", () => focusRequestedBackend());
   void (async () => {
     await loadCurrentUser();

@@ -39,6 +39,9 @@
       .card { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 8px; padding: 12px; box-shadow: 0 12px 30px rgba(6,10,16,0.35); }
       .card.stale { border-color: rgba(240,200,90,0.72); box-shadow: 0 0 0 1px rgba(240,200,90,0.18), 0 12px 30px rgba(6,10,16,0.35); }
       .host-list, .control-plane-list, .core-service-list, .backend-list { display:flex; flex-direction:column; gap:10px; }
+      .host-card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+      .host-card-title { min-width:0; }
+      .host-copy-button { padding: 6px 9px; white-space: nowrap; }
       .backend-group { display:flex; flex-direction:column; gap:8px; }
       .backend-group-header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding: 2px 2px 0; }
       .backend-group-title { font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -100,7 +103,6 @@
         </div>
         <div class="row">
           <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
-          <button id="copy_hosts" type="button" data-ui-role="secondary" disabled>Copy Host Info</button>
           <button id="refresh" type="button" data-ui-role="secondary">Refresh</button>
         </div>
       </header>
@@ -126,6 +128,6 @@
     </main>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=5"></script>
-    <script src="/static/resources.js?v=11"></script>
+    <script src="/static/resources.js?v=12"></script>
   </body>
 </html>
