@@ -28,7 +28,7 @@
     return el;
   }
 
-  function row(left, middle, badges) {
+  function row(left, middle, badges, actions) {
     const el = document.createElement("div");
     el.className = "model-admin-row";
     const name = document.createElement("div");
@@ -40,6 +40,14 @@
     const badgeWrap = document.createElement("div");
     badgeWrap.className = "model-admin-badges";
     (badges || []).forEach((item) => badgeWrap.appendChild(badge(item.text, item.tone)));
+    (actions || []).forEach((item) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = item.text;
+      button.dataset.uiRole = item.role || "secondary";
+      button.addEventListener("click", item.onClick);
+      badgeWrap.appendChild(button);
+    });
     el.appendChild(name);
     el.appendChild(detail);
     el.appendChild(badgeWrap);
@@ -89,11 +97,23 @@
       models.forEach((model) => {
         const badges = [{ text: model.selectable ? "selectable" : "not selectable", tone: model.selectable ? "green" : "red" }];
         if (model.cache_state) badges.push({ text: model.cache_state, tone: model.cache_state === "cached" ? "green" : "yellow" });
+        const activity = model.fetch_activity && typeof model.fetch_activity === "object" ? model.fetch_activity : null;
+        if (activity?.status === "active") badges.push({ text: "downloading", tone: "green" });
+        if (activity?.status === "stalled") badges.push({ text: "stalled/stopped", tone: "red" });
+        if (activity?.status === "unknown") badges.push({ text: "fetch unknown", tone: "yellow" });
         if (model.unavailable_reason) badges.push({ text: model.unavailable_reason, tone: "yellow" });
         if (model.cache_only) badges.push({ text: "cache only", tone: "yellow" });
         if (model.advertised) badges.push({ text: "advertised", tone: "" });
         const aliasText = Array.isArray(model.aliases) && model.aliases.length ? `aliases: ${model.aliases.join(", ")}` : model.provider || "";
-        modelGroup.appendChild(row(`${model.backend || ""}:${model.model || ""}`, aliasText, badges));
+        const actions = [];
+        if (model.provider === "mlx" && model.cache_state === "fetching" && activity?.status !== "active") {
+          actions.push({
+            text: "Restart fetch",
+            role: "secondary",
+            onClick: () => void restartFetch(model.backend || "local_mlx", model.model || ""),
+          });
+        }
+        modelGroup.appendChild(row(`${model.backend || ""}:${model.model || ""}`, aliasText, badges, actions));
       });
     }
     listEl.appendChild(modelGroup);
@@ -133,6 +153,30 @@
       if (statusEl) statusEl.textContent = `Error: ${String(error)}`;
     } finally {
       if (refreshEl) refreshEl.disabled = false;
+    }
+  }
+
+  async function restartFetch(backend, model) {
+    if (!model) return;
+    if (statusEl) statusEl.textContent = `Starting prefetch for ${model}...`;
+    try {
+      const resp = await fetch("/ui/api/admin/models/prefetch", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backend, model }),
+      });
+      const text = await resp.text();
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        if (statusEl) statusEl.textContent = `Prefetch restart failed: HTTP ${resp.status}: ${text}`;
+        return;
+      }
+      const payload = JSON.parse(text);
+      if (statusEl) statusEl.textContent = `Prefetch started for ${model}${payload.pid ? ` (pid ${payload.pid})` : ""}.`;
+      window.setTimeout(() => void load(), 1500);
+    } catch (error) {
+      if (statusEl) statusEl.textContent = `Prefetch restart failed: ${String(error)}`;
     }
   }
 

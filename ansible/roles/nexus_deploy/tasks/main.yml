@@ -6,3 +6,9 @@
   environment:
     NEXUS_TRUST_GENERATED_SOPS_OVERLAYS: "{{ 'true' if (nexus_manage_sops_secrets | bool) else 'false' }}"
   changed_when: true
+  when: (nexus_components | default([]) | length) > 0
+
+- name: Skip deploy for componentless infrastructure hosts
+  ansible.builtin.debug:
+    msg: "No Nexus service components are assigned to {{ nexus_topology_host }}; skipping deploy because this host is managed as infrastructure/control only."
+  when: (nexus_components | default([]) | length) == 0

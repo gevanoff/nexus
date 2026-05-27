@@ -49,16 +49,22 @@ def test_meltdown_container_alias_is_available_to_control_plane_compose() -> Non
         text = _read(compose_file)
         assert "meltdown:${NEXUS_HOST_MELTDOWN_IP}" in text
         assert "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}" in text
+        assert "copyfail:${NEXUS_HOST_COPYFAIL_IP}" in text
+        assert "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}" in text
 
     assert "NEXUS_HOST_MELTDOWN_IP=10.10.22.186" in _read(".env.example")
+    assert "NEXUS_HOST_COPYFAIL_IP=10.10.22.156" in _read(".env.example")
     assert "NEXUS_HOST_MELTDOWN_IP" in _read("deploy/scripts/_common.sh")
+    assert "NEXUS_HOST_COPYFAIL_IP" in _read("deploy/scripts/_common.sh")
 
 
 def test_ansible_wrapper_exposes_meltdown_host() -> None:
     wrapper = _read("deploy/scripts/ansible-topology.sh")
 
     assert "ai1|ai2|ada2|meltdown" in wrapper
+    assert "copyfail" in wrapper
     assert "bootstrap meltdown" in wrapper
+    assert "bootstrap copyfail" in wrapper
 
 
 def test_meltdown_bootstrap_uses_managed_checkout_and_gpu_runtime_validation() -> None:
@@ -77,3 +83,37 @@ def test_meltdown_bootstrap_uses_managed_checkout_and_gpu_runtime_validation() -
     assert "docker info --format" in linux_docker_role
     assert "docker run --rm --gpus all" in linux_docker_role
     assert "become: true" in linux_docker_role
+
+
+def test_copyfail_is_infra_only_topology_host() -> None:
+    topology = json.loads(_read("deploy/topology/production.json"))
+    lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
+
+    copyfail = topology["hosts"]["copyfail"]
+
+    assert copyfail["platform"] == "linux"
+    assert copyfail["resource_kind"] == "linux_infra"
+    assert copyfail["ssh_target"] == "ai@copyfail"
+    assert copyfail["components"] == []
+    assert "deployment_control" in copyfail["roles"]
+    assert lifecycle["hosts"]["copyfail"]["resource_kind"] == "linux_infra"
+    assert lifecycle["hosts"]["copyfail"]["env_file"] == "deploy/env/.env.prod.copyfail"
+    assert lifecycle["core_services"]["deployment_control"]["host"] == "copyfail"
+    assert lifecycle["core_services"]["deployment_control"]["components"] == []
+
+    for backend in lifecycle["backends"].values():
+        assert backend.get("host") != "copyfail"
+
+
+def test_copyfail_ansible_host_vars_skip_model_runtime_install() -> None:
+    host_vars = _read("ansible/inventory/host_vars/copyfail.yml")
+    preflight_role = _read("ansible/roles/nexus_preflight/tasks/main.yml")
+    deploy_role = _read("ansible/roles/nexus_deploy/tasks/main.yml")
+
+    assert "nexus_manage_checkout: true" in host_vars
+    assert "nexus_manage_docker_runtime: false" in host_vars
+    assert "nexus_manage_nvidia_container_runtime: false" in host_vars
+    assert "nexus_manage_mlx_host_prep: false" in host_vars
+    assert "ansible" in host_vars
+    assert "skipping deploy preflight" in preflight_role
+    assert "skipping deploy" in deploy_role

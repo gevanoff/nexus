@@ -32,6 +32,7 @@ Short wrappers for the most common flows live in `deploy/scripts/`:
 ./deploy/scripts/ansible-topology.sh bootstrap ai1 -- --check
 ./deploy/scripts/ansible-topology.sh deploy ada2
 ./deploy/scripts/ansible-topology.sh bootstrap meltdown
+./deploy/scripts/ansible-topology.sh bootstrap copyfail
 ./deploy/scripts/topology-ssh.sh ai2
 ./deploy/scripts/topology-ssh.sh ai1 docker ps
 ```
@@ -95,7 +96,9 @@ Linux Docker defaults prefer Docker's official apt repository on Debian/Ubuntu h
 - The deploy playbook now includes `nexus_secret_overlay`, which decrypts tracked SOPS secret files on the control node and syncs the generated `*.sops.local` overlays to the remote host before preflight/deploy.
 - Inventory exposes `platform_macos` and `platform_linux` groups from the topology manifest so repo layout and other hosttype defaults can live in group vars.
 - Inventory also exposes `resource_linux_nvidia` for CUDA-capable Linux hosts such as `ai1`, `ada2`, and `meltdown`.
+- Inventory exposes `resource_linux_infra` for `copyfail`. Treat `copyfail` as a deployment/metrics/IT control host only; it intentionally has no model-serving components.
 - Mixed Linux/macOS roles dispatch into platform-specific task files (`linux.yml`, `macos.yml`) from a shared entrypoint and fail clearly on unsupported platforms.
 - The bootstrap playbook now covers the main non-interactive host setup path: Python bootstrap, common packages, Linux Docker engine setup, macOS Colima setup, and optional MLX pf allowlisting.
+- `copyfail` host vars disable Docker, NVIDIA runtime, and MLX prep while installing lightweight control-node packages such as Ansible, SSH, rsync, and jq.
 - Linux/NVIDIA bootstrap installs and configures NVIDIA Container Toolkit from NVIDIA's package repository when a GPU is visible and `nexus_manage_nvidia_container_runtime=true`.
 - Homebrew itself is not auto-installed. On macOS hosts, install Homebrew first or override the Docker/bootstrap strategy in `host_vars`.

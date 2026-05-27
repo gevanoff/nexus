@@ -1,0 +1,25 @@
+nexus_manage_checkout: true
+nexus_repo_url: https://github.com/gevanoff/nexus.git
+nexus_sync_existing_checkout: true
+
+# copyfail is an infrastructure/control host, not a model-serving host.
+nexus_manage_docker_runtime: false
+nexus_manage_nvidia_container_runtime: false
+nexus_nvidia_container_runtime_validate: false
+nexus_manage_mlx_host_prep: false
+nexus_verify_gateway: false
+
+# Keep this host lightweight but useful as an Ansible/deployment controller.
+nexus_linux_common_packages:
+  - git
+  - curl
+  - gpg
+  - lsof
+  - ca-certificates
+  - python3
+  - python3-pip
+  - python3-venv
+  - openssh-client
+  - rsync
+  - jq
+  - ansible

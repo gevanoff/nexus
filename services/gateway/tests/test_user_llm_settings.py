@@ -186,6 +186,8 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/admin/models" in html
     assert "Nexus model admin" in admin_models_html
     assert "/ui/api/admin/models" in admin_models_js
+    assert "/ui/api/admin/models/prefetch" in admin_models_js
+    assert "Restart fetch" in admin_models_js
 
 
 def test_user_llm_available_models_include_selected_models():
@@ -469,6 +471,14 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
     monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda backend, model: "fetching" if backend == "local_mlx" and model.endswith("MiniMax-M2.5-8bit") else None)
     monkeypatch.setattr(ui_routes, "fallback_target_for_backend", lambda backend: ("local_vllm_fast", "fast-model") if backend == "local_mlx" else None)
     monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "fetching" if model.endswith("MiniMax-M2.5-8bit") else None)
+    monkeypatch.setattr(
+        ui_routes,
+        "hf_model_cache_details",
+        lambda model: {
+            "state": "fetching" if model.endswith("MiniMax-M2.5-8bit") else None,
+            "fetch_activity": {"status": "stalled", "last_progress_age_sec": 999},
+        },
+    )
     monkeypatch.setattr(ui_routes, "hf_model_cache_entries", lambda: {})
 
     payload = await ui_routes.ui_admin_models(SimpleNamespace())
@@ -477,6 +487,7 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
     assert payload["aliases"][0]["effective_model"] == "fast-model"
     minimax = next(item for item in payload["models"] if item["model"].endswith("MiniMax-M2.5-8bit"))
     assert minimax["unavailable_reason"] == "fetching"
+    assert minimax["fetch_activity"]["status"] == "stalled"
 
 
 @pytest.mark.asyncio
@@ -513,6 +524,7 @@ async def test_ui_admin_models_marks_cached_unadvertised_mlx_models_not_selectab
     monkeypatch.setattr(ui_routes, "backend_hostname", lambda *_args, **_kwargs: "ai2")
     monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda _backend, _model: None)
     monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "cached" if model == model_id else None)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_details", lambda model: {"state": "cached" if model == model_id else None, "fetch_activity": None})
     monkeypatch.setattr(ui_routes, "hf_model_cache_entries", lambda: {model_id: "cached"})
 
     payload = await ui_routes.ui_admin_models(SimpleNamespace())
@@ -523,6 +535,39 @@ async def test_ui_admin_models_marks_cached_unadvertised_mlx_models_not_selectab
     assert row["advertised"] is False
     assert row["unavailable_reason"] == "not_advertised"
     assert row["selectable"] is False
+
+
+@pytest.mark.asyncio
+async def test_ui_admin_model_prefetch_calls_lifecycle_manager(monkeypatch):
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return backend
+
+    calls = []
+
+    async def fake_lifecycle(method, path, *, json_body=None, timeout=None):
+        calls.append((method, path, json_body))
+        return {"ok": True, "decision": "prefetch_started"}
+
+    monkeypatch.setattr(ui_routes, "_require_admin", lambda _req: SimpleNamespace(id=1, admin=True))
+    monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ui_routes, "backend_provider_name", lambda backend: "mlx" if backend == "local_mlx" else "vllm")
+    monkeypatch.setattr(ui_routes, "call_lifecycle_manager", fake_lifecycle)
+    monkeypatch.setattr(ui_routes, "lifecycle_timeout", lambda: 3.0)
+
+    payload = await ui_routes.ui_admin_model_prefetch(
+        SimpleNamespace(),
+        ui_routes.ModelPrefetchRequest(backend="local_mlx", model="mlx-community/MiniMax-M2.5-8bit"),
+    )
+
+    assert payload["decision"] == "prefetch_started"
+    assert calls == [
+        (
+            "POST",
+            "/v1/lifecycle/mlx/prefetch",
+            {"backend_class": "local_mlx", "model": "mlx-community/MiniMax-M2.5-8bit"},
+        )
+    ]
 
 
 def test_ui_model_alias_hides_embedding_selectors():

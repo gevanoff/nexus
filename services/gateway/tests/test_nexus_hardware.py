@@ -70,6 +70,13 @@ def _live_payload() -> dict[str, object]:
                 "updated_at": 1_700_000_004,
             },
             {
+                "name": "copyfail",
+                "cpu": {"model_name": "Test Copyfail Host", "logical_cpus": 2},
+                "memory": {"total_mb": 7600, "used_mb": 200, "available_mb": 7200},
+                "gpus": [],
+                "updated_at": 1_700_000_006,
+            },
+            {
                 "name": "ai3",
                 "error": "ssh unavailable",
                 "cpu": {},
@@ -98,6 +105,8 @@ def test_lifecycle_payload_updates_runtime_and_cached_snapshot(tmp_path, monkeyp
     assert "NVIDIA Test GPU 80 GiB" in prompt_context
     assert "meltdown: linux_x86_64; Test Meltdown Host; 12 logical CPUs" in prompt_context
     assert "NVIDIA GeForce RTX 5060 Ti 15.9 GiB" in prompt_context
+    assert "copyfail: linux_x86_64; Test Copyfail Host; 2 logical CPUs" in prompt_context
+    assert "Do not schedule model-serving backends here" in prompt_context
     assert "ai3: macos_arm64; Apple M2" in prompt_context
     assert "lifecycle probe failed" in prompt_context
 
@@ -115,6 +124,7 @@ def test_scheduled_context_uses_last_cached_snapshot_when_runtime_is_empty(tmp_p
     assert "Test Intel Workstation" in prompt_context
     assert "NVIDIA Test GPU 80 GiB" in prompt_context
     assert "Test Meltdown Host" in prompt_context
+    assert "Test Copyfail Host" in prompt_context
 
 
 @pytest.mark.asyncio
@@ -129,4 +139,5 @@ async def test_startup_refresh_falls_back_to_baseline_when_lifecycle_is_unconfig
     assert snapshot["source"] == "checked_in_baseline"
     assert snapshot["hosts"]["ai1"]["cpu"] == "12th Gen Intel Core i7-12700F"
     assert snapshot["hosts"]["meltdown"]["cpu"] == "Intel Core i7-5930K"
+    assert snapshot["hosts"]["copyfail"]["cpu"] == "Intel Celeron J3355 @ 2.00GHz"
     assert "lifecycle manager URL is not configured" in " ".join(snapshot["warnings"])

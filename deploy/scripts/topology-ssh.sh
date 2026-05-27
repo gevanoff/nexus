@@ -27,6 +27,7 @@ Examples:
   ./deploy/scripts/topology-ssh.sh ai1
   ./deploy/scripts/topology-ssh.sh ai2 docker ps
   ./deploy/scripts/topology-ssh.sh --print-target ada2
+  ./deploy/scripts/topology-ssh.sh copyfail hostname
 EOF
 }
 

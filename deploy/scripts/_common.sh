@@ -120,6 +120,7 @@ ns_gateway_extra_host_env_keys() {
     NEXUS_HOST_AI3_IP \
     NEXUS_HOST_ADA2_IP \
     NEXUS_HOST_MELTDOWN_IP \
+    NEXUS_HOST_COPYFAIL_IP \
     NEXUS_HOST_ADADA_IP
 }
 

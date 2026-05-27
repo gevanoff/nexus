@@ -4,3 +4,9 @@
   args:
     chdir: "{{ nexus_repo_dir }}"
   changed_when: false
+  when: (nexus_components | default([]) | length) > 0
+
+- name: Skip deploy preflight for componentless infrastructure hosts
+  ansible.builtin.debug:
+    msg: "No Nexus service components are assigned to {{ nexus_topology_host }}; skipping deploy preflight."
+  when: (nexus_components | default([]) | length) == 0

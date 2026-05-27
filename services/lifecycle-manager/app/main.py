@@ -199,6 +199,11 @@ class ActionRequest(BaseModel):
     allow_disruptive: bool = False
 
 
+class MlxPrefetchRequest(BaseModel):
+    backend_class: str = "local_mlx"
+    model: str
+
+
 class NotifyRequest(BaseModel):
     backend_class: str
     event: str
@@ -497,7 +502,7 @@ class LifecycleManager:
         host.error = ""
         host.updated_at = time.time()
         try:
-            if host.resource_kind == "linux_nvidia":
+            if host.resource_kind in {"linux", "linux_nvidia", "linux_infra"}:
                 raw = await self._ssh(host, self._linux_probe_command())
                 self._parse_linux_probe(host, raw)
             elif host.resource_kind == "macos":
@@ -880,6 +885,56 @@ class LifecycleManager:
         await self._execute_plan(plan)
         await self.refresh()
         return plan
+
+    async def prefetch_mlx_model(self, req: MlxPrefetchRequest) -> Dict[str, Any]:
+        backend = self._backend_or_404(req.backend_class)
+        if backend.backend_class != "local_mlx":
+            raise HTTPException(status_code=400, detail="MLX prefetch is only supported for local_mlx")
+        model = req.model.strip()
+        if not model:
+            raise HTTPException(status_code=400, detail="model is required")
+        if any(ch in model for ch in ("\x00", "\n", "\r")):
+            raise HTTPException(status_code=400, detail="model contains invalid characters")
+        host = self.hosts.get(backend.host)
+        if host is None:
+            raise HTTPException(status_code=400, detail=f"unknown host {backend.host}")
+
+        safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in model)[:160] or "model"
+        log_path = f"/var/lib/mlx/logs/prefetch-{safe_name}.log"
+        inner_command = (
+            f"nohup /var/lib/mlx/env/bin/mlx-prefetch-models --model {shlex.quote(model)} "
+            f">>{shlex.quote(log_path)} 2>&1 </dev/null & echo $!"
+        )
+        command = (
+            "sudo -n install -d -o mlx -m 775 /var/lib/mlx/logs; "
+            "if [ ! -x /var/lib/mlx/env/bin/mlx-prefetch-models ]; then "
+            "echo 'mlx-prefetch-models helper not found' >&2; exit 127; "
+            "fi; "
+            "sudo -n -H -u mlx env "
+            "MLX_ENV_FILE=/var/lib/mlx/mlx.env "
+            "MLX_VENV=/var/lib/mlx/env "
+            f"/bin/bash -lc {shlex.quote(inner_command)}"
+        )
+        backend.last_action = "prefetch"
+        backend.last_action_at = time.time()
+        try:
+            stdout = await self._ssh(host, command, timeout=30)
+        except Exception as exc:
+            backend.last_action_error = f"{type(exc).__name__}: {exc}"
+            self._save_state()
+            raise
+        backend.last_action_error = ""
+        self._save_state()
+        return {
+            "ok": True,
+            "decision": "prefetch_started",
+            "backend_class": backend.backend_class,
+            "host": backend.host,
+            "model": model,
+            "pid": (stdout or "").strip().splitlines()[-1] if (stdout or "").strip() else "",
+            "log_path": log_path,
+            "backend": self._backend_status(backend),
+        }
 
     def notify(self, req: NotifyRequest) -> Dict[str, Any]:
         backend = self._backend_or_404(req.backend_class)
@@ -2004,12 +2059,17 @@ class LifecycleManager:
 
         missing = [component for component in service.components if not active_by_component.get(component)]
         host_error = host.error if host is not None else f"unknown host {service.host}"
-        active = bool(service.components) and not missing and not host_error
+        active = not missing and not host_error
         if host_error:
             status = "host_error"
             label = "Host probe failed"
             color = "red"
             rank = 3
+        elif not service.components:
+            status = "active"
+            label = "Host reachable"
+            color = "green"
+            rank = 0
         elif active:
             status = "active"
             label = "Active"
@@ -2186,6 +2246,11 @@ async def lifecycle_ensure_capacity(req: EnsureCapacityRequest) -> Dict[str, Any
 @app.post("/v1/lifecycle/action")
 async def lifecycle_action(req: ActionRequest) -> Dict[str, Any]:
     return await manager.action(req)
+
+
+@app.post("/v1/lifecycle/mlx/prefetch")
+async def lifecycle_mlx_prefetch(req: MlxPrefetchRequest) -> Dict[str, Any]:
+    return await manager.prefetch_mlx_model(req)
 
 
 @app.post("/v1/lifecycle/notify")

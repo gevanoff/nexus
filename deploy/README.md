@@ -35,7 +35,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: deploy selected components on a host
 - `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <dev|prod> <branch> [user@host]`: deploy selected components over SSH
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
-- `./deploy/scripts/topology-ssh.sh [--print-target] <ai1|ai2|ada2> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
+- `./deploy/scripts/topology-ssh.sh [--print-target] <ai1|ai2|ada2|meltdown|copyfail> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
 - `./deploy/scripts/reassign-topology-family.sh --family <name> --from <host> --to <host> [--write]`: move a tracked backend family between topology hosts
 - `./deploy/scripts/materialize-sops-env.sh --environment <dev|prod> [--topology-host <host>]`: materialize tracked SOPS secret files into generated `*.sops.local` overlays
@@ -89,6 +89,15 @@ Example: deploy the explicit `ai1` topology profile over SSH without repeating t
 ./deploy/scripts/ansible-topology.sh deploy ai1
 ./deploy/scripts/topology-ssh.sh ai1 docker ps
 ```
+
+Example: prepare `copyfail` as the lightweight infrastructure control host:
+
+```bash
+./deploy/scripts/ansible-topology.sh bootstrap copyfail
+./deploy/scripts/topology-ssh.sh copyfail 'cd /home/ai/ai/nexus && git pull --ff-only'
+```
+
+After `copyfail` is bootstrapped, prefer running routine Ansible-driven deployments from that host so deploy state, logs, and control-node tooling converge in one place. `copyfail` is intentionally not a model-serving host.
 
 Backend-family reassignment routine:
 
@@ -160,7 +169,7 @@ Remote host deploy:
 		 - Linux: `ai:ai`
 2. Clone this repo to the platform-specific repo path on the remote host (as the `ai` user)
 3. Run `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>` from your local machine
-4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <ai1|ai2|ada2> <dev|prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
+4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <ai1|ai2|ada2|meltdown|copyfail> <dev|prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
 
 ## Windows development note
 
@@ -169,7 +178,7 @@ Nexus is deployed/operated from macOS/Linux hosts. If you develop on Windows, ru
 ## Notes
 
 - These manifests assume a shared `nexus` network for multi-host deployments.
-- `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `ai1`/`ai2`/`ada2` cluster.
+- `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `ai1`/`ai2`/`ada2`/`meltdown` cluster plus the `copyfail` infrastructure-control host.
 - etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
 - Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
 - `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, and `vllm-embeddings` when different hosts should own different inference lanes.

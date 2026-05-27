@@ -30,6 +30,8 @@ services:
       - "ada2.embrient.com:${NEXUS_HOST_ADA2_IP}"
       - "meltdown:${NEXUS_HOST_MELTDOWN_IP}"
       - "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}"
+      - "copyfail:${NEXUS_HOST_COPYFAIL_IP}"
+      - "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}"
       - "adada:${NEXUS_HOST_ADADA_IP}"
       - "adada.embrient.com:${NEXUS_HOST_ADADA_IP}"
     networks:

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "nexus-production",
-  "description": "Canonical multi-host production placement for ai1, ai2, ada2, and meltdown.",
+  "description": "Canonical multi-host production placement for ai1, ai2, ada2, meltdown, and copyfail.",
   "defaults": {
     "repo_dir_by_platform": {
       "macos": "/Users/ai/ai/nexus",
@@ -175,6 +175,21 @@
         "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.70",
         "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "2048",
         "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "0"
+      }
+    },
+    "copyfail": {
+      "description": "Ubuntu 22.04 infrastructure-only host with Intel Celeron J3355, 2 logical CPUs, and about 7.4 GiB system RAM. Use for metrics collection, deployment orchestration, and general IT infrastructure; do not schedule model-serving backends here.",
+      "platform": "linux",
+      "resource_kind": "linux_infra",
+      "ssh_target": "ai@copyfail",
+      "components": [],
+      "roles": [
+        "deployment_control",
+        "metrics_collection",
+        "it_infrastructure"
+      ],
+      "env": {
+        "ETCD_URL": "http://ai2:2379"
       }
     }
   }

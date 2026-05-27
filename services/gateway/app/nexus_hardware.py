@@ -12,9 +12,9 @@ import httpx
 from app.config import S
 
 
-NEXUS_HARDWARE_VERIFIED_AT = "2026-05-25"
+NEXUS_HARDWARE_VERIFIED_AT = "2026-05-26"
 NEXUS_HARDWARE_SNAPSHOT_VERSION = 1
-PRODUCTION_CONTEXT_HOSTS = ("ai2", "ai1", "ada2", "meltdown")
+PRODUCTION_CONTEXT_HOSTS = ("ai2", "ai1", "ada2", "meltdown", "copyfail")
 KNOWN_NON_PRODUCTION_HOSTS = ("ai3",)
 
 
@@ -57,6 +57,15 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
         "accelerators": ["NVIDIA GeForce RTX 5060 Ti 16 GB class GPU with 15.9 GiB reported VRAM"],
         "role": "Linux/NVIDIA overflow and staging host for lighter CUDA workloads.",
         "notes": "Use for smaller models or test deployments; avoid assuming ada2-class VRAM. Docker and NVIDIA Container Toolkit must be bootstrapped before Compose GPU workloads.",
+    },
+    "copyfail": {
+        "platform": "linux_x86_64",
+        "cpu": "Intel Celeron J3355 @ 2.00GHz",
+        "cpu_cores": "2 logical CPUs",
+        "memory": "about 7.4 GiB system RAM observed",
+        "accelerators": [],
+        "role": "Infrastructure-only host for metrics collection, deployment orchestration, and general IT operations.",
+        "notes": "Do not schedule model-serving backends here; use it as a lightweight control node.",
     },
     "ai3": {
         "platform": "macos_arm64",
@@ -333,9 +342,10 @@ def scheduled_task_hardware_context() -> str:
     for host in PRODUCTION_CONTEXT_HOSTS:
         spec = hosts.get(host) if isinstance(hosts.get(host), dict) else NEXUS_HOST_HARDWARE[host]
         accelerators = "; ".join(str(item) for item in spec["accelerators"])
+        accelerator_text = f"accelerators: {accelerators}" if accelerators else "accelerators: none"
         lines.append(
             f"- {host}: {spec['platform']}; {spec['cpu']}; {spec['cpu_cores']}; "
-            f"{spec['memory']}; accelerators: {accelerators}. {spec['role']} {spec['notes']}"
+            f"{spec['memory']}; {accelerator_text}. {spec['role']} {spec['notes']}"
         )
     for host in KNOWN_NON_PRODUCTION_HOSTS:
         spec = hosts.get(host) if isinstance(hosts.get(host), dict) else NEXUS_HOST_HARDWARE[host]

@@ -40,7 +40,7 @@ from app.backends import (
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
-from app.model_availability import fallback_target_for_backend, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason
+from app.model_availability import fallback_target_for_backend, hf_model_cache_details, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason
 from app.models import ChatCompletionRequest, ChatMessage
 from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
@@ -83,6 +83,12 @@ class SentinelArchiveFindingReviewRequest(BaseModel):
     finding_ts: float
     verdict: Literal["invalid", "superseded"]
     note: Optional[str] = None
+
+
+class ModelPrefetchRequest(BaseModel):
+    backend: str = "local_mlx"
+    model: str
+
 
 _UI_MODELS_CACHE_LOCK = asyncio.Lock()
 _UI_MODELS_CACHE_VALUE: Optional[Dict[str, Any]] = None
@@ -281,6 +287,12 @@ def _ui_model_cache_state(backend_name: str, model_name: str) -> Optional[str]:
     return hf_model_cache_state(model_name)
 
 
+def _ui_model_cache_details(backend_name: str, model_name: str) -> Dict[str, Any]:
+    if backend_provider_name(backend_name) != "mlx":
+        return {"state": None, "fetch_activity": None}
+    return hf_model_cache_details(model_name)
+
+
 def _ui_alias_is_chat_selector(alias_name: str, alias: Any, registry: Any) -> bool:
     resolved = registry.resolve_backend_class(alias.backend) or alias.backend
     normalized = str(resolved or "").strip().lower()
@@ -403,7 +415,7 @@ def _request_url_port(req: Request) -> Optional[int]:
 
 def _public_proxy_hostname(hostname: str) -> str:
     host = (hostname or "").strip().strip("[]")
-    if host.lower() in {"ai1", "ai2", "ai3", "ada2", "meltdown", "adada"}:
+    if host.lower() in {"ai1", "ai2", "ai3", "ada2", "meltdown", "copyfail", "adada"}:
         return f"{host}.local"
     return host
 
@@ -4390,12 +4402,14 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
         row = model_rows.get(key)
         if row is None:
             unavailable = model_unavailable_reason(resolved_backend, model_name)
-            cache_state = _ui_model_cache_state(resolved_backend, model_name)
+            cache_details = _ui_model_cache_details(resolved_backend, model_name)
+            cache_state = cache_details.get("state") or _ui_model_cache_state(resolved_backend, model_name)
             row = {
                 "backend": resolved_backend,
                 "provider": backend_provider_name(resolved_backend),
                 "model": model_name,
                 "cache_state": cache_state,
+                "fetch_activity": cache_details.get("fetch_activity"),
                 "unavailable_reason": unavailable,
                 "advertised": False,
                 "cache_only": False,
@@ -4422,7 +4436,9 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
 
     for model_name, cache_state in hf_model_cache_entries().items():
         row = ensure_model_row("local_mlx", model_name)
+        cache_details = _ui_model_cache_details("local_mlx", model_name)
         row["cache_state"] = cache_state
+        row["fetch_activity"] = cache_details.get("fetch_activity")
         if not row["advertised"]:
             row["cache_only"] = True
             if cache_state == "cached":
@@ -4490,6 +4506,27 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
         "models": sorted(model_rows.values(), key=lambda row: (str(row.get("backend") or ""), str(row.get("model") or ""))),
         "diagnostics": {"sources": source_diags, "probe_timeout_sec": probe_timeout_sec},
     }
+
+
+@router.post("/ui/api/admin/models/prefetch", include_in_schema=False)
+async def ui_admin_model_prefetch(req: Request, body: ModelPrefetchRequest) -> Dict[str, Any]:
+    _require_admin(req)
+
+    registry = get_registry()
+    backend_name = registry.resolve_backend_class(body.backend) or body.backend
+    model_name = (body.model or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="model is required")
+    if backend_provider_name(backend_name) != "mlx":
+        raise HTTPException(status_code=400, detail="prefetch restart is currently supported only for MLX models")
+
+    payload = await call_lifecycle_manager(
+        "POST",
+        "/v1/lifecycle/mlx/prefetch",
+        json_body={"backend_class": backend_name, "model": model_name},
+        timeout=max(10.0, lifecycle_timeout()),
+    )
+    return payload
 
 
 @router.get("/ui/api/models", include_in_schema=False)

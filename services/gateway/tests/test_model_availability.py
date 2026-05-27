@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import model_availability
-from app.model_availability import hf_model_cache_entries, hf_model_cache_state
+from app.model_availability import hf_model_cache_details, hf_model_cache_entries, hf_model_cache_state
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,37 @@ def test_hf_model_cache_entries_lists_repo_states(tmp_path):
         "mlx-community/Cached-Model": "cached",
         "mlx-community/Fetching-Model": "fetching",
     }
+
+
+def test_hf_model_cache_details_marks_fetching_active_or_stalled_from_metadata(tmp_path):
+    payload = {
+        "generated_at": 2000,
+        "models": {
+            "mlx-community/Active": {
+                "state": "fetching",
+                "incomplete_count": 2,
+                "incomplete_bytes": 1234,
+                "newest_incomplete_mtime": 1950,
+                "oldest_incomplete_mtime": 1900,
+            },
+            "mlx-community/Stalled": {
+                "state": "fetching",
+                "incomplete_count": 1,
+                "incomplete_bytes": 5678,
+                "newest_incomplete_mtime": 1000,
+            },
+        },
+    }
+    (tmp_path / ".nexus_cache_status.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    active = hf_model_cache_details("mlx-community/Active", str(tmp_path), stalled_after_sec=600, now=2000)
+    stalled = hf_model_cache_details("mlx-community/Stalled", str(tmp_path), stalled_after_sec=600, now=2000)
+
+    assert active["state"] == "fetching"
+    assert active["fetch_activity"]["status"] == "active"
+    assert active["fetch_activity"]["incomplete_bytes"] == 1234
+    assert stalled["fetch_activity"]["status"] == "stalled"
+    assert stalled["fetch_activity"]["last_progress_age_sec"] == 1000
 
 
 def test_route_with_model_fallback_can_switch_to_fast_backend(monkeypatch):
