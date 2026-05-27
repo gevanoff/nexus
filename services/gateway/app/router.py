@@ -85,6 +85,8 @@ def _backend_prefixes(backend: str) -> list[str]:
     }
     if provider == "vllm":
         prefixes.update({"vllm", "local_vllm", "local-vllm", _provider_default_backend("vllm")})
+    if resolved == "local_vllm_fast":
+        prefixes.update({"vllm_fast", "vllm-fast"})
     if provider == "mlx":
         prefixes.update({"mlx", "local_mlx", "local-mlx", _provider_default_backend("mlx")})
     return [p for p in prefixes if isinstance(p, str) and p]

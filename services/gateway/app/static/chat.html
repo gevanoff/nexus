@@ -838,6 +838,14 @@
                   </div>
                   <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
                 </fieldset>
+                <fieldset id="settings_session_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Browser session</legend>
+                  <div id="settings_session_status" class="hint" style="margin-bottom:8px">Checking session status...</div>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <button type="button" id="settings_logout" data-ui-role="danger">Log out in this browser</button>
+                    <div class="hint">Logs out the current browser session and forgets any saved browser API key.</div>
+                  </div>
+                </fieldset>
               </section>
             </div>
           </div>

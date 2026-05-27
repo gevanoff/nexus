@@ -2115,6 +2115,41 @@
       }
     }
 
+    function renderSessionStatus(authenticated, username) {
+      const statusEl = document.getElementById('settings_session_status');
+      const logoutBtn = document.getElementById('settings_logout');
+      if (statusEl) {
+        statusEl.textContent = authenticated
+          ? `Signed in${username ? ` as ${username}` : ''}.`
+          : 'No active browser session.';
+      }
+      if (logoutBtn) {
+        logoutBtn.disabled = !authenticated;
+      }
+    }
+
+    async function logoutBrowserSession() {
+      try {
+        const resp = await fetch('/ui/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        if (!resp.ok && resp.status !== 401) {
+          const txt = await resp.text();
+          alert(`Failed to log out: ${txt || resp.status}`);
+          return;
+        }
+      } catch (e) {
+        alert(`Failed to log out: ${String(e)}`);
+        return;
+      }
+      try {
+        if (window.GatewayAuth && window.GatewayAuth.clearApiKey) {
+          window.GatewayAuth.clearApiKey();
+        }
+      } catch (e) {}
+      renderSessionStatus(false, '');
+      updateApiKeyStatusUi();
+      window.location.replace('/ui/login');
+    }
+
     async function useBrowserApiKeyFromSettings() {
       const tokenEl = document.getElementById('settings_browser_api_key');
       const resultEl = document.getElementById('settings_api_key_result');
@@ -2321,12 +2356,15 @@
             if (r.ok) {
               const j = await r.json();
               showPw = !!j && !!j.authenticated;
+              renderSessionStatus(showPw, String(j?.user?.username || ''));
             } else {
               // If the route returns 401/403, treat as not authenticated
               showPw = false;
+              renderSessionStatus(false, '');
             }
           } catch (e) {
             showPw = false;
+            renderSessionStatus(false, '');
           }
           if (pwField) pwField.style.display = showPw ? 'block' : 'none';
           if (apiKeysField) apiKeysField.style.display = showPw ? 'block' : 'none';
@@ -3361,6 +3399,7 @@
       const telegramGenerateLinkCode = document.getElementById('settings_telegram_generate_link_code');
       const createApiKeyBtn = document.getElementById('settings_create_api_key');
       const forgetBrowserApiKeyBtn = document.getElementById('settings_forget_browser_api_key');
+      const logoutBtn = document.getElementById('settings_logout');
       const useBrowserApiKeyBtn = document.getElementById('settings_use_browser_api_key');
       if (settingsCancel) settingsCancel.addEventListener('click', () => closeSettings());
       if (settingsClose) settingsClose.addEventListener('click', () => closeSettings());
@@ -3369,6 +3408,7 @@
       if (telegramGenerateLinkCode) telegramGenerateLinkCode.addEventListener('click', () => void generateTelegramLinkCode());
       if (createApiKeyBtn) createApiKeyBtn.addEventListener('click', () => void createApiKeyFromSettings());
       if (forgetBrowserApiKeyBtn) forgetBrowserApiKeyBtn.addEventListener('click', () => forgetStoredApiKey());
+      if (logoutBtn) logoutBtn.addEventListener('click', () => void logoutBrowserSession());
       if (useBrowserApiKeyBtn) useBrowserApiKeyBtn.addEventListener('click', () => void useBrowserApiKeyFromSettings());
       for (const provider of USER_LLM_PROVIDERS) {
         const llmEls = commercialLlmElements(provider.id);
