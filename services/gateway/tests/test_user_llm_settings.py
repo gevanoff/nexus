@@ -5,6 +5,7 @@ import os
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -731,6 +732,52 @@ async def test_user_llm_stream_adapts_response_output_text_sse(monkeypatch):
     chunks = [chunk async for chunk in user_llm.stream_user_chat_as_openai(req, model_id=req.model, settings=_settings())]
 
     assert any(b'"delta":{"content":"hello"}' in chunk for chunk in chunks)
+    assert chunks[-1] == b"data: [DONE]\n\n"
+
+
+@pytest.mark.asyncio
+async def test_user_llm_stream_reports_http_error_when_stream_body_not_pre_read(monkeypatch):
+    class Resp:
+        status_code = 401
+        encoding = None
+
+        async def aread(self):
+            return b'{"error":{"message":"bad api key"}}'
+
+        @property
+        def text(self):
+            raise httpx.ResponseNotRead()
+
+        def raise_for_status(self):
+            request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+            raise httpx.HTTPStatusError("boom", request=request, response=self)
+
+    class StreamCtx:
+        async def __aenter__(self):
+            return Resp()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class Client:
+        def stream(self, *args, **kwargs):
+            return StreamCtx()
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        yield Client()
+
+    monkeypatch.setattr(user_llm, "_httpx_client", fake_client)
+
+    req = ChatCompletionRequest(
+        model="user_llm:openai:gpt-test",
+        messages=[ChatMessage(role="user", content="hi")],
+        stream=True,
+    )
+    chunks = [chunk async for chunk in user_llm.stream_user_chat_as_openai(req, model_id=req.model, settings=_settings())]
+
+    assert any(b'"type":"upstream_error"' in chunk for chunk in chunks)
+    assert any(b'bad api key' in chunk for chunk in chunks)
     assert chunks[-1] == b"data: [DONE]\n\n"
 
 

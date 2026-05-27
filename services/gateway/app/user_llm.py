@@ -31,6 +31,25 @@ _PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
 }
 
 
+async def _http_status_error_detail(exc: httpx.HTTPStatusError, *, upstream: str) -> Dict[str, Any]:
+    response = exc.response
+    body = ""
+    if response is not None:
+        try:
+            body = response.text
+        except httpx.ResponseNotRead:
+            try:
+                raw = await response.aread()
+            except Exception:
+                raw = b""
+            body = raw.decode(response.encoding or "utf-8", errors="replace")
+    return {
+        "upstream": upstream,
+        "status": response.status_code if response is not None else None,
+        "body": body[:5000],
+    }
+
+
 def token_hint(value: str) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -368,7 +387,7 @@ async def discover_provider_models(
         except HTTPException:
             raise
         except httpx.HTTPStatusError as e:
-            detail = {"upstream": user_backend_name(pid), "status": e.response.status_code, "body": e.response.text[:5000]}
+            detail = await _http_status_error_detail(e, upstream=user_backend_name(pid))
             raise HTTPException(status_code=502, detail=detail) from e
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail={"upstream": user_backend_name(pid), "error": str(e)}) from e
@@ -394,7 +413,7 @@ async def call_user_chat(req: ChatCompletionRequest, *, model_id: str, settings:
                 out["model"] = model_id
             return out
         except httpx.HTTPStatusError as e:
-            detail = {"upstream": user_backend_name(provider), "status": e.response.status_code, "body": e.response.text[:5000]}
+            detail = await _http_status_error_detail(e, upstream=user_backend_name(provider))
             raise HTTPException(status_code=502, detail=detail) from e
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail={"upstream": user_backend_name(provider), "error": str(e)}) from e
@@ -493,7 +512,7 @@ async def stream_user_chat_as_openai(req: ChatCompletionRequest, *, model_id: st
                 async for chunk in passthrough_sse(r):
                     yield chunk
         except httpx.HTTPStatusError as e:
-            detail = {"upstream": user_backend_name(provider), "status": e.response.status_code, "body": e.response.text[:5000]}
+            detail = await _http_status_error_detail(e, upstream=user_backend_name(provider))
             yield sse({"error": {"message": "Upstream error", "type": "upstream_error", "param": None, "code": None, "detail": detail}})
             yield sse_done()
         except httpx.RequestError as e:
