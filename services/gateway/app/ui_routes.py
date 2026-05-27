@@ -93,6 +93,8 @@ class ModelPrefetchRequest(BaseModel):
 _UI_MODELS_CACHE_LOCK = asyncio.Lock()
 _UI_MODELS_CACHE_VALUE: Optional[Dict[str, Any]] = None
 _UI_MODELS_CACHE_EXPIRES_AT: float = 0.0
+_ADMIN_MLX_CACHE_SYNC_LOCK = asyncio.Lock()
+_ADMIN_MLX_CACHE_SYNC_EXPIRES_AT: float = 0.0
 
 _IMAGE_BACKEND_LABELS: Dict[str, str] = {
     "gpu_fast": "SDXL-Turbo",
@@ -291,6 +293,28 @@ def _ui_model_cache_details(backend_name: str, model_name: str) -> Dict[str, Any
     if backend_provider_name(backend_name) != "mlx":
         return {"state": None, "fetch_activity": None}
     return hf_model_cache_details(model_name)
+
+
+async def _sync_mlx_cache_status_best_effort() -> None:
+    global _ADMIN_MLX_CACHE_SYNC_EXPIRES_AT
+
+    current_time = time.time()
+    if current_time < _ADMIN_MLX_CACHE_SYNC_EXPIRES_AT:
+        return
+
+    async with _ADMIN_MLX_CACHE_SYNC_LOCK:
+        current_time = time.time()
+        if current_time < _ADMIN_MLX_CACHE_SYNC_EXPIRES_AT:
+            return
+        _ADMIN_MLX_CACHE_SYNC_EXPIRES_AT = current_time + 20.0
+        try:
+            await call_lifecycle_manager(
+                "POST",
+                "/v1/lifecycle/mlx/cache-status/sync",
+                timeout=max(5.0, min(15.0, lifecycle_timeout())),
+            )
+        except Exception:
+            logger.debug("MLX cache status sync failed", exc_info=True)
 
 
 def _ui_alias_is_chat_selector(alias_name: str, alias: Any, registry: Any) -> bool:
@@ -4369,6 +4393,7 @@ async def ui_uploaded_file(req: Request, name: str):
 @router.get("/ui/api/admin/models", include_in_schema=False)
 async def ui_admin_models(req: Request) -> Dict[str, Any]:
     _require_admin(req)
+    await _sync_mlx_cache_status_best_effort()
 
     now = now_unix()
     registry = get_registry()

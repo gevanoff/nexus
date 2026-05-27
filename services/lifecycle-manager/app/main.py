@@ -936,6 +936,31 @@ class LifecycleManager:
             "backend": self._backend_status(backend),
         }
 
+    async def sync_mlx_cache_status(self) -> Dict[str, Any]:
+        backend = self._backend_or_404("local_mlx")
+        host = self.hosts.get(backend.host)
+        if host is None:
+            raise HTTPException(status_code=400, detail=f"unknown host {backend.host}")
+
+        command = (
+            f"cd {shlex.quote(host.repo_dir)} && "
+            "if [ ! -x deploy/scripts/sync-mlx-cache-status.sh ]; then "
+            "echo 'sync-mlx-cache-status.sh helper not found' >&2; exit 127; "
+            "fi; "
+            "./deploy/scripts/sync-mlx-cache-status.sh"
+        )
+        try:
+            stdout = await self._ssh(host, command, timeout=30)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"MLX cache status sync failed: {exc}") from exc
+        return {
+            "ok": True,
+            "decision": "cache_status_synced",
+            "backend_class": backend.backend_class,
+            "host": backend.host,
+            "stdout": stdout.strip(),
+        }
+
     def notify(self, req: NotifyRequest) -> Dict[str, Any]:
         backend = self._backend_or_404(req.backend_class)
         event = req.event.strip().lower()
@@ -2251,6 +2276,11 @@ async def lifecycle_action(req: ActionRequest) -> Dict[str, Any]:
 @app.post("/v1/lifecycle/mlx/prefetch")
 async def lifecycle_mlx_prefetch(req: MlxPrefetchRequest) -> Dict[str, Any]:
     return await manager.prefetch_mlx_model(req)
+
+
+@app.post("/v1/lifecycle/mlx/cache-status/sync")
+async def lifecycle_mlx_cache_status_sync() -> Dict[str, Any]:
+    return await manager.sync_mlx_cache_status()
 
 
 @app.post("/v1/lifecycle/notify")
