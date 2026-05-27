@@ -6,8 +6,8 @@
       "tools": false
     },
     "default": {
-      "backend": "local_mlx",
-      "model": "mlx-community/MiniMax-M2.5-8bit",
+      "backend": "local_vllm",
+      "model": "unsloth/Qwen3-30B-A3B-FP8",
       "tools": true
     },
     "mlx": {
@@ -16,13 +16,13 @@
       "tools": true
     },
     "coder": {
-      "backend": "local_mlx",
-      "model": "mlx-community/GLM-5-4bit",
+      "backend": "local_vllm",
+      "model": "unsloth/Qwen3-30B-A3B-FP8",
       "tools": true
     },
     "reasoning": {
-      "backend": "local_mlx",
-      "model": "mlx-community/DeepSeek-R1-0528-4bit",
+      "backend": "local_vllm",
+      "model": "unsloth/Qwen3-30B-A3B-FP8",
       "tools": true,
       "max_tokens_cap": 2048
     },

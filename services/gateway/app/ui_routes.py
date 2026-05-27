@@ -5109,7 +5109,8 @@ async def _stream_ui_chat(
         yield sse({"type": "done"})
         yield sse_done()
     finally:
-        admission.release(backend_class, "chat")
+        if admission is not None:
+            admission.release(backend_class, "chat")
 
 
 async def _stream_ui_command_events(pre_events: list | None = None):

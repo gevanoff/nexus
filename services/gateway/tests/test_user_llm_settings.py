@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -185,6 +186,7 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "Session expired. Redirecting to sign in..." in js
     assert "window.location.replace(`/ui/login?next=${back}`)" in js
     assert "settings_logout" in html
+    assert '/static/chat.js?v=16' in html
     assert "/ui/api/auth/logout" in js
     assert "resolveRequestedChatModel" in js
     assert "settings-models" not in html
@@ -193,6 +195,21 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/api/admin/models" in admin_models_js
     assert "/ui/api/admin/models/prefetch" in admin_models_js
     assert "Restart fetch" in admin_models_js
+
+
+def test_canonical_chat_aliases_use_working_vllm_lane():
+    aliases_path = os.path.join(os.path.dirname(__file__), "..", "app", "model_aliases.json")
+    with open(aliases_path, encoding="utf-8") as f:
+        payload = json.load(f)
+
+    aliases = payload["aliases"]
+
+    assert aliases["default"]["backend"] == "local_vllm"
+    assert aliases["default"]["model"] == "unsloth/Qwen3-30B-A3B-FP8"
+    assert aliases["coder"]["backend"] == "local_vllm"
+    assert aliases["coder"]["model"] == "unsloth/Qwen3-30B-A3B-FP8"
+    assert aliases["reasoning"]["backend"] == "local_vllm"
+    assert aliases["reasoning"]["model"] == "unsloth/Qwen3-30B-A3B-FP8"
 
 
 def test_user_llm_available_models_include_selected_models():
@@ -746,3 +763,26 @@ async def test_ui_stream_reports_empty_upstream_response():
     assert any(b'"type":"empty_response"' in chunk for chunk in chunks)
     assert chunks[-1] == b"data: [DONE]\n\n"
     assert admission.released is True
+
+
+@pytest.mark.asyncio
+async def test_ui_stream_handles_missing_admission_controller():
+    async def upstream():
+        yield b"data: [DONE]\n\n"
+
+    chunks = [
+        chunk
+        async for chunk in ui_routes._stream_ui_chat(
+            upstream(),
+            backend="user_llm:openai",
+            upstream_model="gpt-test",
+            route=SimpleNamespace(reason="user_llm_settings"),
+            conversation_id="",
+            user=None,
+            backend_class="user_llm:openai",
+            admission=None,
+        )
+    ]
+
+    assert any(b'"type":"empty_response"' in chunk for chunk in chunks)
+    assert chunks[-1] == b"data: [DONE]\n\n"
