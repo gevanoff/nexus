@@ -18,9 +18,10 @@ services:
       - HEARTMULA_REPO_REF=${HEARTMULA_REPO_REF:-}
       - HEARTMULA_UPDATE_ON_START=${HEARTMULA_UPDATE_ON_START:-false}
       - HEARTMULA_TIMEOUT_SEC=${HEARTMULA_TIMEOUT_SEC:-1200}
-      - HF_HOME=/data/huggingface
+      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
       - ./.runtime/heartmula:/data
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     gpus: all
     networks:
       - nexus

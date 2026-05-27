@@ -17,7 +17,8 @@ services:
       - MLX_MODEL_PATH=${MLX_MODEL_PATH:-mlx-community/Qwen3-30B-A3B-4bit}
       - MLX_MODEL_TYPE=${MLX_MODEL_TYPE:-lm}
       - MLX_CONFIG_PATH=${MLX_CONFIG_PATH:-/var/lib/mlx/config/config.yaml}
-      - HF_HOME=/var/lib/mlx/cache/huggingface
+      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
       - XDG_CACHE_HOME=/var/lib/mlx/cache
     volumes:
       - ./.runtime/mlx/cache:/var/lib/mlx/cache

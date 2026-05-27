@@ -14,13 +14,14 @@ services:
       - SKYREELS_UPDATE_ON_START=${SKYREELS_UPDATE_ON_START:-false}
       - SKYREELS_TIMEOUT_SEC=${SKYREELS_TIMEOUT_SEC:-3600}
       - SKYREELS_OUTPUT_ROOT=${SKYREELS_OUTPUT_ROOT:-/data/outputs}
-      - HF_HOME=${SKYREELS_HF_HOME:-/data/cache/huggingface}
-      - HUGGINGFACE_HUB_CACHE=${SKYREELS_HUGGINGFACE_HUB_CACHE:-/data/cache/huggingface/hub}
-      - TRANSFORMERS_CACHE=${SKYREELS_TRANSFORMERS_CACHE:-/data/cache/huggingface/transformers}
+      - HF_HOME=${SKYREELS_HF_HOME:-${HF_HOME:-/var/lib/huggingface}}
+      - HUGGINGFACE_HUB_CACHE=${SKYREELS_HUGGINGFACE_HUB_CACHE:-${SKYREELS_HF_HOME:-${HF_HOME:-/var/lib/huggingface}}/hub}
+      - TRANSFORMERS_CACHE=${SKYREELS_TRANSFORMERS_CACHE:-${SKYREELS_HF_HOME:-${HF_HOME:-/var/lib/huggingface}}/transformers}
       - XDG_CACHE_HOME=${SKYREELS_XDG_CACHE_HOME:-/data/cache}
       - TORCH_HOME=${SKYREELS_TORCH_HOME:-/data/cache/torch}
     volumes:
       - ./.runtime/skyreels-v2:/data
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${SKYREELS_HF_HOME:-${HF_HOME:-/var/lib/huggingface}}
     gpus: all
     networks:
       - nexus

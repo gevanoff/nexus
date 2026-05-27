@@ -5,7 +5,7 @@ services:
     ports:
       - "${VLLM_PORT:-8000}:8000"
     environment:
-      - HF_HOME=/root/.cache/huggingface
+      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
     command:
       - --host
@@ -23,7 +23,7 @@ services:
       - --max-model-len
       - ${VLLM_MAX_MODEL_LEN:-32768}
     volumes:
-      - ../.runtime/vllm/cache:/root/.cache/huggingface
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus
     restart: unless-stopped

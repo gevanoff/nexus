@@ -47,7 +47,7 @@ services:
     volumes:
       - ./.runtime/qwen3-tts/data:/var/lib/qwen3-tts
       - ./.runtime/tts_refs:/var/lib/tts_refs:ro
-      - ./.runtime/huggingface:/var/lib/huggingface
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus
     restart: unless-stopped

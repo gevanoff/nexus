@@ -6,10 +6,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 if [[ -n "${MLX_HF_CACHE_SOURCE_DIR:-}" ]]; then
   SRC="$MLX_HF_CACHE_SOURCE_DIR"
-elif [[ -d "/private/var/lib/mlx/cache/huggingface" ]]; then
-  SRC="/private/var/lib/mlx/cache/huggingface"
+elif [[ -n "${HF_HOME:-}" ]]; then
+  SRC="$HF_HOME"
+elif [[ -d "/private/var/lib/huggingface" ]]; then
+  SRC="/private/var/lib/huggingface"
 else
-  SRC="/var/lib/mlx/cache/huggingface"
+  SRC="/var/lib/huggingface"
 fi
 
 DST="${MLX_HF_CACHE_STATUS_DIR:-$ROOT_DIR/.runtime/gateway/mlx_hf_cache}"

@@ -6,7 +6,7 @@ services:
     ports:
       - "${VLLM_EMBEDDINGS_PORT:-8002}:8000"
     environment:
-      - HF_HOME=/root/.cache/huggingface
+      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - NVIDIA_VISIBLE_DEVICES=${VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES:-all}
@@ -35,7 +35,7 @@ services:
       - --cpu-offload-gb
       - "${VLLM_EMBEDDINGS_CPU_OFFLOAD_GB:-0}"
     volumes:
-      - ./.runtime/vllm/cache:/root/.cache/huggingface
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus
     restart: unless-stopped

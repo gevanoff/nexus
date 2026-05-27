@@ -4,7 +4,7 @@ services:
     ports:
       - "${DEV_VLLM_PORT:-18000}:8000"
     volumes:
-      - ../.runtime/vllm-dev/cache:/root/.cache/huggingface
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
 
 networks:
   nexus:

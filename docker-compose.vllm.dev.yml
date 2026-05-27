@@ -4,21 +4,21 @@ services:
     ports:
       - "${DEV_VLLM_PORT:-18000}:8000"
     volumes:
-      - ./.runtime/vllm-dev/cache:/root/.cache/huggingface
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
 
   vllm-fast:
     container_name: nexus-vllm-fast-dev
     ports:
       - "${DEV_VLLM_FAST_PORT:-18001}:8000"
     volumes:
-      - ./.runtime/vllm-dev/cache:/root/.cache/huggingface
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
 
   vllm-embeddings:
     container_name: nexus-vllm-embeddings-dev
     ports:
       - "${DEV_VLLM_EMBEDDINGS_PORT:-18002}:8000"
     volumes:
-      - ./.runtime/vllm-dev/cache:/root/.cache/huggingface
+      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
 
 networks:
   nexus:

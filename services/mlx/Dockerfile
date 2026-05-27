@@ -3,7 +3,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HF_HOME=/var/lib/mlx/cache/huggingface \
+    HF_HOME=/var/lib/huggingface \
     XDG_CACHE_HOME=/var/lib/mlx/cache
 
 WORKDIR /app
