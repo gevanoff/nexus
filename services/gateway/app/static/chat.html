@@ -355,6 +355,17 @@
       .settings-content { min-height: 0; overflow-y: auto; max-height: calc(100vh - 178px); padding-right: 4px; }
       .settings-section { display: none; flex-direction: column; gap: 8px; }
       .settings-section.active { display: flex; }
+      .model-admin-list { display: flex; flex-direction: column; gap: 10px; }
+      .model-admin-group { border: 1px solid rgba(231,237,246,0.08); border-radius: 8px; padding: 10px; background: rgba(9,14,22,0.55); }
+      .model-admin-title { font-weight: 650; font-size: 13px; margin-bottom: 6px; }
+      .model-admin-row { display: grid; grid-template-columns: minmax(120px, 0.9fr) minmax(180px, 1.4fr) minmax(150px, 1fr); gap: 8px; align-items: start; padding: 7px 0; border-top: 1px solid rgba(231,237,246,0.06); font-size: 12px; }
+      .model-admin-row:first-of-type { border-top: 0; }
+      .model-admin-muted { color: var(--muted); }
+      .model-admin-badges { display:flex; flex-wrap:wrap; gap:5px; }
+      .model-admin-badge { border:1px solid rgba(231,237,246,0.12); border-radius:999px; padding:2px 7px; color:#cbd6e5; background:rgba(231,237,246,0.06); }
+      .model-admin-badge.green { border-color:rgba(139,227,201,0.36); color:#9ff0d8; }
+      .model-admin-badge.red { border-color:rgba(255,130,130,0.36); color:#ffb4b4; }
+      .model-admin-badge.yellow { border-color:rgba(240,200,90,0.36); color:#f0d78f; }
       .user-llm-provider-card {
         border: 1px solid rgba(231,237,246,0.08);
         border-radius: 8px;
@@ -593,6 +604,7 @@
           <div class="settings-layout">
             <nav class="settings-menu">
               <button type="button" data-section="settings-backends" class="active" data-ui-role="menu">Backends</button>
+              <button type="button" data-section="settings-models" data-ui-role="menu">Models</button>
               <button type="button" data-section="settings-profile" data-ui-role="menu">Profile</button>
               <button type="button" data-section="settings-ui" data-ui-role="menu">UI</button>
               <button type="button" data-section="settings-coding" data-ui-role="menu">Coding</button>
@@ -611,6 +623,13 @@
                 <label>Preferred TTS voice
                   <select id="settings_tts_voice"><option value="">(default)</option></select>
                 </label>
+              </section>
+              <section id="settings-models" class="settings-section">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <button type="button" id="settings_models_refresh" data-ui-role="secondary">Refresh</button>
+                  <span id="settings_models_status" class="hint"></span>
+                </div>
+                <div id="settings_models_list" class="model-admin-list"></div>
               </section>
               <section id="settings-profile" class="settings-section">
                 <label>System prompt

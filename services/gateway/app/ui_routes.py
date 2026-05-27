@@ -40,7 +40,7 @@ from app.backends import (
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
-from app.model_availability import model_unavailable_reason
+from app.model_availability import fallback_target_for_backend, hf_model_cache_state, model_unavailable_reason
 from app.models import ChatCompletionRequest, ChatMessage
 from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
@@ -179,12 +179,34 @@ def _ui_runtime_selector_entries(
             resolved_model,
             advertised_models_by_backend=advertised_models_by_backend,
         )
+        fallback_backend = ""
+        fallback_model = ""
         if unavailable:
-            advertised = sorted((advertised_models_by_backend or {}).get(backend_name, set()))
-            if not advertised:
-                continue
-            resolved_model = advertised[0]
+            fallback = fallback_target_for_backend(backend_name)
+            if fallback:
+                fallback_backend, fallback_model = fallback
+                fallback_unavailable = _ui_model_unavailable_reason(
+                    fallback_backend,
+                    fallback_model,
+                    advertised_models_by_backend=advertised_models_by_backend,
+                )
+                if fallback_unavailable:
+                    fallback_backend = ""
+                    fallback_model = ""
+            if fallback_model:
+                resolved_model = fallback_model
+            else:
+                advertised = sorted((advertised_models_by_backend or {}).get(backend_name, set()))
+                resolved_model = ""
+                for candidate in advertised:
+                    if _ui_model_id_is_chat_candidate(candidate) and not model_unavailable_reason(backend_name, candidate):
+                        resolved_model = candidate
+                        break
+                if not resolved_model:
+                    continue
         label = f"{selector_id} -> {resolved_model}"
+        if fallback_model and fallback_backend:
+            label = f"{selector_id} -> {resolved_model} ({_ui_canonical_backend_selector_id(fallback_backend)} fallback; {unavailable})"
         if host:
             label = f"{label} @ {host}"
         item: Dict[str, Any] = {
@@ -197,6 +219,9 @@ def _ui_runtime_selector_entries(
             "is_runtime_selector": True,
             "label": label,
         }
+        if fallback_model and fallback_backend:
+            item["resolved_backend"] = fallback_backend
+            item["primary_model_unavailable"] = unavailable
         entries.append(_apply_model_location(item, location))
     return entries
 
@@ -231,14 +256,29 @@ def _ui_model_unavailable_reason(
     *,
     advertised_models_by_backend: Optional[Dict[str, set[str]]] = None,
 ) -> Optional[str]:
-    if _ui_is_advertised_model(advertised_models_by_backend, backend_name, model_name):
-        return None
     unavailable = model_unavailable_reason(backend_name, model_name)
     if unavailable:
         return unavailable
     if advertised_models_by_backend and (backend_name or "").strip() in advertised_models_by_backend:
+        if _ui_is_advertised_model(advertised_models_by_backend, backend_name, model_name):
+            return None
         return "not_advertised"
     return None
+
+
+def _ui_model_id_is_chat_candidate(model_id: str) -> bool:
+    value = (model_id or "").strip().lower()
+    if not value:
+        return False
+    if any(part in value for part in ("embedding", "bge-small", "bge_", "whisper")):
+        return False
+    return True
+
+
+def _ui_model_cache_state(backend_name: str, model_name: str) -> Optional[str]:
+    if backend_provider_name(backend_name) != "mlx":
+        return None
+    return hf_model_cache_state(model_name)
 
 
 def _ui_alias_is_chat_selector(alias_name: str, alias: Any, registry: Any) -> bool:
@@ -267,15 +307,17 @@ def _ui_alias_display_model(
     if not unavailable:
         return True, alias.upstream_model, None
 
-    fallback = (getattr(S, "MLX_FALLBACK_MODEL", "") or "").strip()
+    fallback = fallback_target_for_backend(backend_name)
+    fallback_backend = fallback[0] if fallback else ""
+    fallback_model = fallback[1] if fallback else ""
     fallback_unavailable = _ui_model_unavailable_reason(
-        backend_name,
-        fallback,
+        fallback_backend,
+        fallback_model,
         advertised_models_by_backend=advertised_models_by_backend,
-    )
-    if str(alias_name or "").strip().lower() in {"default", "mlx"} and fallback and not fallback_unavailable:
-        return True, fallback, unavailable
-    return True, alias.upstream_model, unavailable
+    ) if fallback_model else "unavailable"
+    if str(alias_name or "").strip().lower() in {"default", "mlx"} and fallback_model and not fallback_unavailable:
+        return True, fallback_model, unavailable
+    return False, alias.upstream_model, unavailable
 
 
 def _lighton_ocr_base_url() -> str:
@@ -4304,6 +4346,128 @@ async def ui_uploaded_file(req: Request, name: str):
     return FileResponse(full, media_type=media_type, headers=headers)
 
 
+@router.get("/ui/api/admin/models", include_in_schema=False)
+async def ui_admin_models(req: Request) -> Dict[str, Any]:
+    _require_admin(req)
+
+    now = now_unix()
+    registry = get_registry()
+    probe_timeout_sec = _ui_models_probe_timeout_sec()
+
+    async with _httpx_client(timeout=probe_timeout_sec) as client:
+        probe_defs = [(backend_name, cfg) for backend_name, cfg in llm_backends()]
+        probe_results = await asyncio.gather(
+            *[_probe_models_for_backend(client, registry, backend_name, cfg.base_url, now) for backend_name, cfg in probe_defs],
+            return_exceptions=True,
+        )
+
+    source_diags: Dict[str, Any] = {}
+    probed_items: list[Dict[str, Any]] = []
+    for (backend_name, _cfg), result in zip(probe_defs, probe_results):
+        if isinstance(result, Exception):
+            source_diags[backend_name] = {"backend": backend_name, "ok": False, "error": str(result)}
+            continue
+        items, diag = result
+        probed_items.extend(items)
+        source_diags[backend_name] = diag
+
+    advertised_models_by_backend = _ui_advertised_models_by_backend(probed_items)
+    aliases = get_aliases()
+
+    model_rows: Dict[tuple[str, str], Dict[str, Any]] = {}
+
+    def ensure_model_row(backend_name: str, model_name: str, *, advertised: bool = False) -> Dict[str, Any]:
+        resolved_backend = registry.resolve_backend_class(backend_name) or backend_name
+        key = (resolved_backend, model_name)
+        row = model_rows.get(key)
+        if row is None:
+            unavailable = model_unavailable_reason(resolved_backend, model_name)
+            cache_state = _ui_model_cache_state(resolved_backend, model_name)
+            row = {
+                "backend": resolved_backend,
+                "provider": backend_provider_name(resolved_backend),
+                "model": model_name,
+                "cache_state": cache_state,
+                "unavailable_reason": unavailable,
+                "advertised": False,
+                "chat_candidate": _ui_model_id_is_chat_candidate(model_name),
+                "selectable": not unavailable and _ui_model_id_is_chat_candidate(model_name),
+                "aliases": [],
+            }
+            model_rows[key] = row
+        if advertised:
+            row["advertised"] = True
+        return row
+
+    for item in probed_items:
+        backend_name = str(item.get("backend") or "").strip()
+        model_name = str(item.get("upstream_model") or "").strip()
+        if backend_name and model_name:
+            ensure_model_row(backend_name, model_name, advertised=True)
+
+    alias_rows: list[Dict[str, Any]] = []
+    for alias_name in sorted(aliases.keys()):
+        alias = aliases[alias_name]
+        resolved_backend = registry.resolve_backend_class(alias.backend) or alias.backend
+        show_alias, effective_model, unavailable = _ui_alias_display_model(
+            alias_name,
+            alias,
+            registry,
+            advertised_models_by_backend=advertised_models_by_backend,
+        )
+        effective_backend = resolved_backend
+        fallback = fallback_target_for_backend(resolved_backend)
+        if unavailable and fallback and fallback[1] == effective_model:
+            effective_backend = fallback[0]
+
+        configured_row = ensure_model_row(resolved_backend, alias.upstream_model)
+        configured_row.setdefault("aliases", []).append(alias_name)
+        if effective_backend != resolved_backend or effective_model != alias.upstream_model:
+            ensure_model_row(effective_backend, effective_model).setdefault("aliases", []).append(f"{alias_name} (fallback)")
+
+        alias_rows.append(
+            {
+                "alias": alias_name,
+                "backend": resolved_backend,
+                "configured_model": alias.upstream_model,
+                "effective_backend": effective_backend,
+                "effective_model": effective_model,
+                "visible": bool(show_alias),
+                "unavailable_reason": unavailable,
+                "tools": alias.tools,
+                "context_window": alias.context_window,
+                "max_tokens_cap": alias.max_tokens_cap,
+                "temperature_cap": alias.temperature_cap,
+            }
+        )
+
+    backend_rows: list[Dict[str, Any]] = []
+    checker = get_health_checker()
+    for backend_name, cfg in llm_backends():
+        status = checker.get_status(backend_name)
+        backend_rows.append(
+            {
+                "backend": backend_name,
+                "provider": backend_provider_name(backend_name),
+                "base_url": cfg.base_url,
+                "hostname": backend_hostname(backend_name, registry=registry, fallback_base_url=cfg.base_url),
+                "healthy": status.is_healthy if status else None,
+                "ready": status.is_ready if status else None,
+                "error": status.error if status else None,
+                "advertised_models": sorted(advertised_models_by_backend.get(backend_name, set())),
+            }
+        )
+
+    return {
+        "generated_at": now,
+        "alias_config": get_aliases_state().__dict__,
+        "backends": backend_rows,
+        "aliases": alias_rows,
+        "models": sorted(model_rows.values(), key=lambda row: (str(row.get("backend") or ""), str(row.get("model") or ""))),
+        "diagnostics": {"sources": source_diags, "probe_timeout_sec": probe_timeout_sec},
+    }
+
+
 @router.get("/ui/api/models", include_in_schema=False)
 async def ui_models(req: Request) -> Dict[str, Any]:
     global _UI_MODELS_CACHE_VALUE, _UI_MODELS_CACHE_EXPIRES_AT
@@ -4398,7 +4562,11 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         item["resolved_model"] = display_model
         if unavailable:
             item["primary_model_unavailable"] = unavailable
-            item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(a.backend)} fallback; {a.upstream_model} {unavailable})"
+            resolved_backend = registry.resolve_backend_class(a.backend) or a.backend
+            fallback = fallback_target_for_backend(resolved_backend)
+            fallback_backend = fallback[0] if fallback and fallback[1] == display_model else resolved_backend
+            item["resolved_backend"] = fallback_backend
+            item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(fallback_backend)} fallback; {a.upstream_model} {unavailable})"
         else:
             item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(a.backend)})"
         if a.context_window:
@@ -4422,6 +4590,16 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         )
 
     for item in probed_items:
+        backend_name = str(item.get("backend") or "").strip()
+        upstream_model = str(item.get("upstream_model") or "").strip()
+        hidden_reason = model_unavailable_reason(backend_name, upstream_model)
+        if hidden_reason or not _ui_model_id_is_chat_candidate(upstream_model):
+            source_diags.setdefault("hidden_probed_models", {})[str(item.get("id") or upstream_model)] = {
+                "backend": backend_name,
+                "model": upstream_model,
+                "reason": hidden_reason or "not_chat",
+            }
+            continue
         add_ui_model_item(item)
 
     diagnostics: Dict[str, Any] = {

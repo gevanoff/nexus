@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
+from app import model_availability
 from app.model_availability import hf_model_cache_state
+
+
+@dataclass(frozen=True)
+class Route:
+    backend: str
+    model: str
+    reason: str
 
 
 def test_hf_model_cache_state_detects_hub_and_direct_layouts(tmp_path):
@@ -25,3 +34,19 @@ def test_hf_model_cache_state_detects_hub_and_direct_layouts(tmp_path):
     (hub / "snapshots" / "def456").mkdir(parents=True)
     (hub / "snapshots" / "def456" / "config.json").write_text("{}", encoding="utf-8")
     assert hf_model_cache_state(model, str(tmp_path)) == "cached"
+
+
+def test_route_with_model_fallback_can_switch_to_fast_backend(monkeypatch):
+    monkeypatch.setattr(model_availability.S, "MLX_FALLBACK_BACKEND", "local_vllm_fast", raising=False)
+    monkeypatch.setattr(model_availability.S, "MLX_FALLBACK_MODEL", "fast-model", raising=False)
+
+    def unavailable(backend, model):
+        return "fetching" if backend == "local_mlx" and model == "minimax" else None
+
+    monkeypatch.setattr(model_availability, "model_unavailable_reason", unavailable)
+
+    route = model_availability.route_with_model_fallback(Route("local_mlx", "minimax", "alias:model"))
+
+    assert route.backend == "local_vllm_fast"
+    assert route.model == "fast-model"
+    assert route.reason == "alias:model->fallback:fetching:local_mlx:minimax"

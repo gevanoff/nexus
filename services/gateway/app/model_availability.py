@@ -58,17 +58,47 @@ def model_unavailable_reason(backend: str, model: str) -> Optional[str]:
     return None
 
 
+def fallback_target_for_backend(backend: str) -> Optional[tuple[str, str]]:
+    if backend_provider_name(backend) != "mlx":
+        return None
+
+    fallback_backend = (getattr(S, "MLX_FALLBACK_BACKEND", "") or backend or "").strip()
+    if not fallback_backend:
+        return None
+
+    fallback_model = (getattr(S, "MLX_FALLBACK_MODEL", "") or "").strip()
+    fallback_provider = backend_provider_name(fallback_backend)
+    if not fallback_model:
+        if fallback_provider == "vllm":
+            fallback_model = (getattr(S, "VLLM_MODEL_FAST", "") or getattr(S, "VLLM_MODEL_DEFAULT", "") or "").strip()
+        elif fallback_provider == "mlx":
+            fallback_model = (getattr(S, "MLX_MODEL_FAST", "") or getattr(S, "MLX_MODEL_DEFAULT", "") or "").strip()
+
+    if not fallback_model:
+        return None
+    return fallback_backend, fallback_model
+
+
 def route_with_model_fallback(route):
     reason = model_unavailable_reason(route.backend, route.model)
     if not reason:
         return route
 
-    fallback = (getattr(S, "MLX_FALLBACK_MODEL", "") or "").strip()
-    if not fallback or fallback == route.model:
+    fallback = fallback_target_for_backend(route.backend)
+    if not fallback:
+        return route
+    fallback_backend, fallback_model = fallback
+
+    if fallback_backend == route.backend and fallback_model == route.model:
         return route
 
-    fallback_reason = model_unavailable_reason(route.backend, fallback)
+    fallback_reason = model_unavailable_reason(fallback_backend, fallback_model)
     if fallback_reason:
         return route
 
-    return replace(route, model=fallback, reason=f"{route.reason}->fallback:{reason}:{route.model}")
+    return replace(
+        route,
+        backend=fallback_backend,
+        model=fallback_model,
+        reason=f"{route.reason}->fallback:{reason}:{route.backend}:{route.model}",
+    )

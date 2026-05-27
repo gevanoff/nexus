@@ -238,7 +238,8 @@ class Settings(BaseSettings):
     MLX_MODEL_STRONG: str = "mlx-community/MiniMax-M2.5-8bit"
     MLX_MODEL_FAST: str = "mlx-community/MiniMax-M2.5-8bit"
     MLX_MODEL_DEFAULT: str = "mlx-community/MiniMax-M2.5-8bit"
-    MLX_FALLBACK_MODEL: str = "mlx-community/Phi-4-reasoning-plus-4bit"
+    MLX_FALLBACK_BACKEND: str = "local_vllm_fast"
+    MLX_FALLBACK_MODEL: str = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
     MLX_HF_CACHE_DIR: str = "/var/lib/gateway/mlx_hf_cache"
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
