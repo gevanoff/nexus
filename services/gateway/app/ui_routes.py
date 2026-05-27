@@ -3010,6 +3010,14 @@ async def ui_admin_users(req: Request) -> HTMLResponse:
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
+@router.get("/ui/admin/models", include_in_schema=False)
+async def ui_admin_models_page(req: Request) -> HTMLResponse:
+    _require_ui_access(req)
+    # Only render the page; the page will call the admin APIs which enforce admin privileges.
+    html_path = Path(__file__).with_name("static").joinpath("admin_models.html")
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
 @router.post("/ui/api/music", include_in_schema=False)
 async def ui_api_music(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)

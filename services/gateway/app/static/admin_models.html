@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Nexus Model Admin</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0d12;
+        --panel: #111821;
+        --border: rgba(231,237,246,0.12);
+        --text: #e7edf6;
+        --muted: #a9b4c3;
+        --accent: #6fb8ff;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(111,184,255,0.16), transparent 60%),
+          radial-gradient(900px 500px at 80% 0%, rgba(139,227,201,0.12), transparent 55%),
+          linear-gradient(180deg, #0a0d12 0%, #0c1016 100%);
+        color: var(--text);
+      }
+      main { max-width: 1180px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 16px; font-weight: 650; }
+      .hint { font-size: 12px; color: var(--muted); }
+      .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .pill { display:inline-flex; gap:8px; align-items:center; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); color: var(--text); text-decoration:none; }
+      .card { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 8px; padding: 12px; box-shadow: 0 12px 30px rgba(6,10,16,0.35); }
+      button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); color: var(--text); cursor:pointer; background: linear-gradient(180deg, rgba(22,28,38,0.95), rgba(15,20,28,0.95)); }
+      button:hover { border-color: rgba(111,184,255,0.44); }
+      .model-admin-list { display: flex; flex-direction: column; gap: 10px; }
+      .model-admin-group { border: 1px solid rgba(231,237,246,0.08); border-radius: 8px; padding: 10px; background: rgba(9,14,22,0.55); }
+      .model-admin-title { font-weight: 650; font-size: 13px; margin-bottom: 6px; }
+      .model-admin-row { display: grid; grid-template-columns: minmax(150px, 0.9fr) minmax(220px, 1.4fr) minmax(180px, 1fr); gap: 8px; align-items: start; padding: 7px 0; border-top: 1px solid rgba(231,237,246,0.06); font-size: 12px; }
+      .model-admin-row:first-of-type { border-top: 0; }
+      .model-admin-name { overflow-wrap: anywhere; }
+      .model-admin-muted { color: var(--muted); overflow-wrap: anywhere; }
+      .model-admin-badges { display:flex; flex-wrap:wrap; gap:5px; }
+      .model-admin-badge { border:1px solid rgba(231,237,246,0.12); border-radius:999px; padding:2px 7px; color:#cbd6e5; background:rgba(231,237,246,0.06); }
+      .model-admin-badge.green { border-color:rgba(139,227,201,0.36); color:#9ff0d8; }
+      .model-admin-badge.red { border-color:rgba(255,130,130,0.36); color:#ffb4b4; }
+      .model-admin-badge.yellow { border-color:rgba(240,200,90,0.36); color:#f0d78f; }
+      @media (max-width: 820px) {
+        .model-admin-row { grid-template-columns: 1fr; }
+      }
+    </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Nexus model admin</h1>
+          <div class="hint">Model aliases, backend availability, cache state, and fallback routing.</div>
+        </div>
+        <div class="row">
+          <a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a>
+          <button id="admin_models_refresh" type="button" data-ui-role="secondary">Refresh</button>
+        </div>
+      </header>
+
+      <section class="card">
+        <div id="admin_models_status" class="hint" style="margin-bottom:10px">Loading...</div>
+        <div id="admin_models_list" class="model-admin-list"></div>
+      </section>
+    </main>
+    <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/focused_nav.js?v=6"></script>
+    <script src="/static/admin_models.js?v=1"></script>
+  </body>
+</html>

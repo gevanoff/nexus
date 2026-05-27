@@ -174,13 +174,15 @@
     return window.location.pathname.replace(/\/+$/, "");
   }
 
-  async function exposeAdminLink(adminLink) {
+  async function exposeAdminLink(...adminLinks) {
     try {
       const resp = await fetch("/ui/api/auth/me", { method: "GET", credentials: "same-origin" });
       if (!resp.ok) return;
       const payload = await resp.json();
       if (payload?.authenticated && payload?.user?.admin) {
-        adminLink.hidden = false;
+        adminLinks.forEach((adminLink) => {
+          if (adminLink) adminLink.hidden = false;
+        });
       }
     } catch (error) {}
   }
@@ -300,6 +302,12 @@
       item.textContent = label;
       menu.appendChild(item);
     });
+    const modelAdmin = document.createElement("a");
+    modelAdmin.href = "/ui/admin/models";
+    modelAdmin.textContent = "Model Admin";
+    modelAdmin.hidden = true;
+    menu.appendChild(modelAdmin);
+
     const admin = document.createElement("a");
     admin.href = "/ui/admin/users";
     admin.textContent = "Admin UI";
@@ -336,7 +344,7 @@
       appsBtn.setAttribute("aria-expanded", "false");
       menu.setAttribute("aria-hidden", "true");
     });
-    void exposeAdminLink(admin);
+    void exposeAdminLink(modelAdmin, admin);
   }
 
   if (document.readyState === "loading") {

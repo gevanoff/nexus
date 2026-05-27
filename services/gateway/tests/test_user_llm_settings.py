@@ -168,6 +168,10 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
         html = f.read()
     with open(os.path.join(root, "chat.js"), encoding="utf-8") as f:
         js = f.read()
+    with open(os.path.join(root, "admin_models.html"), encoding="utf-8") as f:
+        admin_models_html = f.read()
+    with open(os.path.join(root, "admin_models.js"), encoding="utf-8") as f:
+        admin_models_js = f.read()
 
     assert ".user-llm-provider-card.key-saved" in html
     assert "settings_user_llm_openai_load_models" in html
@@ -178,8 +182,10 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "settings_user_llm_openai_models_list" in html
     assert "settings_user_llm_openai_select_all_models" in html
     assert "available_models" in js
-    assert "settings-models" in html
-    assert "/ui/api/admin/models" in js
+    assert "settings-models" not in html
+    assert "/ui/admin/models" in html
+    assert "Nexus model admin" in admin_models_html
+    assert "/ui/api/admin/models" in admin_models_js
 
 
 def test_user_llm_available_models_include_selected_models():

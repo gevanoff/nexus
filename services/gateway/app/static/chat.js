@@ -2125,9 +2125,7 @@
         ? 'settings-security'
         : requested === 'coding'
           ? 'settings-coding'
-          : requested === 'models'
-            ? 'settings-models'
-            : requested === 'llms'
+          : requested === 'llms'
               ? 'settings-llms'
               : requested === 'telegram'
                 ? 'settings-telegram'
@@ -2317,9 +2315,6 @@
 
         modal.setAttribute('aria-hidden', 'false');
         setSettingsSection(sectionId || 'settings-backends');
-        if ((sectionId || '') === 'settings-models' || (sectionId || '') === 'models') {
-          void loadModelManagement();
-        }
         const close = document.getElementById('settingsClose');
         if (close) close.focus();
       })();
@@ -2661,120 +2656,6 @@
         setModelOptionLabels([]);
         _setModelOptions(["default"], userSettings.preferredModel || "default");
         addMessage({ role: "system", content: `Models error: ${String(e)}` });
-      }
-    }
-
-    function modelAdminBadge(text, tone) {
-      const badge = document.createElement("span");
-      badge.className = `model-admin-badge${tone ? ` ${tone}` : ""}`;
-      badge.textContent = text;
-      return badge;
-    }
-
-    function modelAdminRow(left, middle, badges) {
-      const row = document.createElement("div");
-      row.className = "model-admin-row";
-      const a = document.createElement("div");
-      a.textContent = left;
-      const b = document.createElement("div");
-      b.textContent = middle;
-      b.className = "model-admin-muted";
-      const c = document.createElement("div");
-      c.className = "model-admin-badges";
-      (badges || []).forEach((item) => c.appendChild(modelAdminBadge(item.text, item.tone)));
-      row.appendChild(a);
-      row.appendChild(b);
-      row.appendChild(c);
-      return row;
-    }
-
-    function renderModelManagement(payload) {
-      const list = document.getElementById("settings_models_list");
-      const status = document.getElementById("settings_models_status");
-      if (!list) return;
-      list.innerHTML = "";
-      if (status) status.textContent = payload?.generated_at ? `Updated ${formatTimestamp(Number(payload.generated_at))}` : "";
-
-      const aliases = Array.isArray(payload?.aliases) ? payload.aliases : [];
-      const models = Array.isArray(payload?.models) ? payload.models : [];
-      const backends = Array.isArray(payload?.backends) ? payload.backends : [];
-
-      const aliasGroup = document.createElement("div");
-      aliasGroup.className = "model-admin-group";
-      const aliasTitle = document.createElement("div");
-      aliasTitle.className = "model-admin-title";
-      aliasTitle.textContent = "Aliases";
-      aliasGroup.appendChild(aliasTitle);
-      if (!aliases.length) {
-        aliasGroup.appendChild(modelAdminRow("None", "", []));
-      } else {
-        aliases.forEach((alias) => {
-          const effective = `${alias.effective_backend || alias.backend}:${alias.effective_model || ""}`;
-          const configured = `${alias.backend || ""}:${alias.configured_model || ""}`;
-          const badges = [
-            { text: alias.visible ? "visible" : "hidden", tone: alias.visible ? "green" : "red" },
-          ];
-          if (alias.unavailable_reason) badges.push({ text: alias.unavailable_reason, tone: "yellow" });
-          aliasGroup.appendChild(modelAdminRow(alias.alias || "", `${configured} -> ${effective}`, badges));
-        });
-      }
-      list.appendChild(aliasGroup);
-
-      const modelGroup = document.createElement("div");
-      modelGroup.className = "model-admin-group";
-      const modelTitle = document.createElement("div");
-      modelTitle.className = "model-admin-title";
-      modelTitle.textContent = "Models";
-      modelGroup.appendChild(modelTitle);
-      if (!models.length) {
-        modelGroup.appendChild(modelAdminRow("None", "", []));
-      } else {
-        models.forEach((model) => {
-          const badges = [
-            { text: model.selectable ? "selectable" : "not selectable", tone: model.selectable ? "green" : "red" },
-          ];
-          if (model.cache_state) badges.push({ text: model.cache_state, tone: model.cache_state === "cached" ? "green" : "yellow" });
-          if (model.unavailable_reason) badges.push({ text: model.unavailable_reason, tone: "yellow" });
-          if (model.cache_only) badges.push({ text: "cache only", tone: "yellow" });
-          if (model.advertised) badges.push({ text: "advertised", tone: "" });
-          const aliasText = Array.isArray(model.aliases) && model.aliases.length ? `aliases: ${model.aliases.join(", ")}` : model.provider || "";
-          modelGroup.appendChild(modelAdminRow(`${model.backend || ""}:${model.model || ""}`, aliasText, badges));
-        });
-      }
-      list.appendChild(modelGroup);
-
-      const backendGroup = document.createElement("div");
-      backendGroup.className = "model-admin-group";
-      const backendTitle = document.createElement("div");
-      backendTitle.className = "model-admin-title";
-      backendTitle.textContent = "Backends";
-      backendGroup.appendChild(backendTitle);
-      backends.forEach((backend) => {
-        const badges = [
-          { text: backend.ready === true ? "ready" : backend.ready === false ? "not ready" : "unknown", tone: backend.ready === true ? "green" : backend.ready === false ? "red" : "yellow" },
-        ];
-        if (backend.error) badges.push({ text: String(backend.error).slice(0, 80), tone: "red" });
-        backendGroup.appendChild(modelAdminRow(backend.backend || "", backend.hostname || backend.base_url || "", badges));
-      });
-      list.appendChild(backendGroup);
-    }
-
-    async function loadModelManagement() {
-      const status = document.getElementById("settings_models_status");
-      const list = document.getElementById("settings_models_list");
-      if (status) status.textContent = "Loading...";
-      try {
-        const resp = await fetch("/ui/api/admin/models", { method: "GET", credentials: "same-origin" });
-        const text = await resp.text();
-        if (handle401(resp)) return;
-        if (!resp.ok) {
-          if (status) status.textContent = resp.status === 403 ? "Admin required." : `HTTP ${resp.status}`;
-          if (list) list.innerHTML = "";
-          return;
-        }
-        renderModelManagement(JSON.parse(text));
-      } catch (e) {
-        if (status) status.textContent = `Error: ${String(e)}`;
       }
     }
 
@@ -3439,6 +3320,10 @@
       try {
         const params = new URLSearchParams(window.location.search || "");
         const requestedSettings = params.get("settings") || "";
+        if (requestedSettings.toLowerCase() === "models") {
+          window.location.href = "/ui/admin/models";
+          return;
+        }
         if (requestedSettings || window.location.hash === "#settings") {
           const section = requestedSettings ? `settings-${requestedSettings}` : "";
           window.setTimeout(() => openSettings(section), 0);
@@ -3510,16 +3395,14 @@
           const target = btn.dataset.section;
           if (target) {
             setSettingsSection(target);
-            if (target === "settings-models") void loadModelManagement();
           }
         });
       });
-      const settingsModelsRefresh = document.getElementById("settings_models_refresh");
-      if (settingsModelsRefresh) settingsModelsRefresh.addEventListener("click", () => void loadModelManagement());
       // Apps menu: toggle and admin-only link visibility
       const appsBtnEl = document.getElementById('appsBtn');
       const appsMenuEl = document.getElementById('appsMenu');
       const adminUiLinkEl = document.getElementById('adminUiLink');
+      const modelAdminLinkEl = document.getElementById('modelAdminLink');
       if (appsBtnEl && appsMenuEl) {
         appsBtnEl.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -3550,6 +3433,7 @@
           const j = await r.json();
           if (j && j.authenticated && j.user && j.user.admin) {
             currentUserIsAdmin = true;
+            try { if (modelAdminLinkEl) modelAdminLinkEl.style.display = 'block'; } catch (e) {}
             try { if (adminUiLinkEl) adminUiLinkEl.style.display = 'block'; } catch (e) {}
             void loadBackendStatus();
           } else {
