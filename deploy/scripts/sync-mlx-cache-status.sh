@@ -159,6 +159,9 @@ payload = {
 PY
 fi
 
+find "$tmp" -type d -exec chmod 755 {} +
+find "$tmp" -type f -exec chmod 644 {} +
+
 rm -rf "$DST"
 mv "$tmp" "$DST"
 
