@@ -182,6 +182,8 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "settings_user_llm_openai_models_list" in html
     assert "settings_user_llm_openai_select_all_models" in html
     assert "available_models" in js
+    assert "Session expired. Redirecting to sign in..." in js
+    assert "window.location.replace(`/ui/login?next=${back}`)" in js
     assert "settings-models" not in html
     assert "/ui/admin/models" in html
     assert "Nexus model admin" in admin_models_html

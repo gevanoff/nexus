@@ -58,15 +58,39 @@
     let modelOptionsCache = [];
     let modelOptionLabels = new Map();
     let currentUserIsAdmin = false;
+    let authRedirectPending = false;
     const BACKEND_STATUS_CACHE_KEY = "nexus.chat.backendStatus.v1";
     const BACKEND_STATUS_POLL_MS = 30000;
     const BACKEND_STATUS_STALE_AFTER_POLLS = 3;
     let backendStatusPollIntervalSec = BACKEND_STATUS_POLL_MS / 1000;
 
+    function showAuthExpiredState() {
+      if (sendEl) sendEl.disabled = true;
+      if (loadModelsEl) loadModelsEl.disabled = true;
+      if (modelEl) {
+        modelEl.disabled = true;
+        modelEl.title = "Session expired. Sign in again to load models.";
+      }
+      if (inputEl) {
+        inputEl.disabled = true;
+        inputEl.placeholder = "Session expired. Redirecting to sign in...";
+      }
+      if (!authRedirectPending && chatEl) {
+        addMessage({ role: "system", content: "Session expired. Redirecting to sign in..." });
+      }
+    }
+
     function handle401(resp) {
       if (resp && resp.status === 401) {
+        showAuthExpiredState();
+        if (authRedirectPending) return true;
+        authRedirectPending = true;
         const back = encodeURIComponent(window.location.pathname + window.location.search);
-        window.location.href = `/ui/login?next=${back}`;
+        if (!window.location.pathname.startsWith("/ui/login")) {
+          window.setTimeout(() => {
+            window.location.replace(`/ui/login?next=${back}`);
+          }, 0);
+        }
         return true;
       }
       return false;
