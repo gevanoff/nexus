@@ -4652,7 +4652,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
             fallback = fallback_target_for_backend(resolved_backend)
             fallback_backend = fallback[0] if fallback and fallback[1] == display_model else resolved_backend
             item["resolved_backend"] = fallback_backend
-            item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(fallback_backend)} fallback; {a.upstream_model} {unavailable})"
+            item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(fallback_backend)} fallback; primary unavailable: {unavailable})"
         else:
             item["label"] = f"{alias_name} -> {display_model} ({_ui_canonical_backend_selector_id(a.backend)})"
         if a.context_window:

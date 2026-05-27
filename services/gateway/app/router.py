@@ -255,6 +255,22 @@ def decide_route(
         request_model_norm = ""
         request_model_key = ""
 
+    selector_backend = _known_backend_name(request_model_norm)
+    if selector_backend and request_model_key in {
+        "mlx",
+        "local_mlx",
+        "local-mlx",
+        "vllm",
+        "local_vllm",
+        "local-vllm",
+        "vllm_fast",
+        "vllm-fast",
+        "local_vllm_fast",
+        "local-vllm-fast",
+    }:
+        normalized = _normalize_model(request_model_norm, selector_backend, cfg)
+        return route_with_model_fallback(RouteDecision(backend=selector_backend, model=normalized, reason="selector:model"))
+
     aliases = get_aliases()
 
     alias_key = request_model_key

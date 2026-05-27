@@ -59,4 +59,34 @@ def test_vllm_fast_selector_normalizes_to_fast_model(monkeypatch):
 
     assert decision.backend == "local_vllm_fast"
     assert decision.model == "served-fast-model"
-    assert decision.reason == "pinned:model"
+    assert decision.reason == "selector:model"
+
+
+def test_mlx_selector_prefers_runtime_selector_over_alias(monkeypatch):
+    aliases = {
+        "mlx": SimpleNamespace(backend="local_mlx", upstream_model="stale-alias-model", tools=True),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: aliases)
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: "local_mlx" if name in {"mlx", "local_mlx"} else name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: "local_mlx" if name == "mlx" else None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "mlx" if "mlx" in backend else "vllm")
+    monkeypatch.setattr(router.S, "MLX_MODEL_STRONG", "served-mlx-model", raising=False)
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_mlx",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="mlx",
+        headers={},
+        messages=[{"role": "user", "content": "hi"}],
+        has_tools=False,
+        enable_policy=False,
+        enable_request_type=False,
+    )
+
+    assert decision.backend == "local_mlx"
+    assert decision.model == "served-mlx-model"
+    assert decision.reason == "selector:model"
