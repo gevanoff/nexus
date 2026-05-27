@@ -40,7 +40,7 @@ from app.backends import (
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
-from app.model_availability import fallback_target_for_backend, hf_model_cache_state, model_unavailable_reason
+from app.model_availability import fallback_target_for_backend, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason
 from app.models import ChatCompletionRequest, ChatMessage
 from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
@@ -4390,13 +4390,20 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
                 "cache_state": cache_state,
                 "unavailable_reason": unavailable,
                 "advertised": False,
+                "cache_only": False,
                 "chat_candidate": _ui_model_id_is_chat_candidate(model_name),
-                "selectable": not unavailable and _ui_model_id_is_chat_candidate(model_name),
+                "selectable": False,
                 "aliases": [],
             }
             model_rows[key] = row
         if advertised:
             row["advertised"] = True
+            row["cache_only"] = False
+        row["selectable"] = bool(
+            row["chat_candidate"]
+            and not row["unavailable_reason"]
+            and (row["advertised"] or backend_provider_name(resolved_backend) != "mlx")
+        )
         return row
 
     for item in probed_items:
@@ -4404,6 +4411,15 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
         model_name = str(item.get("upstream_model") or "").strip()
         if backend_name and model_name:
             ensure_model_row(backend_name, model_name, advertised=True)
+
+    for model_name, cache_state in hf_model_cache_entries().items():
+        row = ensure_model_row("local_mlx", model_name)
+        row["cache_state"] = cache_state
+        if not row["advertised"]:
+            row["cache_only"] = True
+            if cache_state == "cached":
+                row["unavailable_reason"] = "not_advertised"
+            row["selectable"] = False
 
     alias_rows: list[Dict[str, Any]] = []
     for alias_name in sorted(aliases.keys()):

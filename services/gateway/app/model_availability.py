@@ -49,6 +49,33 @@ def hf_model_cache_state(model_id: str, cache_dir: str | None = None) -> Optiona
     return "missing"
 
 
+def hf_model_cache_entries(cache_dir: str | None = None) -> dict[str, str]:
+    """Return visible Hugging Face model cache states keyed by repo id."""
+
+    root = Path((cache_dir or getattr(S, "MLX_HF_CACHE_DIR", "") or "").strip())
+    if not root.exists():
+        return {}
+
+    candidates: list[Path] = []
+    for base in (root / "hub", root):
+        if not base.exists():
+            continue
+        try:
+            candidates.extend(path for path in base.iterdir() if path.is_dir() and path.name.startswith("models--"))
+        except Exception:
+            continue
+
+    entries: dict[str, str] = {}
+    for path in candidates:
+        repo_id = path.name.removeprefix("models--").replace("--", "/").strip()
+        if not repo_id:
+            continue
+        state = hf_model_cache_state(repo_id, str(root))
+        if state:
+            entries[repo_id] = state
+    return entries
+
+
 def model_unavailable_reason(backend: str, model: str) -> Optional[str]:
     if backend_provider_name(backend) != "mlx":
         return None

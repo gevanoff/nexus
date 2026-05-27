@@ -463,6 +463,7 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
     monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda backend, model: "fetching" if backend == "local_mlx" and model.endswith("MiniMax-M2.5-8bit") else None)
     monkeypatch.setattr(ui_routes, "fallback_target_for_backend", lambda backend: ("local_vllm_fast", "fast-model") if backend == "local_mlx" else None)
     monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "fetching" if model.endswith("MiniMax-M2.5-8bit") else None)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_entries", lambda: {})
 
     payload = await ui_routes.ui_admin_models(SimpleNamespace())
 
@@ -470,6 +471,52 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
     assert payload["aliases"][0]["effective_model"] == "fast-model"
     minimax = next(item for item in payload["models"] if item["model"].endswith("MiniMax-M2.5-8bit"))
     assert minimax["unavailable_reason"] == "fetching"
+
+
+@pytest.mark.asyncio
+async def test_ui_admin_models_marks_cached_unadvertised_mlx_models_not_selectable(monkeypatch):
+    class Backend:
+        base_url = "http://mlx"
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return backend
+
+        def get_backend(self, backend):
+            return Backend()
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        yield object()
+
+    async def fake_probe(_client, _registry, backend_name, _base_url, now):
+        return ([], {"backend": backend_name, "ok": True, "count": 0})
+
+    model_id = "mlx-community/GLM-5-8bit-MXFP8"
+
+    monkeypatch.setattr(ui_routes, "_require_admin", lambda _req: SimpleNamespace(id=1, admin=True))
+    monkeypatch.setattr(ui_routes, "now_unix", lambda: 123)
+    monkeypatch.setattr(ui_routes, "_ui_models_probe_timeout_sec", lambda: 1)
+    monkeypatch.setattr(ui_routes, "_httpx_client", fake_client)
+    monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ui_routes, "llm_backends", lambda: [("local_mlx", Backend())])
+    monkeypatch.setattr(ui_routes, "_probe_models_for_backend", fake_probe)
+    monkeypatch.setattr(ui_routes, "get_aliases", lambda: {})
+    monkeypatch.setattr(ui_routes, "get_aliases_state", lambda: SimpleNamespace(source="test", configured_path="", error=""))
+    monkeypatch.setattr(ui_routes, "get_health_checker", lambda: SimpleNamespace(get_status=lambda _name: None))
+    monkeypatch.setattr(ui_routes, "backend_hostname", lambda *_args, **_kwargs: "ai2")
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda _backend, _model: None)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "cached" if model == model_id else None)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_entries", lambda: {model_id: "cached"})
+
+    payload = await ui_routes.ui_admin_models(SimpleNamespace())
+
+    row = next(item for item in payload["models"] if item["model"] == model_id)
+    assert row["cache_state"] == "cached"
+    assert row["cache_only"] is True
+    assert row["advertised"] is False
+    assert row["unavailable_reason"] == "not_advertised"
+    assert row["selectable"] is False
 
 
 def test_ui_model_alias_hides_embedding_selectors():

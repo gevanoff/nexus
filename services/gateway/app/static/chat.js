@@ -2735,6 +2735,7 @@
           ];
           if (model.cache_state) badges.push({ text: model.cache_state, tone: model.cache_state === "cached" ? "green" : "yellow" });
           if (model.unavailable_reason) badges.push({ text: model.unavailable_reason, tone: "yellow" });
+          if (model.cache_only) badges.push({ text: "cache only", tone: "yellow" });
           if (model.advertised) badges.push({ text: "advertised", tone: "" });
           const aliasText = Array.isArray(model.aliases) && model.aliases.length ? `aliases: ${model.aliases.join(", ")}` : model.provider || "";
           modelGroup.appendChild(modelAdminRow(`${model.backend || ""}:${model.model || ""}`, aliasText, badges));
