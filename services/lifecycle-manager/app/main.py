@@ -902,8 +902,9 @@ class LifecycleManager:
         safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in model)[:160] or "model"
         log_path = f"/var/lib/mlx/logs/prefetch-{safe_name}.log"
         inner_command = (
-            f"nohup /var/lib/mlx/env/bin/mlx-prefetch-models --model {shlex.quote(model)} "
-            f">>{shlex.quote(log_path)} 2>&1 </dev/null & echo $!"
+            f"/var/lib/mlx/env/bin/mlx-prefetch-models --model {shlex.quote(model)} "
+            f">>{shlex.quote(log_path)} 2>&1 </dev/null & "
+            "pid=$!; disown \"$pid\" 2>/dev/null || true; echo \"$pid\""
         )
         command = (
             "sudo -n install -d -o mlx -m 775 /var/lib/mlx/logs; "
