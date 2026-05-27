@@ -76,6 +76,11 @@ def repo_id_from_cache_dir(path: Path) -> str:
 src = Path(os.environ["SRC"])
 dst = Path(os.environ["DST_TMP"])
 models: dict[str, dict[str, object]] = {}
+try:
+    stalled_after_sec = float(os.environ.get("MLX_FETCH_STALLED_AFTER_SEC", "600") or "600")
+except ValueError:
+    stalled_after_sec = 600.0
+now = time.time()
 
 if src.exists():
     candidates: list[Path] = []
@@ -136,9 +141,13 @@ if src.exists():
                     entry["snapshot_count"] = int(entry["snapshot_count"]) + 1
                     entry["newest_snapshot_mtime"] = max(float(entry["newest_snapshot_mtime"] or 0.0), mtime)
 
-        if int(entry["incomplete_count"] or 0) > 0:
+        incomplete_count = int(entry["incomplete_count"] or 0)
+        snapshot_count = int(entry["snapshot_count"] or 0)
+        newest_incomplete = float(entry["newest_incomplete_mtime"] or 0.0)
+        incomplete_active = incomplete_count > 0 and newest_incomplete > 0 and (now - newest_incomplete) <= stalled_after_sec
+        if incomplete_count > 0 and (snapshot_count <= 0 or incomplete_active):
             entry["state"] = "fetching"
-        elif int(entry["snapshot_count"] or 0) > 0:
+        elif snapshot_count > 0:
             entry["state"] = "cached"
 
 payload = {
