@@ -1,8 +1,8 @@
 services:
   # TTS Service - Text-to-Speech
   # Shared host paths:
-  # - ./.runtime/tts/data is the TTS service's state dir
-  # - ./.runtime/tts_refs is shared reference audio (mounted read-only)
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts/data is the TTS service's state dir
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs is shared reference audio (mounted read-only)
   tts:
     build:
       context: ./services/tts
@@ -24,8 +24,8 @@ services:
       - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
       - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
-      - ./.runtime/tts/data:/data
-      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts/data:/data
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs:/var/lib/tts_refs:ro
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus

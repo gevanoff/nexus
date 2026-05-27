@@ -40,9 +40,9 @@ services:
       - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
     volumes:
-      - ../../.runtime/gateway/data:/var/lib/gateway/data
-      - ../../.runtime/gateway/config:/var/lib/gateway/config:ro
-      - ${MLX_HF_CACHE_HOST_DIR:-../../.runtime/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
+      - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/gateway/data:/var/lib/gateway/data
+      - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/gateway/config:/var/lib/gateway/config:ro
+      - ${MLX_HF_CACHE_HOST_DIR:-${NEXUS_RUNTIME_ROOT:-../../.runtime}/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
       - ../../.env:/var/lib/gateway/app/.env:ro
     networks:
       - nexus
@@ -71,7 +71,7 @@ services:
       - new
       - --enable-v2
     volumes:
-      - ../../.runtime/etcd/data:/etcd-data
+      - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/etcd/data:/etcd-data
     networks:
       - nexus
     ports:

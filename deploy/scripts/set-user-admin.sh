@@ -10,7 +10,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 NS_AUTO_YES="false"
 admin_flag="true"
-db_path="$ROOT_DIR/.runtime/gateway/data/users.sqlite"
+db_path="$(ns_runtime_root "$ROOT_DIR")/gateway/data/users.sqlite"
 
 usage() {
   cat <<'EOF'

@@ -11,7 +11,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 SNAPSHOT_PATH=""
 CONTAINER_NAME=""
-DATA_DIR="$ROOT_DIR/.runtime/etcd/data"
+DATA_DIR="$(ns_runtime_root "$ROOT_DIR")/etcd/data"
 FORCE="false"
 
 usage() {

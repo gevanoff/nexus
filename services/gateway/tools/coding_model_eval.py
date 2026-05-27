@@ -488,14 +488,15 @@ def _selected_tasks(suite: dict[str, Any], ids: set[str]) -> list[dict[str, Any]
 
 
 def parse_args() -> argparse.Namespace:
+    runtime_root = os.getenv("NEXUS_RUNTIME_ROOT", ".runtime")
     parser = argparse.ArgumentParser(description="Evaluate local coding models on patch and repo-question fixtures.")
     parser.add_argument("--base-url", default=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:8800/v1"))
     parser.add_argument("--token", default=os.getenv("GATEWAY_BEARER_TOKEN") or os.getenv("OPENAI_API_KEY") or "")
     parser.add_argument("--model", required=False, default="coder")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="coding_repo")
     parser.add_argument("--suite", default=str(Path(__file__).with_name("coding_model_eval_suite.example.json")))
-    parser.add_argument("--out", default=".runtime/coding-model-evals/results.jsonl")
-    parser.add_argument("--workdir", default=".runtime/coding-model-evals/work")
+    parser.add_argument("--out", default=os.path.join(runtime_root, "coding-model-evals", "results.jsonl"))
+    parser.add_argument("--workdir", default=os.path.join(runtime_root, "coding-model-evals", "work"))
     parser.add_argument("--task", action="append", default=[], help="Task id to run. May be repeated.")
     parser.add_argument("--attempts", type=int, default=None, help="Override profile attempts.")
     parser.add_argument("--seed", type=int, default=1234)

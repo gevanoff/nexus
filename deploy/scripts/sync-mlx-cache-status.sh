@@ -4,6 +4,9 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# shellcheck source=/dev/null
+source "$ROOT_DIR/deploy/scripts/_common.sh"
+
 if [[ -n "${MLX_HF_CACHE_SOURCE_DIR:-}" ]]; then
   SRC="$MLX_HF_CACHE_SOURCE_DIR"
 elif [[ -n "${HF_HOME:-}" ]]; then
@@ -14,10 +17,10 @@ else
   SRC="/var/lib/huggingface"
 fi
 
-DST="${MLX_HF_CACHE_STATUS_DIR:-$ROOT_DIR/.runtime/gateway/mlx_hf_cache}"
+DST="${MLX_HF_CACHE_STATUS_DIR:-$(ns_runtime_root "$ROOT_DIR")/gateway/mlx_hf_cache}"
 
 case "$DST" in
-  "$ROOT_DIR"/.runtime/gateway/mlx_hf_cache) ;;
+  "$(ns_runtime_root "$ROOT_DIR")"/gateway/mlx_hf_cache) ;;
   *)
     echo "Refusing to replace unexpected MLX cache status directory: $DST" >&2
     exit 1

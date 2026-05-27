@@ -23,7 +23,7 @@ services:
       - new
       - --enable-v2
     volumes:
-      - ../.runtime/etcd/data:/etcd-data
+      - ${NEXUS_RUNTIME_ROOT:-../.runtime}/etcd/data:/etcd-data
     networks:
       - nexus
     ports:

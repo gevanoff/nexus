@@ -1,7 +1,7 @@
 services:
   # LuxTTS Service - OpenAI-compatible TTS shim
   # Shared host paths:
-  # - ./.runtime/luxtts/data is LuxTTS state/cache/workdir
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/luxtts/data is LuxTTS state/cache/workdir
   luxtts:
     build:
       context: ./services/luxtts
@@ -32,8 +32,8 @@ services:
       - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
       - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
-      - ./.runtime/luxtts/data:/var/lib/luxtts
-      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/luxtts/data:/var/lib/luxtts
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs:/var/lib/tts_refs:ro
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus

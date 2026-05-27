@@ -63,8 +63,8 @@ services:
       # Memory v2
       - MEMORY_V2_ENABLED=true
     volumes:
-      - ../.runtime/gateway/data:/var/lib/gateway/data
-      - ../.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ${NEXUS_RUNTIME_ROOT:-../.runtime}/gateway/data:/var/lib/gateway/data
+      - ${NEXUS_RUNTIME_ROOT:-../.runtime}/gateway/config:/var/lib/gateway/config:ro
       - ../.env:/var/lib/gateway/app/.env:ro
     networks:
       - nexus

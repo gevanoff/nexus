@@ -1,7 +1,7 @@
 services:
   # Dev override for the Images service.
   # Shared host paths:
-  # - ./.runtime/images-dev/* is images service state for dev
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/images-dev/* is images service state for dev
   images:
     container_name: nexus-images-dev
     ports:
@@ -10,8 +10,8 @@ services:
       - SHIM_MODE=${DEV_IMAGES_SHIM_MODE:-stub}
       - SHIM_PORT=7860
     volumes:
-      - ./.runtime/images-dev/data:/data
-      - ./.runtime/images-dev/models:/data/models
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/images-dev/data:/data
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/images-dev/models:/data/models
 
 networks:
   nexus:

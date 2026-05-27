@@ -1,8 +1,8 @@
 services:
   # Dev override for the Gateway service.
   # Shared host paths:
-  # - ./.runtime/gateway-dev/data is gateway dev data dir
-  # - ./.runtime/gateway/config is shared read-only config across gateway modes
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway-dev/data is gateway dev data dir
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config is shared read-only config across gateway modes
   gateway:
     container_name: nexus-gateway-dev
     ports:
@@ -21,9 +21,9 @@ services:
       - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
     volumes:
-      - ./.runtime/gateway-dev/data:/var/lib/gateway/data
-      - ./.runtime/tts_refs:/var/lib/tts_refs
-      - ./.runtime/gateway/config:/var/lib/gateway/config:ro
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway-dev/data:/var/lib/gateway/data
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs:/var/lib/tts_refs
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config:/var/lib/gateway/config:ro
       - ./services/gateway/app:/var/lib/gateway/app
       - ./services/gateway/tools:/var/lib/gateway/tools
 

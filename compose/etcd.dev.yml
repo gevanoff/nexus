@@ -4,7 +4,7 @@ services:
     ports:
       - "${DEV_ETCD_PORT:-12379}:2379"
     volumes:
-      - ../.runtime/etcd-dev/data:/etcd-data
+      - ${NEXUS_RUNTIME_ROOT:-../.runtime}/etcd-dev/data:/etcd-data
 
 networks:
   nexus:

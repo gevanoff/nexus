@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CERT_DIR="${ROOT_DIR}/.runtime/nginx/certs"
+
+# shellcheck source=/dev/null
+source "$ROOT_DIR/deploy/scripts/_common.sh"
+
+CERT_DIR="$(ns_runtime_root "$ROOT_DIR")/nginx/certs"
 DAYS="${DAYS:-365}"
 COMMON_NAME="${COMMON_NAME:-localhost}"
 

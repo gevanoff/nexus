@@ -13,7 +13,7 @@ CHECK_ONLY="false"
 MLX_BASE_URL_OVERRIDE="${PREWARM_MLX_BASE_URL:-}"
 WARMUP_TIMEOUT_SEC="${MLX_WARMUP_TIMEOUT_SEC:-0}"
 FROM_ALIASES="false"
-ALIASES_FILE="${ROOT_DIR}/.runtime/gateway/config/model_aliases.json"
+ALIASES_FILE="$(ns_runtime_root "$ROOT_DIR")/gateway/config/model_aliases.json"
 
 declare -a MLX_MODEL_OVERRIDES=()
 
@@ -33,7 +33,7 @@ Options:
                       also supported via PREWARM_MLX_BASE_URL env var.
   --model MODEL       Explicit model id/path for warmup request (repeatable)
   --from-aliases      Include all backend=mlx/local_mlx models from model_aliases.json
-  --aliases-file PATH Alias config path (default: ./.runtime/gateway/config/model_aliases.json)
+  --aliases-file PATH Alias config path (default: <runtime-root>/gateway/config/model_aliases.json)
   --timeout-sec N     Curl timeout in seconds for each warmup request.
                     Use 0 for no timeout (default: 0)
 EOF

@@ -228,7 +228,7 @@ docker compose logs -f
 
 Edit files in `services/gateway/app/` or other service directories.
 
-For deployed Nexus hosts (`ai2`, `ai1`, `ada2`), do not live-edit tracked code in the host checkout. Commit and push from your development checkout, then deploy the intended branch with the repo deployment scripts. Runtime state under `.runtime/` is host-local and is the exception.
+For deployed Nexus hosts (`ai2`, `ai1`, `ada2`), do not live-edit tracked code in the host checkout. Commit and push from your development checkout, then deploy the intended branch with the repo deployment scripts. Runtime state under `${NEXUS_RUNTIME_ROOT:-./.runtime}/` is host-local and is the exception.
 
 5. **Restart services**
 

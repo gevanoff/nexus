@@ -36,7 +36,7 @@ Options:
   --repo-dir PATH              Remote Nexus repo dir (default: auto-detect ~/ai/nexus, ~/nexus, /Users/ai/nexus)
   --env-file RELPATH           Env file relative to repo dir (default: .env)
   --cluster-token TOKEN        Shared etcd cluster token
-  --no-wipe                    Do not clear remote .runtime/etcd/data before bootstrap
+  --no-wipe                    Do not clear remote <runtime-root>/etcd/data before bootstrap
   --no-start                   Only write env files; do not start etcd
   --no-health-check            Skip final health checks
 
@@ -234,9 +234,11 @@ env_file="$repo_dir/$env_file_rel"
 
 source "$repo_dir/deploy/scripts/_common.sh"
 
+runtime_root="$(ns_runtime_root "$repo_dir")"
+
 if [[ "$do_wipe" == "true" ]]; then
   ns_compose --env-file "$env_file" -f docker-compose.etcd.yml down || true
-  docker run --rm -v "$repo_dir/.runtime/etcd/data:/etcd-data" busybox:1.36 sh -c 'rm -rf /etcd-data/* /etcd-data/.[!.]* /etcd-data/..?* 2>/dev/null || true'
+  docker run --rm -v "$runtime_root/etcd/data:/etcd-data" busybox:1.36 sh -c 'rm -rf /etcd-data/* /etcd-data/.[!.]* /etcd-data/..?* 2>/dev/null || true'
 fi
 
 ./deploy/scripts/init-etcd-cluster.sh \

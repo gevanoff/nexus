@@ -40,7 +40,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/reassign-topology-family.sh --family <name> --from <host> --to <host> [--write]`: move a tracked backend family between topology hosts
 - `./deploy/scripts/materialize-sops-env.sh --environment <dev|prod> [--topology-host <host>]`: materialize tracked SOPS secret files into generated `*.sops.local` overlays
 - `./deploy/scripts/sops-secrets.sh <keygen|import-dotenv|edit|decrypt|materialize> ...`: manage SOPS+age secret files under `deploy/secrets/`
-- `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` with deduped reference audio
+- `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs` with deduped reference audio
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 - `./deploy/scripts/smoke-test-video.sh`: run a SkyReels video smoke test (direct backend by default, or the gateway UI path when UI credentials are provided)
@@ -182,7 +182,7 @@ Nexus is deployed/operated from macOS/Linux hosts. If you develop on Windows, ru
 - etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
 - Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
 - `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, and `vllm-embeddings` when different hosts should own different inference lanes.
-- Persistence uses host bind mounts under `./.runtime/` (including gateway RO config at `./.runtime/gateway/config`).
+- Persistence uses host bind mounts under `${NEXUS_RUNTIME_ROOT:-./.runtime}/` (including gateway RO config at `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config`).
 - The UI is intentionally separated from the gateway for production deployments; keep it as a standalone container when it is implemented.
 - For branch-based deploys, see `./deploy/scripts/deploy.sh` and `./deploy/scripts/remote-deploy.sh` (invoked from repo root).
 - For etcd convenience, use `./deploy/scripts/register-service.sh` and `./deploy/scripts/list-services.sh` (invoked from repo root).

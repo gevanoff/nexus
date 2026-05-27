@@ -96,9 +96,9 @@ For non-interactive environments, use:
 
 The quickstart flow automatically runs `deploy/scripts/preflight-check.sh` and validates key prerequisites before starting containers.
 
-Gateway persistence is stored on the host under `./.runtime/gateway/` and bind-mounted into the container:
-- **Read-write data** (SQLite DBs, tool logs, cached UI assets): `./.runtime/gateway/data/` → `/var/lib/gateway/data`
-- **Read-only operator config** (model aliases, agent specs, tools registry): `./.runtime/gateway/config/` → `/var/lib/gateway/config`
+Gateway persistence is stored on the host under `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/` and bind-mounted into the container:
+- **Read-write data** (SQLite DBs, tool logs, cached UI assets): `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/data/` → `/var/lib/gateway/data`
+- **Read-only operator config** (model aliases, agent specs, tools registry): `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config/` → `/var/lib/gateway/config`
 
 Important persistent gateway state includes:
 - `data/users.sqlite`: UI users, password hashes, user settings, and per-user API keys.
@@ -240,15 +240,15 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/restart-gateway.sh`: restart/rebuild only Gateway so code/config updates are picked up quickly
 - `deploy/scripts/redeploy-tts-shims.sh`: redeploy containerized `pocket_tts` + `luxtts` + `qwen3-tts` and optionally restart Gateway
 - `deploy/scripts/reassign-topology-family.sh`: move a tracked backend family between topology hosts and print the rollout order
-- `deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `./.runtime/tts_refs` from local audio files with content-hash dedup
+- `deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs` from local audio files with content-hash dedup
 - `deploy/scripts/prewarm-models.sh`: prewarm Ollama models (container or host-native mode)
 - `deploy/scripts/prewarm-mlx.sh`: prewarm MLX model runtime (host-native recommended)
 - `docker-compose.mediamtx.yml`: RTMP ingest + HLS/WebRTC playback stack for multi-consumer streaming on `ai1`
 
 Alias-aware prewarm options:
 
-- `deploy/scripts/prewarm-models.sh --from-aliases`: include all `backend=ollama` models from `./.runtime/gateway/config/model_aliases.json`
-- `deploy/scripts/prewarm-mlx.sh --from-aliases`: include all `backend=mlx` models from `./.runtime/gateway/config/model_aliases.json`
+- `deploy/scripts/prewarm-models.sh --from-aliases`: include all `backend=ollama` models from `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config/model_aliases.json`
+- `deploy/scripts/prewarm-mlx.sh --from-aliases`: include all `backend=mlx` models from `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config/model_aliases.json`
 - `services/ollama/scripts/install-native-macos.sh`: install/manage host-native Ollama (launchd)
 - `services/mlx/scripts/install-native-macos.sh`: install/manage host-native MLX (launchd)
 - `deploy/scripts/allowlist-mlx-macos.sh`: configure macOS `pf` allowlist for MLX port access
@@ -258,7 +258,7 @@ Alias-aware prewarm options:
 
 ### Seed shared TTS refs
 
-Use this utility to populate the shared reference-audio pool used by Gateway and TTS containers (`./.runtime/tts_refs`).
+Use this utility to populate the shared reference-audio pool used by Gateway and TTS containers (`${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs`).
 
 ```bash
 ./deploy/scripts/seed-tts-refs.sh --source /path/to/voice-samples
@@ -346,8 +346,8 @@ See `.env.example` for all available options.
 
 - Nexus uses a single env file at `./.env` (created from `./.env.example`).
 - Service-specific templates live under `services/<name>/env/*.example`.
-- Persistent state and large artifacts live under `./.runtime/` (bind mounts), not Docker named volumes.
-- Gateway model alias config lives at `./.runtime/gateway/config/model_aliases.json`.
+- Persistent state and large artifacts live under `${NEXUS_RUNTIME_ROOT:-./.runtime}/` (bind mounts), not Docker named volumes.
+- Gateway model alias config lives at `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config/model_aliases.json`.
 - For a practical MLX-fast + Ollama-strong split example, see `services/mlx/README.md`.
 - For `ai2` (512GB) model tier recommendations and Linux host placement notes, see `services/mlx/README.md`.
 

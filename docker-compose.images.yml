@@ -1,7 +1,7 @@
 services:
   # Image Generation Service (InvokeAI)
   # Shared host paths:
-  # - ./.runtime/images/* is the images service's state and models cache
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/images/* is the images service's state and models cache
   images:
     build:
       context: ./services/images
@@ -17,8 +17,8 @@ services:
       # Optional: only used when SHIM_MODE=invokeai_queue
       - INVOKEAI_BASE_URL=${IMAGES_SHIM_INVOKEAI_BASE_URL:-${INVOKEAI_BASE_URL:-http://invokeai:9090}}
     volumes:
-      - ./.runtime/images/data:/data
-      - ./.runtime/images/models:/data/models
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/images/data:/data
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/images/models:/data/models
     networks:
       - nexus
     restart: unless-stopped

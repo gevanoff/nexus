@@ -12,7 +12,7 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 VLLM_ARGS=()
 MLX_ARGS=()
 CHECK_ONLY="false"
-ALIASES_FILE="${ROOT_DIR}/.runtime/gateway/config/model_aliases.json"
+ALIASES_FILE="$(ns_runtime_root "$ROOT_DIR")/gateway/config/model_aliases.json"
 USE_ALIAS_MODELS="false"
 
 usage() {

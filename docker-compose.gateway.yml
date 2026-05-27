@@ -1,8 +1,8 @@
 services:
   # Gateway Service - Central API gateway
   # Shared host paths:
-  # - ./.runtime/gateway/data is gateway's RW data dir (SQLite DBs, tool logs, cached UI assets)
-  # - ./.runtime/gateway/config is gateway's RO operator config (aliases/specs/tools registry)
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/data is gateway's RW data dir (SQLite DBs, tool logs, cached UI assets)
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config is gateway's RO operator config (aliases/specs/tools registry)
   # - ./.env is bind-mounted into the container for parity with macOS launchd layout
   gateway:
     build:
@@ -74,10 +74,10 @@ services:
       # Memory v2
       - MEMORY_V2_ENABLED=true
     volumes:
-      - ./.runtime/gateway/data:/var/lib/gateway/data
-      - ./.runtime/tts_refs:/var/lib/tts_refs
-      - ./.runtime/gateway/config:/var/lib/gateway/config:ro
-      - ${MLX_HF_CACHE_HOST_DIR:-./.runtime/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/data:/var/lib/gateway/data
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs:/var/lib/tts_refs
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config:/var/lib/gateway/config:ro
+      - ${MLX_HF_CACHE_HOST_DIR:-${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
       - type: bind
         source: ./.env
         target: /var/lib/gateway/app/.env

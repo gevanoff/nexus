@@ -7,8 +7,8 @@ services:
       - SHIM_MODE=${DEV_IMAGES_SHIM_MODE:-stub}
       - SHIM_PORT=7860
     volumes:
-      - ../.runtime/images-dev/data:/data
-      - ../.runtime/images-dev/models:/data/models
+      - ${NEXUS_RUNTIME_ROOT:-../.runtime}/images-dev/data:/data
+      - ${NEXUS_RUNTIME_ROOT:-../.runtime}/images-dev/models:/data/models
 
 networks:
   nexus:

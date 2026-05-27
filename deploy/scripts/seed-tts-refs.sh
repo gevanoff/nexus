@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Seed shared TTS reference pool from one or more local directories/files.
-# - Copies supported audio files into ./.runtime/tts_refs by default
+# - Copies supported audio files into <runtime-root>/tts_refs by default
 # - Deduplicates by SHA-256 hash against existing refs
 # - Uses safe, deterministic-ish voice IDs derived from filenames
 
@@ -29,7 +29,7 @@ Required:
   --source PATH          Source directory or audio file. Can be repeated.
 
 Options:
-  --target DIR           Destination refs directory (default: ./.runtime/tts_refs)
+  --target DIR           Destination refs directory (default: <runtime-root>/tts_refs)
   --non-recursive        Do not recurse into subdirectories
   --force                On name collision, write with a numeric suffix instead of failing
   --dry-run              Show actions without copying files
@@ -115,7 +115,7 @@ find_existing_hash() {
   printf '%s' "$found"
 }
 
-TARGET="./.runtime/tts_refs"
+TARGET="$(ns_runtime_root "$ROOT_DIR")/tts_refs"
 RECURSIVE="true"
 FORCE="false"
 DRY_RUN="false"

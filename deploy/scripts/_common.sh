@@ -100,6 +100,31 @@ ns_env_get() {
   echo "$value"
 }
 
+ns_runtime_root() {
+  # Resolve the host runtime root for bind-mounted Nexus state.
+  # Usage: ns_runtime_root <repo_root>
+  local repo_root="$1"
+  local configured_root=""
+
+  configured_root="${NEXUS_RUNTIME_ROOT:-}"
+  if [[ -z "${configured_root:-}" ]]; then
+    configured_root="$(ns_env_get "${repo_root}/.env" NEXUS_RUNTIME_ROOT "")"
+  fi
+  if [[ -z "${configured_root:-}" ]]; then
+    echo "${repo_root}/.runtime"
+    return 0
+  fi
+
+  case "$configured_root" in
+    /*)
+      echo "$configured_root"
+      ;;
+    *)
+      echo "${repo_root}/${configured_root#./}"
+      ;;
+  esac
+}
+
 ns_is_valid_ipv4() {
   # Usage: ns_is_valid_ipv4 <value>
   local value="$1"
@@ -629,12 +654,14 @@ ns_ensure_gateway_runtime_dirs() {
   # Create repo-local runtime dirs that are bind-mounted into the gateway container.
   # Usage: ns_ensure_gateway_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/gateway/config"
-  ns_mkdir_p "${repo_root}/.runtime/gateway/data/tools"
-  ns_mkdir_p "${repo_root}/.runtime/gateway/data/ui_images"
-  ns_mkdir_p "${repo_root}/.runtime/gateway/data/ui_files"
-  ns_mkdir_p "${repo_root}/.runtime/gateway/data/ui_chats"
-  ns_mkdir_p "${repo_root}/.runtime/gateway/data/tools_work"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/gateway/config"
+  ns_mkdir_p "${runtime_root}/gateway/data/tools"
+  ns_mkdir_p "${runtime_root}/gateway/data/ui_images"
+  ns_mkdir_p "${runtime_root}/gateway/data/ui_files"
+  ns_mkdir_p "${runtime_root}/gateway/data/ui_chats"
+  ns_mkdir_p "${runtime_root}/gateway/data/tools_work"
 }
 
 ns_seed_gateway_config_files() {
@@ -642,7 +669,9 @@ ns_seed_gateway_config_files() {
   # Usage: ns_seed_gateway_config_files <repo_root> [preserve|refresh]
   local repo_root="$1"
   local sync_mode="${2:-preserve}"
+  local runtime_root
   ns_ensure_gateway_runtime_dirs "$repo_root"
+  runtime_root="$(ns_runtime_root "$repo_root")"
 
   # NOTE: Do not rely on services/gateway/env/* here. That directory is gitignored
   # (it may contain secrets on some hosts) and does not exist in a clean checkout.
@@ -650,14 +679,14 @@ ns_seed_gateway_config_files() {
   local tools_registry_template="${repo_root}/services/gateway/app/tools_registry.json"
   local model_aliases_template="${repo_root}/services/gateway/app/model_aliases.json"
 
-  local tools_registry_dst="${repo_root}/.runtime/gateway/config/tools_registry.json"
-  local model_aliases_dst="${repo_root}/.runtime/gateway/config/model_aliases.json"
-  local agent_specs_dst="${repo_root}/.runtime/gateway/config/agent_specs.json"
+  local tools_registry_dst="${runtime_root}/gateway/config/tools_registry.json"
+  local model_aliases_dst="${runtime_root}/gateway/config/model_aliases.json"
+  local agent_specs_dst="${runtime_root}/gateway/config/agent_specs.json"
 
-  # Migration: older layouts stored these files under .runtime/gateway/data.
-  local legacy_tools_registry="${repo_root}/.runtime/gateway/data/tools_registry.json"
-  local legacy_model_aliases="${repo_root}/.runtime/gateway/data/model_aliases.json"
-  local legacy_agent_specs="${repo_root}/.runtime/gateway/data/agent_specs.json"
+  # Migration: older layouts stored these files under the repo-local .runtime/gateway/data path.
+  local legacy_tools_registry="${runtime_root}/gateway/data/tools_registry.json"
+  local legacy_model_aliases="${runtime_root}/gateway/data/model_aliases.json"
+  local legacy_agent_specs="${runtime_root}/gateway/data/agent_specs.json"
 
   if [[ ! -f "$tools_registry_dst" && -f "$legacy_tools_registry" ]]; then
     cp "$legacy_tools_registry" "$tools_registry_dst" 2>/dev/null || true
@@ -725,9 +754,11 @@ ns_ensure_images_runtime_dirs() {
   # Images service persistence (outputs, caches) and optional model storage.
   # Usage: ns_ensure_images_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/images/data"
-  ns_mkdir_p "${repo_root}/.runtime/images/models"
-  ns_mkdir_p "${repo_root}/.runtime/invokeai"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/images/data"
+  ns_mkdir_p "${runtime_root}/images/models"
+  ns_mkdir_p "${runtime_root}/invokeai"
 }
 
 ns_ensure_media_runtime_dirs() {
@@ -736,60 +767,72 @@ ns_ensure_media_runtime_dirs() {
   # missing output paths during generation.
   # Usage: ns_ensure_media_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/sdxl-turbo"
-  ns_mkdir_p "${repo_root}/.runtime/lighton-ocr"
-  ns_mkdir_p "${repo_root}/.runtime/skyreels-v2/app"
-  ns_mkdir_p "${repo_root}/.runtime/skyreels-v2/outputs"
-  ns_mkdir_p "${repo_root}/.runtime/skyreels-v2/cache"
-  ns_mkdir_p "${repo_root}/.runtime/followyourcanvas/app"
-  ns_mkdir_p "${repo_root}/.runtime/followyourcanvas/outputs"
-  ns_mkdir_p "${repo_root}/.runtime/personaplex"
-  ns_mkdir_p "${repo_root}/.runtime/heartmula/app"
-  ns_mkdir_p "${repo_root}/.runtime/heartmula/logs"
-  ns_mkdir_p "${repo_root}/.runtime/heartmula/output"
-  ns_mkdir_p "${repo_root}/.runtime/heartmula/huggingface"
-  ns_mkdir_p "${repo_root}/.runtime/mediamtx/recordings"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/sdxl-turbo"
+  ns_mkdir_p "${runtime_root}/lighton-ocr"
+  ns_mkdir_p "${runtime_root}/skyreels-v2/app"
+  ns_mkdir_p "${runtime_root}/skyreels-v2/outputs"
+  ns_mkdir_p "${runtime_root}/skyreels-v2/cache"
+  ns_mkdir_p "${runtime_root}/followyourcanvas/app"
+  ns_mkdir_p "${runtime_root}/followyourcanvas/outputs"
+  ns_mkdir_p "${runtime_root}/personaplex"
+  ns_mkdir_p "${runtime_root}/heartmula/app"
+  ns_mkdir_p "${runtime_root}/heartmula/logs"
+  ns_mkdir_p "${runtime_root}/heartmula/output"
+  ns_mkdir_p "${runtime_root}/heartmula/huggingface"
+  ns_mkdir_p "${runtime_root}/mediamtx/recordings"
 }
 
 ns_ensure_tts_runtime_dirs() {
   # TTS service persistence (cache/output as needed by backend).
   # Usage: ns_ensure_tts_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/tts/data"
-  ns_mkdir_p "${repo_root}/.runtime/tts_refs"
-  ns_mkdir_p "${repo_root}/.runtime/huggingface"
-  ns_mkdir_p "${repo_root}/.runtime/luxtts/data"
-  ns_mkdir_p "${repo_root}/.runtime/qwen3-tts/data"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/tts/data"
+  ns_mkdir_p "${runtime_root}/tts_refs"
+  ns_mkdir_p "${runtime_root}/huggingface"
+  ns_mkdir_p "${runtime_root}/luxtts/data"
+  ns_mkdir_p "${runtime_root}/qwen3-tts/data"
 }
 
 ns_ensure_nginx_runtime_dirs() {
   # nginx TLS termination certs.
   # Usage: ns_ensure_nginx_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/nginx/certs"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/nginx/certs"
 }
 
 ns_ensure_etcd_runtime_dirs() {
   # Persist etcd state on host so registrations survive container upgrades.
   # Usage: ns_ensure_etcd_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/etcd/data"
-  ns_mkdir_p "${repo_root}/.runtime/etcd/backups"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/etcd/data"
+  ns_mkdir_p "${runtime_root}/etcd/backups"
 }
 
 ns_ensure_mlx_runtime_dirs() {
   # MLX service persistence (model/cache artifacts).
   # Usage: ns_ensure_mlx_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/mlx/cache"
-  ns_mkdir_p "${repo_root}/.runtime/mlx/config"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/mlx/cache"
+  ns_mkdir_p "${runtime_root}/mlx/config"
 }
 
 ns_ensure_vllm_runtime_dirs() {
   # vLLM service persistence (downloaded model/cache artifacts).
   # Usage: ns_ensure_vllm_runtime_dirs <repo_root>
   local repo_root="$1"
-  ns_mkdir_p "${repo_root}/.runtime/vllm/cache"
+  local runtime_root
+  runtime_root="$(ns_runtime_root "$repo_root")"
+  ns_mkdir_p "${runtime_root}/vllm/cache"
 }
 
 ns_ensure_runtime_dirs() {

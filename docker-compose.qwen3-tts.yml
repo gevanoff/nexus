@@ -1,7 +1,7 @@
 services:
   # Qwen3-TTS Service - OpenAI-compatible TTS shim
   # Shared host paths:
-  # - ./.runtime/qwen3-tts/data is Qwen3-TTS state/cache/workdir
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/qwen3-tts/data is Qwen3-TTS state/cache/workdir
   qwen3-tts:
     build:
       context: ./services/qwen3-tts
@@ -45,8 +45,8 @@ services:
       - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
       - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
-      - ./.runtime/qwen3-tts/data:/var/lib/qwen3-tts
-      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/qwen3-tts/data:/var/lib/qwen3-tts
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs:/var/lib/tts_refs:ro
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus

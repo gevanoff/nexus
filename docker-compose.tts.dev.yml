@@ -1,7 +1,7 @@
 services:
   # Dev override for the TTS service.
   # Shared host paths:
-  # - ./.runtime/tts-dev/data is TTS state for dev
+  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts-dev/data is TTS state for dev
   tts:
     container_name: nexus-tts-dev
     ports:
@@ -11,8 +11,8 @@ services:
       - POCKET_TTS_PORT=9940
       - POCKET_TTS_BACKEND=${DEV_POCKET_TTS_BACKEND:-auto}
     volumes:
-      - ./.runtime/tts-dev/data:/data
-      - ./.runtime/tts_refs:/var/lib/tts_refs:ro
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts-dev/data:/data
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs:/var/lib/tts_refs:ro
 
 networks:
   nexus:

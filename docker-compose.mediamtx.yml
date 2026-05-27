@@ -19,7 +19,7 @@ services:
       - MTX_WEBRTCADDITIONALHOSTS=${MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS:-}
     volumes:
       - ./services/mediamtx/mediamtx.yml:/mediamtx.yml:ro
-      - ./.runtime/mediamtx/recordings:/recordings
+      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/mediamtx/recordings:/recordings
     networks:
       - nexus
     restart: unless-stopped

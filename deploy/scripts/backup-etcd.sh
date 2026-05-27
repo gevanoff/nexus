@@ -60,7 +60,7 @@ ENDPOINTS="${ENDPOINTS:-http://127.0.0.1:2379}"
 
 if [[ -z "$OUTPUT_PATH" ]]; then
   timestamp="$(date +%Y%m%d-%H%M%S)"
-  OUTPUT_PATH="$ROOT_DIR/.runtime/etcd/backups/etcd-snapshot-${timestamp}.db"
+  OUTPUT_PATH="$(ns_runtime_root "$ROOT_DIR")/etcd/backups/etcd-snapshot-${timestamp}.db"
 fi
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"
