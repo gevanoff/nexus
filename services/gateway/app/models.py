@@ -39,6 +39,7 @@ class ChatCompletionRequest(BaseModel):
     stop: Optional[Any] = None
     seed: Optional[int] = None
     max_tokens: Optional[int] = None
+    chat_template_kwargs: Optional[Dict[str, Any]] = None
     stream: Optional[bool] = False
 
 

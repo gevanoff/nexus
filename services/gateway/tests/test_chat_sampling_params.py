@@ -41,3 +41,23 @@ def test_route_request_for_backend_preserves_local_sampling_params(monkeypatch):
     assert payload["seed"] == 1234
     assert payload["max_tokens"] == 8192
     assert payload["stream"] is True
+
+
+def test_vllm_qwen3_defaults_disable_thinking_without_overriding_user_values(monkeypatch):
+    monkeypatch.setattr(upstreams, "backend_provider_name", lambda backend_name: "vllm")
+
+    payload = upstreams._apply_backend_generation_defaults(
+        {"model": "Qwen3-test", "messages": [], "chat_template_kwargs": {"enable_thinking": True}, "repetition_penalty": 1.2},
+        backend_name="local_vllm_fast",
+        model_name="unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M",
+    )
+    assert payload["chat_template_kwargs"]["enable_thinking"] is True
+    assert payload["repetition_penalty"] == 1.2
+
+    payload = upstreams._apply_backend_generation_defaults(
+        {"model": "Qwen3-test", "messages": []},
+        backend_name="local_vllm_fast",
+        model_name="unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M",
+    )
+    assert payload["chat_template_kwargs"]["enable_thinking"] is False
+    assert payload["repetition_penalty"] == 1.12

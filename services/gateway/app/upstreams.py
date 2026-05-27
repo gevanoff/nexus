@@ -99,6 +99,25 @@ def default_embeddings_model_for_backend(backend_name: str) -> str:
     return "mlx-community/bge-small-en-v1.5-8bit"
 
 
+def _model_uses_qwen3_thinking_template(model_name: str) -> bool:
+    value = (model_name or "").strip().lower()
+    return "qwen3" in value
+
+
+def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name: str, model_name: str) -> Dict[str, Any]:
+    provider = backend_provider_name(backend_name)
+    if provider == "vllm" and _model_uses_qwen3_thinking_template(model_name):
+        out = dict(payload)
+        kwargs = out.get("chat_template_kwargs")
+        if not isinstance(kwargs, dict):
+            kwargs = {}
+        kwargs.setdefault("enable_thinking", False)
+        out["chat_template_kwargs"] = kwargs
+        out.setdefault("repetition_penalty", 1.12)
+        return out
+    return payload
+
+
 def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, model_name: str) -> ChatCompletionRequest:
     _resolved, provider, _base_url = _resolve_backend_target(backend_name)
     if provider not in {"mlx", "vllm"}:
@@ -118,6 +137,7 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
         stop=req.stop,
         seed=req.seed,
         max_tokens=req.max_tokens,
+        chat_template_kwargs=req.chat_template_kwargs,
         stream=req.stream,
     )
 
@@ -131,6 +151,7 @@ async def call_openai_chat(
     payload = req.model_dump(exclude_none=True)
     if "messages" in payload and isinstance(payload["messages"], list):
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
+    payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=req.model)
 
     provider = backend_provider_name(backend_name)
     target = (base_url or _default_base_url_for_provider(provider)).rstrip("/")
@@ -240,6 +261,7 @@ async def stream_openai_chat(
     if "messages" in payload and isinstance(payload["messages"], list):
         payload = dict(payload)
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
+    payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=str(payload.get("model") or ""))
 
     provider = backend_provider_name(backend_name)
     target = (base_url or _default_base_url_for_provider(provider)).rstrip("/")
