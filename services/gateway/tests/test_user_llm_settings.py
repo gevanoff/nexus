@@ -186,6 +186,7 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "window.location.replace(`/ui/login?next=${back}`)" in js
     assert "settings_logout" in html
     assert "/ui/api/auth/logout" in js
+    assert "resolveRequestedChatModel" in js
     assert "settings-models" not in html
     assert "/ui/admin/models" in html
     assert "Nexus model admin" in admin_models_html

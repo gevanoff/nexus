@@ -57,6 +57,7 @@
     let pendingAttachments = [];
     let modelOptionsCache = [];
     let modelOptionLabels = new Map();
+    let modelOptionItems = new Map();
     let currentUserIsAdmin = false;
     let authRedirectPending = false;
     const BACKEND_STATUS_CACHE_KEY = "nexus.chat.backendStatus.v1";
@@ -2617,15 +2618,34 @@
 
     function setModelOptionLabels(items) {
       modelOptionLabels = new Map();
+      modelOptionItems = new Map();
       if (!Array.isArray(items)) return;
       for (const item of items) {
         const id = typeof item?.id === "string" ? item.id.trim() : "";
         if (!id) continue;
         modelOptionLabels.set(id, buildModelOptionLabel(item) || id);
+        modelOptionItems.set(id, item);
       }
       if (!modelOptionLabels.has("default")) {
         modelOptionLabels.set("default", "default");
       }
+    }
+
+    function resolveRequestedChatModel(selectedId) {
+      const id = String(selectedId || "").trim() || "default";
+      const item = modelOptionItems.get(id);
+      const backend = typeof item?.resolved_backend === "string" && item.resolved_backend.trim()
+        ? item.resolved_backend.trim()
+        : typeof item?.backend === "string" && item.backend.trim()
+          ? item.backend.trim()
+          : "";
+      const model = typeof item?.resolved_model === "string" && item.resolved_model.trim()
+        ? item.resolved_model.trim()
+        : "";
+      if (backend && model && (item?.is_runtime_selector || item?.primary_model_unavailable)) {
+        return `${backend}:${model}`;
+      }
+      return id;
     }
 
     function populateModelSelect(selectEl, options) {
@@ -2806,7 +2826,8 @@
     
 
     async function sendChatMessage(userText) {
-      const model = (modelEl.value || "").trim() || "default";
+      const selectedModel = (modelEl.value || "").trim() || "default";
+      const model = resolveRequestedChatModel(selectedModel);
 
       // Intercept explicit slash-commands here as a safety net so any caller
       // of sendChatMessage will route commands to the correct backend.
