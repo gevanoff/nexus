@@ -122,6 +122,14 @@ canonical_path() {
   (cd "$dir" && printf '%s/%s\n' "$(pwd -P)" "$base")
 }
 
+launchctl_for_target() {
+  if [[ "$TARGET_USER" == "$(id -un)" ]]; then
+    launchctl "$@"
+  else
+    sudo -H -u "$TARGET_USER" launchctl "$@"
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) TARGET_USER="${2:-}"; shift 2 ;;
@@ -231,9 +239,9 @@ sudo plutil -lint "$PLIST_PATH" >/dev/null
 
 TARGET_UID="$(id -u "$TARGET_USER")"
 sudo launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
-sudo -H -u "$TARGET_USER" launchctl bootout "gui/${TARGET_UID}/${LABEL}" >/dev/null 2>&1 || true
-sudo -H -u "$TARGET_USER" launchctl bootstrap "gui/${TARGET_UID}" "$PLIST_PATH"
-sudo -H -u "$TARGET_USER" launchctl kickstart -k "gui/${TARGET_UID}/${LABEL}" || true
+launchctl_for_target bootout "gui/${TARGET_UID}/${LABEL}" >/dev/null 2>&1 || true
+launchctl_for_target bootstrap "gui/${TARGET_UID}" "$PLIST_PATH"
+launchctl_for_target kickstart -k "gui/${TARGET_UID}/${LABEL}" || true
 
 ns_print_ok "Coding smoke launchd job installed: gui/${TARGET_UID}/${LABEL}"
 ns_print_ok "Reports: ${OUTPUT_DIR}"
