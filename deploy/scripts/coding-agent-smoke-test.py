@@ -53,7 +53,9 @@ inspect the diff, then call coding_finish. Do not edit `{PROTECTED_TEST}`.
 
 
 class SmokeFailure(RuntimeError):
-    pass
+    def __init__(self, message: str, *, report: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.report = report
 
 
 class GatewayClient:
@@ -194,7 +196,7 @@ def verify_final_state(client: GatewayClient, task_id: str, allowed_changes: set
     report["validation"] = command_summary(verify)
     append_phase(report, "validation", command_ok(verify), argv=VERIFY_ARGV)
     if not command_ok(verify):
-        raise SmokeFailure("fixture validation command failed")
+        raise SmokeFailure("fixture validation command failed", report=report)
 
     diff_check = client.post(
         f"/v1/coding/tasks/{urllib.parse.quote(task_id)}/command",
@@ -203,7 +205,7 @@ def verify_final_state(client: GatewayClient, task_id: str, allowed_changes: set
     report["diff_check"] = command_summary(diff_check)
     append_phase(report, "diff_check", command_ok(diff_check), argv=DIFF_CHECK_ARGV)
     if not command_ok(diff_check):
-        raise SmokeFailure("git diff --check failed")
+        raise SmokeFailure("git diff --check failed", report=report)
 
     diff_payload = client.get(f"/v1/coding/tasks/{urllib.parse.quote(task_id)}/diff")
     changed = changed_files_from_diff(diff_payload)
@@ -211,18 +213,15 @@ def verify_final_state(client: GatewayClient, task_id: str, allowed_changes: set
     append_phase(report, "diff_audit", True, changed_files=sorted(changed))
 
     if EXPECTED_CHANGE not in changed:
-        raise SmokeFailure(f"expected changed file not found: {EXPECTED_CHANGE}")
+        raise SmokeFailure(f"expected changed file not found: {EXPECTED_CHANGE}", report=report)
     disallowed = sorted(path for path in changed if path not in allowed_changes)
     if disallowed:
-        raise SmokeFailure(f"unexpected changed files: {', '.join(disallowed)}")
+        raise SmokeFailure(f"unexpected changed files: {', '.join(disallowed)}", report=report)
     if PROTECTED_TEST in changed:
-        raise SmokeFailure(f"protected test file was modified: {PROTECTED_TEST}")
+        raise SmokeFailure(f"protected test file was modified: {PROTECTED_TEST}", report=report)
 
 
 def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
-    env_file_values = parse_env_file(args.env_file)
-    token = choose_token(args, env_file_values)
-    client = GatewayClient(args.base_url, token, timeout_sec=args.http_timeout_sec)
     started_at = int(time.time())
     branch_suffix = f"{started_at}-{secrets.token_hex(3)}"
     report: dict[str, Any] = {
@@ -237,12 +236,22 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
         "interventions": [],
     }
 
+    def fail(message: str) -> None:
+        raise SmokeFailure(message, report=report)
+
+    try:
+        env_file_values = parse_env_file(args.env_file)
+        token = choose_token(args, env_file_values)
+    except SmokeFailure as exc:
+        raise SmokeFailure(str(exc), report=report) from exc
+    client = GatewayClient(args.base_url, token, timeout_sec=args.http_timeout_sec)
+
     config = client.get("/v1/coding/config")
     append_phase(report, "config", True)
     if not bool(config.get("enabled")):
-        raise SmokeFailure("coding is disabled")
+        fail("coding is disabled")
     if not bool(config.get("bearer_api_enabled")):
-        raise SmokeFailure("coding bearer API is disabled")
+        fail("coding bearer API is disabled")
 
     repo_url = args.repo_url or str(config.get("default_repo_url") or "").strip()
     base_branch = args.base_branch or str(config.get("default_base_branch") or "main").strip() or "main"
@@ -266,11 +275,11 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     task = created.get("task") if isinstance(created.get("task"), dict) else {}
     task_id = str(task.get("id") or "")
     if not task_id:
-        raise SmokeFailure("coding run did not return a task id")
+        fail("coding run did not return a task id")
     report["task_id"] = task_id
     append_phase(report, "create_and_run", str(task.get("status") or "") != "error", task_id=task_id)
     if str(task.get("status") or "") == "error":
-        raise SmokeFailure(f"workspace creation failed: {task.get('error') or task}")
+        fail(f"workspace creation failed: {task.get('error') or task}")
 
     deadline = time.monotonic() + args.timeout_sec
     interventions = 0
@@ -331,7 +340,14 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
             )
         except Exception:
             pass
-        raise SmokeFailure(f"coding run timed out after {args.timeout_sec:.0f}s")
+        report["final_task"] = {
+            "status": last_task.get("status"),
+            "agent_status": agent_status(last_task),
+            "agent_summary": ((last_task.get("agent") or {}).get("summary") if isinstance(last_task.get("agent"), dict) else ""),
+            "agent_error": ((last_task.get("agent") or {}).get("error") if isinstance(last_task.get("agent"), dict) else ""),
+        }
+        report["final_inspect"] = last_inspect.get("task") if isinstance(last_inspect.get("task"), dict) else last_inspect
+        fail(f"coding run timed out after {args.timeout_sec:.0f}s")
 
     final_status = agent_status(last_task)
     report["final_task"] = {
@@ -343,7 +359,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     report["final_inspect"] = last_inspect.get("task") if isinstance(last_inspect.get("task"), dict) else last_inspect
     append_phase(report, "agent_terminal", final_status == "completed", agent_status=final_status)
     if final_status != "completed":
-        raise SmokeFailure(f"agent did not complete successfully: {final_status}")
+        fail(f"agent did not complete successfully: {final_status}")
 
     allowed_changes = set(args.allowed_change or [EXPECTED_CHANGE])
     verify_final_state(client, task_id, allowed_changes, report)
@@ -393,6 +409,8 @@ def main(argv: list[str]) -> int:
         report = run_smoke(args)
         return_code = 0
     except SmokeFailure as exc:
+        if isinstance(getattr(exc, "report", None), dict):
+            report = exc.report
         report["ok"] = False
         report["error"] = str(exc)
         report["finished_at"] = int(time.time())

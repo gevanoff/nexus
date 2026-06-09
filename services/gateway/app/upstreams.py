@@ -35,16 +35,26 @@ def _normalize_messages_for_openai_backend(msgs: List[Dict[str, Any]]) -> List[D
             except Exception:
                 normalized_content = str(content)
 
-        if last_role is not None and last_role == role and out:
+        normalized_message: Dict[str, Any] = {"role": role, "content": normalized_content}
+        if m.get("name") is not None:
+            normalized_message["name"] = m.get("name")
+        if m.get("tool_calls") is not None:
+            normalized_message["tool_calls"] = m.get("tool_calls")
+        if m.get("tool_call_id") is not None:
+            normalized_message["tool_call_id"] = m.get("tool_call_id")
+
+        can_merge = set(normalized_message.keys()) == {"role", "content"} and isinstance(normalized_content, str)
+        prev_can_merge = (
+            bool(out)
+            and set(out[-1].keys()) == {"role", "content"}
+            and isinstance(out[-1].get("content"), str)
+        )
+        if last_role is not None and last_role == role and out and can_merge and prev_can_merge:
             prev = out[-1]
             prev_content = prev.get("content") or ""
-            if isinstance(prev_content, str) and isinstance(normalized_content, str):
-                prev["content"] = prev_content + "\n" + normalized_content
-            else:
-                out.append({"role": role, "content": normalized_content})
-                last_role = role
+            prev["content"] = prev_content + "\n" + normalized_content
         else:
-            out.append({"role": role, "content": normalized_content})
+            out.append(normalized_message)
             last_role = role
     return out
 

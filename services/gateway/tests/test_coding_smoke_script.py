@@ -44,3 +44,27 @@ def test_command_summary_redacts_to_tails_and_preserves_status():
     assert summary["returncode"] == 1
     assert summary["stdout_tail"] == "a" * 2000
     assert summary["stderr_tail"] == "b" * 2000
+
+
+def test_main_preserves_partial_report_on_smoke_failure(monkeypatch, capsys):
+    smoke = _load_smoke_module()
+
+    def fail_run(_args):
+        raise smoke.SmokeFailure(
+            "agent failed",
+            report={
+                "schema": smoke.SCHEMA,
+                "ok": False,
+                "task_id": "code_partial",
+                "phases": [{"name": "create_and_run", "ok": True}],
+            },
+        )
+
+    monkeypatch.setattr(smoke, "run_smoke", fail_run)
+
+    assert smoke.main(["--token", "test-token"]) == 1
+
+    captured = capsys.readouterr().out
+    assert '"task_id": "code_partial"' in captured
+    assert '"name": "create_and_run"' in captured
+    assert '"error": "agent failed"' in captured
