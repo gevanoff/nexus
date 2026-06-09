@@ -420,6 +420,7 @@ class Settings(BaseSettings):
     CODING_ALLOWED_COMMANDS: str = "git,rg,python,python3,node,npm,pytest,ruff,uv,gh"
     CODING_COMMAND_TIMEOUT_SEC: int = 120
     CODING_ARCHIVE_RETENTION_SEC: int = 7 * 24 * 60 * 60
+    CODING_SMOKE_REPORT_DIR: str = "/var/lib/gateway/coding_smoke_reports"
     CODING_MAX_OUTPUT_CHARS: int = 40_000
     CODING_FILE_MAX_BYTES: int = 500_000
     CODING_AGENT_MAX_EVENTS: int = 120

@@ -31,6 +31,7 @@
     taskCount: document.getElementById("taskCount"),
     selectedTitle: document.getElementById("selectedTitle"),
     selectedMeta: document.getElementById("selectedMeta"),
+    selectedModelLine: document.getElementById("selectedModelLine"),
     selectedStatus: document.getElementById("selectedStatus"),
     selectedPrompt: document.getElementById("selectedPrompt"),
     workspaceModelInput: document.getElementById("workspaceModelInput"),
@@ -251,6 +252,43 @@
 
   function workspaceModelValue(task) {
     return String((task && task.coding_model) || "").trim() || "coder";
+  }
+
+  function compactModelName(value) {
+    const text = String(value || "").trim();
+    if (!text) return "unknown";
+    const tail = text.includes("/") ? text.split("/").filter(Boolean).slice(-1)[0] : text;
+    return tail.length > 34 ? `...${tail.slice(-31)}` : tail;
+  }
+
+  function workspaceModelIdentity(task) {
+    const agent = agentInfo(task);
+    const policy = task && task.model_policy && typeof task.model_policy === "object" ? task.model_policy : null;
+    const selected = String((policy && policy.selected_model) || workspaceModelValue(task) || "coder").trim() || "coder";
+    const resolved = String((policy && policy.resolved_model) || agent.upstream_model || selected).trim();
+    const backend = String(agent.backend || "").trim();
+    const status = String((policy && policy.status_label) || (policy && policy.status) || "").trim();
+    let label = selected;
+    if (policy && policy.tracks_coder) label = `coder -> ${compactModelName(resolved || "current")}`;
+    else if (resolved && resolved !== selected) label = `${compactModelName(selected)} -> ${compactModelName(resolved)}`;
+    else label = compactModelName(selected);
+    const title = [
+      `Workspace model: ${selected}`,
+      resolved ? `Resolved upstream: ${resolved}` : "",
+      backend ? `Backend: ${backend}` : "",
+      status ? `Policy: ${status}` : "",
+      policy && policy.run_policy ? `Run policy: ${policy.run_policy}` : "",
+    ].filter(Boolean).join("\n");
+    return { label, title, backend, resolved, status, policy };
+  }
+
+  function modelBadge(task) {
+    const info = workspaceModelIdentity(task);
+    const badge = document.createElement("span");
+    badge.className = "badge model-badge";
+    badge.textContent = info.label;
+    badge.title = info.title;
+    return badge;
   }
 
   function codingModelOptions(selectedValue) {
@@ -587,6 +625,7 @@
       commitMeta.textContent = commit ? `commit ${commit}` : "";
       button.appendChild(status);
       button.appendChild(agentBadge);
+      button.appendChild(modelBadge(task));
       button.appendChild(title);
       button.appendChild(meta);
       if (commitMeta.textContent) button.appendChild(commitMeta);
@@ -675,6 +714,7 @@
     if (!task) {
       if (els.selectedTitle) els.selectedTitle.textContent = "No workspace selected";
       if (els.selectedMeta) els.selectedMeta.textContent = "";
+      if (els.selectedModelLine) els.selectedModelLine.innerHTML = "";
       if (els.selectedPrompt) els.selectedPrompt.textContent = "";
       renderWorkspaceModelOptions(null);
       renderWorkspaceModelHint(null);
@@ -710,6 +750,23 @@
       const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
       if (commit) bits.push(`commit ${commit}`);
       els.selectedMeta.textContent = bits.join(" | ");
+    }
+    if (els.selectedModelLine) {
+      els.selectedModelLine.innerHTML = "";
+      els.selectedModelLine.appendChild(modelBadge(task));
+      const identity = workspaceModelIdentity(task);
+      if (identity.backend) {
+        const backendBadge = document.createElement("span");
+        backendBadge.className = "badge pending";
+        backendBadge.textContent = identity.backend;
+        els.selectedModelLine.appendChild(backendBadge);
+      }
+      if (identity.status) {
+        const statusBadge = document.createElement("span");
+        statusBadge.className = "badge pending";
+        statusBadge.textContent = identity.status;
+        els.selectedModelLine.appendChild(statusBadge);
+      }
     }
     renderWorkspaceModelOptions(task);
     renderWorkspaceModelHint(task);

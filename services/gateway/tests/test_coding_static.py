@@ -26,6 +26,17 @@ def test_coding_ui_has_huge_model_tracking_warning_controls():
     assert 'els.workspaceModelInput.value = "coder";' in js
 
 
+def test_coding_ui_shows_workspace_model_identity_badges():
+    root = Path(__file__).resolve().parent.parent.joinpath("app", "static")
+    html = root.joinpath("coding.html").read_text(encoding="utf-8")
+    js = root.joinpath("coding.js").read_text(encoding="utf-8")
+
+    assert 'id="selectedModelLine"' in html
+    assert "workspaceModelIdentity" in js
+    assert "modelBadge(task)" in js
+    assert "Resolved upstream:" in js
+
+
 def test_sentinel_ui_lists_archives_and_actions():
     html = Path(__file__).resolve().parent.parent.joinpath("app", "static", "sentinel.html").read_text(encoding="utf-8")
     js = Path(__file__).resolve().parent.parent.joinpath("app", "static", "sentinel.js").read_text(encoding="utf-8")

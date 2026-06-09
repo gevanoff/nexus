@@ -66,6 +66,7 @@ from app.resources_snapshot import (
 )
 from app.tools_bus import TOOL_SCHEMAS
 from app import sentinel_runtime
+from app import coding_smoke_status
 from app import coding_workspace as cw
 
 
@@ -5839,6 +5840,13 @@ async def ui_chat_stream(req: Request):
 async def ui_api_backend_status(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     return await build_registry_backend_status_payload()
+
+
+@router.get("/ui/api/coding/smoke-status", include_in_schema=False)
+async def ui_api_coding_smoke_status(req: Request, limit: int = 100) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    return coding_smoke_status.payload(limit=limit)
 
 
 @router.get("/ui/api/sentinel/status", include_in_schema=False)

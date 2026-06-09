@@ -155,6 +155,14 @@
       .badge.error { border-color:rgba(255,127,143,0.54); color:#ffc3cb; background:rgba(150,20,38,0.20); }
       .badge.running { border-color:rgba(111,184,255,0.58); color:#cfe6ff; background:rgba(20,82,140,0.22); }
       .badge.pending { border-color:rgba(240,200,90,0.46); color:#f5dda0; }
+      .badge.model-badge { border-color:rgba(111,184,255,0.50); color:#d7ebff; background:rgba(22,74,128,0.22); max-width:100%; }
+      .workspace-model-line {
+        margin-top:8px;
+        display:flex;
+        flex-wrap:wrap;
+        gap:6px;
+        align-items:center;
+      }
       .toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
       .panel-grid { display:grid; grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr); gap:10px; }
       .subpanel { border:1px solid rgba(231,237,246,0.10); border-radius:8px; background:rgba(8,13,20,0.52); padding:10px; }
@@ -453,6 +461,7 @@
               <div>
                 <h2 id="selectedTitle">No workspace selected</h2>
                 <div id="selectedMeta" class="meta"></div>
+                <div id="selectedModelLine" class="workspace-model-line"></div>
               </div>
               <span id="selectedStatus" class="badge pending">idle</span>
             </div>

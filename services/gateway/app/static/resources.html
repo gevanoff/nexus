@@ -38,7 +38,7 @@
       .layout { display:grid; grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.4fr); gap: 12px; align-items:start; }
       .card { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 8px; padding: 12px; box-shadow: 0 12px 30px rgba(6,10,16,0.35); }
       .card.stale { border-color: rgba(240,200,90,0.72); box-shadow: 0 0 0 1px rgba(240,200,90,0.18), 0 12px 30px rgba(6,10,16,0.35); }
-      .host-list, .control-plane-list, .core-service-list, .backend-list { display:flex; flex-direction:column; gap:10px; }
+      .host-list, .control-plane-list, .core-service-list, .backend-list, .coding-smoke-list { display:flex; flex-direction:column; gap:10px; }
       .host-card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
       .host-card-title { min-width:0; }
       .host-copy-button { padding: 6px 9px; white-space: nowrap; }
@@ -68,6 +68,11 @@
       .huge-lane-row { display:grid; grid-template-columns: minmax(0, 1fr) auto; gap:8px; align-items:center; border-top: 1px solid rgba(231,237,246,0.08); padding-top:8px; }
       .huge-lane-row:first-child { border-top: 0; padding-top:0; }
       .huge-lane-actions { display:flex; justify-content:flex-end; gap:8px; }
+      .metrics-table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
+      .metrics-table th, .metrics-table td { text-align:left; border-top:1px solid rgba(231,237,246,0.08); padding:7px 6px; vertical-align:top; }
+      .metrics-table th { color:var(--muted); font-weight:650; }
+      .metrics-table td:last-child, .metrics-table th:last-child { text-align:right; }
+      .metrics-model { max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .backend-card:target,
       .backend-card.focused {
         border-color: rgba(111,184,255,0.92);
@@ -130,6 +135,10 @@
             <h2>MLX Huge Model</h2>
             <div id="mlx_huge_lane"></div>
           </section>
+          <section id="coding_smoke_section" class="resource-subsection">
+            <h2>Coding Health</h2>
+            <div id="coding_smoke" class="coding-smoke-list"></div>
+          </section>
           <h2>Backends</h2>
           <div id="backends" class="backend-list"></div>
         </section>
@@ -137,6 +146,6 @@
     </main>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=6"></script>
-    <script src="/static/resources.js?v=13"></script>
+    <script src="/static/resources.js?v=14"></script>
   </body>
 </html>

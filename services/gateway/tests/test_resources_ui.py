@@ -10,7 +10,7 @@ def test_resources_ui_hides_duplicate_core_services_section() -> None:
 
     assert 'id="control_plane_section"' in html
     assert 'id="core_services_section" class="resource-subsection" hidden' in html
-    assert "/static/resources.js?v=13" in html
+    assert "/static/resources.js?v=14" in html
     assert "splitCoreServicesForResourceUi" in js
     assert "controlPlaneCoreServiceIds" in js
     assert "hideWhenEmpty: true" in js
@@ -34,3 +34,15 @@ def test_resources_ui_can_copy_individual_host_information() -> None:
     assert "copyHostInfo(host, generatedAt)" in js
     assert 'copyButton.textContent = "Copy"' in js
     assert "navigator.clipboard.writeText" in js
+
+
+def test_resources_ui_shows_coding_smoke_health() -> None:
+    static_root = Path(__file__).resolve().parents[1] / "app" / "static"
+    html = (static_root / "resources.html").read_text(encoding="utf-8")
+    js = (static_root / "resources.js").read_text(encoding="utf-8")
+
+    assert 'id="coding_smoke_section"' in html
+    assert 'id="coding_smoke"' in html
+    assert "/ui/api/coding/smoke-status?limit=100" in js
+    assert "renderCodingSmoke" in js
+    assert "metrics-table" in js

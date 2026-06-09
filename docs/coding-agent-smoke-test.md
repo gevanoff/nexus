@@ -51,16 +51,45 @@ The script also prints the JSON report to stdout.
 
 ## Scheduling
 
-Run the wrapper from launchd, cron, or any existing Nexus supervisor. For ai2,
-keep logs and reports under `/ai-data`, for example:
+On ai2, install the recurring launchd job without placing job-owned files on the
+internal disk:
 
 ```bash
-NEXUS_CODING_SMOKE_OUTPUT_DIR=/ai-data/var/lib/nexus-smoke/coding \
-  /ai-data/var/lib/nexus/deploy/scripts/run-coding-smoke-test.sh
+cd /ai-data/var/lib/nexus
+./deploy/scripts/install-coding-smoke-launchd.sh \
+  --repo-dir /ai-data/var/lib/nexus \
+  --env-file /ai-data/var/lib/nexus/.env \
+  --output-dir /ai-data/var/lib/nexus-smoke/coding \
+  --models coder \
+  --start-interval 3600
 ```
 
-Use a cadence that matches model availability. Hourly is useful for active
-development; daily is enough for basic regression monitoring.
+The installer writes launcher state, logs, reports, lock files, and the plist
+under `/ai-data/var/lib/nexus-smoke`. It also sets
+`NEXUS_CODING_SMOKE_OUTPUT_DIR` in the Nexus env file so Gateway can mount and
+display the same report directory.
+
+Use `--weekly-models` for huge models that are not normally resident. The
+launcher only runs that list during its weekly idle window, controlled by
+`NEXUS_CODING_SMOKE_WEEKLY_DAY`, `NEXUS_CODING_SMOKE_IDLE_START_HOUR`, and
+`NEXUS_CODING_SMOKE_IDLE_END_HOUR` in
+`/ai-data/var/lib/nexus-smoke/coding/coding-smoke.env`.
+
+Hourly is useful for active Coding hardening; daily is enough for basic
+regression monitoring once the path is stable.
+
+## Resources Health Panel
+
+Gateway exposes summarized reports through:
+
+- `GET /ui/api/coding/smoke-status`
+- `GET /v1/coding/smoke-status`
+
+The Resources UI shows the latest run, the requested model, resolved backend and
+upstream model, duration, and a grouped metrics table by smoke profile and model.
+The current profile is `fixture_median`; future profiles should use increasing
+`profile_id`/`complexity` values so simple, medium, and larger coding tasks are
+auditable separately.
 
 ## Monitoring And Intervention APIs
 

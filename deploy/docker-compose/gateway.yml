@@ -37,12 +37,14 @@ services:
       - CODING_DEFAULT_REPO_URL=${CODING_DEFAULT_REPO_URL:-https://github.com/gevanoff/nexus.git}
       - CODING_ALLOWED_REPOS=${CODING_ALLOWED_REPOS:-https://github.com/gevanoff/nexus.git}
       - CODING_REQUIRE_ADMIN=${CODING_REQUIRE_ADMIN:-true}
+      - CODING_SMOKE_REPORT_DIR=/var/lib/gateway/coding_smoke_reports
       - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
     volumes:
       - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/gateway/data:/var/lib/gateway/data
       - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/gateway/config:/var/lib/gateway/config:ro
       - ${MLX_HF_CACHE_HOST_DIR:-${NEXUS_RUNTIME_ROOT:-../../.runtime}/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
+      - ${NEXUS_CODING_SMOKE_OUTPUT_DIR:-${NEXUS_RUNTIME_ROOT:-../../.runtime}/gateway/data/coding-smoke/reports}:/var/lib/gateway/coding_smoke_reports
       - ../../.env:/var/lib/gateway/app/.env:ro
     networks:
       - nexus

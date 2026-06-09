@@ -227,6 +227,10 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     report: dict[str, Any] = {
         "schema": SCHEMA,
         "ok": False,
+        "profile_id": args.profile_id,
+        "profile_label": args.profile_label,
+        "complexity": args.complexity,
+        "model": args.model,
         "started_at": started_at,
         "base_url": args.base_url.rstrip("/"),
         "task_id": "",
@@ -356,6 +360,10 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
         "agent_summary": ((last_task.get("agent") or {}).get("summary") if isinstance(last_task.get("agent"), dict) else ""),
         "agent_error": ((last_task.get("agent") or {}).get("error") if isinstance(last_task.get("agent"), dict) else ""),
     }
+    agent_payload = last_task.get("agent") if isinstance(last_task.get("agent"), dict) else {}
+    report["backend"] = agent_payload.get("backend") or ""
+    report["upstream_model"] = agent_payload.get("upstream_model") or ""
+    report["agent_elapsed_runtime_sec"] = agent_payload.get("elapsed_runtime_sec")
     report["final_inspect"] = last_inspect.get("task") if isinstance(last_inspect.get("task"), dict) else last_inspect
     append_phase(report, "agent_terminal", final_status == "completed", agent_status=final_status)
     if final_status != "completed":
@@ -365,6 +373,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
     verify_final_state(client, task_id, allowed_changes, report)
     report["ok"] = True
     report["finished_at"] = int(time.time())
+    report["duration_sec"] = int(report["finished_at"] - started_at)
     return report
 
 
@@ -390,6 +399,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--branch-name", default="")
     parser.add_argument("--branch-prefix", default="nexus-coding-smoke")
     parser.add_argument("--model", default=os.environ.get("NEXUS_CODING_SMOKE_MODEL", "coder"))
+    parser.add_argument("--profile-id", default=os.environ.get("NEXUS_CODING_SMOKE_PROFILE_ID", "fixture_median"))
+    parser.add_argument("--profile-label", default=os.environ.get("NEXUS_CODING_SMOKE_PROFILE_LABEL", "Fixture median repair"))
+    parser.add_argument("--complexity", default=os.environ.get("NEXUS_CODING_SMOKE_COMPLEXITY", "simple"))
     parser.add_argument("--prompt", default="")
     parser.add_argument("--timeout-sec", type=float, default=float(os.environ.get("NEXUS_CODING_SMOKE_TIMEOUT_SEC", "1200")))
     parser.add_argument("--poll-sec", type=float, default=float(os.environ.get("NEXUS_CODING_SMOKE_POLL_SEC", "10")))
@@ -414,11 +426,15 @@ def main(argv: list[str]) -> int:
         report["ok"] = False
         report["error"] = str(exc)
         report["finished_at"] = int(time.time())
+        if report.get("started_at"):
+            report["duration_sec"] = int(report["finished_at"] - int(report.get("started_at") or report["finished_at"]))
         return_code = 1
     except KeyboardInterrupt:
         report["ok"] = False
         report["error"] = "interrupted"
         report["finished_at"] = int(time.time())
+        if report.get("started_at"):
+            report["duration_sec"] = int(report["finished_at"] - int(report.get("started_at") or report["finished_at"]))
         return_code = 130
     finally:
         try:

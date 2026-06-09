@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.auth import require_bearer
 from app.config import S
 from app import coding_agent as ca
+from app import coding_smoke_status
 from app import coding_workspace as cw
 from app.tools_bus import tool_web_browse
 from app import user_store
@@ -597,6 +598,12 @@ async def v1_coding_monitor(
         only_attention=only_attention,
         stalled_after_sec=stalled_after_sec,
     )
+
+
+@router.get("/v1/coding/smoke-status")
+async def v1_coding_smoke_status(req: Request, limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return coding_smoke_status.payload(limit=limit)
 
 
 @router.post("/v1/coding/model-integrations")

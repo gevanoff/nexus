@@ -6,6 +6,8 @@
   const coreServicesEl = document.getElementById("core_services");
   const mlxHugeLaneSectionEl = document.getElementById("mlx_huge_lane_section");
   const mlxHugeLaneEl = document.getElementById("mlx_huge_lane");
+  const codingSmokeSectionEl = document.getElementById("coding_smoke_section");
+  const codingSmokeEl = document.getElementById("coding_smoke");
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
@@ -44,9 +46,24 @@
     return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
   }
 
+  function shortModel(value) {
+    const text = String(value || "").trim();
+    if (!text) return "unknown";
+    return text.length > 48 ? `...${text.slice(-45)}` : text;
+  }
+
   function fmtValue(value) {
     const text = String(value ?? "").trim();
     return text || "unknown";
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   function pct(used, total) {
@@ -111,6 +128,12 @@
     } catch (error) {
       return "";
     }
+  }
+
+  function formatDurationText(value) {
+    const sec = Number(value || 0);
+    if (!Number.isFinite(sec) || sec <= 0) return "--";
+    return fmtSec(sec);
   }
 
   function formatDateTime(tsSeconds) {
@@ -745,6 +768,80 @@
     scheduleHugeLanePoll(lane.status === "switching");
   }
 
+  function renderCodingSmoke(smoke) {
+    if (!codingSmokeEl) return;
+    codingSmokeEl.innerHTML = "";
+    const payload = smoke && typeof smoke === "object" ? smoke : {};
+    const latest = payload.latest && typeof payload.latest === "object" ? payload.latest : null;
+    const metrics = Array.isArray(payload.metrics) ? payload.metrics : [];
+    if (codingSmokeSectionEl) codingSmokeSectionEl.hidden = false;
+
+    const card = document.createElement("div");
+    card.className = "huge-lane-card";
+    const title = document.createElement("div");
+    title.className = "backend-name";
+    title.textContent = "Automated Coding smoke";
+    card.appendChild(title);
+
+    const badges = document.createElement("div");
+    badges.className = "badges";
+    if (latest) {
+      badges.appendChild(badge(latest.ok ? "passing" : "failing", latest.ok ? "green" : "red"));
+      badges.appendChild(badge(latest.profile_label || latest.profile_id || "profile", "blue"));
+      badges.appendChild(badge(formatDurationText(latest.duration_sec), "blue"));
+      if (latest.finished_at) badges.appendChild(badge(`last ${formatTimestamp(latest.finished_at) || "recent"}`, "blue"));
+    } else {
+      badges.appendChild(badge("no reports", "grey"));
+    }
+    card.appendChild(badges);
+
+    const detail = document.createElement("div");
+    detail.className = latest && latest.ok === false ? "meta error" : "meta";
+    detail.style.marginTop = "6px";
+    if (latest) {
+      const model = shortModel(latest.upstream_model || latest.model);
+      const bits = [
+        `model ${latest.model || "unknown"}`,
+        latest.backend ? `backend ${latest.backend}` : "",
+        model ? `upstream ${model}` : "",
+        latest.task_id ? `task ${latest.task_id}` : "",
+      ].filter(Boolean);
+      if (!latest.ok && latest.error) bits.push(latest.error);
+      detail.textContent = bits.join(" · ");
+    } else {
+      detail.textContent = `Report directory: ${payload.report_dir || "not configured"}`;
+    }
+    card.appendChild(detail);
+
+    if (metrics.length) {
+      const table = document.createElement("table");
+      table.className = "metrics-table";
+      const head = document.createElement("thead");
+      head.innerHTML = "<tr><th>Profile</th><th>Model</th><th>Pass</th><th>Avg</th><th>Last</th></tr>";
+      table.appendChild(head);
+      const body = document.createElement("tbody");
+      metrics.slice(0, 12).forEach((row) => {
+        const tr = document.createElement("tr");
+        const profile = row.profile_label || row.profile_id || "profile";
+        const model = shortModel(row.upstream_model || row.model);
+        const passRate = `${Math.round(Number(row.success_rate || 0) * 100)}% (${row.successes || 0}/${row.runs || 0})`;
+        const last = row.last_ok ? "ok" : "fail";
+        tr.innerHTML = [
+          `<td>${escapeHtml(profile)}<div class="meta">${escapeHtml(row.complexity || "")}</div></td>`,
+          `<td><div class="metrics-model" title="${escapeHtml(row.upstream_model || row.model || "")}">${escapeHtml(model)}</div><div class="meta">${escapeHtml(row.backend || "")}</div></td>`,
+          `<td>${escapeHtml(passRate)}</td>`,
+          `<td>${escapeHtml(formatDurationText(row.avg_duration_sec))}</td>`,
+          `<td>${escapeHtml(last)}<div class="meta">${escapeHtml(formatDurationText(row.last_duration_sec))}</div></td>`,
+        ].join("");
+        body.appendChild(tr);
+      });
+      table.appendChild(body);
+      card.appendChild(table);
+    }
+
+    codingSmokeEl.appendChild(card);
+  }
+
   function renderBackends(backends) {
     if (!backendsEl) return;
     backendsEl.innerHTML = "";
@@ -916,6 +1013,7 @@
       hideWhenEmpty: true,
     });
     renderMlxHugeLane(payload.mlx_huge_lane || null);
+    renderCodingSmoke(payload.coding_smoke || null);
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];
     if (opts.cached) statusParts.push("showing cached data");
@@ -942,9 +1040,10 @@
       const lifecyclePromise = fetchJson(lifecyclePath);
       const registryPromise = fetchJson("/ui/api/backend_status");
       const hugeLanePromise = fetchJson("/ui/api/mlx/huge-lane");
+      const codingSmokePromise = fetchJson("/ui/api/coding/smoke-status?limit=100");
 
-      const [lifecycleResult, registryResult, hugeLaneResult] = await Promise.all([lifecyclePromise, registryPromise, hugeLanePromise]);
-      if (lifecycleResult.redirected || registryResult.redirected || hugeLaneResult.redirected) return;
+      const [lifecycleResult, registryResult, hugeLaneResult, codingSmokeResult] = await Promise.all([lifecyclePromise, registryPromise, hugeLanePromise, codingSmokePromise]);
+      if (lifecycleResult.redirected || registryResult.redirected || hugeLaneResult.redirected || codingSmokeResult.redirected) return;
       let payload = lifecycleResult.data || null;
       if (registryResult.redirected) return;
       if (!payload && !registryResult.data) {
@@ -952,6 +1051,7 @@
       }
       payload = mergeBackendStatusPayload(payload, registryResult.data);
       if (hugeLaneResult.data) payload.mlx_huge_lane = hugeLaneResult.data;
+      if (codingSmokeResult.data) payload.coding_smoke = codingSmokeResult.data;
       renderPayload(payload, { registryError: registryResult.error });
       saveCachedPayload(payload);
     } catch (error) {
