@@ -165,7 +165,7 @@ OUT_LOG="${LOG_DIR}/${LABEL}.out.log"
 ERR_LOG="${LOG_DIR}/${LABEL}.err.log"
 
 sudo install -d -o "${TARGET_USER}" -g staff -m 750 "$BIN_DIR" "$ENV_DIR" "$OUTPUT_DIR" "$LOG_DIR"
-sudo install -d -o root -g wheel -m 755 "$LAUNCHD_DIR"
+sudo install -d -o "${TARGET_USER}" -g staff -m 750 "$LAUNCHD_DIR"
 sudo install -o root -g wheel -m 755 "$ROOT_DIR/deploy/scripts/coding-smoke-launch-agent.sh" "$LAUNCHER_DST"
 
 tmp_env="$(mktemp)"
@@ -196,8 +196,6 @@ cat >"$tmp_plist" <<EOF
   <dict>
     <key>Label</key>
     <string>${LABEL}</string>
-    <key>UserName</key>
-    <string>${TARGET_USER}</string>
     <key>WorkingDirectory</key>
     <string>${PLIST_REPO_DIR}</string>
     <key>ProgramArguments</key>
@@ -227,15 +225,17 @@ cat >"$tmp_plist" <<EOF
   </dict>
 </plist>
 EOF
-sudo install -o root -g wheel -m 644 "$tmp_plist" "$PLIST_PATH"
+sudo install -o "${TARGET_USER}" -g staff -m 600 "$tmp_plist" "$PLIST_PATH"
 rm -f "$tmp_plist"
 sudo plutil -lint "$PLIST_PATH" >/dev/null
 
+TARGET_UID="$(id -u "$TARGET_USER")"
 sudo launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
-sudo launchctl bootstrap system "$PLIST_PATH"
-sudo launchctl kickstart -k "system/${LABEL}" || true
+sudo -H -u "$TARGET_USER" launchctl bootout "gui/${TARGET_UID}/${LABEL}" >/dev/null 2>&1 || true
+sudo -H -u "$TARGET_USER" launchctl bootstrap "gui/${TARGET_UID}" "$PLIST_PATH"
+sudo -H -u "$TARGET_USER" launchctl kickstart -k "gui/${TARGET_UID}/${LABEL}" || true
 
-ns_print_ok "Coding smoke launchd job installed: ${LABEL}"
+ns_print_ok "Coding smoke launchd job installed: gui/${TARGET_UID}/${LABEL}"
 ns_print_ok "Reports: ${OUTPUT_DIR}"
 ns_print_ok "Logs: ${LOG_DIR}"
-ns_print_warn "The launchd plist lives under /ai-data. Re-run this installer after a full OS reinstall or launchd database reset."
+ns_print_warn "The launchd plist lives under /ai-data. Re-run this installer after a full OS reinstall, launchd database reset, or if the user GUI bootstrap domain is unavailable after reboot."
