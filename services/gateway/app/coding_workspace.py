@@ -7,6 +7,7 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -41,6 +42,8 @@ _TREE_SKIP = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cach
 _ARCHIVE_ANALYSIS_MODES = {"manual", "idle", "immediate"}
 _ARCHIVE_ANALYSIS_TARGETS = {"local", "external", "human", "none"}
 _FINDING_REVIEW_VERDICTS = {"invalid", "superseded"}
+_JSON_LOCKS_GUARD = threading.Lock()
+_JSON_LOCKS: Dict[str, threading.RLock] = {}
 
 
 def coding_enabled() -> bool:
@@ -545,10 +548,24 @@ def _archive_heuristic_findings(task: Dict[str, Any], manifest: Dict[str, Any], 
 
 
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    with _json_lock(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+
+
+def _json_lock(path: Path) -> threading.RLock:
+    try:
+        key = str(path.resolve())
+    except Exception:
+        key = str(path)
+    with _JSON_LOCKS_GUARD:
+        lock = _JSON_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _JSON_LOCKS[key] = lock
+        return lock
 
 
 def _quarantine_task_file(path: Path, raw_bytes: bytes, *, error_text: str) -> str:
@@ -622,24 +639,25 @@ def _repair_unreadable_task_file(path: Path, *, raw_bytes: bytes, error_text: st
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
-    try:
-        raw_bytes = path.read_bytes()
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="coding task not found")
-    except Exception as exc:
-        logger.warning("coding task read failed path=%s error=%s", path, exc)
-        raise HTTPException(status_code=500, detail="coding task metadata is unreadable")
-    try:
-        text = raw_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text=f"{type(exc).__name__}: {exc}")
-    try:
-        data = json.loads(text)
-    except Exception as exc:
-        return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text=f"{type(exc).__name__}: {exc}")
-    if not isinstance(data, dict) or data.get("schema") != SCHEMA:
-        return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text="task metadata schema is invalid")
-    return data
+    with _json_lock(path):
+        try:
+            raw_bytes = path.read_bytes()
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="coding task not found")
+        except Exception as exc:
+            logger.warning("coding task read failed path=%s error=%s", path, exc)
+            raise HTTPException(status_code=500, detail="coding task metadata is unreadable")
+        try:
+            text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text=f"{type(exc).__name__}: {exc}")
+        try:
+            data = json.loads(text)
+        except Exception as exc:
+            return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text=f"{type(exc).__name__}: {exc}")
+        if not isinstance(data, dict) or data.get("schema") != SCHEMA:
+            return _repair_unreadable_task_file(path, raw_bytes=raw_bytes, error_text="task metadata schema is invalid")
+        return data
 
 
 def load_task(task_id: str) -> Dict[str, Any]:
