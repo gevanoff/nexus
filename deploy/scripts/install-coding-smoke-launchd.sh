@@ -17,6 +17,7 @@ TARGET_HOME=""
 REPO_DIR="${ROOT_DIR}"
 NEXUS_ENV_FILE="${ROOT_DIR}/.env"
 RUNTIME_ROOT="${NEXUS_CODING_SMOKE_RUNTIME_ROOT:-/ai-data/var/lib/nexus-smoke}"
+LAUNCHD_ROOT="${NEXUS_CODING_SMOKE_LAUNCHD_ROOT:-/ai-data/launchd/nexus-smoke}"
 OUTPUT_DIR="${NEXUS_CODING_SMOKE_OUTPUT_DIR:-${RUNTIME_ROOT}/coding}"
 LOG_DIR="${NEXUS_CODING_SMOKE_LOG_DIR:-${RUNTIME_ROOT}/logs}"
 START_INTERVAL="${NEXUS_CODING_SMOKE_START_INTERVAL_SEC:-3600}"
@@ -38,6 +39,7 @@ Options:
   --repo-dir PATH         Nexus repo path (default: current repo)
   --env-file PATH         Nexus .env file (default: repo .env)
   --runtime-root PATH     Smoke runtime root (default: /ai-data/var/lib/nexus-smoke)
+  --launchd-root PATH     Root-owned launchd asset root (default: /ai-data/launchd/nexus-smoke)
   --output-dir PATH       JSON report directory (default: runtime-root/coding)
   --log-dir PATH          launchd stdout/stderr directory (default: runtime-root/logs)
   --start-interval SEC    Run interval in seconds (default: 3600)
@@ -137,6 +139,7 @@ while [[ $# -gt 0 ]]; do
     --repo-dir) REPO_DIR="${2:-}"; shift 2 ;;
     --env-file) NEXUS_ENV_FILE="${2:-}"; shift 2 ;;
     --runtime-root) RUNTIME_ROOT="${2:-}"; shift 2 ;;
+    --launchd-root) LAUNCHD_ROOT="${2:-}"; shift 2 ;;
     --output-dir) OUTPUT_DIR="${2:-}"; shift 2 ;;
     --log-dir) LOG_DIR="${2:-}"; shift 2 ;;
     --start-interval) START_INTERVAL="${2:-}"; shift 2 ;;
@@ -151,6 +154,7 @@ done
 
 [[ "$START_INTERVAL" =~ ^[0-9]+$ ]] || ns_die "--start-interval must be an integer"
 [[ "$RUNTIME_ROOT" == /ai-data/* ]] || ns_die "--runtime-root must be under /ai-data"
+[[ "$LAUNCHD_ROOT" == /ai-data/* ]] || ns_die "--launchd-root must be under /ai-data"
 [[ "$OUTPUT_DIR" == /ai-data/* ]] || ns_die "--output-dir must be under /ai-data"
 [[ "$LOG_DIR" == /ai-data/* ]] || ns_die "--log-dir must be under /ai-data"
 
@@ -163,8 +167,8 @@ fi
 
 TARGET_USER="$(resolve_target_user)"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
-BIN_DIR="${RUNTIME_ROOT}/bin"
-LAUNCHD_DIR="${RUNTIME_ROOT}/launchd"
+BIN_DIR="${LAUNCHD_ROOT}/bin"
+LAUNCHD_DIR="${LAUNCHD_ROOT}/plists"
 ENV_DIR="${RUNTIME_ROOT}/coding"
 LAUNCHER_DST="${BIN_DIR}/nexus-coding-smoke-launch"
 JOB_ENV_FILE="${ENV_DIR}/coding-smoke.env"
@@ -173,7 +177,7 @@ OUT_LOG="${LOG_DIR}/${LABEL}.out.log"
 ERR_LOG="${LOG_DIR}/${LABEL}.err.log"
 
 sudo install -d -o "${TARGET_USER}" -g staff -m 750 "$BIN_DIR" "$ENV_DIR" "$OUTPUT_DIR" "$LOG_DIR"
-sudo install -d -o "${TARGET_USER}" -g staff -m 750 "$LAUNCHD_DIR"
+sudo install -d -o root -g wheel -m 755 "$BIN_DIR" "$LAUNCHD_DIR"
 sudo install -o root -g wheel -m 755 "$ROOT_DIR/deploy/scripts/coding-smoke-launch-agent.sh" "$LAUNCHER_DST"
 
 tmp_env="$(mktemp)"
@@ -182,6 +186,8 @@ NEXUS_REPO_DIR=${REPO_DIR}
 NEXUS_ENV_FILE=${NEXUS_ENV_FILE}
 NEXUS_GATEWAY_URL=${GATEWAY_URL}
 NEXUS_CODING_SMOKE_OUTPUT_DIR=${OUTPUT_DIR}
+NEXUS_CODING_SMOKE_STDOUT_LOG=${OUT_LOG}
+NEXUS_CODING_SMOKE_STDERR_LOG=${ERR_LOG}
 NEXUS_CODING_SMOKE_MODELS=${MODELS}
 NEXUS_CODING_SMOKE_WEEKLY_MODELS=${WEEKLY_MODELS}
 EOF
@@ -190,11 +196,8 @@ rm -f "$tmp_env"
 
 update_env_value "$NEXUS_ENV_FILE" "NEXUS_CODING_SMOKE_OUTPUT_DIR" "$OUTPUT_DIR"
 
-PLIST_REPO_DIR="$(canonical_path "$REPO_DIR")"
 PLIST_LAUNCHER_DST="$(canonical_path "$LAUNCHER_DST")"
 PLIST_JOB_ENV_FILE="$(canonical_path "$JOB_ENV_FILE")"
-PLIST_OUT_LOG="$(canonical_path "$OUT_LOG")"
-PLIST_ERR_LOG="$(canonical_path "$ERR_LOG")"
 
 tmp_plist="$(mktemp)"
 cat >"$tmp_plist" <<EOF
@@ -204,8 +207,10 @@ cat >"$tmp_plist" <<EOF
   <dict>
     <key>Label</key>
     <string>${LABEL}</string>
+    <key>UserName</key>
+    <string>${TARGET_USER}</string>
     <key>WorkingDirectory</key>
-    <string>${PLIST_REPO_DIR}</string>
+    <string>/</string>
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
@@ -227,23 +232,23 @@ cat >"$tmp_plist" <<EOF
       <string>${PLIST_JOB_ENV_FILE}</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>${PLIST_OUT_LOG}</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>${PLIST_ERR_LOG}</string>
+    <string>/dev/null</string>
   </dict>
 </plist>
 EOF
-sudo install -o "${TARGET_USER}" -g staff -m 600 "$tmp_plist" "$PLIST_PATH"
+sudo install -o root -g wheel -m 644 "$tmp_plist" "$PLIST_PATH"
 rm -f "$tmp_plist"
 sudo plutil -lint "$PLIST_PATH" >/dev/null
 
 TARGET_UID="$(id -u "$TARGET_USER")"
 sudo launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 launchctl_for_target bootout "gui/${TARGET_UID}/${LABEL}" >/dev/null 2>&1 || true
-launchctl_for_target bootstrap "gui/${TARGET_UID}" "$PLIST_PATH"
-launchctl_for_target kickstart -k "gui/${TARGET_UID}/${LABEL}" || true
+sudo launchctl bootstrap system "$PLIST_PATH"
+sudo launchctl kickstart -k "system/${LABEL}" || true
 
-ns_print_ok "Coding smoke launchd job installed: gui/${TARGET_UID}/${LABEL}"
+ns_print_ok "Coding smoke launchd job installed: system/${LABEL}"
 ns_print_ok "Reports: ${OUTPUT_DIR}"
 ns_print_ok "Logs: ${LOG_DIR}"
-ns_print_warn "The launchd plist lives under /ai-data. Re-run this installer after a full OS reinstall, launchd database reset, or if the user GUI bootstrap domain is unavailable after reboot."
+ns_print_warn "The launchd plist lives under /ai-data. Re-run this installer after a full OS reinstall or launchd database reset."
