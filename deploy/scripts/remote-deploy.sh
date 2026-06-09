@@ -29,7 +29,7 @@ Suggested order (typical):
   1) On the remote host, ensure the standard repo path exists and is writable by the deploy user
      - Standard deploy user: ai
      - Standard repo path:
-       - macOS:  /Users/ai/ai/nexus
+       - macOS:  /ai-data/var/lib/nexus
        - Linux:  /home/ai/ai/nexus
      - Standard ownership:
        - macOS:  ai:staff

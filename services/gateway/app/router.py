@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable, Optional
 
 from app.backends import backend_provider_name, get_registry
 from app.config import S
+from app import coding_model_policy
+from app import mlx_huge_lane
 from app.model_aliases import get_alias, get_aliases
 from app.model_availability import route_with_model_fallback
 
@@ -101,11 +103,19 @@ def _default_model_for_backend(backend: str, cfg: RouterConfig) -> str:
     if resolved == "local_vllm":
         return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
     if resolved == "local_mlx":
-        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+        return (
+            mlx_huge_lane.route_model()
+            or (getattr(S, "MLX_MODEL_STRONG", "") or "").strip()
+            or cfg.primary_strong_model
+        )
 
     provider = backend_provider_name(resolved)
     if provider == "mlx":
-        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+        return (
+            mlx_huge_lane.route_model()
+            or (getattr(S, "MLX_MODEL_STRONG", "") or "").strip()
+            or cfg.primary_strong_model
+        )
     if provider == "vllm":
         return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
     return cfg.primary_strong_model
@@ -180,6 +190,28 @@ def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
     }:
         return _default_model_for_backend(backend, cfg)
     return m
+
+
+def _effective_alias_model(alias_name: str, alias: Any, backend: Backend) -> str:
+    model = str(getattr(alias, "upstream_model", "") or "").strip()
+    name = str(alias_name or "").strip().lower()
+    if (
+        name in {"mlx", "long"}
+        and backend_provider_name(backend) == "mlx"
+        and mlx_huge_lane.is_huge_model(model)
+    ):
+        return mlx_huge_lane.route_model() or model
+    return model
+
+
+def _effective_alias_backend_model(alias_name: str, alias: Any, cfg: RouterConfig) -> tuple[Backend, str]:
+    name = str(alias_name or "").strip().lower()
+    if name == "coder":
+        coder_model = coding_model_policy.current_coder_model()
+        if coder_model:
+            return _provider_default_backend("mlx"), coder_model
+    backend = _resolved_backend_name(alias.backend) or alias.backend
+    return backend, _normalize_model(_effective_alias_model(name, alias, backend), backend, cfg)
 
 
 _CODE_HINT_RE = re.compile(
@@ -276,8 +308,7 @@ def decide_route(
     alias_key = request_model_key
     if alias_key and alias_key in aliases:
         a = aliases[alias_key]
-        backend = _resolved_backend_name(a.backend) or a.backend
-        normalized = _normalize_model(a.upstream_model, backend, cfg)
+        backend, normalized = _effective_alias_backend_model(alias_key, a, cfg)
         return route_with_model_fallback(RouteDecision(backend=backend, model=normalized, reason="alias:model"))
 
     backend = _choose_backend_by_model(request_model_norm, cfg.default_backend)
@@ -316,23 +347,23 @@ def decide_route(
         if is_coding:
             a = get_alias("coder")
             if a and a.tools is not False:
-                b = _resolved_backend_name(a.backend) or a.backend
-                return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->coding->alias:coder"))
+                b, m = _effective_alias_backend_model("coder", a, cfg)
+                return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:tools->coding->alias:coder"))
         a = get_alias("default")
         if a and a.tools is not False:
-            b = _resolved_backend_name(a.backend) or a.backend
-            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:default"))
+            b, m = _effective_alias_backend_model("default", a, cfg)
+            return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:tools->alias:default"))
         a = get_alias("coder")
         if a and a.tools is not False:
-            b = _resolved_backend_name(a.backend) or a.backend
-            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:tools->alias:coder"))
+            b, m = _effective_alias_backend_model("coder", a, cfg)
+            return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:tools->alias:coder"))
         return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:tools->strong"))
 
     if size >= long_threshold:
         a = get_alias("long")
         if a:
-            b = _resolved_backend_name(a.backend) or a.backend
-            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:long_context->alias:long"))
+            b, m = _effective_alias_backend_model("long", a, cfg)
+            return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:long_context->alias:long"))
         primary_backend = _provider_default_backend("mlx")
         if cfg.primary_strong_model:
             return route_with_model_fallback(RouteDecision(backend=primary_backend, model=cfg.primary_strong_model, reason="policy:long_context->primary"))
@@ -341,13 +372,13 @@ def decide_route(
     if is_coding:
         a = get_alias("coder")
         if a:
-            b = _resolved_backend_name(a.backend) or a.backend
-            return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:coding->alias:coder"))
+            b, m = _effective_alias_backend_model("coder", a, cfg)
+            return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:coding->alias:coder"))
         return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:coding->strong"))
 
     a = get_alias("fast")
     if a:
         b = _resolved_backend_name(a.backend) or a.backend
-        return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(a.upstream_model, b, cfg), reason="policy:fast->alias:fast"))
+        return route_with_model_fallback(RouteDecision(backend=b, model=_normalize_model(_effective_alias_model("fast", a, b), b, cfg), reason="policy:fast->alias:fast"))
 
     return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_fast_model, reason="policy:fast"))

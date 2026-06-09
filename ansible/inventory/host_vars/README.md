@@ -12,7 +12,7 @@ Typical examples:
 Example `ansible/inventory/host_vars/ai2.yml`:
 
 ```yaml
-nexus_repo_dir: /Users/ai/ai/nexus
+nexus_repo_dir: /ai-data/var/lib/nexus
 ansible_python_interpreter: /usr/bin/python3
 nexus_mlx_pf_allowlist_enabled: true
 ```

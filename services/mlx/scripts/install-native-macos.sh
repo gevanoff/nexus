@@ -81,6 +81,7 @@ MLX_LAUNCHER="${MLX_VENV}/bin/mlx-openai-launch"
 MLX_PREFETCHER="${MLX_VENV}/bin/mlx-prefetch-models"
 MLX_PREFETCH_HELPER="${MLX_VENV}/bin/mlx-prefetch-models.py"
 MLX_PREFETCH_HELPER_COMPAT="${MLX_VENV}/bin/prefetch_models.py"
+MLX_PACKAGE_PATCHER="${MLX_VENV}/bin/mlx-patch-openai-server.py"
 PREFETCH_BEFORE_START="${PREFETCH_BEFORE_START:-1}"
 
 HOST_FROM_SHELL="false"
@@ -306,6 +307,7 @@ fi
 sudo -H "${MLX_VENV}/bin/python" -m pip install --upgrade --no-cache-dir pip setuptools wheel
 # shellcheck disable=SC2086
 sudo -H "${MLX_VENV}/bin/python" -m pip install --upgrade --no-cache-dir ${MLX_PIP_PACKAGES} huggingface_hub
+sudo -H "${MLX_VENV}/bin/python" "${ROOT_DIR}/services/mlx/scripts/patch_mlx_openai_server.py" --venv "${MLX_VENV}"
 
 if [[ ! -x "${MLX_VENV}/bin/mlx-openai-server" ]]; then
   echo "ERROR: mlx-openai-server executable was not installed into ${MLX_VENV}/bin" >&2
@@ -321,8 +323,9 @@ sudo chmod 755 "${MLX_LAUNCHER}"
 sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch-models.sh" "${MLX_PREFETCHER}"
 sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch_models.py" "${MLX_PREFETCH_HELPER}"
 sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch_models.py" "${MLX_PREFETCH_HELPER_COMPAT}"
-sudo chown root:wheel "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}"
-sudo chmod 755 "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}"
+sudo cp "${ROOT_DIR}/services/mlx/scripts/patch_mlx_openai_server.py" "${MLX_PACKAGE_PATCHER}"
+sudo chown root:wheel "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}" "${MLX_PACKAGE_PATCHER}"
+sudo chmod 755 "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}" "${MLX_PACKAGE_PATCHER}"
 
 update_env_file_key() {
   local file="$1"

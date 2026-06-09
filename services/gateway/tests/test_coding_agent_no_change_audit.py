@@ -475,3 +475,48 @@ def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypat
 
     assert [item["backend"] for item in ranked] == ["local_mlx"]
     assert ranked[0]["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_start_agent_run_defers_inactive_pinned_huge_model(monkeypatch):
+    task = {
+        "id": "code_abcdef123456",
+        "status": "ready",
+        "agent_status": "idle",
+        "coding_model": "model-b",
+        "prompt": "Fix the bug.",
+        "agent_events": [],
+    }
+    store = {"task": dict(task)}
+
+    def _load_task(task_id):
+        assert task_id == "code_abcdef123456"
+        return dict(store["task"])
+
+    def _save_task(next_task):
+        store["task"] = dict(next_task)
+        return next_task
+
+    monkeypatch.setattr(ca.cw, "_ensure_enabled", lambda: None)
+    monkeypatch.setattr(ca.cw, "load_task", _load_task)
+    monkeypatch.setattr(ca.cw, "save_task", _save_task)
+    monkeypatch.setattr(
+        ca.coding_model_policy,
+        "describe_workspace_model",
+        lambda model: {
+            "selected_model": model,
+            "resolved_model": model,
+            "run_policy": "idle_only",
+            "warning": "This workspace will only run during idle periods.",
+            "active_huge_model": "model-a",
+            "recommended_model": "coder",
+        },
+    )
+
+    result = await ca.start_agent_run("code_abcdef123456", coding_model="model-b", actor="test")
+
+    assert result["agent"]["status"] == "idle_waiting"
+    assert result["agent"]["summary"] == "This workspace will only run during idle periods."
+    assert store["task"]["agent_status"] == "idle_waiting"
+    assert store["task"]["agent_events"][-1]["type"] == "idle_deferred"
+    assert ca._active_runner("code_abcdef123456") is None

@@ -757,8 +757,14 @@ async def _maybe_notify_coding(
     return {"sent": False, "reason": str(result.get("error") or "send_failed")}
 
 
-async def _monitor_coding(state: Dict[str, Any], conn: sqlite3.Connection, *, now: int) -> Dict[str, Any]:
-    from app import coding_agent, coding_workspace
+async def _monitor_coding(
+    state: Dict[str, Any],
+    conn: sqlite3.Connection,
+    *,
+    now: int,
+    resources_summary: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    from app import coding_agent, coding_model_policy, coding_workspace
 
     monitor = coding_workspace.monitor_tasks(limit=100, only_attention=False, stalled_after_sec=_stalled_after_sec())
     items = monitor.get("tasks") if isinstance(monitor.get("tasks"), list) else []
@@ -814,6 +820,38 @@ async def _monitor_coding(state: Dict[str, Any], conn: sqlite3.Connection, *, no
         safe_actions = item.get("safe_actions") if isinstance(item.get("safe_actions"), list) else []
         agent = item.get("agent") if isinstance(item.get("agent"), dict) else {}
         agent_status = str(agent.get("status") or "").strip().lower()
+        if agent_status == "idle_waiting":
+            wait_for_idle = _archive_analysis_should_wait_for_idle(resources_summary or {})
+            model = str(agent.get("model") or item.get("coding_model") or "").strip()
+            policy = coding_model_policy.describe_workspace_model(model)
+            if wait_for_idle or str(policy.get("run_policy") or "") != "immediate":
+                continue
+            updated = await coding_agent.start_agent_run(task_id, actor="nexus-sentinel-idle")
+            next_agent = updated.get("agent") if isinstance(updated.get("agent"), dict) else {}
+            action = {
+                "task_id": task_id,
+                "action": "idle_resume",
+                "previous_status": agent_status,
+                "agent_status": str(next_agent.get("status") or ""),
+            }
+            summary["actions"] += 1
+            action_fingerprint = _fingerprint({"task_id": task_id, "action": action})
+            _record_event(
+                conn,
+                ts=now,
+                level="info",
+                category="coding",
+                event_type="idle_resume",
+                subject_type="coding_task",
+                subject_id=task_id,
+                title=f"Nexus Sentinel started idle coding workspace {task_id}",
+                summary=f"{agent_status} -> {action['agent_status'] or 'queued'}",
+                reasoning=_coding_reasoning(item),
+                dedupe_key=f"coding:{task_id}:idle_resume",
+                fingerprint=action_fingerprint,
+                details={"item": item, "action": action},
+            )
+            continue
         blocked_attention = _CODING_AUTO_RESUME_BLOCKERS.intersection({str(item) for item in attention})
         can_resume = agent_status in {"interrupted", "failed"} and "resume" in safe_actions and not blocked_attention
         if not can_resume:
@@ -1290,7 +1328,7 @@ async def run_monitor_once() -> Dict[str, Any]:
         state = _load_state(conn)
         resources_summary = await _monitor_resources(state, conn, now=started)
         summary = {
-            "coding": await _monitor_coding(state, conn, now=started),
+            "coding": await _monitor_coding(state, conn, now=started, resources_summary=resources_summary),
             "scheduled_tasks": _monitor_scheduled_tasks(state, conn, now=started),
             "resources": resources_summary,
             "archives": await _monitor_archived_workspaces(state, conn, now=started, resources_summary=resources_summary),

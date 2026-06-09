@@ -34,7 +34,9 @@
     selectedStatus: document.getElementById("selectedStatus"),
     selectedPrompt: document.getElementById("selectedPrompt"),
     workspaceModelInput: document.getElementById("workspaceModelInput"),
+    workspaceModelHint: document.getElementById("workspaceModelHint"),
     saveWorkspaceModel: document.getElementById("saveWorkspaceModel"),
+    trackCurrentCoderModel: document.getElementById("trackCurrentCoderModel"),
     archiveTaskBtn: document.getElementById("archiveTaskBtn"),
     purgeTaskBtn: document.getElementById("purgeTaskBtn"),
     workspaceChat: document.getElementById("workspaceChat"),
@@ -239,6 +241,96 @@
       select.appendChild(option);
     });
     if (selectedValue !== undefined && selectedValue !== null) select.value = String(selectedValue);
+  }
+
+  function codingModelConfig() {
+    return state.config && state.config.coding_model_policy && typeof state.config.coding_model_policy === "object"
+      ? state.config.coding_model_policy
+      : {};
+  }
+
+  function workspaceModelValue(task) {
+    return String((task && task.coding_model) || "").trim() || "coder";
+  }
+
+  function codingModelOptions(selectedValue) {
+    const config = codingModelConfig();
+    const options = Array.isArray(config.options) && config.options.length
+      ? config.options.map((item) => ({ value: String(item.value || ""), label: String(item.label || item.value || "") }))
+      : [{ value: "coder", label: "Track current coder" }];
+    const selected = String(selectedValue || "coder").trim() || "coder";
+    if (selected && !options.some((item) => item.value === selected)) {
+      options.push({ value: selected, label: `Custom: ${selected}` });
+    }
+    return options;
+  }
+
+  function modelOptionForValue(value) {
+    const selected = String(value || "coder").trim() || "coder";
+    const options = Array.isArray(codingModelConfig().options) ? codingModelConfig().options : [];
+    return options.find((item) => String(item && item.value || "") === selected) || null;
+  }
+
+  function modelPolicyForValue(value, task) {
+    const selected = String(value || "coder").trim() || "coder";
+    const taskPolicy = task && task.model_policy && typeof task.model_policy === "object" ? task.model_policy : null;
+    if (taskPolicy && String(taskPolicy.selected_model || "coder") === selected) return taskPolicy;
+    const config = codingModelConfig();
+    const option = modelOptionForValue(selected);
+    if (selected.toLowerCase() === "coder" || selected.toLowerCase() === "default" || selected.toLowerCase() === "auto") {
+      return {
+        selected_model: "coder",
+        resolved_model: config.current_coder_model || "",
+        tracks_coder: true,
+        status: "tracking",
+        status_label: "Tracking current coder",
+        run_policy: "immediate",
+        warning: "",
+      };
+    }
+    if (option && String(option.run_policy || "") === "idle_only") {
+      const active = config.active_huge_model || "none";
+      return {
+        selected_model: selected,
+        resolved_model: selected,
+        tracks_coder: false,
+        status: "idle_only",
+        status_label: "Idle only",
+        run_policy: "idle_only",
+        warning: `This workspace is pinned to ${selected}, but the loaded coder model is ${active}. It will only run during idle periods after that huge model is loaded. Switch this workspace to coder to track the current loaded model.`,
+        recommended_model: "coder",
+      };
+    }
+    return {
+      selected_model: selected,
+      resolved_model: selected,
+      tracks_coder: false,
+      status: option && option.status ? String(option.status) : "custom",
+      status_label: option && option.status ? String(option.status) : "Custom",
+      run_policy: option && option.run_policy ? String(option.run_policy) : "immediate",
+      warning: "",
+    };
+  }
+
+  function renderWorkspaceModelOptions(task) {
+    if (!els.workspaceModelInput) return;
+    const selected = document.activeElement === els.workspaceModelInput
+      ? String(els.workspaceModelInput.value || "coder")
+      : workspaceModelValue(task);
+    setSelectOptions(els.workspaceModelInput, codingModelOptions(selected), selected);
+  }
+
+  function renderWorkspaceModelHint(task) {
+    if (!els.workspaceModelHint) return;
+    const value = els.workspaceModelInput ? String(els.workspaceModelInput.value || "coder") : workspaceModelValue(task);
+    const policy = modelPolicyForValue(value, task);
+    const warning = String(policy.warning || "").trim();
+    els.workspaceModelHint.hidden = !warning;
+    els.workspaceModelHint.textContent = warning;
+    if (els.trackCurrentCoderModel) {
+      els.trackCurrentCoderModel.hidden = !warning;
+      els.trackCurrentCoderModel.disabled = state.busy || !task || agentIsActive(task);
+    }
   }
 
   function createModeProfile(mode) {
@@ -584,7 +676,8 @@
       if (els.selectedTitle) els.selectedTitle.textContent = "No workspace selected";
       if (els.selectedMeta) els.selectedMeta.textContent = "";
       if (els.selectedPrompt) els.selectedPrompt.textContent = "";
-      if (els.workspaceModelInput) els.workspaceModelInput.value = "";
+      renderWorkspaceModelOptions(null);
+      renderWorkspaceModelHint(null);
       if (els.selectedStatus) {
         els.selectedStatus.className = "badge pending";
         els.selectedStatus.textContent = "idle";
@@ -609,14 +702,17 @@
           ].filter(Boolean)
         : [`${task.repo_url || ""}`, `base ${task.base_branch || ""}`, `updated ${fmtTime(task.updated_at)}`];
       if (task.elapsed_runtime_sec !== undefined) bits.push(`workspace runtime ${fmtDuration(task.elapsed_runtime_sec)}`);
-      bits.push(`workspace model ${task.coding_model || "default"}`);
+      const policy = task.model_policy && typeof task.model_policy === "object" ? task.model_policy : null;
+      const modelLabel = policy && policy.tracks_coder
+        ? `coder -> ${policy.resolved_model || "current"}`
+        : (task.coding_model || "coder");
+      bits.push(`workspace model ${modelLabel}`);
       const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
       if (commit) bits.push(`commit ${commit}`);
       els.selectedMeta.textContent = bits.join(" | ");
     }
-    if (els.workspaceModelInput && document.activeElement !== els.workspaceModelInput) {
-      els.workspaceModelInput.value = String(task.coding_model || "");
-    }
+    renderWorkspaceModelOptions(task);
+    renderWorkspaceModelHint(task);
     if (els.selectedPrompt) {
       const promptBits = [];
       if (integration && deployment && deployment.reason) promptBits.push(`${task.prompt || ""}\n\nRecommended lane: ${deployment.reason}`.trim());
@@ -646,6 +742,7 @@
       els.prBody.value = task.prompt || "";
     }
     if (els.saveWorkspaceModel) els.saveWorkspaceModel.disabled = state.busy || activeAgent;
+    if (els.trackCurrentCoderModel) els.trackCurrentCoderModel.disabled = state.busy || activeAgent;
     renderAgent(task);
     renderWorkspaceChat(task);
   }
@@ -703,7 +800,7 @@
     }
     if (els.workspaceChatStatus) {
       if (!task) els.workspaceChatStatus.textContent = "";
-      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = `Sent messages are read by the active agent during its next work cycle. Replies appear here. Next run model: ${task.coding_model || "default"}.`;
+      else if (agentIsActive(task)) els.workspaceChatStatus.textContent = `Sent messages are read by the active agent during its next work cycle. Replies appear here. Next run model: ${workspaceModelValue(task)}.`;
       else els.workspaceChatStatus.textContent = `Sending a message starts a continuation run and the agent reply appears here. Press Enter to send, Shift+Enter for a new line.`;
     }
     if (!messages.length) {
@@ -1232,7 +1329,8 @@
       renderTasks();
       renderSelected();
       setOutput("agent run", fresh || payload);
-      setStatus("Agent run started.");
+      const agentStatus = String((fresh && fresh.agent && fresh.agent.status) || "");
+      setStatus(agentStatus === "idle_waiting" ? "Workspace is waiting for an idle period with the pinned huge model loaded." : "Agent run started.");
     } finally {
       setBusy(false);
       renderSelected();
@@ -1259,7 +1357,10 @@
       renderTasks();
       renderSelected();
       setOutput(payload.started ? "workspace message and run" : "workspace message", fresh || payload);
-      setStatus(payload.started ? "Workspace message sent and continuation run started." : "Workspace message sent.");
+      const agentStatus = String((fresh && fresh.agent && fresh.agent.status) || "");
+      setStatus(payload.started && agentStatus === "idle_waiting"
+        ? "Workspace message saved; run is waiting for an idle period with the pinned huge model loaded."
+        : (payload.started ? "Workspace message sent and continuation run started." : "Workspace message sent."));
     } finally {
       setBusy(false);
       renderSelected();
@@ -1288,6 +1389,13 @@
       setBusy(false);
       renderSelected();
     }
+  }
+
+  async function trackCurrentCoderModel() {
+    if (!els.workspaceModelInput) return;
+    els.workspaceModelInput.value = "coder";
+    renderWorkspaceModelHint(selectedTask());
+    await saveWorkspaceModel();
   }
 
   async function stopAgentRun(taskId) {
@@ -1642,6 +1750,7 @@
   wire("briefBtn", runAgentBrief);
   wire("sendWorkspaceMessage", sendWorkspaceMessage);
   wire("saveWorkspaceModel", saveWorkspaceModel);
+  wire("trackCurrentCoderModel", trackCurrentCoderModel);
   wire("runCommand", runCommand);
   wire("commitBtn", commitTask);
   wire("pushBtn", pushTask);
@@ -1657,6 +1766,10 @@
     els.createMode.addEventListener("change", () => {
       setCreateMode(els.createMode ? els.createMode.value : "agent");
     });
+  }
+
+  if (els.workspaceModelInput) {
+    els.workspaceModelInput.addEventListener("change", () => renderWorkspaceModelHint(selectedTask()));
   }
 
   if (els.filesPanel) {

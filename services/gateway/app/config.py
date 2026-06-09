@@ -236,12 +236,16 @@ class Settings(BaseSettings):
 
     # MLX-hosted reasoning models, typically on ai2.
     MLX_MODEL_STRONG: str = "mlx-community/MiniMax-M2.5-8bit"
-    MLX_MODEL_FAST: str = "mlx-community/MiniMax-M2.5-8bit"
+    MLX_MODEL_FAST: str = "mlx-community/Phi-4-reasoning-plus-4bit"
     MLX_MODEL_DEFAULT: str = "mlx-community/MiniMax-M2.5-8bit"
     MLX_FALLBACK_BACKEND: str = "local_vllm_fast"
     MLX_FALLBACK_MODEL: str = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
     MLX_HF_CACHE_DIR: str = "/var/lib/gateway/mlx_hf_cache"
     MLX_FETCH_STALLED_AFTER_SEC: int = 600
+    MLX_HUGE_LANE_ENABLED: bool = True
+    MLX_HUGE_LANE_DEFAULT_MODEL: str = "mlx-community/MiniMax-M2.5-8bit"
+    MLX_HUGE_MODELS: str = "mlx-community/MiniMax-M2.5-8bit,mlx-community/DeepSeek-R1-0528-4bit,mlx-community/GLM-5-4bit"
+    MLX_HUGE_LANE_STATE_PATH: str = "/var/lib/gateway/data/mlx_huge_lane.json"
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 

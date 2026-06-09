@@ -13,6 +13,19 @@ def test_coding_ui_trash_button_deletes_not_archives():
     assert 'deleteTask(task.id);' in source
 
 
+def test_coding_ui_has_huge_model_tracking_warning_controls():
+    root = Path(__file__).resolve().parent.parent.joinpath("app", "static")
+    html = root.joinpath("coding.html").read_text(encoding="utf-8")
+    js = root.joinpath("coding.js").read_text(encoding="utf-8")
+
+    assert '<select id="workspaceModelInput"></select>' in html
+    assert 'id="workspaceModelHint"' in html
+    assert 'id="trackCurrentCoderModel"' in html
+    assert "coding_model_policy" in js
+    assert "only run during idle periods" in js
+    assert 'els.workspaceModelInput.value = "coder";' in js
+
+
 def test_sentinel_ui_lists_archives_and_actions():
     html = Path(__file__).resolve().parent.parent.joinpath("app", "static", "sentinel.html").read_text(encoding="utf-8")
     js = Path(__file__).resolve().parent.parent.joinpath("app", "static", "sentinel.js").read_text(encoding="utf-8")

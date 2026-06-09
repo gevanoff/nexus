@@ -13,6 +13,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import user_llm
 from app import ui_routes
+from app import mlx_huge_lane
 from app.agent_runtime_v1 import run_agent_v1
 from app.models import AgentRunRequest, AgentSpecModel, ChatCompletionRequest, ChatMessage
 
@@ -174,6 +175,10 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
         admin_models_html = f.read()
     with open(os.path.join(root, "admin_models.js"), encoding="utf-8") as f:
         admin_models_js = f.read()
+    with open(os.path.join(root, "resources.html"), encoding="utf-8") as f:
+        resources_html = f.read()
+    with open(os.path.join(root, "resources.js"), encoding="utf-8") as f:
+        resources_js = f.read()
 
     assert ".user-llm-provider-card.key-saved" in html
     assert "settings_user_llm_openai_load_models" in html
@@ -196,9 +201,11 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/api/admin/models" in admin_models_js
     assert "/ui/api/admin/models/prefetch" in admin_models_js
     assert "Restart fetch" in admin_models_js
+    assert "mlx_huge_lane" in resources_html
+    assert "/ui/api/mlx/huge-lane/switch" in resources_js
 
 
-def test_canonical_chat_aliases_use_working_vllm_lane():
+def test_canonical_chat_aliases_keep_default_vllm_and_coder_mlx_lane():
     aliases_path = os.path.join(os.path.dirname(__file__), "..", "app", "model_aliases.json")
     with open(aliases_path, encoding="utf-8") as f:
         payload = json.load(f)
@@ -207,10 +214,31 @@ def test_canonical_chat_aliases_use_working_vllm_lane():
 
     assert aliases["default"]["backend"] == "local_vllm"
     assert aliases["default"]["model"] == "unsloth/Qwen3-30B-A3B-FP8"
-    assert aliases["coder"]["backend"] == "local_vllm"
-    assert aliases["coder"]["model"] == "unsloth/Qwen3-30B-A3B-FP8"
+    assert aliases["coder"]["backend"] == "local_mlx"
+    assert aliases["coder"]["model"] == "mlx-community/MiniMax-M2.5-8bit"
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == "unsloth/Qwen3-30B-A3B-FP8"
+
+
+def test_mlx_huge_lane_state_routes_pending_target(monkeypatch, tmp_path):
+    state_path = tmp_path / "mlx_huge_lane.json"
+    monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_STATE_PATH", str(state_path), raising=False)
+    monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_MODELS", "model-a,model-b", raising=False)
+    monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_DEFAULT_MODEL", "model-a", raising=False)
+    monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_ENABLED", True, raising=False)
+
+    assert mlx_huge_lane.load_state()["active_model"] == "model-a"
+
+    switching = mlx_huge_lane.mark_switching("model-b")
+    assert switching["active_model"] == "model-a"
+    assert switching["target_model"] == "model-b"
+    assert switching["route_model"] == "model-b"
+    assert mlx_huge_lane.route_model() == "model-b"
+
+    ready = mlx_huge_lane.mark_ready("model-b")
+    assert ready["active_model"] == "model-b"
+    assert ready["target_model"] == ""
+    assert ready["route_model"] == "model-b"
 
 
 def test_user_llm_available_models_include_selected_models():
@@ -449,7 +477,7 @@ async def test_ui_models_hides_fetching_probed_backend_models(monkeypatch):
     payload = await ui_routes.ui_models(SimpleNamespace())
 
     assert payload["data"] == []
-    assert payload["diagnostics"]["sources"]["hidden_probed_models"]["local_mlx:mlx-community/MiniMax-M2.5-8bit"]["reason"] == "fetching"
+    assert payload["diagnostics"]["sources"]["hidden_probed_models"]["local_mlx:mlx-community/MiniMax-M2.5-8bit"]["reason"] == "mlx_huge_lane_controlled"
 
 
 @pytest.mark.asyncio

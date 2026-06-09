@@ -54,6 +54,40 @@ def test_hf_model_cache_entries_lists_repo_states(tmp_path):
     }
 
 
+def test_hf_model_cache_state_rejects_incomplete_sharded_snapshot(tmp_path):
+    model = "mlx-community/Sharded-Model"
+    snapshot = tmp_path / "hub" / "models--mlx-community--Sharded-Model" / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True)
+    (snapshot / "model-00001-of-00003.safetensors").write_text("", encoding="utf-8")
+    (snapshot / "model-00003-of-00003.safetensors").write_text("", encoding="utf-8")
+
+    assert hf_model_cache_state(model, str(tmp_path)) == "missing"
+
+    (snapshot / "model-00002-of-00003.safetensors").write_text("", encoding="utf-8")
+    assert hf_model_cache_state(model, str(tmp_path)) == "cached"
+
+
+def test_hf_model_cache_state_does_not_trust_cached_metadata_with_incomplete_files(tmp_path):
+    payload = {
+        "models": {
+            "mlx-community/Partial": {
+                "state": "cached",
+                "incomplete_count": 2,
+                "incomplete_bytes": 1234,
+            },
+            "mlx-community/IncompleteSnapshot": {
+                "state": "cached",
+                "complete_snapshot_count": 0,
+                "incomplete_snapshot_count": 1,
+            },
+        }
+    }
+    (tmp_path / ".nexus_cache_status.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    assert hf_model_cache_state("mlx-community/Partial", str(tmp_path)) == "fetching"
+    assert hf_model_cache_state("mlx-community/IncompleteSnapshot", str(tmp_path)) == "missing"
+
+
 def test_hf_model_cache_details_marks_fetching_active_or_stalled_from_metadata(tmp_path):
     payload = {
         "generated_at": 2000,

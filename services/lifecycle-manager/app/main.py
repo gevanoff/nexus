@@ -26,6 +26,11 @@ def _env(name: str, default: str = "") -> str:
     return value if value else default
 
 
+def _path_env(name: str, default: str) -> str:
+    value = _env(name, default).rstrip("/")
+    return value or default.rstrip("/")
+
+
 def _int_env(name: str, default: int) -> int:
     raw = _env(name)
     if not raw:
@@ -900,20 +905,21 @@ class LifecycleManager:
             raise HTTPException(status_code=400, detail=f"unknown host {backend.host}")
 
         safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in model)[:160] or "model"
-        log_path = f"/var/lib/mlx/logs/prefetch-{safe_name}.log"
+        mlx_root = _path_env("MLX_NATIVE_ROOT", "/var/lib/mlx")
+        log_path = f"{mlx_root}/logs/prefetch-{safe_name}.log"
         inner_command = (
-            f"/var/lib/mlx/env/bin/mlx-prefetch-models --model {shlex.quote(model)} "
+            f"{shlex.quote(mlx_root)}/env/bin/mlx-prefetch-models --model {shlex.quote(model)} "
             f">>{shlex.quote(log_path)} 2>&1 </dev/null & "
             "pid=$!; disown \"$pid\" 2>/dev/null || true; echo \"$pid\""
         )
         command = (
-            "sudo -n install -d -o mlx -m 775 /var/lib/mlx/logs; "
-            "if [ ! -x /var/lib/mlx/env/bin/mlx-prefetch-models ]; then "
+            f"sudo -n install -d -o mlx -m 775 {shlex.quote(mlx_root)}/logs; "
+            f"if [ ! -x {shlex.quote(mlx_root)}/env/bin/mlx-prefetch-models ]; then "
             "echo 'mlx-prefetch-models helper not found' >&2; exit 127; "
             "fi; "
             "sudo -n -H -u mlx env "
-            "MLX_ENV_FILE=/var/lib/mlx/mlx.env "
-            "MLX_VENV=/var/lib/mlx/env "
+            f"MLX_ENV_FILE={shlex.quote(mlx_root)}/mlx.env "
+            f"MLX_VENV={shlex.quote(mlx_root)}/env "
             f"/bin/bash -lc {shlex.quote(inner_command)}"
         )
         backend.last_action = "prefetch"
@@ -1850,7 +1856,25 @@ class LifecycleManager:
 
     @staticmethod
     def _docker_probe_command() -> str:
-        return "docker ps --format '{{.Names}}\\t{{.Status}}' 2>/dev/null || true"
+        return (
+            "docker_bin=\"$(command -v docker 2>/dev/null || true)\"; "
+            "if [ -z \"$docker_bin\" ]; then "
+            "PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"; "
+            "docker_bin=\"$(command -v docker 2>/dev/null || true)\"; "
+            "fi; "
+            "if [ -n \"$docker_bin\" ]; then "
+            "\"$docker_bin\" ps --format '{{.Names}}\\t{{.Status}}' 2>/dev/null || "
+            "for sock in "
+            "\"${DOCKER_HOST#unix://}\" "
+            "\"${HOME:-}/.colima/default/docker.sock\" "
+            "\"/ai-data/var/lib/colima/default/docker.sock\" "
+            "\"/Volumes/ai_data/var/lib/colima/default/docker.sock\"; do "
+            "if [ -n \"$sock\" ] && [ -S \"$sock\" ]; then "
+            "DOCKER_HOST=\"unix://$sock\" \"$docker_bin\" ps --format '{{.Names}}\\t{{.Status}}' 2>/dev/null && break; "
+            "fi; "
+            "done; "
+            "fi; true"
+        )
 
     @classmethod
     def _linux_probe_command(cls) -> str:

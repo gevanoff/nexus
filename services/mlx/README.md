@@ -109,6 +109,8 @@ sudo -u mlx env MLX_ENV_FILE=/var/lib/mlx/mlx.env MLX_VENV=/var/lib/mlx/env /var
 
 `install-native-macos.sh` installs both the wrapper and its Python helper into `/var/lib/mlx/env/bin`, so `deploy/scripts/restart-mlx.sh` and plain `launchctl kickstart` can use the same prefetch mechanism without relying on the repo checkout at runtime.
 
+`install-native-macos.sh` also applies Nexus' `mlx-openai-server` compatibility patch after pip installation. The current patch keeps DeepSeek MLX generation on the handler thread because that model family binds some MLX GPU stream state to the thread that creates it. `deploy/scripts/restart-mlx.sh` reapplies the patch idempotently before launchd restarts so a future package reinstall does not silently lose the fix.
+
 ## Notes
 
 - Gateway containers on the same Mac should use `MLX_BASE_URL=http://host.docker.internal:10240/v1`.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +24,56 @@ def _hf_repo_cache_dirs(model_id: str, cache_dir: str) -> list[Path]:
 
 def _hf_cache_root(cache_dir: str | None = None) -> Path:
     return Path((cache_dir or getattr(S, "MLX_HF_CACHE_DIR", "") or "").strip())
+
+
+_SHARDED_WEIGHT_RE = re.compile(r"^(.+)-(\d{5})-of-(\d{5})\.(safetensors|bin)$")
+
+
+def _snapshot_weight_completeness(snapshot: Path) -> Optional[bool]:
+    """Return whether a Hugging Face snapshot appears to have complete weights."""
+
+    index_path = snapshot / "model.safetensors.index.json"
+    if index_path.exists():
+        try:
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        weight_map = payload.get("weight_map") if isinstance(payload, dict) else None
+        if isinstance(weight_map, dict) and weight_map:
+            required = {
+                str(rel).strip()
+                for rel in weight_map.values()
+                if isinstance(rel, str) and str(rel).strip()
+            }
+            if required:
+                return all((snapshot / rel).exists() for rel in required)
+
+    weight_files = [
+        path
+        for pattern in ("*.safetensors", "*.bin")
+        for path in snapshot.glob(pattern)
+        if path.is_file()
+    ]
+    if not weight_files:
+        return None
+
+    expected_by_group: dict[tuple[str, str], int] = {}
+    observed_by_group: dict[tuple[str, str], set[int]] = {}
+    for path in weight_files:
+        match = _SHARDED_WEIGHT_RE.match(path.name)
+        if not match:
+            continue
+        group = (match.group(1), match.group(4))
+        shard_number = int(match.group(2))
+        shard_total = int(match.group(3))
+        expected_by_group[group] = max(expected_by_group.get(group, 0), shard_total)
+        observed_by_group.setdefault(group, set()).add(shard_number)
+
+    for group, expected in expected_by_group.items():
+        observed = observed_by_group.get(group, set())
+        if len(observed) < expected or any(number not in observed for number in range(1, expected + 1)):
+            return False
+    return True
 
 
 def _cache_status_payload(root: Path) -> dict[str, Any]:
@@ -61,23 +112,54 @@ def hf_model_cache_state(model_id: str, cache_dir: str | None = None) -> Optiona
     metadata = _model_status_metadata(model, root)
     metadata_state = str(metadata.get("state") or "").strip()
     if metadata_state in {"cached", "fetching", "missing"}:
+        complete_snapshots = _int_metadata(metadata.get("complete_snapshot_count"))
+        if _int_metadata(metadata.get("incomplete_count")) > 0:
+            if metadata_state == "cached" and complete_snapshots > 0:
+                return "cached"
+            return "fetching"
+        if metadata_state == "cached":
+            incomplete_snapshots = _int_metadata(metadata.get("incomplete_snapshot_count"))
+            if incomplete_snapshots > 0 and complete_snapshots <= 0:
+                return "missing"
         return metadata_state
 
     repos = [repo for repo in _hf_repo_cache_dirs(model, str(root)) if repo.exists()]
     if not repos:
         return "missing"
 
+    has_incomplete_blob = False
+    complete_snapshot_found = False
+    incomplete_snapshot_found = False
+    any_snapshot_files = False
     for repo in repos:
         if any(repo.glob("blobs/*.incomplete")):
-            return "fetching"
-
-    for repo in repos:
+            has_incomplete_blob = True
         snapshots = repo / "snapshots"
         try:
-            if any(True for _path in snapshots.glob("*/*")):
-                return "cached"
+            snapshot_dirs = [path for path in snapshots.iterdir() if path.is_dir()]
         except Exception:
             return None
+        for snapshot in snapshot_dirs:
+            try:
+                has_files = any(snapshot.iterdir())
+            except Exception:
+                continue
+            if not has_files:
+                continue
+            any_snapshot_files = True
+            complete = _snapshot_weight_completeness(snapshot)
+            if complete is True:
+                complete_snapshot_found = True
+            elif complete is False:
+                incomplete_snapshot_found = True
+    if complete_snapshot_found:
+        return "cached"
+    if has_incomplete_blob:
+        return "fetching"
+    if incomplete_snapshot_found:
+        return "missing"
+    if any_snapshot_files:
+        return "cached"
     return "missing"
 
 

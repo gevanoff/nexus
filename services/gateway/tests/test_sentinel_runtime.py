@@ -87,6 +87,59 @@ def test_backend_issue_state_waits_for_poll_and_duration_thresholds(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_sentinel_resumes_idle_waiting_workspace_when_resources_idle(monkeypatch, tmp_path):
+    db_path = _sentinel_events(tmp_path, monkeypatch)
+    resumed = []
+    coding_workspace = types.SimpleNamespace(
+        monitor_tasks=lambda **_: {
+            "counts": {"total": 1, "attention": 0},
+            "tasks": [
+                {
+                    "id": "code_idle",
+                    "status": "ready",
+                    "coding_model": "model-b",
+                    "needs_attention": False,
+                    "attention": [],
+                    "safe_actions": [],
+                    "agent": {"status": "idle_waiting", "model": "model-b"},
+                }
+            ],
+        }
+    )
+
+    async def _start_agent_run(task_id: str, actor: str | None = None, **_: object):
+        resumed.append((task_id, actor))
+        return {"agent": {"status": "queued"}}
+
+    coding_agent = types.SimpleNamespace(start_agent_run=_start_agent_run)
+    coding_model_policy = types.SimpleNamespace(describe_workspace_model=lambda _: {"run_policy": "immediate"})
+    monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
+    monkeypatch.setitem(sys.modules, "app.coding_agent", coding_agent)
+    monkeypatch.setitem(sys.modules, "app.coding_model_policy", coding_model_policy)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+    monkeypatch.setattr(app, "coding_agent", coding_agent, raising=False)
+    monkeypatch.setattr(app, "coding_model_policy", coding_model_policy, raising=False)
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        state = {}
+        summary = await sentinel_runtime._monitor_coding(
+            state,
+            conn,
+            now=1_700_000_000,
+            resources_summary={"resource_pressure": 0, "queue_pressure": 0},
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert summary["actions"] == 1
+    assert resumed == [("code_idle", "nexus-sentinel-idle")]
+    assert any(item["event_type"] == "idle_resume" for item in sentinel_runtime.list_events(limit=10))
+
+
+@pytest.mark.asyncio
 async def test_sentinel_records_coding_attention_and_auto_resume(monkeypatch, tmp_path):
     _sentinel_events(tmp_path, monkeypatch)
     _agent_tasks_db(tmp_path, monkeypatch)

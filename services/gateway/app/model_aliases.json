@@ -16,8 +16,8 @@
       "tools": true
     },
     "coder": {
-      "backend": "local_vllm",
-      "model": "unsloth/Qwen3-30B-A3B-FP8",
+      "backend": "local_mlx",
+      "model": "mlx-community/MiniMax-M2.5-8bit",
       "tools": true
     },
     "reasoning": {

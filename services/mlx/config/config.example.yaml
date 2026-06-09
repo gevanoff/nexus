@@ -8,8 +8,8 @@ models:
     model_path: mlx-community/bge-small-en-v1.5-8bit
     model_type: embeddings
 
-  # Primary text/chat model for ai2. Keep very large LM entries on-demand so
-  # one model can be loaded at a time instead of keeping all resident.
+  # Primary long-context profile. Keep large LM entries on-demand so one model
+  # can be loaded at a time instead of keeping all resident.
   - served_model_name: mlx-community/MiniMax-M2.5-8bit
     model_path: mlx-community/MiniMax-M2.5-8bit
     model_type: lm
@@ -37,16 +37,6 @@ models:
     on_demand: true
     on_demand_idle_timeout: 300
 
-  # Higher-quality coding profile. Keep on-demand and route to it only after
-  # the repo is fully prefetched.
-  - served_model_name: mlx-community/GLM-5-8bit-MXFP8
-    model_path: mlx-community/GLM-5-8bit-MXFP8
-    model_type: lm
-    tool_call_parser: glm4_moe
-    reasoning_parser: glm4_moe
-    on_demand: true
-    on_demand_idle_timeout: 300
-
   # Smaller reasoning fallback.
   - served_model_name: mlx-community/Phi-4-reasoning-plus-4bit
     model_path: mlx-community/Phi-4-reasoning-plus-4bit
@@ -55,6 +45,16 @@ models:
 
   # Add large optional models incrementally. Use on_demand for very large models
   # so first request pays the load cost and idle models are unloaded later.
+  # Only advertise optional repos after their local Hugging Face cache is complete.
+
+  # Optional higher-quality GLM coding profile.
+  # - served_model_name: mlx-community/GLM-5-8bit-MXFP8
+  #   model_path: mlx-community/GLM-5-8bit-MXFP8
+  #   model_type: lm
+  #   tool_call_parser: glm4_moe
+  #   reasoning_parser: glm4_moe
+  #   on_demand: true
+  #   on_demand_idle_timeout: 300
 
   # Optional image generation model. Uncomment after installing the image extras
   # for mlx-openai-server and selecting a config_name supported by that model.

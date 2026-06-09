@@ -162,7 +162,7 @@ Remote host deploy:
 1. Standardize the remote host layout:
 	 - Deploy user: `ai`
 	 - Repo location:
-		 - macOS: `/Users/ai/ai/nexus`
+		 - macOS: `/ai-data/var/lib/nexus`
 		 - Linux: `/home/ai/ai/nexus`
 	 - Ownership:
 		 - macOS: `ai:staff`

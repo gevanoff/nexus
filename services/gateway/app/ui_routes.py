@@ -49,6 +49,8 @@ from app.upstreams import call_backend_chat, stream_backend_chat_as_openai
 from app.images_backend import generate_images, resolve_images_backend_class
 from app.ocr_backend import extract_ocr_text, scan_ocr
 from app.tts_backend import generate_tts, _effective_tts_base_url
+from app import coding_model_policy
+from app import mlx_huge_lane
 from app import ui_conversations
 from app import user_store
 from app import user_llm
@@ -90,6 +92,11 @@ class ModelPrefetchRequest(BaseModel):
     model: str
 
 
+class MlxHugeLaneSwitchRequest(BaseModel):
+    model: str
+    confirmed: bool = False
+
+
 _UI_MODELS_CACHE_LOCK = asyncio.Lock()
 _UI_MODELS_CACHE_VALUE: Optional[Dict[str, Any]] = None
 _UI_MODELS_CACHE_EXPIRES_AT: float = 0.0
@@ -111,6 +118,12 @@ def _backend_base_url(backend_class: str) -> str:
     except Exception:
         pass
     return ""
+
+
+def _clear_ui_models_cache() -> None:
+    global _UI_MODELS_CACHE_VALUE, _UI_MODELS_CACHE_EXPIRES_AT
+    _UI_MODELS_CACHE_VALUE = None
+    _UI_MODELS_CACHE_EXPIRES_AT = 0.0
 
 
 def _backend_location_details(registry: Any, backend_name: str, *, base_url: str = "") -> Dict[str, str]:
@@ -156,10 +169,10 @@ def _ui_default_model_for_backend(backend_name: str) -> str:
     if resolved == "local_vllm":
         return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
     if resolved == "local_mlx":
-        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+        return mlx_huge_lane.route_model() or (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
     provider = backend_provider_name(resolved)
     if provider == "mlx":
-        return (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
+        return mlx_huge_lane.route_model() or (getattr(S, "MLX_MODEL_STRONG", "") or "").strip() or cfg.primary_strong_model
     if provider == "vllm":
         return (getattr(S, "VLLM_MODEL_STRONG", "") or "").strip() or cfg.primary_fast_model
     return cfg.primary_strong_model
@@ -335,13 +348,29 @@ def _ui_alias_display_model(
     advertised_models_by_backend: Optional[Dict[str, set[str]]] = None,
 ) -> tuple[bool, str, Optional[str]]:
     backend_name = registry.resolve_backend_class(alias.backend) or alias.backend
+    if str(alias_name or "").strip().lower() == "coder":
+        alias_model = coding_model_policy.current_coder_model()
+        if alias_model:
+            unavailable = _ui_model_unavailable_reason(
+                registry.resolve_backend_class("mlx") or "local_mlx",
+                alias_model,
+                advertised_models_by_backend=advertised_models_by_backend,
+            )
+            return (not bool(unavailable)), alias_model, unavailable
+    alias_model = str(alias.upstream_model or "").strip()
+    if (
+        str(alias_name or "").strip().lower() in {"mlx", "long"}
+        and backend_provider_name(backend_name) == "mlx"
+        and mlx_huge_lane.is_huge_model(alias_model)
+    ):
+        alias_model = mlx_huge_lane.route_model() or alias_model
     unavailable = _ui_model_unavailable_reason(
         backend_name,
-        alias.upstream_model,
+        alias_model,
         advertised_models_by_backend=advertised_models_by_backend,
     )
     if not unavailable:
-        return True, alias.upstream_model, None
+        return True, alias_model, None
 
     fallback = fallback_target_for_backend(backend_name)
     fallback_backend = fallback[0] if fallback else ""
@@ -353,7 +382,7 @@ def _ui_alias_display_model(
     ) if fallback_model else "unavailable"
     if str(alias_name or "").strip().lower() in {"default", "mlx"} and fallback_model and not fallback_unavailable:
         return True, fallback_model, unavailable
-    return False, alias.upstream_model, unavailable
+    return False, alias_model, unavailable
 
 
 def _lighton_ocr_base_url() -> str:
@@ -4441,6 +4470,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
                 "chat_candidate": _ui_model_id_is_chat_candidate(model_name),
                 "selectable": False,
                 "aliases": [],
+                "huge_lane": bool(backend_provider_name(resolved_backend) == "mlx" and mlx_huge_lane.is_huge_model(model_name)),
             }
             model_rows[key] = row
         if advertised:
@@ -4526,6 +4556,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
     return {
         "generated_at": now,
         "alias_config": get_aliases_state().__dict__,
+        "mlx_huge_lane": mlx_huge_lane.load_state(),
         "backends": backend_rows,
         "aliases": alias_rows,
         "models": sorted(model_rows.values(), key=lambda row: (str(row.get("backend") or ""), str(row.get("model") or ""))),
@@ -4552,6 +4583,108 @@ async def ui_admin_model_prefetch(req: Request, body: ModelPrefetchRequest) -> D
         timeout=max(10.0, lifecycle_timeout()),
     )
     return payload
+
+
+def _mlx_huge_lane_payload() -> Dict[str, Any]:
+    state = mlx_huge_lane.load_state()
+    candidates = []
+    for candidate in state.get("candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        model_name = str(candidate.get("model") or "").strip()
+        cache_details = hf_model_cache_details(model_name)
+        candidates.append(
+            {
+                **candidate,
+                "cache_state": cache_details.get("state") or hf_model_cache_state(model_name),
+                "fetch_activity": cache_details.get("fetch_activity"),
+            }
+        )
+    state["candidates"] = candidates
+    return state
+
+
+def _mlx_chat_completions_url() -> str:
+    base_url = _backend_base_url("local_mlx").rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=503, detail="MLX backend URL is not configured")
+    return f"{base_url}/chat/completions"
+
+
+async def _warm_mlx_huge_lane_model(model_name: str) -> None:
+    try:
+        info = mlx_huge_lane.model_info(model_name)
+        timeout = max(300.0, float(info.get("estimated_load_sec") or 120) + 180.0)
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
+            "max_tokens": 8,
+            "temperature": 0,
+            "stream": False,
+        }
+        async with _httpx_client(timeout=timeout) as client:
+            resp = await client.post(_mlx_chat_completions_url(), json=payload)
+            if resp.status_code >= 400:
+                body = resp.text[:500] if resp.text else ""
+                raise RuntimeError(f"MLX warmup failed HTTP {resp.status_code}: {body}")
+        mlx_huge_lane.mark_ready(model_name, message=f"{model_name} is loaded")
+    except Exception as exc:
+        logger.warning("MLX huge lane switch failed model=%s error=%s", model_name, exc)
+        mlx_huge_lane.mark_error(model_name, f"{type(exc).__name__}: {exc}")
+    finally:
+        _clear_ui_models_cache()
+
+
+@router.get("/ui/api/mlx/huge-lane", include_in_schema=False)
+async def ui_mlx_huge_lane(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    return _mlx_huge_lane_payload()
+
+
+@router.post("/ui/api/mlx/huge-lane/switch", include_in_schema=False)
+async def ui_mlx_huge_lane_switch(req: Request, body: MlxHugeLaneSwitchRequest) -> Dict[str, Any]:
+    _require_admin(req)
+    if not mlx_huge_lane.enabled():
+        raise HTTPException(status_code=400, detail="MLX huge lane is disabled")
+    model_name = str(body.model or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="model is required")
+    if not mlx_huge_lane.is_huge_model(model_name):
+        raise HTTPException(status_code=400, detail="model is not configured for the MLX huge lane")
+
+    cache_details = hf_model_cache_details(model_name)
+    cache_state = cache_details.get("state") or hf_model_cache_state(model_name)
+    if cache_state != "cached":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "model_not_cached",
+                "model": model_name,
+                "cache_state": cache_state or "unknown",
+            },
+        )
+
+    state = mlx_huge_lane.load_state()
+    if state.get("status") == "ready" and state.get("active_model") == model_name:
+        return {"ok": True, "decision": "already_active", "lane": _mlx_huge_lane_payload()}
+
+    info = mlx_huge_lane.model_info(model_name)
+    if not body.confirmed:
+        return {
+            "ok": False,
+            "decision": "requires_confirmation",
+            "message": (
+                f"Switch MLX huge lane to {model_name}? "
+                f"Estimated cold-load time is about {int(info.get('estimated_load_sec') or 120)} seconds. "
+                "The selected model will be warmed immediately; avoid starting another huge MLX chat until it is ready."
+            ),
+            "lane": _mlx_huge_lane_payload(),
+        }
+
+    mlx_huge_lane.mark_switching(model_name)
+    _clear_ui_models_cache()
+    asyncio.create_task(_warm_mlx_huge_lane_model(model_name))
+    return {"ok": True, "decision": "switch_started", "lane": _mlx_huge_lane_payload()}
 
 
 @router.get("/ui/api/models", include_in_schema=False)
@@ -4646,6 +4779,9 @@ async def ui_models(req: Request) -> Dict[str, Any]:
         item["backend"] = a.backend
         item["upstream_model"] = a.upstream_model
         item["resolved_model"] = display_model
+        if backend_provider_name(a.backend) == "mlx" and mlx_huge_lane.is_huge_model(display_model):
+            item["controlled_by"] = "mlx_huge_lane"
+            item["huge_lane"] = mlx_huge_lane.load_state()
         if unavailable:
             item["primary_model_unavailable"] = unavailable
             resolved_backend = registry.resolve_backend_class(a.backend) or a.backend
@@ -4678,6 +4814,13 @@ async def ui_models(req: Request) -> Dict[str, Any]:
     for item in probed_items:
         backend_name = str(item.get("backend") or "").strip()
         upstream_model = str(item.get("upstream_model") or "").strip()
+        if backend_provider_name(backend_name) == "mlx" and mlx_huge_lane.is_huge_model(upstream_model):
+            source_diags.setdefault("hidden_probed_models", {})[str(item.get("id") or upstream_model)] = {
+                "backend": backend_name,
+                "model": upstream_model,
+                "reason": "mlx_huge_lane_controlled",
+            }
+            continue
         hidden_reason = model_unavailable_reason(backend_name, upstream_model)
         if hidden_reason or not _ui_model_id_is_chat_candidate(upstream_model):
             source_diags.setdefault("hidden_probed_models", {})[str(item.get("id") or upstream_model)] = {
@@ -4691,6 +4834,7 @@ async def ui_models(req: Request) -> Dict[str, Any]:
     diagnostics: Dict[str, Any] = {
         "probe_timeout_sec": probe_timeout_sec,
         "sources": source_diags,
+        "mlx_huge_lane": mlx_huge_lane.load_state(),
         "cache": {
             "hit": False,
             "ttl_sec": cache_ttl_sec,
@@ -4998,6 +5142,7 @@ async def _stream_ui_chat(
         full_text = ""
         emitted_error = False
         has_visible_output = False
+        has_model_output = False
         done_seen = False
 
         # Emit any pre-collected events from server-side command handling.
@@ -5040,26 +5185,33 @@ async def _stream_ui_chat(
                     delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
                     text = delta.get("content")
                     thinking = delta.get("thinking")
+                    reasoning_content = delta.get("reasoning_content")
                     thinking_reset = bool(delta.get("thinking_reset"))
                 except Exception:
                     text = None
                     thinking = None
+                    reasoning_content = None
                     thinking_reset = False
 
                 if thinking_reset:
                     yield sse({"type": "thinking_reset"})
 
+                if isinstance(reasoning_content, str) and reasoning_content:
+                    thinking = (thinking or "") + reasoning_content if isinstance(thinking, str) else reasoning_content
+
                 if isinstance(thinking, str) and thinking:
+                    has_model_output = True
                     yield sse({"type": "thinking", "thinking": thinking})
 
                 if isinstance(text, str) and text:
                     full_text += text
                     has_visible_output = True
+                    has_model_output = True
                     yield sse({"type": "delta", "delta": text})
             if done_seen:
                 break
 
-        if not has_visible_output and not emitted_error:
+        if not has_visible_output and not has_model_output and not emitted_error:
             emitted_error = True
             yield sse(
                 {

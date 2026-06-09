@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from fastapi import HTTPException
 
 from app.backends import backend_hostname, get_admission_controller, get_registry, llm_backends
+from app import coding_model_policy
 from app import coding_workspace as cw
 from app import user_llm, user_store
 from app.config import S, logger
@@ -546,6 +547,8 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
             f"backend_selected cycle={event.get('cycle') or ''} backend={event.get('backend') or ''} "
             f"host={event.get('host') or ''} preferred={event.get('preferred_backend') or ''}"
         ).strip()
+    if event_type == "idle_deferred":
+        return f"idle_deferred {_clip_text(str(event.get('summary') or ''), 700)}".strip()
     if event_type in {"queued", "started", "cycle_started", "review", "commit", "completed", "failed", "paused", "stopped"}:
         summary = str(event.get("summary") or event.get("error") or "")
         return f"{event_type} {_clip_text(summary, 700)}".strip()
@@ -1680,6 +1683,13 @@ def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
     return model
 
 
+def _idle_only_huge_model_policy(model: str) -> Optional[Dict[str, Any]]:
+    policy = coding_model_policy.describe_workspace_model(model)
+    if str(policy.get("run_policy") or "") == "idle_only":
+        return policy
+    return None
+
+
 def _settings_for_task_owner(task: Dict[str, Any]) -> Dict[str, Any]:
     user_id = task.get("owner_user_id")
     try:
@@ -1737,6 +1747,56 @@ async def start_agent_run(
         )
         guidance_messages = guidance_messages[-200:]
     now = time.time()
+    idle_only_policy = _idle_only_huge_model_policy(model)
+    if idle_only_policy:
+        summary = str(idle_only_policy.get("warning") or "").strip() or (
+            "This workspace is pinned to a huge MLX model that is not currently loaded."
+        )
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "coding_model": model,
+                "agent_run_id": run_id,
+                "agent_status": "idle_waiting",
+                "agent_model": model,
+                "agent_backend": "",
+                "agent_upstream_model": str(idle_only_policy.get("resolved_model") or ""),
+                "agent_cycle": 0,
+                "agent_started_at": None,
+                "agent_finished_at": now,
+                "agent_last_event_at": now_unix(),
+                "agent_summary": summary,
+                "agent_error": "",
+                "agent_previous_run_id": previous_run_id,
+                "agent_previous_status": previous_status,
+                "agent_previous_summary": previous_summary,
+                "agent_previous_error": previous_error,
+                "agent_stop_requested": False,
+                "agent_pause_requested": False,
+                "agent_auto_commit": bool(auto_commit),
+                "agent_run_prompt": effective_prompt,
+                "agent_events": previous_events[-_max_events():],
+                "guidance_messages": guidance_messages,
+                "last_guidance_at": guidance_messages[-1].get("ts") if requested_prompt and guidance_messages else task.get("last_guidance_at"),
+            },
+        )
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "idle_deferred",
+                "run_id": run_id,
+                "model": model,
+                "active_huge_model": idle_only_policy.get("active_huge_model") or "",
+                "recommended_model": idle_only_policy.get("recommended_model") or "coder",
+                "summary": summary,
+                "actor": actor or "",
+            },
+        )
+        fresh = await asyncio.to_thread(cw.load_task, task_id)
+        return cw.public_task(fresh)
+
     await asyncio.to_thread(
         _mutate_task,
         task_id,

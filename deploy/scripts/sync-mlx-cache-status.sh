@@ -11,6 +11,10 @@ if [[ -n "${MLX_HF_CACHE_SOURCE_DIR:-}" ]]; then
   SRC="$MLX_HF_CACHE_SOURCE_DIR"
 elif [[ -n "${HF_HOME:-}" ]]; then
   SRC="$HF_HOME"
+elif [[ -d "/ai-data/huggingface" ]]; then
+  SRC="/ai-data/huggingface"
+elif [[ -d "/Volumes/ai_data/huggingface" ]]; then
+  SRC="/Volumes/ai_data/huggingface"
 elif [[ -d "/private/var/lib/huggingface" ]]; then
   SRC="/private/var/lib/huggingface"
 else
@@ -67,6 +71,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -78,14 +83,71 @@ def repo_id_from_cache_dir(path: Path) -> str:
     return name.removeprefix("models--").replace("--", "/").strip()
 
 
+SHARDED_WEIGHT_RE = re.compile(r"^(.+)-(\d{5})-of-(\d{5})\.(safetensors|bin)$")
+
+
+def snapshot_weight_status(snapshot: Path) -> tuple[str, int, int, list[str]]:
+    index_path = snapshot / "model.safetensors.index.json"
+    if index_path.exists():
+        try:
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        weight_map = payload.get("weight_map") if isinstance(payload, dict) else None
+        if isinstance(weight_map, dict) and weight_map:
+            required = sorted(
+                {
+                    str(rel).strip()
+                    for rel in weight_map.values()
+                    if isinstance(rel, str) and str(rel).strip()
+                }
+            )
+            missing = [rel for rel in required if not (snapshot / rel).exists()]
+            return ("complete" if not missing else "incomplete", len(required), len(required) - len(missing), missing[:20])
+
+    weight_files = [
+        path
+        for pattern in ("*.safetensors", "*.bin")
+        for path in snapshot.glob(pattern)
+        if path.is_file()
+    ]
+    if not weight_files:
+        return "unknown", 0, 0, []
+
+    expected_by_group: dict[tuple[str, str], int] = {}
+    observed_by_group: dict[tuple[str, str], set[int]] = {}
+    for path in weight_files:
+        match = SHARDED_WEIGHT_RE.match(path.name)
+        if not match:
+            continue
+        group = (match.group(1), match.group(4))
+        shard_number = int(match.group(2))
+        shard_total = int(match.group(3))
+        expected_by_group[group] = max(expected_by_group.get(group, 0), shard_total)
+        observed_by_group.setdefault(group, set()).add(shard_number)
+
+    if not expected_by_group:
+        return "complete", len(weight_files), len(weight_files), []
+
+    expected_total = 0
+    observed_total = 0
+    missing: list[str] = []
+    for (prefix, suffix), expected in sorted(expected_by_group.items()):
+        observed = observed_by_group.get((prefix, suffix), set())
+        expected_total += expected
+        observed_total += len(observed)
+        width = 5
+        for number in range(1, expected + 1):
+            if number not in observed:
+                missing.append(f"{prefix}-{number:0{width}d}-of-{expected:0{width}d}.{suffix}")
+                if len(missing) >= 20:
+                    break
+    return ("complete" if observed_total >= expected_total and not missing else "incomplete", expected_total, observed_total, missing[:20])
+
+
 src = Path(os.environ["SRC"])
 dst = Path(os.environ["DST_TMP"])
 models: dict[str, dict[str, object]] = {}
-try:
-    stalled_after_sec = float(os.environ.get("MLX_FETCH_STALLED_AFTER_SEC", "600") or "600")
-except ValueError:
-    stalled_after_sec = 600.0
-now = time.time()
 
 if src.exists():
     candidates: list[Path] = []
@@ -107,6 +169,11 @@ if src.exists():
                 "oldest_incomplete_mtime": 0.0,
                 "newest_incomplete_mtime": 0.0,
                 "snapshot_count": 0,
+                "complete_snapshot_count": 0,
+                "incomplete_snapshot_count": 0,
+                "safetensors_count": 0,
+                "expected_safetensors_count": 0,
+                "missing_weight_files": [],
                 "newest_snapshot_mtime": 0.0,
             },
         )
@@ -145,13 +212,28 @@ if src.exists():
                 if has_files:
                     entry["snapshot_count"] = int(entry["snapshot_count"]) + 1
                     entry["newest_snapshot_mtime"] = max(float(entry["newest_snapshot_mtime"] or 0.0), mtime)
+                    status, expected_count, observed_count, missing_files = snapshot_weight_status(snap)
+                    entry["expected_safetensors_count"] = max(int(entry["expected_safetensors_count"] or 0), expected_count)
+                    entry["safetensors_count"] = max(int(entry["safetensors_count"] or 0), observed_count)
+                    if status == "complete":
+                        entry["complete_snapshot_count"] = int(entry["complete_snapshot_count"] or 0) + 1
+                    elif status == "incomplete":
+                        entry["incomplete_snapshot_count"] = int(entry["incomplete_snapshot_count"] or 0) + 1
+                        current_missing = entry["missing_weight_files"]
+                        if not isinstance(current_missing, list):
+                            current_missing = []
+                        entry["missing_weight_files"] = [*current_missing, *missing_files][:20]
 
         incomplete_count = int(entry["incomplete_count"] or 0)
         snapshot_count = int(entry["snapshot_count"] or 0)
-        newest_incomplete = float(entry["newest_incomplete_mtime"] or 0.0)
-        incomplete_active = incomplete_count > 0 and newest_incomplete > 0 and (now - newest_incomplete) <= stalled_after_sec
-        if incomplete_count > 0 and (snapshot_count <= 0 or incomplete_active):
+        complete_snapshot_count = int(entry["complete_snapshot_count"] or 0)
+        incomplete_snapshot_count = int(entry["incomplete_snapshot_count"] or 0)
+        if complete_snapshot_count > 0:
+            entry["state"] = "cached"
+        elif incomplete_count > 0:
             entry["state"] = "fetching"
+        elif incomplete_snapshot_count > 0:
+            entry["state"] = "missing"
         elif snapshot_count > 0:
             entry["state"] = "cached"
 

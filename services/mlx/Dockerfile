@@ -7,6 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     XDG_CACHE_HOME=/var/lib/mlx/cache
 
 WORKDIR /app
+COPY scripts/patch_mlx_openai_server.py /usr/local/bin/patch_mlx_openai_server.py
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -14,7 +15,8 @@ RUN apt-get update \
 
 ARG MLX_PIP_PACKAGES="mlx-openai-server"
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install --no-cache-dir ${MLX_PIP_PACKAGES}
+    && python -m pip install --no-cache-dir ${MLX_PIP_PACKAGES} \
+    && python /usr/local/bin/patch_mlx_openai_server.py
 
 EXPOSE 10240
 

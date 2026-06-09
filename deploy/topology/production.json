@@ -4,7 +4,7 @@
   "description": "Canonical multi-host production placement for ai1, ai2, ada2, meltdown, and copyfail.",
   "defaults": {
     "repo_dir_by_platform": {
-      "macos": "/Users/ai/ai/nexus",
+      "macos": "/ai-data/var/lib/nexus",
       "linux": "/home/ai/ai/nexus"
     },
     "env": {
@@ -23,7 +23,7 @@
       "MLX_MODEL_PATH": "mlx-community/MiniMax-M2.5-8bit",
       "MLX_MODEL_TYPE": "lm",
       "MLX_MODEL_STRONG": "mlx-community/MiniMax-M2.5-8bit",
-      "MLX_MODEL_FAST": "mlx-community/MiniMax-M2.5-8bit",
+      "MLX_MODEL_FAST": "mlx-community/Phi-4-reasoning-plus-4bit",
       "MLX_MODEL_DEFAULT": "mlx-community/MiniMax-M2.5-8bit",
       "MLX_BASE_URL": "http://ai2:10240/v1",
       "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",

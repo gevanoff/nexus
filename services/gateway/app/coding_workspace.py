@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import HTTPException
 
 from app.config import S, logger
+from app import coding_model_policy
 from app import model_integration_workspace as miw
 
 
@@ -2944,6 +2945,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "guidance_messages": guidance_messages[-80:],
         "last_guidance_at": task.get("last_guidance_at"),
         "coding_model": task.get("coding_model") or "",
+        "model_policy": coding_model_policy.describe_workspace_model(str(task.get("coding_model") or "")),
         "workspace_path": task.get("workspace_path"),
         "repo_path": task.get("repo_path"),
         "last_command_at": task.get("last_command_at"),
@@ -3216,6 +3218,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
         "preferred_coding_model": str(preferred_coding_model or "").strip(),
+        "coding_model_policy": coding_model_policy.options_payload(),
         "gh_cli_available": shutil.which("gh") is not None,
         "model_integration_runtimes": ["auto", "mlx", "vllm", "transformers"],
         "model_integration_route_kinds": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"],
