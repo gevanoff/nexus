@@ -149,6 +149,13 @@ async def lifespan(_app: FastAPI):
         logger.warning("startup: agent task scheduler unavailable (%s: %s)", type(e).__name__, e)
 
     try:
+        from app.coding_smoke_runner import start_scheduler as start_coding_smoke_scheduler
+
+        await start_coding_smoke_scheduler()
+    except Exception as e:
+        logger.warning("startup: coding smoke scheduler unavailable (%s: %s)", type(e).__name__, e)
+
+    try:
         from app.sentinel_runtime import start_runtime as start_sentinel_runtime
 
         await start_sentinel_runtime()
@@ -165,6 +172,12 @@ async def lifespan(_app: FastAPI):
         await stop_agent_task_scheduler()
     except Exception as e:
         logger.info("shutdown: agent task scheduler stop skipped (%s: %s)", type(e).__name__, e)
+    try:
+        from app.coding_smoke_runner import stop_scheduler as stop_coding_smoke_scheduler
+
+        await stop_coding_smoke_scheduler()
+    except Exception as e:
+        logger.info("shutdown: coding smoke scheduler stop skipped (%s: %s)", type(e).__name__, e)
     try:
         from app.sentinel_runtime import stop_runtime as stop_sentinel_runtime
 

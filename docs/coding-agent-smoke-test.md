@@ -56,8 +56,33 @@ The script also prints the JSON report to stdout.
 
 ## Scheduling
 
-On ai2, install the recurring launchd job without placing job-owned files on the
-internal disk:
+The preferred scheduler is Gateway-native. It runs inside the Gateway container,
+uses the Coding workspace functions directly, and writes reports to the same
+`CODING_SMOKE_REPORT_DIR` that Resources reads. Enable it with env values such
+as:
+
+```text
+CODING_SMOKE_SCHEDULER_ENABLED=true
+CODING_SMOKE_RUN_AT_STARTUP=true
+CODING_SMOKE_START_INTERVAL_SEC=3600
+CODING_SMOKE_MODELS=coder
+CODING_SMOKE_PROFILES=fixture_median,fixture_inventory,fixture_route_flags
+CODING_SMOKE_WEEKLY_MODELS=mlx-community/DeepSeek-R1-0528-4bit,mlx-community/GLM-5-4bit
+CODING_SMOKE_WEEKLY_PROFILES=fixture_median,fixture_inventory,fixture_route_flags
+CODING_SMOKE_WEEKLY_DAY=7
+CODING_SMOKE_IDLE_START_HOUR=0
+CODING_SMOKE_IDLE_END_HOUR=6
+```
+
+On ai2, the report directory is mounted from:
+
+```text
+/ai-data/var/lib/nexus-smoke/coding
+```
+
+The older launchd installer is retained for environments where system launchd
+can execute external-volume scripts. If it is used, install the recurring job
+without placing job-owned files on the internal disk:
 
 ```bash
 cd /ai-data/var/lib/nexus
@@ -70,7 +95,7 @@ cd /ai-data/var/lib/nexus
   --start-interval 3600
 ```
 
-The installer writes launcher assets and the plist under
+The launchd installer writes launcher assets and the plist under
 `/ai-data/launchd/nexus-smoke`, while runtime env, logs, reports, and lock files
 live under `/ai-data/var/lib/nexus-smoke`. It also sets
 `NEXUS_CODING_SMOKE_OUTPUT_DIR` in the Nexus env file so Gateway can mount and
