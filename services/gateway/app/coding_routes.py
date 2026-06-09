@@ -61,6 +61,15 @@ class CodingAgentRunRequest(BaseModel):
     commit_message: Optional[str] = None
 
 
+class CodingInterventionRequest(BaseModel):
+    action: str
+    message: Optional[str] = None
+    actor: Optional[str] = None
+    coding_model: Optional[str] = None
+    auto_commit: bool = False
+    commit_message: Optional[str] = None
+
+
 class CodingGuidanceRequest(BaseModel):
     message: str
     run: bool = False
@@ -573,6 +582,23 @@ async def v1_coding_tasks(req: Request, limit: int = Query(default=100, ge=1, le
     return {"tasks": await _to_thread(cw.list_tasks, limit)}
 
 
+@router.get("/v1/coding/monitor")
+async def v1_coding_monitor(
+    req: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    only_attention: bool = Query(default=False),
+    stalled_after_sec: float = Query(default=900.0, ge=30.0, le=86_400.0),
+) -> Dict[str, Any]:
+    _require_coding_api(req)
+    await ca.recover_stale_agent_runs()
+    return await _to_thread(
+        cw.monitor_tasks,
+        limit=limit,
+        only_attention=only_attention,
+        stalled_after_sec=stalled_after_sec,
+    )
+
+
 @router.post("/v1/coding/model-integrations")
 async def v1_coding_model_integrations(req: Request, body: CodingModelIntegrationCreateRequest) -> Dict[str, Any]:
     user = _require_coding_api(req)
@@ -678,6 +704,67 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
 async def v1_coding_get_task(req: Request, task_id: str) -> Dict[str, Any]:
     _require_coding_api(req)
     return {"task": await ca.recover_stale_agent_run(task_id)}
+
+
+@router.get("/v1/coding/tasks/{task_id}/inspect")
+async def v1_coding_inspect_task(
+    req: Request,
+    task_id: str,
+    stalled_after_sec: float = Query(default=900.0, ge=30.0, le=86_400.0),
+) -> Dict[str, Any]:
+    _require_coding_api(req)
+    await ca.recover_stale_agent_run(task_id)
+    return await _to_thread(cw.inspect_task, task_id, stalled_after_sec=stalled_after_sec)
+
+
+@router.post("/v1/coding/tasks/{task_id}/intervene")
+async def v1_coding_intervene(req: Request, task_id: str, body: CodingInterventionRequest) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    action = str(body.action or "").strip().lower()
+    if action not in {"resume", "guidance", "guide_and_resume", "pause", "stop"}:
+        raise HTTPException(status_code=400, detail="action must be one of resume, guidance, guide_and_resume, pause, stop")
+
+    message = str(body.message or "").strip()
+    actor = str(body.actor or "").strip() or (_actor_from_user(user) if user is not None else "coding-api")
+    task = await ca.recover_stale_agent_run(task_id)
+    agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
+    active = str(agent.get("status") or "").strip().lower() in {"queued", "running", "stopping", "pausing"}
+
+    if action == "guidance":
+        if not message:
+            raise HTTPException(status_code=400, detail="message is required for guidance")
+        updated = await _to_thread(cw.append_guidance_message, task_id, message=message, actor=actor)
+        return {"ok": True, "action": action, "started": False, "task": updated}
+
+    if action == "pause" or action == "stop":
+        updated = await ca.request_pause(task_id)
+        return {"ok": True, "action": "pause", "started": False, "task": updated}
+
+    if action == "guide_and_resume":
+        if not message:
+            raise HTTPException(status_code=400, detail="message is required for guide_and_resume")
+        await _to_thread(cw.append_guidance_message, task_id, message=message, actor=actor)
+        if active:
+            updated = await ca.recover_stale_agent_run(task_id)
+            return {"ok": True, "action": action, "started": False, "task": updated}
+    elif active:
+        raise HTTPException(status_code=409, detail="coding task is already running")
+
+    model = (
+        _coding_model_for_user(user, body.coding_model)
+        if user is not None
+        else str(body.coding_model or task.get("coding_model") or "coder").strip() or "coder"
+    )
+    updated = await ca.start_agent_run(
+        task_id,
+        git_token_value=_git_token_for_user(user) if user is not None else None,
+        coding_model=model,
+        prompt=message or None,
+        auto_commit=body.auto_commit,
+        commit_message=body.commit_message,
+        actor=actor,
+    )
+    return {"ok": True, "action": action, "started": True, "task": updated}
 
 
 @router.post("/v1/coding/tasks/{task_id}/archive")
