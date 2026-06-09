@@ -110,6 +110,18 @@ PY
   chmod 600 "$env_file" 2>/dev/null || true
 }
 
+canonical_path() {
+  local path="$1"
+  local dir base
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  if [[ -d "$path" ]]; then
+    (cd "$path" && pwd -P)
+    return 0
+  fi
+  (cd "$dir" && printf '%s/%s\n' "$(pwd -P)" "$base")
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --user) TARGET_USER="${2:-}"; shift 2 ;;
@@ -170,6 +182,12 @@ rm -f "$tmp_env"
 
 update_env_value "$NEXUS_ENV_FILE" "NEXUS_CODING_SMOKE_OUTPUT_DIR" "$OUTPUT_DIR"
 
+PLIST_REPO_DIR="$(canonical_path "$REPO_DIR")"
+PLIST_LAUNCHER_DST="$(canonical_path "$LAUNCHER_DST")"
+PLIST_JOB_ENV_FILE="$(canonical_path "$JOB_ENV_FILE")"
+PLIST_OUT_LOG="$(canonical_path "$OUT_LOG")"
+PLIST_ERR_LOG="$(canonical_path "$ERR_LOG")"
+
 tmp_plist="$(mktemp)"
 cat >"$tmp_plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -181,11 +199,11 @@ cat >"$tmp_plist" <<EOF
     <key>UserName</key>
     <string>${TARGET_USER}</string>
     <key>WorkingDirectory</key>
-    <string>${REPO_DIR}</string>
+    <string>${PLIST_REPO_DIR}</string>
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
-      <string>${LAUNCHER_DST}</string>
+      <string>${PLIST_LAUNCHER_DST}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -200,12 +218,12 @@ cat >"$tmp_plist" <<EOF
       <key>HOME</key>
       <string>${TARGET_HOME}</string>
       <key>NEXUS_CODING_SMOKE_ENV_FILE</key>
-      <string>${JOB_ENV_FILE}</string>
+      <string>${PLIST_JOB_ENV_FILE}</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>${OUT_LOG}</string>
+    <string>${PLIST_OUT_LOG}</string>
     <key>StandardErrorPath</key>
-    <string>${ERR_LOG}</string>
+    <string>${PLIST_ERR_LOG}</string>
   </dict>
 </plist>
 EOF
