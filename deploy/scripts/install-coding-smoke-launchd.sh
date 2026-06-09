@@ -114,14 +114,12 @@ PY
 
 canonical_path() {
   local path="$1"
-  local dir base
-  dir="$(dirname "$path")"
-  base="$(basename "$path")"
-  if [[ -d "$path" ]]; then
-    (cd "$path" && pwd -P)
-    return 0
-  fi
-  (cd "$dir" && printf '%s/%s\n' "$(pwd -P)" "$base")
+  python3 - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+print(Path(sys.argv[1]).resolve(strict=False))
+PY
 }
 
 launchctl_for_target() {
@@ -178,6 +176,8 @@ ERR_LOG="${LOG_DIR}/${LABEL}.err.log"
 
 sudo install -d -o "${TARGET_USER}" -g staff -m 750 "$BIN_DIR" "$ENV_DIR" "$OUTPUT_DIR" "$LOG_DIR"
 sudo install -d -o root -g wheel -m 755 "$BIN_DIR" "$LAUNCHD_DIR"
+sudo chown root:wheel "$BIN_DIR" "$LAUNCHD_DIR"
+sudo chmod 755 "$BIN_DIR" "$LAUNCHD_DIR"
 sudo install -o root -g wheel -m 755 "$ROOT_DIR/deploy/scripts/coding-smoke-launch-agent.sh" "$LAUNCHER_DST"
 
 tmp_env="$(mktemp)"
