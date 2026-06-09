@@ -90,8 +90,20 @@ if [[ -f "$package_patcher" && -x "${mlx_venv}/bin/python" ]]; then
 fi
 
 cleanup_mlx_processes() {
-  local pids
-  pids="$(ps -axo pid,user,command | awk -v root="$MLX_NATIVE_ROOT" -v mlx_user="$MLX_NATIVE_USER" '
+  local pids protected pid ppid
+  protected=" "
+  pid="$$"
+  while [[ -n "$pid" && "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]]; do
+    protected+="${pid} "
+    ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+    if [[ -z "$ppid" || "$ppid" == "$pid" ]]; then
+      break
+    fi
+    pid="$ppid"
+  done
+
+  pids="$(ps -axo pid,user,command | awk -v root="$MLX_NATIVE_ROOT" -v mlx_user="$MLX_NATIVE_USER" -v protected="$protected" '
+    index(protected, " " $1 " ") { next }
     ($2 == mlx_user || $2 == "root" || $2 == "ai") && index($0, root) { print $1 }
   ')"
   if [[ -n "$pids" ]]; then
