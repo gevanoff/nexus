@@ -91,6 +91,19 @@ def test_extract_text_tool_calls_parses_complete_json_block():
     assert calls[0]["function"]["name"] == "coding_read_file_lines"
 
 
+def test_parse_tool_arguments_coerces_json_encoded_argv_array():
+    args = ca._parse_tool_arguments('{"argv":"[\\"python\\",\\"-m\\",\\"unittest\\"]","timeout_sec":120}')
+
+    assert args["argv"] == ["python", "-m", "unittest"]
+    assert args["timeout_sec"] == 120
+
+
+def test_parse_tool_arguments_does_not_split_shell_argv_string():
+    args = ca._parse_tool_arguments({"argv": "python -m unittest"})
+
+    assert args["argv"] == "python -m unittest"
+
+
 def test_fix_oriented_request_is_marked_edit_expected():
     task = {
         "id": "code_test",

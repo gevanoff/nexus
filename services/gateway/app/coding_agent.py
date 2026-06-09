@@ -1203,14 +1203,27 @@ async def _call_backend_chat_with_retry(
 
 def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
-        return raw
+        return _coerce_tool_arguments(raw)
     if not isinstance(raw, str) or not raw.strip():
         return {}
     try:
         parsed = json.loads(raw)
     except Exception:
         return {"_raw": raw}
-    return parsed if isinstance(parsed, dict) else {"value": parsed}
+    return _coerce_tool_arguments(parsed) if isinstance(parsed, dict) else {"value": parsed}
+
+
+def _coerce_tool_arguments(args: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(args)
+    argv = out.get("argv")
+    if isinstance(argv, str) and argv.strip().startswith("["):
+        try:
+            parsed_argv = json.loads(argv)
+        except Exception:
+            parsed_argv = None
+        if isinstance(parsed_argv, list):
+            out["argv"] = parsed_argv
+    return out
 
 
 def _tool_specs() -> List[ToolSpec]:
