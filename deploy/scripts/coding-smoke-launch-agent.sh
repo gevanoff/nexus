@@ -16,15 +16,16 @@ NEXUS_GATEWAY_URL="${NEXUS_GATEWAY_URL:-http://127.0.0.1:8800}"
 NEXUS_CODING_SMOKE_OUTPUT_DIR="${NEXUS_CODING_SMOKE_OUTPUT_DIR:-/ai-data/var/lib/nexus-smoke/coding}"
 NEXUS_CODING_SMOKE_MODELS="${NEXUS_CODING_SMOKE_MODELS:-coder}"
 NEXUS_CODING_SMOKE_WEEKLY_MODELS="${NEXUS_CODING_SMOKE_WEEKLY_MODELS:-}"
+NEXUS_CODING_SMOKE_DEFAULT_PROFILES="${NEXUS_CODING_SMOKE_DEFAULT_PROFILES:-fixture_median,fixture_inventory,fixture_route_flags}"
+NEXUS_CODING_SMOKE_PROFILES="${NEXUS_CODING_SMOKE_PROFILES:-${NEXUS_CODING_SMOKE_PROFILE_ID:-$NEXUS_CODING_SMOKE_DEFAULT_PROFILES}}"
+NEXUS_CODING_SMOKE_WEEKLY_PROFILES="${NEXUS_CODING_SMOKE_WEEKLY_PROFILES:-$NEXUS_CODING_SMOKE_PROFILES}"
 NEXUS_CODING_SMOKE_WEEKLY_DAY="${NEXUS_CODING_SMOKE_WEEKLY_DAY:-7}"
 NEXUS_CODING_SMOKE_IDLE_START_HOUR="${NEXUS_CODING_SMOKE_IDLE_START_HOUR:-0}"
 NEXUS_CODING_SMOKE_IDLE_END_HOUR="${NEXUS_CODING_SMOKE_IDLE_END_HOUR:-6}"
 NEXUS_CODING_SMOKE_TIMEOUT_SEC="${NEXUS_CODING_SMOKE_TIMEOUT_SEC:-1200}"
 NEXUS_CODING_SMOKE_POLL_SEC="${NEXUS_CODING_SMOKE_POLL_SEC:-10}"
 NEXUS_CODING_SMOKE_STALLED_AFTER_SEC="${NEXUS_CODING_SMOKE_STALLED_AFTER_SEC:-180}"
-NEXUS_CODING_SMOKE_PROFILE_ID="${NEXUS_CODING_SMOKE_PROFILE_ID:-fixture_median}"
-NEXUS_CODING_SMOKE_PROFILE_LABEL="${NEXUS_CODING_SMOKE_PROFILE_LABEL:-Fixture median repair}"
-NEXUS_CODING_SMOKE_COMPLEXITY="${NEXUS_CODING_SMOKE_COMPLEXITY:-simple}"
+NEXUS_CODING_SMOKE_ARCHIVE_ON_SUCCESS="${NEXUS_CODING_SMOKE_ARCHIVE_ON_SUCCESS:-true}"
 NEXUS_CODING_SMOKE_STDOUT_LOG="${NEXUS_CODING_SMOKE_STDOUT_LOG:-}"
 NEXUS_CODING_SMOKE_STDERR_LOG="${NEXUS_CODING_SMOKE_STDERR_LOG:-}"
 LOCK_DIR="${NEXUS_CODING_SMOKE_LOCK_DIR:-${NEXUS_CODING_SMOKE_OUTPUT_DIR}/.lock}"
@@ -66,10 +67,17 @@ in_weekly_idle_window() {
   (( 10#$hour >= NEXUS_CODING_SMOKE_IDLE_START_HOUR && 10#$hour < NEXUS_CODING_SMOKE_IDLE_END_HOUR ))
 }
 
-run_one_model() {
+run_one_profile() {
   local model="$1"
+  local profile="$2"
+  local archive_flag
   [[ -n "$model" ]] || return 0
-  log "Starting Coding smoke model=${model} profile=${NEXUS_CODING_SMOKE_PROFILE_ID}"
+  [[ -n "$profile" ]] || return 0
+  log "Starting Coding smoke model=${model} profile=${profile}"
+  archive_flag="--archive-on-success"
+  case "$(printf '%s' "$NEXUS_CODING_SMOKE_ARCHIVE_ON_SUCCESS" | tr '[:upper:]' '[:lower:]')" in
+    0|false|no) archive_flag="--no-archive-on-success" ;;
+  esac
   "$REPO_DIR/deploy/scripts/run-coding-smoke-test.sh" \
     --base-url "$NEXUS_GATEWAY_URL" \
     --env-file "$NEXUS_ENV_FILE" \
@@ -77,9 +85,27 @@ run_one_model() {
     --timeout-sec "$NEXUS_CODING_SMOKE_TIMEOUT_SEC" \
     --poll-sec "$NEXUS_CODING_SMOKE_POLL_SEC" \
     --stalled-after-sec "$NEXUS_CODING_SMOKE_STALLED_AFTER_SEC" \
-    --profile-id "$NEXUS_CODING_SMOKE_PROFILE_ID" \
-    --profile-label "$NEXUS_CODING_SMOKE_PROFILE_LABEL" \
-    --complexity "$NEXUS_CODING_SMOKE_COMPLEXITY"
+    --profile-id "$profile" \
+    "$archive_flag"
+}
+
+run_model_suite() {
+  local model="$1"
+  local profiles_csv="$2"
+  local status=0
+  local old_ifs raw_profile profile
+  old_ifs="$IFS"
+  IFS=","
+  read -r -a profiles <<<"$profiles_csv"
+  IFS="$old_ifs"
+  for raw_profile in "${profiles[@]}"; do
+    profile="$(trim "$raw_profile")"
+    [[ -n "$profile" ]] || continue
+    if ! run_one_profile "$model" "$profile"; then
+      status=1
+    fi
+  done
+  return "$status"
 }
 
 if [[ ! -x "$REPO_DIR/deploy/scripts/run-coding-smoke-test.sh" ]]; then
@@ -110,7 +136,7 @@ IFS="$old_ifs"
 for raw_model in "${models[@]}"; do
   model="$(trim "$raw_model")"
   [[ -n "$model" ]] || continue
-  if ! run_one_model "$model"; then
+  if ! run_model_suite "$model" "$NEXUS_CODING_SMOKE_PROFILES"; then
     status=1
   fi
 done
@@ -124,7 +150,7 @@ if [[ -n "$NEXUS_CODING_SMOKE_WEEKLY_MODELS" ]]; then
     for raw_model in "${weekly_models[@]}"; do
       model="$(trim "$raw_model")"
       [[ -n "$model" ]] || continue
-      if ! run_one_model "$model"; then
+      if ! run_model_suite "$model" "$NEXUS_CODING_SMOKE_WEEKLY_PROFILES"; then
         status=1
       fi
     done

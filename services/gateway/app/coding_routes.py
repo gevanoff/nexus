@@ -167,6 +167,11 @@ def _actor_from_user(user: Any) -> str:
     return "ui"
 
 
+def _is_smoke_task(task: Dict[str, Any]) -> bool:
+    branch_name = str(task.get("branch_name") or "").strip()
+    return branch_name.startswith("nexus-coding-smoke/")
+
+
 def _user_id(user: Any) -> Optional[int]:
     try:
         value = getattr(user, "id", None)
@@ -777,9 +782,15 @@ async def v1_coding_intervene(req: Request, task_id: str, body: CodingInterventi
 @router.post("/v1/coding/tasks/{task_id}/archive")
 async def v1_coding_archive_task(req: Request, task_id: str) -> Dict[str, Any]:
     user = _require_coding_api(req)
-    if user is None or not bool(getattr(user, "admin", False)):
+    task = await _to_thread(cw.load_task, task_id)
+    actor = _actor_from_user(user) if user is not None else "coding-smoke-harness"
+    if user is None:
+        if not _is_smoke_task(task):
+            raise HTTPException(status_code=403, detail="admin required")
+        return await _to_thread(cw.archive_task, task_id, actor=actor, reason="smoke_archive")
+    if not bool(getattr(user, "admin", False)):
         raise HTTPException(status_code=403, detail="admin required")
-    return await _to_thread(cw.archive_task, task_id, actor=_actor_from_user(user), reason="api_archive")
+    return await _to_thread(cw.archive_task, task_id, actor=actor, reason="api_archive")
 
 
 @router.post("/v1/coding/tasks/{task_id}/command")

@@ -10,7 +10,7 @@ def test_resources_ui_hides_duplicate_core_services_section() -> None:
 
     assert 'id="control_plane_section"' in html
     assert 'id="core_services_section" class="resource-subsection" hidden' in html
-    assert "/static/resources.js?v=14" in html
+    assert "/static/resources.js?v=15" in html
     assert "splitCoreServicesForResourceUi" in js
     assert "controlPlaneCoreServiceIds" in js
     assert "hideWhenEmpty: true" in js
@@ -46,3 +46,4 @@ def test_resources_ui_shows_coding_smoke_health() -> None:
     assert "/ui/api/coding/smoke-status?limit=100" in js
     assert "renderCodingSmoke" in js
     assert "metrics-table" in js
+    assert "metrics.slice(0, 48)" in js

@@ -820,7 +820,7 @@
       head.innerHTML = "<tr><th>Profile</th><th>Model</th><th>Pass</th><th>Avg</th><th>Last</th></tr>";
       table.appendChild(head);
       const body = document.createElement("tbody");
-      metrics.slice(0, 12).forEach((row) => {
+      metrics.slice(0, 48).forEach((row) => {
         const tr = document.createElement("tr");
         const profile = row.profile_label || row.profile_id || "profile";
         const model = shortModel(row.upstream_model || row.model);

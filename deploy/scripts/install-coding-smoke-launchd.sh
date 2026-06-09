@@ -23,6 +23,8 @@ LOG_DIR="${NEXUS_CODING_SMOKE_LOG_DIR:-${RUNTIME_ROOT}/logs}"
 START_INTERVAL="${NEXUS_CODING_SMOKE_START_INTERVAL_SEC:-3600}"
 MODELS="${NEXUS_CODING_SMOKE_MODELS:-coder}"
 WEEKLY_MODELS="${NEXUS_CODING_SMOKE_WEEKLY_MODELS:-}"
+PROFILES="${NEXUS_CODING_SMOKE_PROFILES:-fixture_median,fixture_inventory,fixture_route_flags}"
+WEEKLY_PROFILES="${NEXUS_CODING_SMOKE_WEEKLY_PROFILES:-${PROFILES}}"
 LABEL="${NEXUS_CODING_SMOKE_LAUNCHD_LABEL:-com.nexus.coding-smoke}"
 GATEWAY_URL="${NEXUS_GATEWAY_URL:-http://127.0.0.1:8800}"
 
@@ -45,6 +47,8 @@ Options:
   --start-interval SEC    Run interval in seconds (default: 3600)
   --models CSV            Regular model list (default: coder)
   --weekly-models CSV     Weekly idle-window model list for non-active huge models
+  --profiles CSV          Regular profile suite (default: fixture_median,fixture_inventory,fixture_route_flags)
+  --weekly-profiles CSV   Weekly idle-window profile suite for huge models (default: profiles)
   --gateway-url URL       Gateway URL (default: http://127.0.0.1:8800)
   --label LABEL           launchd label (default: com.nexus.coding-smoke)
 EOF
@@ -143,6 +147,8 @@ while [[ $# -gt 0 ]]; do
     --start-interval) START_INTERVAL="${2:-}"; shift 2 ;;
     --models) MODELS="${2:-}"; shift 2 ;;
     --weekly-models) WEEKLY_MODELS="${2:-}"; shift 2 ;;
+    --profiles) PROFILES="${2:-}"; shift 2 ;;
+    --weekly-profiles) WEEKLY_PROFILES="${2:-}"; shift 2 ;;
     --gateway-url) GATEWAY_URL="${2:-}"; shift 2 ;;
     --label) LABEL="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -155,6 +161,10 @@ done
 [[ "$LAUNCHD_ROOT" == /ai-data/* ]] || ns_die "--launchd-root must be under /ai-data"
 [[ "$OUTPUT_DIR" == /ai-data/* ]] || ns_die "--output-dir must be under /ai-data"
 [[ "$LOG_DIR" == /ai-data/* ]] || ns_die "--log-dir must be under /ai-data"
+[[ -n "${PROFILES//[[:space:],]/}" ]] || ns_die "--profiles must include at least one profile id"
+if [[ -n "$WEEKLY_MODELS" ]]; then
+  [[ -n "${WEEKLY_PROFILES//[[:space:],]/}" ]] || ns_die "--weekly-profiles must include at least one profile id when --weekly-models is set"
+fi
 
 ns_require_cmd launchctl "launchctl" || exit 1
 ns_require_cmd plutil "plutil" || exit 1
@@ -167,6 +177,7 @@ TARGET_USER="$(resolve_target_user)"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
 BIN_DIR="${LAUNCHD_ROOT}/bin"
 LAUNCHD_DIR="${LAUNCHD_ROOT}/plists"
+LAUNCHD_PARENT="$(dirname "$LAUNCHD_ROOT")"
 ENV_DIR="${RUNTIME_ROOT}/coding"
 LAUNCHER_DST="${BIN_DIR}/nexus-coding-smoke-launch"
 JOB_ENV_FILE="${ENV_DIR}/coding-smoke.env"
@@ -174,10 +185,15 @@ PLIST_PATH="${LAUNCHD_DIR}/${LABEL}.plist"
 OUT_LOG="${LOG_DIR}/${LABEL}.out.log"
 ERR_LOG="${LOG_DIR}/${LABEL}.err.log"
 
-sudo install -d -o "${TARGET_USER}" -g staff -m 750 "$BIN_DIR" "$ENV_DIR" "$OUTPUT_DIR" "$LOG_DIR"
-sudo install -d -o root -g wheel -m 755 "$BIN_DIR" "$LAUNCHD_DIR"
-sudo chown root:wheel "$BIN_DIR" "$LAUNCHD_DIR"
-sudo chmod 755 "$BIN_DIR" "$LAUNCHD_DIR"
+sudo install -d -o "${TARGET_USER}" -g staff -m 750 "$ENV_DIR" "$OUTPUT_DIR" "$LOG_DIR"
+if [[ "$LAUNCHD_PARENT" != "/ai-data" && "$LAUNCHD_PARENT" != "/" ]]; then
+  sudo install -d -o root -g wheel -m 755 "$LAUNCHD_PARENT"
+  sudo chown root:wheel "$LAUNCHD_PARENT"
+  sudo chmod 755 "$LAUNCHD_PARENT"
+fi
+sudo install -d -o root -g wheel -m 755 "$LAUNCHD_ROOT" "$BIN_DIR" "$LAUNCHD_DIR"
+sudo chown root:wheel "$LAUNCHD_ROOT" "$BIN_DIR" "$LAUNCHD_DIR"
+sudo chmod 755 "$LAUNCHD_ROOT" "$BIN_DIR" "$LAUNCHD_DIR"
 sudo install -o root -g wheel -m 755 "$ROOT_DIR/deploy/scripts/coding-smoke-launch-agent.sh" "$LAUNCHER_DST"
 
 tmp_env="$(mktemp)"
@@ -190,6 +206,8 @@ NEXUS_CODING_SMOKE_STDOUT_LOG=${OUT_LOG}
 NEXUS_CODING_SMOKE_STDERR_LOG=${ERR_LOG}
 NEXUS_CODING_SMOKE_MODELS=${MODELS}
 NEXUS_CODING_SMOKE_WEEKLY_MODELS=${WEEKLY_MODELS}
+NEXUS_CODING_SMOKE_PROFILES=${PROFILES}
+NEXUS_CODING_SMOKE_WEEKLY_PROFILES=${WEEKLY_PROFILES}
 EOF
 sudo install -o "${TARGET_USER}" -g staff -m 600 "$tmp_env" "$JOB_ENV_FILE"
 rm -f "$tmp_env"
