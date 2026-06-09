@@ -225,14 +225,13 @@ cat >"$tmp_plist" <<EOF
   <dict>
     <key>Label</key>
     <string>${LABEL}</string>
-    <key>UserName</key>
-    <string>${TARGET_USER}</string>
     <key>WorkingDirectory</key>
     <string>/</string>
     <key>ProgramArguments</key>
     <array>
       <string>/bin/bash</string>
-      <string>${PLIST_LAUNCHER_DST}</string>
+      <string>-lc</string>
+      <string>exec /usr/bin/sudo -H -u ${TARGET_USER} env PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME=${TARGET_HOME} NEXUS_CODING_SMOKE_ENV_FILE=${PLIST_JOB_ENV_FILE} /bin/bash ${PLIST_LAUNCHER_DST}</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -244,10 +243,6 @@ cat >"$tmp_plist" <<EOF
     <dict>
       <key>PATH</key>
       <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-      <key>HOME</key>
-      <string>${TARGET_HOME}</string>
-      <key>NEXUS_CODING_SMOKE_ENV_FILE</key>
-      <string>${PLIST_JOB_ENV_FILE}</string>
     </dict>
     <key>StandardOutPath</key>
     <string>/dev/null</string>
