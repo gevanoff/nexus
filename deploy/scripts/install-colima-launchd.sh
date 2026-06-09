@@ -18,6 +18,7 @@ START_INTERVAL="60"
 SANITIZED_PROFILE="default"
 TARGET_USER=""
 TARGET_HOME=""
+TARGET_COLIMA_HOME="${COLIMA_HOME:-}"
 SANITIZED_USER=""
 LABEL=""
 COLIMA_RUNTIME_ROOT="${COLIMA_RUNTIME_ROOT:-/var/lib/nexus-colima}"
@@ -25,7 +26,7 @@ COLIMA_LOG_DIR="${COLIMA_LOG_DIR:-/var/log/nexus-colima}"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--label LABEL]
+Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--colima-home PATH] [--label LABEL]
 
 Install/reload a macOS LaunchDaemon that starts Colima at boot and runs it
 under the selected unprivileged user account.
@@ -36,6 +37,7 @@ Options:
   --start-interval SEC  Relaunch check interval in seconds (default: 60)
   --user USER           User account that should own/run Colima (default: current user)
   --home PATH           Home directory for the selected user (default: detected from dscl/$HOME)
+  --colima-home PATH    Colima state root to export as COLIMA_HOME (default: existing COLIMA_HOME)
   --label LABEL         LaunchDaemon label (default: com.nexus.colima.<user>.<profile>)
 EOF
 }
@@ -133,6 +135,10 @@ while [[ $# -gt 0 ]]; do
       TARGET_HOME="${2:-}"
       shift 2
       ;;
+    --colima-home)
+      TARGET_COLIMA_HOME="${2:-}"
+      shift 2
+      ;;
     --label)
       LABEL="${2:-}"
       shift 2
@@ -188,6 +194,7 @@ DOCKER_BIN=${DOCKER_BIN}
 COLIMA_PROFILE=${PROFILE}
 COLIMA_VM_TYPE=${VM_TYPE}
 COLIMA_USER_HOME=${TARGET_HOME}
+COLIMA_HOME=${TARGET_COLIMA_HOME}
 EOF
 sudo install -o root -g wheel -m 644 "$tmp_env_file" "$ENV_FILE"
 rm -f "$tmp_env_file"

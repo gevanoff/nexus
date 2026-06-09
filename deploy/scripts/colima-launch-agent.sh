@@ -15,6 +15,10 @@ DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || true)}"
 COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 COLIMA_VM_TYPE="${COLIMA_VM_TYPE:-}"
 COLIMA_USER_HOME="${COLIMA_USER_HOME:-${HOME:-}}"
+COLIMA_HOME="${COLIMA_HOME:-}"
+if [[ -n "${COLIMA_HOME:-}" ]]; then
+  export COLIMA_HOME
+fi
 
 if [[ -n "${COLIMA_USER_HOME:-}" ]]; then
   HOME="${COLIMA_USER_HOME}"
