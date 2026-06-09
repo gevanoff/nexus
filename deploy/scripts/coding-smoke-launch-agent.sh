@@ -38,16 +38,6 @@ log() {
   printf '%s %s\n' "$(timestamp)" "$*"
 }
 
-split_csv() {
-  local raw="$1"
-  local -n out_ref="$2"
-  out_ref=()
-  local old_ifs="$IFS"
-  IFS=","
-  read -r -a out_ref <<<"$raw"
-  IFS="$old_ifs"
-}
-
 trim() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
@@ -100,8 +90,10 @@ trap 'rm -rf "$LOCK_DIR"' EXIT
 printf '%s\n' "$$" >"$LOCK_DIR/pid"
 
 status=0
-models=()
-split_csv "$NEXUS_CODING_SMOKE_MODELS" models
+old_ifs="$IFS"
+IFS=","
+read -r -a models <<<"$NEXUS_CODING_SMOKE_MODELS"
+IFS="$old_ifs"
 for raw_model in "${models[@]}"; do
   model="$(trim "$raw_model")"
   [[ -n "$model" ]] || continue
@@ -112,8 +104,10 @@ done
 
 if [[ -n "$NEXUS_CODING_SMOKE_WEEKLY_MODELS" ]]; then
   if in_weekly_idle_window; then
-    weekly_models=()
-    split_csv "$NEXUS_CODING_SMOKE_WEEKLY_MODELS" weekly_models
+    old_ifs="$IFS"
+    IFS=","
+    read -r -a weekly_models <<<"$NEXUS_CODING_SMOKE_WEEKLY_MODELS"
+    IFS="$old_ifs"
     for raw_model in "${weekly_models[@]}"; do
       model="$(trim "$raw_model")"
       [[ -n "$model" ]] || continue
