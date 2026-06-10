@@ -92,14 +92,18 @@ def test_extract_text_tool_calls_parses_complete_json_block():
 
 
 def test_text_tool_mode_prompt_and_results_use_plain_messages():
+    task = {"id": "code_test", "prompt": "Fix it.", "base_branch": "main", "branch_name": "nexus-coder/code_test"}
     prompt = ca._system_prompt(
-        {"id": "code_test", "prompt": "Fix it.", "base_branch": "main", "branch_name": "nexus-coder/code_test"},
+        task,
         text_tool_mode=True,
     )
+    context = ca._text_tool_task_context(task)
     message = ca._text_tool_result_message(name="coding_git_status", result={"ok": True, "status": "clean"})
 
     assert "<tool_call>" in prompt
     assert "coding_tool_manifest" in prompt
+    assert "Fix it." in prompt
+    assert "Fix it." not in context
     assert message.role == "user"
     assert message.tool_call_id is None
     assert "Tool result for coding_git_status" in str(message.content)

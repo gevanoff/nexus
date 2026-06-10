@@ -1762,6 +1762,13 @@ def _task_context(task: Dict[str, Any]) -> str:
     return base
 
 
+def _text_tool_task_context(task: Dict[str, Any]) -> str:
+    return (
+        "Start now using the request, repository, branch, and allowed-command details in the system message. "
+        "Emit exactly one complete <tool_call>{...}</tool_call> block."
+    )
+
+
 def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
     model = str(requested_model or task.get("coding_model") or "coder").strip() or "coder"
     return model
@@ -2036,9 +2043,10 @@ async def _run_agent(
             },
         )
 
+        initial_text_tool_mode = not _backend_supports_tool_calling(backend)
         messages: List[ChatMessage] = [
-            ChatMessage(role="system", content=_system_prompt(task, text_tool_mode=not _backend_supports_tool_calling(backend))),
-            ChatMessage(role="user", content=_task_context(task)),
+            ChatMessage(role="system", content=_system_prompt(task, text_tool_mode=initial_text_tool_mode)),
+            ChatMessage(role="user", content=_text_tool_task_context(task) if initial_text_tool_mode else _task_context(task)),
         ]
         seen_guidance_count = len(_guidance_messages(task))
         tools = _tool_specs()
