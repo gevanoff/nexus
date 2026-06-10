@@ -326,9 +326,9 @@ def _rank_coding_backend_candidates(request_model: str, preferred_backend: str, 
     candidates.sort(
         key=lambda item: (
             0 if item["ready"] and item["available"] > 0 else 1 if item["ready"] else 2,
+            0 if item["preferred"] else 1,
             item["host_load"],
             item["backend_load"],
-            0 if not item["preferred"] else 1,
             str(item["backend"]),
         )
     )

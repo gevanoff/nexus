@@ -482,6 +482,63 @@ def test_tools_true_alias_allows_preferred_vllm_coding_route(monkeypatch):
     assert ca._coding_candidate_routes("default", "local_vllm", "qwen-default") == [("local_vllm", "qwen-default")]
 
 
+def test_rank_coding_backend_candidates_keeps_ready_alias_backend_first(monkeypatch):
+    class FakeBackend:
+        def __init__(self, base_url: str, provider: str, policy):
+            self.base_url = base_url
+            self.provider = provider
+            self.payload_policy = policy
+
+        def supports(self, route_kind: str) -> bool:
+            return route_kind == "chat"
+
+        def get_limit(self, route_kind: str) -> int:
+            return 4
+
+    class FakeRegistry:
+        def __init__(self):
+            self.backends = {
+                "local_mlx": FakeBackend("http://ai2:10240/v1", "mlx", {"supports_tool_calling": True}),
+                "local_vllm": FakeBackend("http://ada2:8000/v1", "vllm", {"supports_tool_calling": False}),
+            }
+
+        def get_backend(self, backend_name: str):
+            return self.backends.get(backend_name)
+
+        def resolve_backend_class(self, backend_name: str):
+            return backend_name
+
+    class FakeChecker:
+        def get_status(self, backend_name: str):
+            return SimpleNamespace(error="")
+
+        def is_ready(self, backend_name: str) -> bool:
+            return True
+
+    class FakeAdmission:
+        def get_stats(self):
+            return {
+                "local_mlx.chat": {"limit": 4, "available": 4, "inflight": 0},
+                "local_vllm.chat": {"limit": 4, "available": 1, "inflight": 3},
+            }
+
+    monkeypatch.setattr(ca, "get_registry", lambda: FakeRegistry())
+    monkeypatch.setattr(ca, "get_health_checker", lambda: FakeChecker())
+    monkeypatch.setattr(ca, "get_admission_controller", lambda: FakeAdmission())
+    monkeypatch.setattr(ca, "llm_backends", lambda: [("local_mlx", object()), ("local_vllm", object())])
+    monkeypatch.setattr(ca, "backend_hostname", lambda backend_name, **kwargs: {"local_mlx": "ai2", "local_vllm": "ada2"}[backend_name])
+    monkeypatch.setattr(ca, "default_model_for_backend", lambda backend_name, cfg: f"model-for-{backend_name}")
+    monkeypatch.setattr(
+        ca,
+        "get_aliases",
+        lambda: {"default": SimpleNamespace(backend="local_vllm", upstream_model="qwen-default", tools=True)},
+    )
+
+    ranked = ca._rank_coding_backend_candidates("default", "local_vllm", "qwen-default")
+
+    assert [item["backend"] for item in ranked[:2]] == ["local_vllm", "local_mlx"]
+
+
 def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypatch):
     class FakeBackend:
         def __init__(self, base_url: str, limit: int, provider: str, policy=None):
