@@ -1144,6 +1144,19 @@ def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> Ch
     return ChatMessage(role="tool", tool_call_id=tool_call_id, content=json.dumps(compact, separators=(",", ":"), ensure_ascii=False))
 
 
+def _text_tool_result_message(*, name: str, result: Dict[str, Any]) -> ChatMessage:
+    compact = _clip_jsonable(result, _tool_context_char_limit())
+    payload = json.dumps(compact, separators=(",", ":"), ensure_ascii=False)
+    return ChatMessage(
+        role="user",
+        content=(
+            f"Tool result for {name}:\n{payload}\n\n"
+            "Continue the coding task with exactly one complete <tool_call>{...}</tool_call> block, "
+            "or call coding_finish when the task is complete or blocked."
+        ),
+    )
+
+
 async def _call_backend_chat_with_retry(
     req: ChatCompletionRequest,
     backend: str,
@@ -1466,6 +1479,24 @@ def coding_tool_manifest() -> Dict[str, Any]:
     }
 
 
+def _text_tool_call_guidance() -> str:
+    tools = []
+    for spec in _tool_specs():
+        try:
+            tools.append(str(spec.function.name))
+        except Exception:
+            continue
+    names = ", ".join(tools)
+    return (
+        "This selected backend does not receive native OpenAI tool definitions. "
+        "Use text-form tool calls instead. To call a tool, respond with exactly one complete block and no prose: "
+        '<tool_call>{"name":"coding_read_file_lines","arguments":{"path":"README.md","start_line":1,"line_count":80}}</tool_call>. '
+        "Use JSON only inside the block. Do not wrap the block in Markdown fences. "
+        "Call coding_tool_manifest with include_parameters=true if you need exact parameter schemas. "
+        f"Available tool names: {names}."
+    )
+
+
 def _mutate_task(task_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
     task = cw.load_task(task_id)
     task.update(fields)
@@ -1626,7 +1657,7 @@ def _checkpoint_after_cycle(task_id: str, *, run_id: str, cycle: int) -> Dict[st
     return cw.checkpoint_task(task_id, message=msg, run_id=run_id, cycle=cycle)
 
 
-def _system_prompt(task: Dict[str, Any]) -> str:
+def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str:
     allowed = ", ".join(cw.allowed_commands())
     original = str(task.get("prompt") or "").strip()
     current = _effective_run_prompt(task)
@@ -1646,6 +1677,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
             "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
             "Do not stop at diagnosis alone when a focused fix is available. "
         )
+    tool_mode_guidance = f"{_text_tool_call_guidance()} " if text_tool_mode else ""
     return (
         "You are Nexus Coding Agent. Work autonomously toward the user's coding request inside one isolated git workspace. "
         "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
@@ -1668,6 +1700,7 @@ def _system_prompt(task: Dict[str, Any]) -> str:
         "Repository-relative commands default to the repo root; when a project layout requires a service-local package root, set cwd to that service directory before running tests or linters. "
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
+        f"{tool_mode_guidance}"
         "If the request requires code or documentation changes, make edits, run targeted validation, and inspect coding_git_diff before calling coding_finish. "
         "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to satisfy validation. Only add project manifests or dependency files when the user explicitly requested that scaffolding or the target service already uses it. "
         "Placeholder handlers or comments such as 'Add logic to ...' do not count as a fix. "
@@ -1976,7 +2009,7 @@ async def _run_agent(
         )
 
         messages: List[ChatMessage] = [
-            ChatMessage(role="system", content=_system_prompt(task)),
+            ChatMessage(role="system", content=_system_prompt(task, text_tool_mode=not _backend_supports_tool_calling(backend))),
             ChatMessage(role="user", content=_task_context(task)),
         ]
         seen_guidance_count = len(_guidance_messages(task))
@@ -2018,11 +2051,12 @@ async def _run_agent(
             await asyncio.to_thread(_mutate_task, task_id, {"agent_cycle": cycle, "agent_last_event_at": now_unix()})
             await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
 
+            request_text_tool_mode = not _backend_supports_tool_calling(backend)
             req = ChatCompletionRequest(
                 model=model,
                 messages=messages,
-                tools=tools,
-                tool_choice="auto",
+                tools=None if request_text_tool_mode else tools,
+                tool_choice=None if request_text_tool_mode else "auto",
                 temperature=0.1,
                 max_tokens=_max_completion_tokens(),
                 stream=False,
@@ -2051,8 +2085,9 @@ async def _run_agent(
             if not tool_calls:
                 tool_calls = _extract_text_tool_calls(assistant.content)
                 text_tool_calls = bool(tool_calls)
+            response_text_tool_mode = not _backend_supports_tool_calling(backend)
             event_content = assistant.content if isinstance(assistant.content, str) else ""
-            if text_tool_calls:
+            if text_tool_calls and not response_text_tool_mode:
                 assistant = ChatMessage(role=assistant.role, content=None, tool_calls=tool_calls)
             messages.append(assistant)
             if thinking:
@@ -2276,7 +2311,10 @@ async def _run_agent(
                         "result": _event_result(result),
                     },
                 )
-                messages.append(_tool_message_for_result(tool_call_id=tool_call_id, result=result))
+                if response_text_tool_mode:
+                    messages.append(_text_tool_result_message(name=name, result=result))
+                else:
+                    messages.append(_tool_message_for_result(tool_call_id=tool_call_id, result=result))
 
                 if name == "coding_finish" and bool(result.get("ok")):
                     finish_summary = str(result.get("summary") or args.get("summary") or "").strip()

@@ -91,6 +91,20 @@ def test_extract_text_tool_calls_parses_complete_json_block():
     assert calls[0]["function"]["name"] == "coding_read_file_lines"
 
 
+def test_text_tool_mode_prompt_and_results_use_plain_messages():
+    prompt = ca._system_prompt(
+        {"id": "code_test", "prompt": "Fix it.", "base_branch": "main", "branch_name": "nexus-coder/code_test"},
+        text_tool_mode=True,
+    )
+    message = ca._text_tool_result_message(name="coding_git_status", result={"ok": True, "status": "clean"})
+
+    assert "<tool_call>" in prompt
+    assert "coding_tool_manifest" in prompt
+    assert message.role == "user"
+    assert message.tool_call_id is None
+    assert "Tool result for coding_git_status" in str(message.content)
+
+
 def test_parse_tool_arguments_coerces_json_encoded_argv_array():
     args = ca._parse_tool_arguments('{"argv":"[\\"python\\",\\"-m\\",\\"unittest\\"]","timeout_sec":120}')
 
