@@ -220,6 +220,18 @@ def _backend_supports_tool_calling(backend_name: str) -> bool:
     return str(config.provider or "").strip().lower() == "mlx"
 
 
+def _preferred_route_supports_coding_tools(request_model: str, preferred_backend: str) -> bool:
+    if _backend_supports_tool_calling(preferred_backend):
+        return True
+    alias = get_aliases().get(str(request_model or "").strip().lower())
+    if alias is None or alias.tools is not True:
+        return False
+    registry = get_registry()
+    alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
+    resolved_preferred = registry.resolve_backend_class(preferred_backend) or preferred_backend
+    return alias_backend == resolved_preferred
+
+
 def _candidate_summary(candidate: Dict[str, Any]) -> Dict[str, Any]:
     summary = {
         "backend": candidate.get("backend"),
@@ -246,7 +258,7 @@ def _coding_candidate_routes(request_model: str, preferred_backend: str, preferr
         seen.add(key)
         out.append((key, model_name))
 
-    if _backend_supports_tool_calling(preferred_backend):
+    if _preferred_route_supports_coding_tools(request_model, preferred_backend):
         add(preferred_backend, preferred_upstream_model)
     if not _model_is_reroutable(request_model):
         return out

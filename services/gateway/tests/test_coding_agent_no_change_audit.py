@@ -437,6 +437,37 @@ def test_backend_supports_tool_calling_prefers_payload_policy(monkeypatch):
     assert ca._backend_supports_tool_calling("legacy_mlx") is True
 
 
+def test_tools_true_alias_allows_preferred_vllm_coding_route(monkeypatch):
+    class FakeBackend:
+        def __init__(self, provider: str, policy):
+            self.provider = provider
+            self.payload_policy = policy
+
+    class FakeRegistry:
+        def get_backend(self, backend_name: str):
+            return {
+                "local_vllm": FakeBackend("vllm", {"supports_tool_calling": False}),
+            }.get(backend_name)
+
+        def resolve_backend_class(self, backend_name: str):
+            return backend_name
+
+    monkeypatch.setattr(ca, "get_registry", lambda: FakeRegistry())
+    monkeypatch.setattr(
+        ca,
+        "get_aliases",
+        lambda: {
+            "default": SimpleNamespace(backend="local_vllm", upstream_model="qwen-default", tools=True),
+            "fast": SimpleNamespace(backend="local_vllm", upstream_model="qwen-fast", tools=False),
+        },
+    )
+    monkeypatch.setattr(ca, "llm_backends", lambda: [])
+
+    assert ca._preferred_route_supports_coding_tools("default", "local_vllm") is True
+    assert ca._preferred_route_supports_coding_tools("fast", "local_vllm") is False
+    assert ca._coding_candidate_routes("default", "local_vllm", "qwen-default") == [("local_vllm", "qwen-default")]
+
+
 def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypatch):
     class FakeBackend:
         def __init__(self, base_url: str, limit: int, provider: str, policy=None):
