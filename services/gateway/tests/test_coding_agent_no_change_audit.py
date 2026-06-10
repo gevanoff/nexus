@@ -130,6 +130,21 @@ def test_non_native_coding_route_uses_text_tool_token_cap(monkeypatch):
     assert ca._max_completion_tokens_for_route("default", "local_vllm") == 192
 
 
+def test_text_tool_message_compaction_keeps_recent_tail():
+    messages = [
+        ca.ChatMessage(role="system", content="system"),
+        ca.ChatMessage(role="user", content="start"),
+        *[ca.ChatMessage(role="assistant" if i % 2 else "user", content=f"m{i}") for i in range(10)],
+    ]
+
+    compacted = ca._compact_text_tool_messages(messages)
+
+    assert compacted[0].content == "system"
+    assert compacted[1].content == "start"
+    assert "history was omitted" in str(compacted[2].content)
+    assert [item.content for item in compacted[-5:]] == [f"m{i}" for i in range(5, 10)]
+
+
 def test_parse_tool_arguments_coerces_json_encoded_argv_array():
     args = ca._parse_tool_arguments('{"argv":"[\\"python\\",\\"-m\\",\\"unittest\\"]","timeout_sec":120}')
 

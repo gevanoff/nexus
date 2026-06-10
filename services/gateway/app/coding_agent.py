@@ -1162,7 +1162,7 @@ def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> Ch
 
 
 def _text_tool_result_message(*, name: str, result: Dict[str, Any]) -> ChatMessage:
-    compact = _clip_jsonable(result, min(_tool_context_char_limit(), 2000))
+    compact = _clip_jsonable(result, min(_tool_context_char_limit(), 1000))
     payload = json.dumps(compact, separators=(",", ":"), ensure_ascii=False)
     return ChatMessage(
         role="user",
@@ -1172,6 +1172,24 @@ def _text_tool_result_message(*, name: str, result: Dict[str, Any]) -> ChatMessa
             "or call coding_finish when the task is complete or blocked."
         ),
     )
+
+
+def _compact_text_tool_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
+    if len(messages) <= 8:
+        return messages
+    head = messages[:2]
+    tail = messages[-5:]
+    return [
+        *head,
+        ChatMessage(
+            role="user",
+            content=(
+                "Earlier text-tool call history was omitted to stay within this backend's small context window. "
+                "Use the recent tool results below, avoid repeating completed inspection, and continue with one <tool_call>{...}</tool_call> block."
+            ),
+        ),
+        *tail,
+    ]
 
 
 async def _call_backend_chat_with_retry(
@@ -2088,9 +2106,10 @@ async def _run_agent(
             await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
 
             request_text_tool_mode = not _backend_supports_tool_calling(backend)
+            request_messages = _compact_text_tool_messages(messages) if request_text_tool_mode else messages
             req = ChatCompletionRequest(
                 model=model,
-                messages=messages,
+                messages=request_messages,
                 tools=None if request_text_tool_mode else tools,
                 tool_choice=None if request_text_tool_mode else "auto",
                 temperature=0.1,
