@@ -105,6 +105,27 @@ def test_text_tool_mode_prompt_and_results_use_plain_messages():
     assert "Tool result for coding_git_status" in str(message.content)
 
 
+def test_non_native_coding_route_uses_text_tool_token_cap(monkeypatch):
+    class FakeBackend:
+        provider = "vllm"
+        payload_policy = {"supports_tool_calling": False}
+
+    class FakeRegistry:
+        def get_backend(self, backend_name: str):
+            return FakeBackend()
+
+    monkeypatch.setattr(ca, "get_registry", lambda: FakeRegistry())
+    monkeypatch.setattr(ca.S, "CODING_AGENT_MAX_TOKENS", 8192, raising=False)
+    monkeypatch.setattr(ca.S, "CODING_AGENT_TEXT_TOOL_MAX_TOKENS", 192, raising=False)
+    monkeypatch.setattr(
+        ca,
+        "get_aliases",
+        lambda: {"default": SimpleNamespace(backend="local_vllm", upstream_model="qwen-default", tools=True, max_tokens_cap=None)},
+    )
+
+    assert ca._max_completion_tokens_for_route("default", "local_vllm") == 192
+
+
 def test_parse_tool_arguments_coerces_json_encoded_argv_array():
     args = ca._parse_tool_arguments('{"argv":"[\\"python\\",\\"-m\\",\\"unittest\\"]","timeout_sec":120}')
 

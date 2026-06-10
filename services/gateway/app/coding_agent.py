@@ -126,6 +126,23 @@ def _max_completion_tokens() -> int:
         return 8192
 
 
+def _text_tool_max_completion_tokens() -> int:
+    try:
+        return max(64, min(int(getattr(S, "CODING_AGENT_TEXT_TOOL_MAX_TOKENS", 256) or 256), 2048))
+    except Exception:
+        return 256
+
+
+def _max_completion_tokens_for_route(model: str, backend: str) -> int:
+    cap = _max_completion_tokens()
+    alias = get_aliases().get(str(model or "").strip().lower())
+    if alias is not None and alias.max_tokens_cap is not None:
+        cap = min(cap, int(alias.max_tokens_cap))
+    if not _backend_supports_tool_calling(backend):
+        cap = min(cap, _text_tool_max_completion_tokens())
+    return cap
+
+
 def _tool_context_char_limit() -> int:
     try:
         return max(2_000, min(int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000) or 32_000), 100_000))
@@ -1145,7 +1162,7 @@ def _tool_message_for_result(*, tool_call_id: str, result: Dict[str, Any]) -> Ch
 
 
 def _text_tool_result_message(*, name: str, result: Dict[str, Any]) -> ChatMessage:
-    compact = _clip_jsonable(result, _tool_context_char_limit())
+    compact = _clip_jsonable(result, min(_tool_context_char_limit(), 2000))
     payload = json.dumps(compact, separators=(",", ":"), ensure_ascii=False)
     return ChatMessage(
         role="user",
@@ -1677,7 +1694,19 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
             "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
             "Do not stop at diagnosis alone when a focused fix is available. "
         )
-    tool_mode_guidance = f"{_text_tool_call_guidance()} " if text_tool_mode else ""
+    if text_tool_mode:
+        return (
+            "You are Nexus Coding Agent in a constrained context window. Work by calling workspace tools, not by narrating. "
+            f"{_text_tool_call_guidance()} "
+            "Use this loop: inspect files, make focused edits, run the requested validation, inspect coding_git_diff, then coding_finish. "
+            "Use small reads: coding_search_text first, then coding_read_file_lines with narrow ranges. "
+            "Use coding_replace_text for small edits and coding_run_command for validation. "
+            "Never push, open pull requests, or modify files outside the workspace. "
+            f"{edit_expectation}"
+            f"Allowed commands: {allowed or '(none)'}. "
+            f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
+            + "\n\n".join(request_bits)
+        )
     return (
         "You are Nexus Coding Agent. Work autonomously toward the user's coding request inside one isolated git workspace. "
         "Use the provided tools to inspect, edit, and test the repository. Do not ask the user for routine next steps. "
@@ -1700,7 +1729,6 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
         "Repository-relative commands default to the repo root; when a project layout requires a service-local package root, set cwd to that service directory before running tests or linters. "
         "Never finish by writing a prose-only assistant message; the run only ends when you call coding_finish. "
         "Call coding_finish only after you have either completed the task or identified a concrete blocker. "
-        f"{tool_mode_guidance}"
         "If the request requires code or documentation changes, make edits, run targeted validation, and inspect coding_git_diff before calling coding_finish. "
         "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to satisfy validation. Only add project manifests or dependency files when the user explicitly requested that scaffolding or the target service already uses it. "
         "Placeholder handlers or comments such as 'Add logic to ...' do not count as a fix. "
@@ -2058,7 +2086,7 @@ async def _run_agent(
                 tools=None if request_text_tool_mode else tools,
                 tool_choice=None if request_text_tool_mode else "auto",
                 temperature=0.1,
-                max_tokens=_max_completion_tokens(),
+                max_tokens=_max_completion_tokens_for_route(model, backend),
                 stream=False,
             )
             resp, backend, upstream_model = await _call_backend_chat_with_retry(
