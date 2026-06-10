@@ -35,6 +35,7 @@ def test_coding_ui_shows_workspace_model_identity_badges():
     assert "workspaceModelIdentity" in js
     assert "modelBadge(task)" in js
     assert "Resolved upstream:" in js
+    assert "policy && policy.backend" in js
 
 
 def test_sentinel_ui_lists_archives_and_actions():

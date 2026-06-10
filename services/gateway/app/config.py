@@ -424,7 +424,7 @@ class Settings(BaseSettings):
     CODING_SMOKE_SCHEDULER_ENABLED: bool = False
     CODING_SMOKE_RUN_AT_STARTUP: bool = True
     CODING_SMOKE_START_INTERVAL_SEC: int = 3600
-    CODING_SMOKE_MODELS: str = "coder"
+    CODING_SMOKE_MODELS: str = "coder,default,reasoning"
     CODING_SMOKE_PROFILES: str = "fixture_median,fixture_inventory,fixture_route_flags"
     CODING_SMOKE_WEEKLY_MODELS: str = ""
     CODING_SMOKE_WEEKLY_PROFILES: str = "fixture_median,fixture_inventory,fixture_route_flags"

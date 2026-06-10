@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_model_policy
+from app.model_aliases import ModelAlias
 
 
 def _configure_huge_lane(monkeypatch, tmp_path):
@@ -50,3 +51,48 @@ def test_options_payload_includes_track_coder_and_huge_choices(monkeypatch, tmp_
     assert options["coder"]["run_policy"] == "immediate"
     assert options["model-a"]["run_policy"] == "immediate"
     assert options["model-b"]["run_policy"] == "idle_only"
+
+
+def test_options_payload_includes_tool_capable_non_huge_aliases(monkeypatch, tmp_path):
+    _configure_huge_lane(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        coding_model_policy,
+        "get_aliases",
+        lambda: {
+            "coder": ModelAlias(backend="local_mlx", upstream_model="model-a", tools=True),
+            "default": ModelAlias(backend="local_vllm", upstream_model="qwen-default", tools=True),
+            "reasoning": ModelAlias(backend="local_vllm", upstream_model="qwen-reasoning", tools=True),
+            "fast": ModelAlias(backend="local_vllm_fast", upstream_model="qwen-fast", tools=False),
+            "mlx": ModelAlias(backend="local_mlx", upstream_model="model-b", tools=True),
+            "embeddings": ModelAlias(backend="local_vllm_embeddings", upstream_model="embedder", tools=False),
+        },
+    )
+
+    payload = coding_model_policy.options_payload()
+    options = {item["value"]: item for item in payload["options"]}
+
+    assert options["default"]["kind"] == "alias"
+    assert options["default"]["backend"] == "local_vllm"
+    assert options["default"]["model"] == "qwen-default"
+    assert options["reasoning"]["kind"] == "alias"
+    assert "fast" not in options
+    assert "mlx" not in options
+    assert "embeddings" not in options
+
+
+def test_default_alias_is_not_coder_tracking_policy(monkeypatch, tmp_path):
+    _configure_huge_lane(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        coding_model_policy,
+        "get_aliases",
+        lambda: {
+            "default": ModelAlias(backend="local_vllm", upstream_model="qwen-default", tools=True),
+        },
+    )
+
+    policy = coding_model_policy.describe_workspace_model("default")
+
+    assert policy["tracks_coder"] is False
+    assert policy["status"] == "alias"
+    assert policy["resolved_model"] == "qwen-default"
+    assert policy["backend"] == "local_vllm"

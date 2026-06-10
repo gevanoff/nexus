@@ -266,7 +266,7 @@
     const policy = task && task.model_policy && typeof task.model_policy === "object" ? task.model_policy : null;
     const selected = String((policy && policy.selected_model) || workspaceModelValue(task) || "coder").trim() || "coder";
     const resolved = String((policy && policy.resolved_model) || agent.upstream_model || selected).trim();
-    const backend = String(agent.backend || "").trim();
+    const backend = String(agent.backend || (policy && policy.backend) || "").trim();
     const status = String((policy && policy.status_label) || (policy && policy.status) || "").trim();
     let label = selected;
     if (policy && policy.tracks_coder) label = `coder -> ${compactModelName(resolved || "current")}`;
@@ -315,7 +315,7 @@
     if (taskPolicy && String(taskPolicy.selected_model || "coder") === selected) return taskPolicy;
     const config = codingModelConfig();
     const option = modelOptionForValue(selected);
-    if (selected.toLowerCase() === "coder" || selected.toLowerCase() === "default" || selected.toLowerCase() === "auto") {
+    if (selected.toLowerCase() === "coder" || selected.toLowerCase() === "auto") {
       return {
         selected_model: "coder",
         resolved_model: config.current_coder_model || "",
@@ -337,6 +337,18 @@
         run_policy: "idle_only",
         warning: `This workspace is pinned to ${selected}, but the loaded coder model is ${active}. It will only run during idle periods after that huge model is loaded. Switch this workspace to coder to track the current loaded model.`,
         recommended_model: "coder",
+      };
+    }
+    if (option && String(option.kind || "") === "alias") {
+      return {
+        selected_model: selected,
+        resolved_model: String(option.model || option.upstream_model || selected),
+        tracks_coder: false,
+        status: "alias",
+        status_label: "Alias",
+        run_policy: String(option.run_policy || "immediate"),
+        warning: "",
+        backend: String(option.backend || ""),
       };
     }
     return {

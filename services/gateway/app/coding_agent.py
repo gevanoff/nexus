@@ -1691,8 +1691,6 @@ def _task_context(task: Dict[str, Any]) -> str:
 
 def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
     model = str(requested_model or task.get("coding_model") or "coder").strip() or "coder"
-    if model.lower() == "default":
-        return "coder"
     return model
 
 

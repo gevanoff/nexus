@@ -294,8 +294,6 @@ def _archive_default_analysis(task: Dict[str, Any], *, archived_at: float, analy
     if target not in _ARCHIVE_ANALYSIS_TARGETS:
         target = "local"
     local_model = str(analysis.get("local_model") or task.get("coding_model") or "coder").strip() or "coder"
-    if local_model.lower() == "default":
-        local_model = "coder"
     status = str(analysis.get("status") or "").strip().lower()
     if not status:
         if target == "none":
@@ -2641,7 +2639,7 @@ def update_archived_task_settings(
 
     if analysis_model is not None:
         model = str(analysis_model or "").strip()
-        analysis["local_model"] = "coder" if model.lower() == "default" else model
+        analysis["local_model"] = model
         if str(analysis.get("target") or "local") == "local" and analysis.get("local_model"):
             analysis["status"] = "pending"
             analysis["last_requested_at"] = _now()

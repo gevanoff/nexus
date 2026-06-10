@@ -234,11 +234,11 @@ def test_model_is_reroutable_for_aliases_but_not_explicit_backend_model():
     assert ca._model_is_reroutable("local_mlx:mlx-community/Qwen3-30B-A3B-4bit") is False
 
 
-def test_choose_model_remaps_default_alias_to_coder_lane():
+def test_choose_model_preserves_default_alias():
     task = {"coding_model": "default"}
 
-    assert ca._choose_model(task, None) == "coder"
-    assert ca._choose_model(task, "default") == "coder"
+    assert ca._choose_model(task, None) == "default"
+    assert ca._choose_model(task, "default") == "default"
     assert ca._choose_model(task, "local_vllm:custom") == "local_vllm:custom"
 
 

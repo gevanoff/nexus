@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from app.backends import backend_provider_name
 from app import mlx_huge_lane
+from app.model_aliases import ModelAlias, get_aliases
 
 
 TRACK_CODER_MODEL = "coder"
-_TRACKING_VALUES = {"", "auto", "default", TRACK_CODER_MODEL}
+_TRACKING_VALUES = {"", "auto", TRACK_CODER_MODEL}
+_NON_CODING_ALIAS_VALUES = {"coder", "mlx", "long", "embeddings", "embeddings-fallback"}
 
 
 def _model_label(model: str) -> str:
@@ -21,6 +24,33 @@ def _strip_mlx_prefix(model: str) -> str:
         if lower.startswith(prefix):
             return value[len(prefix) :].strip()
     return value
+
+
+def _alias_label(alias_name: str, alias: ModelAlias) -> str:
+    name = str(alias_name or "").strip()
+    model = str(alias.upstream_model or "").strip()
+    tail = model.rsplit("/", 1)[-1] if model else ""
+    backend = backend_provider_name(alias.backend) or str(alias.backend or "").strip()
+    if backend and tail:
+        return f"{name} ({backend}: {tail})"
+    if tail:
+        return f"{name} ({tail})"
+    return name
+
+
+def _coding_aliases() -> Dict[str, ModelAlias]:
+    out: Dict[str, ModelAlias] = {}
+    for alias_name, alias in get_aliases().items():
+        key = str(alias_name or "").strip().lower()
+        if not key or key in _NON_CODING_ALIAS_VALUES:
+            continue
+        if alias.tools is False:
+            continue
+        model = _strip_mlx_prefix(alias.upstream_model)
+        if backend_provider_name(alias.backend) == "mlx" and mlx_huge_lane.is_huge_model(model):
+            continue
+        out[key] = alias
+    return out
 
 
 def current_coder_model() -> str:
@@ -107,6 +137,24 @@ def describe_workspace_model(model: str) -> Dict[str, Any]:
             "recommended_model": TRACK_CODER_MODEL,
         }
 
+    alias = _coding_aliases().get(selected_model.lower())
+    if alias is not None:
+        return {
+            "selected_model": selected_model,
+            "display_model": selected_model,
+            "resolved_model": str(alias.upstream_model or "").strip(),
+            "tracks_coder": False,
+            "huge_model": "",
+            "active_huge_model": active_model,
+            "route_huge_model": route_model,
+            "status": "alias",
+            "status_label": "Alias",
+            "run_policy": "immediate",
+            "warning": "",
+            "recommended_model": "",
+            "backend": alias.backend,
+        }
+
     return {
         "selected_model": selected_model,
         "display_model": selected_model,
@@ -155,6 +203,22 @@ def options_payload() -> Dict[str, Any]:
                 "run_policy": "immediate" if is_active else "idle_only",
                 "estimated_load_sec": int((candidate or {}).get("estimated_load_sec") or 0),
                 "estimated_memory_gb": (candidate or {}).get("estimated_memory_gb"),
+            }
+        )
+    for alias_name, alias in sorted(_coding_aliases().items()):
+        model = str(alias.upstream_model or "").strip()
+        options.append(
+            {
+                "value": alias_name,
+                "label": _alias_label(alias_name, alias),
+                "kind": "alias",
+                "model": model,
+                "backend": alias.backend,
+                "status": "alias",
+                "run_policy": "immediate",
+                "tools": alias.tools,
+                "context_window": alias.context_window,
+                "max_tokens_cap": alias.max_tokens_cap,
             }
         )
     return {
