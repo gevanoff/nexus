@@ -152,6 +152,12 @@ def test_parse_tool_arguments_coerces_json_encoded_argv_array():
     assert args["timeout_sec"] == 120
 
 
+def test_parse_tool_arguments_accepts_command_list_as_argv():
+    args = ca._parse_tool_arguments({"command": ["python", "-m", "unittest"]})
+
+    assert args["argv"] == ["python", "-m", "unittest"]
+
+
 def test_parse_tool_arguments_does_not_split_shell_argv_string():
     args = ca._parse_tool_arguments({"argv": "python -m unittest"})
 

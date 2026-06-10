@@ -1275,6 +1275,8 @@ def _parse_tool_arguments(raw: Any) -> Dict[str, Any]:
 
 def _coerce_tool_arguments(args: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(args)
+    if "argv" not in out and isinstance(out.get("command"), list):
+        out["argv"] = out.get("command")
     argv = out.get("argv")
     if isinstance(argv, str) and argv.strip().startswith("["):
         try:
