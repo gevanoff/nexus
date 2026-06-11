@@ -21,6 +21,8 @@ services:
       - VLLM_BASE_URL=${VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
       - VLLM_FAST_BASE_URL=${VLLM_FAST_BASE_URL:-http://host.docker.internal:8001/v1}
       - VLLM_EMBEDDINGS_BASE_URL=${VLLM_EMBEDDINGS_BASE_URL:-http://host.docker.internal:8002/v1}
+      - VLLM_NATIVE_TOOLS_ENABLED=${VLLM_NATIVE_TOOLS_ENABLED:-false}
+      - VLLM_FAST_NATIVE_TOOLS_ENABLED=${VLLM_FAST_NATIVE_TOOLS_ENABLED:-false}
       - MLX_BASE_URL=${MLX_BASE_URL:-}
       - IMAGES_HTTP_BASE_URL=${IMAGES_HTTP_BASE_URL:-http://images:7860}
       - AUDIO_BACKEND_URL=${AUDIO_BACKEND_URL:-http://tts:9940}

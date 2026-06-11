@@ -230,6 +230,17 @@ def backend_provider_name(backend_name: str) -> str:
     return normalized
 
 
+def backend_supports_tool_calling(backend_name: str) -> bool:
+    registry = get_registry()
+    resolved = registry.resolve_backend_class((backend_name or "").strip())
+    cfg = registry.get_backend(resolved)
+    policy = cfg.payload_policy if cfg is not None else {}
+    explicit = policy.get("supports_tool_calling") if isinstance(policy, dict) else None
+    if explicit is not None:
+        return bool(explicit)
+    return backend_provider_name(resolved or backend_name) == "mlx"
+
+
 def llm_backends() -> list[tuple[str, BackendConfig]]:
     registry = get_registry()
     out: list[tuple[str, BackendConfig]] = []
@@ -471,6 +482,35 @@ def _sanitize_base_url(raw_base_url: str) -> str:
     return candidate
 
 
+def _native_tool_support_override(backend_class: str) -> Optional[bool]:
+    normalized = _normalize_backend_name(backend_class).replace("-", "_")
+    if normalized == "local_vllm":
+        return bool(getattr(S, "VLLM_NATIVE_TOOLS_ENABLED", False))
+    if normalized == "local_vllm_fast":
+        return bool(getattr(S, "VLLM_FAST_NATIVE_TOOLS_ENABLED", False))
+    return None
+
+
+def _apply_backend_payload_policy_overrides(registry: BackendRegistry) -> BackendRegistry:
+    def _updated_config(name: str, cfg: BackendConfig) -> BackendConfig:
+        enabled = _native_tool_support_override(cfg.backend_class or name)
+        if enabled is None:
+            return cfg
+        policy = dict(cfg.payload_policy or {})
+        policy["supports_tool_calling"] = enabled
+        return replace(cfg, payload_policy=policy)
+
+    static_backends = {
+        name: _updated_config(name, cfg)
+        for name, cfg in registry.static_backends.items()
+    }
+    backends = {
+        name: _updated_config(name, cfg)
+        for name, cfg in registry.backends.items()
+    }
+    return replace(registry, backends=backends, static_backends=static_backends)
+
+
 def _capability_availability(route_kind: RouteKind) -> Dict[str, Any]:
     registry = get_registry()
     available = []
@@ -697,11 +737,11 @@ def load_backends_config(path: Optional[Path] = None) -> BackendRegistry:
     legacy_mapping = data.get("legacy_mapping", {})
 
     logger.info(f"Loaded {len(backends)} backend configs from {path}")
-    return BackendRegistry(
+    return _apply_backend_payload_policy_overrides(BackendRegistry(
         backends=dict(backends),
         legacy_mapping=legacy_mapping,
         static_backends=dict(backends),
-    )
+    ))
 
 
 def _default_registry() -> BackendRegistry:
@@ -752,7 +792,7 @@ def _default_registry() -> BackendRegistry:
             payload_policy={},
         ),
     }
-    return BackendRegistry(
+    return _apply_backend_payload_policy_overrides(BackendRegistry(
         backends=dict(backends),
         legacy_mapping={
             "vllm": "local_vllm",
@@ -764,7 +804,7 @@ def _default_registry() -> BackendRegistry:
             "ollama": "local_vllm",
         },
         static_backends=dict(backends),
-    )
+    ))
 
 
 # Global registry and admission controller

@@ -59,3 +59,21 @@ Compatibility note:
 - `ada2` has 128GB system RAM and a 48GB RTX 6000 Ada. Use the RAM for vLLM CPU offload and startup headroom, but continue to schedule CUDA services by VRAM pressure.
 - `meltdown` has Ubuntu 22.04, about 47GB system RAM, and a 16GB RTX 5060 Ti. It currently owns SDXL-Turbo and the vLLM embeddings lane; treat it as a lighter CUDA overflow/staging host, not a replacement for `ada2`.
 - `copyfail` has Ubuntu 22.04, an Intel Celeron J3355, 2 logical CPUs, and about 7.4GiB system RAM. It is an infrastructure-only host for metrics collection, deployment orchestration, and general IT operations; do not assign model-serving backends to it.
+
+## vLLM Native Tool Calling
+
+vLLM native tool calling is opt-in per lane. Enable it only after validating the model-specific parser for the served model:
+
+- strong lane: set `VLLM_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_TOOL_CALL_PARSER=<parser>`, and `VLLM_NATIVE_TOOLS_ENABLED=true`
+- fast lane: set `VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_FAST_TOOL_CALL_PARSER=<parser>`, and `VLLM_FAST_NATIVE_TOOLS_ENABLED=true`
+
+The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) must stay false until the matching vLLM process is restarted with `--enable-auto-tool-choice` and the parser flag. Otherwise `/v1/chat/completions` tool requests should remain routed to a tool-capable MLX alias or fail at the gateway before reaching vLLM.
+
+The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `ai1` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. Native tool parsing remains disabled until the Mistral parser/tool-call behavior is smoke-tested repeatedly on these served models.
+
+After restarting a lane with native tool flags, validate it directly before flipping the gateway flag:
+
+```bash
+BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh
+REPEATS=10 BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh
+```

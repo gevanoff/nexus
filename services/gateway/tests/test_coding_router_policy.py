@@ -41,6 +41,170 @@ def test_tool_bearing_coding_requests_prefer_coder_alias(monkeypatch):
     assert decision.reason == "policy:tools->coding->alias:coder"
 
 
+def test_tool_request_skips_vllm_default_alias_without_native_tools(monkeypatch):
+    aliases = {
+        "default": SimpleNamespace(backend="local_vllm", upstream_model="default-vllm-model", tools=True),
+        "coder": SimpleNamespace(backend="local_mlx", upstream_model="coder-mlx-model", tools=True),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: {})
+    monkeypatch.setattr(router, "get_alias", lambda name: aliases.get(name))
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "vllm" if "vllm" in backend else "mlx")
+    monkeypatch.setattr(router, "backend_supports_tool_calling", lambda backend: backend == "local_mlx")
+    monkeypatch.setattr(router.coding_model_policy, "current_coder_model", lambda: None)
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_vllm",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="auto",
+        headers={},
+        messages=[{"role": "user", "content": "Use a tool to answer"}],
+        has_tools=True,
+        enable_policy=True,
+        enable_request_type=True,
+    )
+
+    assert decision.backend == "local_mlx"
+    assert decision.model == "coder-mlx-model"
+    assert decision.reason == "policy:tools->alias:coder"
+
+
+def test_tool_request_prefers_fast_alias_when_fast_native_tools_enabled(monkeypatch):
+    aliases = {
+        "default": SimpleNamespace(backend="local_vllm", upstream_model="default-vllm-model", tools=True),
+        "fast": SimpleNamespace(backend="local_vllm_fast", upstream_model="fast-vllm-model", tools=True),
+        "coder": SimpleNamespace(backend="local_mlx", upstream_model="coder-mlx-model", tools=True),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: {})
+    monkeypatch.setattr(router, "get_alias", lambda name: aliases.get(name))
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "vllm" if "vllm" in backend else "mlx")
+    monkeypatch.setattr(router, "backend_supports_tool_calling", lambda backend: backend in {"local_vllm_fast", "local_mlx"})
+    monkeypatch.setattr(router.coding_model_policy, "current_coder_model", lambda: None)
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_vllm",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="auto",
+        headers={},
+        messages=[{"role": "user", "content": "Use a tool to answer"}],
+        has_tools=True,
+        enable_policy=True,
+        enable_request_type=True,
+    )
+
+    assert decision.backend == "local_vllm_fast"
+    assert decision.model == "fast-vllm-model"
+    assert decision.reason == "policy:tools->alias:fast"
+
+
+def test_direct_fast_alias_with_tools_uses_fast_when_native_tools_enabled(monkeypatch):
+    aliases = {
+        "fast": SimpleNamespace(backend="local_vllm_fast", upstream_model="fast-vllm-model", tools=True),
+        "coder": SimpleNamespace(backend="local_mlx", upstream_model="coder-mlx-model", tools=True),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: aliases)
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "vllm" if "vllm" in backend else "mlx")
+    monkeypatch.setattr(router, "backend_supports_tool_calling", lambda backend: backend == "local_vllm_fast")
+    monkeypatch.setattr(router.coding_model_policy, "current_coder_model", lambda: None)
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_vllm",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="fast",
+        headers={},
+        messages=[{"role": "user", "content": "Use a tool to answer"}],
+        has_tools=True,
+        enable_policy=False,
+        enable_request_type=False,
+    )
+
+    assert decision.backend == "local_vllm_fast"
+    assert decision.model == "fast-vllm-model"
+    assert decision.reason == "alias:model"
+
+
+def test_direct_default_alias_with_tools_reroutes_when_vllm_tools_disabled(monkeypatch):
+    aliases = {
+        "default": SimpleNamespace(backend="local_vllm", upstream_model="default-vllm-model", tools=True),
+        "coder": SimpleNamespace(backend="local_mlx", upstream_model="coder-mlx-model", tools=True),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: aliases)
+    monkeypatch.setattr(router, "get_alias", lambda name: aliases.get(name))
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "vllm" if "vllm" in backend else "mlx")
+    monkeypatch.setattr(router, "backend_supports_tool_calling", lambda backend: backend == "local_mlx")
+    monkeypatch.setattr(router.coding_model_policy, "current_coder_model", lambda: None)
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_vllm",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="default",
+        headers={},
+        messages=[{"role": "user", "content": "Use a tool to answer"}],
+        has_tools=True,
+        enable_policy=False,
+        enable_request_type=False,
+    )
+
+    assert decision.backend == "local_mlx"
+    assert decision.model == "coder-mlx-model"
+    assert decision.reason == "policy:tools->alias:coder"
+
+
+def test_direct_default_alias_with_tools_uses_vllm_when_native_tools_enabled(monkeypatch):
+    aliases = {
+        "default": SimpleNamespace(backend="local_vllm", upstream_model="default-vllm-model", tools=True),
+        "coder": SimpleNamespace(backend="local_mlx", upstream_model="coder-mlx-model", tools=True),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: aliases)
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "vllm" if "vllm" in backend else "mlx")
+    monkeypatch.setattr(router, "backend_supports_tool_calling", lambda backend: True)
+    monkeypatch.setattr(router.coding_model_policy, "current_coder_model", lambda: None)
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_vllm",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="default",
+        headers={},
+        messages=[{"role": "user", "content": "Use a tool to answer"}],
+        has_tools=True,
+        enable_policy=False,
+        enable_request_type=False,
+    )
+
+    assert decision.backend == "local_vllm"
+    assert decision.model == "default-vllm-model"
+    assert decision.reason == "alias:model"
+
+
 def test_direct_coder_alias_tracks_active_mlx_huge_model(monkeypatch):
     aliases = {
         "coder": SimpleNamespace(backend="local_vllm", upstream_model="stale-coder-model", tools=True),

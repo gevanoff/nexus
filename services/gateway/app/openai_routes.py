@@ -11,7 +11,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth import require_bearer
 from app.config import S, logger
-from app.backends import check_capability, get_admission_controller, get_registry, llm_backends
+from app.backends import (
+    backend_supports_tool_calling,
+    check_capability,
+    get_admission_controller,
+    get_registry,
+    llm_backends,
+)
 from app.health_checker import check_backend_ready
 from app.models import (
     ChatCompletionRequest,
@@ -249,6 +255,17 @@ async def chat_completions(req: Request):
 
         alias_name = _selected_alias_name(cc.model, route.reason)
         cc = _apply_alias_constraints(cc, alias_name=alias_name)
+
+        if cc.tools and not backend_supports_tool_calling(backend_class):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"backend '{backend_class}' does not support native tool calling; "
+                    "enable vLLM native tools with VLLM_NATIVE_TOOLS_ENABLED and a matching "
+                    "VLLM_ENABLE_AUTO_TOOL_CHOICE/VLLM_TOOL_CALL_PARSER deployment config, "
+                    "or route the request to a tool-capable backend"
+                ),
+            )
 
         logger.debug(
             "route chat.completions model=%r stream=%s tools=%s -> backend=%s upstream_model=%s reason=%s",

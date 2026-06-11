@@ -229,17 +229,19 @@ class Settings(BaseSettings):
 
     # vLLM-backed lightweight/utility models, typically hosted on Linux/NVIDIA
     # nodes such as ai1 or ada2.
-    VLLM_MODEL_STRONG: str = "unsloth/Qwen3-30B-A3B-FP8"
-    VLLM_MODEL_FAST: str = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
-    VLLM_MODEL_DEFAULT: str = "unsloth/Qwen3-30B-A3B-FP8"
+    VLLM_MODEL_STRONG: str = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
+    VLLM_MODEL_FAST: str = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
+    VLLM_MODEL_DEFAULT: str = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
     VLLM_MODEL_EMBEDDINGS: str = "unsloth/Qwen3-Embedding-4B"
+    VLLM_NATIVE_TOOLS_ENABLED: bool = False
+    VLLM_FAST_NATIVE_TOOLS_ENABLED: bool = False
 
     # MLX-hosted reasoning models, typically on ai2.
     MLX_MODEL_STRONG: str = "mlx-community/MiniMax-M2.5-8bit"
     MLX_MODEL_FAST: str = "mlx-community/Phi-4-reasoning-plus-4bit"
     MLX_MODEL_DEFAULT: str = "mlx-community/MiniMax-M2.5-8bit"
     MLX_FALLBACK_BACKEND: str = "local_vllm_fast"
-    MLX_FALLBACK_MODEL: str = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
+    MLX_FALLBACK_MODEL: str = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     MLX_HF_CACHE_DIR: str = "/var/lib/gateway/mlx_hf_cache"
     MLX_FETCH_STALLED_AFTER_SEC: int = 600
     MLX_HUGE_LANE_ENABLED: bool = True

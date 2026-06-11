@@ -7,22 +7,26 @@ services:
     environment:
       - HF_HOME=${HF_HOME:-/var/lib/huggingface}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
-    command:
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --model
-      - ${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}
-      - --served-model-name
-      - ${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL_STRONG:-unsloth/Qwen3-30B-A3B-FP8}}
-      - --generation-config
-      - vllm
-      - --load-format
-      - "${VLLM_LOAD_FORMAT:-auto}"
-      - --max-model-len
-      - ${VLLM_MAX_MODEL_LEN:-32768}
+      - NEXUS_VLLM_MODEL=${VLLM_MODEL_STRONG:-ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic}
+      - NEXUS_VLLM_SERVED_MODEL_NAME=${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL_STRONG:-ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic}}
+      - NEXUS_VLLM_TOKENIZER=${VLLM_TOKENIZER:-${VLLM_MODEL_STRONG:-ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic}}
+      - NEXUS_VLLM_TOKENIZER_MODE=${VLLM_TOKENIZER_MODE:-}
+      - NEXUS_VLLM_CONFIG_FORMAT=${VLLM_CONFIG_FORMAT:-}
+      - NEXUS_VLLM_LIMIT_MM_PER_PROMPT=${VLLM_LIMIT_MM_PER_PROMPT:-}
+      - NEXUS_VLLM_SKIP_MM_PROFILING=${VLLM_SKIP_MM_PROFILING:-false}
+      - NEXUS_VLLM_LOAD_FORMAT=${VLLM_LOAD_FORMAT:-auto}
+      - NEXUS_VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-32768}
+      - NEXUS_VLLM_ENFORCE_EAGER=${VLLM_ENFORCE_EAGER:-false}
+      - NEXUS_VLLM_ENABLE_AUTO_TOOL_CHOICE=${VLLM_ENABLE_AUTO_TOOL_CHOICE:-false}
+      - NEXUS_VLLM_TOOL_CALL_PARSER=${VLLM_TOOL_CALL_PARSER:-}
+      - NEXUS_VLLM_TOOL_PARSER_PLUGIN=${VLLM_TOOL_PARSER_PLUGIN:-}
+      - NEXUS_VLLM_EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE=${VLLM_EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE:-true}
+      - NEXUS_VLLM_REASONING_PARSER=${VLLM_REASONING_PARSER:-}
+      - NEXUS_VLLM_CHAT_TEMPLATE=${VLLM_CHAT_TEMPLATE:-}
+      - NEXUS_VLLM_CHAT_TEMPLATE_CONTENT_FORMAT=${VLLM_CHAT_TEMPLATE_CONTENT_FORMAT:-}
+    entrypoint: ["/bin/sh", "/usr/local/bin/nexus-run-vllm-openai"]
     volumes:
+      - ../deploy/scripts/run-vllm-openai.sh:/usr/local/bin/nexus-run-vllm-openai:ro
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus

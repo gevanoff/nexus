@@ -11,30 +11,31 @@ services:
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - NVIDIA_VISIBLE_DEVICES=${VLLM_FAST_CUDA_VISIBLE_DEVICES:-all}
       - CUDA_VISIBLE_DEVICES=${VLLM_FAST_CUDA_VISIBLE_DEVICES:-all}
-    command:
-      - --host
-      - 0.0.0.0
-      - --port
-      - "8000"
-      - --model
-      - ${VLLM_MODEL_FAST:-unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M}
-      - --served-model-name
-      - ${VLLM_FAST_SERVED_MODEL_NAME:-${VLLM_MODEL_FAST:-unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M}}
-      - --tokenizer
-      - ${VLLM_FAST_TOKENIZER:-${VLLM_MODEL_FAST:-unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M}}
-      - --generation-config
-      - vllm
-      - --load-format
-      - "${VLLM_FAST_LOAD_FORMAT:-auto}"
-      - --tensor-parallel-size
-      - "${VLLM_FAST_TENSOR_PARALLEL_SIZE:-1}"
-      - --gpu-memory-utilization
-      - "${VLLM_FAST_GPU_MEMORY_UTILIZATION:-0.90}"
-      - --max-model-len
-      - "${VLLM_FAST_MAX_MODEL_LEN:-32768}"
-      - --cpu-offload-gb
-      - "${VLLM_FAST_CPU_OFFLOAD_GB:-0}"
+      - NEXUS_VLLM_MODEL=${VLLM_MODEL_FAST:-cyankiwi/Devstral-Small-2507-AWQ-4bit}
+      - NEXUS_VLLM_SERVED_MODEL_NAME=${VLLM_FAST_SERVED_MODEL_NAME:-${VLLM_MODEL_FAST:-cyankiwi/Devstral-Small-2507-AWQ-4bit}}
+      - NEXUS_VLLM_TOKENIZER=${VLLM_FAST_TOKENIZER:-${VLLM_MODEL_FAST:-cyankiwi/Devstral-Small-2507-AWQ-4bit}}
+      - NEXUS_VLLM_TOKENIZER_MODE=${VLLM_FAST_TOKENIZER_MODE:-}
+      - NEXUS_VLLM_CONFIG_FORMAT=${VLLM_FAST_CONFIG_FORMAT:-}
+      - NEXUS_VLLM_LIMIT_MM_PER_PROMPT=${VLLM_FAST_LIMIT_MM_PER_PROMPT:-}
+      - NEXUS_VLLM_SKIP_MM_PROFILING=${VLLM_FAST_SKIP_MM_PROFILING:-false}
+      - NEXUS_VLLM_LOAD_FORMAT=${VLLM_FAST_LOAD_FORMAT:-auto}
+      - NEXUS_VLLM_TENSOR_PARALLEL_SIZE=${VLLM_FAST_TENSOR_PARALLEL_SIZE:-1}
+      - NEXUS_VLLM_GPU_MEMORY_UTILIZATION=${VLLM_FAST_GPU_MEMORY_UTILIZATION:-0.90}
+      - NEXUS_VLLM_MAX_MODEL_LEN=${VLLM_FAST_MAX_MODEL_LEN:-32768}
+      - NEXUS_VLLM_CPU_OFFLOAD_GB=${VLLM_FAST_CPU_OFFLOAD_GB:-0}
+      - NEXUS_VLLM_DTYPE=${VLLM_FAST_DTYPE:-}
+      - NEXUS_VLLM_KV_CACHE_DTYPE=${VLLM_FAST_KV_CACHE_DTYPE:-}
+      - NEXUS_VLLM_ENFORCE_EAGER=${VLLM_FAST_ENFORCE_EAGER:-false}
+      - NEXUS_VLLM_ENABLE_AUTO_TOOL_CHOICE=${VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE:-false}
+      - NEXUS_VLLM_TOOL_CALL_PARSER=${VLLM_FAST_TOOL_CALL_PARSER:-}
+      - NEXUS_VLLM_TOOL_PARSER_PLUGIN=${VLLM_FAST_TOOL_PARSER_PLUGIN:-}
+      - NEXUS_VLLM_EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE=${VLLM_FAST_EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE:-true}
+      - NEXUS_VLLM_REASONING_PARSER=${VLLM_FAST_REASONING_PARSER:-}
+      - NEXUS_VLLM_CHAT_TEMPLATE=${VLLM_FAST_CHAT_TEMPLATE:-}
+      - NEXUS_VLLM_CHAT_TEMPLATE_CONTENT_FORMAT=${VLLM_FAST_CHAT_TEMPLATE_CONTENT_FORMAT:-}
+    entrypoint: ["/bin/sh", "/usr/local/bin/nexus-run-vllm-openai"]
     volumes:
+      - ./deploy/scripts/run-vllm-openai.sh:/usr/local/bin/nexus-run-vllm-openai:ro
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     networks:
       - nexus

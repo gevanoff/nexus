@@ -138,7 +138,7 @@ setup_config() {
 
     # Generate random token (shared helper)
     RANDOM_TOKEN="$(ns_generate_token | tr -d '\r\n')"
-    LOCAL_QUICKSTART_MODEL_ALIASES_JSON='{"aliases":{"default":{"backend":"local_vllm","model":"unsloth/Qwen3-30B-A3B-FP8","tools":true},"fast":{"backend":"local_vllm_fast","model":"unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M","tools":false},"coder":{"backend":"local_vllm","model":"unsloth/Qwen3-30B-A3B-FP8","tools":true},"long":{"backend":"local_vllm","model":"unsloth/Qwen3-30B-A3B-FP8","context_window":65536,"tools":false},"embeddings":{"backend":"local_vllm_embeddings","model":"unsloth/Qwen3-Embedding-4B","tools":false}}}'
+    LOCAL_QUICKSTART_MODEL_ALIASES_JSON='{"aliases":{"default":{"backend":"local_vllm","model":"ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic","tools":true},"fast":{"backend":"local_vllm_fast","model":"cyankiwi/Devstral-Small-2507-AWQ-4bit","tools":false},"coder":{"backend":"local_vllm","model":"ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic","tools":true},"long":{"backend":"local_vllm","model":"ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic","context_window":65536,"tools":false},"embeddings":{"backend":"local_vllm_embeddings","model":"unsloth/Qwen3-Embedding-4B","tools":false}}}'
     platform="$(ns_detect_platform)"
 
     upsert_env_value() {

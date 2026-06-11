@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, Dict, Iterable, Optional
 
-from app.backends import backend_provider_name, get_registry
+from app.backends import backend_provider_name, backend_supports_tool_calling, get_registry
 from app.config import S
 from app import coding_model_policy
 from app import mlx_huge_lane
@@ -214,6 +214,21 @@ def _effective_alias_backend_model(alias_name: str, alias: Any, cfg: RouterConfi
     return backend, _normalize_model(_effective_alias_model(name, alias, backend), backend, cfg)
 
 
+def _alias_supports_tool_calling(alias_name: str, alias: Any, cfg: RouterConfig) -> bool:
+    if alias is None or getattr(alias, "tools", None) is False:
+        return False
+    backend, _model = _effective_alias_backend_model(alias_name, alias, cfg)
+    return backend_supports_tool_calling(backend)
+
+
+def _tool_alias_decision(alias_name: str, cfg: RouterConfig, reason: str) -> Optional[RouteDecision]:
+    alias = get_alias(alias_name)
+    if not _alias_supports_tool_calling(alias_name, alias, cfg):
+        return None
+    backend, model = _effective_alias_backend_model(alias_name, alias, cfg)
+    return RouteDecision(backend=backend, model=model, reason=reason)
+
+
 _CODE_HINT_RE = re.compile(
     r"\b(typescript|javascript|python|py|node|npm|pip|pytest|uvicorn|fastapi|dockerfile|kubernetes|terraform|ansible|git)\b",
     re.IGNORECASE,
@@ -308,6 +323,11 @@ def decide_route(
     alias_key = request_model_key
     if alias_key and alias_key in aliases:
         a = aliases[alias_key]
+        if has_tools and not _alias_supports_tool_calling(alias_key, a, cfg):
+            for candidate in ("fast", "coder", "mlx", "default"):
+                decision = _tool_alias_decision(candidate, cfg, f"policy:tools->alias:{candidate}")
+                if decision is not None:
+                    return route_with_model_fallback(decision)
         backend, normalized = _effective_alias_backend_model(alias_key, a, cfg)
         return route_with_model_fallback(RouteDecision(backend=backend, model=normalized, reason="alias:model"))
 
@@ -345,18 +365,16 @@ def decide_route(
 
     if has_tools:
         if is_coding:
-            a = get_alias("coder")
-            if a and a.tools is not False:
-                b, m = _effective_alias_backend_model("coder", a, cfg)
-                return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:tools->coding->alias:coder"))
-        a = get_alias("default")
-        if a and a.tools is not False:
-            b, m = _effective_alias_backend_model("default", a, cfg)
-            return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:tools->alias:default"))
-        a = get_alias("coder")
-        if a and a.tools is not False:
-            b, m = _effective_alias_backend_model("coder", a, cfg)
-            return route_with_model_fallback(RouteDecision(backend=b, model=m, reason="policy:tools->alias:coder"))
+            decision = _tool_alias_decision("coder", cfg, "policy:tools->coding->alias:coder")
+            if decision is not None:
+                return route_with_model_fallback(decision)
+        for candidate in ("default", "fast", "coder", "mlx"):
+            decision = _tool_alias_decision(candidate, cfg, f"policy:tools->alias:{candidate}")
+            if decision is not None:
+                return route_with_model_fallback(decision)
+        if backend_supports_tool_calling(backend):
+            normalized = _normalize_model(request_model_norm, backend, cfg)
+            return route_with_model_fallback(RouteDecision(backend=backend, model=normalized, reason="policy:tools->backend"))
         return route_with_model_fallback(RouteDecision(backend=backend, model=cfg.primary_strong_model, reason="policy:tools->strong"))
 
     if size >= long_threshold:
