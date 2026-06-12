@@ -236,6 +236,7 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/restart-colima.sh`: restart/verify the Colima LaunchDaemon on macOS
 - `deploy/scripts/deploy.sh <dev|prod> <branch>`: host-local deployment
 - `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/cutover-tts-one-way.sh`: one-way cutover from legacy native TTS launchd jobs to the tracked Nexus Pocket/Lux/Qwen container stack
 - `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
 - `deploy/scripts/restart-gateway.sh`: restart/rebuild only Gateway so code/config updates are picked up quickly
 - `deploy/scripts/redeploy-tts-shims.sh`: redeploy containerized `pocket_tts` + `luxtts` + `qwen3-tts` and optionally restart Gateway

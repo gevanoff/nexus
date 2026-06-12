@@ -34,6 +34,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
 - `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: deploy selected components on a host
 - `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <dev|prod> <branch> [user@host]`: deploy selected components over SSH
+- `./deploy/scripts/cutover-tts-one-way.sh [--env-file PATH] [--no-build] [--skip-gateway]`: disable legacy native TTS launchd jobs, seed Nexus runtime mounts from `/ai-data/var/lib/...`, and cut over Pocket/Lux/Qwen TTS to the tracked containerized shims
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
 - `./deploy/scripts/topology-ssh.sh [--print-target] <ai1|ai2|ada2|meltdown|copyfail> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
