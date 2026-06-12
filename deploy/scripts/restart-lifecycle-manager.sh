@@ -35,6 +35,30 @@ sanitize_token() {
   printf '%s' "${1:-}" | tr -c 'A-Za-z0-9._-' '_'
 }
 
+detect_colima_runtime_root() {
+  local profile_name="$1"
+  local user_name="$2"
+  local sanitized_profile sanitized_user candidate env_path
+
+  sanitized_profile="$(sanitize_token "$profile_name")"
+  sanitized_user="$(sanitize_token "$user_name")"
+
+  for candidate in \
+    "${COLIMA_RUNTIME_ROOT}" \
+    "/ai-data/var/lib/nexus-colima" \
+    "/var/lib/nexus-colima"
+  do
+    [[ -n "${candidate:-}" ]] || continue
+    env_path="${candidate}/${sanitized_user}-${sanitized_profile}.env"
+    if [[ -f "$env_path" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$COLIMA_RUNTIME_ROOT"
+}
+
 resolve_target_user() {
   if [[ -n "${TARGET_USER:-}" ]]; then
     printf '%s\n' "$TARGET_USER"
@@ -58,6 +82,7 @@ apply_managed_colima_env() {
   local sanitized_profile sanitized_user env_path docker_socket alt_socket
   sanitized_profile="$(sanitize_token "$profile_name")"
   sanitized_user="$(sanitize_token "$user_name")"
+  COLIMA_RUNTIME_ROOT="$(detect_colima_runtime_root "$profile_name" "$user_name")"
   env_path="${COLIMA_RUNTIME_ROOT}/${sanitized_user}-${sanitized_profile}.env"
 
   if [[ ! -f "$env_path" ]]; then
@@ -87,6 +112,10 @@ apply_managed_colima_env() {
     elif [[ -S "$alt_socket" ]]; then
       export DOCKER_HOST="unix://${alt_socket}"
     fi
+  fi
+
+  if ns_have_cmd docker; then
+    docker context use colima >/dev/null 2>&1 || true
   fi
 }
 
