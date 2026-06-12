@@ -78,9 +78,9 @@ compose_args=(
 
 ns_print_header "Redeploying Pocket TTS + LuxtTS + Qwen3-TTS"
 if [[ "$NO_BUILD" == "true" ]]; then
-  ns_compose "${compose_args[@]}" up -d tts luxtts qwen3-tts
+  ns_compose "${compose_args[@]}" up -d tts luxtts luxtts-registrar qwen3-tts qwen3-tts-registrar
 else
-  ns_compose "${compose_args[@]}" up -d --build tts luxtts qwen3-tts
+  ns_compose "${compose_args[@]}" up -d --build tts luxtts luxtts-registrar qwen3-tts qwen3-tts-registrar
 fi
 
 ns_print_header "Waiting for TTS service health"
@@ -107,7 +107,7 @@ for i in {1..60}; do
   if [[ "$i" -eq 60 ]]; then
     ns_print_error "Timed out waiting for TTS service health endpoints"
     ns_compose "${compose_args[@]}" ps || true
-    ns_compose "${compose_args[@]}" logs --tail=120 tts luxtts qwen3-tts || true
+    ns_compose "${compose_args[@]}" logs --tail=120 tts luxtts luxtts-registrar qwen3-tts qwen3-tts-registrar || true
     exit 1
   fi
   sleep 2
