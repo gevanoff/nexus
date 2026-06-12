@@ -15,12 +15,15 @@ fi
 PROFILE="default"
 TARGET_USER=""
 TARGET_HOME=""
+TARGET_COLIMA_HOME="${COLIMA_HOME:-}"
+TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-}"
 LABEL=""
 TIMEOUT_SEC="75"
+COLIMA_RUNTIME_ROOT="${COLIMA_RUNTIME_ROOT:-/var/lib/nexus-colima}"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/restart-colima.sh [--profile NAME] [--user USER] [--home PATH] [--label LABEL] [--timeout-sec N]
+Usage: deploy/scripts/restart-colima.sh [--profile NAME] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--label LABEL] [--timeout-sec N]
 
 Restart the Colima LaunchDaemon and wait for Docker to become reachable.
 
@@ -28,6 +31,11 @@ Options:
   --profile NAME     Colima profile name (default: default)
   --user USER        User account that owns/runs Colima (default: current user)
   --home PATH        Home directory for the selected user (default: detected from dscl/$HOME)
+  --colima-home PATH Colima state root to export as COLIMA_HOME when checking Docker
+  --colima-user-home PATH
+                     Home/config root to export as COLIMA_USER_HOME and HOME when checking Docker
+  --runtime-root PATH
+                     Root-owned asset directory used by install-colima-launchd.sh (default: /var/lib/nexus-colima)
   --label LABEL      LaunchDaemon label (default: com.nexus.colima.<user>.<profile>)
   --timeout-sec N    Wait time for Docker daemon health (default: 75)
 EOF
@@ -82,10 +90,12 @@ run_docker_for_target() {
     return 1
   fi
 
+  local docker_home="${TARGET_COLIMA_USER_HOME:-${TARGET_HOME}}"
+
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-    sudo -H -u "${TARGET_USER}" HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+    sudo -H -u "${TARGET_USER}" HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
   else
-    HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+    HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
   fi
 }
 
@@ -118,6 +128,18 @@ while [[ $# -gt 0 ]]; do
       TARGET_HOME="${2:-}"
       shift 2
       ;;
+    --colima-home)
+      TARGET_COLIMA_HOME="${2:-}"
+      shift 2
+      ;;
+    --colima-user-home)
+      TARGET_COLIMA_USER_HOME="${2:-}"
+      shift 2
+      ;;
+    --runtime-root)
+      COLIMA_RUNTIME_ROOT="${2:-}"
+      shift 2
+      ;;
     --label)
       LABEL="${2:-}"
       shift 2
@@ -126,7 +148,7 @@ while [[ $# -gt 0 ]]; do
       TIMEOUT_SEC="${2:-}"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -138,6 +160,7 @@ done
 
 [[ -n "${PROFILE:-}" ]] || ns_die "--profile must not be empty"
 [[ "$TIMEOUT_SEC" =~ ^[0-9]+$ ]] || ns_die "--timeout-sec must be an integer"
+[[ "${COLIMA_RUNTIME_ROOT}" == /* ]] || ns_die "--runtime-root must be an absolute path"
 
 ns_require_cmd launchctl "launchctl" || exit 1
 ns_require_cmd dscl "dscl" || exit 1
@@ -145,7 +168,6 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   ns_require_cmd sudo "sudo" || exit 1
 fi
 
-DOCKER_BIN="$(command -v docker || true)"
 TARGET_USER="$(resolve_target_user)"
 [[ "${TARGET_USER}" != "root" ]] || ns_die "Colima target user must not be root"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
@@ -156,6 +178,20 @@ if [[ -z "${LABEL:-}" ]]; then
 fi
 
 PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
+ENV_FILE="${COLIMA_RUNTIME_ROOT}/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
+fi
+
+DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || true)}"
+if [[ -z "${TARGET_COLIMA_HOME:-}" ]]; then
+  TARGET_COLIMA_HOME="${COLIMA_HOME:-}"
+fi
+if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
+  TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-$TARGET_HOME}"
+fi
 
 ns_print_header "Restarting Colima LaunchDaemon"
 
@@ -165,7 +201,7 @@ else
   if [[ ! -f "$PLIST_PATH" ]]; then
     ns_print_error "Colima LaunchDaemon not found: ${PLIST_PATH}"
     ns_print_warn "Install it first:"
-    ns_print_warn "  ./deploy/scripts/install-colima-launchd.sh --profile ${PROFILE} --user ${TARGET_USER}"
+    ns_print_warn "  ./deploy/scripts/install-colima-launchd.sh --profile ${PROFILE} --user ${TARGET_USER} --runtime-root ${COLIMA_RUNTIME_ROOT}"
     exit 1
   fi
   ns_print_warn "LaunchDaemon is not loaded; bootstrapping ${PLIST_PATH}"

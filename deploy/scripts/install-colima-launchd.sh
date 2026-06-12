@@ -19,6 +19,7 @@ SANITIZED_PROFILE="default"
 TARGET_USER=""
 TARGET_HOME=""
 TARGET_COLIMA_HOME="${COLIMA_HOME:-}"
+TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-}"
 SANITIZED_USER=""
 LABEL=""
 COLIMA_RUNTIME_ROOT="${COLIMA_RUNTIME_ROOT:-/var/lib/nexus-colima}"
@@ -26,7 +27,7 @@ COLIMA_LOG_DIR="${COLIMA_LOG_DIR:-/var/log/nexus-colima}"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--colima-home PATH] [--label LABEL]
+Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL]
 
 Install/reload a macOS LaunchDaemon that starts Colima at boot and runs it
 under the selected unprivileged user account.
@@ -38,6 +39,10 @@ Options:
   --user USER           User account that should own/run Colima (default: current user)
   --home PATH           Home directory for the selected user (default: detected from dscl/$HOME)
   --colima-home PATH    Colima state root to export as COLIMA_HOME (default: existing COLIMA_HOME)
+  --colima-user-home PATH
+                        Home/config root to export as COLIMA_USER_HOME and HOME for docker/colima commands
+  --runtime-root PATH   Root-owned asset directory for the Colima launch helper (default: /var/lib/nexus-colima)
+  --log-dir PATH        Log directory for the Colima launch helper (default: /var/log/nexus-colima)
   --label LABEL         LaunchDaemon label (default: com.nexus.colima.<user>.<profile>)
 EOF
 }
@@ -91,10 +96,12 @@ run_docker_for_target() {
     return 1
   fi
 
+  local docker_home="${TARGET_COLIMA_USER_HOME:-${TARGET_HOME}}"
+
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-    sudo -H -u "${TARGET_USER}" HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+    sudo -H -u "${TARGET_USER}" HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
   else
-    HOME="${TARGET_HOME}" "${DOCKER_BIN}" "$@"
+    HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
   fi
 }
 
@@ -139,11 +146,23 @@ while [[ $# -gt 0 ]]; do
       TARGET_COLIMA_HOME="${2:-}"
       shift 2
       ;;
+    --colima-user-home)
+      TARGET_COLIMA_USER_HOME="${2:-}"
+      shift 2
+      ;;
+    --runtime-root)
+      COLIMA_RUNTIME_ROOT="${2:-}"
+      shift 2
+      ;;
+    --log-dir)
+      COLIMA_LOG_DIR="${2:-}"
+      shift 2
+      ;;
     --label)
       LABEL="${2:-}"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -155,6 +174,8 @@ done
 
 [[ -n "${PROFILE:-}" ]] || ns_die "--profile must not be empty"
 [[ "$START_INTERVAL" =~ ^[0-9]+$ ]] || ns_die "--start-interval must be an integer"
+[[ "${COLIMA_RUNTIME_ROOT}" == /* ]] || ns_die "--runtime-root must be an absolute path"
+[[ "${COLIMA_LOG_DIR}" == /* ]] || ns_die "--log-dir must be an absolute path"
 
 ns_require_cmd colima "colima" || exit 1
 ns_require_cmd launchctl "launchctl" || exit 1
@@ -169,6 +190,9 @@ DOCKER_BIN="$(command -v docker || true)"
 TARGET_USER="$(resolve_target_user)"
 [[ "${TARGET_USER}" != "root" ]] || ns_die "Colima target user must not be root"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
+if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
+  TARGET_COLIMA_USER_HOME="$TARGET_HOME"
+fi
 SANITIZED_PROFILE="$(sanitize_profile "$PROFILE")"
 SANITIZED_USER="$(sanitize_profile "$TARGET_USER")"
 if [[ -z "${LABEL:-}" ]]; then
@@ -193,7 +217,7 @@ COLIMA_BIN=${COLIMA_BIN}
 DOCKER_BIN=${DOCKER_BIN}
 COLIMA_PROFILE=${PROFILE}
 COLIMA_VM_TYPE=${VM_TYPE}
-COLIMA_USER_HOME=${TARGET_HOME}
+COLIMA_USER_HOME=${TARGET_COLIMA_USER_HOME}
 COLIMA_HOME=${TARGET_COLIMA_HOME}
 EOF
 sudo install -o root -g wheel -m 644 "$tmp_env_file" "$ENV_FILE"
