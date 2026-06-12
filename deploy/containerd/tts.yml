@@ -13,7 +13,7 @@ services:
       - POCKET_TTS_PORT=9940
       - POCKET_TTS_BACKEND=${POCKET_TTS_BACKEND:-auto}
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/tts/data:/data
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/tts/data:/data
     networks:
       - nexus
     restart: unless-stopped

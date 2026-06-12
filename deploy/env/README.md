@@ -13,6 +13,8 @@ Start from the repo template:
 
 - Source template: `../../.env.example`
 
+Set `NEXUS_RUNTIME_ROOT` explicitly in deployed host env files. Use an absolute host path such as `/ai-data/runtime` on ai2 rather than relying on compose-file-relative `.runtime` defaults.
+
 Then create one of:
 
 - `deploy/env/.env.dev` (for `deploy/scripts/deploy.sh dev ...`)

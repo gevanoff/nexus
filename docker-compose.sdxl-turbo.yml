@@ -25,7 +25,7 @@ services:
       - SDXL_TURBO_HEIGHT=${SDXL_TURBO_HEIGHT:-512}
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/sdxl-turbo:/data
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/sdxl-turbo:/data
     gpus: all
     networks:
       - nexus

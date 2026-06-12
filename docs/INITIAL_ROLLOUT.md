@@ -28,7 +28,7 @@ This guide answers three practical questions:
 ### Phase B: Multi-host rollout
 
 1. Keep gateway + etcd on ingress host (or shared control host).
-2. Start remote backend services using `deploy/docker-compose/*.yml` or `deploy/containerd/*.yml`.
+2. Start remote backend services using `deploy/docker-compose/*.yml` or `deploy/containerd/*.yml`, with `NEXUS_RUNTIME_ROOT` set explicitly in the selected host env file.
 3. Register remote backends in etcd:
    ```bash
    ./deploy/scripts/register-service.sh ollama http://ai1:11434 http://ai2:2379

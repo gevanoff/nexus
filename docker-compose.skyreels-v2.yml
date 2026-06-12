@@ -20,7 +20,7 @@ services:
       - XDG_CACHE_HOME=${SKYREELS_XDG_CACHE_HOME:-/data/cache}
       - TORCH_HOME=${SKYREELS_TORCH_HOME:-/data/cache/torch}
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/skyreels-v2:/data
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/skyreels-v2:/data
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${SKYREELS_HF_HOME:-${HF_HOME:-/var/lib/huggingface}}
     gpus: all
     networks:

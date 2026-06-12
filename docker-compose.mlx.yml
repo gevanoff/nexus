@@ -1,7 +1,7 @@
 services:
   # MLX Service - OpenAI-compatible MLX server
   # Shared host paths:
-  # - ${NEXUS_RUNTIME_ROOT:-./.runtime}/mlx/cache is MLX model/cache persistence
+  # - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/mlx/cache is MLX model/cache persistence
   mlx:
     build:
       context: ./services/mlx
@@ -21,8 +21,8 @@ services:
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
       - XDG_CACHE_HOME=/var/lib/mlx/cache
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/mlx/cache:/var/lib/mlx/cache
-      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/mlx/config:/var/lib/mlx/config:ro
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/mlx/cache:/var/lib/mlx/cache
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/mlx/config:/var/lib/mlx/config:ro
     networks:
       - nexus
     # MLX runtime is Apple-Silicon/macOS specific; this Linux container may exit

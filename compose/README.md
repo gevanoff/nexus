@@ -20,3 +20,5 @@ Dev overrides (layer on top of the corresponding base file):
 - `docker-compose.tts.dev.yml`
 
 This `compose/` directory is kept only for historical context; the active compose entrypoints are the root-level files listed above.
+
+Its file-local `../.runtime` defaults are compatibility leftovers for repo-local experimentation, not the deployment standard for managed hosts.

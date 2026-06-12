@@ -13,8 +13,8 @@ services:
       - SHIM_PORT=7860
       - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/images/data:/data
-      - ${NEXUS_RUNTIME_ROOT:-../../.runtime}/images/models:/data/models
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/images/data:/data
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/images/models:/data/models
     networks:
       - nexus
     restart: unless-stopped

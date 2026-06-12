@@ -20,7 +20,7 @@ services:
       - HEARTMULA_TIMEOUT_SEC=${HEARTMULA_TIMEOUT_SEC:-1200}
       - HF_HOME=${HF_HOME:-/var/lib/huggingface}
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/heartmula:/data
+      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/heartmula:/data
       - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
     gpus: all
     networks:

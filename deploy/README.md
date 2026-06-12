@@ -20,6 +20,8 @@ For remote hosts:
 
 Containerd manifests remain available in `deploy/containerd/`, but operational install/deploy guidance is script-first via `deploy/scripts/*.sh`.
 
+Both the deploy compose manifests and the containerd manifests assume the selected host env file sets `NEXUS_RUNTIME_ROOT` explicitly.
+
 ## Setup and Deployment Scripts
 
 Make sure helper scripts are executable before first use:
@@ -41,7 +43,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/reassign-topology-family.sh --family <name> --from <host> --to <host> [--write]`: move a tracked backend family between topology hosts
 - `./deploy/scripts/materialize-sops-env.sh --environment <dev|prod> [--topology-host <host>]`: materialize tracked SOPS secret files into generated `*.sops.local` overlays
 - `./deploy/scripts/sops-secrets.sh <keygen|import-dotenv|edit|decrypt|materialize> ...`: manage SOPS+age secret files under `deploy/secrets/`
-- `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs` with deduped reference audio
+- `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `${NEXUS_RUNTIME_ROOT}/tts_refs` with deduped reference audio
 - `./deploy/scripts/backup-gateway-db.sh [--env-file PATH] [--output PATH] [--keep COUNT] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: take a consistent snapshot of `gateway/data/users.sqlite`, keep local retention, and optionally mirror the bundle to SSH or `rclone` destinations
 - `./deploy/scripts/install-gateway-db-backup-launchd.sh [--start-interval SEC] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: install/reload a macOS launchd job for recurring gateway DB backups on hosts such as `ai2`
 - `./deploy/scripts/backup-etcd.sh [--env-file PATH] [--container NAME] [--endpoints URLS] [--output PATH] [--keep COUNT] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: take an etcd snapshot, keep local retention, and optionally mirror the bundle to SSH or `rclone` destinations
@@ -182,6 +184,8 @@ sudo ./deploy/scripts/install-etcd-backup-launchd.sh --user ai --start-interval 
 
 The gateway DB backup script resolves the source database from `NEXUS_RUNTIME_ROOT` via the repo `.env`, so it follows the canonical host runtime path instead of accidentally backing up a repo-local `.runtime` override.
 
+Deployment note: active deploy manifests should be treated as requiring `NEXUS_RUNTIME_ROOT` in the selected host env file. Do not rely on compose-file-relative `.runtime` fallbacks for deployed hosts.
+
 
 ## Recommended Sequence
 
@@ -239,7 +243,7 @@ pre-commit install
 - etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
 - Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
 - `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, and `vllm-embeddings` when different hosts should own different inference lanes.
-- Persistence uses host bind mounts under `${NEXUS_RUNTIME_ROOT:-./.runtime}/` (including gateway RO config at `${NEXUS_RUNTIME_ROOT:-./.runtime}/gateway/config`).
+- Persistence uses host bind mounts under `${NEXUS_RUNTIME_ROOT}/` (including gateway RO config at `${NEXUS_RUNTIME_ROOT}/gateway/config`). For deployed hosts, set `NEXUS_RUNTIME_ROOT` explicitly in the selected host env file.
 - The UI is intentionally separated from the gateway for production deployments; keep it as a standalone container when it is implemented.
 - For branch-based deploys, see `./deploy/scripts/deploy.sh` and `./deploy/scripts/remote-deploy.sh` (invoked from repo root).
 - For etcd convenience, use `./deploy/scripts/register-service.sh` and `./deploy/scripts/list-services.sh` (invoked from repo root).
