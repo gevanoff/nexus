@@ -17,8 +17,8 @@ services:
       - "${LIFECYCLE_MANAGER_PORT:-9190}:9190"
     volumes:
       - ./deploy/topology:/app/config:ro
-      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/lifecycle-manager/ssh:/root/.ssh:ro
-      - ${NEXUS_RUNTIME_ROOT:-./.runtime}/lifecycle-manager/state:/app/state
+      - ${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/lifecycle-manager/ssh:/root/.ssh:ro
+      - ${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/lifecycle-manager/state:/app/state
     extra_hosts:
       - "ai1:${NEXUS_HOST_AI1_IP}"
       - "ai1.embrient.com:${NEXUS_HOST_AI1_IP}"

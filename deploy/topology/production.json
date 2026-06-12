@@ -117,7 +117,8 @@
         "lifecycle-manager",
         "telegram-bot",
         "tts",
-        "luxtts"
+        "luxtts",
+        "qwen3-tts"
       ],
       "native_services": [
         "mlx"
