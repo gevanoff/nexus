@@ -1220,7 +1220,10 @@ ns_ensure_env_file() {
 
 ns_ensure_project_env_bind_source() {
   # Ensure compose bind source <root>/.env exists, even when using --env-file
-  # with another path (e.g., deploy/env/.env.dev).
+  # with another path (e.g., deploy/env/.env.dev). When a selected env file
+  # differs from <root>/.env, keep the bind-mounted copy synchronized so
+  # containers that read /var/lib/gateway/app/.env do not drift from the
+  # compose interpolation source.
   # Usage: ns_ensure_project_env_bind_source <root_dir> <selected_env_file> [preserve|refresh]
   local root_dir="$1"
   local selected_env_file="$2"
@@ -1228,10 +1231,16 @@ ns_ensure_project_env_bind_source() {
   local root_env="${root_dir}/.env"
 
   if [[ -f "$root_env" ]]; then
-    if [[ "$sync_mode" == "refresh" && -n "$selected_env_file" && -f "$selected_env_file" && "$selected_env_file" != "$root_env" ]]; then
-      cp "$selected_env_file" "$root_env"
-      chmod 600 "$root_env" 2>/dev/null || true
-      ns_print_warn "Refreshed ${root_env} from ${selected_env_file} for compose bind mount compatibility."
+    if [[ -n "$selected_env_file" && -f "$selected_env_file" && "$selected_env_file" != "$root_env" ]]; then
+      if [[ "$sync_mode" == "refresh" ]] || ! cmp -s "$selected_env_file" "$root_env"; then
+        cp "$selected_env_file" "$root_env"
+        chmod 600 "$root_env" 2>/dev/null || true
+        if [[ "$sync_mode" == "refresh" ]]; then
+          ns_print_warn "Refreshed ${root_env} from ${selected_env_file} for compose bind mount compatibility."
+        else
+          ns_print_warn "Synchronized ${root_env} from ${selected_env_file} to avoid compose env drift."
+        fi
+      fi
     fi
     return 0
   fi
