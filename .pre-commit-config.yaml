@@ -14,7 +14,7 @@ repos:
         name: nexus-shellcheck
         entry: ./deploy/scripts/lint-shell.sh
         language: system
-        pass_filenames: false
+        files: ^(deploy/scripts/.*\.sh|services/.*/scripts/.*\.sh|services/.*/docker-entrypoint\.sh|quickstart\.sh)$
       - id: nexus-shfmt
         name: nexus-shfmt
         entry: shfmt -d -i 2 -ci

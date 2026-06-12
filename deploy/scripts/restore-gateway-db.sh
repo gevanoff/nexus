@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
       FORCE="true"
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -70,8 +70,11 @@ if [[ "$FORCE" != "true" ]]; then
   echo "The current DB will be moved to ${backup_path}."
   read -r -p "Continue? [y/N] " answer
   case "$answer" in
-    [yY]|[yY][eE][sS]) ;;
-    *) echo "Aborted."; exit 1 ;;
+    [yY] | [yY][eE][sS]) ;;
+    *)
+      echo "Aborted."
+      exit 1
+      ;;
   esac
 fi
 
@@ -83,7 +86,7 @@ ns_print_header "Restoring gateway database"
 echo "Snapshot: ${SNAPSHOT_PATH}"
 echo "Destination: ${DB_PATH}"
 
-gzip -dc "$SNAPSHOT_PATH" > "$tmp_db"
+gzip -dc "$SNAPSHOT_PATH" >"$tmp_db"
 integrity_result="$(sqlite3 "$tmp_db" 'PRAGMA integrity_check;' | tr -d '\r')"
 if ! printf '%s\n' "$integrity_result" | grep -qx 'ok'; then
   ns_die "Snapshot integrity check failed: ${integrity_result}"

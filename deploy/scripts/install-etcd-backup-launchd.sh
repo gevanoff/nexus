@@ -125,27 +125,75 @@ PY
 append_env_line() {
   local key="$1"
   local value="$2"
-  printf '%s=%q\n' "$key" "$value" >> "$JOB_ENV_FILE_TMP"
+  printf '%s=%q\n' "$key" "$value" >>"$JOB_ENV_FILE_TMP"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --user) TARGET_USER="${2:-}"; shift 2 ;;
-    --home) TARGET_HOME="${2:-}"; shift 2 ;;
-    --repo-dir) REPO_DIR="${2:-}"; shift 2 ;;
-    --env-file) NEXUS_ENV_FILE="${2:-}"; shift 2 ;;
-    --backup-dir) BACKUP_DIR="${2:-}"; shift 2 ;;
-    --container) CONTAINER_NAME="${2:-}"; shift 2 ;;
-    --endpoints) ENDPOINTS="${2:-}"; shift 2 ;;
-    --keep) KEEP_COUNT="${2:-}"; shift 2 ;;
-    --start-interval) START_INTERVAL="${2:-}"; shift 2 ;;
-    --ssh-target) SSH_TARGET="${2:-}"; shift 2 ;;
-    --ssh-dir) SSH_DIR="${2:-}"; shift 2 ;;
-    --rclone-remote) RCLONE_REMOTE="${2:-}"; shift 2 ;;
-    --log-dir) LOG_DIR="${2:-}"; shift 2 ;;
-    --label) LABEL="${2:-}"; shift 2 ;;
-    --launchd-root) LAUNCHD_ROOT="${2:-}"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
+    --user)
+      TARGET_USER="${2:-}"
+      shift 2
+      ;;
+    --home)
+      TARGET_HOME="${2:-}"
+      shift 2
+      ;;
+    --repo-dir)
+      REPO_DIR="${2:-}"
+      shift 2
+      ;;
+    --env-file)
+      NEXUS_ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    --backup-dir)
+      BACKUP_DIR="${2:-}"
+      shift 2
+      ;;
+    --container)
+      CONTAINER_NAME="${2:-}"
+      shift 2
+      ;;
+    --endpoints)
+      ENDPOINTS="${2:-}"
+      shift 2
+      ;;
+    --keep)
+      KEEP_COUNT="${2:-}"
+      shift 2
+      ;;
+    --start-interval)
+      START_INTERVAL="${2:-}"
+      shift 2
+      ;;
+    --ssh-target)
+      SSH_TARGET="${2:-}"
+      shift 2
+      ;;
+    --ssh-dir)
+      SSH_DIR="${2:-}"
+      shift 2
+      ;;
+    --rclone-remote)
+      RCLONE_REMOTE="${2:-}"
+      shift 2
+      ;;
+    --log-dir)
+      LOG_DIR="${2:-}"
+      shift 2
+      ;;
+    --label)
+      LABEL="${2:-}"
+      shift 2
+      ;;
+    --launchd-root)
+      LAUNCHD_ROOT="${2:-}"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
     *) ns_die "Unknown argument: $1" ;;
   esac
 done

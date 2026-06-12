@@ -13,13 +13,43 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install shell tools
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck shfmt
 
+      - name: Collect changed shell files
+        id: changed-shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_ref="origin/${{ github.base_ref }}"
+            git fetch origin "${{ github.base_ref }}"
+            diff_output="$(git diff --name-only "$base_ref"...HEAD)"
+          else
+            before_sha="${{ github.event.before }}"
+            if [[ -z "$before_sha" || "$before_sha" == "0000000000000000000000000000000000000000" ]]; then
+              diff_output="$(git ls-files)"
+            else
+              diff_output="$(git diff --name-only "$before_sha" HEAD)"
+            fi
+          fi
+
+          shell_files="$(printf '%s\n' "$diff_output" | grep -E '^(quickstart\.sh|deploy/scripts/.*\.sh|services/.*/scripts/.*\.sh|services/.*/docker-entrypoint\.sh)$' || true)"
+          {
+            echo 'files<<EOF'
+            printf '%s\n' "$shell_files"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Run shell lint
+        if: steps.changed-shell.outputs.files != ''
+        shell: bash
         run: |
           chmod +x ./deploy/scripts/lint-shell.sh
-          ./deploy/scripts/lint-shell.sh
+          mapfile -t files < <(printf '%s\n' '${{ steps.changed-shell.outputs.files }}' | sed '/^$/d')
+          ./deploy/scripts/lint-shell.sh "${files[@]}"

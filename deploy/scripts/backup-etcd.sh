@@ -55,6 +55,7 @@ mirror_to_ssh() {
   ns_require_cmd ssh "ssh" || exit 1
   local quoted_dir
   quoted_dir="$(printf '%q' "$SSH_DIR")"
+  # shellcheck disable=SC2029
   ssh "$SSH_TARGET" "mkdir -p ${quoted_dir}"
 
   if ns_have_cmd rsync; then
@@ -87,7 +88,7 @@ prune_local_backups() {
   local backup_dir="$1"
   local keep_count="$2"
 
-  (( keep_count > 0 )) || return 0
+  ((keep_count > 0)) || return 0
   [[ -d "$backup_dir" ]] || return 0
 
   local -a backup_files=()
@@ -97,12 +98,12 @@ prune_local_backups() {
   done < <(find "$backup_dir" -maxdepth 1 -type f -name 'etcd-snapshot-*.db' -print | sort)
 
   local file_count="${#backup_files[@]}"
-  (( file_count > keep_count )) || return 0
+  ((file_count > keep_count)) || return 0
 
   local prune_count=$((file_count - keep_count))
   local manifest_path=""
   local sha_path=""
-  for ((idx=0; idx<prune_count; idx+=1)); do
+  for ((idx = 0; idx < prune_count; idx += 1)); do
     file_path="${backup_files[$idx]}"
     sha_path="${file_path}.sha256"
     manifest_path="${file_path%.db}.json"
@@ -144,7 +145,7 @@ while [[ $# -gt 0 ]]; do
       RCLONE_REMOTE="${2:-}"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -188,9 +189,9 @@ docker cp "${CONTAINER_NAME}:${tmp_snapshot}" "$OUTPUT_PATH"
 docker exec "$CONTAINER_NAME" rm -f "$tmp_snapshot" >/dev/null 2>&1 || true
 
 compressed_sha="$(sha256_file "$OUTPUT_PATH")"
-snapshot_size="$(wc -c < "$OUTPUT_PATH" | tr -d '[:space:]')"
-printf '%s  %s\n' "$compressed_sha" "$(basename "$OUTPUT_PATH")" > "$SHA_PATH"
-cat > "$MANIFEST_PATH" <<EOF
+snapshot_size="$(wc -c <"$OUTPUT_PATH" | tr -d '[:space:]')"
+printf '%s  %s\n' "$compressed_sha" "$(basename "$OUTPUT_PATH")" >"$SHA_PATH"
+cat >"$MANIFEST_PATH" <<EOF
 {
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "host": "$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown-host)",

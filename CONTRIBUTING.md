@@ -70,7 +70,7 @@ Repository script policy:
 - This applies to `deploy/scripts/*.sh`, `services/*/scripts/*.sh`, and service `docker-entrypoint.sh` files.
 - Run `./deploy/scripts/preflight-check.sh` before shipping changes; it now validates script execute bits across those paths.
 - Install and use `shellcheck`, `shfmt`, and `pre-commit` in the WSL/Linux environment you use for Nexus work.
-- Run `./deploy/scripts/lint-shell.sh` after touching repo shell scripts.
+- Run `./deploy/scripts/lint-shell.sh` after touching repo shell scripts. It checks changed shell files by default; use `--all` only for an intentional repo-wide cleanup.
 - Prefer `pre-commit install` in the repo root so shell syntax/format regressions are caught before commit.
 - macOS-targeted shell scripts must remain compatible with the system `/bin/bash` shipped by Apple, which is still Bash `3.2` on many hosts.
 - Do not use Bash 4+/5+ features in repo scripts unless the script explicitly installs and invokes a newer Bash itself.

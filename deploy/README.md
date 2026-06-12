@@ -230,6 +230,8 @@ pre-commit install
 ./deploy/scripts/lint-shell.sh
 ```
 
+`./deploy/scripts/lint-shell.sh` checks changed shell files by default. Use `./deploy/scripts/lint-shell.sh --all` only when you intentionally want to sweep the whole repo for shell formatting and lint drift.
+
 ## Notes
 
 - These manifests assume a shared `nexus` network for multi-host deployments.

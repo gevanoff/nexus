@@ -10,7 +10,6 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 TOPOLOGY_FILE="$ROOT_DIR/deploy/topology/production.json"
 BATCH_MODE="true"
-STDIN_SCRIPT="false"
 
 usage() {
   cat <<'EOF'
@@ -41,7 +40,7 @@ while [[ $# -gt 0 ]]; do
       BATCH_MODE="false"
       shift
       ;;
-    -h|--help|help)
+    -h | --help | help)
       usage
       exit 0
       ;;
