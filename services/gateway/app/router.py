@@ -148,9 +148,6 @@ def _choose_backend_by_model(model: str, default_backend: Backend) -> Backend:
         return _provider_default_backend("vllm")
     if m in {"mlx", "mlx-default", "local_mlx", "local-mlx"}:
         return _provider_default_backend("mlx")
-    if m in {"ollama", "ollama-default"}:
-        return _provider_default_backend("vllm")
-
     return _resolved_backend_name(default_backend) or default_backend
 
 
@@ -171,8 +168,6 @@ def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
         "vllm-default",
         "local_vllm",
         "local-vllm",
-        "ollama",
-        "ollama-default",
         "auto",
         "",
     }:
@@ -183,8 +178,6 @@ def _normalize_model(model: str, backend: Backend, cfg: RouterConfig) -> str:
         "mlx-default",
         "local_mlx",
         "local-mlx",
-        "ollama",
-        "ollama-default",
         "auto",
         "",
     }:

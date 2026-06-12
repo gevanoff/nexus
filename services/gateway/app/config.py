@@ -132,6 +132,8 @@ class Settings(BaseSettings):
     IMAGES_HTTP_TIMEOUT_SEC: float = 120.0
     SDXL_TURBO_BASE_URL: str = ""
     INVOKEAI_BASE_URL: str = ""
+    INVOKEAI_ADVERTISE_BASE_URL: str = ""
+    INVOKEAI_UI_URL: str = ""
     IMAGES_A1111_STEPS: int = 20
     IMAGES_MAX_PIXELS: int = 2_000_000
     IMAGES_OPENAI_MODEL: str = ""

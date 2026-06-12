@@ -209,4 +209,3 @@ legacy_mapping:
   mlx: local_mlx
   mlx-coder: local_mlx
   mlx_coder: local_mlx
-  ollama: local_vllm

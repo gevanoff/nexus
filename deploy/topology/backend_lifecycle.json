@@ -156,7 +156,7 @@
       "auto_stop": false,
       "compose_file": "docker-compose.vllm-strong.yml",
       "ready_path": "/models",
-      "notes": "Observed on ada2 after the 128GB system RAM upgrade: vLLM Strong with Qwen3-30B-A3B-FP8, max_model_len=2048, gpu_memory_utilization=0.55, and cpu_offload_gb=8 idles around 27.1GB VRAM, leaving about 18.3GB free on the RTX 6000 Ada. System RAM gives CPU-offload/startup headroom but does not remove VRAM contention with peak media jobs."
+      "notes": "Observed on ada2 with ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic, max_model_len=2048, gpu_memory_utilization=0.68, and cpu_offload_gb=8: vLLM consumes roughly 31GB VRAM after smoke tests. System RAM gives CPU-offload/startup headroom but does not remove VRAM contention with peak media jobs."
     },
     "local_vllm_fast": {
       "display_name": "vLLM Fast",
@@ -206,7 +206,8 @@
       "auto_start": true,
       "auto_stop": true,
       "compose_files": ["docker-compose.invokeai.yml", "docker-compose.images.yml"],
-      "ready_path": "/readyz"
+      "ready_path": "/readyz",
+      "notes": "InvokeAI remains the managed creative image runtime behind the OpenAI images shim. The production UI URL is advertised through INVOKEAI_UI_URL so operators can manage models in the InvokeAI interface."
     },
     "lighton_ocr": {
       "display_name": "LightOn OCR",
@@ -246,33 +247,6 @@
       "compose_file": "docker-compose.personaplex.yml",
       "ready_path": "/readyz",
       "notes": "CUDA/PyTorch upstream path; likely needs a reserved window on ada2 rather than coexisting with vLLM strong."
-    },
-    "followyourcanvas": {
-      "display_name": "FollowYourCanvas",
-      "host": "ada2",
-      "component": "followyourcanvas",
-      "tier": "optional",
-      "capabilities": ["video"],
-      "estimated_vram_mb": 18000,
-      "auto_start": true,
-      "auto_stop": true,
-      "compose_file": "docker-compose.followyourcanvas.yml",
-      "ready_path": "/readyz"
-    },
-    "heartmula_music": {
-      "display_name": "HeartMula",
-      "host": "ada2",
-      "component": "heartmula",
-      "tier": "optional",
-      "capabilities": ["music"],
-      "estimated_vram_mb": 35000,
-      "idle_observed_vram_mb": 1000,
-      "peak_observed_vram_mb": 35000,
-      "auto_start": true,
-      "auto_stop": true,
-      "compose_file": "docker-compose.heartmula.yml",
-      "ready_path": "/readyz",
-      "notes": "Observed on ada2 after checkpoint install: about 1GB idle VRAM with HEARTMULA_LAZY_LOAD=true and about 35GB during a short smoke generation. Eager load idles around 22GB and should be avoided for traded-in operation."
     },
     "pocket_tts": {
       "display_name": "Pocket TTS",

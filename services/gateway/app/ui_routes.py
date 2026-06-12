@@ -153,7 +153,7 @@ def _ui_canonical_backend_selector_id(backend_name: str) -> str:
     normalized = (backend_name or "").strip().lower().replace("-", "_")
     if normalized in {"mlx", "local_mlx", "mlx_default"}:
         return "mlx"
-    if normalized in {"vllm", "local_vllm", "vllm_default", "ollama", "ollama_default"}:
+    if normalized in {"vllm", "local_vllm", "vllm_default"}:
         return "vllm"
     if normalized in {"vllm_fast", "local_vllm_fast"}:
         return "vllm_fast"
@@ -1461,6 +1461,17 @@ def _image_backend_option_profile(backend_class: str) -> Dict[str, Any]:
     }
 
 
+def _invokeai_ui_url() -> str:
+    explicit = (getattr(S, "INVOKEAI_UI_URL", "") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    for attr in ("INVOKEAI_ADVERTISE_BASE_URL", "INVOKEAI_BASE_URL"):
+        value = (getattr(S, attr, "") or "").strip()
+        if value:
+            return value.rstrip("/")
+    return ""
+
+
 def _normalize_image_models_payload(payload: Any) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     if not isinstance(payload, dict):
         return [], {"supported": False, "message": "Backend did not return a JSON model catalog."}
@@ -1578,6 +1589,14 @@ async def _fetch_image_backend_catalog_entry(client: httpx.AsyncClient, *, backe
         return entry
 
     models, management = _normalize_image_models_payload(payload)
+    if backend_class == "gpu_heavy":
+        ui_url = _invokeai_ui_url()
+        if ui_url:
+            management = dict(management)
+            management["supported"] = True
+            management["ui_url"] = ui_url
+            management["ui_label"] = "Open InvokeAI"
+            management["message"] = "Use the InvokeAI interface to install, remove, and organize image models."
     entry["models"] = models
     entry["model_management"] = management
     return entry

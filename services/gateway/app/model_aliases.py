@@ -58,7 +58,6 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
     # Accept either:
     # - "vllm:..."
     # - "mlx:..."
-    # - legacy "ollama:..." values, normalized onto local_vllm
     # - {"backend": "local_vllm", "model": "...", "context": 8192}
     if isinstance(v, str):
         s = v.strip()
@@ -68,8 +67,6 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             return ModelAlias(backend="local_vllm_fast", upstream_model=s.split(":", 1)[1])
         if s.startswith("vllm_embeddings:") or s.startswith("vllm-embeddings:"):
             return ModelAlias(backend="local_vllm_embeddings", upstream_model=s.split(":", 1)[1])
-        if s.startswith("ollama:"):
-            return ModelAlias(backend="local_vllm", upstream_model=s[len("ollama:") :])
         if s.startswith("vllm:"):
             return ModelAlias(backend="local_vllm", upstream_model=s[len("vllm:") :])
         if s.startswith("mlx:"):
@@ -86,13 +83,11 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             backend = "local_vllm_fast"
         elif backend_key in {"vllm_embeddings", "local_vllm_embeddings"}:
             backend = "local_vllm_embeddings"
-        elif backend_key == "vllm" or backend_key == "local_vllm" or backend_key.startswith("ollama"):
+        elif backend_key == "vllm" or backend_key == "local_vllm":
             backend = "local_vllm"
         elif backend_key == "mlx" or backend_key.startswith("local_mlx"):
             backend = "local_mlx"
-        if model.startswith("ollama:"):
-            model = model[len("ollama:") :]
-        elif model.startswith("vllm:"):
+        if model.startswith("vllm:"):
             model = model[len("vllm:") :]
         elif model.startswith("mlx:"):
             model = model[len("mlx:") :]

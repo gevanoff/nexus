@@ -77,3 +77,14 @@ After restarting a lane with native tool flags, validate it directly before flip
 BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh
 REPEATS=10 BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh
 ```
+
+## Image Interfaces
+
+InvokeAI remains useful in production when Nexus needs a managed creative image workspace: model manager, gallery/canvas, and an operator UI behind the OpenAI images shim. Production advertises `INVOKEAI_UI_URL` so the Gateway Image UI can link operators to the InvokeAI interface for model management.
+
+ComfyUI should not be added as another always-on CUDA service on `ada2` while `vllm-strong` and InvokeAI/images are resident; the RTX 6000 Ada is the primary contention point. Prefer one of these rollout shapes:
+
+- persistent ComfyUI interface on `ai2`, host-native Apple Silicon, for workflow editing and light/local runs
+- on-demand ComfyUI worker on `ada2` for CUDA-only or high-throughput workflows, lifecycle-managed so it trades out conflicting heavy backends
+
+Do not run ComfyUI in Docker on `ai2` for GPU work; macOS GPU access should be host-native.

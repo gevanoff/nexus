@@ -124,7 +124,6 @@ def _backend_host(base_url: str) -> Optional[str]:
 
 
 _SERVICE_NAME_TO_BACKEND_CLASS: Dict[str, str] = {
-    "ollama": "local_vllm",
     "vllm": "local_vllm",
     "local_vllm": "local_vllm",
     "vllm-fast": "local_vllm_fast",
@@ -801,7 +800,6 @@ def _default_registry() -> BackendRegistry:
             "mlx": "local_mlx",
             "mlx-coder": "local_mlx",
             "mlx_coder": "local_mlx",
-            "ollama": "local_vllm",
         },
         static_backends=dict(backends),
     ))

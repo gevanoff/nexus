@@ -2611,7 +2611,7 @@
       const normalized = raw.toLowerCase().replace(/-/g, "_");
       if (!normalized) return raw;
       if (["mlx", "local_mlx", "mlx_default"].includes(normalized)) return "mlx";
-      if (["vllm", "local_vllm", "vllm_default", "ollama", "ollama_default"].includes(normalized)) return "vllm";
+      if (["vllm", "local_vllm", "vllm_default"].includes(normalized)) return "vllm";
       if (["vllm_fast", "local_vllm_fast"].includes(normalized)) return "vllm_fast";
       return raw;
     }

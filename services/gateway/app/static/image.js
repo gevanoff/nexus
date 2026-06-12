@@ -69,6 +69,18 @@
     statusEl.className = isError ? "hint error" : "hint";
   }
 
+  function safeExternalUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    try {
+      const parsed = new URL(raw, window.location.origin);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.href;
+    } catch (error) {
+      return "";
+    }
+    return "";
+  }
+
   function clearOutput() {
     metaEl.textContent = "";
     galleryEl.innerHTML = "";
@@ -152,7 +164,7 @@
   function renderBackendSummary(entry) {
     if (!entry) {
       backendSummaryEl.textContent = "No image backend selected.";
-      modelManagementEl.textContent = "";
+      modelManagementEl.replaceChildren();
       return;
     }
 
@@ -175,7 +187,22 @@
     if (management.source_url) managementBits.push(`Model source: ${management.source_url}`);
     if (management.upstream_error) managementBits.push(`Upstream note: ${management.upstream_error}`);
     if (entry.models_error) managementBits.push(`Model list error: ${entry.models_error}`);
-    modelManagementEl.textContent = managementBits.join(" • ");
+    modelManagementEl.replaceChildren();
+    const summary = document.createElement("span");
+    summary.textContent = managementBits.join(" • ");
+    modelManagementEl.appendChild(summary);
+    const uiUrl = safeExternalUrl(management.ui_url);
+    if (uiUrl) {
+      const sep = document.createElement("span");
+      sep.textContent = summary.textContent ? " • " : "";
+      const link = document.createElement("a");
+      link.href = uiUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = String(management.ui_label || "Open management UI");
+      modelManagementEl.appendChild(sep);
+      modelManagementEl.appendChild(link);
+    }
   }
 
   function renderModelSelect(entry) {

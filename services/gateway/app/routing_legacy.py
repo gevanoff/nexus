@@ -18,7 +18,7 @@ def choose_backend(model: str) -> str:
             return resolved
 
     lowered = m.lower()
-    if lowered in {"ollama", "ollama-default", "vllm", "vllm-default", "local_vllm", "local-vllm"}:
+    if lowered in {"vllm", "vllm-default", "local_vllm", "local-vllm"}:
         return registry.resolve_backend_class("vllm")
     if lowered in {"mlx", "mlx-default", "local_mlx", "local-mlx"}:
         return registry.resolve_backend_class("mlx")
@@ -38,13 +38,12 @@ def normalize_model(model: str, backend: str) -> str:
         "mlx",
         "local_mlx",
         "local-mlx",
-        "ollama",
     }:
         if prefix and m.lower().startswith(prefix.lower() + ":"):
             m = m[len(prefix) + 1 :]
             break
 
-    if m in {"default", "vllm", "vllm-default", "local_vllm", "local-vllm", "ollama", "ollama-default", ""}:
+    if m in {"default", "vllm", "vllm-default", "local_vllm", "local-vllm", ""}:
         return S.VLLM_MODEL_DEFAULT
     if m in {"mlx", "local_mlx", "local-mlx"}:
         return S.MLX_MODEL_DEFAULT

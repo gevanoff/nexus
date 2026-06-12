@@ -148,13 +148,6 @@ _FALLBACK_BACKENDS = {
         "compose_file": "docker-compose.skyreels-v2.yml",
         "ready_path": "/readyz",
     },
-    "heartmula_music": {
-        "display_name": "HeartMula",
-        "host": "ada2",
-        "estimated_vram_mb": 35000,
-        "compose_file": "docker-compose.heartmula.yml",
-        "ready_path": "/readyz",
-    },
 }
 
 DOCKERFILE_TEMPLATE = """ARG PYTHON_BASE_IMAGE=python:3.11-slim
@@ -628,7 +621,7 @@ def integration_host_lanes() -> list[Dict[str, Any]]:
         ("local_vllm_embeddings", "meltdown / vLLM Embeddings", ["embeddings"]),
         ("local_vllm", "ada2 / vLLM Strong", ["chat", "json"]),
         ("gpu_fast", "meltdown / SDXL-Turbo", ["images"]),
-        ("gpu_heavy", "ada2 / CUDA Media", ["images", "video", "music", "ocr"]),
+        ("gpu_heavy", "ada2 / InvokeAI Images", ["images"]),
     ):
         backend = _backend_profile(backend_name)
         if not backend.get("host"):
@@ -718,10 +711,21 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
             reason="Video generation belongs on ada2 because the tracked video lane already absorbs the highest CUDA and VRAM pressure in the cluster.",
         )
     if route_kind == "music":
-        return _deployment_target_from_backend(
-            "heartmula_music",
-            reason="Music generation is treated as a heavy CUDA workload in this cluster and should start from ada2.",
-        )
+        ada2 = _host_profile("ada2")
+        return {
+            "host": "ada2",
+            "host_description": ada2.get("description") or "",
+            "platform": ada2.get("platform") or "",
+            "resource_kind": ada2.get("resource_kind") or "",
+            "backend_lane": "new_music_backend",
+            "backend_display_name": "New music backend",
+            "deployment_mode": "compose",
+            "compose_file": "docker-compose.<service>.yml",
+            "estimated_vram_mb": 0,
+            "ready_path": "/readyz",
+            "reason": "No canonical production music backend is currently assigned; HeartMula was removed from the production plan. Pick a new runtime explicitly before scheduling it.",
+            "notes": "",
+        }
     if route_kind == "images":
         return _deployment_target_from_backend(
             "gpu_heavy",
