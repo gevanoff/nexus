@@ -22,6 +22,10 @@ def test_docker_probe_handles_external_colima_socket() -> None:
     command = module.LifecycleManager._docker_probe_command()
 
     assert "ps --format" in command
+    assert "preferred_output" in command
+    assert "fallback_output" in command
+    assert "default_output" in command
+    assert "${COLIMA_HOME:-}/default/docker.sock" in command
     assert "/ai-data/var/lib/colima/default/docker.sock" in command
     assert "/Volumes/ai_data/var/lib/colima/default/docker.sock" in command
     assert "DOCKER_HOST=\"unix://$sock\"" in command
