@@ -42,6 +42,8 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/materialize-sops-env.sh --environment <dev|prod> [--topology-host <host>]`: materialize tracked SOPS secret files into generated `*.sops.local` overlays
 - `./deploy/scripts/sops-secrets.sh <keygen|import-dotenv|edit|decrypt|materialize> ...`: manage SOPS+age secret files under `deploy/secrets/`
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs` with deduped reference audio
+- `./deploy/scripts/backup-gateway-db.sh [--env-file PATH] [--output PATH] [--keep COUNT] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: take a consistent snapshot of `gateway/data/users.sqlite`, keep local retention, and optionally mirror the bundle to SSH or `rclone` destinations
+- `./deploy/scripts/install-gateway-db-backup-launchd.sh [--start-interval SEC] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: install/reload a macOS launchd job for recurring gateway DB backups on hosts such as `ai2`
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 - `./deploy/scripts/smoke-test-video.sh`: run a SkyReels video smoke test (direct backend by default, or the gateway UI path when UI credentials are provided)
@@ -140,6 +142,28 @@ Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:
 ```bash
 ./deploy/scripts/deploy.sh --component ollama-linux-nvidia prod main
 ```
+
+Gateway DB backup examples:
+
+Keep 30 local snapshots under the canonical runtime root and mirror each bundle to `copyfail`:
+
+```bash
+./deploy/scripts/backup-gateway-db.sh --ssh-target ai@copyfail --ssh-dir /home/ai/backups/nexus/gateway-db/ai2
+```
+
+Mirror the same backup bundle to a private cloud destination that has already been configured in `rclone`:
+
+```bash
+./deploy/scripts/backup-gateway-db.sh --rclone-remote private:nexus/gateway-db/ai2
+```
+
+Install a recurring `ai2` launchd job that runs every six hours and mirrors backups to another cluster host:
+
+```bash
+sudo ./deploy/scripts/install-gateway-db-backup-launchd.sh --user ai --start-interval 21600 --ssh-target ai@copyfail --ssh-dir /home/ai/backups/nexus/gateway-db/ai2
+```
+
+The gateway DB backup script resolves the source database from `NEXUS_RUNTIME_ROOT` via the repo `.env`, so it follows the canonical host runtime path instead of accidentally backing up a repo-local `.runtime` override.
 
 
 ## Recommended Sequence
