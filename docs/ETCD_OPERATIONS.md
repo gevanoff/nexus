@@ -200,6 +200,18 @@ Create a point-in-time snapshot:
 ./deploy/scripts/backup-etcd.sh
 ```
 
+Mirror the backup bundle off-host and retain 30 local snapshots:
+
+```bash
+./deploy/scripts/backup-etcd.sh --ssh-target ai@copyfail --ssh-dir /home/ai/backups/nexus/etcd/ai2
+```
+
+On macOS hosts such as `ai2`, install a recurring launchd job:
+
+```bash
+sudo ./deploy/scripts/install-etcd-backup-launchd.sh --user ai --start-interval 21600 --ssh-target ai@copyfail --ssh-dir /home/ai/backups/nexus/etcd/ai2
+```
+
 Backups are stored by default under:
 
 ```text

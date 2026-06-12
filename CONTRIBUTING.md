@@ -69,12 +69,17 @@ Repository script policy:
 - Any shell script intended to be run directly must be committed with the executable bit set.
 - This applies to `deploy/scripts/*.sh`, `services/*/scripts/*.sh`, and service `docker-entrypoint.sh` files.
 - Run `./deploy/scripts/preflight-check.sh` before shipping changes; it now validates script execute bits across those paths.
+- Install and use `shellcheck`, `shfmt`, and `pre-commit` in the WSL/Linux environment you use for Nexus work.
+- Run `./deploy/scripts/lint-shell.sh` after touching repo shell scripts.
+- Prefer `pre-commit install` in the repo root so shell syntax/format regressions are caught before commit.
 - macOS-targeted shell scripts must remain compatible with the system `/bin/bash` shipped by Apple, which is still Bash `3.2` on many hosts.
 - Do not use Bash 4+/5+ features in repo scripts unless the script explicitly installs and invokes a newer Bash itself.
 - In practice, avoid `${var,,}` / `${var^^}`, associative arrays, `mapfile`, and other Bash 4+ syntax in shared or macOS-facing scripts.
 - Under macOS Bash `3.2`, empty array expansions can also break under `set -u`; guard array use carefully or assemble commands without relying on empty `"${array[@]}"` expansions.
 - Prefer portable patterns such as `tr '[:upper:]' '[:lower:]'` for case folding and explicit command construction for optional arguments.
 - If you touch macOS shell scripts, test them with the host `bash` interpreter, not only a newer Homebrew or Linux Bash.
+- For remote multi-step operations, prefer checked-in scripts or `deploy/scripts/topology-ssh-script.sh` with stdin-fed shell bodies over nested quoted one-liners through PowerShell or `ssh`.
+- Do not `source` deploy dotenv files directly unless they are purpose-built shell env files. For Nexus deploy env files, prefer `--env-file`, `ns_env_get`, or overlay/materialization helpers.
 
 Or manually:
 
@@ -227,6 +232,8 @@ docker compose logs -f
 4. **Make changes**
 
 Edit files in `services/gateway/app/` or other service directories.
+
+On Windows, treat WSL as the default authoring and execution shell for Nexus operational scripts. Avoid running nested `wsl ... ssh ... bash -lc ...` one-liners from PowerShell when a checked-in script or stdin-fed remote script will do.
 
 For deployed Nexus hosts (`ai2`, `ai1`, `ada2`), do not live-edit tracked code in the host checkout. Commit and push from your development checkout, then deploy the intended branch with the repo deployment scripts. Runtime state under `${NEXUS_RUNTIME_ROOT:-./.runtime}/` is host-local and is the exception.
 

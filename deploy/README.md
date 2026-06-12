@@ -44,6 +44,9 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `${NEXUS_RUNTIME_ROOT:-./.runtime}/tts_refs` with deduped reference audio
 - `./deploy/scripts/backup-gateway-db.sh [--env-file PATH] [--output PATH] [--keep COUNT] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: take a consistent snapshot of `gateway/data/users.sqlite`, keep local retention, and optionally mirror the bundle to SSH or `rclone` destinations
 - `./deploy/scripts/install-gateway-db-backup-launchd.sh [--start-interval SEC] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: install/reload a macOS launchd job for recurring gateway DB backups on hosts such as `ai2`
+- `./deploy/scripts/backup-etcd.sh [--env-file PATH] [--container NAME] [--endpoints URLS] [--output PATH] [--keep COUNT] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: take an etcd snapshot, keep local retention, and optionally mirror the bundle to SSH or `rclone` destinations
+- `./deploy/scripts/install-etcd-backup-launchd.sh [--start-interval SEC] [--ssh-target USER@HOST --ssh-dir PATH] [--rclone-remote DEST]`: install/reload a macOS launchd job for recurring etcd snapshot backups on hosts such as `ai2`
+- `./deploy/scripts/restore-gateway-db.sh --snapshot PATH [--env-file PATH] [--force]`: restore a compressed `users.sqlite` backup into the canonical runtime path while preserving the current DB beside it
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 - `./deploy/scripts/smoke-test-video.sh`: run a SkyReels video smoke test (direct backend by default, or the gateway UI path when UI credentials are provided)
@@ -163,6 +166,20 @@ Install a recurring `ai2` launchd job that runs every six hours and mirrors back
 sudo ./deploy/scripts/install-gateway-db-backup-launchd.sh --user ai --start-interval 21600 --ssh-target ai@copyfail --ssh-dir /home/ai/backups/nexus/gateway-db/ai2
 ```
 
+Etcd backup examples:
+
+Keep 30 local snapshots under the canonical runtime root and mirror each bundle to `copyfail`:
+
+```bash
+./deploy/scripts/backup-etcd.sh --ssh-target ai@copyfail --ssh-dir /home/ai/backups/nexus/etcd/ai2
+```
+
+Install a recurring `ai2` launchd job that runs every six hours and mirrors etcd snapshots to another cluster host:
+
+```bash
+sudo ./deploy/scripts/install-etcd-backup-launchd.sh --user ai --start-interval 21600 --ssh-target ai@copyfail --ssh-dir /home/ai/backups/nexus/etcd/ai2
+```
+
 The gateway DB backup script resolves the source database from `NEXUS_RUNTIME_ROOT` via the repo `.env`, so it follows the canonical host runtime path instead of accidentally backing up a repo-local `.runtime` override.
 
 
@@ -199,6 +216,19 @@ Remote host deploy:
 ## Windows development note
 
 Nexus is deployed/operated from macOS/Linux hosts. If you develop on Windows, run all `deploy/scripts/*.sh` scripts from within WSL (Ubuntu) rather than PowerShell.
+
+When you need to run multi-step commands on a tracked remote host, prefer a checked-in script or `./deploy/scripts/topology-ssh-script.sh <host> <<'EOF' ... EOF` over nested quoted one-liners. This avoids PowerShell, WSL, SSH, and remote-shell quoting interacting in unpredictable ways.
+
+Do not `source` the tracked deploy env files directly. They are dotenv files, not guaranteed shell scripts. Use `--env-file`, `ns_env_get`, or the repo's env materialization/overlay helpers instead.
+
+Recommended shell setup for contributors:
+
+```bash
+sudo apt-get install -y shellcheck shfmt
+pipx install pre-commit
+pre-commit install
+./deploy/scripts/lint-shell.sh
+```
 
 ## Notes
 
