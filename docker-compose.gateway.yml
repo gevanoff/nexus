@@ -83,7 +83,7 @@ services:
       - ${MLX_HF_CACHE_HOST_DIR:-${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
       - ${NEXUS_CODING_SMOKE_OUTPUT_DIR:-${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/gateway/data/coding-smoke/reports}:/var/lib/gateway/coding_smoke_reports
       - type: bind
-        source: ./.env
+        source: ${GATEWAY_ENV_FILE:-./.env}
         target: /var/lib/gateway/app/.env
         read_only: true
         bind:

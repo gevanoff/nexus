@@ -127,6 +127,8 @@ fi
 ns_print_header "Nexus Ops: update + restart + verify"
 
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
+export GATEWAY_ENV_FILE
+GATEWAY_ENV_FILE="$(realpath "$ENV_FILE")"
 
 if [[ "$NO_PULL" != "true" ]]; then
   ns_print_header "Updating code"

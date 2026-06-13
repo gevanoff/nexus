@@ -53,6 +53,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
+export GATEWAY_ENV_FILE
+GATEWAY_ENV_FILE="$(realpath "$ENV_FILE")"
 ns_seed_gateway_config_files "$ROOT_DIR" refresh
 if [[ -x "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh" ]]; then
   if ! "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh"; then
@@ -76,9 +78,9 @@ if ! ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-c
 fi
 
 if [[ "$NO_BUILD" == "true" ]]; then
-  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --force-recreate gateway
+  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --force-recreate --remove-orphans gateway
 else
-  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build --force-recreate gateway
+  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build --force-recreate --remove-orphans gateway
 fi
 
 if [[ -f "$ROOT_DIR/docker-compose.nginx.yml" ]]; then
