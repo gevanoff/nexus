@@ -20,10 +20,11 @@ TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-}"
 LABEL=""
 TIMEOUT_SEC="75"
 COLIMA_RUNTIME_ROOT="${COLIMA_RUNTIME_ROOT:-/var/lib/nexus-colima}"
+declare -a EXTRA_MOUNTS=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/restart-colima.sh [--profile NAME] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--label LABEL] [--timeout-sec N]
+Usage: deploy/scripts/restart-colima.sh [--profile NAME] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--label LABEL] [--timeout-sec N] [--mount PATH[:MODE]]
 
 Restart the Colima LaunchDaemon and wait for Docker to become reachable.
 
@@ -38,6 +39,8 @@ Options:
                      Root-owned asset directory used by install-colima-launchd.sh (default: /var/lib/nexus-colima)
   --label LABEL      LaunchDaemon label (default: com.nexus.colima.<user>.<profile>)
   --timeout-sec N    Wait time for Docker daemon health (default: 75)
+  --mount PATH[:MODE]
+                     One-off explicit Colima host mount for this restart (repeatable). MODE defaults to w.
 EOF
 }
 
@@ -114,6 +117,28 @@ wait_for_docker_as_target() {
   return 1
 }
 
+normalize_mount_spec() {
+  local raw="$1"
+  local path_part="$raw"
+  local mode_part="w"
+
+  if [[ "$raw" == *:* ]]; then
+    path_part="${raw%%:*}"
+    mode_part="${raw##*:}"
+  fi
+
+  [[ -n "$path_part" ]] || return 1
+  if [[ ! -e "$path_part" ]]; then
+    ns_print_warn "Skipping Colima mount because the host path does not exist: $path_part"
+    return 1
+  fi
+
+  local physical_path=""
+  physical_path="$(cd "$path_part" 2>/dev/null && pwd -P)" || physical_path="$(cd "$(dirname "$path_part")" && pwd -P)/$(basename "$path_part")"
+  [[ -n "$physical_path" ]] || return 1
+  printf '%s:%s\n' "$physical_path" "$mode_part"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
@@ -146,6 +171,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timeout-sec)
       TIMEOUT_SEC="${2:-}"
+      shift 2
+      ;;
+    --mount)
+      EXTRA_MOUNTS+=("${2:-}")
       shift 2
       ;;
     -h | --help)
@@ -191,6 +220,38 @@ if [[ -z "${TARGET_COLIMA_HOME:-}" ]]; then
 fi
 if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
   TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-$TARGET_HOME}"
+fi
+
+if [[ ${#EXTRA_MOUNTS[@]} -gt 0 ]]; then
+  normalized_mounts=()
+  existing_mounts_csv="${COLIMA_MOUNTS:-}"
+  if [[ -n "${existing_mounts_csv:-}" ]]; then
+    IFS=',' read -r -a existing_mounts <<< "$existing_mounts_csv"
+    for mount_spec in "${existing_mounts[@]:-}"; do
+      normalized="$(normalize_mount_spec "$mount_spec" || true)"
+      [[ -n "${normalized:-}" ]] && normalized_mounts+=("$normalized")
+    done
+  fi
+  for mount_spec in "${EXTRA_MOUNTS[@]:-}"; do
+    normalized="$(normalize_mount_spec "$mount_spec" || true)"
+    if [[ -n "${normalized:-}" ]]; then
+      duplicate="false"
+      for existing in "${normalized_mounts[@]:-}"; do
+        if [[ "$existing" == "$normalized" ]]; then
+          duplicate="true"
+          break
+        fi
+      done
+      if [[ "$duplicate" != "true" ]]; then
+        normalized_mounts+=("$normalized")
+      fi
+    fi
+  done
+  if [[ ${#normalized_mounts[@]} -gt 0 ]]; then
+    printf -v merged_mounts_csv '%s,' "${normalized_mounts[@]}"
+    export COLIMA_MOUNTS="${merged_mounts_csv%,}"
+    ns_print_warn "Applying explicit Colima mounts for this restart: ${COLIMA_MOUNTS}"
+  fi
 fi
 
 ns_print_header "Restarting Colima LaunchDaemon"

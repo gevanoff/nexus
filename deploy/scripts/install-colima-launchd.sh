@@ -24,10 +24,11 @@ SANITIZED_USER=""
 LABEL=""
 COLIMA_RUNTIME_ROOT="${COLIMA_RUNTIME_ROOT:-/var/lib/nexus-colima}"
 COLIMA_LOG_DIR="${COLIMA_LOG_DIR:-/var/log/nexus-colima}"
+declare -a EXTRA_MOUNTS=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL]
+Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL] [--mount PATH[:MODE]]
 
 Install/reload a macOS LaunchDaemon that starts Colima at boot and runs it
 under the selected unprivileged user account.
@@ -44,6 +45,7 @@ Options:
   --runtime-root PATH   Root-owned asset directory for the Colima launch helper (default: /var/lib/nexus-colima)
   --log-dir PATH        Log directory for the Colima launch helper (default: /var/log/nexus-colima)
   --label LABEL         LaunchDaemon label (default: com.nexus.colima.<user>.<profile>)
+  --mount PATH[:MODE]   Persist an explicit Colima host mount (repeatable). MODE defaults to w.
 EOF
 }
 
@@ -120,6 +122,40 @@ wait_for_docker_as_target() {
   return 1
 }
 
+normalize_mount_spec() {
+  local raw="$1"
+  local path_part="$raw"
+  local mode_part="w"
+
+  if [[ "$raw" == *:* ]]; then
+    path_part="${raw%%:*}"
+    mode_part="${raw##*:}"
+  fi
+
+  [[ -n "$path_part" ]] || return 1
+  if [[ ! -e "$path_part" ]]; then
+    ns_print_warn "Skipping Colima mount because the host path does not exist: $path_part"
+    return 1
+  fi
+
+  local physical_path=""
+  physical_path="$(cd "$path_part" 2>/dev/null && pwd -P)" || physical_path="$(cd "$(dirname "$path_part")" && pwd -P)/$(basename "$path_part")"
+  [[ -n "$physical_path" ]] || return 1
+  printf '%s:%s\n' "$physical_path" "$mode_part"
+}
+
+append_mount_spec() {
+  local candidate="$1"
+  [[ -n "$candidate" ]] || return 0
+  local existing
+  for existing in "${EXTRA_MOUNTS[@]:-}"; do
+    if [[ "$existing" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  EXTRA_MOUNTS+=("$candidate")
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile)
@@ -162,6 +198,10 @@ while [[ $# -gt 0 ]]; do
       LABEL="${2:-}"
       shift 2
       ;;
+    --mount)
+      EXTRA_MOUNTS+=("${2:-}")
+      shift 2
+      ;;
     -h | --help)
       usage
       exit 0
@@ -193,6 +233,36 @@ TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
 if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
   TARGET_COLIMA_USER_HOME="$TARGET_HOME"
 fi
+
+resolved_runtime_root="$(ns_runtime_root "$ROOT_DIR")"
+append_mount_spec "$ROOT_DIR:w"
+if [[ -n "${resolved_runtime_root:-}" && -e "$resolved_runtime_root" ]]; then
+  append_mount_spec "$resolved_runtime_root:w"
+fi
+
+normalized_mounts=()
+for mount_spec in "${EXTRA_MOUNTS[@]:-}"; do
+  normalized="$(normalize_mount_spec "$mount_spec" || true)"
+  if [[ -n "${normalized:-}" ]]; then
+    duplicate="false"
+    for existing in "${normalized_mounts[@]:-}"; do
+      if [[ "$existing" == "$normalized" ]]; then
+        duplicate="true"
+        break
+      fi
+    done
+    if [[ "$duplicate" != "true" ]]; then
+      normalized_mounts+=("$normalized")
+    fi
+  fi
+done
+
+colima_mounts_csv=""
+if [[ ${#normalized_mounts[@]} -gt 0 ]]; then
+  printf -v colima_mounts_csv '%s,' "${normalized_mounts[@]}"
+  colima_mounts_csv="${colima_mounts_csv%,}"
+fi
+
 SANITIZED_PROFILE="$(sanitize_profile "$PROFILE")"
 SANITIZED_USER="$(sanitize_profile "$TARGET_USER")"
 if [[ -z "${LABEL:-}" ]]; then
@@ -219,6 +289,7 @@ COLIMA_PROFILE=${PROFILE}
 COLIMA_VM_TYPE=${VM_TYPE}
 COLIMA_USER_HOME=${TARGET_COLIMA_USER_HOME}
 COLIMA_HOME=${TARGET_COLIMA_HOME}
+COLIMA_MOUNTS=${colima_mounts_csv}
 EOF
 sudo install -o root -g wheel -m 644 "$tmp_env_file" "$ENV_FILE"
 rm -f "$tmp_env_file"
@@ -309,3 +380,6 @@ fi
 
 echo "LaunchDaemon: ${PLIST_PATH}"
 echo "Restart helper: ./deploy/scripts/restart-colima.sh --profile ${PROFILE}"
+if [[ -n "${colima_mounts_csv:-}" ]]; then
+  echo "Persisted mounts: ${colima_mounts_csv}"
+fi

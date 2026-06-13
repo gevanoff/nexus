@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     role: str
     content: Optional[Any] = None
     name: Optional[str] = None
@@ -14,21 +16,29 @@ class ChatMessage(BaseModel):
 
 
 class ToolFunction(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     name: str
     description: Optional[str] = None
     parameters: Dict[str, Any]
 
 
 class ToolSpec(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     type: str = "function"
     function: ToolFunction
 
 
 class ChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     model: str
     messages: List[ChatMessage]
+    n: Optional[int] = None
     tools: Optional[List[ToolSpec]] = None
     tool_choice: Optional[Any] = None
+    parallel_tool_calls: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -39,6 +49,13 @@ class ChatCompletionRequest(BaseModel):
     stop: Optional[Any] = None
     seed: Optional[int] = None
     max_tokens: Optional[int] = None
+    response_format: Optional[Any] = None
+    user: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    store: Optional[bool] = None
+    stream_options: Optional[Dict[str, Any]] = None
+    logprobs: Optional[bool] = None
+    top_logprobs: Optional[int] = None
     chat_template_kwargs: Optional[Dict[str, Any]] = None
     stream: Optional[bool] = False
 

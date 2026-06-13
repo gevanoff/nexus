@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional
@@ -8,6 +9,7 @@ from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import ValidationError
 
 from app.auth import require_bearer
 from app.config import S, logger
@@ -30,8 +32,6 @@ from app.openai_utils import new_id, now_unix, sse_done
 from app.model_aliases import get_aliases
 from app.router import decide_route
 from app.router_cfg import router_cfg
-from app.tool_loop import tool_loop
-from app.tools_bus import allowed_tool_names_for_policy
 from app.upstreams import (
     backend_model_id,
     call_backend_chat,
@@ -70,10 +70,6 @@ def _apply_alias_constraints(cc: ChatCompletionRequest, *, alias_name: Optional[
     if not a:
         return cc
 
-    # Enforce allow_tools constraint if present.
-    if cc.tools and a.tools is False:
-        raise HTTPException(status_code=400, detail=f"tools not allowed for model alias '{alias_name}'")
-
     temperature = cc.temperature
     if temperature is not None and a.temperature_cap is not None:
         temperature = min(float(temperature), float(a.temperature_cap))
@@ -85,15 +81,311 @@ def _apply_alias_constraints(cc: ChatCompletionRequest, *, alias_name: Optional[
     if temperature == cc.temperature and max_tokens == cc.max_tokens:
         return cc
 
-    return ChatCompletionRequest(
-        model=cc.model,
-        messages=cc.messages,
-        tools=cc.tools,
-        tool_choice=cc.tool_choice,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        stream=cc.stream,
+    return cc.model_copy(
+        update={
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
     )
+
+
+def _openai_error_payload(
+    message: str,
+    *,
+    error_type: str = "invalid_request_error",
+    param: Optional[str] = None,
+    code: Optional[str] = "invalid_request",
+    detail: Any = None,
+) -> Dict[str, Any]:
+    error: Dict[str, Any] = {
+        "message": message,
+        "type": error_type,
+        "param": param,
+        "code": code,
+    }
+    if detail is not None:
+        error["detail"] = detail
+    return {"error": error}
+
+
+def _openai_error_response(
+    message: str,
+    *,
+    status_code: int = 400,
+    error_type: str = "invalid_request_error",
+    param: Optional[str] = None,
+    code: Optional[str] = "invalid_request",
+    detail: Any = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=_openai_error_payload(
+            message,
+            error_type=error_type,
+            param=param,
+            code=code,
+            detail=detail,
+        ),
+    )
+
+
+def _validation_error_param(exc: ValidationError) -> Optional[str]:
+    try:
+        first = exc.errors(include_url=False)[0]
+    except Exception:
+        return None
+    loc = first.get("loc") if isinstance(first, dict) else None
+    if not isinstance(loc, (list, tuple)):
+        return None
+    parts = [str(item) for item in loc if item not in {"body", None, ""}]
+    return ".".join(parts) if parts else None
+
+
+def _validation_error_message(exc: ValidationError) -> str:
+    try:
+        first = exc.errors(include_url=False)[0]
+    except Exception:
+        return str(exc)
+    if not isinstance(first, dict):
+        return str(exc)
+    param = _validation_error_param(exc)
+    msg = str(first.get("msg") or "request validation failed")
+    if param:
+        return f"Unsupported field or invalid request shape: {param}: {msg}"
+    return f"Unsupported field or invalid request shape: {msg}"
+
+
+def _alias_allows_tools(alias_name: Optional[str]) -> bool:
+    if not alias_name:
+        return True
+    alias = get_aliases().get(alias_name)
+    if alias is None:
+        return True
+    return alias.tools is not False
+
+
+def _tool_fields_present(cc: ChatCompletionRequest) -> bool:
+    return bool(cc.tools) or cc.tool_choice is not None or cc.parallel_tool_calls is not None
+
+
+def _body_keys(body: Any) -> list[str]:
+    if not isinstance(body, dict):
+        return []
+    return sorted(str(key) for key in body.keys())
+
+
+def _request_messages_summary(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        item = {
+            "role": message.role,
+            "has_content": message.content is not None,
+            "has_tool_calls": bool(message.tool_calls),
+            "has_tool_call_id": message.tool_call_id is not None,
+        }
+        if message.name is not None:
+            item["name"] = message.name
+        out.append(item)
+    return out
+
+
+def _tool_fields_action(before: ChatCompletionRequest, after: ChatCompletionRequest, *, request_shape_action: str) -> str:
+    if request_shape_action == "shimmed" and _tool_fields_present(before):
+        if _tool_fields_present(after):
+            return "shimmed"
+        return "stripped"
+    if not _tool_fields_present(before):
+        return "absent"
+    if (
+        before.tools == after.tools
+        and before.tool_choice == after.tool_choice
+        and before.parallel_tool_calls == after.parallel_tool_calls
+    ):
+        return "passed_through"
+    return "stripped"
+
+
+def _log_openai_request(
+    *,
+    endpoint: str,
+    body: Any,
+    cc: ChatCompletionRequest,
+    alias_name: Optional[str],
+    route: Any,
+    tool_fields_action: str,
+    request_shape_action: str,
+) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    payload: dict[str, Any] = {
+        "endpoint": endpoint,
+        "request_keys": _body_keys(body),
+        "selected_model_alias": alias_name,
+        "model": cc.model,
+        "stream": bool(cc.stream),
+        "has_tools": bool(cc.tools),
+        "tool_choice": cc.tool_choice,
+        "parallel_tool_calls": cc.parallel_tool_calls,
+        "tool_fields_action": tool_fields_action,
+        "request_shape_action": request_shape_action,
+        "message_count": len(cc.messages),
+        "message_summary": _request_messages_summary(cc.messages),
+        "route_backend": getattr(route, "backend", None),
+        "route_model": getattr(route, "model", None),
+        "route_reason": getattr(route, "reason", None),
+    }
+    if bool(getattr(S, "OPENAI_DEBUG_LOG_MESSAGE_CONTENT", False)):
+        payload["messages"] = [message.model_dump(exclude_none=True) for message in cc.messages]
+
+    logger.debug("openai compatibility request %s", json.dumps(payload, ensure_ascii=False, default=str, sort_keys=True))
+    if tool_fields_action != "absent":
+        logger.info(
+            "openai compatibility endpoint=%s alias=%s stream=%s tools=%s tool_choice=%r tool_fields=%s route_backend=%s route_model=%s",
+            endpoint,
+            alias_name,
+            bool(cc.stream),
+            bool(cc.tools),
+            cc.tool_choice,
+            tool_fields_action,
+            getattr(route, "backend", None),
+            getattr(route, "model", None),
+        )
+
+
+def _tool_choice_requires_tools(tool_choice: Any) -> bool:
+    if tool_choice is None:
+        return False
+    if isinstance(tool_choice, str):
+        normalized = tool_choice.strip().lower()
+        return normalized not in {"", "auto", "none"}
+    if isinstance(tool_choice, dict):
+        normalized = str(tool_choice.get("type") or "").strip().lower()
+        return normalized not in {"", "auto", "none"}
+    return True
+
+
+def _degradation_reason(*, alias_name: Optional[str], backend_class: str, backend_supports_tools: bool) -> Optional[str]:
+    reasons: list[str] = []
+    if alias_name and not _alias_allows_tools(alias_name):
+        reasons.append(f"model alias '{alias_name}' disables tools")
+    if not backend_supports_tools:
+        reasons.append(f"backend '{backend_class}' does not support native tool calling")
+    if not reasons:
+        return None
+    return "; ".join(reasons)
+
+
+def _normalize_chat_request_for_backend(
+    cc: ChatCompletionRequest,
+    *,
+    alias_name: Optional[str],
+    backend_class: str,
+) -> tuple[ChatCompletionRequest, Optional[str], bool]:
+    if not _tool_fields_present(cc):
+        return cc, None, False
+
+    backend_supports_tools = backend_supports_tool_calling(backend_class)
+    degradation_reason = _degradation_reason(
+        alias_name=alias_name,
+        backend_class=backend_class,
+        backend_supports_tools=backend_supports_tools,
+    )
+    if degradation_reason is None:
+        return cc, None, False
+
+    if _tool_choice_requires_tools(cc.tool_choice):
+        return cc, degradation_reason, True
+
+    logger.info(
+        "chat.completions degrading tool fields alias=%s backend=%s tool_choice=%r parallel_tool_calls=%r reason=%s",
+        alias_name or "-",
+        backend_class,
+        cc.tool_choice,
+        cc.parallel_tool_calls,
+        degradation_reason,
+    )
+    return (
+        cc.model_copy(update={"tools": None, "tool_choice": None, "parallel_tool_calls": None}),
+        degradation_reason,
+        False,
+    )
+
+
+def _route_chat_request(
+    cc: ChatCompletionRequest,
+    *,
+    headers: Dict[str, str],
+    enable_request_type: bool = False,
+) -> tuple[Any, str, Optional[str]]:
+    route = decide_route(
+        cfg=router_cfg(),
+        request_model=cc.model,
+        headers=headers,
+        # Preserve requested alias/backend selection and degrade unsupported tool fields later.
+        # This avoids compatibility failures caused by tool-shaped requests being rerouted to
+        # a different backend solely because tool fields were present.
+        messages=[m.model_dump(exclude_none=True) for m in cc.messages],
+        has_tools=False,
+        enable_policy=S.ROUTER_ENABLE_POLICY,
+        enable_request_type=enable_request_type,
+    )
+    backend_class = get_registry().resolve_backend_class(route.backend)
+    alias_name = _selected_alias_name(cc.model, route.reason)
+    return route, backend_class, alias_name
+
+
+def _chat_completion_request_from_response_body(body: dict[str, Any], messages: list[ChatMessage], *, stream: bool) -> ChatCompletionRequest:
+    payload = dict(body)
+    payload.pop("input", None)
+    payload.pop("max_output_tokens", None)
+    payload["messages"] = messages
+    payload["max_tokens"] = body.get("max_output_tokens") if body.get("max_output_tokens") is not None else body.get("max_tokens")
+    payload["stream"] = bool(stream)
+    return ChatCompletionRequest(**payload)
+
+
+def _response_output_from_chat_message(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    output: List[Dict[str, Any]] = []
+
+    text = message.get("content")
+    if isinstance(text, str):
+        output.append(
+            {
+                "type": "message",
+                "id": new_id("msg"),
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}],
+            }
+        )
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+            fn = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            output.append(
+                {
+                    "type": "function_call",
+                    "id": new_id("fc"),
+                    "call_id": tool_call.get("id"),
+                    "name": fn.get("name") or "",
+                    "arguments": fn.get("arguments") or "",
+                }
+            )
+
+    if output:
+        return output
+
+    return [
+        {
+            "type": "message",
+            "id": new_id("msg"),
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": ""}],
+        }
+    ]
 
 
 def _normalize_embeddings_request_model(request_model: Optional[str], backend: str) -> str:
@@ -194,34 +486,32 @@ async def get_model(req: Request, model_id: str):
 @router.post("/v1/chat/completions")
 async def chat_completions(req: Request):
     require_bearer(req)
-    body = await req.json()
-    cc = ChatCompletionRequest(**body)
+    try:
+        body = await req.json()
+    except Exception as exc:
+        return _openai_error_response(
+            f"Unsupported field or invalid request shape: invalid JSON body ({type(exc).__name__})"
+        )
+
+    try:
+        cc = ChatCompletionRequest(**body)
+    except ValidationError as exc:
+        return _openai_error_response(
+            _validation_error_message(exc),
+            param=_validation_error_param(exc),
+            detail=exc.errors(include_url=False),
+        )
+
     cc.messages = await inject_memory(cc.messages, req=req)
 
-    allowed_tools = None
-    try:
-        pol = getattr(req.state, "token_policy", None)
-        if isinstance(pol, dict):
-            allowed_tools = allowed_tool_names_for_policy(pol)
-    except Exception:
-        allowed_tools = None
-
     hdrs = {k.lower(): v for k, v in req.headers.items()}
-    route = decide_route(
-        cfg=router_cfg(),
-        request_model=cc.model,
+    route, backend_class, alias_name = _route_chat_request(
+        cc,
         headers=hdrs,
-        messages=[m.model_dump(exclude_none=True) for m in cc.messages],
-        has_tools=bool(cc.tools),
-        enable_policy=S.ROUTER_ENABLE_POLICY,
         enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
     )
     backend = route.backend
     model_name = route.model
-    
-    # Resolve to backend_class for capability gating and admission control
-    registry = get_registry()
-    backend_class = registry.resolve_backend_class(backend)
     
     # Check backend health/readiness
     check_backend_ready(backend_class, route_kind="chat")
@@ -247,38 +537,59 @@ async def chat_completions(req: Request):
                     "upstream_model": model_name,
                     "router_reason": route.reason,
                     "has_tools": bool(cc.tools),
+                    "request_keys": _body_keys(body),
+                    "selected_alias": alias_name,
+                    "stream": bool(cc.stream),
+                    "tool_choice": cc.tool_choice,
+                    "tool_fields_action": tool_fields_action,
                 }
             )
             req.state.instrument = inst
         except Exception:
             pass
 
-        alias_name = _selected_alias_name(cc.model, route.reason)
         cc = _apply_alias_constraints(cc, alias_name=alias_name)
+        original_cc = cc
 
-        if cc.tools and not backend_supports_tool_calling(backend_class):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"backend '{backend_class}' does not support native tool calling; "
-                    "enable vLLM native tools with VLLM_NATIVE_TOOLS_ENABLED and a matching "
-                    "VLLM_ENABLE_AUTO_TOOL_CHOICE/VLLM_TOOL_CALL_PARSER deployment config, "
-                    "or route the request to a tool-capable backend"
-                ),
+        cc, degradation_reason, tools_required_error = _normalize_chat_request_for_backend(
+            cc,
+            alias_name=alias_name,
+            backend_class=backend_class,
+        )
+        tool_fields_action = _tool_fields_action(original_cc, cc, request_shape_action="direct")
+        _log_openai_request(
+            endpoint="/v1/chat/completions",
+            body=body,
+            cc=cc,
+            alias_name=alias_name,
+            route=route,
+            tool_fields_action=tool_fields_action,
+            request_shape_action="direct",
+        )
+        if tools_required_error:
+            return _openai_error_response(
+                f"Unsupported field or invalid request shape: tools were explicitly required, but {degradation_reason}",
+                param="tool_choice",
+                detail={
+                    "backend": backend_class,
+                    "alias": alias_name,
+                    "tool_choice": cc.tool_choice,
+                },
             )
 
         logger.debug(
-            "route chat.completions model=%r stream=%s tools=%s -> backend=%s upstream_model=%s reason=%s",
+            "route chat.completions model=%r alias=%r stream=%s tools=%s tool_choice=%r tool_fields_action=%s degraded_tools=%s -> backend=%s upstream_model=%s reason=%s",
             cc.model,
+            alias_name,
             bool(cc.stream),
             bool(cc.tools),
+            cc.tool_choice,
+            tool_fields_action,
+            bool(degradation_reason),
             backend,
             model_name,
             route.reason,
         )
-
-        if cc.stream and cc.tools:
-            raise HTTPException(status_code=400, detail="stream=true not supported when tools are provided")
 
         if cc.stream:
             gen = stream_backend_chat_as_openai(cc, backend, model_name)
@@ -289,14 +600,13 @@ async def chat_completions(req: Request):
             return out
 
         t0 = time.monotonic()
-        if cc.tools:
-            resp = await tool_loop(cc, backend, model_name, allowed_tools=allowed_tools)
-        else:
-            resp = await call_backend_chat(cc, backend, model_name)
+        resp = await call_backend_chat(cc, backend, model_name)
         try:
             inst = getattr(req.state, "instrument", None)
             if isinstance(inst, dict):
                 inst["upstream_ms"] = round((time.monotonic() - t0) * 1000.0, 1)
+                if degradation_reason:
+                    inst["tool_degradation_reason"] = degradation_reason
         except Exception:
             pass
 
@@ -492,150 +802,196 @@ async def responses(req: Request):
     """
 
     require_bearer(req)
-    body = await req.json()
+    try:
+        body = await req.json()
+    except Exception as exc:
+        return _openai_error_response(
+            f"Unsupported field or invalid request shape: invalid JSON body ({type(exc).__name__})"
+        )
     if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="body must be an object")
+        return _openai_error_response("Unsupported field or invalid request shape: body must be an object")
 
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():
-        raise HTTPException(status_code=400, detail="model must be a non-empty string")
+        return _openai_error_response(
+            "Unsupported field or invalid request shape: model must be a non-empty string",
+            param="model",
+        )
 
     stream = bool(body.get("stream") or False)
 
-    temperature = body.get("temperature")
-    max_tokens = body.get("max_output_tokens")
-    if max_tokens is None:
-        max_tokens = body.get("max_tokens")
-
     raw_input = body.get("input")
     messages: list[ChatMessage] = []
-    if isinstance(raw_input, str):
-        messages = [ChatMessage(role="user", content=raw_input)]
-    elif isinstance(raw_input, list) and raw_input and all(isinstance(x, dict) for x in raw_input):
-        # Best-effort: treat as chat-style messages.
-        messages = [ChatMessage(**x) for x in raw_input]  # type: ignore[arg-type]
-    elif raw_input is None:
-        # Some clients send chat-style messages under `messages`.
-        raw_messages = body.get("messages")
-        if isinstance(raw_messages, list) and raw_messages and all(isinstance(x, dict) for x in raw_messages):
-            messages = [ChatMessage(**x) for x in raw_messages]  # type: ignore[arg-type]
+    try:
+        if isinstance(raw_input, str):
+            messages = [ChatMessage(role="user", content=raw_input)]
+        elif isinstance(raw_input, list) and raw_input and all(isinstance(x, dict) for x in raw_input):
+            messages = [ChatMessage(**x) for x in raw_input]  # type: ignore[arg-type]
+        elif raw_input is None:
+            raw_messages = body.get("messages")
+            if isinstance(raw_messages, list) and raw_messages and all(isinstance(x, dict) for x in raw_messages):
+                messages = [ChatMessage(**x) for x in raw_messages]  # type: ignore[arg-type]
+            else:
+                return _openai_error_response(
+                    "Unsupported field or invalid request shape: input is required",
+                    param="input",
+                )
         else:
-            raise HTTPException(status_code=400, detail="input is required")
-    else:
-        raise HTTPException(status_code=400, detail="input must be a string or list of message objects")
+            return _openai_error_response(
+                "Unsupported field or invalid request shape: input must be a string or list of message objects",
+                param="input",
+            )
+        cc = _chat_completion_request_from_response_body(body, messages, stream=stream)
+    except ValidationError as exc:
+        return _openai_error_response(
+            _validation_error_message(exc),
+            param=_validation_error_param(exc),
+            detail=exc.errors(include_url=False),
+        )
 
-    tools = body.get("tools")
-
-    cc = ChatCompletionRequest(
-        model=model,
-        messages=messages,
-        tools=tools,
-        tool_choice=body.get("tool_choice"),
-        temperature=float(temperature) if temperature is not None else None,
-        max_tokens=int(max_tokens) if max_tokens is not None else None,
-        stream=False,
-    )
     cc.messages = await inject_memory(cc.messages, req=req)
 
-    if stream and cc.tools:
-        raise HTTPException(status_code=400, detail="stream=true not supported when tools are provided")
-
     hdrs = {k.lower(): v for k, v in req.headers.items()}
-    route = decide_route(
-        cfg=router_cfg(),
-        request_model=cc.model,
-        headers=hdrs,
-        messages=[m.model_dump(exclude_none=True) for m in cc.messages],
-        has_tools=bool(cc.tools),
-        enable_policy=S.ROUTER_ENABLE_POLICY,
-    )
+    route, backend_class, alias_name = _route_chat_request(cc, headers=hdrs)
     backend = route.backend
     model_name = route.model
 
-    alias_name = _selected_alias_name(cc.model, route.reason)
-    cc = _apply_alias_constraints(cc, alias_name=alias_name)
+    check_backend_ready(backend_class, route_kind="chat")
+    await check_capability(backend_class, "chat")
+    admission = get_admission_controller()
+    await admission.acquire(backend_class, "chat")
 
-    if stream:
-        response_id = new_id("resp")
-        created = now_unix()
-        used_model_id = backend_model_id(backend, model_name)
+    try:
+        cc = _apply_alias_constraints(cc, alias_name=alias_name)
+        original_cc = cc
+        cc, degradation_reason, tools_required_error = _normalize_chat_request_for_backend(
+            cc,
+            alias_name=alias_name,
+            backend_class=backend_class,
+        )
+        tool_fields_action = _tool_fields_action(original_cc, cc, request_shape_action="shimmed")
+        _log_openai_request(
+            endpoint="/v1/responses",
+            body=body,
+            cc=cc,
+            alias_name=alias_name,
+            route=route,
+            tool_fields_action=tool_fields_action,
+            request_shape_action="shimmed",
+        )
+        if tools_required_error:
+            return _openai_error_response(
+                f"Unsupported field or invalid request shape: tools were explicitly required, but {degradation_reason}",
+                param="tool_choice",
+                detail={
+                    "backend": backend_class,
+                    "alias": alias_name,
+                    "tool_choice": cc.tool_choice,
+                },
+            )
 
-        upstream_gen = stream_backend_chat_as_openai(cc, backend, model_name)
-
-        async def gen() -> AsyncIterator[bytes]:
-            # Best-effort Responses API SSE.
-            yield (
-                f"data: {json.dumps({'type':'response.created','response':{'id':response_id,'object':'response','created':created,'model':used_model_id}}, separators=(',', ':'))}\n\n"
-            ).encode("utf-8")
-
-            async for chunk in upstream_gen:
-                for line in chunk.splitlines():
-                    if not line.startswith(b"data:"):
-                        continue
-                    data = line[len(b"data:") :].strip()
-                    if data == b"[DONE]":
-                        yield (
-                            f"data: {json.dumps({'type':'response.completed','response':{'id':response_id}}, separators=(',', ':'))}\n\n"
-                        ).encode("utf-8")
-                        yield sse_done()
-                        return
-                    try:
-                        j = json.loads(data)
-                    except Exception:
-                        continue
-                    delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
-                    text = delta.get("content")
-                    if isinstance(text, str) and text:
-                        yield (
-                            f"data: {json.dumps({'type':'response.output_text.delta','delta':text}, separators=(',', ':'))}\n\n"
-                        ).encode("utf-8")
-
-            yield (
-                f"data: {json.dumps({'type':'response.completed','response':{'id':response_id}}, separators=(',', ':'))}\n\n"
-            ).encode("utf-8")
-            yield sse_done()
-
-        out = StreamingResponse(gen(), media_type="text/event-stream")
-        out.headers["X-Backend-Used"] = backend
-        out.headers["X-Model-Used"] = model_name
-        out.headers["X-Router-Reason"] = route.reason
-        return out
-
-    if cc.tools:
-        allowed_tools = None
         try:
-            pol = getattr(req.state, "token_policy", None)
-            if isinstance(pol, dict):
-                allowed_tools = allowed_tool_names_for_policy(pol)
+            inst = getattr(req.state, "instrument", None)
+            if not isinstance(inst, dict):
+                inst = {}
+            inst.update(
+                {
+                    "op": "responses",
+                    "backend": backend,
+                    "backend_class": backend_class,
+                    "upstream_model": model_name,
+                    "router_reason": route.reason,
+                    "has_tools": bool(cc.tools),
+                    "request_keys": _body_keys(body),
+                    "selected_alias": alias_name,
+                    "stream": bool(cc.stream),
+                    "tool_choice": cc.tool_choice,
+                    "tool_fields_action": tool_fields_action,
+                }
+            )
+            if degradation_reason:
+                inst["tool_degradation_reason"] = degradation_reason
+            req.state.instrument = inst
         except Exception:
-            allowed_tools = None
-        chat_resp = await tool_loop(cc, backend, model_name, allowed_tools=allowed_tools)
-    else:
+            pass
+
+        logger.debug(
+            "route responses model=%r alias=%r stream=%s tools=%s tool_choice=%r tool_fields_action=%s degraded_tools=%s -> backend=%s upstream_model=%s reason=%s",
+            cc.model,
+            alias_name,
+            bool(cc.stream),
+            bool(cc.tools),
+            cc.tool_choice,
+            tool_fields_action,
+            bool(degradation_reason),
+            backend,
+            model_name,
+            route.reason,
+        )
+
+        if stream:
+            response_id = new_id("resp")
+            created = now_unix()
+            used_model_id = backend_model_id(backend, model_name)
+
+            upstream_gen = stream_backend_chat_as_openai(cc, backend, model_name)
+
+            async def gen() -> AsyncIterator[bytes]:
+                # Best-effort Responses API SSE.
+                yield (
+                    f"data: {json.dumps({'type':'response.created','response':{'id':response_id,'object':'response','created':created,'model':used_model_id}}, separators=(',', ':'))}\n\n"
+                ).encode("utf-8")
+
+                async for chunk in upstream_gen:
+                    for line in chunk.splitlines():
+                        if not line.startswith(b"data:"):
+                            continue
+                        data = line[len(b"data:") :].strip()
+                        if data == b"[DONE]":
+                            yield (
+                                f"data: {json.dumps({'type':'response.completed','response':{'id':response_id}}, separators=(',', ':'))}\n\n"
+                            ).encode("utf-8")
+                            yield sse_done()
+                            return
+                        try:
+                            j = json.loads(data)
+                        except Exception:
+                            continue
+                        delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
+                        text = delta.get("content")
+                        if isinstance(text, str) and text:
+                            yield (
+                                f"data: {json.dumps({'type':'response.output_text.delta','delta':text}, separators=(',', ':'))}\n\n"
+                            ).encode("utf-8")
+
+                yield (
+                    f"data: {json.dumps({'type':'response.completed','response':{'id':response_id}}, separators=(',', ':'))}\n\n"
+                ).encode("utf-8")
+                yield sse_done()
+
+            out = StreamingResponse(gen(), media_type="text/event-stream")
+            out.headers["X-Backend-Used"] = backend
+            out.headers["X-Model-Used"] = model_name
+            out.headers["X-Router-Reason"] = route.reason
+            return out
+
         chat_resp = await call_backend_chat(cc, backend, model_name)
 
-    msg = ((chat_resp.get("choices") or [{}])[0].get("message") or {})
-    text = msg.get("content")
-    if not isinstance(text, str):
-        text = ""
+        msg = ((chat_resp.get("choices") or [{}])[0].get("message") or {})
 
-    out = {
-        "id": new_id("resp"),
-        "object": "response",
-        "created": now_unix(),
-        "model": backend_model_id(backend, model_name),
-        "output": [
-            {
-                "type": "message",
-                "id": new_id("msg"),
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": text}],
-            }
-        ],
-        "usage": chat_resp.get("usage") or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }
+        out = {
+            "id": new_id("resp"),
+            "object": "response",
+            "created": now_unix(),
+            "model": backend_model_id(backend, model_name),
+            "output": _response_output_from_chat_message(msg),
+            "usage": chat_resp.get("usage") or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
 
-    resp = JSONResponse(out)
-    resp.headers["X-Backend-Used"] = backend
-    resp.headers["X-Model-Used"] = model_name
-    resp.headers["X-Router-Reason"] = route.reason
-    return resp
+        resp = JSONResponse(out)
+        resp.headers["X-Backend-Used"] = backend
+        resp.headers["X-Model-Used"] = model_name
+        resp.headers["X-Router-Reason"] = route.reason
+        return resp
+    finally:
+        admission.release(backend_class, "chat")

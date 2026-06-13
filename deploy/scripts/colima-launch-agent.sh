@@ -16,6 +16,7 @@ COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 COLIMA_VM_TYPE="${COLIMA_VM_TYPE:-}"
 COLIMA_USER_HOME="${COLIMA_USER_HOME:-${HOME:-}}"
 COLIMA_HOME="${COLIMA_HOME:-}"
+COLIMA_MOUNTS="${COLIMA_MOUNTS:-}"
 if [[ -n "${COLIMA_HOME:-}" ]]; then
   export COLIMA_HOME
 fi
@@ -45,6 +46,15 @@ if [[ -n "${COLIMA_PROFILE:-}" && "${COLIMA_PROFILE}" != "default" ]]; then
   status_cmd+=("${COLIMA_PROFILE}")
   start_cmd+=("${COLIMA_PROFILE}")
   retry_cmd+=("${COLIMA_PROFILE}")
+fi
+
+if [[ -n "${COLIMA_MOUNTS:-}" ]]; then
+  IFS=',' read -r -a mount_specs <<< "$COLIMA_MOUNTS"
+  for mount_spec in "${mount_specs[@]:-}"; do
+    [[ -n "${mount_spec:-}" ]] || continue
+    start_cmd+=("--mount" "$mount_spec")
+    retry_cmd+=("--mount" "$mount_spec")
+  done
 fi
 
 if "${status_cmd[@]}" >/dev/null 2>&1; then

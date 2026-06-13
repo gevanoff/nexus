@@ -132,24 +132,7 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
     _resolved, provider, _base_url = _resolve_backend_target(backend_name)
     if provider not in {"mlx", "vllm"}:
         return req
-    return ChatCompletionRequest(
-        model=model_name,
-        messages=req.messages,
-        tools=req.tools,
-        tool_choice=req.tool_choice,
-        temperature=req.temperature,
-        top_p=req.top_p,
-        top_k=req.top_k,
-        min_p=req.min_p,
-        repetition_penalty=req.repetition_penalty,
-        frequency_penalty=req.frequency_penalty,
-        presence_penalty=req.presence_penalty,
-        stop=req.stop,
-        seed=req.seed,
-        max_tokens=req.max_tokens,
-        chat_template_kwargs=req.chat_template_kwargs,
-        stream=req.stream,
-    )
+    return req.model_copy(update={"model": model_name})
 
 
 async def call_openai_chat(
