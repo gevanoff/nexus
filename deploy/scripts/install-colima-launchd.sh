@@ -270,17 +270,18 @@ if [[ -z "${LABEL:-}" ]]; then
   LABEL="com.nexus.colima.${SANITIZED_USER}.${SANITIZED_PROFILE}"
 fi
 
-LAUNCHER_DST="${COLIMA_RUNTIME_ROOT}/bin/nexus-colima-launch"
+LAUNCHER_DST="${TARGET_HOME}/.colima/bin/nexus-colima-launch"
 ENV_FILE="${COLIMA_RUNTIME_ROOT}/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
 PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
 OUT_LOG="${COLIMA_LOG_DIR}/${LABEL}.out.log"
 ERR_LOG="${COLIMA_LOG_DIR}/${LABEL}.err.log"
 
 sudo install -d -o root -g wheel -m 755 "${COLIMA_RUNTIME_ROOT}"
-sudo install -d -o root -g wheel -m 755 "${COLIMA_RUNTIME_ROOT}/bin"
+sudo install -d -o "${TARGET_USER}" -g staff -m 700 "${TARGET_HOME}/.colima"
+sudo install -d -o "${TARGET_USER}" -g staff -m 700 "${TARGET_HOME}/.colima/bin"
 sudo install -d -o "${TARGET_USER}" -g staff -m 750 "${COLIMA_LOG_DIR}"
 
-sudo install -o root -g wheel -m 755 "${ROOT_DIR}/deploy/scripts/colima-launch-agent.sh" "$LAUNCHER_DST"
+sudo install -o "${TARGET_USER}" -g staff -m 700 "${ROOT_DIR}/deploy/scripts/colima-launch-agent.sh" "$LAUNCHER_DST"
 
 tmp_env_file="$(mktemp)"
 cat >"$tmp_env_file" <<EOF
