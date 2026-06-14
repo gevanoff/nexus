@@ -12,6 +12,7 @@ ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 BRANCH=""
 NO_PULL="false"
 NO_BUILD="false"
+NO_VERIFY="false"
 WITH_TELEGRAM="false"
 EXTERNAL_VLLM="false"
 EXTERNAL_VLLM_SET="false"
@@ -21,7 +22,7 @@ EXTERNAL_MLX_SET="false"
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/ops-stack.sh [--env-file PATH] [--branch BRANCH] [--no-pull] [--no-build]
+Usage: deploy/scripts/ops-stack.sh [--env-file PATH] [--branch BRANCH] [--no-pull] [--no-build] [--no-verify]
 
 Host-local daily operations helper for Nexus core stack:
   1) (optional) git pull
@@ -34,6 +35,7 @@ Options:
   --branch BRANCH   If set, checkout+pull this branch before restart
   --no-pull         Skip git fetch/pull
   --no-build        Skip image rebuild (use compose up -d without --build)
+  --no-verify       Skip gateway verifier after restart
   --external-vllm   Use external/native vLLM (do not include docker-compose.vllm.yml).
                     If not set explicitly, auto-detected from VLLM_BASE_URL.
   --with-telegram   Include telegram-bot component (docker-compose.telegram-bot.yml)
@@ -59,6 +61,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-build)
       NO_BUILD="true"
+      shift
+      ;;
+    --no-verify)
+      NO_VERIFY="true"
       shift
       ;;
     --external-vllm)
@@ -198,17 +204,19 @@ for i in {1..60}; do
   fi
 done
 
-ns_print_header "Running verifier"
-verify_args=()
-if [[ "$EXTERNAL_VLLM" == "true" ]]; then
-  verify_args+=(--external-vllm)
+if [[ "$NO_VERIFY" != "true" ]]; then
+  ns_print_header "Running verifier"
+  verify_args=()
+  if [[ "$EXTERNAL_VLLM" == "true" ]]; then
+    verify_args+=(--external-vllm)
+  fi
+  if [[ "$WITH_MLX" == "true" ]]; then
+    verify_args+=(--with-mlx)
+  elif [[ "$EXTERNAL_MLX" == "true" ]]; then
+    verify_args+=(--external-mlx)
+  fi
+  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" "${verify_args[@]}"
 fi
-if [[ "$WITH_MLX" == "true" ]]; then
-  verify_args+=(--with-mlx)
-elif [[ "$EXTERNAL_MLX" == "true" ]]; then
-  verify_args+=(--external-mlx)
-fi
-ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" "${verify_args[@]}"
 
 ns_print_header "Ops complete"
 ns_compose "${COMPOSE_ARGS[@]}" ps

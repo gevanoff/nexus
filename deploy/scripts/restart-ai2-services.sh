@@ -28,5 +28,5 @@ export GATEWAY_ENV_FILE
 GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ENV_FILE")"
 
 ns_print_header "Restoring ai2 services"
-"$ROOT_DIR/deploy/scripts/ops-stack.sh" --env-file "$ENV_FILE" --no-pull --no-build
+"$ROOT_DIR/deploy/scripts/ops-stack.sh" --env-file "$ENV_FILE" --no-pull --no-build --no-verify
 "$ROOT_DIR/deploy/scripts/redeploy-tts-shims.sh" --env-file "$ENV_FILE" --no-build --skip-gateway
