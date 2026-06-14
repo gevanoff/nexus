@@ -101,7 +101,7 @@ OBS_URL="${GATEWAY_OBS_URL:-http://127.0.0.1:${obs_port}}"
 TOKEN="${GATEWAY_BEARER_TOKEN:-$(ns_env_get "${ENV_FILE}" GATEWAY_BEARER_TOKEN "")}"
 strong_model="${VLLM_MODEL_STRONG:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_STRONG "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic")}"
 fast_model="${VLLM_MODEL_FAST:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_FAST "cyankiwi/Devstral-Small-2507-AWQ-4bit")}"
-embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_EMBEDDINGS "unsloth/Qwen3-Embedding-4B")}"
+embeddings_model="${VLLM_MODEL_EMBEDDINGS:-$(ns_env_get "${ENV_FILE}" VLLM_MODEL_EMBEDDINGS "BAAI/bge-small-en-v1.5")}"
 
 COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
 COMPOSE_FILES=(docker-compose.gateway.yml docker-compose.etcd.yml)

@@ -234,7 +234,7 @@ class Settings(BaseSettings):
     VLLM_MODEL_STRONG: str = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
     VLLM_MODEL_FAST: str = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     VLLM_MODEL_DEFAULT: str = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
-    VLLM_MODEL_EMBEDDINGS: str = "unsloth/Qwen3-Embedding-4B"
+    VLLM_MODEL_EMBEDDINGS: str = "BAAI/bge-small-en-v1.5"
     VLLM_NATIVE_TOOLS_ENABLED: bool = False
     VLLM_FAST_NATIVE_TOOLS_ENABLED: bool = False
 
@@ -345,7 +345,7 @@ class Settings(BaseSettings):
     TOOLS_GIT_CWD: str = "/var/lib/gateway"
     TOOLS_GIT_TIMEOUT_SEC: int = 20
 
-    EMBEDDINGS_BACKEND: str = "local_vllm_embeddings"
+    EMBEDDINGS_BACKEND: str = "local_mlx"
     EMBEDDINGS_MODEL: str = ""
 
     MEMORY_ENABLED: bool = True

@@ -45,7 +45,7 @@ services:
 
       # Routing configuration
       - DEFAULT_BACKEND=${DEFAULT_BACKEND:-local_mlx}
-      - EMBEDDINGS_BACKEND=${EMBEDDINGS_BACKEND:-local_vllm_embeddings}
+      - EMBEDDINGS_BACKEND=${EMBEDDINGS_BACKEND:-local_mlx}
       - ROUTER_ENABLE_POLICY=true
 
       # Request limits
