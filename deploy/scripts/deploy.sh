@@ -483,6 +483,8 @@ if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   bind_env_sync_mode="refresh"
 fi
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file" "$bind_env_sync_mode"
+export GATEWAY_ENV_FILE
+GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ROOT_DIR/.env")"
 
 ns_print_header "Preparing runtime directories"
 ns_ensure_runtime_dirs "$ROOT_DIR"
