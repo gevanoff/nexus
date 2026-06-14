@@ -1259,35 +1259,46 @@ ns_resolve_docker_env_file() {
   # Resolve an env file path to one that is accessible inside a Docker/Colima
   # container bind mount context.
   #
-  # When the path is through a directory symlink (common when the repo lives on
-  # an external APFS volume mounted under /Volumes but accessed via a logical
-  # alias path like /Users/ai/ai/nexus), realpath() returns the physical path
-  # which Docker/Colima does NOT recognise — Colima's virtiofs mount uses the
-  # logical alias path.  In that case we return the logical path as-is so
-  # Docker can resolve it through the configured mount.
-  #
-  # Only when the logical and physical paths are identical AND the physical path
-  # is not under a known Colima-mounted directory do we fall back to copying the
-  # file into a local runtime dir.
+  # Directory symlinks are common on Nexus hosts. Prefer whichever path the
+  # active Docker/Colima context can actually see, falling back to the logical
+  # path for non-Colima contexts to preserve existing behavior.
   #
   # Usage: ns_resolve_docker_env_file <env_file_path>
   # Prints: path suitable for GATEWAY_ENV_FILE
   local env_file="$1"
+  local logical_path=""
   local physical_path=""
   local nexus_runtime_dir=""
+  local docker_context=""
 
   if [[ ! -f "$env_file" ]]; then
     printf '%s\n' "$env_file"
     return 0
   fi
 
-  physical_path="$(realpath "$env_file" 2>/dev/null || printf '%s\n' "$env_file")"
+  logical_path="$(cd "$(dirname "$env_file")" && pwd)/$(basename "$env_file")"
+  physical_path="$(cd "$(dirname "$env_file")" && pwd -P)/$(basename "$env_file")"
+
+  if ns_have_cmd docker; then
+    docker_context="$(docker context show 2>/dev/null || true)"
+  fi
+
+  if [[ "$docker_context" == "colima" ]] && ns_have_cmd colima; then
+    if ns_colima_path_visible "$logical_path"; then
+      printf '%s\n' "$logical_path"
+      return 0
+    fi
+    if ns_colima_path_visible "$physical_path"; then
+      printf '%s\n' "$physical_path"
+      return 0
+    fi
+  fi
 
   # If realpath returned a different path, the file is accessed via a directory
   # symlink.  Return the logical path so Colima/Docker can resolve it through
   # the virtiofs mount that uses the logical alias.
-  if [[ "$physical_path" != "$env_file" ]]; then
-    printf '%s\n' "$env_file"
+  if [[ "$physical_path" != "$logical_path" ]]; then
+    printf '%s\n' "$logical_path"
     return 0
   fi
 
