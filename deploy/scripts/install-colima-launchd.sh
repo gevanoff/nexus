@@ -322,9 +322,6 @@ cat >"$tmp_plist" <<EOF
     <key>StartInterval</key>
     <integer>${START_INTERVAL}</integer>
 
-    <key>ProcessType</key>
-    <string>Background</string>
-
     <key>EnvironmentVariables</key>
     <dict>
       <key>PATH</key>
