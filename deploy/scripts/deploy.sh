@@ -390,7 +390,7 @@ ensure_topology_essential_components() {
   done
 
   ns_print_header "Ensuring essential topology containers"
-  ns_compose --env-file "$env_file" "${essential_compose_args[@]}" up -d --build --no-recreate "${essential_services[@]}"
+  GATEWAY_ENV_FILE="${GATEWAY_ENV_FILE:-}" ns_compose --env-file "$env_file" "${essential_compose_args[@]}" up -d --build --no-recreate "${essential_services[@]}"
 
   if [[ -f "$ROOT_DIR/deploy/scripts/check-essential-containers.sh" ]]; then
     /bin/bash "$ROOT_DIR/deploy/scripts/check-essential-containers.sh" --wait "${NEXUS_ESSENTIAL_WAIT_SECONDS:-90}"
@@ -485,6 +485,7 @@ fi
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file" "$bind_env_sync_mode"
 export GATEWAY_ENV_FILE
 GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ROOT_DIR/.env")"
+ns_print_ok "Gateway env bind source: ${GATEWAY_ENV_FILE}"
 
 ns_print_header "Preparing runtime directories"
 ns_ensure_runtime_dirs "$ROOT_DIR"
@@ -534,5 +535,5 @@ if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   fi
 fi
 
-ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}"
+GATEWAY_ENV_FILE="$GATEWAY_ENV_FILE" ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}"
 ensure_topology_essential_components "$env_file"
