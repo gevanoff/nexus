@@ -1317,6 +1317,54 @@ ns_resolve_docker_env_file() {
   printf '%s\n' "$env_file"
 }
 
+ns_resolve_docker_bind_path() {
+  # Resolve a host bind path to the path visible from the active Docker context.
+  # Usage: ns_resolve_docker_bind_path <path>
+  local bind_path="$1"
+  local logical_path=""
+  local physical_path=""
+  local docker_context=""
+  local mount_hint=""
+
+  if [[ ! -e "$bind_path" ]]; then
+    printf '%s\n' "$bind_path"
+    return 0
+  fi
+
+  logical_path="$(cd "$(dirname "$bind_path")" && pwd)/$(basename "$bind_path")"
+  physical_path="$(cd "$(dirname "$bind_path")" && pwd -P)/$(basename "$bind_path")"
+
+  if ns_have_cmd docker; then
+    docker_context="$(docker context show 2>/dev/null || true)"
+  fi
+
+  if [[ "$docker_context" == "colima" ]] && ns_have_cmd colima; then
+    if [[ "$physical_path" != "$logical_path" ]]; then
+      if ! ns_colima_path_visible "$physical_path"; then
+        mount_hint="$physical_path"
+        [[ -f "$mount_hint" ]] && mount_hint="$(dirname "$mount_hint")"
+        ns_try_auto_fix_colima_bind_source "$mount_hint" >/dev/null 2>&1 || true
+      fi
+      if ns_colima_path_visible "$physical_path"; then
+        printf '%s\n' "$physical_path"
+        return 0
+      fi
+    fi
+
+    if ns_colima_path_visible "$logical_path"; then
+      printf '%s\n' "$logical_path"
+      return 0
+    fi
+  fi
+
+  if [[ "$physical_path" != "$logical_path" ]]; then
+    printf '%s\n' "$logical_path"
+    return 0
+  fi
+
+  printf '%s\n' "$bind_path"
+}
+
 ns_colima_path_visible() {
   # Usage: ns_colima_path_visible <path>
   local check_path="$1"
