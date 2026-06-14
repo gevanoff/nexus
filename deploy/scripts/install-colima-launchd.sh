@@ -271,7 +271,7 @@ if [[ -z "${LABEL:-}" ]]; then
 fi
 
 LAUNCHER_DST="${TARGET_HOME}/.colima/bin/nexus-colima-launch"
-ENV_FILE="${COLIMA_RUNTIME_ROOT}/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
+ENV_FILE="${TARGET_HOME}/.colima/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
 PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
 OUT_LOG="${COLIMA_LOG_DIR}/${LABEL}.out.log"
 ERR_LOG="${COLIMA_LOG_DIR}/${LABEL}.err.log"

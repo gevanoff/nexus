@@ -207,7 +207,10 @@ if [[ -z "${LABEL:-}" ]]; then
 fi
 
 PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
-ENV_FILE="${COLIMA_RUNTIME_ROOT}/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
+ENV_FILE="${TARGET_HOME}/.colima/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
+if [[ ! -f "$ENV_FILE" ]]; then
+  ENV_FILE="${COLIMA_RUNTIME_ROOT}/${SANITIZED_USER}-${SANITIZED_PROFILE}.env"
+fi
 
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck source=/dev/null
