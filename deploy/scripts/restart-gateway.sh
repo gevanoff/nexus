@@ -54,7 +54,7 @@ fi
 
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
 export GATEWAY_ENV_FILE
-GATEWAY_ENV_FILE="$(realpath "$ENV_FILE")"
+GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ENV_FILE")"
 ns_seed_gateway_config_files "$ROOT_DIR" refresh
 if [[ -x "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh" ]]; then
   if ! "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh"; then
