@@ -133,7 +133,9 @@ ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
 _resolved_env_file="$(realpath "$ENV_FILE")"
 if [[ -L "$ENV_FILE" || "$_resolved_env_file" != "$ENV_FILE" ]]; then
   _local_env_copy="$ROOT_DIR/.env"
-  if [[ "$_resolved_env_file" != "$_local_env_copy" ]]; then
+  if [[ "$_resolved_env_file" != "$_local_env_copy" ]] || [[ -L "$_local_env_copy" ]]; then
+    # Unlink symlink first so cp creates a real independent file
+    [[ -L "$_local_env_copy" ]] && rm -f "$_local_env_copy"
     cp "$_resolved_env_file" "$_local_env_copy"
     chmod 600 "$_local_env_copy" 2>/dev/null || true
     ns_print_warn "Copied resolved env from ${_resolved_env_file} → ${_local_env_copy} for Docker bind compatibility."
