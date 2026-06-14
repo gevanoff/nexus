@@ -15,6 +15,8 @@ fi
 PROFILE="default"
 VM_TYPE=""
 START_INTERVAL="60"
+WAIT_TIMEOUT="75"
+NO_WAIT="false"
 SANITIZED_PROFILE="default"
 TARGET_USER=""
 TARGET_HOME=""
@@ -28,7 +30,7 @@ declare -a EXTRA_MOUNTS=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL] [--mount PATH[:MODE]]
+Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--wait-timeout SEC] [--no-wait] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL] [--mount PATH[:MODE]]
 
 Install/reload a macOS LaunchDaemon that starts Colima at boot and runs it
 under the selected unprivileged user account.
@@ -37,6 +39,8 @@ Options:
   --profile NAME        Colima profile name (default: default)
   --vm-type TYPE        Optional Colima vm-type override (for example: qemu)
   --start-interval SEC  Relaunch check interval in seconds (default: 60)
+  --wait-timeout SEC    Seconds to wait for Docker readiness after install (default: 75)
+  --no-wait             Skip Docker readiness wait and return after launchd reload
   --user USER           User account that should own/run Colima (default: current user)
   --home PATH           Home directory for the selected user (default: detected from dscl/$HOME)
   --colima-home PATH    Colima state root to export as COLIMA_HOME (default: existing COLIMA_HOME)
@@ -170,6 +174,14 @@ while [[ $# -gt 0 ]]; do
       START_INTERVAL="${2:-}"
       shift 2
       ;;
+    --wait-timeout)
+      WAIT_TIMEOUT="${2:-}"
+      shift 2
+      ;;
+    --no-wait)
+      NO_WAIT="true"
+      shift
+      ;;
     --user)
       TARGET_USER="${2:-}"
       shift 2
@@ -214,6 +226,7 @@ done
 
 [[ -n "${PROFILE:-}" ]] || ns_die "--profile must not be empty"
 [[ "$START_INTERVAL" =~ ^[0-9]+$ ]] || ns_die "--start-interval must be an integer"
+[[ "$WAIT_TIMEOUT" =~ ^[0-9]+$ ]] || ns_die "--wait-timeout must be an integer"
 [[ "${COLIMA_RUNTIME_ROOT}" == /* ]] || ns_die "--runtime-root must be an absolute path"
 [[ "${COLIMA_LOG_DIR}" == /* ]] || ns_die "--log-dir must be an absolute path"
 
@@ -376,14 +389,18 @@ sudo launchctl kickstart -k "system/${LABEL}"
 
 ns_print_header "Waiting for Colima / Docker"
 run_docker_for_target context use colima >/dev/null 2>&1 || true
-if wait_for_docker_as_target 75; then
-  ns_print_ok "Colima launch daemon is active (${LABEL})"
-  ns_print_ok "Docker daemon is reachable via the Colima context"
+if [[ "$NO_WAIT" == "true" ]]; then
+  ns_print_warn "Skipped Docker readiness wait (--no-wait requested)"
 else
-  ns_print_warn "LaunchDaemon was installed, but Docker is not reachable yet"
-  ns_print_warn "Inspect logs:"
-  ns_print_warn "  sudo tail -n 120 '${OUT_LOG}'"
-  ns_print_warn "  sudo tail -n 120 '${ERR_LOG}'"
+  if wait_for_docker_as_target "$WAIT_TIMEOUT"; then
+    ns_print_ok "Colima launch daemon is active (${LABEL})"
+    ns_print_ok "Docker daemon is reachable via the Colima context"
+  else
+    ns_print_warn "LaunchDaemon was installed, but Docker is not reachable yet"
+    ns_print_warn "Inspect logs:"
+    ns_print_warn "  sudo tail -n 120 '${OUT_LOG}'"
+    ns_print_warn "  sudo tail -n 120 '${ERR_LOG}'"
+  fi
 fi
 
 echo "LaunchDaemon: ${PLIST_PATH}"
