@@ -230,6 +230,7 @@ DOCKER_BIN="$(command -v docker || true)"
 TARGET_USER="$(resolve_target_user)"
 [[ "${TARGET_USER}" != "root" ]] || ns_die "Colima target user must not be root"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
+TARGET_UID="$(id -u "$TARGET_USER")"
 if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
   TARGET_COLIMA_USER_HOME="$TARGET_HOME"
 fi
@@ -344,6 +345,14 @@ EOF
 sudo install -o root -g wheel -m 644 "$tmp_plist" "$PLIST_PATH"
 rm -f "$tmp_plist"
 sudo plutil -lint "$PLIST_PATH" >/dev/null
+
+legacy_agent_plist="${TARGET_HOME}/Library/LaunchAgents/${LABEL}.plist"
+if [[ -f "$legacy_agent_plist" ]]; then
+  sudo launchctl bootout "gui/${TARGET_UID}/${LABEL}" >/dev/null 2>&1 || true
+  sudo launchctl bootout "user/${TARGET_UID}/${LABEL}" >/dev/null 2>&1 || true
+  sudo rm -f "$legacy_agent_plist"
+  ns_print_warn "Removed legacy LaunchAgent ${legacy_agent_plist} to avoid duplicate Colima starters."
+fi
 
 sudo launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 sudo launchctl remove "${LABEL}" >/dev/null 2>&1 || true

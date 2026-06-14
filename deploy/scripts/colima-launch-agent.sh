@@ -34,9 +34,64 @@ log() {
   printf '%s %s\n' "$(timestamp)" "$*"
 }
 
+resolve_link_target() {
+  local link_path="$1"
+  local target=""
+
+  target="$(readlink "$link_path" 2>/dev/null || true)"
+  [[ -n "$target" ]] || return 1
+  if [[ "$target" != /* ]]; then
+    target="$(cd "$(dirname "$link_path")" && pwd -P)/$target"
+  fi
+  printf '%s\n' "$target"
+}
+
+wait_for_colima_home_ready() {
+  local wait_sec="${COLIMA_HOME_WAIT_SEC:-120}"
+  local elapsed=0
+  local lima_target=""
+
+  [[ "$wait_sec" =~ ^[0-9]+$ ]] || wait_sec=120
+  [[ -n "${COLIMA_HOME:-}" ]] || return 0
+
+  while [[ "$elapsed" -lt "$wait_sec" ]]; do
+    if [[ -d "$COLIMA_HOME" && -w "$COLIMA_HOME" ]]; then
+      if [[ -L "$COLIMA_HOME/_lima" ]]; then
+        lima_target="$(resolve_link_target "$COLIMA_HOME/_lima" || true)"
+        if [[ -n "$lima_target" && -d "$lima_target" && -x "$lima_target" ]]; then
+          return 0
+        fi
+      else
+        return 0
+      fi
+    fi
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  return 1
+}
+
+apply_colima_home_fallback() {
+  local fallback_home="${COLIMA_FALLBACK_HOME:-/ai-data/var/lib/colima}"
+  [[ -n "$fallback_home" ]] || return 1
+  [[ "$fallback_home" == "$COLIMA_HOME" ]] && return 1
+  [[ -d "$fallback_home" ]] || return 1
+  [[ -w "$fallback_home" ]] || return 1
+
+  COLIMA_HOME="$fallback_home"
+  export COLIMA_HOME
+  log "Switching COLIMA_HOME fallback to '$COLIMA_HOME'"
+  return 0
+}
+
 if [[ -z "${COLIMA_BIN:-}" ]]; then
   log "ERROR: colima executable not found in PATH"
   exit 1
+fi
+
+if ! wait_for_colima_home_ready; then
+  log "WARNING: COLIMA_HOME path did not become fully ready in time (${COLIMA_HOME:-unset})"
 fi
 
 status_cmd=("$COLIMA_BIN" status)
@@ -69,10 +124,22 @@ else
     if [[ -z "${COLIMA_VM_TYPE:-}" ]]; then
       log "Default Colima start failed; retrying with qemu fallback"
       retry_cmd+=("--vm-type" "qemu")
-      "${retry_cmd[@]}"
+      if ! "${retry_cmd[@]}"; then
+        if apply_colima_home_fallback; then
+          log "Retrying Colima start with fallback COLIMA_HOME and qemu"
+          "${retry_cmd[@]}"
+        else
+          exit 1
+        fi
+      fi
     else
       log "ERROR: Colima start failed with vm-type '${COLIMA_VM_TYPE}'"
-      exit 1
+      if apply_colima_home_fallback; then
+        log "Retrying Colima start with fallback COLIMA_HOME"
+        "${start_cmd[@]}"
+      else
+        exit 1
+      fi
     fi
   fi
 fi
