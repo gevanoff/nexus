@@ -1257,20 +1257,24 @@ ns_ensure_project_env_bind_source() {
 
 ns_resolve_docker_env_file() {
   # Resolve an env file path to one that is accessible inside a Docker/Colima
-  # container bind mount context. When the physical path of the env file sits
-  # outside all Colima-mounted host directories (e.g. on an external APFS volume
-  # that Colima can see via the host filesystem but Docker cannot bind), this
-  # function writes a real copy to $COLIMA_USER_HOME/.nexus-runtime/gateway.env
-  # (which is a known local Colima mount) and returns that path instead.
+  # container bind mount context.
+  #
+  # When the path is through a directory symlink (common when the repo lives on
+  # an external APFS volume mounted under /Volumes but accessed via a logical
+  # alias path like /Users/ai/ai/nexus), realpath() returns the physical path
+  # which Docker/Colima does NOT recognise — Colima's virtiofs mount uses the
+  # logical alias path.  In that case we return the logical path as-is so
+  # Docker can resolve it through the configured mount.
+  #
+  # Only when the logical and physical paths are identical AND the physical path
+  # is not under a known Colima-mounted directory do we fall back to copying the
+  # file into a local runtime dir.
   #
   # Usage: ns_resolve_docker_env_file <env_file_path>
   # Prints: path suitable for GATEWAY_ENV_FILE
   local env_file="$1"
   local physical_path=""
   local nexus_runtime_dir=""
-
-  # Candidate local runtime dir (must be an actual Colima bind mount)
-  nexus_runtime_dir="${COLIMA_USER_HOME:-${HOME:-}}/.nexus-runtime"
 
   if [[ ! -f "$env_file" ]]; then
     printf '%s\n' "$env_file"
@@ -1279,15 +1283,17 @@ ns_resolve_docker_env_file() {
 
   physical_path="$(realpath "$env_file" 2>/dev/null || printf '%s\n' "$env_file")"
 
-  # If realpath didn't change the path, Docker can see the file via the logical
-  # path; nothing to do.
-  if [[ "$physical_path" == "$env_file" ]]; then
+  # If realpath returned a different path, the file is accessed via a directory
+  # symlink.  Return the logical path so Colima/Docker can resolve it through
+  # the virtiofs mount that uses the logical alias.
+  if [[ "$physical_path" != "$env_file" ]]; then
     printf '%s\n' "$env_file"
     return 0
   fi
 
-  # Physical path differs (path traverses a directory symlink). If the runtime
-  # dir exists and is writable, copy there for Docker bind mount use.
+  # Physical and logical paths are the same.  Check if the path is outside any
+  # Colima-mounted directory by looking for a writable local runtime dir.
+  nexus_runtime_dir="${COLIMA_USER_HOME:-${HOME:-}}/.nexus-runtime"
   if [[ -d "$nexus_runtime_dir" && -w "$nexus_runtime_dir" ]]; then
     local dest="${nexus_runtime_dir}/gateway.env"
     cp "$env_file" "$dest"
@@ -1296,8 +1302,8 @@ ns_resolve_docker_env_file() {
     return 0
   fi
 
-  # Fallback: return the physical path (original behaviour)
-  printf '%s\n' "$physical_path"
+  # Last resort: return the physical/logical path as-is
+  printf '%s\n' "$env_file"
 }
 
 ns_colima_path_visible() {
