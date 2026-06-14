@@ -60,6 +60,12 @@
 - On hosts `ai2` and `ai3`, always use `docker-compose` (hyphenated) in commands.
 - Do not use `docker compose` for those hosts.
 
+## Agent shell policy (Nexus)
+- For Nexus operational work, use WSL/Linux shell execution paths first.
+- Avoid raw PowerShell command composition for repo/host operations because quoting/escaping drift causes repeated failures and noisy retries.
+- Preferred pattern: invoke checked-in `.sh` helpers via `wsl -d Ubuntu-20.04 bash -lc 'bash /mnt/c/.../script.sh'`.
+- If an ad-hoc probe is required, put it in a temporary `.sh` file and run it via WSL rather than embedding complex nested quotes in PowerShell.
+
 ## Operational references
 - Primary docs/scripts: `nexus/deploy/`, `nexus/docs/`, top-level compose files.
 - Gateway implementation reference: `gateway/app/` and `gateway/tests/`.
