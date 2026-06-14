@@ -17,6 +17,7 @@ VM_TYPE=""
 START_INTERVAL="60"
 WAIT_TIMEOUT="75"
 NO_WAIT="false"
+NO_DEFAULT_MOUNTS="false"
 SANITIZED_PROFILE="default"
 TARGET_USER=""
 TARGET_HOME=""
@@ -30,7 +31,7 @@ declare -a EXTRA_MOUNTS=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--wait-timeout SEC] [--no-wait] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL] [--mount PATH[:MODE]]
+Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--wait-timeout SEC] [--no-wait] [--no-default-mounts] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL] [--mount PATH[:MODE]]
 
 Install/reload a macOS LaunchDaemon that starts Colima at boot and runs it
 under the selected unprivileged user account.
@@ -41,6 +42,7 @@ Options:
   --start-interval SEC  Relaunch check interval in seconds (default: 60)
   --wait-timeout SEC    Seconds to wait for Docker readiness after install (default: 75)
   --no-wait             Skip Docker readiness wait and return after launchd reload
+  --no-default-mounts   Do not add implicit repo/runtime mounts; only use explicit --mount values
   --user USER           User account that should own/run Colima (default: current user)
   --home PATH           Home directory for the selected user (default: detected from dscl/$HOME)
   --colima-home PATH    Colima state root to export as COLIMA_HOME (default: existing COLIMA_HOME)
@@ -182,6 +184,10 @@ while [[ $# -gt 0 ]]; do
       NO_WAIT="true"
       shift
       ;;
+    --no-default-mounts)
+      NO_DEFAULT_MOUNTS="true"
+      shift
+      ;;
     --user)
       TARGET_USER="${2:-}"
       shift 2
@@ -248,10 +254,12 @@ if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
   TARGET_COLIMA_USER_HOME="$TARGET_HOME"
 fi
 
-resolved_runtime_root="$(ns_runtime_root "$ROOT_DIR")"
-append_mount_spec "$ROOT_DIR:w"
-if [[ -n "${resolved_runtime_root:-}" && -e "$resolved_runtime_root" ]]; then
-  append_mount_spec "$resolved_runtime_root:w"
+if [[ "$NO_DEFAULT_MOUNTS" != "true" ]]; then
+  resolved_runtime_root="$(ns_runtime_root "$ROOT_DIR")"
+  append_mount_spec "$ROOT_DIR:w"
+  if [[ -n "${resolved_runtime_root:-}" && -e "$resolved_runtime_root" ]]; then
+    append_mount_spec "$resolved_runtime_root:w"
+  fi
 fi
 
 normalized_mounts=()
