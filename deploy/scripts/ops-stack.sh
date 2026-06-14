@@ -127,6 +127,19 @@ fi
 ns_print_header "Nexus Ops: update + restart + verify"
 
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
+# If the selected env file (or root .env) is a symlink, copy its content to a
+# real file under the repo root so Docker/Colima bind mounts always see a path
+# within the repo tree rather than a resolved external-volume target.
+_resolved_env_file="$(realpath "$ENV_FILE")"
+if [[ -L "$ENV_FILE" || "$_resolved_env_file" != "$ENV_FILE" ]]; then
+  _local_env_copy="$ROOT_DIR/.env"
+  if [[ "$_resolved_env_file" != "$_local_env_copy" ]]; then
+    cp "$_resolved_env_file" "$_local_env_copy"
+    chmod 600 "$_local_env_copy" 2>/dev/null || true
+    ns_print_warn "Copied resolved env from ${_resolved_env_file} → ${_local_env_copy} for Docker bind compatibility."
+  fi
+  ENV_FILE="$_local_env_copy"
+fi
 export GATEWAY_ENV_FILE
 GATEWAY_ENV_FILE="$(realpath "$ENV_FILE")"
 
