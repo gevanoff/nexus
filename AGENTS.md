@@ -5,9 +5,8 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 
 ## Shell And Repo Work
 
-- Do all Nexus repo inspection, edits, greps, tests, git operations, commits,
-  pushes, and deploys from WSL/Linux shell. Do not use PowerShell for repository
-  work.
+- Do all Nexus repo inspection, edits, greps, tests, and git operations from the
+  local WSL/Linux checkout. Do not use PowerShell for repository work.
 - From Windows Codex sessions, use this pattern:
 
   ```bash
@@ -37,6 +36,8 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 
 - Start by checking `git status --short`. Preserve user changes and avoid
   unrelated refactors.
+- Manage git operations locally in the WSL checkout. Do not run git operations
+  from remote Nexus hosts unless the user explicitly asks.
 - Keep patches minimal and inspectable.
 - Run the relevant tests or validators before committing. For gateway/model
   config changes, at minimum validate JSON/YAML that was touched and run the
@@ -45,10 +46,10 @@ state before acting on operational notes; Nexus hosts and model routes can chang
   commit. Use `chmod +x <path>` where the filesystem supports it, and on Windows
   drvfs use `git update-index --chmod=+x <path>` if needed. Verify with
   `git diff --summary` or `git ls-files --stage <path>`.
-- For changes intended to affect the live Nexus deployment, aim to complete the
-  loop: implement, test, commit, push, deploy, and verify live behavior. If any
-  credential, host, or deployment prerequisite is missing, report the exact
-  blocker and the next concrete command or action.
+- Commit local repo changes when the task calls for a durable checkpoint. Push
+  and deploy only when explicitly requested or when the task clearly requires a
+  live deployment. If any credential, host, or deployment prerequisite is
+  missing, report the exact blocker and the next concrete command or action.
 
 ## OpenAI-Compatible Gateway And Continue
 
