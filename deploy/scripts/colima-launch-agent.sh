@@ -17,6 +17,7 @@ COLIMA_VM_TYPE="${COLIMA_VM_TYPE:-}"
 COLIMA_USER_HOME="${COLIMA_USER_HOME:-${HOME:-}}"
 COLIMA_HOME="${COLIMA_HOME:-}"
 COLIMA_MOUNTS="${COLIMA_MOUNTS:-}"
+REPO_DIR="${REPO_DIR:-${HOME}/ai/nexus}"
 if [[ -n "${COLIMA_HOME:-}" ]]; then
   export COLIMA_HOME
 fi
@@ -146,6 +147,47 @@ fi
 
 if [[ -n "${DOCKER_BIN:-}" ]]; then
   "$DOCKER_BIN" context use colima >/dev/null 2>&1 || true
+fi
+
+restore_ai2_services_if_needed() {
+  local gateway_ok="false"
+  local tts_ok="false"
+  local luxtts_ok="false"
+  local qwen_ok="false"
+
+  if curl -fsS --max-time 3 "http://127.0.0.1:8801/health" >/dev/null 2>&1; then
+    gateway_ok="true"
+  fi
+  if curl -fsS --max-time 3 "http://127.0.0.1:9940/health" >/dev/null 2>&1; then
+    tts_ok="true"
+  fi
+  if curl -fsS --max-time 3 "http://127.0.0.1:9170/health" >/dev/null 2>&1; then
+    luxtts_ok="true"
+  fi
+  if curl -fsS --max-time 3 "http://127.0.0.1:9175/health" >/dev/null 2>&1; then
+    qwen_ok="true"
+  fi
+
+  if [[ "$gateway_ok" == "true" && "$tts_ok" == "true" && "$luxtts_ok" == "true" && "$qwen_ok" == "true" ]]; then
+    return 0
+  fi
+
+  if [[ ! -x "${REPO_DIR}/deploy/scripts/restart-ai2-services.sh" ]]; then
+    log "WARNING: ai2 service restore helper not found at ${REPO_DIR}/deploy/scripts/restart-ai2-services.sh"
+    return 1
+  fi
+
+  log "Restoring ai2 services because one or more endpoints are down: gateway=${gateway_ok} tts=${tts_ok} luxtts=${luxtts_ok} qwen3-tts=${qwen_ok}"
+  if ! "${REPO_DIR}/deploy/scripts/restart-ai2-services.sh" --env-file "${COLIMA_USER_HOME:-${HOME:-}}/ai/nexus/.env"; then
+    log "ERROR: ai2 service restore failed"
+    return 1
+  fi
+
+  return 0
+}
+
+if [[ "${COLIMA_PROFILE:-default}" == "default" ]]; then
+  restore_ai2_services_if_needed || true
 fi
 
 log "Colima launchd check completed"
