@@ -1325,6 +1325,8 @@ ns_resolve_docker_bind_path() {
   local physical_path=""
   local docker_context=""
   local mount_hint=""
+  local volume_name=""
+  local volume_mount_root=""
 
   if [[ ! -e "$bind_path" ]]; then
     printf '%s\n' "$bind_path"
@@ -1340,6 +1342,17 @@ ns_resolve_docker_bind_path() {
 
   if [[ "$docker_context" == "colima" ]] && ns_have_cmd colima; then
     if [[ "$physical_path" != "$logical_path" ]]; then
+      case "$physical_path" in
+        /Volumes/*/*)
+          volume_name="${physical_path#/Volumes/}"
+          volume_name="${volume_name%%/*}"
+          volume_mount_root="/Volumes/${volume_name}"
+          if ! ns_colima_mountpoint_mounted "$volume_mount_root"; then
+            ns_try_auto_fix_colima_bind_source "$volume_mount_root" >/dev/null 2>&1 || true
+          fi
+          ;;
+      esac
+
       if ! ns_colima_path_visible "$physical_path"; then
         mount_hint="$physical_path"
         [[ -f "$mount_hint" ]] && mount_hint="$(dirname "$mount_hint")"
@@ -1370,6 +1383,13 @@ ns_colima_path_visible() {
   local check_path="$1"
   [[ -n "${check_path:-}" ]] || return 1
   colima ssh -- test -e "$check_path" >/dev/null 2>&1
+}
+
+ns_colima_mountpoint_mounted() {
+  # Usage: ns_colima_mountpoint_mounted <mountpoint>
+  local mount_path="$1"
+  [[ -n "${mount_path:-}" ]] || return 1
+  colima ssh -- mount 2>/dev/null | grep -F " on ${mount_path} " >/dev/null 2>&1
 }
 
 ns_try_auto_fix_colima_bind_source() {
