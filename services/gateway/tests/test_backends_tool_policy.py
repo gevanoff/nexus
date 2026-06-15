@@ -76,6 +76,7 @@ def test_env_base_url_override_keeps_static_proxy_url_for_etcd_record(monkeypatc
 
     assert registry.get_backend("local_vllm_fast").base_url == "http://host.docker.internal:18001/v1"
     assert registry.service_records["vllm-fast"].base_url == "http://host.docker.internal:18001/v1"
+    assert registry.service_records["vllm-fast"].metadata_url == "http://host.docker.internal:18001/v1/metadata"
     assert registry.service_records["vllm-fast"].hostname == "ai1"
 
 

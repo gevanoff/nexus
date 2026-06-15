@@ -348,7 +348,7 @@ def _build_seed_records(registry: BackendRegistry) -> Dict[str, ServiceRecord]:
         seeded[service_name] = ServiceRecord(
             name=service_name,
             base_url=base_url,
-            metadata_url=f"{base_url.rstrip('/')}/v1/metadata",
+            metadata_url=_metadata_url_for_base(base_url),
             backend_class=backend_class,
             hostname="",
             source="env",
@@ -385,7 +385,7 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
                 record = replace(
                     record,
                     base_url=static_base_url,
-                    metadata_url=f"{static_base_url.rstrip('/')}/v1/metadata",
+                    metadata_url=_metadata_url_for_base(static_base_url),
                     source="etcd+env_base_url",
                 )
         backend_key = backend_class if record_name in {"", canonical_service_name, _normalize_backend_name(backend_class)} else record_name
@@ -412,6 +412,13 @@ def _env_base_url_override_classes(registry: BackendRegistry) -> set[str]:
         if backend_class:
             out.add(backend_class)
     return out
+
+
+def _metadata_url_for_base(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/metadata"
+    return f"{base}/v1/metadata"
 
 
 async def refresh_registry_from_etcd() -> None:
