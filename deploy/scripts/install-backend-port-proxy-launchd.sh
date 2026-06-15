@@ -15,7 +15,7 @@ fi
 TARGET_USER=""
 TARGET_HOME=""
 RUNTIME_ROOT="${NEXUS_BACKEND_PROXY_RUNTIME_ROOT:-/ai-data/var/lib/nexus-backend-proxy}"
-LAUNCHD_ROOT="${NEXUS_BACKEND_PROXY_LAUNCHD_ROOT:-/usr/local/libexec/nexus-backend-proxy}"
+LAUNCHD_ROOT="${NEXUS_BACKEND_PROXY_LAUNCHD_ROOT:-/usr/local/nexus-backend-proxy}"
 LOG_DIR="${NEXUS_BACKEND_PROXY_LOG_DIR:-/var/log/nexus-backend-proxy}"
 LABEL="${NEXUS_BACKEND_PROXY_LAUNCHD_LABEL:-com.nexus.backend-port-proxy}"
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -35,7 +35,7 @@ Options:
   --user USER             User account that should run the proxy
   --home PATH             Home directory for that user
   --runtime-root PATH     Runtime root (default: /ai-data/var/lib/nexus-backend-proxy)
-  --launchd-root PATH     Root-owned launchd asset root (default: /usr/local/libexec/nexus-backend-proxy)
+  --launchd-root PATH     Root-owned launchd asset root (default: /usr/local/nexus-backend-proxy)
   --log-dir PATH          launchd stdout/stderr directory (default: /var/log/nexus-backend-proxy)
   --label LABEL           launchd label (default: com.nexus.backend-port-proxy)
   --python PATH           Python interpreter (default: command -v python3)
