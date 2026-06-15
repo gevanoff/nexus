@@ -105,6 +105,22 @@ def test_copyfail_is_infra_only_topology_host() -> None:
         assert backend.get("host") != "copyfail"
 
 
+def test_ai2_lifecycle_uses_host_side_ssh_proxies_for_remote_hosts() -> None:
+    lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
+    installer = _read("deploy/scripts/install-backend-port-proxy-launchd.sh")
+    expected_ports = {
+        "ai1": 19022,
+        "ada2": 19023,
+        "meltdown": 19024,
+        "copyfail": 19025,
+    }
+
+    for host, port in expected_ports.items():
+        assert lifecycle["hosts"][host]["ssh_connect_target"] == "ai@host.docker.internal"
+        assert lifecycle["hosts"][host]["ssh_port"] == port
+        assert f"ssh-{host}=127.0.0.1:{port}={host}:22" in installer
+
+
 def test_copyfail_ansible_host_vars_skip_model_runtime_install() -> None:
     host_vars = _read("ansible/inventory/host_vars/copyfail.yml")
     preflight_role = _read("ansible/roles/nexus_preflight/tasks/main.yml")

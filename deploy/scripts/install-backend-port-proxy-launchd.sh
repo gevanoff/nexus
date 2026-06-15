@@ -47,6 +47,10 @@ Default forwards:
   vllm-fast=127.0.0.1:18001=ai1:8001
   vllm-embeddings=127.0.0.1:18002=meltdown:8002
   vllm=127.0.0.1:18003=ada2:8003
+  ssh-ai1=127.0.0.1:19022=ai1:22
+  ssh-ada2=127.0.0.1:19023=ada2:22
+  ssh-meltdown=127.0.0.1:19024=meltdown:22
+  ssh-copyfail=127.0.0.1:19025=copyfail:22
 EOF
 }
 
@@ -132,6 +136,10 @@ if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
     "vllm-fast=127.0.0.1:18001=ai1:8001"
     "vllm-embeddings=127.0.0.1:18002=meltdown:8002"
     "vllm=127.0.0.1:18003=ada2:8003"
+    "ssh-ai1=127.0.0.1:19022=ai1:22"
+    "ssh-ada2=127.0.0.1:19023=ada2:22"
+    "ssh-meltdown=127.0.0.1:19024=meltdown:22"
+    "ssh-copyfail=127.0.0.1:19025=copyfail:22"
   )
   if [[ ${#FORWARDS[@]} -gt 0 ]]; then
     FORWARDS=("${DEFAULT_FORWARDS[@]}" "${FORWARDS[@]}")

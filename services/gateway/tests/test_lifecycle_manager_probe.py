@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _load_lifecycle_main():
@@ -40,3 +42,33 @@ def test_component_container_match_allows_compose_suffixes() -> None:
         "nexus-gateway-registrar-1",
         "nexus-gateway",
     )
+
+
+def test_ssh_probe_uses_configured_connect_target_and_port(monkeypatch) -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    manager.ssh_identity_file = ""
+    host = module.HostPolicy(
+        name="ai1",
+        ssh_target="ai@ai1",
+        ssh_connect_target="ai@host.docker.internal",
+        ssh_port=19022,
+        repo_dir="",
+        env_file="",
+        platform="linux",
+        resource_kind="linux_nvidia",
+    )
+    calls = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    assert asyncio.run(manager._ssh(host, "hostname")) == "ok"
+
+    args = calls[0]
+    assert args[args.index("-p") + 1] == "19022"
+    assert "ai@host.docker.internal" in args
+    assert "ai@ai1" not in args

@@ -37,6 +37,8 @@
   "hosts": {
     "ai1": {
       "resource_kind": "linux_nvidia",
+      "ssh_connect_target": "ai@host.docker.internal",
+      "ssh_port": 19022,
       "env_file": "deploy/env/.env.prod.ai1"
     },
     "ai2": {
@@ -46,14 +48,20 @@
     },
     "ada2": {
       "resource_kind": "linux_nvidia",
+      "ssh_connect_target": "ai@host.docker.internal",
+      "ssh_port": 19023,
       "env_file": "deploy/env/.env.prod.ada2"
     },
     "meltdown": {
       "resource_kind": "linux_nvidia",
+      "ssh_connect_target": "ai@host.docker.internal",
+      "ssh_port": 19024,
       "env_file": "deploy/env/.env.prod.meltdown"
     },
     "copyfail": {
       "resource_kind": "linux_infra",
+      "ssh_connect_target": "ai@host.docker.internal",
+      "ssh_port": 19025,
       "env_file": "deploy/env/.env.prod.copyfail"
     }
   },

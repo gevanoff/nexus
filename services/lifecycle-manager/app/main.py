@@ -96,6 +96,8 @@ def _read_json(path: Path) -> Dict[str, Any]:
 class HostPolicy:
     name: str
     ssh_target: str
+    ssh_connect_target: str
+    ssh_port: int
     repo_dir: str
     env_file: str
     platform: str
@@ -286,6 +288,10 @@ class LifecycleManager:
             hosts[name] = HostPolicy(
                 name=name,
                 ssh_target=str(host_policy.get("ssh_target") or topo.get("ssh_target") or name).strip(),
+                ssh_connect_target=str(
+                    host_policy.get("ssh_connect_target") or topo.get("ssh_connect_target") or ""
+                ).strip(),
+                ssh_port=_int_value(host_policy.get("ssh_port") or topo.get("ssh_port"), 0),
                 repo_dir=repo_dir,
                 env_file=env_file,
                 platform=platform,
@@ -299,6 +305,8 @@ class LifecycleManager:
             hosts[name] = HostPolicy(
                 name=name,
                 ssh_target=str(host_policy.get("ssh_target") or name).strip(),
+                ssh_connect_target=str(host_policy.get("ssh_connect_target") or "").strip(),
+                ssh_port=_int_value(host_policy.get("ssh_port"), 0),
                 repo_dir=str(host_policy.get("repo_dir") or repo_by_platform.get(platform) or "").strip(),
                 env_file=str(host_policy.get("env_file") or f"deploy/env/.env.prod.{name}").strip(),
                 platform=platform,
@@ -1841,7 +1849,9 @@ class LifecycleManager:
         ]
         if self.ssh_identity_file and Path(self.ssh_identity_file).expanduser().is_file():
             ssh_args.extend(["-i", self.ssh_identity_file])
-        ssh_args.extend([host.ssh_target, remote_command])
+        if host.ssh_port > 0:
+            ssh_args.extend(["-p", str(host.ssh_port)])
+        ssh_args.extend([host.ssh_connect_target or host.ssh_target, remote_command])
         proc = await asyncio.to_thread(
             subprocess.run,
             ssh_args,
@@ -2241,6 +2251,8 @@ class LifecycleManager:
                 {
                     "name": host.name,
                     "ssh_target": host.ssh_target,
+                    "ssh_connect_target": host.ssh_connect_target,
+                    "ssh_port": host.ssh_port,
                     "platform": host.platform,
                     "resource_kind": host.resource_kind,
                     "error": host.error,
