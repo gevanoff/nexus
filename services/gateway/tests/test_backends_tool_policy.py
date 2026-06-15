@@ -69,5 +69,7 @@ def test_production_topology_enables_vllm_chat_tool_flags():
     assert env["VLLM_TOOL_CALL_PARSER"] == "mistral"
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == "mistral"
     assert "vllm-fast" in topology["hosts"]["ai1"]["components"]
+    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER"] == env["VLLM_MODEL_FAST"]
+    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "auto"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
