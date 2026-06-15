@@ -65,7 +65,7 @@ Compatibility note:
 vLLM native tool calling is enabled for the production chat lanes:
 
 - strong lane (`ada2`): `VLLM_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_TOOL_CALL_PARSER=mistral`, and `VLLM_NATIVE_TOOLS_ENABLED=true`
-- fast lane (`ai1`): `VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_FAST_TOOL_CALL_PARSER=mistral`, and `VLLM_FAST_NATIVE_TOOLS_ENABLED=true`
+- fast lane (`ai1`): native tool parsing is disabled. vLLM 0.10.2 cannot use the served Devstral tokenizer on this lane, and the stable Qwen tokenizer override is incompatible with the `mistral` tool parser. Gateway should degrade tool-shaped fast-lane requests instead of passing tool fields to this backend.
 
 The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` tool requests may be passed to a backend that is not actually running with `--enable-auto-tool-choice`.
 

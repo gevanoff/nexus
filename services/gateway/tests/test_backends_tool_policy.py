@@ -57,19 +57,18 @@ def test_vllm_native_tool_flags_default_disabled_in_minimal_registry(monkeypatch
     assert registry.get_backend("local_vllm_fast").payload_policy["supports_tool_calling"] is False
 
 
-def test_production_topology_enables_vllm_chat_tool_flags():
+def test_production_topology_sets_vllm_tool_flags_by_validated_lane():
     repo_root = Path(__file__).resolve().parents[3]
     topology = json.loads((repo_root / "deploy" / "topology" / "production.json").read_text(encoding="utf-8"))
     env = topology["defaults"]["env"]
 
     assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "true"
-    assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "true"
+    assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "false"
     assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "true"
-    assert env["VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE"] == "true"
+    assert env["VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE"] == "false"
     assert env["VLLM_TOOL_CALL_PARSER"] == "mistral"
-    assert env["VLLM_FAST_TOOL_CALL_PARSER"] == "mistral"
+    assert env["VLLM_FAST_TOOL_CALL_PARSER"] == ""
     assert "vllm-fast" in topology["hosts"]["ai1"]["components"]
-    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER"] == env["VLLM_MODEL_FAST"]
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "auto"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
