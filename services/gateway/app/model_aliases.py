@@ -53,8 +53,8 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "long": ModelAlias(
             backend=default_backend,
             upstream_model=default_strong_model,
-            context_window=S.ROUTER_LONG_CONTEXT_CHARS,
-            tools=False,
+            context_window=65_536,
+            tools=True,
         ),
     }
 

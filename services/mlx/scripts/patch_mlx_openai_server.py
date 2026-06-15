@@ -10,6 +10,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 
 HELPER_BEFORE = """        logger.info(f"Initialized MLXHandler with model path: {model_path}")
@@ -139,6 +140,56 @@ NONTRIMMABLE_GUARDS = [
     ),
 ]
 
+GLM_TOOL_BEFORE = """        tool_calls = []
+        for match in matches:
+            tc_detail = self.func_detail_regex.search(match)
+            tc_name = tc_detail.group(1)
+            tc_args = tc_detail.group(2)
+            pairs = self.func_arg_regex.findall(tc_args)
+            arg_dct = {}
+            for key, value in pairs:
+                arg_key = key.strip()
+                arg_value = value.strip()
+                arg_dct[arg_key] = arg_value
+            tool_calls.append(
+                {"name": tc_name.strip(), "arguments": json.dumps(arg_dct, ensure_ascii=False)}
+            )
+        return {"tool_calls": tool_calls}
+"""
+
+GLM_TOOL_AFTER = """        tool_calls = []
+        malformed_blocks = []
+        for match in matches:
+            tc_detail = self.func_detail_regex.search(match)
+            if tc_detail is None:
+                malformed_blocks.append(match)
+                continue
+            tc_name = tc_detail.group(1)
+            tc_args = tc_detail.group(2) or ""
+            pairs = self.func_arg_regex.findall(tc_args)
+            arg_dct = {}
+            for key, value in pairs:
+                arg_key = key.strip()
+                arg_value = value.strip()
+                arg_dct[arg_key] = arg_value
+            tool_calls.append(
+                {"name": tc_name.strip(), "arguments": json.dumps(arg_dct, ensure_ascii=False)}
+            )
+        if malformed_blocks or not tool_calls:
+            return {"content": model_output}
+        return {"tool_calls": tool_calls}
+"""
+
+KIMI_TOOL_BEFORE = """                name_match = self.tool_name_regex.search(header)
+                name = name_match.group(1)
+"""
+
+KIMI_TOOL_AFTER = """                name_match = self.tool_name_regex.search(header)
+                if name_match is None:
+                    continue
+                name = name_match.group(1)
+"""
+
 
 class PatchError(RuntimeError):
     """Raised when the installed package is not compatible with this patch."""
@@ -187,17 +238,67 @@ def _patch_text(text: str) -> tuple[str, list[str]]:
     return text, changes
 
 
-def _find_handler_path(venv: Path | None) -> Path:
+def _patch_glm4_moe_text(text: str) -> tuple[str, list[str]]:
+    text, changed = _replace_once(
+        text,
+        GLM_TOOL_BEFORE,
+        GLM_TOOL_AFTER,
+        "defensive GLM/MiniMax tool parser",
+    )
+    return text, ["defensive GLM/MiniMax tool parser"] if changed else []
+
+
+def _patch_kimi_k2_text(text: str) -> tuple[str, list[str]]:
+    text, changed = _replace_once(
+        text,
+        KIMI_TOOL_BEFORE,
+        KIMI_TOOL_AFTER,
+        "defensive Kimi K2 tool parser",
+    )
+    return text, ["defensive Kimi K2 tool parser"] if changed else []
+
+
+def _find_package_path(venv: Path | None, relative_path: str, import_name: str) -> Path:
     if venv is not None:
-        matches = sorted(venv.glob("lib/python*/site-packages/app/handler/mlx_lm.py"))
+        matches = sorted(venv.glob(f"lib/python*/site-packages/{relative_path}"))
         if matches:
             return matches[-1]
-        raise PatchError(f"could not find app/handler/mlx_lm.py under venv: {venv}")
+        raise PatchError(f"could not find {relative_path} under venv: {venv}")
 
-    spec = importlib.util.find_spec("app.handler.mlx_lm")
+    spec = importlib.util.find_spec(import_name)
     if spec is None or spec.origin is None:
-        raise PatchError("could not import-locate app.handler.mlx_lm")
+        raise PatchError(f"could not import-locate {import_name}")
     return Path(spec.origin)
+
+
+def _find_handler_path(venv: Path | None) -> Path:
+    return _find_package_path(venv, "app/handler/mlx_lm.py", "app.handler.mlx_lm")
+
+
+def _patch_file(
+    target: Path,
+    patcher: Callable[[str], tuple[str, list[str]]],
+    *,
+    backup_label: str,
+    dry_run: bool,
+) -> list[str]:
+    source = target.read_text(encoding="utf-8")
+    patched, changes = patcher(source)
+    if not changes:
+        return []
+
+    compile(patched, str(target), "exec")
+    if dry_run:
+        return changes
+
+    backup = target.with_name(f"{target.name}.bak-nexus-{backup_label}-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.copy2(target, backup)
+    target.write_text(patched, encoding="utf-8")
+    py_compile.compile(str(target), doraise=True)
+    print(f"patched mlx-openai-server file: {target}")
+    print(f"backup: {backup}")
+    print("changes: " + ", ".join(changes))
+    return changes
 
 
 def main() -> int:
@@ -209,26 +310,41 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="validate without writing")
     args = parser.parse_args()
 
-    target = args.target or _find_handler_path(args.venv)
-    source = target.read_text(encoding="utf-8")
-    patched, changes = _patch_text(source)
+    patches: list[tuple[Path, Callable[[str], tuple[str, list[str]]], str]] = [
+        (args.target or _find_handler_path(args.venv), _patch_text, "deepseek-thread"),
+    ]
+    if args.target is None:
+        patches.extend(
+            [
+                (
+                    _find_package_path(args.venv, "app/parsers/glm4_moe.py", "app.parsers.glm4_moe"),
+                    _patch_glm4_moe_text,
+                    "tool-parser",
+                ),
+                (
+                    _find_package_path(args.venv, "app/parsers/kimi_k2.py", "app.parsers.kimi_k2"),
+                    _patch_kimi_k2_text,
+                    "tool-parser",
+                ),
+            ]
+        )
 
-    if not changes:
-        print(f"mlx-openai-server patch already present: {target}")
+    all_changes: list[str] = []
+    for target, patcher, backup_label in patches:
+        changes = _patch_file(target, patcher, backup_label=backup_label, dry_run=args.dry_run)
+        if changes:
+            all_changes.extend(f"{target}: {change}" for change in changes)
+
+    if not all_changes:
+        print("mlx-openai-server patches already present")
         return 0
 
     if args.dry_run:
-        print(f"mlx-openai-server patch would update {target}: {', '.join(changes)}")
+        print("mlx-openai-server patch would update:")
+        for change in all_changes:
+            print(f"  - {change}")
         return 0
 
-    compile(patched, str(target), "exec")
-    backup = target.with_name(f"{target.name}.bak-nexus-deepseek-thread-{time.strftime('%Y%m%d-%H%M%S')}")
-    shutil.copy2(target, backup)
-    target.write_text(patched, encoding="utf-8")
-    py_compile.compile(str(target), doraise=True)
-    print(f"patched mlx-openai-server handler: {target}")
-    print(f"backup: {backup}")
-    print("changes: " + ", ".join(changes))
     return 0
 
 

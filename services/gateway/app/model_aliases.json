@@ -31,7 +31,7 @@
       "backend": "local_mlx",
       "model": "mlx-community/MiniMax-M2.5-8bit",
       "context_window": 65536,
-      "tools": false
+      "tools": true
     },
     "embeddings": {
       "backend": "local_mlx",
