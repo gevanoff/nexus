@@ -1,0 +1,72 @@
+# Copilot instructions (nexus)
+
+## Repo role and relationships
+- `nexus/` is the primary operations repo and the current source of truth for compose/deploy/runtime workflows.
+- Treat Nexus as the operational aggregation point for:
+  - Gateway behavior and contracts (implemented in `gateway/`).
+  - Infra/deploy assumptions historically captured in `ai-infra/`.
+- If a change affects runtime operations, prefer implementing/updating it in `nexus/` docs/scripts first.
+
+## Scope boundaries
+- The development host is never used as a deployment host.
+- Development-host helper scripts may exist, but are not the default production/test deploy path.
+- Keep changes minimal and rooted in real deploy/runtime needs.
+
+## Migration-first backend policy
+- Nexus is the destination architecture for services previously run under `ai-infra/`.
+- When a backend exists in `ai-infra/` but is missing in Nexus, do **not** recommend running the legacy `ai-infra` service as the steady-state solution.
+- Instead, begin porting that backend into Nexus (service directory, container image, compose component, env/docs/diagnostics updates) and treat any legacy usage as temporary migration context only.
+
+## Commit and distribution policy
+- If code updates require user changes on test/production hosts, the standard completion path is commit, push to `origin`, and deploy the intended branch with the repository deployment path when it is safe and within scope.
+- If you would otherwise mention that changes have not yet been committed and pushed, commit and push them instead whenever it is safe and within the user's requested scope.
+- If the user's request is operational and the repository already provides a standard deploy path, use it instead of stopping at code changes or workflow edits alone unless the user explicitly limits the task.
+- Do not stop at recommendations when practical code/docs updates can be completed safely.
+
+## Cross-platform script guidance (Linux + macOS)
+- For scripts intended to run on Linux and macOS, write with both in mind.
+- Detect OS (`uname`/platform checks) and auto-select compatible behavior.
+- Avoid GNU-only assumptions unless guarded by OS checks; include BSD/macOS-safe alternatives.
+- Prefer portable shell patterns and fail clearly when prerequisites are missing.
+- Any script that operators/users are expected to run directly must be executable (`chmod +x`) and committed with the executable bit set.
+
+## Reuse and consistency rules
+- Before modifying code, search for existing similar implementations in-repo and follow established patterns.
+- When fixing one repeated pattern, apply the same fix across equivalent call sites where appropriate.
+- Add explicit maintenance markers when needed to link related logic blocks, using a structured tag like `SYNC-CHECK(<topic>)`.
+- When shared logic is repeated, prefer extracting helpers/libraries to reduce drift.
+
+## UI numeric scale standardization
+- For backend numeric tunables that are not already standardized across providers, keep the UI-facing scale standardized and translate in gateway/backend adapters.
+- Prefer a normalized UI scale (for example `1-10`, or `0-9` where required by UX) and map to backend-native ranges server-side.
+- Preserve backward compatibility for existing API callers where practical.
+- Apply this consistently across all relevant tunables (not only speed).
+
+## Security and hardening
+- After code changes, perform a quick security pass for obvious risks (unsafe shell execution, path traversal, secret leakage, missing input validation, insecure defaults).
+- Apply basic hardening fixes within scope before handing off.
+
+## Response/hand-off expectations
+- Provide next practical steps after updates.
+- If commands are needed, provide one-liners where possible.
+- If one line is not possible, provide one command per code block.
+
+## Command formatting default
+- When presenting shell/terminal commands to users, always place commands inside fenced code blocks by default.
+- Do not provide runnable commands as plain prose lines.
+- Prefer one command per code block for clarity unless the user explicitly asks for grouped multi-line blocks.
+
+## Compose CLI on ai2/ai3
+- On hosts `ai2` and `ai3`, always use `docker-compose` (hyphenated) in commands.
+- Do not use `docker compose` for those hosts.
+
+## Agent shell policy (Nexus)
+- For Nexus operational work, use WSL/Linux shell execution paths first.
+- Avoid raw PowerShell command composition for repo/host operations because quoting/escaping drift causes repeated failures and noisy retries.
+- Preferred pattern: invoke checked-in `.sh` helpers via `wsl -d Ubuntu-20.04 bash -lc 'bash /mnt/c/.../script.sh'`.
+- If an ad-hoc probe is required, put it in a temporary `.sh` file and run it via WSL rather than embedding complex nested quotes in PowerShell.
+
+## Operational references
+- Primary docs/scripts: `nexus/deploy/`, `nexus/docs/`, top-level compose files.
+- Gateway implementation reference: `gateway/app/` and `gateway/tests/`.
+- Historical infra reference: `ai-infra/services/` (especially gateway runtime docs).

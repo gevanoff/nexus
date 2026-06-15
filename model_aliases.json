@@ -1,0 +1,41 @@
+{
+  "aliases": {
+    "fast": {
+      "backend": "local_vllm_fast",
+      "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
+      "tools": true
+    },
+    "default": {
+      "backend": "local_vllm",
+      "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+      "tools": true
+    },
+    "mlx": {
+      "backend": "local_mlx",
+      "model": "mlx-community/MiniMax-M2.5-8bit",
+      "tools": true
+    },
+    "coder": {
+      "backend": "local_vllm",
+      "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+      "tools": true
+    },
+    "reasoning": {
+      "backend": "local_vllm",
+      "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+      "tools": true,
+      "max_tokens_cap": 2048
+    },
+    "long": {
+      "backend": "local_mlx",
+      "model": "mlx-community/MiniMax-M2.5-8bit",
+      "context_window": 65536,
+      "tools": false
+    },
+    "embeddings": {
+      "backend": "local_mlx",
+      "model": "mlx-community/bge-small-en-v1.5-8bit",
+      "tools": false
+    }
+  }
+}
