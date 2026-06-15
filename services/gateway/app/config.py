@@ -227,6 +227,7 @@ class Settings(BaseSettings):
     ETCD_PREFIX: str = "/nexus/services/"
     ETCD_POLL_INTERVAL: float = 15.0
     ETCD_SEED_FROM_ENV: bool = True
+    BACKEND_ENV_BASE_URL_OVERRIDES: str = ""
     ETCD_TIMEOUT_SEC: float = 5.0
 
     # vLLM-backed lightweight/utility models, typically hosted on Linux/NVIDIA

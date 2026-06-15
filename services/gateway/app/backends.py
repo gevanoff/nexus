@@ -359,6 +359,7 @@ def _build_seed_records(registry: BackendRegistry) -> Dict[str, ServiceRecord]:
 def _apply_service_records(registry: BackendRegistry, service_records: Dict[str, ServiceRecord]) -> None:
     effective = dict(registry.static_backends)
     bound_records: Dict[str, ServiceRecord] = {}
+    env_base_url_overrides = _env_base_url_override_classes(registry)
     for record in service_records.values():
         explicit_backend_class = _normalize_backend_class(record.backend_class, registry)
         backend_class = explicit_backend_class
@@ -378,6 +379,15 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
                 backend_class,
             )
             continue
+        if record.source == "etcd" and backend_class in env_base_url_overrides:
+            static_base_url = _sanitize_base_url(config.base_url)
+            if static_base_url:
+                record = replace(
+                    record,
+                    base_url=static_base_url,
+                    metadata_url=f"{static_base_url.rstrip('/')}/v1/metadata",
+                    source="etcd+env_base_url",
+                )
         backend_key = backend_class if record_name in {"", canonical_service_name, _normalize_backend_name(backend_class)} else record_name
         description = config.description if backend_key == backend_class else f"{config.description} ({record.name})"
         effective[backend_key] = replace(
@@ -389,6 +399,19 @@ def _apply_service_records(registry: BackendRegistry, service_records: Dict[str,
         bound_records[record.name] = replace(record, backend_class=backend_key)
     registry.backends = effective
     registry.service_records = bound_records
+
+
+def _env_base_url_override_classes(registry: BackendRegistry) -> set[str]:
+    raw = str(getattr(S, "BACKEND_ENV_BASE_URL_OVERRIDES", "") or "")
+    out: set[str] = set()
+    for item in raw.split(","):
+        name = item.strip()
+        if not name:
+            continue
+        backend_class = _normalize_backend_class(name, registry)
+        if backend_class:
+            out.add(backend_class)
+    return out
 
 
 async def refresh_registry_from_etcd() -> None:

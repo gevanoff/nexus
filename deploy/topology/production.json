@@ -131,6 +131,7 @@
         "VLLM_BASE_URL": "http://host.docker.internal:18003/v1",
         "VLLM_FAST_BASE_URL": "http://host.docker.internal:18001/v1",
         "VLLM_EMBEDDINGS_BASE_URL": "http://host.docker.internal:18002/v1",
+        "BACKEND_ENV_BASE_URL_OVERRIDES": "local_vllm,local_vllm_fast,local_vllm_embeddings",
         "LUXTTS_UPSTREAM_BASE_URL": "http://qwen3-tts:9175",
         "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",
         "QWEN3_TTS_DEVICE_MAP": "auto",

@@ -57,6 +57,28 @@ def test_vllm_native_tool_flags_default_disabled_in_minimal_registry(monkeypatch
     assert registry.get_backend("local_vllm_fast").payload_policy["supports_tool_calling"] is False
 
 
+def test_env_base_url_override_keeps_static_proxy_url_for_etcd_record(monkeypatch):
+    monkeypatch.setattr(backends.S, "VLLM_FAST_BASE_URL", "http://host.docker.internal:18001/v1", raising=False)
+    monkeypatch.setattr(backends.S, "BACKEND_ENV_BASE_URL_OVERRIDES", "local_vllm_fast", raising=False)
+
+    registry = backends._default_registry()
+    records = {
+        "vllm-fast": backends.ServiceRecord(
+            name="vllm-fast",
+            base_url="http://ai1:8001/v1",
+            backend_class="local_vllm_fast",
+            hostname="ai1",
+            source="etcd",
+        )
+    }
+
+    backends._apply_service_records(registry, records)
+
+    assert registry.get_backend("local_vllm_fast").base_url == "http://host.docker.internal:18001/v1"
+    assert registry.service_records["vllm-fast"].base_url == "http://host.docker.internal:18001/v1"
+    assert registry.service_records["vllm-fast"].hostname == "ai1"
+
+
 def test_production_topology_sets_vllm_tool_flags_by_validated_lane():
     repo_root = Path(__file__).resolve().parents[3]
     topology = json.loads((repo_root / "deploy" / "topology" / "production.json").read_text(encoding="utf-8"))
@@ -73,3 +95,4 @@ def test_production_topology_sets_vllm_tool_flags_by_validated_lane():
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "auto"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
+    assert topology["hosts"]["ai2"]["env"]["BACKEND_ENV_BASE_URL_OVERRIDES"] == "local_vllm,local_vllm_fast,local_vllm_embeddings"
