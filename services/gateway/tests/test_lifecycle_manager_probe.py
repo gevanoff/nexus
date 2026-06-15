@@ -72,3 +72,48 @@ def test_ssh_probe_uses_configured_connect_target_and_port(monkeypatch) -> None:
     assert args[args.index("-p") + 1] == "19022"
     assert "ai@host.docker.internal" in args
     assert "ai@ai1" not in args
+
+
+def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) -> None:
+    module = _load_lifecycle_main()
+    policy_path = tmp_path / "backend_lifecycle.json"
+    topology_path = tmp_path / "production.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(
+        """
+{
+  "settings": {"mode": "assisted"},
+  "backends": {
+    "local_vllm_fast": {
+      "host": "ai1",
+      "component": "vllm-fast"
+    }
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    topology_path.write_text(
+        """
+{
+  "defaults": {
+    "env": {
+      "VLLM_FAST_BASE_URL": "http://ai1:8001/v1"
+    }
+  },
+  "hosts": {
+    "ai1": {"platform": "linux", "ssh_target": "ai@ai1"}
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    state_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("NEXUS_LIFECYCLE_POLICY", str(policy_path))
+    monkeypatch.setenv("NEXUS_TOPOLOGY_FILE", str(topology_path))
+    monkeypatch.setenv("NEXUS_LIFECYCLE_STATE_PATH", str(state_path))
+    monkeypatch.setenv("VLLM_FAST_BASE_URL", "http://host.docker.internal:18001/v1")
+
+    manager = module.LifecycleManager()
+
+    assert manager.backends["local_vllm_fast"].base_url == "http://host.docker.internal:18001/v1"

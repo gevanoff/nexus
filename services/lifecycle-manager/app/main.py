@@ -323,7 +323,8 @@ class LifecycleManager:
             tier_cfg = tiers.get(tier) if isinstance(tiers.get(tier), dict) else {}
             components = _as_list(raw_cfg.get("components")) or _as_list(raw_cfg.get("component"))
             compose_files = _as_list(raw_cfg.get("compose_files")) or _as_list(raw_cfg.get("compose_file"))
-            base_url = str(raw_cfg.get("base_url") or default_env.get(self._base_url_env_name(backend_class)) or "").strip()
+            base_url_env_name = self._base_url_env_name(backend_class)
+            base_url = str(raw_cfg.get("base_url") or _env(base_url_env_name) or default_env.get(base_url_env_name) or "").strip()
             canary_cfg = raw_cfg.get("canary") if isinstance(raw_cfg.get("canary"), dict) else {}
             canary_payload = canary_cfg.get("payload") if isinstance(canary_cfg.get("payload"), dict) else {}
             restart_cfg = raw_cfg.get("auto_restart") if isinstance(raw_cfg.get("auto_restart"), dict) else {}
