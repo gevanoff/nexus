@@ -124,12 +124,16 @@ done
 [[ "$LAUNCHD_ROOT" == /ai-data/* ]] || ns_die "--launchd-root must be under /ai-data"
 
 if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
-  FORWARDS=(
+  DEFAULT_FORWARDS=(
     "vllm-fast=127.0.0.1:18001=ai1:8001"
     "vllm-embeddings=127.0.0.1:18002=meltdown:8002"
     "vllm=127.0.0.1:18003=ada2:8003"
-    "${FORWARDS[@]}"
   )
+  if [[ ${#FORWARDS[@]} -gt 0 ]]; then
+    FORWARDS=("${DEFAULT_FORWARDS[@]}" "${FORWARDS[@]}")
+  else
+    FORWARDS=("${DEFAULT_FORWARDS[@]}")
+  fi
 fi
 [[ ${#FORWARDS[@]} -gt 0 ]] || ns_die "At least one --forward is required"
 
