@@ -205,21 +205,21 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/api/mlx/huge-lane/switch" in resources_js
 
 
-def test_canonical_chat_aliases_use_vllm_strong_and_fast_lanes():
+def test_canonical_chat_aliases_match_runtime_lanes():
     aliases_path = os.path.join(os.path.dirname(__file__), "..", "app", "model_aliases.json")
     with open(aliases_path, encoding="utf-8") as f:
         payload = json.load(f)
 
     aliases = payload["aliases"]
     strong_model = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
-    fast_model = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
+    mlx_model = "mlx-community/MiniMax-M2.5-8bit"
 
     assert aliases["default"]["backend"] == "local_vllm"
     assert aliases["default"]["model"] == strong_model
-    assert aliases["coder"]["backend"] == "local_vllm"
-    assert aliases["coder"]["model"] == strong_model
-    assert aliases["fast"]["backend"] == "local_vllm_fast"
-    assert aliases["fast"]["model"] == fast_model
+    assert aliases["coder"]["backend"] == "local_mlx"
+    assert aliases["coder"]["model"] == mlx_model
+    assert aliases["fast"]["backend"] == "local_mlx"
+    assert aliases["fast"]["model"] == mlx_model
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == strong_model
 

@@ -1,5 +1,6 @@
 # Environment configuration
 .env
+.env.prod.*
 deploy/env/.env.*
 !deploy/env/.env.*.example
 deploy/secrets/**/*.env
@@ -47,6 +48,7 @@ venv/
 *.log
 
 # Repo-local container runtime (bind mounts)
+.runtime
 .runtime/
 
 # Data directories

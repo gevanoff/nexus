@@ -62,14 +62,14 @@ Compatibility note:
 
 ## vLLM Native Tool Calling
 
-vLLM native tool calling is opt-in per lane. Enable it only after validating the model-specific parser for the served model:
+vLLM native tool calling is enabled for the production chat lanes:
 
-- strong lane: set `VLLM_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_TOOL_CALL_PARSER=<parser>`, and `VLLM_NATIVE_TOOLS_ENABLED=true`
-- fast lane: set `VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_FAST_TOOL_CALL_PARSER=<parser>`, and `VLLM_FAST_NATIVE_TOOLS_ENABLED=true`
+- strong lane (`ada2`): `VLLM_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_TOOL_CALL_PARSER=mistral`, and `VLLM_NATIVE_TOOLS_ENABLED=true`
+- fast lane (`ai1`): `VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_FAST_TOOL_CALL_PARSER=mistral`, and `VLLM_FAST_NATIVE_TOOLS_ENABLED=true`
 
-The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) must stay false until the matching vLLM process is restarted with `--enable-auto-tool-choice` and the parser flag. Otherwise `/v1/chat/completions` tool requests should remain routed to a tool-capable MLX alias or fail at the gateway before reaching vLLM.
+The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` tool requests may be passed to a backend that is not actually running with `--enable-auto-tool-choice`.
 
-The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `ai1` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. Native tool parsing remains disabled until the Mistral parser/tool-call behavior is smoke-tested repeatedly on these served models.
+The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `ai1` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. `meltdown` currently serves the vLLM embeddings lane only; there is no chat tool-call surface on that host unless a chat model is assigned there.
 
 After restarting a lane with native tool flags, validate it directly before flipping the gateway flag:
 
