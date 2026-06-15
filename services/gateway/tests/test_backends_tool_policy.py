@@ -69,6 +69,7 @@ def test_production_topology_sets_vllm_tool_flags_by_validated_lane():
     assert env["VLLM_TOOL_CALL_PARSER"] == "mistral"
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == ""
     assert "vllm-fast" in topology["hosts"]["ai1"]["components"]
+    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER"] == "Qwen/Qwen3-30B-A3B"
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "auto"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"

@@ -99,6 +99,7 @@
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "VLLM_FAST_SERVICE_NAME": "vllm-fast",
         "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
+        "VLLM_FAST_TOKENIZER": "Qwen/Qwen3-30B-A3B",
         "VLLM_FAST_TOKENIZER_MODE": "auto",
         "VLLM_FAST_CONFIG_FORMAT": "hf",
         "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.82",
