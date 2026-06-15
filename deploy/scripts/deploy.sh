@@ -6,7 +6,7 @@ umask 077
 # Keep cross-script logic in deploy/scripts/_common.sh (prereqs, env files, prompts,
 # validation helpers). Avoid copy/paste changes across scripts.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$ROOT_DIR"
 
 # shellcheck source=/dev/null

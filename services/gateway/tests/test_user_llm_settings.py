@@ -212,14 +212,16 @@ def test_canonical_chat_aliases_match_runtime_lanes():
 
     aliases = payload["aliases"]
     strong_model = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
+    fast_model = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     mlx_model = "mlx-community/MiniMax-M2.5-8bit"
 
     assert aliases["default"]["backend"] == "local_vllm"
     assert aliases["default"]["model"] == strong_model
     assert aliases["coder"]["backend"] == "local_mlx"
     assert aliases["coder"]["model"] == mlx_model
-    assert aliases["fast"]["backend"] == "local_mlx"
-    assert aliases["fast"]["model"] == mlx_model
+    assert aliases["fast"]["backend"] == "local_vllm_fast"
+    assert aliases["fast"]["model"] == fast_model
+    assert aliases["fast"]["tools"] is False
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == strong_model
 

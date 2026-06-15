@@ -117,3 +117,10 @@ def test_copyfail_ansible_host_vars_skip_model_runtime_install() -> None:
     assert "ansible" in host_vars
     assert "skipping deploy preflight" in preflight_role
     assert "skipping deploy" in deploy_role
+
+
+def test_deploy_script_uses_physical_repo_root_for_colima_binds() -> None:
+    deploy_script = _read("deploy/scripts/deploy.sh")
+
+    assert 'pwd -P)' in deploy_script
+    assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"' in deploy_script

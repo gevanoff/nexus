@@ -1,9 +1,9 @@
 {
   "aliases": {
     "fast": {
-      "backend": "local_mlx",
-      "model": "mlx-community/MiniMax-M2.5-8bit",
-      "tools": true
+      "backend": "local_vllm_fast",
+      "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
+      "tools": false
     },
     "default": {
       "backend": "local_vllm",
