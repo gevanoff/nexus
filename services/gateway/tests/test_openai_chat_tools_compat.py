@@ -112,6 +112,12 @@ def test_chat_completion_request_allows_openai_tool_fields():
     assert payload["messages"][1]["extra_tool_field"] is True
 
 
+def test_selected_alias_name_prefers_router_fallback_alias(monkeypatch):
+    monkeypatch.setattr(openai_routes, "get_aliases", lambda: {"fast": object(), "long": object()})
+
+    assert openai_routes._selected_alias_name("fast", "policy:alias_context->fast->alias:long") == "long"
+
+
 def test_models_route_still_requires_and_accepts_bearer_auth(monkeypatch):
     client = _build_client(monkeypatch, patch_auth=False)
 

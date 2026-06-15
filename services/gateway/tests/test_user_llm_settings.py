@@ -221,6 +221,7 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["coder"]["model"] == mlx_model
     assert aliases["fast"]["backend"] == "local_vllm_fast"
     assert aliases["fast"]["model"] == fast_model
+    assert aliases["fast"]["context_window"] == 2048
     assert aliases["fast"]["tools"] is False
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == strong_model

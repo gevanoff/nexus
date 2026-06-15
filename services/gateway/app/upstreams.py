@@ -86,6 +86,22 @@ def _default_base_url_for_provider(provider: str) -> str:
     return ""
 
 
+async def _http_status_error_detail(exc: httpx.HTTPStatusError, *, upstream: str) -> Dict[str, Any]:
+    response = exc.response
+    status = response.status_code if response is not None else None
+    body = ""
+    if response is not None:
+        try:
+            body = response.text
+        except httpx.ResponseNotRead:
+            try:
+                raw = await response.aread()
+            except Exception:
+                raw = b""
+            body = raw.decode(response.encoding or "utf-8", errors="replace")
+    return {"upstream": upstream, "status": status, "body": body[:5000]}
+
+
 def backend_model_id(backend_name: str, model_name: str) -> str:
     resolved, _provider, _base_url = _resolve_backend_target(backend_name)
     return f"{resolved}:{model_name}"
@@ -271,7 +287,7 @@ async def stream_openai_chat(
                 async for chunk in passthrough_sse(r):
                     yield chunk
         except httpx.HTTPStatusError as e:
-            detail = {"upstream": backend_name, "status": e.response.status_code, "body": e.response.text[:5000]}
+            detail = await _http_status_error_detail(e, upstream=backend_name)
             yield sse({"error": {"message": "Upstream error", "type": "upstream_error", "param": None, "code": None, "detail": detail}})
             yield sse_done()
         except httpx.RequestError as e:

@@ -51,14 +51,14 @@ _ALIAS_IN_REASON = re.compile(r"\balias:([a-z0-9_\-]+)\b", re.IGNORECASE)
 
 def _selected_alias_name(request_model: str, route_reason: str) -> Optional[str]:
     aliases = get_aliases()
-    key = (request_model or "").strip().lower()
-    if key and key in aliases:
-        return key
     m = _ALIAS_IN_REASON.search(route_reason or "")
     if m:
         cand = (m.group(1) or "").strip().lower()
         if cand in aliases:
             return cand
+    key = (request_model or "").strip().lower()
+    if key and key in aliases:
+        return key
     return None
 
 

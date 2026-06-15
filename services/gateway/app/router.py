@@ -214,6 +214,19 @@ def _alias_supports_tool_calling(alias_name: str, alias: Any, cfg: RouterConfig)
     return backend_supports_tool_calling(backend)
 
 
+def _alias_context_chars_threshold(alias: Any) -> int:
+    context_window = getattr(alias, "context_window", None)
+    if not context_window:
+        return 0
+    try:
+        tokens = int(context_window)
+    except Exception:
+        return 0
+    if tokens <= 0:
+        return 0
+    return tokens * 4
+
+
 def _tool_alias_decision(alias_name: str, cfg: RouterConfig, reason: str) -> Optional[RouteDecision]:
     alias = get_alias(alias_name)
     if not _alias_supports_tool_calling(alias_name, alias, cfg):
@@ -284,6 +297,8 @@ def decide_route(
 ) -> RouteDecision:
     """Select {backend, model} with simple, stable heuristics."""
 
+    message_items = list(messages or [])
+
     hdr_backend = _known_backend_name((headers.get("x-backend") or "").strip())
     if hdr_backend:
         normalized = _normalize_model(request_model, hdr_backend, cfg)
@@ -312,10 +327,23 @@ def decide_route(
         return route_with_model_fallback(RouteDecision(backend=selector_backend, model=normalized, reason="selector:model"))
 
     aliases = get_aliases()
+    size = _approx_text_size(message_items)
 
     alias_key = request_model_key
     if alias_key and alias_key in aliases:
         a = aliases[alias_key]
+        alias_threshold = _alias_context_chars_threshold(a)
+        if alias_key != "long" and alias_threshold and size >= alias_threshold:
+            long_alias = aliases.get("long")
+            if long_alias:
+                backend, normalized = _effective_alias_backend_model("long", long_alias, cfg)
+                return route_with_model_fallback(
+                    RouteDecision(
+                        backend=backend,
+                        model=normalized,
+                        reason=f"policy:alias_context->{alias_key}->alias:long",
+                    )
+                )
         if has_tools and not _alias_supports_tool_calling(alias_key, a, cfg):
             for candidate in ("fast", "coder", "mlx", "default"):
                 decision = _tool_alias_decision(candidate, cfg, f"policy:tools->alias:{candidate}")
@@ -339,8 +367,6 @@ def decide_route(
         normalized = _normalize_model(request_model_norm, backend, cfg)
         return route_with_model_fallback(RouteDecision(backend=backend, model=normalized, reason="direct:model"))
 
-    size = _approx_text_size(messages or [])
-
     long_alias = get_alias("long")
     long_threshold = int(long_alias.context_window) if (long_alias and long_alias.context_window) else cfg.long_context_chars_threshold
 
@@ -354,7 +380,7 @@ def decide_route(
         elif hdr_req_type in {"chat", "general"}:
             is_coding = False
         else:
-            is_coding = _is_probably_coding_request(messages or [])
+            is_coding = _is_probably_coding_request(message_items)
 
     if has_tools:
         if is_coding:

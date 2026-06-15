@@ -43,7 +43,12 @@ def _default_aliases() -> Dict[str, ModelAlias]:
     return {
         # These four are the canonical policy surface.
         "default": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True),
-        "fast": ModelAlias(backend="local_vllm_fast", upstream_model=S.VLLM_MODEL_FAST, tools=False),
+        "fast": ModelAlias(
+            backend="local_vllm_fast",
+            upstream_model=S.VLLM_MODEL_FAST,
+            context_window=S.VLLM_FAST_MAX_MODEL_LEN,
+            tools=False,
+        ),
         "coder": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True),
         "long": ModelAlias(
             backend=default_backend,

@@ -3,6 +3,7 @@
     "fast": {
       "backend": "local_vllm_fast",
       "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
+      "context_window": 2048,
       "tools": false
     },
     "default": {

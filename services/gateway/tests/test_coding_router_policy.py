@@ -356,3 +356,43 @@ def test_mlx_huge_lane_overrides_long_alias(monkeypatch):
     assert decision.backend == "local_mlx"
     assert decision.model == "mlx-community/DeepSeek-R1-0528-4bit"
     assert decision.reason == "alias:model"
+
+
+def test_explicit_fast_alias_large_context_falls_back_to_long(monkeypatch):
+    aliases = {
+        "fast": SimpleNamespace(
+            backend="local_vllm_fast",
+            upstream_model="fast-vllm-model",
+            tools=False,
+            context_window=2048,
+        ),
+        "long": SimpleNamespace(
+            backend="local_mlx",
+            upstream_model="long-mlx-model",
+            tools=False,
+            context_window=65536,
+        ),
+    }
+
+    monkeypatch.setattr(router, "get_aliases", lambda: aliases)
+    monkeypatch.setattr(router, "_resolved_backend_name", lambda name: name)
+    monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
+    monkeypatch.setattr(router, "backend_provider_name", lambda backend: "vllm" if "vllm" in backend else "mlx")
+
+    decision = router.decide_route(
+        cfg=router.RouterConfig(
+            default_backend="local_vllm",
+            primary_strong_model="strong-model",
+            primary_fast_model="fast-model",
+        ),
+        request_model="fast",
+        headers={},
+        messages=[{"role": "user", "content": "x" * 9000}],
+        has_tools=False,
+        enable_policy=False,
+        enable_request_type=False,
+    )
+
+    assert decision.backend == "local_mlx"
+    assert decision.model == "long-mlx-model"
+    assert decision.reason == "policy:alias_context->fast->alias:long"
