@@ -169,8 +169,8 @@ sudo install -o root -g wheel -m 755 "$ROOT_DIR/deploy/scripts/backend-port-prox
 PLIST_PYTHON_BIN="$(canonical_path "$PYTHON_BIN")"
 PLIST_PROXY_DST="$(canonical_path "$PROXY_DST")"
 PLIST_TARGET_HOME="$(xml_escape "$TARGET_HOME")"
-PLIST_OUT_LOG="$(xml_escape "$OUT_LOG")"
-PLIST_ERR_LOG="$(xml_escape "$ERR_LOG")"
+PLIST_OUT_LOG="$(xml_escape "$(canonical_path "$OUT_LOG")")"
+PLIST_ERR_LOG="$(xml_escape "$(canonical_path "$ERR_LOG")")"
 
 tmp_plist="$(mktemp)"
 cat >"$tmp_plist" <<EOF
