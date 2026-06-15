@@ -78,6 +78,21 @@ BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smo
 REPEATS=10 BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh
 ```
 
+## ai2 Colima Backend Proxies
+
+The ai2 gateway runs in Colima. On this host, the Colima VM may be able to reach ai2 host services while failing to connect directly to the remote LAN model backends. The production ai2 topology therefore points gateway vLLM URLs at loopback host proxies reachable from containers through `host.docker.internal`:
+
+- `VLLM_FAST_BASE_URL=http://host.docker.internal:18001/v1` forwards to `ai1:8001`
+- `VLLM_EMBEDDINGS_BASE_URL=http://host.docker.internal:18002/v1` forwards to `meltdown:8002`
+- `VLLM_BASE_URL=http://host.docker.internal:18003/v1` forwards to `ada2:8003`
+
+Install or refresh the host-side launchd proxy on ai2 before restarting gateway:
+
+```bash
+./deploy/scripts/install-backend-port-proxy-launchd.sh --user ai
+./deploy/scripts/deploy.sh --topology-host ai2 --components gateway
+```
+
 ## Image Interfaces
 
 InvokeAI remains useful in production when Nexus needs a managed creative image workspace: model manager, gallery/canvas, and an operator UI behind the OpenAI images shim. Production advertises `INVOKEAI_UI_URL` so the Gateway Image UI can link operators to the InvokeAI interface for model management.
