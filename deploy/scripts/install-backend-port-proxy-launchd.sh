@@ -16,6 +16,7 @@ TARGET_USER=""
 TARGET_HOME=""
 RUNTIME_ROOT="${NEXUS_BACKEND_PROXY_RUNTIME_ROOT:-/ai-data/var/lib/nexus-backend-proxy}"
 LAUNCHD_ROOT="${NEXUS_BACKEND_PROXY_LAUNCHD_ROOT:-/ai-data/launchd/nexus-backend-proxy}"
+LOG_DIR="${NEXUS_BACKEND_PROXY_LOG_DIR:-/var/log/nexus-backend-proxy}"
 LABEL="${NEXUS_BACKEND_PROXY_LAUNCHD_LABEL:-com.nexus.backend-port-proxy}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 CONNECT_TIMEOUT="${NEXUS_BACKEND_PROXY_CONNECT_TIMEOUT_SEC:-10}"
@@ -33,8 +34,9 @@ cannot reach remote LAN model backends directly.
 Options:
   --user USER             User account that should run the proxy
   --home PATH             Home directory for that user
-  --runtime-root PATH     Runtime/log root (default: /ai-data/var/lib/nexus-backend-proxy)
+  --runtime-root PATH     Runtime root (default: /ai-data/var/lib/nexus-backend-proxy)
   --launchd-root PATH     Root-owned launchd asset root (default: /ai-data/launchd/nexus-backend-proxy)
+  --log-dir PATH          launchd stdout/stderr directory (default: /var/log/nexus-backend-proxy)
   --label LABEL           launchd label (default: com.nexus.backend-port-proxy)
   --python PATH           Python interpreter (default: command -v python3)
   --connect-timeout SEC   Upstream connect timeout (default: 10)
@@ -109,6 +111,7 @@ while [[ $# -gt 0 ]]; do
     --home) TARGET_HOME="${2:-}"; shift 2 ;;
     --runtime-root) RUNTIME_ROOT="${2:-}"; shift 2 ;;
     --launchd-root) LAUNCHD_ROOT="${2:-}"; shift 2 ;;
+    --log-dir) LOG_DIR="${2:-}"; shift 2 ;;
     --label) LABEL="${2:-}"; shift 2 ;;
     --python) PYTHON_BIN="${2:-}"; shift 2 ;;
     --connect-timeout) CONNECT_TIMEOUT="${2:-}"; shift 2 ;;
@@ -122,6 +125,7 @@ done
 [[ "$CONNECT_TIMEOUT" =~ ^[0-9]+([.][0-9]+)?$ ]] || ns_die "--connect-timeout must be numeric"
 [[ "$RUNTIME_ROOT" == /ai-data/* ]] || ns_die "--runtime-root must be under /ai-data"
 [[ "$LAUNCHD_ROOT" == /ai-data/* ]] || ns_die "--launchd-root must be under /ai-data"
+[[ "$LOG_DIR" == /* ]] || ns_die "--log-dir must be an absolute path"
 
 if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
   DEFAULT_FORWARDS=(
@@ -156,7 +160,6 @@ TARGET_USER="$(resolve_target_user)"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
 BIN_DIR="${LAUNCHD_ROOT}/bin"
 PLIST_DIR="${LAUNCHD_ROOT}/plists"
-LOG_DIR="${RUNTIME_ROOT}/logs"
 PROXY_DST="${BIN_DIR}/backend-port-proxy.py"
 PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
 OUT_LOG="${LOG_DIR}/${LABEL}.out.log"
