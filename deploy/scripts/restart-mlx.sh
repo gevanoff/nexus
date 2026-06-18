@@ -8,7 +8,13 @@ cd "$ROOT_DIR"
 # shellcheck source=/dev/null
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
-MLX_NATIVE_ROOT="${MLX_NATIVE_ROOT:-/var/lib/mlx}"
+if [[ -z "${MLX_NATIVE_ROOT:-}" ]]; then
+  if [[ ! -e /var/lib/mlx && -d /ai-data/var/lib/mlx ]]; then
+    MLX_NATIVE_ROOT="/ai-data/var/lib/mlx"
+  else
+    MLX_NATIVE_ROOT="/var/lib/mlx"
+  fi
+fi
 MLX_NATIVE_USER="${MLX_NATIVE_USER:-mlx}"
 MLX_ENV_FILE="${MLX_ENV_FILE:-${MLX_NATIVE_ROOT}/mlx.env}"
 LAUNCHD_LABEL="${LAUNCHD_LABEL:-com.nexus.mlx.openai.server}"

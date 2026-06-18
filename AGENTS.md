@@ -78,6 +78,9 @@ model-admin/gateway repair:
   return to a memory-saving mode or live memory pressure makes that necessary.
   MiniMax should remain present as an on-demand fallback. Do not restore the old
   `mlx-community/GLM-5-4bit` cache/config unless explicitly requested.
+- The ai2 native MLX install lives under `/ai-data/var/lib/mlx`. If restarting
+  manually, use `MLX_NATIVE_ROOT=/ai-data/var/lib/mlx` unless
+  `deploy/scripts/restart-mlx.sh` has already auto-detected that path.
 
 - MiniMax was previously live in the ai2 gateway model list as
   `local_mlx:mlx-community/MiniMax-M2.5-8bit`.
