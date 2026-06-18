@@ -58,3 +58,23 @@ def test_mlx_patcher_adds_glm_dsa_indexshare_model():
     assert "shared_topk_indices" in patched
     assert "if layer.self_attn.indexer is not None:" in patched
     assert patched_again == patched
+
+
+def test_mlx_patcher_upgrades_glm_dsa_handler_thread_guard():
+    patcher = _load_patcher()
+    source = "\n".join(
+        [
+            patcher.HELPER_LEGACY_AFTER,
+            patcher.CONTEXT_AFTER,
+            patcher.CACHE_AFTER,
+            patcher.STREAM_AFTER,
+            patcher.NONSTREAM_AFTER,
+            "            if not force_handler_thread and not self.model.cache_is_trimmable:\n",
+            "        if not force_handler_thread and not self.model.cache_is_trimmable:\n",
+        ]
+    )
+
+    patched, changes = patcher._patch_text(source)
+
+    assert "handler-thread GLM DSA helper upgrade" in changes
+    assert 'model_type == "glm_moe_dsa"' in patched

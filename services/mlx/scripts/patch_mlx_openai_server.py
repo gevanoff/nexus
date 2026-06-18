@@ -22,6 +22,16 @@ HELPER_AFTER = """        logger.info(f"Initialized MLXHandler with model path: 
 
     def _requires_handler_thread_generation(self) -> bool:
         \"\"\"Return True for model families whose MLX stream state is thread-local.\"\"\"
+        model_type = str(self.model_type)
+        return model_type.startswith("deepseek_v") or model_type == "glm_moe_dsa"
+
+    async def get_models(self) -> list[dict[str, Any]]:
+"""
+
+HELPER_LEGACY_AFTER = """        logger.info(f"Initialized MLXHandler with model path: {model_path}")
+
+    def _requires_handler_thread_generation(self) -> bool:
+        \"\"\"Return True for model families whose MLX stream state is thread-local.\"\"\"
         return str(self.model_type).startswith("deepseek_v")
 
     async def get_models(self) -> list[dict[str, Any]]:
@@ -488,6 +498,10 @@ def _replace_once(text: str, before: str, after: str, description: str) -> tuple
 
 def _patch_text(text: str) -> tuple[str, list[str]]:
     changes: list[str] = []
+
+    if HELPER_AFTER not in text and HELPER_LEGACY_AFTER in text:
+        text = text.replace(HELPER_LEGACY_AFTER, HELPER_AFTER, 1)
+        changes.append("handler-thread GLM DSA helper upgrade")
 
     replacements = [
         ("handler-thread model-family helper", HELPER_BEFORE, HELPER_AFTER),
