@@ -206,6 +206,19 @@ GLM_DSA_ORIGINAL_MARKER = """from .base import BaseModelArgs
 from .deepseek_v32 import Model as DSV32Model
 """
 
+GLM_DSA_LEGACY_CACHE = """    def make_cache(self):
+        return [CacheList(KVCache(), KVCache()) for _ in self.layers]
+"""
+
+GLM_DSA_INDEXSHARE_CACHE = """    def make_cache(self):
+        return [
+            CacheList(KVCache(), KVCache())
+            if layer.self_attn.indexer is not None
+            else CacheList(KVCache())
+            for layer in self.layers
+        ]
+"""
+
 GLM_DSA_PATCHED_TEXT = '''# Copyright © 2025 Apple Inc.
 
 from dataclasses import dataclass
@@ -480,7 +493,12 @@ class Model(DSV32Model):
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
     def make_cache(self):
-        return [CacheList(KVCache(), KVCache()) for _ in self.layers]
+        return [
+            CacheList(KVCache(), KVCache())
+            if layer.self_attn.indexer is not None
+            else CacheList(KVCache())
+            for layer in self.layers
+        ]
 '''
 
 
@@ -557,6 +575,14 @@ def _patch_kimi_k2_text(text: str) -> tuple[str, list[str]]:
 
 def _patch_glm_moe_dsa_model_text(text: str) -> tuple[str, list[str]]:
     if GLM_DSA_PATCH_MARKER in text:
+        if "else CacheList(KVCache())" not in text:
+            text, changed = _replace_once(
+                text,
+                GLM_DSA_LEGACY_CACHE,
+                GLM_DSA_INDEXSHARE_CACHE,
+                "GLM DSA shared-layer cache shape",
+            )
+            return text, ["GLM DSA shared-layer cache shape"] if changed else []
         return text, []
     if "indexer_types" in text and "shared_topk_indices" in text:
         return text, []
