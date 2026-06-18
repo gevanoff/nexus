@@ -8,16 +8,15 @@ models:
     model_path: mlx-community/bge-small-en-v1.5-8bit
     model_type: embeddings
 
-  # Primary long-context profile. Keep large LM entries on-demand so one model
-  # can be loaded at a time instead of keeping all resident.
+  # Primary long-context profile. MiniMax is intentionally resident on ai2 so
+  # long-context requests do not pay the repeated model reload cost.
   - served_model_name: mlx-community/MiniMax-M2.5-8bit
     model_path: mlx-community/MiniMax-M2.5-8bit
     model_type: lm
     trust_remote_code: true
     tool_call_parser: minimax_m2
     reasoning_parser: minimax_m2
-    on_demand: true
-    on_demand_idle_timeout: 300
+    on_demand: false
 
   # Deep reasoning profile.
   - served_model_name: mlx-community/DeepSeek-R1-0528-4bit

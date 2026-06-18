@@ -54,7 +54,8 @@ Example config template:
 Operational note:
 
 - `mlx-openai-server` supports `on_demand: true` for large models in config mode; these models are advertised in `/v1/models` but loaded only when requested.
-- Only one idle on-demand model is kept loaded at a time, so this is the preferred pattern for 200GB+ MLX models on `ai2`.
+- The current `ai2` operating profile keeps MiniMax resident to avoid repeated multi-minute reloads for `long` requests, while DeepSeek and GLM remain on-demand.
+- Only one idle on-demand model is kept loaded at a time, so use on-demand for optional 200GB+ MLX models that do not need to stay hot.
 - Non-on-demand models are initialized during server startup. Keep at least one small known-good chat model or embeddings model available for health checks.
 - Add optional models incrementally and keep a known-good minimal config available for rollback.
 
@@ -177,7 +178,7 @@ Gateway integration pattern:
 
 ## Recommended Model Strategy for `ai2` (512GB)
 
-With 512GB unified memory, `ai2` can run very large MLX models, but the current large-model profile should use `on_demand: true` so only one heavy model is resident at a time:
+With 512GB unified memory, `ai2` can run very large MLX models. The current large-model profile keeps MiniMax resident because it backs the `long` alias and has expensive reload latency. Other heavy MLX profiles should stay on-demand unless there is a specific reason to keep them hot:
 
 - `default` / `mlx`: `mlx-community/MiniMax-M2.5-8bit`
 - `reasoning`: `mlx-community/DeepSeek-R1-0528-4bit`
@@ -224,7 +225,7 @@ Recommended `ai2` alias-to-model mapping:
 Operational note for `ai2`:
 
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
-- Configure MiniMax, DeepSeek, and GLM with `on_demand: true`; first request loads the model, later requests reuse it until the idle timeout, and switching to another on-demand model unloads the idle one.
+- Configure MiniMax with `on_demand: false` so it stays resident. Keep DeepSeek and GLM on-demand; first request loads the model, later requests reuse it until the idle timeout, and switching to another on-demand model unloads the idle one.
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
 - MiniMax uses custom model code, so its config should set `trust_remote_code: true`.
 

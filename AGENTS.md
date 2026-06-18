@@ -69,7 +69,14 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 
 ## ai2 Model Admin Background
 
-Operational context from 2026-06-14 for the ai2 model-admin/gateway repair:
+Operational context from 2026-06-14 through 2026-06-17 for the ai2
+model-admin/gateway repair:
+
+- MiniMax is intentionally resident on `ai2` for the current operating profile.
+  In `services/mlx/config/config.example.yaml`, keep
+  `mlx-community/MiniMax-M2.5-8bit` at `on_demand: false` unless the user asks to
+  return to a memory-saving mode or live memory pressure makes that necessary.
+  DeepSeek and GLM should remain on-demand.
 
 - MiniMax was live in the ai2 gateway model list as
   `local_mlx:mlx-community/MiniMax-M2.5-8bit`.
