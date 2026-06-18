@@ -41,3 +41,20 @@ def test_mlx_patcher_hardens_kimi_tool_parser():
     assert changes_again == []
     assert "if name_match is None:" in patched
     assert patched_again == patched
+
+
+def test_mlx_patcher_adds_glm_dsa_indexshare_model():
+    patcher = _load_patcher()
+    source = patcher.GLM_DSA_ORIGINAL_MARKER
+
+    patched, changes = patcher._patch_glm_moe_dsa_model_text(source)
+    patched_again, changes_again = patcher._patch_glm_moe_dsa_model_text(patched)
+
+    assert changes == ["GLM DSA IndexShare model"]
+    assert changes_again == []
+    assert patcher.GLM_DSA_PATCH_MARKER in patched
+    assert "indexer_types: Optional[list[str]] = None" in patched
+    assert 'if self.indexer_type != "full":' in patched
+    assert "shared_topk_indices" in patched
+    assert "if layer.self_attn.indexer is not None:" in patched
+    assert patched_again == patched
