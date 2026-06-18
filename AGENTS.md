@@ -72,16 +72,18 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 Operational context from 2026-06-14 through 2026-06-17 for the ai2
 model-admin/gateway repair:
 
-- MiniMax is intentionally resident on `ai2` for the current operating profile.
+- GLM-5.2 is intentionally resident on `ai2` for the current operating profile.
   In `services/mlx/config/config.example.yaml`, keep
-  `mlx-community/MiniMax-M2.5-8bit` at `on_demand: false` unless the user asks to
+  `mlx-community/GLM-5.2-DQ4plus-q8` at `on_demand: false` unless the user asks to
   return to a memory-saving mode or live memory pressure makes that necessary.
-  DeepSeek and GLM should remain on-demand.
+  MiniMax should remain present as an on-demand fallback. Do not restore the old
+  `mlx-community/GLM-5-4bit` cache/config unless explicitly requested.
 
-- MiniMax was live in the ai2 gateway model list as
+- MiniMax was previously live in the ai2 gateway model list as
   `local_mlx:mlx-community/MiniMax-M2.5-8bit`.
-- Aliases `default`, `coder`, and `long` were expected to resolve to a live
-  MiniMax route unless current config and live state prove a better route.
+- Aliases `mlx`, `coder`, and `long` are expected to resolve to
+  `local_mlx:mlx-community/GLM-5.2-DQ4plus-q8` unless current config and live
+  state prove a better route.
 - Model admin was showing MiniMax as hidden/missing despite live gateway state;
   that inconsistency should be fixed by correcting stale config or metadata.
 - Purge Qwen3 LLM/model and embedding references when requested, but preserve

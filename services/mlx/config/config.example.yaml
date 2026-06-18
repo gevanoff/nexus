@@ -8,15 +8,24 @@ models:
     model_path: mlx-community/bge-small-en-v1.5-8bit
     model_type: embeddings
 
-  # Primary long-context profile. MiniMax is intentionally resident on ai2 so
-  # long-context requests do not pay the repeated model reload cost.
+  # Primary long-context/coding profile. GLM-5.2 is intentionally resident on
+  # ai2 so long-context requests do not pay the repeated model reload cost.
+  - served_model_name: mlx-community/GLM-5.2-DQ4plus-q8
+    model_path: mlx-community/GLM-5.2-DQ4plus-q8
+    model_type: lm
+    tool_call_parser: glm4_moe
+    reasoning_parser: glm4_moe
+    on_demand: false
+
+  # On-demand fallback for the resident primary profile.
   - served_model_name: mlx-community/MiniMax-M2.5-8bit
     model_path: mlx-community/MiniMax-M2.5-8bit
     model_type: lm
     trust_remote_code: true
     tool_call_parser: minimax_m2
     reasoning_parser: minimax_m2
-    on_demand: false
+    on_demand: true
+    on_demand_idle_timeout: 300
 
   # Deep reasoning profile.
   - served_model_name: mlx-community/DeepSeek-R1-0528-4bit
@@ -26,15 +35,6 @@ models:
     on_demand: true
     on_demand_idle_timeout: 300
     default_max_tokens: 2048
-
-  # Coding profile.
-  - served_model_name: mlx-community/GLM-5-4bit
-    model_path: mlx-community/GLM-5-4bit
-    model_type: lm
-    tool_call_parser: glm4_moe
-    reasoning_parser: glm4_moe
-    on_demand: true
-    on_demand_idle_timeout: 300
 
   # Smaller reasoning fallback.
   - served_model_name: mlx-community/Phi-4-reasoning-plus-4bit

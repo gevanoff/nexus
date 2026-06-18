@@ -32,7 +32,7 @@ Nexus Gateway reaches it over HTTP via `MLX_BASE_URL`.
 See `env/mlx.env.example` for primary variables:
 
 - `MLX_PORT` (default `10240`)
-- `MLX_MODEL_PATH` (default `mlx-community/MiniMax-M2.5-8bit`)
+- `MLX_MODEL_PATH` (default `mlx-community/GLM-5.2-DQ4plus-q8`)
 - `MLX_MODEL_TYPE` (default `lm`)
 - `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
 - `XDG_CACHE_HOME` / `HF_HOME` (optional; move MLX/Hugging Face caches to a larger volume)
@@ -54,7 +54,7 @@ Example config template:
 Operational note:
 
 - `mlx-openai-server` supports `on_demand: true` for large models in config mode; these models are advertised in `/v1/models` but loaded only when requested.
-- The current `ai2` operating profile keeps MiniMax resident to avoid repeated multi-minute reloads for `long` requests, while DeepSeek and GLM remain on-demand.
+- The current `ai2` operating profile keeps GLM-5.2 resident to avoid repeated multi-minute reloads for `long` and coding requests, while MiniMax remains available as an on-demand fallback.
 - Only one idle on-demand model is kept loaded at a time, so use on-demand for optional 200GB+ MLX models that do not need to stay hot.
 - Non-on-demand models are initialized during server startup. Keep at least one small known-good chat model or embeddings model available for health checks.
 - Add optional models incrementally and keep a known-good minimal config available for rollback.
@@ -122,7 +122,7 @@ After first install, the native launchd job reads runtime settings from `/var/li
 To change models later, update that file and restart the service without rewriting the plist:
 
 ```bash
-sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/MiniMax-M2.5-8bit#' /var/lib/mlx/mlx.env
+sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/GLM-5.2-DQ4plus-q8#' /var/lib/mlx/mlx.env
 ./deploy/scripts/restart-mlx.sh
 ```
 
@@ -178,13 +178,14 @@ Gateway integration pattern:
 
 ## Recommended Model Strategy for `ai2` (512GB)
 
-With 512GB unified memory, `ai2` can run very large MLX models. The current large-model profile keeps MiniMax resident because it backs the `long` alias and has expensive reload latency. Other heavy MLX profiles should stay on-demand unless there is a specific reason to keep them hot:
+With 512GB unified memory, `ai2` can run very large MLX models. The current large-model profile keeps GLM-5.2 resident because it backs the `mlx`, `coder`, and `long` aliases and has expensive reload latency. MiniMax stays configured as the on-demand fallback. Other heavy MLX profiles should stay on-demand unless there is a specific reason to keep them hot:
 
-- `default` / `mlx`: `mlx-community/MiniMax-M2.5-8bit`
+- `mlx`: `mlx-community/GLM-5.2-DQ4plus-q8`
 - `reasoning`: `mlx-community/DeepSeek-R1-0528-4bit`
-- `coder`: `mlx-community/GLM-5-4bit`
+- `coder`: `mlx-community/GLM-5.2-DQ4plus-q8`
+- `minimax fallback`: `mlx-community/MiniMax-M2.5-8bit`
 - `phi-4-reasoning-plus`: `mlx-community/Phi-4-reasoning-plus-4bit` as the smaller reasoning fallback and lightweight chat health model
-- `long`: `mlx-community/MiniMax-M2.5-8bit` with raised `context_window`
+- `long`: `mlx-community/GLM-5.2-DQ4plus-q8` with raised `context_window`
 
 Recommended `ai2` alias-to-model mapping:
 
@@ -192,31 +193,31 @@ Recommended `ai2` alias-to-model mapping:
 {
 	"aliases": {
 		"default": {
-			"backend": "mlx",
-			"model": "mlx-community/MiniMax-M2.5-8bit",
+			"backend": "local_vllm",
+			"model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
 			"tools": true
 		},
 		"mlx": {
-			"backend": "mlx",
-			"model": "mlx-community/MiniMax-M2.5-8bit",
+			"backend": "local_mlx",
+			"model": "mlx-community/GLM-5.2-DQ4plus-q8",
 			"tools": true
 		},
 		"coder": {
 			"backend": "local_mlx",
-			"model": "mlx-community/GLM-5-4bit",
+			"model": "mlx-community/GLM-5.2-DQ4plus-q8",
 			"tools": true
 		},
 		"reasoning": {
-			"backend": "local_mlx",
-			"model": "mlx-community/DeepSeek-R1-0528-4bit",
+			"backend": "local_vllm",
+			"model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
 			"tools": true,
 			"max_tokens_cap": 2048
 		},
 		"long": {
-			"backend": "mlx",
-			"model": "mlx-community/MiniMax-M2.5-8bit",
+			"backend": "local_mlx",
+			"model": "mlx-community/GLM-5.2-DQ4plus-q8",
 			"context_window": 65536,
-			"tools": false
+			"tools": true
 		}
 	}
 }
@@ -225,9 +226,9 @@ Recommended `ai2` alias-to-model mapping:
 Operational note for `ai2`:
 
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
-- Configure MiniMax with `on_demand: false` so it stays resident. Keep DeepSeek and GLM on-demand; first request loads the model, later requests reuse it until the idle timeout, and switching to another on-demand model unloads the idle one.
+- Configure GLM-5.2 with `on_demand: false` so it stays resident. Keep MiniMax on-demand as the fallback; first request loads it, later requests reuse it until the idle timeout.
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
-- MiniMax uses custom model code, so its config should set `trust_remote_code: true`.
+- GLM-5.2 uses the GLM `<tool_call><arg_key>...` chat-template shape, so configure it with the `glm4_moe` tool and reasoning parsers. MiniMax uses custom model code, so its fallback config should set `trust_remote_code: true`.
 
 ## Are these models already configured?
 
@@ -244,9 +245,9 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 - Prewarm MLX aliases/models:
 
 ```bash
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5.2-DQ4plus-q8
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/MiniMax-M2.5-8bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/DeepSeek-R1-0528-4bit
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5-4bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Phi-4-reasoning-plus-4bit
 ```
 

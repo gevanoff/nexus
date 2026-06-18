@@ -9,12 +9,17 @@ from app.config import S
 
 
 DEFAULT_HUGE_MODELS = [
+    "mlx-community/GLM-5.2-DQ4plus-q8",
     "mlx-community/MiniMax-M2.5-8bit",
     "mlx-community/DeepSeek-R1-0528-4bit",
-    "mlx-community/GLM-5-4bit",
 ]
 
 MODEL_ESTIMATES: Dict[str, Dict[str, Any]] = {
+    "mlx-community/GLM-5.2-DQ4plus-q8": {
+        "label": "GLM-5.2 DQ4plus-q8",
+        "estimated_load_sec": 420,
+        "estimated_memory_gb": 465,
+    },
     "mlx-community/MiniMax-M2.5-8bit": {
         "label": "MiniMax M2.5 8-bit",
         "estimated_load_sec": 90,
@@ -24,11 +29,6 @@ MODEL_ESTIMATES: Dict[str, Dict[str, Any]] = {
         "label": "DeepSeek R1 0528 4-bit",
         "estimated_load_sec": 110,
         "estimated_memory_gb": 370,
-    },
-    "mlx-community/GLM-5-4bit": {
-        "label": "GLM-5 4-bit",
-        "estimated_load_sec": 150,
-        "estimated_memory_gb": 410,
     },
 }
 

@@ -64,7 +64,7 @@ has_shell_override() {
 MLX_USER="${MLX_USER:-mlx}"
 MLX_HOST="${MLX_HOST:-127.0.0.1}"
 MLX_PORT="${MLX_PORT:-10240}"
-MLX_MODEL_PATH="${MLX_MODEL_PATH:-mlx-community/MiniMax-M2.5-8bit}"
+MLX_MODEL_PATH="${MLX_MODEL_PATH:-mlx-community/GLM-5.2-DQ4plus-q8}"
 MLX_MODEL_TYPE="${MLX_MODEL_TYPE:-lm}"
 MLX_CONFIG_PATH="${MLX_CONFIG_PATH:-}"
 MLX_HOME="${MLX_HOME:-/var/lib/mlx}"
@@ -116,7 +116,7 @@ Usage: services/mlx/scripts/install-native-macos.sh [--model-path PATH] [--model
 Installs/starts MLX OpenAI server as a launchd service under an unprivileged user.
 
 Options:
-  --model-path PATH   Model path/repo id (default: mlx-community/MiniMax-M2.5-8bit)
+  --model-path PATH   Model path/repo id (default: mlx-community/GLM-5.2-DQ4plus-q8)
   --model-type TYPE   Model type (default: lm)
   --config PATH       Optional mlx-openai-server config YAML. When set, overrides --model-path/--model-type launch mode.
   --host HOST         Listen host (default: 127.0.0.1)

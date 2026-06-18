@@ -13,12 +13,12 @@
     },
     "mlx": {
       "backend": "local_mlx",
-      "model": "mlx-community/MiniMax-M2.5-8bit",
+      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
       "tools": true
     },
     "coder": {
       "backend": "local_mlx",
-      "model": "mlx-community/MiniMax-M2.5-8bit",
+      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
       "tools": true
     },
     "reasoning": {
@@ -29,7 +29,7 @@
     },
     "long": {
       "backend": "local_mlx",
-      "model": "mlx-community/MiniMax-M2.5-8bit",
+      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
       "context_window": 65536,
       "tools": true
     },
