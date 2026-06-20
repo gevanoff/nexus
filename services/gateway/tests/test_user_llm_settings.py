@@ -283,6 +283,7 @@ def test_ui_model_alias_hides_fetching_models_and_falls_back(monkeypatch):
         return "fetching" if model == primary else None
 
     monkeypatch.setattr(ui_routes, "model_unavailable_reason", unavailable)
+    monkeypatch.setattr(ui_routes.mlx_huge_lane, "route_model", lambda: "")
     alias = SimpleNamespace(backend="local_mlx", upstream_model=primary)
 
     show, display_model, reason = ui_routes._ui_alias_display_model("mlx", alias, Registry())
@@ -316,6 +317,28 @@ def test_ui_model_alias_does_not_treat_advertised_fetching_model_as_available(mo
     assert show is False
     assert display_model == primary
     assert reason == "fetching"
+
+
+def test_ui_model_alias_treats_advertised_missing_model_as_available(monkeypatch):
+    primary = "mlx-community/GLM-5.2-DQ4plus-q8"
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return "local_mlx"
+
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda *_args, **_kwargs: "missing")
+    alias = SimpleNamespace(backend="local_mlx", upstream_model=primary)
+
+    show, display_model, reason = ui_routes._ui_alias_display_model(
+        "long",
+        alias,
+        Registry(),
+        advertised_models_by_backend={"local_mlx": {primary}},
+    )
+
+    assert show is True
+    assert display_model == primary
+    assert reason is None
 
 
 def test_ui_runtime_selector_does_not_treat_advertised_fetching_model_as_available(monkeypatch):
@@ -548,6 +571,60 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
     minimax = next(item for item in payload["models"] if item["model"].endswith("MiniMax-M2.5-8bit"))
     assert minimax["unavailable_reason"] == "fetching"
     assert minimax["fetch_activity"]["status"] == "stalled"
+
+
+@pytest.mark.asyncio
+async def test_admin_models_treats_advertised_missing_mlx_model_as_selectable(monkeypatch):
+    class Backend:
+        base_url = "http://ai2:10240/v1"
+
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return backend
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        yield object()
+
+    model_id = "mlx-community/GLM-5.2-DQ4plus-q8"
+
+    async def fake_probe(_client, _registry, backend_name, _base_url, now):
+        return (
+            [
+                {
+                    "id": f"{backend_name}:{model_id}",
+                    "object": "model",
+                    "created": now,
+                    "owned_by": "local",
+                    "backend": backend_name,
+                    "upstream_model": model_id,
+                }
+            ],
+            {"backend": backend_name, "ok": True, "count": 1},
+        )
+
+    monkeypatch.setattr(ui_routes, "_require_admin", lambda _req: SimpleNamespace(id=1, admin=True))
+    monkeypatch.setattr(ui_routes, "now_unix", lambda: 123)
+    monkeypatch.setattr(ui_routes, "_ui_models_probe_timeout_sec", lambda: 1)
+    monkeypatch.setattr(ui_routes, "_httpx_client", fake_client)
+    monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ui_routes, "llm_backends", lambda: [("local_mlx", Backend())])
+    monkeypatch.setattr(ui_routes, "_probe_models_for_backend", fake_probe)
+    monkeypatch.setattr(ui_routes, "get_aliases", lambda: {})
+    monkeypatch.setattr(ui_routes, "get_aliases_state", lambda: SimpleNamespace(source="test", configured_path="", error=""))
+    monkeypatch.setattr(ui_routes, "get_health_checker", lambda: SimpleNamespace(get_status=lambda _name: None))
+    monkeypatch.setattr(ui_routes, "backend_hostname", lambda *_args, **_kwargs: "ai2")
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda _backend, _model: "missing")
+    monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda _model: "missing")
+    monkeypatch.setattr(ui_routes, "hf_model_cache_details", lambda _model: {"state": "missing", "fetch_activity": None})
+    monkeypatch.setattr(ui_routes, "hf_model_cache_entries", lambda: {})
+
+    payload = await ui_routes.ui_admin_models(SimpleNamespace())
+
+    row = next(item for item in payload["models"] if item["model"] == model_id)
+    assert row["advertised"] is True
+    assert row["unavailable_reason"] is None
+    assert row["selectable"] is True
 
 
 @pytest.mark.asyncio

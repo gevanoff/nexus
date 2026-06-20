@@ -278,13 +278,17 @@ def _ui_model_unavailable_reason(
     *,
     advertised_models_by_backend: Optional[Dict[str, set[str]]] = None,
 ) -> Optional[str]:
+    advertised = False
+    if advertised_models_by_backend and (backend_name or "").strip() in advertised_models_by_backend:
+        advertised = _ui_is_advertised_model(advertised_models_by_backend, backend_name, model_name)
+        if not advertised:
+            return "not_advertised"
+
     unavailable = model_unavailable_reason(backend_name, model_name)
+    if unavailable == "missing" and advertised:
+        return None
     if unavailable:
         return unavailable
-    if advertised_models_by_backend and (backend_name or "").strip() in advertised_models_by_backend:
-        if _ui_is_advertised_model(advertised_models_by_backend, backend_name, model_name):
-            return None
-        return "not_advertised"
     return None
 
 
@@ -4475,7 +4479,11 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
         key = (resolved_backend, model_name)
         row = model_rows.get(key)
         if row is None:
-            unavailable = model_unavailable_reason(resolved_backend, model_name)
+            unavailable = _ui_model_unavailable_reason(
+                resolved_backend,
+                model_name,
+                advertised_models_by_backend=advertised_models_by_backend,
+            )
             cache_details = _ui_model_cache_details(resolved_backend, model_name)
             cache_state = cache_details.get("state") or _ui_model_cache_state(resolved_backend, model_name)
             row = {
