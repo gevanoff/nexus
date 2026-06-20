@@ -22,7 +22,7 @@ backend shims are implemented and deployed through the Nexus repo.
 
 ### Agent Runtime
 - Implemented: tool bus with tier/allowlist enforcement, agent specs, run persistence, web browsing, memory tools, scheduled-task tools, and multi-backend coordinator.
-- Implemented: coding workspaces with autonomous runs, workspace steering messages, checkpoint commits, push/PR actions, and per-user GitHub token/preferred model settings.
+- Implemented: coding workspaces with autonomous runs, durable milestone plans, bounded and resumable run horizons, periodic context reconstruction, retained run history, workspace steering messages, checkpoint commits, push/PR actions, and per-user GitHub token/preferred model settings.
 - Implemented: scheduled LLM tasks with timer/run-at/interval/cron schedules and a focused UI.
 - Remaining: scheduled coder tasks, app/multi-model scheduled runners, and more formal role/team orchestration beyond the current coordinator.
 

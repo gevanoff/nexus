@@ -88,6 +88,11 @@
       }
       .model-warning[hidden] { display:none; }
       .task-list { display:flex; flex-direction:column; gap:8px; max-height: 48vh; overflow:auto; }
+      .task-controls { display:grid; grid-template-columns:minmax(0, 1fr) 150px; gap:8px; margin-bottom:8px; }
+      .workspace-stats { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+      .workspace-stat { border:1px solid var(--border); border-radius:999px; padding:3px 8px; font-size:11px; color:var(--muted); }
+      .workspace-stat.running { border-color:rgba(111,184,255,0.48); color:#cfe6ff; }
+      .workspace-stat.attention { border-color:rgba(255,127,143,0.46); color:#ffc3cb; }
       .task-item {
         display:block;
         text-align:left;
@@ -287,6 +292,18 @@
         line-height:1.45;
       }
       .workspace-chat-input { min-height:76px; }
+      .run-horizon-grid { display:grid; grid-template-columns:repeat(3, minmax(120px, 1fr)); gap:10px; }
+      .plan-progress-track { height:8px; border-radius:999px; overflow:hidden; background:rgba(231,237,246,0.08); }
+      .plan-progress-bar { height:100%; width:0; background:linear-gradient(90deg, #3f8fe5, #58d68d); transition:width 180ms ease; }
+      .plan-goal { color:#dbe8f8; font-size:13px; line-height:1.45; }
+      .plan-items { display:flex; flex-direction:column; gap:6px; }
+      .plan-item { display:grid; grid-template-columns:auto minmax(0,1fr); gap:8px; align-items:start; padding:7px 8px; border:1px solid rgba(231,237,246,0.08); border-radius:7px; background:rgba(5,9,14,0.34); }
+      .plan-item-title { color:#dbe8f8; font-size:12px; line-height:1.4; }
+      .plan-item-summary { color:var(--muted); font-size:11px; margin-top:2px; }
+      .plan-status { min-width:74px; justify-content:center; }
+      .run-history { display:flex; flex-direction:column; gap:7px; }
+      .run-history-item { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:8px; align-items:start; padding:8px; border:1px solid rgba(231,237,246,0.08); border-radius:7px; background:rgba(5,9,14,0.34); }
+      .run-history-summary { min-width:0; font-size:12px; line-height:1.4; color:#dbe8f8; }
       .output {
         margin:0;
         min-height:160px;
@@ -331,11 +348,18 @@
       }
       .file-content { min-height:280px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; line-height:1.45; }
       @media (max-width: 920px) {
-        .layout, .panel-grid, .two { grid-template-columns: 1fr; }
+        .layout, .panel-grid, .two, .run-horizon-grid { grid-template-columns: 1fr; }
         .task-list { max-height:none; }
       }
+      @media (max-width: 560px) {
+        main { padding:10px; }
+        header { flex-direction:column; }
+        .task-controls { grid-template-columns:1fr; }
+        .run-history-item { grid-template-columns:1fr; }
+        button, .pill { min-height:40px; }
+      }
     </style>
-    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
+    <link rel="stylesheet" href="/static/ui_roles.css?v=2" />
   </head>
   <body>
     <main>
@@ -446,10 +470,45 @@
             <div id="modelIntegrationMeta" class="hint"></div>
           </div>
 
+          <details class="card subpanel">
+            <summary>
+              <h2 style="margin:0;">Run horizon</h2>
+              <span class="meta">Durable limits and context compaction</span>
+            </summary>
+            <div class="details-body stack">
+              <div class="run-horizon-grid">
+                <div>
+                  <label for="agentMaxCycles">Maximum work cycles</label>
+                  <input id="agentMaxCycles" type="number" min="4" max="500" step="1" />
+                </div>
+                <div>
+                  <label for="agentMaxRuntimeMinutes">Maximum run time (minutes)</label>
+                  <input id="agentMaxRuntimeMinutes" type="number" min="1" max="1440" step="1" />
+                </div>
+                <div>
+                  <label for="agentContextResetCycles">Compact context every N cycles</label>
+                  <input id="agentContextResetCycles" type="number" min="4" max="100" step="1" />
+                </div>
+              </div>
+              <div class="hint">When a budget is reached, the run pauses with files, project plan, and checkpoint commits preserved. Start a continuation run to keep working.</div>
+            </div>
+          </details>
+
           <div class="card">
             <div class="row" style="justify-content:space-between; margin-bottom:10px;">
               <h2 style="margin:0;">Workspaces</h2>
               <span id="taskCount" class="badge">0</span>
+            </div>
+            <div id="workspaceStats" class="workspace-stats" aria-live="polite"></div>
+            <div class="task-controls">
+              <input id="taskSearch" type="search" autocomplete="off" placeholder="Search workspaces…" aria-label="Search workspaces" />
+              <select id="taskFilter" aria-label="Filter workspaces">
+                <option value="all">All workspaces</option>
+                <option value="active">Active</option>
+                <option value="attention">Needs attention</option>
+                <option value="ready">Ready</option>
+                <option value="completed">Completed</option>
+              </select>
             </div>
             <div id="tasks" class="task-list"></div>
           </div>
@@ -478,11 +537,26 @@
             </div>
             <div id="workspaceModelHint" class="model-warning" hidden></div>
             <div class="toolbar">
+              <button id="runSelectedAgent" type="button" data-ui-role="action">Run agent</button>
+              <button id="pauseSelectedAgent" type="button" data-ui-role="secondary">Pause</button>
               <button id="statusBtn" type="button" data-ui-role="secondary">Git status</button>
               <button id="diffBtn" type="button" data-ui-role="secondary">Diff vs Base</button>
               <button id="briefBtn" type="button" data-ui-role="secondary">Agent brief</button>
               <button id="copyOutput" type="button" data-ui-role="secondary">Copy output</button>
               </div>
+          </div>
+
+          <div class="subpanel stack">
+            <div class="row" style="justify-content:space-between;">
+              <h3>Project plan</h3>
+              <span id="planProgressText" class="meta">No milestones yet</span>
+            </div>
+            <div class="plan-progress-track" role="progressbar" aria-label="Project milestone progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div id="planProgressBar" class="plan-progress-bar"></div>
+            </div>
+            <div id="planGoal" class="plan-goal"></div>
+            <div id="projectPlan" class="plan-items"></div>
+            <div id="planNote" class="meta"></div>
           </div>
 
           <details class="subpanel output-panel" open>
@@ -518,6 +592,16 @@
             <div class="details-body stack">
               <div id="agentMeta" class="meta"></div>
               <pre id="agentLog" class="agent-log"></pre>
+            </div>
+          </details>
+
+          <details class="subpanel">
+            <summary>
+              <h3>Run history</h3>
+              <span id="runHistoryMeta" class="meta"></span>
+            </summary>
+            <div class="details-body">
+              <div id="runHistory" class="run-history"></div>
             </div>
           </details>
 
@@ -591,7 +675,7 @@
       </div>
     </main>
     <script src="/static/auth_client.js?v=5"></script>
-    <script src="/static/focused_nav.js?v=6"></script>
+    <script src="/static/focused_nav.js?v=7"></script>
     <script src="/static/coding.js?v=11"></script>
   </body>
 </html>

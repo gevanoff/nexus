@@ -22,6 +22,7 @@ _CODING_AUTO_RESUME_BLOCKERS = {"repeated_no_tool_call", "no_change_audit", "fin
 
 _TASK_LOOP: asyncio.Task | None = None
 _STOP_EVENT: asyncio.Event | None = None
+_ARCHIVE_ANALYSIS_TASKS: Dict[str, asyncio.Task[Any]] = {}
 _RUNTIME_STATUS: Dict[str, Any] = {
     "running": False,
     "started_at": 0,
@@ -561,6 +562,84 @@ async def _run_archived_local_analysis(archive_id: str) -> Dict[str, Any]:
     }
 
 
+async def _run_requested_archived_analysis(archive_id: str) -> None:
+    from app import coding_workspace
+
+    result: Dict[str, Any]
+    try:
+        result = await _run_archived_local_analysis(archive_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        error_text = f"{type(exc).__name__}: {exc}"
+        result = {"ok": False, "summary": "Immediate archive analysis failed.", "error": error_text}
+        try:
+            coding_workspace.mark_archived_analysis(
+                archive_id,
+                status="failed",
+                error=error_text,
+                finished_at=_now(),
+                summary="Immediate archive analysis failed.",
+            )
+        except Exception:
+            log.exception("failed to persist requested archive analysis failure archive_id=%s", archive_id)
+    finally:
+        current = _ARCHIVE_ANALYSIS_TASKS.get(archive_id)
+        if current is asyncio.current_task():
+            _ARCHIVE_ANALYSIS_TASKS.pop(archive_id, None)
+
+    try:
+        init_db()
+        with _connect() as conn:
+            event_ts = _now()
+            _record_event(
+                conn,
+                ts=event_ts,
+                level="info" if result.get("ok") else "warn",
+                category="archives",
+                event_type="analysis_completed" if result.get("ok") else "analysis_failed",
+                subject_type="archived_coding_task",
+                subject_id=archive_id,
+                title=f"Immediate archived workspace analysis {'completed' if result.get('ok') else 'failed'}: {archive_id}",
+                summary=str(result.get("summary") or result.get("error") or "Immediate archive analysis finished."),
+                reasoning="Requested directly from the Sentinel workspace.",
+                dedupe_key=f"archive:{archive_id}:analysis",
+                fingerprint=_fingerprint({"archive_id": archive_id, "result": result, "ts": event_ts}),
+                details={"result": result, "requested_immediately": True},
+            )
+    except Exception:
+        log.exception("failed to record requested archive analysis event archive_id=%s", archive_id)
+
+
+async def request_archived_analysis(
+    archive_id: str,
+    *,
+    analysis_model: Optional[str] = None,
+    preserve: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Persist and immediately queue one archive analysis independent of the full monitor scan."""
+
+    from app import coding_workspace
+
+    archive_id = str(archive_id or "").strip()
+    existing = _ARCHIVE_ANALYSIS_TASKS.get(archive_id)
+    archive = coding_workspace.get_archived_task(archive_id)
+    analysis = archive.get("analysis") if isinstance(archive.get("analysis"), dict) else {}
+    if (existing is not None and not existing.done()) or str(analysis.get("status") or "").strip().lower() == "running":
+        return {"ok": True, "queued": False, "already_running": True, "archive": archive}
+
+    archive = coding_workspace.update_archived_task_settings(
+        archive_id,
+        preserve=preserve,
+        analysis_mode="immediate",
+        analysis_target="local",
+        analysis_model=analysis_model,
+    )
+    task = asyncio.create_task(_run_requested_archived_analysis(archive_id))
+    _ARCHIVE_ANALYSIS_TASKS[archive_id] = task
+    return {"ok": True, "queued": True, "already_running": False, "archive": archive}
+
+
 async def _monitor_archived_workspaces(
     state: Dict[str, Any],
     conn: sqlite3.Connection,
@@ -620,6 +699,14 @@ async def _monitor_archived_workspaces(
         target = str(analysis.get("target") or "local").strip().lower()
         mode = str(analysis.get("requested_mode") or "idle").strip().lower()
         status = str(analysis.get("status") or "pending").strip().lower()
+        requested_task = _ARCHIVE_ANALYSIS_TASKS.get(archive_id)
+        if requested_task is not None and not requested_task.done():
+            summary["pending"] += 1
+            current_active[archive_id] = {
+                "fingerprint": _fingerprint({"archive_id": archive_id, "status": "running", "source": "ui"}),
+                "status": "running",
+            }
+            continue
         should_run = target == "local" and status == "pending" and mode in {"idle", "immediate"}
         if not should_run:
             continue
@@ -1381,4 +1468,10 @@ async def stop_runtime() -> None:
             pass
     _TASK_LOOP = None
     _STOP_EVENT = None
+    requested_tasks = [task for task in _ARCHIVE_ANALYSIS_TASKS.values() if not task.done()]
+    for task in requested_tasks:
+        task.cancel()
+    if requested_tasks:
+        await asyncio.gather(*requested_tasks, return_exceptions=True)
+    _ARCHIVE_ANALYSIS_TASKS.clear()
     _RUNTIME_STATUS["running"] = False

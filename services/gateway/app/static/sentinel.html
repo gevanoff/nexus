@@ -88,6 +88,11 @@
         background-repeat: no-repeat;
         padding-right: 28px;
       }
+      select option {
+        background: #111821;
+        color: #e7edf6;
+      }
+      select option:checked { background: #214f7c; color: #ffffff; }
       select:disabled { opacity: 0.58; cursor: default; }
       input[type="checkbox"] { accent-color: var(--accent); }
       button { cursor: pointer; }
@@ -97,7 +102,7 @@
         .archive-controls { grid-template-columns: 1fr; }
       }
     </style>
-    <link rel="stylesheet" href="/static/ui_roles.css?v=1" />
+    <link rel="stylesheet" href="/static/ui_roles.css?v=2" />
   </head>
   <body>
     <main>
@@ -163,7 +168,7 @@
     </main>
 
     <script src="/static/auth_client.js?v=3"></script>
-    <script src="/static/focused_nav.js?v=6"></script>
-    <script src="/static/sentinel.js?v=2"></script>
+    <script src="/static/focused_nav.js?v=7"></script>
+    <script src="/static/sentinel.js?v=3"></script>
   </body>
 </html>

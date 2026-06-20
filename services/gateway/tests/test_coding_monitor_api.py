@@ -152,3 +152,52 @@ async def test_v1_coding_intervene_pause_requests_pause(monkeypatch):
     )
 
     assert result == {"ok": True, "action": "pause", "started": False, "task": {"id": "code_123", "agent": {"status": "pausing"}}}
+
+
+def test_run_horizon_kwargs_forwards_optional_limits():
+    body = coding_routes.CodingAgentRunRequest(
+        max_cycles=120,
+        max_runtime_sec=7200,
+        context_reset_cycles=10,
+    )
+
+    assert coding_routes._run_horizon_kwargs(body) == {
+        "max_cycles": 120,
+        "max_runtime_sec": 7200,
+        "context_reset_cycles": 10,
+    }
+
+
+@pytest.mark.asyncio
+async def test_v1_coding_plan_updates_durable_workspace_plan(monkeypatch):
+    calls = []
+
+    def _update(task_id, *, goal, items, note, actor):
+        calls.append((task_id, goal, items, note, actor))
+        return {"ok": True, "plan": {"goal": goal, "items": items}}
+
+    monkeypatch.setattr(coding_routes, "_require_coding_api", lambda req: None)
+    monkeypatch.setattr(coding_routes.cw, "update_project_plan", _update)
+    monkeypatch.setattr(coding_routes.cw, "load_task", lambda task_id: {"id": task_id})
+    monkeypatch.setattr(coding_routes.cw, "public_task", lambda task: {**task, "public": True})
+
+    result = await coding_routes.v1_coding_task_plan(
+        _Request(),
+        "code_123",
+        coding_routes.CodingProjectPlanRequest(
+            goal="Ship the feature",
+            items=[{"id": "verify", "title": "Verify", "status": "pending"}],
+            note="Keep this durable.",
+        ),
+    )
+
+    assert calls == [
+        (
+            "code_123",
+            "Ship the feature",
+            [{"id": "verify", "title": "Verify", "status": "pending"}],
+            "Keep this durable.",
+            "api",
+        )
+    ]
+    assert result["task"] == {"id": "code_123", "public": True}

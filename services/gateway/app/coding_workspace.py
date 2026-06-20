@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib import error as urlerror
 from urllib import request as urlrequest
 from urllib.parse import urlsplit, urlunsplit
@@ -42,6 +42,7 @@ _TREE_SKIP = {".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cach
 _ARCHIVE_ANALYSIS_MODES = {"manual", "idle", "immediate"}
 _ARCHIVE_ANALYSIS_TARGETS = {"local", "external", "human", "none"}
 _FINDING_REVIEW_VERDICTS = {"invalid", "superseded"}
+_PROJECT_PLAN_STATUSES = {"pending", "in_progress", "completed", "blocked", "skipped"}
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
 
@@ -669,6 +670,96 @@ def save_task(task: Dict[str, Any]) -> Dict[str, Any]:
     return task
 
 
+def mutate_task(task_id: str, mutator: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
+    """Atomically read, mutate, and persist task metadata.
+
+    Coding runs write events while users can send guidance from another thread.
+    Holding the task's re-entrant JSON lock for the full transaction prevents a
+    later writer from silently replacing the other writer's update.
+    """
+
+    path = _task_path(task_id)
+    with _json_lock(path):
+        task = _read_json(path)
+        mutator(task)
+        task["updated_at"] = _now()
+        _write_json(path, task)
+        return task
+
+
+def normalize_project_plan(raw: Any, *, fallback_goal: str = "") -> Dict[str, Any]:
+    plan = raw if isinstance(raw, dict) else {}
+    goal = str(plan.get("goal") or fallback_goal or "").strip()[:4_000]
+    raw_items = plan.get("items") if isinstance(plan.get("items"), list) else []
+    items: List[Dict[str, Any]] = []
+    for index, item in enumerate(raw_items[:80]):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or item.get("summary") or "").strip()[:500]
+        if not title:
+            continue
+        status = str(item.get("status") or "pending").strip().lower()
+        if status not in _PROJECT_PLAN_STATUSES:
+            status = "pending"
+        item_id = str(item.get("id") or f"step-{index + 1}").strip()[:120] or f"step-{index + 1}"
+        items.append(
+            {
+                "id": item_id,
+                "title": title,
+                "status": status,
+                "summary": str(item.get("summary") or "").strip()[:2_000],
+            }
+        )
+    counts = {status: 0 for status in sorted(_PROJECT_PLAN_STATUSES)}
+    for item in items:
+        counts[str(item["status"])] += 1
+    done = counts["completed"] + counts["skipped"]
+    try:
+        revision = max(0, int(plan.get("revision") or 0))
+    except Exception:
+        revision = 0
+    return {
+        "goal": goal,
+        "items": items,
+        "counts": {**counts, "total": len(items), "done": done},
+        "revision": revision,
+        "updated_at": plan.get("updated_at"),
+        "updated_by": str(plan.get("updated_by") or "").strip()[:120],
+        "note": str(plan.get("note") or "").strip()[:2_000],
+    }
+
+
+def update_project_plan(
+    task_id: str,
+    *,
+    goal: Optional[str] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    note: Optional[str] = None,
+    actor: Optional[str] = None,
+) -> Dict[str, Any]:
+    if goal is None and items is None and note is None:
+        raise HTTPException(status_code=400, detail="plan update requires goal, items, or note")
+    if items is not None and not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="plan items must be an array")
+
+    def apply(task: Dict[str, Any]) -> None:
+        current = normalize_project_plan(task.get("project_plan"), fallback_goal=str(task.get("prompt") or ""))
+        candidate = dict(current)
+        if goal is not None:
+            candidate["goal"] = str(goal or "").strip()
+        if items is not None:
+            candidate["items"] = items
+        if note is not None:
+            candidate["note"] = str(note or "").strip()
+        candidate["revision"] = int(current.get("revision") or 0) + 1
+        candidate["updated_at"] = _now()
+        candidate["updated_by"] = str(actor or "coding-agent").strip() or "coding-agent"
+        task["project_plan"] = normalize_project_plan(candidate, fallback_goal=str(task.get("prompt") or ""))
+
+    task = mutate_task(task_id, apply)
+    return {"ok": True, "plan": normalize_project_plan(task.get("project_plan"), fallback_goal=str(task.get("prompt") or ""))}
+
+
 def append_guidance_message(
     task_id: str,
     *,
@@ -676,54 +767,56 @@ def append_guidance_message(
     actor: Optional[str] = None,
     run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    task = load_task(task_id)
     text = str(message or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="message is required")
-    messages = task.get("guidance_messages")
-    if not isinstance(messages, list):
-        messages = []
-    messages.append(
-        {
-            "ts": _now(),
-            "role": "user",
-            "actor": str(actor or "").strip(),
-            "run_id": str(run_id or "").strip(),
-            "content": text,
-        }
-    )
-    task["guidance_messages"] = messages[-200:]
-    task["last_guidance_at"] = _now()
-    save_task(task)
+
+    def apply(task: Dict[str, Any]) -> None:
+        messages = task.get("guidance_messages")
+        if not isinstance(messages, list):
+            messages = []
+        now = _now()
+        messages.append(
+            {
+                "ts": now,
+                "role": "user",
+                "actor": str(actor or "").strip(),
+                "run_id": str(run_id or "").strip(),
+                "content": text,
+            }
+        )
+        task["guidance_messages"] = messages[-200:]
+        task["last_guidance_at"] = now
+
+    task = mutate_task(task_id, apply)
     return public_task(task)
 
 
 def set_task_coding_model(task_id: str, *, coding_model: Optional[str]) -> Dict[str, Any]:
-    task = load_task(task_id)
-    agent_status = str(task.get("agent_status") or "").strip().lower()
-    if agent_status in {"queued", "running", "stopping", "pausing"}:
-        raise HTTPException(status_code=409, detail="cannot change coding model while the agent is active")
-
     next_model = str(coding_model or "").strip()
-    previous_model = str(task.get("coding_model") or "").strip()
-    if previous_model == next_model:
-        return public_task(task)
+    def apply(task: Dict[str, Any]) -> None:
+        agent_status = str(task.get("agent_status") or "").strip().lower()
+        if agent_status in {"queued", "running", "stopping", "pausing"}:
+            raise HTTPException(status_code=409, detail="cannot change coding model while the agent is active")
+        previous_model = str(task.get("coding_model") or "").strip()
+        if previous_model == next_model:
+            return
+        task["coding_model"] = next_model
+        events = task.get("agent_events")
+        if not isinstance(events, list):
+            events = []
+        events.append(
+            {
+                "ts": _now(),
+                "type": "model_updated",
+                "summary": f"Workspace coding model set to {next_model or 'default'}.",
+                "previous_model": previous_model,
+                "model": next_model,
+            }
+        )
+        task["agent_events"] = events[-80:]
 
-    task["coding_model"] = next_model
-    events = task.get("agent_events")
-    if not isinstance(events, list):
-        events = []
-    events.append(
-        {
-            "ts": _now(),
-            "type": "model_updated",
-            "summary": f"Workspace coding model set to {next_model or 'default'}.",
-            "previous_model": previous_model,
-            "model": next_model,
-        }
-    )
-    task["agent_events"] = events[-80:]
-    save_task(task)
+    task = mutate_task(task_id, apply)
     return public_task(task)
 
 
@@ -775,6 +868,22 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
         task["agent_error"] = ev["summary"]
         task["agent_finished_at"] = _now()
         task["agent_last_event_at"] = ev["ts"]
+        runs = task.get("agent_runs")
+        if isinstance(runs, list):
+            current_run_id = str(task.get("agent_run_id") or "")
+            for record in reversed(runs):
+                if isinstance(record, dict) and str(record.get("run_id") or "") == current_run_id:
+                    record.update(
+                        {
+                            "status": "interrupted",
+                            "finished_at": task["agent_finished_at"],
+                            "cycle": int(task.get("agent_cycle") or 0),
+                            "summary": ev["summary"],
+                            "error": ev["summary"],
+                        }
+                    )
+                    break
+            task["agent_runs"] = [item for item in runs[-200:] if isinstance(item, dict)]
         save_task(task)
         recovered.append(str(task.get("id") or path.stem))
     return {"ok": True, "recovered": len(recovered), "tasks": recovered}
@@ -1181,6 +1290,8 @@ def create_task(
         "workspace_path": str(workspace),
         "repo_path": str(repo_path),
         "commands": [],
+        "project_plan": normalize_project_plan({"goal": str(prompt or "").strip(), "items": []}),
+        "agent_runs": [],
     }
     save_task(task)
 
@@ -1277,6 +1388,8 @@ def create_model_integration_task(
         "repo_path": str(repo_path),
         "integration": plan,
         "commands": [],
+        "project_plan": normalize_project_plan({"goal": str(plan.get("prompt") or "").strip(), "items": []}),
+        "agent_runs": [],
     }
     save_task(task)
 
@@ -2935,6 +3048,9 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
     guidance_messages = task.get("guidance_messages")
     if not isinstance(guidance_messages, list):
         guidance_messages = []
+    run_history = task.get("agent_runs")
+    if not isinstance(run_history, list):
+        run_history = []
     now = _now()
     created_at = float(task.get("created_at") or now)
     workspace_elapsed = int(max(0.0, now - created_at)) if created_at > 0 else 0
@@ -2959,6 +3075,8 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "prompt": task.get("prompt") or "",
         "seed_files": task.get("seed_files") if isinstance(task.get("seed_files"), list) else [],
         "guidance_messages": guidance_messages[-80:],
+        "project_plan": normalize_project_plan(task.get("project_plan"), fallback_goal=str(task.get("prompt") or "")),
+        "agent_runs": [item for item in run_history[-30:] if isinstance(item, dict)],
         "last_guidance_at": task.get("last_guidance_at"),
         "coding_model": task.get("coding_model") or "",
         "model_policy": coding_model_policy.describe_workspace_model(str(task.get("coding_model") or "")),
@@ -2982,6 +3100,10 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
             "started_at": task.get("agent_started_at"),
             "finished_at": task.get("agent_finished_at"),
             "elapsed_runtime_sec": agent_elapsed,
+            "cycle": int(task.get("agent_cycle") or 0),
+            "max_cycles": int(task.get("agent_max_cycles") or getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80) or 80),
+            "max_runtime_sec": int(task.get("agent_max_runtime_sec") or getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60)),
+            "context_reset_cycles": int(task.get("agent_context_reset_cycles") or getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12),
             "last_event_at": task.get("agent_last_event_at"),
             "summary": task.get("agent_summary") or "",
             "error": _redact_text(str(task.get("agent_error") or "")),
@@ -3231,6 +3353,11 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "file_max_bytes": file_max_bytes(),
         "agent_max_tokens": int(getattr(S, "CODING_AGENT_MAX_TOKENS", 8192) or 8192),
         "agent_tool_context_chars": int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000) or 32_000),
+        "agent_max_cycles_per_run": int(getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80) or 80),
+        "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60)),
+        "agent_context_reset_cycles": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12),
+        "agent_context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 120_000) or 120_000),
+        "agent_run_history_limit": int(getattr(S, "CODING_AGENT_RUN_HISTORY_LIMIT", 50) or 50),
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
         "preferred_coding_model": str(preferred_coding_model or "").strip(),

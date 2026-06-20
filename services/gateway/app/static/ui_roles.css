@@ -135,3 +135,33 @@ button[data-ui-role="menu"]:disabled {
   transform: none;
   box-shadow: none;
 }
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: rgba(111, 184, 255, 0.34);
+  color: #f7fbff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (pointer: coarse) {
+  button[data-ui-role],
+  a[data-ui-role] {
+    min-height: 42px;
+  }
+}

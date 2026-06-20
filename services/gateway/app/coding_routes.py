@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import require_bearer
 from app.config import S
@@ -36,6 +36,9 @@ class CodingCreateAndRunRequest(BaseModel):
     coding_model: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
+    context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
 
 class CodingModelIntegrationCreateRequest(BaseModel):
@@ -53,6 +56,9 @@ class CodingModelIntegrationCreateRequest(BaseModel):
 class CodingModelIntegrationRunRequest(CodingModelIntegrationCreateRequest):
     auto_commit: bool = False
     commit_message: Optional[str] = None
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
+    context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
 
 class CodingAgentRunRequest(BaseModel):
@@ -60,6 +66,9 @@ class CodingAgentRunRequest(BaseModel):
     prompt: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
+    context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
 
 class CodingInterventionRequest(BaseModel):
@@ -69,6 +78,9 @@ class CodingInterventionRequest(BaseModel):
     coding_model: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
+    context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
 
 class CodingGuidanceRequest(BaseModel):
@@ -77,6 +89,15 @@ class CodingGuidanceRequest(BaseModel):
     coding_model: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
+    context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
+
+
+class CodingProjectPlanRequest(BaseModel):
+    goal: Optional[str] = None
+    items: Optional[List[Dict[str, Any]]] = None
+    note: Optional[str] = None
 
 
 class CodingTaskModelRequest(BaseModel):
@@ -165,6 +186,14 @@ def _actor_from_user(user: Any) -> str:
     except Exception:
         pass
     return "ui"
+
+
+def _run_horizon_kwargs(body: Any) -> Dict[str, Optional[int]]:
+    return {
+        "max_cycles": getattr(body, "max_cycles", None),
+        "max_runtime_sec": getattr(body, "max_runtime_sec", None),
+        "context_reset_cycles": getattr(body, "context_reset_cycles", None),
+    }
 
 
 def _is_smoke_task(task: Dict[str, Any]) -> bool:
@@ -294,6 +323,7 @@ async def ui_coding_create_model_integration_and_run(req: Request, body: CodingM
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user),
+        **_run_horizon_kwargs(body),
     )
     return {"task": task}
 
@@ -340,6 +370,7 @@ async def ui_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user),
+        **_run_horizon_kwargs(body),
     )
     return {"task": task}
 
@@ -520,6 +551,7 @@ async def ui_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user),
+        **_run_horizon_kwargs(body),
     )
     return {"task": task}
 
@@ -540,6 +572,7 @@ async def ui_coding_task_message(req: Request, task_id: str, body: CodingGuidanc
                 auto_commit=body.auto_commit,
                 commit_message=body.commit_message,
                 actor=_actor_from_user(user),
+                **_run_horizon_kwargs(body),
             )
             return {"task": task, "started": True}
         except HTTPException as exc:
@@ -554,6 +587,22 @@ async def ui_coding_task_model(req: Request, task_id: str, body: CodingTaskModel
     _require_coding_ui(req)
     task = await _to_thread(cw.set_task_coding_model, task_id, coding_model=body.coding_model)
     return {"task": task}
+
+
+@router.post("/ui/api/coding/tasks/{task_id}/plan", include_in_schema=False)
+async def ui_coding_task_plan(req: Request, task_id: str, body: CodingProjectPlanRequest) -> Dict[str, Any]:
+    user = _require_coding_ui(req)
+    result = await _to_thread(
+        cw.update_project_plan,
+        task_id,
+        goal=body.goal,
+        items=body.items,
+        note=body.note,
+        actor=_actor_from_user(user),
+    )
+    stored = await _to_thread(cw.load_task, task_id)
+    result["task"] = cw.public_task(stored)
+    return result
 
 
 @router.post("/ui/api/coding/tasks/{task_id}/agent-pause", include_in_schema=False)
@@ -661,6 +710,7 @@ async def v1_coding_model_integrations_run(req: Request, body: CodingModelIntegr
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user) if user is not None else "api",
+        **_run_horizon_kwargs(body),
     )
     return {"task": task}
 
@@ -708,6 +758,7 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user) if user is not None else "api",
+        **_run_horizon_kwargs(body),
     )
     return {"task": task}
 
@@ -775,6 +826,7 @@ async def v1_coding_intervene(req: Request, task_id: str, body: CodingInterventi
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=actor,
+        **_run_horizon_kwargs(body),
     )
     return {"ok": True, "action": action, "started": True, "task": updated}
 
@@ -952,6 +1004,7 @@ async def v1_coding_agent_run(req: Request, task_id: str, body: CodingAgentRunRe
         auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user) if user is not None else "api",
+        **_run_horizon_kwargs(body),
     )
     return {"task": task}
 
@@ -972,6 +1025,7 @@ async def v1_coding_task_message(req: Request, task_id: str, body: CodingGuidanc
                 auto_commit=body.auto_commit,
                 commit_message=body.commit_message,
                 actor=_actor_from_user(user) if user is not None else "api",
+                **_run_horizon_kwargs(body),
             )
             return {"task": task, "started": True}
         except HTTPException as exc:
@@ -986,6 +1040,22 @@ async def v1_coding_task_model(req: Request, task_id: str, body: CodingTaskModel
     _require_coding_api(req)
     task = await _to_thread(cw.set_task_coding_model, task_id, coding_model=body.coding_model)
     return {"task": task}
+
+
+@router.post("/v1/coding/tasks/{task_id}/plan")
+async def v1_coding_task_plan(req: Request, task_id: str, body: CodingProjectPlanRequest) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    result = await _to_thread(
+        cw.update_project_plan,
+        task_id,
+        goal=body.goal,
+        items=body.items,
+        note=body.note,
+        actor=_actor_from_user(user) if user is not None else "api",
+    )
+    stored = await _to_thread(cw.load_task, task_id)
+    result["task"] = cw.public_task(stored)
+    return result
 
 
 @router.post("/v1/coding/tasks/{task_id}/agent-pause")

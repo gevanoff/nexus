@@ -29,6 +29,12 @@
     refreshTasks: document.getElementById("refreshTasks"),
     tasks: document.getElementById("tasks"),
     taskCount: document.getElementById("taskCount"),
+    workspaceStats: document.getElementById("workspaceStats"),
+    taskSearch: document.getElementById("taskSearch"),
+    taskFilter: document.getElementById("taskFilter"),
+    agentMaxCycles: document.getElementById("agentMaxCycles"),
+    agentMaxRuntimeMinutes: document.getElementById("agentMaxRuntimeMinutes"),
+    agentContextResetCycles: document.getElementById("agentContextResetCycles"),
     selectedTitle: document.getElementById("selectedTitle"),
     selectedMeta: document.getElementById("selectedMeta"),
     selectedModelLine: document.getElementById("selectedModelLine"),
@@ -38,6 +44,8 @@
     workspaceModelHint: document.getElementById("workspaceModelHint"),
     saveWorkspaceModel: document.getElementById("saveWorkspaceModel"),
     trackCurrentCoderModel: document.getElementById("trackCurrentCoderModel"),
+    runSelectedAgent: document.getElementById("runSelectedAgent"),
+    pauseSelectedAgent: document.getElementById("pauseSelectedAgent"),
     archiveTaskBtn: document.getElementById("archiveTaskBtn"),
     purgeTaskBtn: document.getElementById("purgeTaskBtn"),
     workspaceChat: document.getElementById("workspaceChat"),
@@ -51,6 +59,13 @@
     agentStatus: document.getElementById("agentStatus"),
     agentMeta: document.getElementById("agentMeta"),
     agentLog: document.getElementById("agentLog"),
+    planProgressText: document.getElementById("planProgressText"),
+    planProgressBar: document.getElementById("planProgressBar"),
+    planGoal: document.getElementById("planGoal"),
+    projectPlan: document.getElementById("projectPlan"),
+    planNote: document.getElementById("planNote"),
+    runHistory: document.getElementById("runHistory"),
+    runHistoryMeta: document.getElementById("runHistoryMeta"),
     publishFeedback: document.getElementById("publishFeedback"),
     commandInput: document.getElementById("commandInput"),
     commandCwd: document.getElementById("commandCwd"),
@@ -88,7 +103,11 @@
     diffSummary: null,
     changeSummary: null,
     lastTreePayload: null,
+    taskSearch: "",
+    taskFilter: "all",
   };
+
+  const STORAGE_PREFIX = "nexus.coding.v2";
 
   const CREATE_MODE_PROFILES = {
     agent: {
@@ -201,6 +220,89 @@
     return parts.join(" ");
   }
 
+  function storageGet(key, fallback = "") {
+    try {
+      const value = window.localStorage.getItem(`${STORAGE_PREFIX}.${key}`);
+      return value === null ? fallback : value;
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  function storageSet(key, value) {
+    try {
+      window.localStorage.setItem(`${STORAGE_PREFIX}.${key}`, String(value === undefined || value === null ? "" : value));
+    } catch (error) {
+      // Persistence is best-effort when storage is disabled.
+    }
+  }
+
+  function fmtRelativeTime(ts) {
+    const value = Number(ts || 0);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    const delta = Math.round(value - Date.now() / 1000);
+    const abs = Math.abs(delta);
+    const units = abs >= 86400 ? [86400, "day"] : abs >= 3600 ? [3600, "hour"] : abs >= 60 ? [60, "minute"] : [1, "second"];
+    const amount = Math.round(delta / units[0]);
+    try {
+      return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(amount, units[1]);
+    } catch (error) {
+      return fmtTime(ts);
+    }
+  }
+
+  function taskNeedsAttention(task) {
+    const taskStatus = String((task && task.status) || "").toLowerCase();
+    const agentStatus = String(agentInfo(task).status || "").toLowerCase();
+    return taskStatus === "error" || ["failed", "paused", "interrupted", "stopped"].includes(agentStatus);
+  }
+
+  function filteredTasks() {
+    const query = String(state.taskSearch || "").trim().toLowerCase();
+    const filter = String(state.taskFilter || "all");
+    return (state.tasks || []).filter((task) => {
+      const agentStatus = String(agentInfo(task).status || "").toLowerCase();
+      const taskStatus = String(task.status || "").toLowerCase();
+      if (filter === "active" && !agentIsActive(task)) return false;
+      if (filter === "attention" && !taskNeedsAttention(task)) return false;
+      if (filter === "ready" && taskStatus !== "ready") return false;
+      if (filter === "completed" && agentStatus !== "completed") return false;
+      if (!query) return true;
+      const haystack = [
+        task.id,
+        taskTitle(task),
+        task.repo_url,
+        task.branch_name,
+        task.base_branch,
+        task.prompt,
+        task.coding_model,
+        agentInfo(task).summary,
+      ].map((value) => String(value || "").toLowerCase()).join("\n");
+      return haystack.includes(query);
+    });
+  }
+
+  function renderWorkspaceStats() {
+    if (!els.workspaceStats) return;
+    const all = state.tasks || [];
+    const counts = {
+      active: all.filter(agentIsActive).length,
+      attention: all.filter(taskNeedsAttention).length,
+      completed: all.filter((task) => String(agentInfo(task).status || "").toLowerCase() === "completed").length,
+    };
+    els.workspaceStats.innerHTML = "";
+    [
+      ["active", counts.active, "running"],
+      ["attention", counts.attention, "attention"],
+      ["completed", counts.completed, ""],
+    ].forEach(([label, value, cls]) => {
+      const item = document.createElement("span");
+      item.className = `workspace-stat ${cls}`.trim();
+      item.textContent = `${value} ${label}`;
+      els.workspaceStats.appendChild(item);
+    });
+  }
+
   function shortCommit(value) {
     const text = String(value || "").trim();
     return text ? text.slice(0, 12) : "";
@@ -209,9 +311,8 @@
   function badgeClass(status) {
     const value = String(status || "").toLowerCase();
     if (value === "ready" || value === "completed") return "ready";
-    if (value === "error" || value === "failed") return "error";
+    if (value === "error" || value === "failed" || value === "blocked" || value === "interrupted") return "error";
     if (value === "running" || value === "queued" || value === "stopping" || value === "pausing") return "running";
-    if (value === "interrupted") return "error";
     return "pending";
   }
 
@@ -583,12 +684,14 @@
   function renderTasks() {
     if (!els.tasks) return;
     els.tasks.innerHTML = "";
-    const tasks = state.tasks || [];
-    if (els.taskCount) els.taskCount.textContent = String(tasks.length);
+    const tasks = filteredTasks();
+    const total = (state.tasks || []).length;
+    if (els.taskCount) els.taskCount.textContent = tasks.length === total ? String(total) : `${tasks.length} / ${total}`;
+    renderWorkspaceStats();
     if (!tasks.length) {
       const empty = document.createElement("div");
       empty.className = "hint";
-      empty.textContent = "No workspaces yet.";
+      empty.textContent = total ? "No workspaces match the current search and filter." : "No workspaces yet.";
       els.tasks.appendChild(empty);
       return;
     }
@@ -634,7 +737,9 @@
       const commit = shortCommit(task.last_commit || task.last_checkpoint_commit);
       const commitMeta = document.createElement("div");
       commitMeta.className = "meta commit-meta";
-      commitMeta.textContent = commit ? `commit ${commit}` : "";
+      const updated = fmtRelativeTime(task.updated_at);
+      commitMeta.textContent = [commit ? `commit ${commit}` : "", updated ? `updated ${updated}` : ""].filter(Boolean).join(" | ");
+      commitMeta.title = fmtTime(task.updated_at);
       button.appendChild(status);
       button.appendChild(agentBadge);
       button.appendChild(modelBadge(task));
@@ -647,8 +752,10 @@
       const runBtn = document.createElement("button");
       runBtn.type = "button";
       runBtn.className = "task-icon-btn task-run-btn";
-      runBtn.title = "Run agent for this workspace";
-      runBtn.setAttribute("aria-label", "Run agent for this workspace");
+      const previousAgentStatus = String(agent.status || "idle").toLowerCase();
+      const runLabel = ["paused", "failed", "interrupted", "stopped"].includes(previousAgentStatus) ? "Continue agent for this workspace" : "Run agent for this workspace";
+      runBtn.title = runLabel;
+      runBtn.setAttribute("aria-label", runLabel);
       runBtn.disabled = state.busy || agentIsActive(task);
       runBtn.innerHTML = "<svg viewBox='0 0 24 24'><path d='M8 5v14l11-7z'/></svg>";
       runBtn.addEventListener("click", (event) => runTaskButtonAction(event, () => startAgentRun(task.id)));
@@ -716,6 +823,8 @@
       els.writeFile,
       els.sendWorkspaceMessage,
       els.saveWorkspaceModel,
+      els.runSelectedAgent,
+      els.pauseSelectedAgent,
     ].forEach((button) => {
       if (button) button.disabled = disabled || state.busy;
     });
@@ -736,6 +845,8 @@
       }
       renderAgent(null);
       renderWorkspaceChat(null);
+      renderProjectPlan(null);
+      renderRunHistory(null);
       return;
     }
     const integration = taskIntegration(task);
@@ -812,8 +923,114 @@
     }
     if (els.saveWorkspaceModel) els.saveWorkspaceModel.disabled = state.busy || activeAgent;
     if (els.trackCurrentCoderModel) els.trackCurrentCoderModel.disabled = state.busy || activeAgent;
+    if (els.runSelectedAgent) {
+      const previousStatus = String(agentInfo(task).status || "idle").toLowerCase();
+      els.runSelectedAgent.textContent = ["paused", "failed", "interrupted", "stopped"].includes(previousStatus) ? "Continue agent" : "Run agent";
+      els.runSelectedAgent.disabled = state.busy || activeAgent;
+    }
+    if (els.pauseSelectedAgent) els.pauseSelectedAgent.disabled = state.busy || !activeAgent;
     renderAgent(task);
     renderWorkspaceChat(task);
+    renderProjectPlan(task);
+    renderRunHistory(task);
+  }
+
+  function renderProjectPlan(task) {
+    const plan = task && task.project_plan && typeof task.project_plan === "object" ? task.project_plan : { goal: "", items: [], counts: {} };
+    const items = Array.isArray(plan.items) ? plan.items : [];
+    const counts = plan.counts && typeof plan.counts === "object" ? plan.counts : {};
+    const total = Number(counts.total || items.length || 0);
+    const done = Number(counts.done || 0);
+    const percent = total ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+    if (els.planProgressText) els.planProgressText.textContent = total ? `${done} of ${total} milestones complete` : "No milestones yet";
+    if (els.planProgressBar) {
+      els.planProgressBar.style.width = `${percent}%`;
+      const track = els.planProgressBar.parentElement;
+      if (track) track.setAttribute("aria-valuenow", String(percent));
+    }
+    if (els.planGoal) els.planGoal.textContent = String(plan.goal || (task && task.prompt) || "Select a workspace to view its project plan.");
+    if (els.planNote) {
+      const bits = [];
+      if (plan.note) bits.push(String(plan.note));
+      if (plan.updated_at) bits.push(`updated ${fmtRelativeTime(plan.updated_at)}${plan.updated_by ? ` by ${plan.updated_by}` : ""}`);
+      els.planNote.textContent = bits.join(" | ");
+      els.planNote.title = plan.updated_at ? fmtTime(plan.updated_at) : "";
+    }
+    if (!els.projectPlan) return;
+    els.projectPlan.innerHTML = "";
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint";
+      empty.textContent = task
+        ? "The coding agent will create a durable milestone plan when the work spans several steps."
+        : "No workspace selected.";
+      els.projectPlan.appendChild(empty);
+      return;
+    }
+    for (const item of items) {
+      const row = document.createElement("div");
+      row.className = "plan-item";
+      const status = document.createElement("span");
+      status.className = `badge plan-status ${badgeClass(item.status)}`;
+      status.textContent = String(item.status || "pending").replace(/_/g, " ");
+      const content = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "plan-item-title";
+      title.textContent = item.title || item.id || "Milestone";
+      content.appendChild(title);
+      if (item.summary) {
+        const summary = document.createElement("div");
+        summary.className = "plan-item-summary";
+        summary.textContent = item.summary;
+        content.appendChild(summary);
+      }
+      row.appendChild(status);
+      row.appendChild(content);
+      els.projectPlan.appendChild(row);
+    }
+  }
+
+  function renderRunHistory(task) {
+    if (!els.runHistory) return;
+    const runs = task && Array.isArray(task.agent_runs) ? task.agent_runs.slice().reverse() : [];
+    els.runHistory.innerHTML = "";
+    if (els.runHistoryMeta) els.runHistoryMeta.textContent = runs.length ? `${runs.length} retained run${runs.length === 1 ? "" : "s"}` : "No runs yet";
+    if (!runs.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint";
+      empty.textContent = task ? "No durable run history yet." : "Select a workspace to view run history.";
+      els.runHistory.appendChild(empty);
+      return;
+    }
+    for (const run of runs.slice(0, 30)) {
+      const row = document.createElement("div");
+      row.className = "run-history-item";
+      const status = document.createElement("span");
+      status.className = `badge ${badgeClass(run.status)}`;
+      status.textContent = run.status || "unknown";
+      const summary = document.createElement("div");
+      summary.className = "run-history-summary";
+      const headline = document.createElement("div");
+      headline.textContent = run.summary || run.error || run.prompt || "Run recorded";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = [
+        run.model ? `model ${run.model}` : "",
+        run.cycle !== undefined ? `cycle ${run.cycle}/${run.max_cycles || "?"}` : "",
+        run.duration_ms ? fmtDuration(Number(run.duration_ms) / 1000) : "",
+        run.commit ? `commit ${shortCommit(run.commit)}` : "",
+      ].filter(Boolean).join(" | ");
+      summary.appendChild(headline);
+      summary.appendChild(meta);
+      const time = document.createElement("span");
+      time.className = "meta";
+      time.textContent = fmtRelativeTime(run.finished_at || run.started_at || run.created_at);
+      time.title = fmtTime(run.finished_at || run.started_at || run.created_at);
+      row.appendChild(status);
+      row.appendChild(summary);
+      row.appendChild(time);
+      els.runHistory.appendChild(row);
+    }
   }
 
   function workspaceConversationItems(task) {
@@ -944,6 +1161,9 @@
       const stateText = event.ok ? "saved" : "failed";
       return `${time} checkpoint ${stateText} ${changed}${commit ? ` commit=${commit}` : ""}${event.error ? `\n${event.error}` : ""}`;
     }
+    if (type === "plan_updated") return `${time} project plan updated\n${event.summary || ""}`;
+    if (type === "context_reset") return `${time} context compacted cycle=${cycle} reason=${event.reason || ""}`;
+    if (type === "budget_exhausted") return `${time} run horizon reached cycle=${cycle}\n${event.summary || ""}`;
     if (type === "interrupted") return `${time} interrupted\n${event.summary || ""}`;
     if (type === "commit") {
       const commit = shortCommit(event.commit || (event.result && event.result.last_commit));
@@ -969,6 +1189,9 @@
       if (agent.backend) bits.push(`backend ${agent.backend}`);
       if (agent.upstream_model) bits.push(`upstream ${agent.upstream_model}`);
       if (agent.elapsed_runtime_sec !== undefined) bits.push(`run time ${fmtDuration(agent.elapsed_runtime_sec)}`);
+      if (agent.cycle !== undefined) bits.push(`cycle ${agent.cycle}/${agent.max_cycles || "?"}`);
+      if (agent.max_runtime_sec) bits.push(`time budget ${fmtDuration(agent.max_runtime_sec)}`);
+      if (agent.context_reset_cycles) bits.push(`compact every ${agent.context_reset_cycles} cycles`);
       if (agent.last_event_at) bits.push(`updated ${fmtTime(agent.last_event_at)}`);
       if (agent.auto_commit) bits.push("auto-commit");
       const commit = shortCommit(task && (task.last_commit || task.last_checkpoint_commit));
@@ -1118,8 +1341,31 @@
     }
   }
 
+  function saveWorkspaceDraft(taskId) {
+    const id = String(taskId || "").trim();
+    if (!id || !els.workspaceChatInput) return;
+    storageSet(`draft.message.${id}`, els.workspaceChatInput.value || "");
+  }
+
+  function restoreWorkspaceDraft(taskId) {
+    if (!els.workspaceChatInput) return;
+    const id = String(taskId || "").trim();
+    els.workspaceChatInput.value = id ? storageGet(`draft.message.${id}`, "") : "";
+  }
+
   function selectTask(taskId) {
+    if (state.selectedId && state.selectedId !== String(taskId || "")) saveWorkspaceDraft(state.selectedId);
     state.selectedId = String(taskId || "");
+    storageSet("selectedTask", state.selectedId);
+    try {
+      const url = new URL(window.location.href);
+      if (state.selectedId) url.searchParams.set("task", state.selectedId);
+      else url.searchParams.delete("task");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch (error) {
+      // URL state is best-effort.
+    }
+    restoreWorkspaceDraft(state.selectedId);
     setPublishFeedback("No publish action yet.");
     resetFilesPanel(state.selectedId);
     renderTasks();
@@ -1139,6 +1385,16 @@
     if (els.repoUrl && !els.repoUrl.value) els.repoUrl.value = payload.default_repo_url || "";
     if (els.modelIntegrationRepoUrl && !els.modelIntegrationRepoUrl.value) els.modelIntegrationRepoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
+    if (els.agentMaxCycles && !els.agentMaxCycles.value) {
+      els.agentMaxCycles.value = storageGet("horizon.maxCycles", payload.agent_max_cycles_per_run || 80);
+    }
+    if (els.agentMaxRuntimeMinutes && !els.agentMaxRuntimeMinutes.value) {
+      const defaultMinutes = Math.max(1, Math.round(Number(payload.agent_max_runtime_sec || 21600) / 60));
+      els.agentMaxRuntimeMinutes.value = storageGet("horizon.maxRuntimeMinutes", defaultMinutes);
+    }
+    if (els.agentContextResetCycles && !els.agentContextResetCycles.value) {
+      els.agentContextResetCycles.value = storageGet("horizon.contextResetCycles", payload.agent_context_reset_cycles || 12);
+    }
     setSelectOptions(
       els.modelIntegrationRuntime,
       [{ value: "auto", label: "Auto detect" }].concat((payload.model_integration_runtimes || []).filter((value) => value !== "auto").map((value) => ({ value, label: value }))),
@@ -1154,6 +1410,8 @@
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
       if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
       if (payload.agent_checkpoint_commits) bits.push("checkpoint commits on");
+      bits.push(`horizon: ${payload.agent_max_cycles_per_run || 80} cycles / ${fmtDuration(payload.agent_max_runtime_sec || 21600)}`);
+      bits.push(`context compaction: ${payload.agent_context_reset_cycles || 12} cycles`);
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
       els.configMeta.textContent = bits.join(" | ");
@@ -1172,8 +1430,12 @@
     const payload = await fetchJson("/ui/api/coding/tasks");
     state.tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
     if (!keepSelection || !state.tasks.some((task) => task.id === state.selectedId)) {
-      state.selectedId = state.tasks[0] ? state.tasks[0].id : "";
+      const params = new URLSearchParams(window.location.search);
+      const preferred = params.get("task") || storageGet("selectedTask", "");
+      state.selectedId = state.tasks.some((task) => task.id === preferred) ? preferred : (state.tasks[0] ? state.tasks[0].id : "");
     }
+    storageSet("selectedTask", state.selectedId);
+    restoreWorkspaceDraft(state.selectedId);
     renderTasks();
     renderSelected();
   }
@@ -1189,8 +1451,17 @@
   }
 
   function agentOptionsBody() {
+    const maxCycles = Math.max(4, Math.min(500, Number.parseInt(els.agentMaxCycles && els.agentMaxCycles.value ? els.agentMaxCycles.value : "80", 10) || 80));
+    const maxRuntimeMinutes = Math.max(1, Math.min(1440, Number.parseInt(els.agentMaxRuntimeMinutes && els.agentMaxRuntimeMinutes.value ? els.agentMaxRuntimeMinutes.value : "360", 10) || 360));
+    const contextResetCycles = Math.max(4, Math.min(100, Number.parseInt(els.agentContextResetCycles && els.agentContextResetCycles.value ? els.agentContextResetCycles.value : "12", 10) || 12));
+    storageSet("horizon.maxCycles", maxCycles);
+    storageSet("horizon.maxRuntimeMinutes", maxRuntimeMinutes);
+    storageSet("horizon.contextResetCycles", contextResetCycles);
     return {
       auto_commit: !!(els.agentAutoCommit && els.agentAutoCommit.checked),
+      max_cycles: maxCycles,
+      max_runtime_sec: maxRuntimeMinutes * 60,
+      context_reset_cycles: contextResetCycles,
     };
   }
 
@@ -1224,6 +1495,8 @@
         body: JSON.stringify(body),
       });
       const task = payload.task;
+      storageSet("draft.modelIntegrationPrompt", "");
+      if (els.modelIntegrationPrompt) els.modelIntegrationPrompt.value = "";
       await loadTasks({ keepSelection: false });
       if (task && task.id) selectTask(task.id);
       setOutput("model integration", task || payload);
@@ -1247,6 +1520,8 @@
         body: JSON.stringify(body),
       });
       const task = payload.task;
+      storageSet("draft.modelIntegrationPrompt", "");
+      if (els.modelIntegrationPrompt) els.modelIntegrationPrompt.value = "";
       await loadTasks({ keepSelection: false });
       if (task && task.id) selectTask(task.id);
       setOutput("model integration run", task || payload);
@@ -1268,6 +1543,8 @@
         body: JSON.stringify(body),
       });
       const task = payload.task;
+      storageSet("draft.taskPrompt", "");
+      if (els.taskPrompt) els.taskPrompt.value = "";
       await loadTasks({ keepSelection: false });
       if (task && task.id) selectTask(task.id);
       setOutput("create", task || payload);
@@ -1290,6 +1567,8 @@
         body: JSON.stringify(body),
       });
       const task = payload.task;
+      storageSet("draft.taskPrompt", "");
+      if (els.taskPrompt) els.taskPrompt.value = "";
       await loadTasks({ keepSelection: false });
       if (task && task.id) selectTask(task.id);
       setOutput("agent run", task || payload);
@@ -1361,20 +1640,23 @@
   }
 
   function updatePolling() {
-    const task = selectedTask();
-    const shouldPoll = !!(task && agentIsActive(task));
+    const shouldPoll = (state.tasks || []).some(agentIsActive);
     if (shouldPoll && !state.pollTimer) {
       state.pollTimer = window.setInterval(async () => {
         try {
-          if (selectedTask() && agentIsActive(selectedTask())) {
-            await refreshSelected();
-          } else {
-            updatePolling();
+          const selectedWasActive = !!(selectedTask() && agentIsActive(selectedTask()));
+          const selectedId = state.selectedId;
+          await loadTasks({ keepSelection: true });
+          const selectedIsActive = !!(selectedTask() && agentIsActive(selectedTask()));
+          if (selectedId && selectedWasActive && !selectedIsActive) {
+            await loadDiffSummary({ quiet: true, taskId: selectedId });
+            await loadChanges({ quiet: true, taskId: selectedId });
           }
+          updatePolling();
         } catch (error) {
           setStatus(String(error && error.message ? error.message : error), true);
         }
-      }, 3000);
+      }, 4000);
     } else if (!shouldPoll && state.pollTimer) {
       window.clearInterval(state.pollTimer);
       state.pollTimer = null;
@@ -1384,6 +1666,8 @@
   async function startAgentRun(taskId) {
     const task = taskId ? taskById(taskId) : selectedTask();
     if (!task) return;
+    const codingModel = taskId && task.id !== state.selectedId ? workspaceModelValue(task) : selectedWorkspaceModelValue();
+    if (task.id !== state.selectedId) selectTask(task.id);
     state.selectedId = task.id;
     setBusy(true);
     try {
@@ -1391,7 +1675,7 @@
       const payload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(task.id)}/agent-run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...agentOptionsBody(), coding_model: selectedWorkspaceModelValue() }),
+        body: JSON.stringify({ ...agentOptionsBody(), coding_model: codingModel }),
       });
       const fresh = payload.task;
       state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
@@ -1423,6 +1707,7 @@
       const fresh = payload.task;
       if (fresh) state.tasks = state.tasks.map((item) => (item.id === task.id ? fresh : item));
       if (els.workspaceChatInput) els.workspaceChatInput.value = "";
+      storageSet(`draft.message.${task.id}`, "");
       renderTasks();
       renderSelected();
       setOutput(payload.started ? "workspace message and run" : "workspace message", fresh || payload);
@@ -1470,6 +1755,7 @@
   async function stopAgentRun(taskId) {
     const task = taskId ? taskById(taskId) : selectedTask();
     if (!task) return;
+    if (task.id !== state.selectedId) selectTask(task.id);
     state.selectedId = task.id;
     setBusy(true);
     try {
@@ -1797,7 +2083,14 @@
   async function init() {
     const params = new URLSearchParams(window.location.search);
     const prompt = params.get("prompt") || "";
-    if (prompt && els.taskPrompt && !els.taskPrompt.value) els.taskPrompt.value = prompt;
+    if (els.taskPrompt && !els.taskPrompt.value) els.taskPrompt.value = prompt || storageGet("draft.taskPrompt", "");
+    if (els.modelIntegrationPrompt && !els.modelIntegrationPrompt.value) {
+      els.modelIntegrationPrompt.value = storageGet("draft.modelIntegrationPrompt", "");
+    }
+    state.taskSearch = storageGet("taskSearch", "");
+    state.taskFilter = storageGet("taskFilter", "all") || "all";
+    if (els.taskSearch) els.taskSearch.value = state.taskSearch;
+    if (els.taskFilter) els.taskFilter.value = state.taskFilter;
     setCreateMode(params.get("create") || "agent");
     renderSelected();
     await loadConfig();
@@ -1817,6 +2110,8 @@
   wire("statusBtn", runStatus);
   wire("diffBtn", runDiff);
   wire("briefBtn", runAgentBrief);
+  wire("runSelectedAgent", () => startAgentRun());
+  wire("pauseSelectedAgent", () => stopAgentRun());
   wire("sendWorkspaceMessage", sendWorkspaceMessage);
   wire("saveWorkspaceModel", saveWorkspaceModel);
   wire("trackCurrentCoderModel", trackCurrentCoderModel);
@@ -1854,18 +2149,55 @@
   }
 
   if (els.workspaceChatInput) {
+    els.workspaceChatInput.addEventListener("input", () => saveWorkspaceDraft(state.selectedId));
     els.workspaceChatInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.isComposing) {
         event.preventDefault();
         sendWorkspaceMessage().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
       }
     });
   }
 
+  if (els.taskSearch) {
+    els.taskSearch.addEventListener("input", () => {
+      state.taskSearch = els.taskSearch.value || "";
+      storageSet("taskSearch", state.taskSearch);
+      renderTasks();
+    });
+  }
+
+  if (els.taskFilter) {
+    els.taskFilter.addEventListener("change", () => {
+      state.taskFilter = els.taskFilter.value || "all";
+      storageSet("taskFilter", state.taskFilter);
+      renderTasks();
+    });
+  }
+
+  if (els.taskPrompt) els.taskPrompt.addEventListener("input", () => storageSet("draft.taskPrompt", els.taskPrompt.value || ""));
+  if (els.modelIntegrationPrompt) {
+    els.modelIntegrationPrompt.addEventListener("input", () => storageSet("draft.modelIntegrationPrompt", els.modelIntegrationPrompt.value || ""));
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const tag = String(event.target && event.target.tagName || "").toLowerCase();
+      if (!["input", "textarea", "select"].includes(tag) && els.taskSearch) {
+        event.preventDefault();
+        els.taskSearch.focus();
+      }
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && els.workspaceChatInput === document.activeElement) {
+      event.preventDefault();
+      sendWorkspaceMessage().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
+    }
+  });
+
   document.addEventListener("DOMContentLoaded", () => {
     init().catch((error) => setStatus(String(error && error.message ? error.message : error), true));
   });
   window.addEventListener("beforeunload", () => {
+    saveWorkspaceDraft(state.selectedId);
     if (state.pollTimer) window.clearInterval(state.pollTimer);
   });
 })();

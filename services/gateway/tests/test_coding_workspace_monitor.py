@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
@@ -111,32 +112,99 @@ def test_monitor_tasks_can_filter_attention(monkeypatch):
 
 
 def test_set_task_coding_model_updates_stopped_workspace(monkeypatch, tmp_path):
-        task = _base_task(coding_model="local_vllm")
+    task = _base_task(coding_model="local_vllm")
 
-        monkeypatch.setattr(cw, "coding_enabled", lambda: True)
-        monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
 
-        cw.save_task(task)
-        updated = cw.set_task_coding_model(task["id"], coding_model="coder")
+    cw.save_task(task)
+    updated = cw.set_task_coding_model(task["id"], coding_model="coder")
 
-        assert updated["coding_model"] == "coder"
-        stored = cw.load_task(task["id"])
-        assert stored["coding_model"] == "coder"
-        assert stored["agent_events"][-1]["type"] == "model_updated"
+    assert updated["coding_model"] == "coder"
+    stored = cw.load_task(task["id"])
+    assert stored["coding_model"] == "coder"
+    assert stored["agent_events"][-1]["type"] == "model_updated"
 
 
 def test_set_task_coding_model_rejects_active_workspace(monkeypatch, tmp_path):
-        task = _base_task(agent_status="running", coding_model="local_vllm")
+    task = _base_task(agent_status="running", coding_model="local_vllm")
 
-        monkeypatch.setattr(cw, "coding_enabled", lambda: True)
-        monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
 
-        cw.save_task(task)
+    cw.save_task(task)
 
-        with pytest.raises(Exception) as exc_info:
-            cw.set_task_coding_model(task["id"], coding_model="coder")
+    with pytest.raises(Exception) as exc_info:
+        cw.set_task_coding_model(task["id"], coding_model="coder")
 
-        assert getattr(exc_info.value, "status_code", None) == 409
+    assert getattr(exc_info.value, "status_code", None) == 409
+
+
+def test_project_plan_is_normalized_counted_and_persisted(monkeypatch, tmp_path):
+    task = _base_task(project_plan={"goal": "Ship it", "items": []})
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
+    cw.save_task(task)
+
+    result = cw.update_project_plan(
+        task["id"],
+        goal="Ship the long-horizon change",
+        items=[
+            {"id": "inspect", "title": "Inspect", "status": "completed", "summary": "Mapped the code."},
+            {"id": "build", "title": "Build", "status": "in_progress"},
+            {"id": "verify", "title": "Verify", "status": "not-a-status"},
+        ],
+        actor="tester",
+    )
+
+    assert result["ok"] is True
+    assert result["plan"]["counts"]["total"] == 3
+    assert result["plan"]["counts"]["done"] == 1
+    assert result["plan"]["items"][2]["status"] == "pending"
+    assert result["plan"]["revision"] == 1
+    stored = cw.load_task(task["id"])
+    assert stored["project_plan"]["updated_by"] == "tester"
+
+
+def test_atomic_task_updates_preserve_parallel_writers(monkeypatch, tmp_path):
+    task = _base_task(agent_events=[], guidance_messages=[])
+    monkeypatch.setattr(cw, "coding_enabled", lambda: True)
+    monkeypatch.setattr(cw, "tasks_dir", lambda: tmp_path)
+    cw.save_task(task)
+
+    def add_marker(index: int) -> None:
+        def apply(current):
+            markers = current.get("markers") if isinstance(current.get("markers"), list) else []
+            markers.append(index)
+            current["markers"] = markers
+
+        cw.mutate_task(task["id"], apply)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(add_marker, range(40)))
+
+    stored = cw.load_task(task["id"])
+    assert sorted(stored["markers"]) == list(range(40))
+
+
+def test_public_task_exposes_plan_history_and_run_horizon():
+    task = _base_task(
+        project_plan={"goal": "Finish", "items": [{"id": "one", "title": "One", "status": "completed"}]},
+        agent_runs=[{"run_id": "coderun_1", "status": "completed", "cycle": 7}],
+        agent_cycle=8,
+        agent_max_cycles=120,
+        agent_max_runtime_sec=7200,
+        agent_context_reset_cycles=10,
+    )
+
+    public = cw.public_task(task)
+
+    assert public["project_plan"]["counts"]["done"] == 1
+    assert public["agent_runs"][0]["run_id"] == "coderun_1"
+    assert public["agent"]["cycle"] == 8
+    assert public["agent"]["max_cycles"] == 120
+    assert public["agent"]["max_runtime_sec"] == 7200
+    assert public["agent"]["context_reset_cycles"] == 10
 
 
 def test_validate_command_blocks_dependency_installs():

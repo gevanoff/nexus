@@ -235,6 +235,43 @@ def test_tool_manifest_guidance_mentions_linux_shell_and_service_cwd():
     assert "cwd=services/gateway" in guidance
     assert "Do not invent package.json files" in guidance
     assert "do not count as a fix" in guidance
+    assert "coding_update_plan" in manifest["tool_names"]
+    assert "milestones" in guidance
+
+
+def test_run_horizon_helpers_bound_values_and_measure_messages(monkeypatch):
+    monkeypatch.setattr(ca.S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80, raising=False)
+    monkeypatch.setattr(ca.S, "CODING_AGENT_MAX_RUNTIME_SEC", 21600, raising=False)
+    monkeypatch.setattr(ca.S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12, raising=False)
+
+    assert ca._max_cycles_per_run(None) == 80
+    assert ca._max_cycles_per_run(9999) == 500
+    assert ca._max_runtime_sec(1) == 60
+    assert ca._context_reset_cycles(2) == 4
+    assert ca._messages_char_count([ca.ChatMessage(role="user", content="hello")]) >= 5
+
+
+def test_project_plan_context_survives_context_rebuild():
+    task = {
+        "id": "code_test",
+        "prompt": "Implement a multi-step feature.",
+        "base_branch": "main",
+        "branch_name": "nexus-coder/code_test",
+        "project_plan": {
+            "goal": "Ship safely",
+            "items": [
+                {"id": "inspect", "title": "Inspect the code", "status": "completed"},
+                {"id": "build", "title": "Implement the change", "status": "in_progress"},
+            ],
+        },
+    }
+
+    context = ca._task_context(task)
+    prompt = ca._system_prompt(task)
+
+    assert "Long-horizon project plan" in context
+    assert "[completed] inspect" in context
+    assert "coding_update_plan" in prompt
 
 
 def test_semantic_reroute_candidate_uses_alternative_backend(monkeypatch):
@@ -647,6 +684,7 @@ async def test_start_agent_run_defers_inactive_pinned_huge_model(monkeypatch):
         "coding_model": "model-b",
         "prompt": "Fix the bug.",
         "agent_events": [],
+        "guidance_messages": [{"ts": 1.0, "role": "user", "content": "Keep this guidance."}],
     }
     store = {"task": dict(task)}
 
@@ -674,10 +712,26 @@ async def test_start_agent_run_defers_inactive_pinned_huge_model(monkeypatch):
         },
     )
 
-    result = await ca.start_agent_run("code_abcdef123456", coding_model="model-b", actor="test")
+    result = await ca.start_agent_run(
+        "code_abcdef123456",
+        coding_model="model-b",
+        actor="test",
+        prompt="Also update the tests.",
+        max_cycles=120,
+        max_runtime_sec=7_200,
+        context_reset_cycles=10,
+    )
 
     assert result["agent"]["status"] == "idle_waiting"
     assert result["agent"]["summary"] == "This workspace will only run during idle periods."
     assert store["task"]["agent_status"] == "idle_waiting"
     assert store["task"]["agent_events"][-1]["type"] == "idle_deferred"
+    assert store["task"]["agent_runs"][-1]["status"] == "idle_waiting"
+    assert store["task"]["agent_runs"][-1]["max_cycles"] == 120
+    assert store["task"]["agent_runs"][-1]["max_runtime_sec"] == 7_200
+    assert store["task"]["agent_runs"][-1]["context_reset_cycles"] == 10
+    assert [item["content"] for item in store["task"]["guidance_messages"]] == [
+        "Keep this guidance.",
+        "Also update the tests.",
+    ]
     assert ca._active_runner("code_abcdef123456") is None

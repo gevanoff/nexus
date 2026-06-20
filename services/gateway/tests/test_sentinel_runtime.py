@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import sys
@@ -69,6 +70,83 @@ def _agent_tasks_db(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
     return db_path
+
+
+@pytest.mark.asyncio
+async def test_requested_archive_analysis_queues_immediately_and_deduplicates(monkeypatch, tmp_path):
+    _sentinel_events(tmp_path, monkeypatch)
+    archive_id = "code_abcdef123456.1700000000.deadbeef"
+    archive_item = {
+        "archive_id": archive_id,
+        "analysis": {"requested_mode": "immediate", "target": "local", "status": "pending", "local_model": "coder"},
+    }
+    updates = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    coding_workspace = types.SimpleNamespace(
+        update_archived_task_settings=lambda next_archive_id, **kwargs: updates.append((next_archive_id, kwargs)) or archive_item,
+        get_archived_task=lambda next_archive_id: archive_item,
+        mark_archived_analysis=lambda *args, **kwargs: archive_item,
+    )
+    monkeypatch.setitem(sys.modules, "app.coding_workspace", coding_workspace)
+    monkeypatch.setattr(app, "coding_workspace", coding_workspace, raising=False)
+
+    async def _analyze(next_archive_id: str):
+        assert next_archive_id == archive_id
+        started.set()
+        await release.wait()
+        return {"ok": True, "summary": "Analysis completed."}
+
+    monkeypatch.setattr(sentinel_runtime, "_run_archived_local_analysis", _analyze)
+    sentinel_runtime._ARCHIVE_ANALYSIS_TASKS.clear()
+
+    queued = await sentinel_runtime.request_archived_analysis(archive_id, analysis_model="coder", preserve=True)
+    await started.wait()
+    task = sentinel_runtime._ARCHIVE_ANALYSIS_TASKS[archive_id]
+    duplicate = await sentinel_runtime.request_archived_analysis(archive_id, analysis_model="coder", preserve=True)
+
+    assert queued["queued"] is True
+    assert duplicate["already_running"] is True
+    assert updates == [
+        (
+            archive_id,
+            {
+                "preserve": True,
+                "analysis_mode": "immediate",
+                "analysis_target": "local",
+                "analysis_model": "coder",
+            },
+        )
+    ]
+
+    release.set()
+    await task
+    assert archive_id not in sentinel_runtime._ARCHIVE_ANALYSIS_TASKS
+
+
+@pytest.mark.asyncio
+async def test_sentinel_archive_analyze_route_uses_dedicated_queue(monkeypatch):
+    from app import ui_routes
+
+    calls = []
+
+    async def _request(archive_id: str, *, analysis_model: str | None, preserve: bool | None):
+        calls.append((archive_id, analysis_model, preserve))
+        return {"ok": True, "queued": True}
+
+    monkeypatch.setattr(ui_routes, "_require_ui_access", lambda req: None)
+    monkeypatch.setattr(ui_routes, "_require_admin", lambda req: object())
+    monkeypatch.setattr(ui_routes.sentinel_runtime, "request_archived_analysis", _request)
+
+    result = await ui_routes.ui_api_sentinel_archive_analyze(
+        object(),
+        "code_demo.1700000000.deadbeef",
+        ui_routes.SentinelArchiveAnalyzeRequest(analysis_model="coder", preserve=True),
+    )
+
+    assert result == {"ok": True, "queued": True}
+    assert calls == [("code_demo.1700000000.deadbeef", "coder", True)]
 
 
 def test_backend_issue_state_waits_for_poll_and_duration_thresholds(monkeypatch):

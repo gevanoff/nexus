@@ -11,6 +11,7 @@
   const levelFilterEl = document.getElementById("levelFilter");
 
   let currentPayload = null;
+  let archivePollGeneration = 0;
 
   function setStatus(text, isError) {
     if (!statusEl) return;
@@ -99,6 +100,24 @@
       throw new Error(payload?.detail || payload?.error || `HTTP ${resp.status}`);
     }
     return payload;
+  }
+
+  async function runControlAction(button, busyText, action) {
+    const originalText = button ? button.textContent : "";
+    if (button) {
+      button.disabled = true;
+      button.textContent = busyText;
+    }
+    try {
+      await action();
+    } catch (error) {
+      setStatus(String(error && error.message ? error.message : error), true);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
   }
 
   function renderSummary(summary) {
@@ -212,17 +231,59 @@
     });
   }
 
-  async function saveArchiveSettings(archiveId, body, { runScan = false, successText = "Archive settings updated." } = {}) {
+  async function saveArchiveSettings(archiveId, body, { successText = "Archive settings updated." } = {}) {
+    setStatus(`Saving settings for ${archiveId}...`);
     await fetchJson(`/ui/api/sentinel/archives/${encodeURIComponent(archiveId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (runScan) {
-      await fetchJson("/ui/api/sentinel/scan", { method: "POST" });
-    }
-    await loadStatus();
+    await loadStatus({ quiet: true });
     setStatus(successText);
+  }
+
+  function findArchive(archiveId) {
+    const archives = Array.isArray(currentPayload?.archives) ? currentPayload.archives : [];
+    return archives.find((item) => String(item?.archive_id || "") === String(archiveId || "")) || null;
+  }
+
+  async function pollArchiveAnalysis(archiveId) {
+    const generation = ++archivePollGeneration;
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      if (generation !== archivePollGeneration) return;
+      await loadStatus({ quiet: true });
+      const archive = findArchive(archiveId);
+      const status = String(archive?.analysis?.status || "").toLowerCase();
+      if (!["pending", "running"].includes(status)) {
+        const failed = status.includes("failed");
+        const detail = archive?.analysis?.last_error || archive?.analysis?.last_summary || "";
+        setStatus(
+          failed
+            ? `Analysis failed for ${archiveId}${detail ? `: ${detail}` : "."}`
+            : `Analysis ${status || "finished"} for ${archiveId}${detail ? `: ${detail}` : "."}`,
+          failed
+        );
+        return;
+      }
+    }
+    setStatus(`Analysis is still running for ${archiveId}. Refresh to check its latest status.`);
+  }
+
+  async function requestArchiveAnalysis(archiveId, { analysisModel, preserve } = {}) {
+    setStatus(`Starting immediate analysis for ${archiveId}...`);
+    const payload = await fetchJson(`/ui/api/sentinel/archives/${encodeURIComponent(archiveId)}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ analysis_model: analysisModel || "coder", preserve: Boolean(preserve) }),
+    });
+    await loadStatus({ quiet: true });
+    setStatus(
+      payload?.already_running
+        ? `Analysis is already running for ${archiveId}.`
+        : `Immediate analysis started for ${archiveId}.`
+    );
+    void pollArchiveAnalysis(archiveId).catch((error) => setStatus(String(error && error.message ? error.message : error), true));
   }
 
   async function purgeArchive(archiveId) {
@@ -415,31 +476,33 @@
       saveBtn.textContent = "Save settings";
       saveBtn.addEventListener("click", () => {
         const modePayload = archiveModePayload(modeSelect.value);
-        void saveArchiveSettings(item.archive_id, {
+        void runControlAction(saveBtn, "Saving...", () => saveArchiveSettings(item.archive_id, {
           analysis_mode: modePayload.analysis_mode,
           analysis_target: modePayload.analysis_target,
           analysis_model: modelSelect.disabled ? "" : modelSelect.value,
           preserve: preserveBox.checked,
-        });
+        }));
       });
       const analyzeBtn = document.createElement("button");
       analyzeBtn.type = "button";
       analyzeBtn.textContent = "Analyze now";
-      analyzeBtn.addEventListener("click", async () => {
+      analyzeBtn.addEventListener("click", () => {
         const modePayload = archiveModePayload(modeSelect.value);
         if (modePayload.analysis_target !== "local") return;
-        const body = {
-          analysis_mode: "immediate",
-          analysis_target: "local",
-          analysis_model: modelSelect.value,
+        void runControlAction(analyzeBtn, "Starting...", () => requestArchiveAnalysis(item.archive_id, {
+          analysisModel: modelSelect.value,
           preserve: preserveBox.checked,
-        };
-        await saveArchiveSettings(item.archive_id, body, {
-          runScan: true,
-          successText: `Sentinel queued immediate analysis for ${item.archive_id}.`,
-        });
+        }));
       });
-      modeSelect.addEventListener("change", () => syncArchiveModeUi(modeSelect, modelSelect, analyzeBtn));
+      modeSelect.addEventListener("change", () => {
+        syncArchiveModeUi(modeSelect, modelSelect, analyzeBtn);
+        if (modeSelect.value === "immediate_local") {
+          void runControlAction(analyzeBtn, "Starting...", () => requestArchiveAnalysis(item.archive_id, {
+            analysisModel: modelSelect.value,
+            preserve: preserveBox.checked,
+          }));
+        }
+      });
       syncArchiveModeUi(modeSelect, modelSelect, analyzeBtn);
       const purgeBtn = document.createElement("button");
       purgeBtn.type = "button";
@@ -472,14 +535,15 @@
     renderArchives(payload?.archives || [], payload?.archive_model_choices || []);
   }
 
-  async function loadStatus() {
-    setStatus("Loading Sentinel status...");
+  async function loadStatus({ quiet = false } = {}) {
+    if (!quiet) setStatus("Loading Sentinel status...");
     try {
       const payload = await fetchJson("/ui/api/sentinel/status?limit=200");
       renderPayload(payload);
-      setStatus("");
+      if (!quiet) setStatus("");
     } catch (error) {
       setStatus(String(error), true);
+      if (quiet) throw error;
     }
   }
 

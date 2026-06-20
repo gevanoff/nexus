@@ -122,7 +122,8 @@
       }
       .focused-api-status.active::before { background: #6fb8ff; }
       @media (max-width: 760px) {
-        main > header > .row { max-width: 100%; }
+        main > header > :first-child { flex: 0 1 auto; min-width: 0; }
+        main > header > .row { width: 100%; max-width: 100%; justify-content: flex-start; }
       }
     `;
     document.head.appendChild(style);

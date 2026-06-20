@@ -82,6 +82,11 @@ class SentinelArchiveUpdateRequest(BaseModel):
     analysis_model: Optional[str] = None
 
 
+class SentinelArchiveAnalyzeRequest(BaseModel):
+    analysis_model: Optional[str] = None
+    preserve: Optional[bool] = None
+
+
 class SentinelArchiveFindingReviewRequest(BaseModel):
     finding_ts: float
     verdict: Literal["invalid", "superseded"]
@@ -5911,6 +5916,17 @@ async def ui_api_sentinel_archive_update(req: Request, archive_id: str, body: Se
         analysis_model=body.analysis_model,
     )
     return {"ok": True, "archive": archive}
+
+
+@router.post("/ui/api/sentinel/archives/{archive_id}/analyze", include_in_schema=False)
+async def ui_api_sentinel_archive_analyze(req: Request, archive_id: str, body: SentinelArchiveAnalyzeRequest) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_admin(req)
+    return await sentinel_runtime.request_archived_analysis(
+        archive_id,
+        analysis_model=body.analysis_model,
+        preserve=body.preserve,
+    )
 
 
 @router.post("/ui/api/sentinel/archives/{archive_id}/findings/review", include_in_schema=False)

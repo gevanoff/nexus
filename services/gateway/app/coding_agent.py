@@ -57,18 +57,20 @@ def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None
         "No active coding runner is attached to this workspace. "
         "The persisted run state was marked paused so manual commands and a later resume can proceed."
     )
-    task.update(
-        {
+    finished_at = time.time()
+
+    def apply(current: Dict[str, Any]) -> None:
+        current.update({
             "agent_status": "paused",
             "agent_stop_requested": False,
             "agent_pause_requested": False,
             "agent_summary": summary,
             "agent_error": "",
-            "agent_finished_at": time.time(),
+            "agent_finished_at": finished_at,
             "agent_last_event_at": now_unix(),
-        }
-    )
-    cw.save_task(task)
+        })
+
+    task = _task_transaction(task_id, apply)
     _append_event(
         task_id,
         {
@@ -77,6 +79,18 @@ def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None
             "summary": summary,
         },
     )
+    run_id = str(task.get("agent_run_id") or "")
+    if run_id:
+        _update_run_record(
+            task_id,
+            run_id,
+            {
+                "status": "paused",
+                "finished_at": finished_at,
+                "cycle": int(task.get("agent_cycle") or 0),
+                "summary": summary,
+            },
+        )
     return cw.load_task(task_id)
 
 
@@ -148,6 +162,48 @@ def _tool_context_char_limit() -> int:
         return max(2_000, min(int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000) or 32_000), 100_000))
     except Exception:
         return 32_000
+
+
+def _max_cycles_per_run(value: Optional[int] = None) -> int:
+    default = int(getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80) or 80)
+    requested = default if value is None else int(value)
+    return max(4, min(requested, 500))
+
+
+def _max_runtime_sec(value: Optional[int] = None) -> int:
+    default = int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60))
+    requested = default if value is None else int(value)
+    return max(60, min(requested, 24 * 60 * 60))
+
+
+def _context_reset_cycles(value: Optional[int] = None) -> int:
+    default = int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12)
+    requested = default if value is None else int(value)
+    return max(4, min(requested, 100))
+
+
+def _context_reset_chars() -> int:
+    try:
+        return max(20_000, min(int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 120_000) or 120_000), 1_000_000))
+    except Exception:
+        return 120_000
+
+
+def _run_history_limit() -> int:
+    try:
+        return max(10, min(int(getattr(S, "CODING_AGENT_RUN_HISTORY_LIMIT", 50) or 50), 200))
+    except Exception:
+        return 50
+
+
+def _messages_char_count(messages: Sequence[ChatMessage]) -> int:
+    total = 0
+    for message in messages:
+        try:
+            total += len(json.dumps(message.model_dump(exclude_none=True), ensure_ascii=False))
+        except Exception:
+            total += len(str(message.content or ""))
+    return total
 
 
 def _max_no_tool_call_cycles() -> int:
@@ -527,6 +583,12 @@ def _event_digest_line(event: Dict[str, Any]) -> str:
         return f"checkpoint {status} cycle={event.get('cycle') or ''} commit={commit_hash[:12]}".strip()
     if event_type == "interrupted":
         return f"interrupted {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "plan_updated":
+        return f"plan_updated revision={event.get('revision') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
+    if event_type == "context_reset":
+        return f"context_reset cycle={event.get('cycle') or ''} reason={event.get('reason') or ''}".strip()
+    if event_type == "budget_exhausted":
+        return f"budget_exhausted cycle={event.get('cycle') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "no_tool_call":
         return f"no_tool_call cycle={event.get('cycle') or ''} {_clip_text(str(event.get('summary') or '').strip(), 700)}".strip()
     if event_type == "no_tool_call_limit":
@@ -1010,6 +1072,27 @@ def _guidance_context(task: Dict[str, Any], *, limit: int = 12) -> str:
     return "\n".join(lines)
 
 
+def _project_plan_context(task: Dict[str, Any]) -> str:
+    plan = cw.normalize_project_plan(task.get("project_plan"), fallback_goal=str(task.get("prompt") or ""))
+    items = plan.get("items") if isinstance(plan.get("items"), list) else []
+    if not items:
+        return (
+            "Long-horizon project plan:\n"
+            f"- Goal: {plan.get('goal') or task.get('prompt') or '(not set)'}\n"
+            "- No milestones recorded yet. For work spanning several steps, call coding_update_plan before broad implementation."
+        )
+    lines = ["Long-horizon project plan:", f"- Goal: {plan.get('goal') or '(not set)'}"]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "pending")
+        summary = str(item.get("summary") or "").strip()
+        lines.append(f"- [{status}] {item.get('id') or ''}: {item.get('title') or ''}{f' — {summary}' if summary else ''}")
+    if plan.get("note"):
+        lines.append(f"- Plan note: {_clip_text(str(plan.get('note') or ''), 1200)}")
+    return "\n".join(lines)
+
+
 def _safe_args_preview(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for key, value in (args or {}).items():
@@ -1458,6 +1541,39 @@ def _tool_specs() -> List[ToolSpec]:
         ),
         ToolSpec(
             function=ToolFunction(
+                name="coding_update_plan",
+                description=(
+                    "Create or replace the durable project milestone plan for this workspace. "
+                    "Use it for multi-step work and update milestone statuses as the run progresses."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "goal": {"type": "string"},
+                        "items": {
+                            "type": "array",
+                            "maxItems": 80,
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "title", "status"],
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pending", "in_progress", "completed", "blocked", "skipped"],
+                                    },
+                                    "summary": {"type": "string"},
+                                },
+                            },
+                        },
+                        "note": {"type": "string"},
+                    },
+                },
+            )
+        ),
+        ToolSpec(
+            function=ToolFunction(
                 name="coding_checkpoint",
                 description="Create a local checkpoint commit for current workspace changes.",
                 parameters={
@@ -1495,6 +1611,7 @@ def coding_tool_manifest() -> Dict[str, Any]:
         "Commands run inside a Linux workspace shell. Use POSIX paths, forward slashes, and Linux command/env syntax such as ls, cat, grep, python3, VAR=value cmd, and $VAR.",
         "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace.",
         "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
+        "For work spanning several milestones, use coding_update_plan and keep milestone statuses current.",
         "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
         "Use coding_fetch_url for current public documentation or issue pages.",
         "Do not invent imports, functions, methods, variables, or config keys; search and read definitions before using them.",
@@ -1534,24 +1651,101 @@ def _text_tool_call_guidance() -> str:
     )
 
 
+def _task_transaction(task_id: str, mutator: Any) -> Dict[str, Any]:
+    try:
+        return cw.mutate_task(task_id, mutator)
+    except HTTPException as exc:
+        # Preserve the load/save seam used by in-memory adapters and focused
+        # tests while keeping real file-backed updates atomic.
+        if int(getattr(exc, "status_code", 0) or 0) != 404:
+            raise
+        task = cw.load_task(task_id)
+        mutator(task)
+        cw.save_task(task)
+        return task
+
+
 def _mutate_task(task_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
-    task = cw.load_task(task_id)
-    task.update(fields)
-    cw.save_task(task)
-    return task
+    return _task_transaction(task_id, lambda task: task.update(fields))
 
 
 def _append_event(task_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
-    task = cw.load_task(task_id)
-    events = task.get("agent_events")
-    if not isinstance(events, list):
-        events = []
-    ev = _compact_event(task, {"ts": now_unix(), **event})
-    events.append(ev)
-    task["agent_events"] = events[-_max_events():]
-    task["agent_last_event_at"] = ev["ts"]
-    cw.save_task(task)
-    return ev
+    result: Dict[str, Any] = {}
+
+    def apply(task: Dict[str, Any]) -> None:
+        events = task.get("agent_events")
+        if not isinstance(events, list):
+            events = []
+        ev = _compact_event(task, {"ts": now_unix(), **event})
+        events.append(ev)
+        task["agent_events"] = events[-_max_events():]
+        task["agent_last_event_at"] = ev["ts"]
+        result.update(ev)
+
+    _task_transaction(task_id, apply)
+    return result
+
+
+def _update_run_record(task_id: str, run_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    def apply(task: Dict[str, Any]) -> None:
+        runs = task.get("agent_runs")
+        if not isinstance(runs, list):
+            runs = []
+        record: Optional[Dict[str, Any]] = None
+        for item in reversed(runs):
+            if isinstance(item, dict) and str(item.get("run_id") or "") == run_id:
+                record = item
+                break
+        if record is None:
+            record = {"run_id": run_id, "created_at": time.time()}
+            runs.append(record)
+        record.update(fields)
+        task["agent_runs"] = [item for item in runs[-_run_history_limit():] if isinstance(item, dict)]
+
+    return _task_transaction(task_id, apply)
+
+
+def _initialize_run_state(
+    task_id: str,
+    *,
+    fields: Dict[str, Any],
+    run_record: Dict[str, Any],
+    requested_prompt: str,
+    actor: Optional[str],
+) -> Dict[str, Any]:
+    """Start a run without replacing guidance, events, or history added concurrently."""
+
+    def apply(task: Dict[str, Any]) -> None:
+        events = task.get("agent_events")
+        if not isinstance(events, list):
+            events = []
+        runs = task.get("agent_runs")
+        if not isinstance(runs, list):
+            runs = []
+        run_id = str(run_record.get("run_id") or "")
+        runs = [item for item in runs if isinstance(item, dict) and str(item.get("run_id") or "") != run_id]
+        runs.append(dict(run_record))
+
+        guidance = _guidance_messages(task)
+        if requested_prompt:
+            guidance_ts = time.time()
+            guidance.append(
+                {
+                    "ts": guidance_ts,
+                    "role": "user",
+                    "actor": str(actor or "").strip(),
+                    "run_id": run_id,
+                    "content": requested_prompt,
+                }
+            )
+            task["last_guidance_at"] = guidance_ts
+
+        task.update(fields)
+        task["agent_events"] = events[-_max_events():]
+        task["agent_runs"] = runs[-_run_history_limit():]
+        task["guidance_messages"] = guidance[-200:]
+
+    return _task_transaction(task_id, apply)
 
 
 def _semantic_reroute_candidate(
@@ -1614,6 +1808,21 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
                 )
             manifest["tools"] = slim_tools
         return {"ok": True, **manifest}
+    if name == "coding_update_plan":
+        if not any(key in args for key in ("goal", "items", "note")):
+            return {"ok": False, "error": "coding_update_plan requires goal, items, or note"}
+        items = args.get("items")
+        if items is not None and not isinstance(items, list):
+            return {"ok": False, "error": "items must be an array"}
+        result = cw.update_project_plan(
+            task_id,
+            goal=str(args.get("goal") or "") if "goal" in args else None,
+            items=items,
+            note=str(args.get("note") or "") if "note" in args else None,
+            actor="coding-agent",
+        )
+        plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+        return {"ok": True, "plan": plan}
     if name == "coding_read_file":
         return cw.read_file(task_id, path=str(args.get("path") or ""))
     if name == "coding_read_file_lines":
@@ -1704,6 +1913,7 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
         request_bits.append(f"Current run request:\n{current}")
     if guidance:
         request_bits.append(guidance)
+    request_bits.append(_project_plan_context(task))
     integration_context = _model_integration_context(task)
     if integration_context:
         request_bits.append(integration_context)
@@ -1719,6 +1929,7 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
             "You are Nexus Coding Agent in a constrained context window. Work by calling workspace tools, not by narrating. "
             f"{_text_tool_call_guidance()} "
             "Use this loop: inspect files, make focused edits, run the requested validation, inspect coding_git_diff, then coding_finish. "
+            "For multi-step work, create and maintain the durable project plan with coding_update_plan. "
             "Use small reads: coding_search_text first, then coding_read_file_lines with narrow ranges. "
             "Use coding_replace_text for small edits and coding_run_command for validation. "
             "Never push, open pull requests, or modify files outside the workspace. "
@@ -1734,6 +1945,7 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
         "Use POSIX paths and Linux command conventions: forward slashes, ls/cat/mv/cp/rm, python3, VAR=value cmd, and $VAR. "
         "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace. "
         "Treat workspace conversation messages as additional user guidance. If new guidance arrives during a run, adjust during the next work cycle. "
+        "For work spanning several milestones, call coding_update_plan early, keep exactly one relevant item in_progress, and update completed or blocked items as evidence changes. "
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Keep assistant responses concise; call tools promptly instead of narrating long plans. "
         "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
@@ -1776,6 +1988,7 @@ def _task_context(task: Dict[str, Any]) -> str:
     guidance = _guidance_context(task)
     if guidance:
         base = f"{base}\n\n{guidance}"
+    base = f"{base}\n\n{_project_plan_context(task)}"
     previous = _previous_run_context(task)
     if previous:
         return f"{base}\n\n{previous}"
@@ -1821,6 +2034,9 @@ async def start_agent_run(
     auto_commit: bool = False,
     commit_message: Optional[str] = None,
     actor: Optional[str] = None,
+    max_cycles: Optional[int] = None,
+    max_runtime_sec: Optional[int] = None,
+    context_reset_cycles: Optional[int] = None,
 ) -> Dict[str, Any]:
     cw._ensure_enabled()
     task = await asyncio.to_thread(cw.load_task, task_id)
@@ -1845,28 +2061,38 @@ async def start_agent_run(
     previous_error = str(task.get("agent_error") or "")
     requested_prompt = str(prompt or "").strip()
     effective_prompt = requested_prompt or str(task.get("prompt") or "").strip()
-    guidance_messages = _guidance_messages(task)
-    if requested_prompt:
-        guidance_messages.append(
-            {
-                "ts": time.time(),
-                "role": "user",
-                "actor": str(actor or "").strip(),
-                "run_id": run_id,
-                "content": requested_prompt,
-            }
-        )
-        guidance_messages = guidance_messages[-200:]
     now = time.time()
+    run_max_cycles = _max_cycles_per_run(max_cycles)
+    run_max_runtime_sec = _max_runtime_sec(max_runtime_sec)
+    run_context_reset_cycles = _context_reset_cycles(context_reset_cycles)
+    run_record = {
+        "run_id": run_id,
+        "status": "queued",
+        "created_at": now,
+        "started_at": now,
+        "finished_at": None,
+        "model": model,
+        "backend": "",
+        "upstream_model": "",
+        "cycle": 0,
+        "max_cycles": run_max_cycles,
+        "max_runtime_sec": run_max_runtime_sec,
+        "context_reset_cycles": run_context_reset_cycles,
+        "prompt": _clip_text(effective_prompt, 1_000),
+        "actor": str(actor or "").strip(),
+        "continuation": bool(previous_run_id or previous_events),
+        "summary": "",
+        "error": "",
+    }
     idle_only_policy = _idle_only_huge_model_policy(model)
     if idle_only_policy:
         summary = str(idle_only_policy.get("warning") or "").strip() or (
             "This workspace is pinned to a huge MLX model that is not currently loaded."
         )
         await asyncio.to_thread(
-            _mutate_task,
+            _initialize_run_state,
             task_id,
-            {
+            fields={
                 "coding_model": model,
                 "agent_run_id": run_id,
                 "agent_status": "idle_waiting",
@@ -1874,6 +2100,9 @@ async def start_agent_run(
                 "agent_backend": "",
                 "agent_upstream_model": str(idle_only_policy.get("resolved_model") or ""),
                 "agent_cycle": 0,
+                "agent_max_cycles": run_max_cycles,
+                "agent_max_runtime_sec": run_max_runtime_sec,
+                "agent_context_reset_cycles": run_context_reset_cycles,
                 "agent_started_at": None,
                 "agent_finished_at": now,
                 "agent_last_event_at": now_unix(),
@@ -1887,10 +2116,10 @@ async def start_agent_run(
                 "agent_pause_requested": False,
                 "agent_auto_commit": bool(auto_commit),
                 "agent_run_prompt": effective_prompt,
-                "agent_events": previous_events[-_max_events():],
-                "guidance_messages": guidance_messages,
-                "last_guidance_at": guidance_messages[-1].get("ts") if requested_prompt and guidance_messages else task.get("last_guidance_at"),
             },
+            run_record=run_record,
+            requested_prompt=requested_prompt,
+            actor=actor,
         )
         await asyncio.to_thread(
             _append_event,
@@ -1905,13 +2134,19 @@ async def start_agent_run(
                 "actor": actor or "",
             },
         )
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {"status": "idle_waiting", "finished_at": now, "summary": summary},
+        )
         fresh = await asyncio.to_thread(cw.load_task, task_id)
         return cw.public_task(fresh)
 
     await asyncio.to_thread(
-        _mutate_task,
+        _initialize_run_state,
         task_id,
-        {
+        fields={
             "coding_model": model,
             "agent_run_id": run_id,
             "agent_status": "queued",
@@ -1919,6 +2154,9 @@ async def start_agent_run(
             "agent_backend": "",
             "agent_upstream_model": "",
             "agent_cycle": 0,
+            "agent_max_cycles": run_max_cycles,
+            "agent_max_runtime_sec": run_max_runtime_sec,
+            "agent_context_reset_cycles": run_context_reset_cycles,
             "agent_started_at": now,
             "agent_finished_at": None,
             "agent_last_event_at": now_unix(),
@@ -1932,10 +2170,10 @@ async def start_agent_run(
             "agent_pause_requested": False,
             "agent_auto_commit": bool(auto_commit),
             "agent_run_prompt": effective_prompt,
-            "agent_events": previous_events[-_max_events():],
-            "guidance_messages": guidance_messages,
-            "last_guidance_at": guidance_messages[-1].get("ts") if requested_prompt and guidance_messages else task.get("last_guidance_at"),
         },
+        run_record=run_record,
+        requested_prompt=requested_prompt,
+        actor=actor,
     )
     await asyncio.to_thread(
         _append_event,
@@ -1960,6 +2198,9 @@ async def start_agent_run(
             model=model,
             auto_commit=bool(auto_commit),
             commit_message=commit_message,
+            max_cycles=run_max_cycles,
+            max_runtime_sec=run_max_runtime_sec,
+            context_reset_cycles=run_context_reset_cycles,
         )
     )
     _RUNNING[task_id] = job
@@ -2010,6 +2251,9 @@ async def _run_agent(
     model: str,
     auto_commit: bool,
     commit_message: Optional[str],
+    max_cycles: int,
+    max_runtime_sec: int,
+    context_reset_cycles: int,
 ) -> None:
     t0 = time.monotonic()
     finish_summary = ""
@@ -2017,6 +2261,7 @@ async def _run_agent(
     finish_called = False
     backend = ""
     upstream_model = ""
+    cycle = 0
     try:
         task = await asyncio.to_thread(cw.load_task, task_id)
         user_settings = _settings_for_task_owner(task)
@@ -2062,6 +2307,18 @@ async def _run_agent(
                 "route_reason": route_reason,
             },
         )
+        latest_task = await asyncio.to_thread(cw.load_task, task_id)
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {
+                "status": "running",
+                "backend": backend,
+                "upstream_model": upstream_model,
+                "started_at": time.time(),
+            },
+        )
 
         initial_text_tool_mode = not _backend_supports_tool_calling(backend)
         messages: List[ChatMessage] = [
@@ -2080,9 +2337,29 @@ async def _run_agent(
         validation_failed_after_edit = False
         diff_result_after_edit: Optional[Dict[str, Any]] = None
         validation_argv_after_edit: Optional[List[str]] = None
-        cycle = 0
-
         while True:
+            elapsed_sec = time.monotonic() - t0
+            if cycle >= max_cycles or elapsed_sec >= max_runtime_sec:
+                reason = "cycle budget" if cycle >= max_cycles else "wall-clock budget"
+                budget_summary = (
+                    f"Coding run paused after reaching its {reason} at cycle {cycle}. "
+                    "Workspace files, the durable project plan, and checkpoint commits are preserved. "
+                    "Start a continuation run to keep working."
+                )
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "budget_exhausted",
+                        "cycle": cycle,
+                        "elapsed_runtime_sec": int(elapsed_sec),
+                        "max_cycles": max_cycles,
+                        "max_runtime_sec": max_runtime_sec,
+                        "reason": reason.replace(" ", "_"),
+                        "summary": budget_summary,
+                    },
+                )
+                raise _CodingAgentPaused(budget_summary)
             cycle += 1
             _raise_if_paused(task_id)
             new_guidance, seen_guidance_count = await asyncio.to_thread(_new_guidance_since, task_id, seen_guidance_count)
@@ -2104,7 +2381,42 @@ async def _run_agent(
                             "summary": _clip_text(guidance_text, 1000),
                         },
                     )
+            context_chars = _messages_char_count(messages)
+            reset_for_cycles = cycle > 1 and (cycle - 1) % context_reset_cycles == 0
+            reset_for_size = cycle > 1 and context_chars >= _context_reset_chars()
+            if reset_for_cycles or reset_for_size:
+                latest_task = await asyncio.to_thread(cw.load_task, task_id)
+                request_text_tool_mode = not _backend_supports_tool_calling(backend)
+                messages = [
+                    ChatMessage(role="system", content=_system_prompt(latest_task, text_tool_mode=request_text_tool_mode)),
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            (
+                                _text_tool_task_context(latest_task)
+                                if request_text_tool_mode
+                                else _task_context(latest_task)
+                            )
+                            + "\n\n"
+                            + f"Continue the same coding run at cycle {cycle}. The conversation context was compacted; "
+                            + "the workspace files, git history, durable plan, guidance, and recent event digest above are authoritative. "
+                            + "Inspect current state before making assumptions and continue with a workspace tool call."
+                        ),
+                    ),
+                ]
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "context_reset",
+                        "cycle": cycle,
+                        "reason": "cycle_interval" if reset_for_cycles else "context_size",
+                        "previous_context_chars": context_chars,
+                        "summary": "Agent conversation context compacted from durable workspace state.",
+                    },
+                )
             await asyncio.to_thread(_mutate_task, task_id, {"agent_cycle": cycle, "agent_last_event_at": now_unix()})
+            await asyncio.to_thread(_update_run_record, task_id, run_id, {"cycle": cycle})
             await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
 
             request_text_tool_mode = not _backend_supports_tool_calling(backend)
@@ -2335,6 +2647,21 @@ async def _run_agent(
                                 "validation_failed_after_edit": validation_failed_after_edit,
                             },
                         )
+                elif name == "coding_update_plan" and bool(result.get("ok")):
+                    plan = result.get("plan") if isinstance(result.get("plan"), dict) else {}
+                    counts = plan.get("counts") if isinstance(plan.get("counts"), dict) else {}
+                    await asyncio.to_thread(
+                        _append_event,
+                        task_id,
+                        {
+                            "type": "plan_updated",
+                            "cycle": cycle,
+                            "revision": plan.get("revision"),
+                            "summary": (
+                                f"Project plan updated: {counts.get('done', 0)}/{counts.get('total', 0)} milestones done."
+                            ),
+                        },
+                    )
                 elif _tool_result_modified_workspace(name, args, result):
                     workspace_modified = True
                     diff_reviewed_after_edit = False
@@ -2479,15 +2806,33 @@ async def _run_agent(
                         f"{commit_result.get('error') or 'git commit failed'}"
                     )
 
+        finished_at = time.time()
+        final_status = "completed" if finish_success else "failed"
         await asyncio.to_thread(
             _mutate_task,
             task_id,
             {
-                "agent_status": "completed" if finish_success else "failed",
+                "agent_status": final_status,
                 "agent_summary": finish_summary,
                 "agent_error": "" if finish_success else finish_summary,
-                "agent_finished_at": time.time(),
+                "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
+            },
+        )
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {
+                "status": final_status,
+                "finished_at": finished_at,
+                "cycle": cycle,
+                "backend": backend,
+                "upstream_model": upstream_model,
+                "summary": finish_summary,
+                "error": "" if finish_success else finish_summary,
+                "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
+                "commit": str(latest_task.get("last_commit") or ""),
             },
         )
         await asyncio.to_thread(
@@ -2501,24 +2846,41 @@ async def _run_agent(
             },
         )
     except asyncio.CancelledError:
+        finished_at = time.time()
+        paused_summary = "Coding run was paused. Start another run on this workspace to resume from the latest files and checkpoint."
         await asyncio.to_thread(
             _mutate_task,
             task_id,
             {
                 "agent_status": "paused",
                 "agent_error": "",
-                "agent_summary": "Coding run was paused. Start another run on this workspace to resume from the latest files and checkpoint.",
-                "agent_finished_at": time.time(),
+                "agent_summary": paused_summary,
+                "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
             },
         )
         await asyncio.to_thread(
             _append_event,
             task_id,
-            {"type": "paused", "summary": "Coding run was paused. Start another run on this workspace to resume from the latest files and checkpoint."},
+            {"type": "paused", "summary": paused_summary},
+        )
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {
+                "status": "paused",
+                "finished_at": finished_at,
+                "cycle": cycle,
+                "backend": backend,
+                "upstream_model": upstream_model,
+                "summary": paused_summary,
+                "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
+            },
         )
         raise
     except _CodingAgentPaused as exc:
+        finished_at = time.time()
         await asyncio.to_thread(
             _mutate_task,
             task_id,
@@ -2526,13 +2888,28 @@ async def _run_agent(
                 "agent_status": "paused",
                 "agent_error": "",
                 "agent_summary": str(exc),
-                "agent_finished_at": time.time(),
+                "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
             },
         )
         await asyncio.to_thread(_append_event, task_id, {"type": "paused", "summary": str(exc)})
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {
+                "status": "paused",
+                "finished_at": finished_at,
+                "cycle": cycle,
+                "backend": backend,
+                "upstream_model": upstream_model,
+                "summary": str(exc),
+                "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
+            },
+        )
     except Exception as exc:
         error = exc.detail if isinstance(exc, HTTPException) else f"{type(exc).__name__}: {exc}"
+        finished_at = time.time()
         logger.warning("coding agent failed task=%s backend=%s model=%s error=%s", task_id, backend, upstream_model, error)
         await asyncio.to_thread(
             _mutate_task,
@@ -2541,7 +2918,7 @@ async def _run_agent(
                 "agent_status": "failed",
                 "agent_error": str(error),
                 "agent_summary": "",
-                "agent_finished_at": time.time(),
+                "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
             },
         )
@@ -2551,6 +2928,20 @@ async def _run_agent(
             {
                 "type": "failed",
                 "error": _clip_text(str(error), 4000),
+                "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
+            },
+        )
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {
+                "status": "failed",
+                "finished_at": finished_at,
+                "cycle": cycle,
+                "backend": backend,
+                "upstream_model": upstream_model,
+                "error": _clip_text(str(error), 4_000),
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
             },
         )
