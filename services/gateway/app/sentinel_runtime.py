@@ -350,25 +350,17 @@ def recurring_issues(*, limit: int = 20, since_sec: int = 7 * 24 * 3600) -> List
 
 def status_payload(*, limit: int = 120) -> Dict[str, Any]:
     archives: List[Dict[str, Any]] = []
-    archive_model_choices: List[str] = []
     try:
         from app import coding_workspace
 
         archives = coding_workspace.list_archived_tasks(limit=120)
     except Exception:
         archives = []
-    try:
-        from app.model_aliases import get_aliases
-
-        archive_model_choices = sorted(get_aliases().keys())
-    except Exception:
-        archive_model_choices = []
     return {
         "runtime": dict(_RUNTIME_STATUS),
         "events": list_events(limit=limit),
         "recurring": recurring_issues(),
         "archives": archives,
-        "archive_model_choices": archive_model_choices,
     }
 
 

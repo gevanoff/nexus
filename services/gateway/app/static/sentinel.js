@@ -12,6 +12,8 @@
 
   let currentPayload = null;
   let archivePollGeneration = 0;
+  let modelCatalog = null;
+  let modelCatalogLoadedAt = 0;
 
   function setStatus(text, isError) {
     if (!statusEl) return;
@@ -51,8 +53,15 @@
       const option = document.createElement("option");
       option.value = item.value;
       option.textContent = item.label;
+      if (item.run_policy) option.dataset.runPolicy = item.run_policy;
       select.appendChild(option);
     });
+    if (value && !options.some((item) => String(item.value) === String(value))) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = `Custom: ${value}`;
+      select.appendChild(option);
+    }
     select.value = value;
     return select;
   }
@@ -100,6 +109,14 @@
       throw new Error(payload?.detail || payload?.error || `HTTP ${resp.status}`);
     }
     return payload;
+  }
+
+  async function loadModelCatalog({ force = false } = {}) {
+    if (!force && modelCatalog && Date.now() - modelCatalogLoadedAt < 30000) return modelCatalog;
+    const payload = await fetchJson("/ui/api/model-catalogs");
+    modelCatalog = payload && payload.coding && typeof payload.coding === "object" ? payload.coding : {};
+    modelCatalogLoadedAt = Date.now();
+    return modelCatalog;
   }
 
   async function runControlAction(button, busyText, action) {
@@ -362,10 +379,16 @@
     return wrap;
   }
 
-  function renderArchives(items, modelChoices) {
+  function renderArchives(items, catalog) {
     if (!archivesEl) return;
     archivesEl.innerHTML = "";
-    const models = Array.isArray(modelChoices) && modelChoices.length ? modelChoices : ["coder", "default", "fast"];
+    const models = Array.isArray(catalog?.options) && catalog.options.length
+      ? catalog.options.map((item) => ({
+        value: String(item?.value || ""),
+        label: String(item?.label || item?.value || ""),
+        run_policy: String(item?.run_policy || "immediate"),
+      })).filter((item) => item.value)
+      : [{ value: "coder", label: "Track current coder", run_policy: "immediate" }];
     if (!Array.isArray(items) || !items.length) {
       const empty = document.createElement("div");
       empty.className = "archive-empty";
@@ -437,7 +460,7 @@
         archiveModeValue(analysis)
       );
       const modelSelect = createSelect(
-        models.map((value) => ({ value, label: value })),
+        models,
         analysis.local_model || "coder"
       );
       const preserveWrap = document.createElement("label");
@@ -532,13 +555,16 @@
     renderSummary(runtime.last_summary || {});
     renderRecurring(payload?.recurring || []);
     renderEvents(payload?.events || []);
-    renderArchives(payload?.archives || [], payload?.archive_model_choices || []);
+    renderArchives(payload?.archives || [], modelCatalog || {});
   }
 
-  async function loadStatus({ quiet = false } = {}) {
+  async function loadStatus({ quiet = false, refreshCatalog = false } = {}) {
     if (!quiet) setStatus("Loading Sentinel status...");
     try {
-      const payload = await fetchJson("/ui/api/sentinel/status?limit=200");
+      const [payload] = await Promise.all([
+        fetchJson("/ui/api/sentinel/status?limit=200"),
+        loadModelCatalog({ force: refreshCatalog }),
+      ]);
       renderPayload(payload);
       if (!quiet) setStatus("");
     } catch (error) {
@@ -558,7 +584,7 @@
     }
   }
 
-  if (refreshEl) refreshEl.addEventListener("click", () => { void loadStatus(); });
+  if (refreshEl) refreshEl.addEventListener("click", () => { void loadStatus({ refreshCatalog: true }); });
   if (scanNowEl) scanNowEl.addEventListener("click", () => { void runScan(); });
   if (categoryFilterEl) categoryFilterEl.addEventListener("change", () => renderEvents(currentPayload?.events || []));
   if (levelFilterEl) levelFilterEl.addEventListener("change", () => renderEvents(currentPayload?.events || []));

@@ -3361,7 +3361,6 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
         "preferred_coding_model": str(preferred_coding_model or "").strip(),
-        "coding_model_policy": coding_model_policy.options_payload(),
         "gh_cli_available": shutil.which("gh") is not None,
         "model_integration_runtimes": ["auto", "mlx", "vllm", "transformers"],
         "model_integration_route_kinds": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"],

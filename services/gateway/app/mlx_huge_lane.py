@@ -6,31 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from app.config import S
-
-
-DEFAULT_HUGE_MODELS = [
-    "mlx-community/GLM-5.2-DQ4plus-q8",
-    "mlx-community/MiniMax-M2.5-8bit",
-    "mlx-community/DeepSeek-R1-0528-4bit",
-]
-
-MODEL_ESTIMATES: Dict[str, Dict[str, Any]] = {
-    "mlx-community/GLM-5.2-DQ4plus-q8": {
-        "label": "GLM-5.2 DQ4plus-q8",
-        "estimated_load_sec": 420,
-        "estimated_memory_gb": 465,
-    },
-    "mlx-community/MiniMax-M2.5-8bit": {
-        "label": "MiniMax M2.5 8-bit",
-        "estimated_load_sec": 90,
-        "estimated_memory_gb": 240,
-    },
-    "mlx-community/DeepSeek-R1-0528-4bit": {
-        "label": "DeepSeek R1 0528 4-bit",
-        "estimated_load_sec": 110,
-        "estimated_memory_gb": 370,
-    },
-}
+from app.model_aliases import get_aliases
 
 
 def enabled() -> bool:
@@ -45,43 +21,68 @@ def state_path() -> Path:
     return Path(configured)
 
 
+def configured_candidates() -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    seen_models = set()
+    for alias_name, alias in get_aliases().items():
+        model = str(alias.upstream_model or "").strip()
+        if not alias.huge_candidate or not model or model in seen_models:
+            continue
+        seen_models.add(model)
+        candidates.append(
+            {
+                "alias": str(alias_name or "").strip().lower(),
+                "model": model,
+                "label": alias.label or model.rsplit("/", 1)[-1],
+                "estimated_load_sec": alias.estimated_load_sec or 120,
+                "estimated_memory_gb": alias.estimated_memory_gb,
+                "default": bool(alias.huge_default),
+            }
+        )
+    return candidates
+
+
 def configured_models() -> List[str]:
-    raw = str(getattr(S, "MLX_HUGE_MODELS", "") or "").strip()
-    values = [part.strip() for part in raw.split(",") if part.strip()] if raw else []
-    models = values or DEFAULT_HUGE_MODELS
-    out: List[str] = []
-    seen = set()
-    for model in models:
-        if model and model not in seen:
-            seen.add(model)
-            out.append(model)
-    return out
+    return [str(candidate["model"]) for candidate in configured_candidates()]
 
 
 def is_huge_model(model: str) -> bool:
-    return str(model or "").strip() in set(configured_models())
+    value = str(model or "").strip()
+    return any(value in {candidate["alias"], candidate["model"]} for candidate in configured_candidates())
+
+
+def resolve_model(model_or_alias: str) -> str:
+    value = str(model_or_alias or "").strip()
+    for candidate in configured_candidates():
+        if value in {candidate["alias"], candidate["model"]}:
+            return str(candidate["model"])
+    return ""
 
 
 def default_model() -> str:
-    configured_default = str(
-        getattr(S, "MLX_HUGE_LANE_DEFAULT_MODEL", "")
-        or getattr(S, "MLX_MODEL_STRONG", "")
-        or ""
-    ).strip()
-    models = configured_models()
-    if configured_default in models:
-        return configured_default
-    return models[0] if models else configured_default
+    candidates = configured_candidates()
+    for candidate in candidates:
+        if candidate["default"]:
+            return str(candidate["model"])
+    strong_model = str(getattr(S, "MLX_MODEL_STRONG", "") or "").strip()
+    if strong_model and any(candidate["model"] == strong_model for candidate in candidates):
+        return strong_model
+    return str(candidates[0]["model"]) if candidates else strong_model
 
 
 def model_info(model: str) -> Dict[str, Any]:
     model_id = str(model or "").strip()
-    estimate = dict(MODEL_ESTIMATES.get(model_id) or {})
-    estimate.setdefault("label", model_id.rsplit("/", 1)[-1] if model_id else "")
-    estimate.setdefault("estimated_load_sec", 120)
-    estimate.setdefault("estimated_memory_gb", None)
-    estimate["model"] = model_id
-    return estimate
+    for candidate in configured_candidates():
+        if model_id in {candidate["alias"], candidate["model"]}:
+            return dict(candidate)
+    return {
+        "alias": "",
+        "model": model_id,
+        "label": model_id.rsplit("/", 1)[-1] if model_id else "",
+        "estimated_load_sec": 120,
+        "estimated_memory_gb": None,
+        "default": False,
+    }
 
 
 def _read_raw_state() -> Dict[str, Any]:
@@ -134,11 +135,11 @@ def load_state() -> Dict[str, Any]:
         "previous_model": str(payload.get("previous_model") or "").strip(),
         "candidates": [
             {
-                **model_info(model),
-                "active": model == active_model,
-                "target": model == target_model and status == "switching",
+                **candidate,
+                "active": candidate["model"] == active_model,
+                "target": candidate["model"] == target_model and status == "switching",
             }
-            for model in models
+            for candidate in configured_candidates()
         ],
     }
     return state

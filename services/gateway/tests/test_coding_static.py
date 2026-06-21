@@ -21,7 +21,7 @@ def test_coding_ui_has_huge_model_tracking_warning_controls():
     assert '<select id="workspaceModelInput"></select>' in html
     assert 'id="workspaceModelHint"' in html
     assert 'id="trackCurrentCoderModel"' in html
-    assert "coding_model_policy" in js
+    assert 'fetchJson("/ui/api/model-catalogs")' in js
     assert "only run during idle periods" in js
     assert 'els.workspaceModelInput.value = "coder";' in js
 
@@ -94,9 +94,18 @@ def test_sentinel_ui_has_dark_select_options_and_reliable_immediate_analysis_act
 
     assert "select option {" in html
     assert "background: #111821;" in html
-    assert 'sentinel.js?v=3' in html
+    assert 'sentinel.js?v=4' in html
     assert "/analyze`" in js
     assert "requestArchiveAnalysis" in js
     assert "pollArchiveAnalysis" in js
     assert 'modeSelect.value === "immediate_local"' in js
     assert "runControlAction" in js
+    assert 'fetchJson("/ui/api/model-catalogs")' in js
+
+
+def test_chat_coding_preference_uses_workspace_catalog_not_chat_models():
+    source = Path(__file__).resolve().parent.parent.joinpath("app", "static", "chat.js").read_text(encoding="utf-8")
+
+    assert 'fetch("/ui/api/model-catalogs"' in source
+    assert "codingModelOptionsCache" in source
+    assert "normalizePreferredCodingModel" in source

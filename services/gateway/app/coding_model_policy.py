@@ -28,6 +28,8 @@ def _strip_mlx_prefix(model: str) -> str:
 
 def _alias_label(alias_name: str, alias: ModelAlias) -> str:
     name = str(alias_name or "").strip()
+    if alias.label:
+        return f"{name} ({alias.label})"
     model = str(alias.upstream_model or "").strip()
     tail = model.rsplit("/", 1)[-1] if model else ""
     backend = backend_provider_name(alias.backend) or str(alias.backend or "").strip()
@@ -44,10 +46,9 @@ def _coding_aliases() -> Dict[str, ModelAlias]:
         key = str(alias_name or "").strip().lower()
         if not key or key in _NON_CODING_ALIAS_VALUES:
             continue
-        if alias.tools is False:
+        if alias.coding is False or alias.huge_candidate:
             continue
-        model = _strip_mlx_prefix(alias.upstream_model)
-        if backend_provider_name(alias.backend) == "mlx" and mlx_huge_lane.is_huge_model(model):
+        if alias.tools is False:
             continue
         out[key] = alias
     return out
@@ -72,7 +73,10 @@ def pinned_huge_model(model: str) -> str:
     candidate = _strip_mlx_prefix(model)
     if not candidate or is_tracking_coder_model(candidate):
         return ""
-    return candidate if mlx_huge_lane.is_huge_model(candidate) else ""
+    alias = get_aliases().get(candidate.lower())
+    if alias is not None and alias.huge_candidate:
+        return str(alias.upstream_model or "").strip()
+    return mlx_huge_lane.resolve_model(candidate)
 
 
 def describe_workspace_model(model: str) -> Dict[str, Any]:
@@ -189,13 +193,14 @@ def options_payload() -> Dict[str, Any]:
     ]
     for candidate in candidates:
         model = str((candidate or {}).get("model") or "").strip()
-        if not model:
+        alias_name = str((candidate or {}).get("alias") or "").strip()
+        if not model or not alias_name:
             continue
         label = str((candidate or {}).get("label") or _model_label(model))
         is_active = model == active_model
         options.append(
             {
-                "value": model,
+                "value": alias_name,
                 "label": f"{label} ({'loaded' if is_active else 'idle only'})",
                 "kind": "huge",
                 "model": model,
@@ -222,6 +227,8 @@ def options_payload() -> Dict[str, Any]:
             }
         )
     return {
+        "source": "model_aliases",
+        "catalog_version": 1,
         "track_model": TRACK_CODER_MODEL,
         "current_coder_model": current_model,
         "active_huge_model": active_model,

@@ -135,11 +135,8 @@ Important gateway data under `./.runtime/gateway/data` includes:
 - `coding/`: coding workspace task metadata and isolated git clones.
 - `ui_images`, `ui_files`, `ui_audio`, `ui_chats`: generated UI artifacts and persisted chat/conversation history.
 
-- Edit gateway operator config on the host under `./.runtime/gateway/config/`:
-  - `tools_registry.json` (seeded from `services/gateway/env/tools_registry.json.example`)
-  - `model_aliases.json` (seeded from `services/gateway/env/model_aliases.json.example`)
-  - `agent_specs.json` (seeded from `services/gateway/env/agent_specs.json.example`)
-- No image rebuild is required after edits; restart the gateway container if you want a clean reload.
+- Gateway operator config is materialized under `./.runtime/gateway/config/`. The deploy scripts refresh `model_aliases.json` from the tracked `services/gateway/app/model_aliases.json` catalog; other operator files remain host-managed.
+- Configure model names, Coding/Sentinel choices, huge-lane candidates, labels, and load estimates once in the tracked alias catalog, then redeploy or restart Gateway.
 
 For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `ai1`, `ada2`, or `meltdown`. Commit and push from a development checkout, then deploy by pulling the intended branch on the target host with `deploy/scripts/deploy.sh` or the remote deploy wrapper. The runtime directories above are host state and are the exception.
 

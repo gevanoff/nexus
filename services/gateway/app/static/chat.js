@@ -58,6 +58,7 @@
     let modelOptionsCache = [];
     let modelOptionLabels = new Map();
     let modelOptionItems = new Map();
+    let codingModelOptionsCache = [];
     let currentUserIsAdmin = false;
     let authRedirectPending = false;
     const BACKEND_STATUS_CACHE_KEY = "nexus.chat.backendStatus.v1";
@@ -2224,6 +2225,9 @@
         if (!modelOptionsCache.length) {
           await loadModels();
         }
+        if (!codingModelOptionsCache.length) {
+          await loadCodingModelCatalog();
+        }
         const backendSelect = document.getElementById('settings_tts_backend');
         const select = document.getElementById('settings_tts_voice');
         const showTs = document.getElementById('settings_show_timestamps');
@@ -2415,7 +2419,7 @@
       const newPwd = document.getElementById('settings_new_password');
       const confirmPwd = document.getElementById('settings_confirm_password');
       const chosenModel = normalizePreferredModel(preferredModel ? String(preferredModel.value || "").trim() : "default");
-      const chosenCodingModel = normalizePreferredModel(preferredCodingModel ? String(preferredCodingModel.value || "").trim() : "coder");
+      const chosenCodingModel = normalizePreferredCodingModel(preferredCodingModel ? String(preferredCodingModel.value || "").trim() : "coder");
       const gitTokenValue = codingGitToken ? String(codingGitToken.value || "").trim() : "";
       const clearGitToken = !!(clearCodingGitToken && clearCodingGitToken.checked);
       const telegramUsernameValue = telegramUsername ? String(telegramUsername.value || '').trim().replace(/^@+/, '') : '';
@@ -2537,7 +2541,7 @@
           userSettings.codingGitTokenHint = gitTokenValue.length > 10 ? `${gitTokenValue.slice(0, 4)}...${gitTokenValue.slice(-4)}` : "***";
         }
         setCommercialLlmControls();
-        await loadModels();
+        await Promise.all([loadModels(), loadCodingModelCatalog()]);
         syncSettingsModelSelect(userSettings.preferredModel);
         syncSettingsCodingModelSelect(userSettings.preferredCodingModel);
         applyUserSettingsToUi();
@@ -2682,8 +2686,21 @@
     function syncSettingsCodingModelSelect(preferred) {
       const select = document.getElementById("settings_coding_model_preference");
       if (!select) return;
-      populateModelSelect(select, modelOptionsCache);
-      const desired = pickModelValue({ options: modelOptionsCache, preferred, fallback: "coder" });
+      select.innerHTML = "";
+      for (const item of codingModelOptionsCache) {
+        const opt = document.createElement("option");
+        opt.value = String(item?.value || "");
+        opt.textContent = String(item?.label || item?.value || "");
+        opt.title = opt.textContent;
+        if (opt.value) select.appendChild(opt);
+      }
+      const desired = normalizePreferredCodingModel(preferred);
+      if (desired && !codingModelOptionsCache.some((item) => String(item?.value || "") === desired)) {
+        const opt = document.createElement("option");
+        opt.value = desired;
+        opt.textContent = `Custom: ${desired}`;
+        select.appendChild(opt);
+      }
       select.value = desired;
       window.NexusSelectMarquee?.refresh(select);
     }
@@ -2692,6 +2709,14 @@
       const desired = canonicalizeUiModelId(preferred);
       if (!modelOptionsCache.length) return desired || "default";
       return modelOptionsCache.includes(desired) ? desired : "default";
+    }
+
+    function normalizePreferredCodingModel(preferred) {
+      const raw = String(preferred || "").trim() || "coder";
+      const match = codingModelOptionsCache.find((item) => {
+        return String(item?.value || "") === raw || String(item?.model || "") === raw;
+      });
+      return match ? String(match.value || "coder") : raw;
     }
 
     function _setModelOptions(modelIds, preferred) {
@@ -2705,6 +2730,20 @@
         window.NexusSelectMarquee?.refresh(modelEl);
       }
       syncSettingsModelSelect(preferred);
+    }
+
+    async function loadCodingModelCatalog() {
+      try {
+        const resp = await fetch("/ui/api/model-catalogs", { method: "GET", credentials: "same-origin" });
+        const text = await resp.text();
+        if (handle401(resp)) return;
+        if (!resp.ok) throw new Error(text || `HTTP ${resp.status}`);
+        const payload = text ? JSON.parse(text) : {};
+        const options = payload?.coding?.options;
+        codingModelOptionsCache = Array.isArray(options) ? options : [];
+      } catch (error) {
+        codingModelOptionsCache = [{ value: "coder", label: "Track current coder", model: "" }];
+      }
       syncSettingsCodingModelSelect(userSettings.preferredCodingModel || "coder");
     }
 
@@ -3334,6 +3373,7 @@
     document.addEventListener('DOMContentLoaded', () => {
       if (!chatEl) return;
       void loadModels();
+      void loadCodingModelCatalog();
       (async () => {
         await loadUserSettings();
         await resetSession();
@@ -3393,6 +3433,7 @@
       if (uiRefreshBtn) {
         uiRefreshBtn.addEventListener('click', () => {
           void loadModels();
+          void loadCodingModelCatalog();
           void loadBackendStatus({ refresh: true });
         });
       }

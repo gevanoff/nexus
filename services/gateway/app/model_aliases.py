@@ -22,6 +22,12 @@ class ModelAlias:
     tools: Optional[bool] = None
     max_tokens_cap: Optional[int] = None
     temperature_cap: Optional[float] = None
+    label: str = ""
+    coding: Optional[bool] = None
+    huge_candidate: bool = False
+    huge_default: bool = False
+    estimated_load_sec: Optional[int] = None
+    estimated_memory_gb: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -42,19 +48,51 @@ def _default_aliases() -> Dict[str, ModelAlias]:
 
     return {
         # These four are the canonical policy surface.
-        "default": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True),
+        "default": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True, coding=True),
         "fast": ModelAlias(
             backend="local_vllm_fast",
             upstream_model=S.VLLM_MODEL_FAST,
             context_window=S.VLLM_FAST_MAX_MODEL_LEN,
             tools=False,
         ),
-        "coder": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True),
+        "coder": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True, coding=False),
         "long": ModelAlias(
             backend=default_backend,
             upstream_model=default_strong_model,
             context_window=65_536,
             tools=True,
+            coding=False,
+        ),
+        "glm-5.2": ModelAlias(
+            backend="local_mlx",
+            upstream_model="mlx-community/GLM-5.2-DQ4plus-q8",
+            tools=True,
+            label="GLM-5.2 DQ4plus-q8",
+            coding=True,
+            huge_candidate=True,
+            huge_default=True,
+            estimated_load_sec=420,
+            estimated_memory_gb=465,
+        ),
+        "minimax-m2.5": ModelAlias(
+            backend="local_mlx",
+            upstream_model="mlx-community/MiniMax-M2.5-8bit",
+            tools=True,
+            label="MiniMax M2.5 8-bit",
+            coding=True,
+            huge_candidate=True,
+            estimated_load_sec=90,
+            estimated_memory_gb=240,
+        ),
+        "deepseek-r1": ModelAlias(
+            backend="local_mlx",
+            upstream_model="mlx-community/DeepSeek-R1-0528-4bit",
+            tools=True,
+            label="DeepSeek R1 0528 4-bit",
+            coding=True,
+            huge_candidate=True,
+            estimated_load_sec=110,
+            estimated_memory_gb=370,
         ),
     }
 
@@ -116,6 +154,22 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         if isinstance(tc, (int, float)) and tc >= 0:
             temperature_cap = float(tc)
 
+        label = str(v.get("label") or "").strip()
+        coding_raw = v.get("coding")
+        coding: Optional[bool] = coding_raw if isinstance(coding_raw, bool) else None
+        huge_candidate = v.get("huge_candidate") is True
+        huge_default = v.get("huge_default") is True
+
+        load_raw = v.get("estimated_load_sec")
+        estimated_load_sec: Optional[int] = None
+        if isinstance(load_raw, int) and load_raw > 0:
+            estimated_load_sec = load_raw
+
+        memory_raw = v.get("estimated_memory_gb")
+        estimated_memory_gb: Optional[float] = None
+        if isinstance(memory_raw, (int, float)) and memory_raw > 0:
+            estimated_memory_gb = float(memory_raw)
+
         return ModelAlias(
             backend=backend,
             upstream_model=model,
@@ -123,6 +177,12 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             tools=tools,
             max_tokens_cap=max_tokens_cap,
             temperature_cap=temperature_cap,
+            label=label,
+            coding=coding,
+            huge_candidate=huge_candidate,
+            huge_default=huge_default,
+            estimated_load_sec=estimated_load_sec,
+            estimated_memory_gb=estimated_memory_gb,
         )
 
     return None

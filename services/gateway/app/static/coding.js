@@ -94,6 +94,8 @@
 
   const state = {
     config: null,
+    modelCatalog: null,
+    modelCatalogLoadedAt: 0,
     tasks: [],
     selectedId: "",
     createMode: "agent",
@@ -346,8 +348,8 @@
   }
 
   function codingModelConfig() {
-    return state.config && state.config.coding_model_policy && typeof state.config.coding_model_policy === "object"
-      ? state.config.coding_model_policy
+    return state.modelCatalog && typeof state.modelCatalog === "object"
+      ? state.modelCatalog
       : {};
   }
 
@@ -1426,7 +1428,20 @@
     }
   }
 
+  async function loadModelCatalog({ force = false } = {}) {
+    if (!force && state.modelCatalog && Date.now() - state.modelCatalogLoadedAt < 30000) {
+      return state.modelCatalog;
+    }
+    const payload = await fetchJson("/ui/api/model-catalogs");
+    state.modelCatalog = payload && payload.coding && typeof payload.coding === "object" ? payload.coding : {};
+    state.modelCatalogLoadedAt = Date.now();
+    renderTasks();
+    renderSelected();
+    return state.modelCatalog;
+  }
+
   async function loadTasks({ keepSelection = true } = {}) {
+    await loadModelCatalog();
     const payload = await fetchJson("/ui/api/coding/tasks");
     state.tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
     if (!keepSelection || !state.tasks.some((task) => task.id === state.selectedId)) {
@@ -2093,7 +2108,7 @@
     if (els.taskFilter) els.taskFilter.value = state.taskFilter;
     setCreateMode(params.get("create") || "agent");
     renderSelected();
-    await loadConfig();
+    await Promise.all([loadConfig(), loadModelCatalog({ force: true })]);
     await loadTasks({ keepSelection: false });
     if (state.selectedId) {
       await loadDiffSummary({ quiet: true, taskId: state.selectedId });
@@ -2102,7 +2117,10 @@
     }
   }
 
-  wire("refreshTasks", async () => loadTasks({ keepSelection: true }));
+  wire("refreshTasks", async () => {
+    await Promise.all([loadConfig(), loadModelCatalog({ force: true })]);
+    await loadTasks({ keepSelection: true });
+  });
   wire("createAndRun", createAndRun);
   wire("createTask", createTask);
   wire("createAndRunModelIntegration", createAndRunModelIntegration);

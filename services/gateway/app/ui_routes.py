@@ -4720,6 +4720,13 @@ async def ui_mlx_huge_lane_switch(req: Request, body: MlxHugeLaneSwitchRequest) 
     return {"ok": True, "decision": "switch_started", "lane": _mlx_huge_lane_payload()}
 
 
+@router.get("/ui/api/model-catalogs", include_in_schema=False)
+async def ui_model_catalogs(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    return {"coding": coding_model_policy.options_payload()}
+
+
 @router.get("/ui/api/models", include_in_schema=False)
 async def ui_models(req: Request) -> Dict[str, Any]:
     global _UI_MODELS_CACHE_VALUE, _UI_MODELS_CACHE_EXPIRES_AT

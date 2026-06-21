@@ -12,6 +12,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 ENV_LINE_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+DEPRECATED_ENV_KEYS = {
+    "MLX_HUGE_LANE_DEFAULT_MODEL",
+    "MLX_HUGE_MODELS",
+}
 
 
 FAMILY_SPECS: dict[str, dict[str, list[str]]] = {
@@ -259,6 +263,8 @@ def render_env_file(template_path: Path, output_path: Path, env_values: dict[str
             continue
         key = match.group(2)
         known_keys.add(key)
+        if key in DEPRECATED_ENV_KEYS:
+            continue
         if key in env_values:
             output_lines.append(f"{key}={env_values[key]}\n")
         elif key in existing_values:
@@ -266,8 +272,12 @@ def render_env_file(template_path: Path, output_path: Path, env_values: dict[str
         else:
             output_lines.append(line)
 
-    topology_only_keys = sorted(key for key in env_values if key not in known_keys)
-    existing_only_keys = sorted(key for key in existing_values if key not in known_keys and key not in env_values)
+    topology_only_keys = sorted(key for key in env_values if key not in known_keys and key not in DEPRECATED_ENV_KEYS)
+    existing_only_keys = sorted(
+        key
+        for key in existing_values
+        if key not in known_keys and key not in env_values and key not in DEPRECATED_ENV_KEYS
+    )
 
     if topology_only_keys or existing_only_keys:
         output_lines.append("\n# --- Additional values preserved/materialized by topology_tool.py ---\n")

@@ -14,6 +14,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 from app import user_llm
 from app import ui_routes
 from app import mlx_huge_lane
+from app.model_aliases import ModelAlias
 from app.agent_runtime_v1 import run_agent_v1
 from app.models import AgentRunRequest, AgentSpecModel, ChatCompletionRequest, ChatMessage
 
@@ -32,6 +33,22 @@ def _settings(api_key: str = "sk-test-value") -> dict:
             },
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_ui_model_catalogs_exposes_shared_coding_catalog(monkeypatch):
+    monkeypatch.setattr(ui_routes, "_require_ui_access", lambda _req: None)
+    monkeypatch.setattr(ui_routes, "_require_user", lambda _req: SimpleNamespace(id=1))
+    monkeypatch.setattr(
+        ui_routes.coding_model_policy,
+        "options_payload",
+        lambda: {"source": "model_aliases", "options": [{"value": "coder"}]},
+    )
+
+    payload = await ui_routes.ui_model_catalogs(SimpleNamespace())
+
+    assert payload["coding"]["source"] == "model_aliases"
+    assert payload["coding"]["options"] == [{"value": "coder"}]
 
 
 def test_user_llm_settings_sanitize_hides_keys():
@@ -192,7 +209,7 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "Session expired. Redirecting to sign in..." in js
     assert "window.location.replace(`/ui/login?next=${back}`)" in js
     assert "settings_logout" in html
-    assert '/static/chat.js?v=16' in html
+    assert '/static/chat.js?v=17' in html
     assert "/ui/api/auth/logout" in js
     assert "resolveRequestedChatModel" in js
     assert "settings-models" not in html
@@ -227,16 +244,26 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["long"]["tools"] is True
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == strong_model
+    assert aliases["glm-5.2"]["huge_candidate"] is True
+    assert aliases["glm-5.2"]["huge_default"] is True
+    assert aliases["minimax-m2.5"]["model"] == "mlx-community/MiniMax-M2.5-8bit"
+    assert aliases["deepseek-r1"]["model"] == "mlx-community/DeepSeek-R1-0528-4bit"
 
 
 def test_mlx_huge_lane_state_routes_pending_target(monkeypatch, tmp_path):
     state_path = tmp_path / "mlx_huge_lane.json"
     monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_STATE_PATH", str(state_path), raising=False)
-    monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_MODELS", "model-a,model-b", raising=False)
-    monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_DEFAULT_MODEL", "model-a", raising=False)
     monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_ENABLED", True, raising=False)
+    aliases = {
+        "huge-a": ModelAlias(
+            backend="local_mlx", upstream_model="model-a", huge_candidate=True, huge_default=True
+        ),
+        "huge-b": ModelAlias(backend="local_mlx", upstream_model="model-b", huge_candidate=True),
+    }
+    monkeypatch.setattr(mlx_huge_lane, "get_aliases", lambda: aliases)
 
     assert mlx_huge_lane.load_state()["active_model"] == "model-a"
+    assert [item["alias"] for item in mlx_huge_lane.load_state()["candidates"]] == ["huge-a", "huge-b"]
 
     switching = mlx_huge_lane.mark_switching("model-b")
     assert switching["active_model"] == "model-a"
