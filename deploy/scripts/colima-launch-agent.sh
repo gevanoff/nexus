@@ -17,7 +17,12 @@ COLIMA_VM_TYPE="${COLIMA_VM_TYPE:-}"
 COLIMA_USER_HOME="${COLIMA_USER_HOME:-${HOME:-}}"
 COLIMA_HOME="${COLIMA_HOME:-}"
 COLIMA_MOUNTS="${COLIMA_MOUNTS:-}"
-REPO_DIR="${REPO_DIR:-${HOME}/ai/nexus}"
+if [[ "$COLIMA_PROFILE" == "default" ]]; then
+  DOCKER_CONTEXT="colima"
+else
+  DOCKER_CONTEXT="colima-${COLIMA_PROFILE}"
+fi
+export DOCKER_CONTEXT
 if [[ -n "${COLIMA_HOME:-}" ]]; then
   export COLIMA_HOME
 fi
@@ -73,19 +78,6 @@ wait_for_colima_home_ready() {
   return 1
 }
 
-apply_colima_home_fallback() {
-  local fallback_home="${COLIMA_FALLBACK_HOME:-/ai-data/var/lib/colima}"
-  [[ -n "$fallback_home" ]] || return 1
-  [[ "$fallback_home" == "$COLIMA_HOME" ]] && return 1
-  [[ -d "$fallback_home" ]] || return 1
-  [[ -w "$fallback_home" ]] || return 1
-
-  COLIMA_HOME="$fallback_home"
-  export COLIMA_HOME
-  log "Switching COLIMA_HOME fallback to '$COLIMA_HOME'"
-  return 0
-}
-
 if [[ -z "${COLIMA_BIN:-}" ]]; then
   log "ERROR: colima executable not found in PATH"
   exit 1
@@ -95,21 +87,15 @@ if ! wait_for_colima_home_ready; then
   log "WARNING: COLIMA_HOME path did not become fully ready in time (${COLIMA_HOME:-unset})"
 fi
 
-status_cmd=("$COLIMA_BIN" status)
-start_cmd=("$COLIMA_BIN" start)
-retry_cmd=("$COLIMA_BIN" start)
-if [[ -n "${COLIMA_PROFILE:-}" && "${COLIMA_PROFILE}" != "default" ]]; then
-  status_cmd+=("${COLIMA_PROFILE}")
-  start_cmd+=("${COLIMA_PROFILE}")
-  retry_cmd+=("${COLIMA_PROFILE}")
-fi
+status_cmd=("$COLIMA_BIN" status --profile "$COLIMA_PROFILE")
+start_cmd=("$COLIMA_BIN" start --profile "$COLIMA_PROFILE")
+stop_cmd=("$COLIMA_BIN" stop --force --profile "$COLIMA_PROFILE")
 
 if [[ -n "${COLIMA_MOUNTS:-}" ]]; then
-  IFS=',' read -r -a mount_specs <<< "$COLIMA_MOUNTS"
+  IFS=',' read -r -a mount_specs <<<"$COLIMA_MOUNTS"
   for mount_spec in "${mount_specs[@]:-}"; do
     [[ -n "${mount_spec:-}" ]] || continue
     start_cmd+=("--mount" "$mount_spec")
-    retry_cmd+=("--mount" "$mount_spec")
   done
 fi
 
@@ -117,77 +103,23 @@ if "${status_cmd[@]}" >/dev/null 2>&1; then
   log "Colima profile '${COLIMA_PROFILE}' already running"
 else
   log "Starting Colima profile '${COLIMA_PROFILE}'"
+  # A failed VZ start can leave Lima sockets or disk attachment state behind.
+  # Reset only this stopped profile before starting it; this also prevents the
+  # launchd interval from accumulating stale usernet helpers.
+  "${stop_cmd[@]}" >/dev/null 2>&1 || true
   if [[ -n "${COLIMA_VM_TYPE:-}" ]]; then
     start_cmd+=("--vm-type" "${COLIMA_VM_TYPE}")
   fi
 
   if ! "${start_cmd[@]}"; then
-    if [[ -z "${COLIMA_VM_TYPE:-}" ]]; then
-      log "Default Colima start failed; retrying with qemu fallback"
-      retry_cmd+=("--vm-type" "qemu")
-      if ! "${retry_cmd[@]}"; then
-        if apply_colima_home_fallback; then
-          log "Retrying Colima start with fallback COLIMA_HOME and qemu"
-          "${retry_cmd[@]}"
-        else
-          exit 1
-        fi
-      fi
-    else
-      log "ERROR: Colima start failed with vm-type '${COLIMA_VM_TYPE}'"
-      if apply_colima_home_fallback; then
-        log "Retrying Colima start with fallback COLIMA_HOME"
-        "${start_cmd[@]}"
-      else
-        exit 1
-      fi
-    fi
+    "${stop_cmd[@]}" >/dev/null 2>&1 || true
+    log "ERROR: Colima profile '${COLIMA_PROFILE}' failed to start with its configured settings"
+    exit 1
   fi
 fi
 
 if [[ -n "${DOCKER_BIN:-}" ]]; then
-  "$DOCKER_BIN" context use colima >/dev/null 2>&1 || true
-fi
-
-restore_ai2_services_if_needed() {
-  local gateway_ok="false"
-  local tts_ok="false"
-  local luxtts_ok="false"
-  local qwen_ok="false"
-
-  if curl -fsS --max-time 3 "http://127.0.0.1:8801/health" >/dev/null 2>&1; then
-    gateway_ok="true"
-  fi
-  if curl -fsS --max-time 3 "http://127.0.0.1:9940/health" >/dev/null 2>&1; then
-    tts_ok="true"
-  fi
-  if curl -fsS --max-time 3 "http://127.0.0.1:9170/health" >/dev/null 2>&1; then
-    luxtts_ok="true"
-  fi
-  if curl -fsS --max-time 3 "http://127.0.0.1:9175/health" >/dev/null 2>&1; then
-    qwen_ok="true"
-  fi
-
-  if [[ "$gateway_ok" == "true" && "$tts_ok" == "true" && "$luxtts_ok" == "true" && "$qwen_ok" == "true" ]]; then
-    return 0
-  fi
-
-  if [[ ! -x "${REPO_DIR}/deploy/scripts/restart-ai2-services.sh" ]]; then
-    log "WARNING: ai2 service restore helper not found at ${REPO_DIR}/deploy/scripts/restart-ai2-services.sh"
-    return 1
-  fi
-
-  log "Restoring ai2 services because one or more endpoints are down: gateway=${gateway_ok} tts=${tts_ok} luxtts=${luxtts_ok} qwen3-tts=${qwen_ok}"
-  if ! "${REPO_DIR}/deploy/scripts/restart-ai2-services.sh" --env-file "${COLIMA_USER_HOME:-${HOME:-}}/ai/nexus/.env"; then
-    log "ERROR: ai2 service restore failed"
-    return 1
-  fi
-
-  return 0
-}
-
-if [[ "${COLIMA_PROFILE:-default}" == "default" ]]; then
-  restore_ai2_services_if_needed || true
+  env -u DOCKER_CONTEXT "$DOCKER_BIN" context use "$DOCKER_CONTEXT" >/dev/null 2>&1 || true
 fi
 
 log "Colima launchd check completed"

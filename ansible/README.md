@@ -80,6 +80,8 @@ Common overrides:
 - `nexus_topology_file`
 - `nexus_sops_age_key_file`
 - `nexus_colima_launchd_enabled`
+- `nexus_colima_profile`
+- `nexus_colima_home`
 - `nexus_mlx_pf_allowlist_enabled`
 - `nexus_verify_gateway`
 - `nexus_extra_deploy_args`

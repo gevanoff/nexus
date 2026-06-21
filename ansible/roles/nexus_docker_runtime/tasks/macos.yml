@@ -58,7 +58,7 @@
 
 - name: Install or refresh the Colima LaunchDaemon on macOS
   ansible.builtin.command:
-    argv: "{{ ['./deploy/scripts/install-colima-launchd.sh', '--profile', nexus_colima_profile, '--start-interval', nexus_colima_start_interval | string, '--user', nexus_runtime_user, '--home', nexus_user_home] + (((nexus_colima_vm_type | string | length) > 0) | ternary(['--vm-type', nexus_colima_vm_type], [])) }}"
+    argv: "{{ ['./deploy/scripts/install-colima-launchd.sh', '--profile', nexus_colima_profile, '--start-interval', nexus_colima_start_interval | string, '--user', nexus_runtime_user, '--home', nexus_user_home, '--colima-home', nexus_colima_home, '--colima-user-home', nexus_user_home] + (((nexus_colima_vm_type | string | length) > 0) | ternary(['--vm-type', nexus_colima_vm_type], [])) }}"
   args:
     chdir: "{{ nexus_repo_dir }}"
   become: true

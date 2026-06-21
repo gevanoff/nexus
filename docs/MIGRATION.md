@@ -194,7 +194,7 @@ sudo usermod -aG docker $USER
 # macOS
 # Headless option (recommended on servers): Colima
 #   brew install colima docker docker-compose
-#   colima start
+#   colima start --profile default
 # Alternative: Docker Desktop
 #   https://docs.docker.com/desktop/
 

@@ -49,6 +49,7 @@ nexus_macos_docker_packages:
   - docker-compose
   - qemu
 nexus_colima_profile: default
+nexus_colima_home: "{{ nexus_user_home }}/.colima"
 nexus_colima_vm_type: ""
 nexus_colima_start_interval: 60
 nexus_colima_launchd_enabled: true

@@ -21,7 +21,7 @@ NO_DEFAULT_MOUNTS="false"
 SANITIZED_PROFILE="default"
 TARGET_USER=""
 TARGET_HOME=""
-TARGET_COLIMA_HOME="${COLIMA_HOME:-}"
+TARGET_COLIMA_HOME=""
 TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-}"
 SANITIZED_USER=""
 LABEL=""
@@ -45,7 +45,7 @@ Options:
   --no-default-mounts   Do not add implicit repo/runtime mounts; only use explicit --mount values
   --user USER           User account that should own/run Colima (default: current user)
   --home PATH           Home directory for the selected user (default: detected from dscl/$HOME)
-  --colima-home PATH    Colima state root to export as COLIMA_HOME (default: existing COLIMA_HOME)
+  --colima-home PATH    Colima state root to export as COLIMA_HOME (default: <target-home>/.colima)
   --colima-user-home PATH
                         Home/config root to export as COLIMA_USER_HOME and HOME for docker/colima commands
   --runtime-root PATH   Root-owned asset directory for the Colima launch helper (default: /var/lib/nexus-colima)
@@ -107,9 +107,22 @@ run_docker_for_target() {
   local docker_home="${TARGET_COLIMA_USER_HOME:-${TARGET_HOME}}"
 
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-    sudo -H -u "${TARGET_USER}" HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
+    sudo -H -u "${TARGET_USER}" HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" DOCKER_CONTEXT="${DOCKER_CONTEXT}" "${DOCKER_BIN}" "$@"
   else
-    HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
+    HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" DOCKER_CONTEXT="${DOCKER_CONTEXT}" "${DOCKER_BIN}" "$@"
+  fi
+}
+
+persist_docker_context_for_target() {
+  [[ -n "${DOCKER_BIN:-}" ]] || return 1
+  local docker_home="${TARGET_COLIMA_USER_HOME:-${TARGET_HOME}}"
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    sudo -H -u "${TARGET_USER}" env -u DOCKER_CONTEXT HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" \
+      "${DOCKER_BIN}" context use "${DOCKER_CONTEXT}"
+  else
+    env -u DOCKER_CONTEXT HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" \
+      "${DOCKER_BIN}" context use "${DOCKER_CONTEXT}"
   fi
 }
 
@@ -253,6 +266,12 @@ TARGET_UID="$(id -u "$TARGET_USER")"
 if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
   TARGET_COLIMA_USER_HOME="$TARGET_HOME"
 fi
+if [[ -z "${TARGET_COLIMA_HOME:-}" ]]; then
+  TARGET_COLIMA_HOME="${TARGET_HOME}/.colima"
+fi
+COLIMA_PROFILE="$PROFILE"
+export COLIMA_PROFILE
+ns_activate_colima_docker_context
 
 if [[ "$NO_DEFAULT_MOUNTS" != "true" ]]; then
   resolved_runtime_root="$(ns_runtime_root "$ROOT_DIR")"
@@ -312,8 +331,8 @@ COLIMA_PROFILE=${PROFILE}
 COLIMA_VM_TYPE=${VM_TYPE}
 COLIMA_USER_HOME=${TARGET_COLIMA_USER_HOME}
 COLIMA_HOME=${TARGET_COLIMA_HOME}
-COLIMA_FALLBACK_HOME=${TARGET_COLIMA_HOME}
 COLIMA_MOUNTS=${colima_mounts_csv}
+DOCKER_CONTEXT=${DOCKER_CONTEXT}
 EOF
 sudo install -o root -g wheel -m 644 "$tmp_env_file" "$ENV_FILE"
 rm -f "$tmp_env_file"
@@ -352,6 +371,12 @@ cat >"$tmp_plist" <<EOF
       <string>${TARGET_HOME}</string>
       <key>NEXUS_COLIMA_ENV_FILE</key>
       <string>${ENV_FILE}</string>
+      <key>COLIMA_PROFILE</key>
+      <string>${PROFILE}</string>
+      <key>COLIMA_HOME</key>
+      <string>${TARGET_COLIMA_HOME}</string>
+      <key>DOCKER_CONTEXT</key>
+      <string>${DOCKER_CONTEXT}</string>
     </dict>
 
     <key>StandardOutPath</key>
@@ -396,7 +421,7 @@ rm -f "$bootstrap_err"
 sudo launchctl kickstart -k "system/${LABEL}"
 
 ns_print_header "Waiting for Colima / Docker"
-run_docker_for_target context use colima >/dev/null 2>&1 || true
+persist_docker_context_for_target >/dev/null 2>&1 || true
 if [[ "$NO_WAIT" == "true" ]]; then
   ns_print_warn "Skipped Docker readiness wait (--no-wait requested)"
 else

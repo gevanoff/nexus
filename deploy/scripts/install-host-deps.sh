@@ -167,18 +167,17 @@ install_macos_docker() {
     fi
 
     if confirm "Start Colima now (recommended)?"; then
-      if colima start; then
+      local colima_profile="${COLIMA_PROFILE:-default}"
+      if colima start --profile "$colima_profile"; then
         green "Colima started. 'docker info' should work now."
         yellow "Optional autostart at boot: ./deploy/scripts/install-colima-launchd.sh"
       else
-        yellow "Colima default start failed; trying qemu fallback..."
-        colima start --vm-type qemu
-        green "Colima started with qemu fallback. 'docker info' should work now."
-        yellow "Optional autostart at boot: ./deploy/scripts/install-colima-launchd.sh --vm-type qemu"
+        red "Colima profile '${colima_profile}' failed to start with its configured settings."
+        yellow "Inspect the profile before changing VM type: colima status --profile ${colima_profile}"
+        return 1
       fi
     else
-      yellow "Start Colima later with: colima start"
-      yellow "If VZ startup fails, use: colima start --vm-type qemu"
+      yellow "Start Colima later with: colima start --profile ${COLIMA_PROFILE:-default}"
       yellow "Optional autostart at boot: ./deploy/scripts/install-colima-launchd.sh"
     fi
     return

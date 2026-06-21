@@ -15,8 +15,9 @@ fi
 PROFILE="default"
 TARGET_USER=""
 TARGET_HOME=""
-TARGET_COLIMA_HOME="${COLIMA_HOME:-}"
+TARGET_COLIMA_HOME=""
 TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-}"
+MANAGED_COLIMA_HOME=""
 LABEL=""
 TIMEOUT_SEC="75"
 COLIMA_RUNTIME_ROOT="${COLIMA_RUNTIME_ROOT:-/var/lib/nexus-colima}"
@@ -96,9 +97,22 @@ run_docker_for_target() {
   local docker_home="${TARGET_COLIMA_USER_HOME:-${TARGET_HOME}}"
 
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-    sudo -H -u "${TARGET_USER}" HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
+    sudo -H -u "${TARGET_USER}" HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" DOCKER_CONTEXT="${DOCKER_CONTEXT}" "${DOCKER_BIN}" "$@"
   else
-    HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" "${DOCKER_BIN}" "$@"
+    HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" DOCKER_CONTEXT="${DOCKER_CONTEXT}" "${DOCKER_BIN}" "$@"
+  fi
+}
+
+persist_docker_context_for_target() {
+  [[ -n "${DOCKER_BIN:-}" ]] || return 1
+  local docker_home="${TARGET_COLIMA_USER_HOME:-${TARGET_HOME}}"
+
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    sudo -H -u "${TARGET_USER}" env -u DOCKER_CONTEXT HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" \
+      "${DOCKER_BIN}" context use "${DOCKER_CONTEXT}"
+  else
+    env -u DOCKER_CONTEXT HOME="${docker_home}" COLIMA_HOME="${TARGET_COLIMA_HOME:-}" \
+      "${DOCKER_BIN}" context use "${DOCKER_CONTEXT}"
   fi
 }
 
@@ -215,21 +229,25 @@ fi
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck source=/dev/null
   source "$ENV_FILE"
+  MANAGED_COLIMA_HOME="${COLIMA_HOME:-}"
 fi
 
 DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || true)}"
 if [[ -z "${TARGET_COLIMA_HOME:-}" ]]; then
-  TARGET_COLIMA_HOME="${COLIMA_HOME:-}"
+  TARGET_COLIMA_HOME="${MANAGED_COLIMA_HOME:-${TARGET_HOME}/.colima}"
 fi
 if [[ -z "${TARGET_COLIMA_USER_HOME:-}" ]]; then
   TARGET_COLIMA_USER_HOME="${COLIMA_USER_HOME:-$TARGET_HOME}"
 fi
+COLIMA_PROFILE="$PROFILE"
+export COLIMA_PROFILE
+ns_activate_colima_docker_context
 
 if [[ ${#EXTRA_MOUNTS[@]} -gt 0 ]]; then
   normalized_mounts=()
   existing_mounts_csv="${COLIMA_MOUNTS:-}"
   if [[ -n "${existing_mounts_csv:-}" ]]; then
-    IFS=',' read -r -a existing_mounts <<< "$existing_mounts_csv"
+    IFS=',' read -r -a existing_mounts <<<"$existing_mounts_csv"
     for mount_spec in "${existing_mounts[@]:-}"; do
       normalized="$(normalize_mount_spec "$mount_spec" || true)"
       [[ -n "${normalized:-}" ]] && normalized_mounts+=("$normalized")
@@ -275,7 +293,7 @@ fi
 sudo launchctl kickstart -k "system/${LABEL}"
 
 ns_print_header "Waiting for Docker via Colima"
-run_docker_for_target context use colima >/dev/null 2>&1 || true
+persist_docker_context_for_target >/dev/null 2>&1 || true
 if wait_for_docker_as_target "$TIMEOUT_SEC"; then
   ns_print_ok "Docker daemon is reachable via Colima"
   exit 0

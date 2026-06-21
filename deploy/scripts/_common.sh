@@ -65,6 +65,47 @@ ns_bootstrap_path() {
 
 ns_bootstrap_path
 
+ns_colima_profile() {
+  printf '%s\n' "${COLIMA_PROFILE:-default}"
+}
+
+ns_colima_context_for_profile() {
+  local profile="${1:-default}"
+  if [[ "$profile" == "default" ]]; then
+    printf '%s\n' "colima"
+  else
+    printf '%s\n' "colima-${profile}"
+  fi
+}
+
+ns_colima_docker_context() {
+  ns_colima_context_for_profile "$(ns_colima_profile)"
+}
+
+ns_activate_colima_docker_context() {
+  COLIMA_PROFILE="$(ns_colima_profile)"
+  DOCKER_CONTEXT="$(ns_colima_context_for_profile "$COLIMA_PROFILE")"
+  export COLIMA_PROFILE DOCKER_CONTEXT
+}
+
+ns_persist_colima_docker_context() {
+  local context
+  context="$(ns_colima_docker_context)"
+  env -u DOCKER_CONTEXT docker context use "$context" >/dev/null 2>&1
+}
+
+# Nexus uses Colima as its macOS Docker provider unless explicitly configured
+# otherwise. Keep every Docker invocation in sourced scripts on the context that
+# belongs to the selected Colima profile, even if the user's global context was
+# changed by another Docker client.
+if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" &&
+  "${NS_MACOS_DOCKER_PROVIDER:-colima}" == "colima" &&
+  -n "$(command -v colima 2>/dev/null || true)" ]]; then
+  COLIMA_HOME="${COLIMA_HOME:-${HOME:-}/.colima}"
+  export COLIMA_HOME
+  ns_activate_colima_docker_context
+fi
+
 ns_env_get() {
   # Read a single KEY=value from a dotenv-style file.
   # Usage: ns_env_get <env_file> <key> [default]
@@ -550,7 +591,7 @@ ns_try_start_docker_daemon() {
     return 0
   fi
 
-  local platform
+  local platform colima_profile colima_context
   platform="$(ns_detect_platform)"
 
   case "$platform" in
@@ -558,28 +599,17 @@ ns_try_start_docker_daemon() {
       if [[ "${EUID:-$(id -u)}" -eq 0 ]] && ns_have_cmd colima; then
         ns_print_error "Detected root execution with Colima on macOS. Colima/Lima must run as a non-root user."
         ns_print_warn "Re-run this script as your normal user (do not use sudo for the whole script)."
-        ns_print_warn "Then start Docker runtime with: colima start"
+        ns_print_warn "Then start Docker runtime with: colima start --profile $(ns_colima_profile)"
         return 1
       fi
 
       if ns_have_cmd colima; then
-        ns_print_warn "Docker daemon not reachable; attempting 'colima start'..."
-        colima start >/dev/null 2>&1 || true
-        if ns_have_cmd docker; then
-          docker context use colima >/dev/null 2>&1 || true
-        fi
-
-        if ! docker info >/dev/null 2>&1; then
-          if ns_have_cmd qemu-img; then
-            ns_print_warn "Colima default start did not bring Docker up; attempting 'colima start --vm-type qemu'..."
-            colima start --vm-type qemu >/dev/null 2>&1 || true
-            if ns_have_cmd docker; then
-              docker context use colima >/dev/null 2>&1 || true
-            fi
-          else
-            ns_print_warn "Colima may require QEMU fallback on this host; install with: brew install qemu"
-          fi
-        fi
+        colima_profile="$(ns_colima_profile)"
+        colima_context="$(ns_colima_context_for_profile "$colima_profile")"
+        ns_activate_colima_docker_context
+        ns_print_warn "Docker daemon not reachable; attempting Colima profile '${colima_profile}' on context '${colima_context}'..."
+        colima start --profile "$colima_profile" >/dev/null 2>&1 || true
+        ns_persist_colima_docker_context || true
       fi
 
       if ! docker info >/dev/null 2>&1; then
@@ -626,11 +656,10 @@ ns_ensure_docker_daemon() {
   ns_print_error "Docker daemon is not reachable."
   if [[ "$platform" == "macos" ]]; then
     if [[ "${EUID:-$(id -u)}" -eq 0 ]] && ns_have_cmd colima; then
-      ns_print_warn "Colima cannot run as root. Use a normal user shell and run: colima start"
+      ns_print_warn "Colima cannot run as root. Use a normal user shell and run: colima start --profile $(ns_colima_profile)"
     fi
     if ns_have_cmd colima; then
-      ns_print_warn "macOS: if using Colima, run: colima start"
-      ns_print_warn "macOS: if Colima VZ fails, install QEMU ('brew install qemu') then run: colima start --vm-type qemu"
+      ns_print_warn "macOS: start the managed profile with: colima start --profile $(ns_colima_profile)"
     fi
     ns_print_warn "macOS: otherwise start Docker Desktop and wait for 'docker info' to succeed"
   fi
@@ -1097,7 +1126,7 @@ ns_install_prereqs_macos() {
     else
       (brew install colima docker docker-compose qemu || true)
       ns_print_warn "Headless macOS note: start the Linux VM with 'colima start' before using docker."
-      ns_print_warn "If VZ startup fails, use QEMU fallback: colima start --vm-type qemu"
+      ns_print_warn "Colima will reuse the selected profile's saved VM settings."
     fi
   fi
   # lsof is required for port diagnostics; install via brew if missing.
@@ -1283,13 +1312,20 @@ ns_resolve_docker_env_file() {
     docker_context="$(docker context show 2>/dev/null || true)"
   fi
 
-  if [[ "$docker_context" == "colima" ]] && ns_have_cmd colima; then
+  if [[ "$docker_context" == "$(ns_colima_docker_context)" ]] && ns_have_cmd colima; then
     if ns_colima_path_visible "$logical_path"; then
       printf '%s\n' "$logical_path"
       return 0
     fi
     if ns_colima_path_visible "$physical_path"; then
       printf '%s\n' "$physical_path"
+      return 0
+    fi
+
+    local resolved_path
+    resolved_path="$(ns_resolve_docker_bind_path "$env_file")"
+    if [[ -n "${resolved_path:-}" ]] && ns_colima_path_visible "$resolved_path"; then
+      printf '%s\n' "$resolved_path"
       return 0
     fi
   fi
@@ -1340,8 +1376,13 @@ ns_resolve_docker_bind_path() {
     docker_context="$(docker context show 2>/dev/null || true)"
   fi
 
-  if [[ "$docker_context" == "colima" ]] && ns_have_cmd colima; then
+  if [[ "$docker_context" == "$(ns_colima_docker_context)" ]] && ns_have_cmd colima; then
     if [[ "$physical_path" != "$logical_path" ]]; then
+      if ns_colima_path_visible "$physical_path"; then
+        printf '%s\n' "$physical_path"
+        return 0
+      fi
+
       case "$physical_path" in
         /Volumes/*/*)
           volume_name="${physical_path#/Volumes/}"
@@ -1382,14 +1423,14 @@ ns_colima_path_visible() {
   # Usage: ns_colima_path_visible <path>
   local check_path="$1"
   [[ -n "${check_path:-}" ]] || return 1
-  colima ssh -- test -e "$check_path" >/dev/null 2>&1
+  colima ssh --profile "$(ns_colima_profile)" -- test -e "$check_path" >/dev/null 2>&1
 }
 
 ns_colima_mountpoint_mounted() {
   # Usage: ns_colima_mountpoint_mounted <mountpoint>
   local mount_path="$1"
   [[ -n "${mount_path:-}" ]] || return 1
-  colima ssh -- mount 2>/dev/null | grep -F " on ${mount_path} " >/dev/null 2>&1
+  colima ssh --profile "$(ns_colima_profile)" -- mount 2>/dev/null | grep -F " on ${mount_path} " >/dev/null 2>&1
 }
 
 ns_try_auto_fix_colima_bind_source() {
@@ -1415,13 +1456,16 @@ ns_try_auto_fix_colima_bind_source() {
   NS_COLIMA_AUTO_FIX_ATTEMPTED_MOUNTS="${NS_COLIMA_AUTO_FIX_ATTEMPTED_MOUNTS:-}|${mount_path}|"
 
   ns_print_warn "Attempting automatic Colima mount remediation for: $mount_path"
-  colima stop >/dev/null 2>&1 || true
-  if ! colima start --mount "${mount_path}:w" >/dev/null 2>&1; then
+  local colima_profile
+  colima_profile="$(ns_colima_profile)"
+  colima stop --profile "$colima_profile" >/dev/null 2>&1 || true
+  if ! colima start --profile "$colima_profile" --mount "${mount_path}:w" >/dev/null 2>&1; then
     ns_print_warn "Automatic Colima restart with mount failed."
     return 1
   fi
 
-  docker context use colima >/dev/null 2>&1 || true
+  ns_activate_colima_docker_context
+  ns_persist_colima_docker_context || true
   ns_wait_for_docker_daemon 75 || true
   return 0
 }
@@ -1452,15 +1496,18 @@ ns_verify_docker_bind_source() {
   local ctx
   ctx="$(docker context show 2>/dev/null || true)"
 
-  if [[ "$ctx" == "colima" ]] && ns_have_cmd colima; then
-    if ! colima status >/dev/null 2>&1; then
+  if [[ "$ctx" == "$(ns_colima_docker_context)" ]] && ns_have_cmd colima; then
+    local colima_profile colima_context
+    colima_profile="$(ns_colima_profile)"
+    colima_context="$(ns_colima_docker_context)"
+    if ! colima status --profile "$colima_profile" >/dev/null 2>&1; then
       ns_print_warn "Colima context is selected but Colima is not running; attempting automatic start..."
-      colima start >/dev/null 2>&1 || true
-      docker context use colima >/dev/null 2>&1 || true
+      colima start --profile "$colima_profile" >/dev/null 2>&1 || true
+      ns_persist_colima_docker_context || true
       ns_wait_for_docker_daemon 75 || true
-      if ! colima status >/dev/null 2>&1; then
+      if ! colima status --profile "$colima_profile" >/dev/null 2>&1; then
         ns_print_error "Colima context is selected but Colima is not running."
-        ns_print_warn "Start Colima first: colima start"
+        ns_print_warn "Start Colima first: colima start --profile ${colima_profile}"
         return 1
       fi
     fi
@@ -1479,7 +1526,7 @@ ns_verify_docker_bind_source() {
         fi
       fi
 
-      ns_print_error "Active Docker context (colima) cannot see bind source path."
+      ns_print_error "Active Docker context (${colima_context}) cannot see bind source path."
       if [[ "$abs_path_physical" != "$abs_path_logical" ]]; then
         ns_print_warn "Checked physical path: $abs_path_physical"
         ns_print_warn "Checked logical path:  $abs_path_logical"
@@ -1490,8 +1537,8 @@ ns_verify_docker_bind_source() {
       ns_print_warn "Fix options:"
       ns_print_warn "  1) Move Nexus under /Users/<you>/..."
       ns_print_warn "  2) Or restart Colima with mount(s):"
-      ns_print_warn "     colima stop"
-      ns_print_warn "     colima start --mount ${mount_hint}:w"
+      ns_print_warn "     colima stop --profile ${colima_profile}"
+      ns_print_warn "     colima start --profile ${colima_profile} --mount ${mount_hint}:w"
       return 1
     fi
   fi

@@ -233,7 +233,7 @@ else
   fail "Docker daemon not reachable"
   if [[ "$platform" == "macos" ]]; then
     if ns_have_cmd colima; then
-      warn "macOS: if using Colima, start it with: colima start"
+      warn "macOS: if using Colima, start it with: colima start --profile $(ns_colima_profile)"
       warn "macOS: for automatic startup at boot, install the LaunchDaemon with: ./deploy/scripts/install-colima-launchd.sh"
     else
       warn "macOS: start your Docker backend (Colima or Docker Desktop)"
@@ -617,7 +617,7 @@ if [[ "$missing_docker" == "true" ]]; then
 elif [[ "$docker_daemon_ok" != "true" ]]; then
   if [[ "$platform" == "macos" ]]; then
     if ns_have_cmd colima; then
-      echo "  1) Start Colima: colima start"
+      echo "  1) Start Colima: colima start --profile $(ns_colima_profile)"
     else
       echo "  1) Start your Docker backend (Colima or Docker Desktop)"
     fi

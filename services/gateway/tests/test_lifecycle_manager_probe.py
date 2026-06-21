@@ -19,18 +19,17 @@ def _load_lifecycle_main():
     return module
 
 
-def test_docker_probe_handles_external_colima_socket() -> None:
+def test_docker_probe_uses_canonical_colima_context() -> None:
     module = _load_lifecycle_main()
     command = module.LifecycleManager._docker_probe_command()
 
     assert "ps --format" in command
-    assert "preferred_output" in command
-    assert "fallback_output" in command
+    assert "context_output" in command
     assert "default_output" in command
-    assert "${COLIMA_HOME:-}/default/docker.sock" in command
-    assert "/ai-data/var/lib/colima/default/docker.sock" in command
-    assert "/Volumes/ai_data/var/lib/colima/default/docker.sock" in command
-    assert "DOCKER_HOST=\"unix://$sock\"" in command
+    assert "${DOCKER_CONTEXT:-colima}" in command
+    assert '--context "$colima_context"' in command
+    assert "DOCKER_HOST" not in command
+    assert "/ai-data/var/lib/colima" not in command
 
 
 def test_component_container_match_allows_compose_suffixes() -> None:

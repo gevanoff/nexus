@@ -19,8 +19,8 @@ usage() {
 Usage: deploy/scripts/restart-lifecycle-manager.sh [--env-file PATH] [--no-build] [--profile NAME] [--user USER] [--runtime-root PATH]
 
 Restart only the Lifecycle Manager service. On macOS, if a Colima LaunchDaemon
-env file exists, this helper loads its managed COLIMA_HOME/HOME/DOCKER_HOST so
-the restart targets the same Docker daemon as the boot-managed Colima runtime.
+env file exists, this helper loads its managed profile, home, and Docker context
+so the restart targets the same daemon as the boot-managed Colima runtime.
 
 Options:
   --env-file PATH     Env file path (default: ./.env)
@@ -44,10 +44,8 @@ detect_colima_runtime_root() {
   sanitized_user="$(sanitize_token "$user_name")"
 
   for candidate in \
-    "${COLIMA_RUNTIME_ROOT}" \
-    "/ai-data/var/lib/nexus-colima" \
-    "/var/lib/nexus-colima"
-  do
+    "${HOME:-}/.colima" \
+    "${COLIMA_RUNTIME_ROOT}"; do
     [[ -n "${candidate:-}" ]] || continue
     env_path="${candidate}/${sanitized_user}-${sanitized_profile}.env"
     if [[ -f "$env_path" ]]; then
@@ -79,7 +77,7 @@ apply_managed_colima_env() {
 
   [[ "$(ns_detect_platform)" == "macos" ]] || return 0
 
-  local sanitized_profile sanitized_user env_path docker_socket alt_socket
+  local sanitized_profile sanitized_user env_path
   sanitized_profile="$(sanitize_token "$profile_name")"
   sanitized_user="$(sanitize_token "$user_name")"
   COLIMA_RUNTIME_ROOT="$(detect_colima_runtime_root "$profile_name" "$user_name")"
@@ -105,17 +103,15 @@ apply_managed_colima_env() {
 
   if [[ -n "${COLIMA_HOME:-}" ]]; then
     export COLIMA_HOME
-    docker_socket="${COLIMA_HOME}/default/docker.sock"
-    alt_socket="${docker_socket/#\/ai-data/\/Volumes\/ai_data}"
-    if [[ -S "$docker_socket" ]]; then
-      export DOCKER_HOST="unix://${docker_socket}"
-    elif [[ -S "$alt_socket" ]]; then
-      export DOCKER_HOST="unix://${alt_socket}"
-    fi
   fi
 
+  COLIMA_PROFILE="$profile_name"
+  export COLIMA_PROFILE
+  ns_activate_colima_docker_context
+  unset DOCKER_HOST
+
   if ns_have_cmd docker; then
-    docker context use colima >/dev/null 2>&1 || true
+    ns_persist_colima_docker_context || true
   fi
 }
 
@@ -141,7 +137,7 @@ while [[ $# -gt 0 ]]; do
       COLIMA_RUNTIME_ROOT="${2:-}"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -195,7 +191,7 @@ lifecycle_port="$(ns_env_get "$ENV_FILE" LIFECYCLE_MANAGER_PORT 9190)"
 ready_url="http://127.0.0.1:${lifecycle_port}/readyz"
 
 ns_print_header "Waiting for Lifecycle Manager readiness"
-for i in {1..60}; do
+for _ in {1..60}; do
   if curl -fsS "$ready_url" >/dev/null 2>&1; then
     ns_print_ok "Lifecycle Manager ready endpoint is up (${ready_url})"
     exit 0

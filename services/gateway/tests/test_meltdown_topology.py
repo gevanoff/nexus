@@ -140,3 +140,27 @@ def test_deploy_script_uses_physical_repo_root_for_colima_binds() -> None:
 
     assert 'pwd -P)' in deploy_script
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"' in deploy_script
+
+
+def test_macos_docker_resources_share_one_colima_profile_home_and_context() -> None:
+    group_vars = _read("ansible/inventory/group_vars/all.yml")
+    macos_role = _read("ansible/roles/nexus_docker_runtime/tasks/macos.yml")
+    common = _read("deploy/scripts/_common.sh")
+    launch_agent = _read("deploy/scripts/colima-launch-agent.sh")
+    installer = _read("deploy/scripts/install-colima-launchd.sh")
+    lifecycle_restart = _read("deploy/scripts/restart-lifecycle-manager.sh")
+
+    assert "nexus_colima_profile: default" in group_vars
+    assert 'nexus_colima_home: "{{ nexus_user_home }}/.colima"' in group_vars
+    assert "--colima-home" in macos_role
+    assert 'DOCKER_CONTEXT="$(ns_colima_context_for_profile "$COLIMA_PROFILE")"' in common
+    assert "COLIMA_HOME=\"${COLIMA_HOME:-${HOME:-}/.colima}\"" in common
+    assert 'resolved_path="$(ns_resolve_docker_bind_path "$env_file")"' in common
+    assert 'stop_cmd=("$COLIMA_BIN" stop --force --profile "$COLIMA_PROFILE")' in launch_agent
+    assert "restart-ai2-services.sh" not in launch_agent
+    assert "qemu fallback" not in launch_agent
+    assert "COLIMA_FALLBACK_HOME" not in launch_agent
+    assert "DOCKER_CONTEXT=${DOCKER_CONTEXT}" in installer
+    assert '"${HOME:-}/.colima"' in lifecycle_restart
+    assert "/ai-data/var/lib/nexus-colima" not in lifecycle_restart
+    assert "DOCKER_HOST=" not in lifecycle_restart
