@@ -49,8 +49,8 @@ def test_meltdown_container_alias_is_available_to_control_plane_compose() -> Non
         text = _read(compose_file)
         assert "meltdown:${NEXUS_HOST_MELTDOWN_IP}" in text
         assert "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}" in text
-        assert "copyfail:${NEXUS_HOST_COPYFAIL_IP}" in text
-        assert "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}" in text
+        assert "copyfail:${NEXUS_HOST_COPYFAIL_IP}" not in text
+        assert "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}" not in text
 
     assert "NEXUS_HOST_MELTDOWN_IP=10.10.22.186" in _read(".env.example")
     assert "NEXUS_HOST_COPYFAIL_IP=10.10.22.156" in _read(".env.example")

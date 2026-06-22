@@ -33,6 +33,37 @@
       "context_window": 65536,
       "tools": true
     },
+    "glm-5.2": {
+      "backend": "local_mlx",
+      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+      "tools": true,
+      "label": "GLM-5.2 DQ4plus-q8",
+      "coding": true,
+      "huge_candidate": true,
+      "huge_default": true,
+      "estimated_load_sec": 420,
+      "estimated_memory_gb": 465
+    },
+    "minimax-m2.5": {
+      "backend": "local_mlx",
+      "model": "mlx-community/MiniMax-M2.5-8bit",
+      "tools": true,
+      "label": "MiniMax M2.5 8-bit",
+      "coding": true,
+      "huge_candidate": true,
+      "estimated_load_sec": 90,
+      "estimated_memory_gb": 240
+    },
+    "deepseek-r1": {
+      "backend": "local_mlx",
+      "model": "mlx-community/DeepSeek-R1-0528-4bit",
+      "tools": true,
+      "label": "DeepSeek R1 0528 4-bit",
+      "coding": true,
+      "huge_candidate": true,
+      "estimated_load_sec": 110,
+      "estimated_memory_gb": 370
+    },
     "embeddings": {
       "backend": "local_mlx",
       "model": "mlx-community/bge-small-en-v1.5-8bit",

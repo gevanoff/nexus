@@ -4,6 +4,11 @@ import os
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
+import pytest
+from fastapi import HTTPException
+
+from app.models import ChatCompletionRequest
+from app import upstreams
 from app.upstreams import _normalize_messages_for_openai_backend
 
 
@@ -43,3 +48,36 @@ def test_normalize_messages_only_merges_plain_text_neighbors():
         {"role": "tool", "content": "tool result", "tool_call_id": "call_123"},
         {"role": "tool", "content": "other result", "tool_call_id": "call_456"},
     ]
+
+
+def test_glm_input_guard_rejects_oversized_prompt(monkeypatch):
+    monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 100, raising=False)
+    request = ChatCompletionRequest(
+        model="coder",
+        messages=[{"role": "user", "content": "x" * 200}],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        upstreams._enforce_mlx_glm_input_limit(
+            request,
+            backend_name="local_mlx",
+            model_name="mlx-community/GLM-5.2-DQ4plus-q8",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["error"] == "mlx_glm_input_too_large"
+    assert exc_info.value.detail["input_chars"] > exc_info.value.detail["max_input_chars"]
+
+
+def test_glm_input_guard_does_not_limit_other_models(monkeypatch):
+    monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 100, raising=False)
+    request = ChatCompletionRequest(
+        model="phi",
+        messages=[{"role": "user", "content": "x" * 200}],
+    )
+
+    upstreams._enforce_mlx_glm_input_limit(
+        request,
+        backend_name="local_mlx",
+        model_name="mlx-community/Phi-4-reasoning-plus-4bit",
+    )

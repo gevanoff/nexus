@@ -3356,7 +3356,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "agent_max_cycles_per_run": int(getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80) or 80),
         "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60)),
         "agent_context_reset_cycles": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12),
-        "agent_context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 120_000) or 120_000),
+        "agent_context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 40_000) or 40_000),
         "agent_run_history_limit": int(getattr(S, "CODING_AGENT_RUN_HISTORY_LIMIT", 50) or 50),
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
