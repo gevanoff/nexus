@@ -4589,7 +4589,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
     return {
         "generated_at": now,
         "alias_config": get_aliases_state().__dict__,
-        "mlx_huge_lane": mlx_huge_lane.load_state(),
+        "mlx_huge_lane": _mlx_huge_lane_payload(),
         "backends": backend_rows,
         "aliases": alias_rows,
         "models": sorted(model_rows.values(), key=lambda row: (str(row.get("backend") or ""), str(row.get("model") or ""))),

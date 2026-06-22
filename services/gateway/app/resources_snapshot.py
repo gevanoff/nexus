@@ -72,6 +72,24 @@ def lifecycle_timeout() -> float:
         return 15.0
 
 
+def telegram_gateway_dependency(registry: Any, checker: Any, aliases: Dict[str, Any]) -> tuple[bool, str]:
+    model = (os.getenv("TELEGRAM_GATEWAY_MODEL") or "fast").strip()
+    alias = aliases.get(model.lower())
+    backend_name = ""
+    if alias is not None:
+        backend_name = registry.resolve_backend_class(alias.backend) or alias.backend
+    elif ":" in model:
+        backend_name = registry.resolve_backend_class(model.split(":", 1)[0]) or model.split(":", 1)[0]
+    else:
+        backend_name = registry.resolve_backend_class(model) or model
+    status = checker.get_status(backend_name) if backend_name else None
+    if status is None:
+        return False, f"gateway model {model or 'unknown'} has no backend health state"
+    if not status.is_ready:
+        return False, f"gateway model {model} backend {backend_name} is not ready: {status.error or 'readiness check failed'}"
+    return True, f"gateway model {model} backend {backend_name} is ready"
+
+
 async def call_lifecycle_manager(method: str, path: str, *, json_body: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None) -> Dict[str, Any]:
     base = lifecycle_manager_base_url()
     if not base:
@@ -297,7 +315,9 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(telegram_api_url)
             payload = resp.json() if resp.content else {}
-            ok = bool(resp.status_code == 200 and isinstance(payload, dict) and payload.get("ok") is True)
+            telegram_ok = bool(resp.status_code == 200 and isinstance(payload, dict) and payload.get("ok") is True)
+            gateway_ok, gateway_note = telegram_gateway_dependency(registry, checker, aliases)
+            ok = telegram_ok and gateway_ok
             telegram_entry.update(
                 {
                     "active": ok,
@@ -311,11 +331,14 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                     "updated_at": time.time(),
                 }
             )
-            if not ok:
+            if not telegram_ok:
                 telegram_entry["error"] = f"telegram getMe failed (status {resp.status_code})"
                 telegram_entry["notes"] = telegram_entry["error"]
+            elif not gateway_ok:
+                telegram_entry["error"] = gateway_note
+                telegram_entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
             else:
-                telegram_entry["notes"] = "Telegram getMe succeeded"
+                telegram_entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
         except Exception as exc:
             telegram_entry.update(
                 {

@@ -16,6 +16,8 @@ const TELEGRAM_MAX_MESSAGE = Number.parseInt(process.env.TELEGRAM_MAX_MESSAGE ||
 const LOG_LEVEL = String(process.env.LOG_LEVEL || 'info').toLowerCase();
 const LOG_PREVIEW_CHARS = Number.parseInt(process.env.LOG_PREVIEW_CHARS || '320', 10);
 const GATEWAY_SOCKET_TIMEOUT_MS = 60000;
+const GATEWAY_CONNECT_RETRY_COUNT = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_COUNT || '2', 10);
+const GATEWAY_CONNECT_RETRY_DELAY_MS = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_DELAY_MS || '750', 10);
 const FALLBACK_CLARIFICATION_REPLY = 'I need a bit more context to answer reliably. Please clarify what you want to know or share the earlier message.';
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
 const THINK_TAG_RE = /<\/?think>/gi;
@@ -53,6 +55,22 @@ if (Number.isNaN(LOG_PREVIEW_CHARS) || LOG_PREVIEW_CHARS < 0) {
 
 if (Number.isNaN(GATEWAY_SOCKET_TIMEOUT_MS) || GATEWAY_SOCKET_TIMEOUT_MS < 1000) {
   throw new Error('GATEWAY_SOCKET_TIMEOUT_MS must be a positive integer >= 1000');
+}
+
+if (Number.isNaN(GATEWAY_CONNECT_RETRY_COUNT) || GATEWAY_CONNECT_RETRY_COUNT < 0) {
+  throw new Error('GATEWAY_CONNECT_RETRY_COUNT must be a non-negative integer');
+}
+if (Number.isNaN(GATEWAY_CONNECT_RETRY_DELAY_MS) || GATEWAY_CONNECT_RETRY_DELAY_MS < 0) {
+  throw new Error('GATEWAY_CONNECT_RETRY_DELAY_MS must be a non-negative integer');
+}
+
+function isRetryableGatewayConnectError(err) {
+  if (!axios.isAxiosError(err) || err.response) return false;
+  return ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT'].includes(String(err.code || '').toUpperCase());
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const bot = new Bot(TELEGRAM_TOKEN);
@@ -767,32 +785,39 @@ async function queryGateway(history, message) {
     stream: false,
   };
 
-  try {
-    const res = await axios.post(GATEWAY_URL, payload, {
-      headers: {
-        Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      timeout: GATEWAY_SOCKET_TIMEOUT_MS,
-    });
-
-    return extractAssistantText(res.data);
-  } catch (err) {
-    if (axios.isAxiosError(err)) {
-      log('error', 'Gateway request failed', {
-        error: err.message,
-        code: err.code,
-        status: err.response?.status,
-        statusText: err.response?.statusText,
-        url: err.config?.url,
-        timeout: err.config?.timeout,
-        response: err.response?.data,
+  let err;
+  for (let attempt = 0; attempt <= GATEWAY_CONNECT_RETRY_COUNT; attempt += 1) {
+    try {
+      const res = await axios.post(GATEWAY_URL, payload, {
+        headers: {
+          Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: GATEWAY_SOCKET_TIMEOUT_MS,
       });
-    } else {
-      log('error', 'Gateway request failed', { error: err?.message || String(err) });
+      return extractAssistantText(res.data);
+    } catch (caught) {
+      err = caught;
+      if (!isRetryableGatewayConnectError(caught) || attempt >= GATEWAY_CONNECT_RETRY_COUNT) break;
+      const delayMs = GATEWAY_CONNECT_RETRY_DELAY_MS * (attempt + 1);
+      log('warn', 'Retrying gateway connection', { code: caught.code, attempt: attempt + 1, delayMs });
+      await sleep(delayMs);
     }
-    throw err;
   }
+  if (axios.isAxiosError(err)) {
+    log('error', 'Gateway request failed', {
+      error: err.message,
+      code: err.code,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      url: err.config?.url,
+      timeout: err.config?.timeout,
+      response: err.response?.data,
+    });
+  } else {
+    log('error', 'Gateway request failed', { error: err?.message || String(err) });
+  }
+  throw err;
 }
 
 
