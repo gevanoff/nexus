@@ -15,7 +15,7 @@ from app.config import S
 NEXUS_HARDWARE_VERIFIED_AT = "2026-05-26"
 NEXUS_HARDWARE_SNAPSHOT_VERSION = 1
 PRODUCTION_CONTEXT_HOSTS = ("ai2", "ai1", "ada2", "meltdown", "copyfail")
-KNOWN_NON_PRODUCTION_HOSTS = ("ai3",)
+KNOWN_NON_PRODUCTION_HOSTS = ("migraine",)
 
 
 NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
@@ -67,14 +67,14 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
         "role": "Infrastructure-only host for metrics collection, deployment orchestration, and general IT operations.",
         "notes": "Do not schedule model-serving backends here; use it as a lightweight control node.",
     },
-    "ai3": {
+    "migraine": {
         "platform": "macos_arm64",
         "cpu": "Apple M2",
         "cpu_cores": "8 CPU cores",
         "memory": "8 GiB unified memory",
         "accelerators": ["Apple Silicon integrated GPU"],
         "role": "Known SSH alias only; not part of the current production model-serving topology.",
-        "notes": "Do not choose ai3 for Nexus model placement unless an operator explicitly adds it to topology.",
+        "notes": "Do not choose migraine for Nexus model placement unless an operator explicitly adds it to topology.",
     },
 }
 

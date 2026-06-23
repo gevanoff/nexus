@@ -45,7 +45,7 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - `ai1` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x NVIDIA GeForce RTX 3090 24GB): dual-GPU Linux/NVIDIA node used for media ingress and secondary `vllm`/CUDA capacity.
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, NVIDIA RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
 - `meltdown` (Ubuntu 22.04.5, Intel Core i7-5930K, about 47 GiB observed system RAM, NVIDIA GeForce RTX 5060 Ti 16GB class / 15.9 GiB reported VRAM): lighter Linux/NVIDIA host for SDXL-Turbo, vLLM embeddings, overflow, and staging.
-- `ai3` is a known macOS SSH alias (Apple M2, 8GB unified memory), but it is not part of the current production model-serving topology.
+- `migraine` is a known macOS SSH alias (Apple M2, 8GB unified memory), but it is not part of the current production model-serving topology.
 
 Operational implication:
 - Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
