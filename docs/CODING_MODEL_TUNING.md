@@ -11,7 +11,7 @@ Observed from the local Nexus hosts, with hardware refreshed on 2026-05-21:
 | Host | Runtime | Live model/service | Practical role | Notes |
 | --- | --- | --- | --- | --- |
 | `ai2` | MLX, native macOS | `mlx-community/Qwen3.6-27B-4bit`, `mlx-community/Qwen3-30B-A3B-4bit`, `mlx-community/bge-small-en-v1.5-8bit` | Current best `coder` path | Apple M3 Ultra, 512 GB unified memory. Best control-plane fit for long local coding sessions. |
-| `ai1` | vLLM | `unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M` at `max_model_len=2048`; `unsloth/Qwen3-Embedding-4B` | Fast short edits and embeddings | Intel Core i7-12700F, about 46 GiB observed RAM, 2x RTX 3090 24 GB. Schedule by per-GPU 24 GB VRAM limits. |
+| `ai1` | vLLM | `unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M` at `max_model_len=2048`; `BAAI/bge-small-en-v1.5` | Fast short edits and embeddings | Intel Core i7-12700F, about 46 GiB observed RAM, 2x RTX 3090 24 GB. Schedule by per-GPU 24 GB VRAM limits. |
 | `ada2` | vLLM | `unsloth/Qwen3-30B-A3B-FP8` at `max_model_len=2048` | Strong CUDA lane, currently too short for repo coding | RTX 6000 Ada 48 GB class / 46 GiB reported VRAM. Media services share this GPU, so long-context coding needs an explicit resource window. |
 | Gateway | OpenAI-compatible | aliases include `coder`, `fast`, `long`, `reasoning`, `local_mlx`, `local_vllm`, `local_vllm_fast` | Routing and caps | Coding agent should default to the most reliable tool-capable backend, not the fastest chat lane. |
 

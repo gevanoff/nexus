@@ -162,6 +162,8 @@ ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
 host_runtime_root="$(ns_runtime_root "$ROOT_DIR")"
 export NEXUS_RUNTIME_ROOT
 NEXUS_RUNTIME_ROOT="$(ns_resolve_docker_bind_path "$host_runtime_root")"
+export NEXUS_TOPOLOGY_HOST_DIR
+NEXUS_TOPOLOGY_HOST_DIR="${NEXUS_TOPOLOGY_HOST_DIR:-$(cd "$ROOT_DIR/deploy/topology" && pwd -P)}"
 
 if ! ns_compose_available; then
   ns_die "Docker Compose is not available"
