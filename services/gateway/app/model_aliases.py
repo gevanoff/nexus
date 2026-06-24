@@ -74,15 +74,15 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             estimated_load_sec=420,
             estimated_memory_gb=465,
         ),
-        "minimax-m2.5": ModelAlias(
+        "minimax-m3": ModelAlias(
             backend="local_mlx",
-            upstream_model="mlx-community/MiniMax-M2.5-8bit",
-            tools=True,
-            label="MiniMax M2.5 8-bit",
+            upstream_model="mlx-community/MiniMax-M3-4bit",
+            tools=False,
+            label="MiniMax M3 4-bit",
             coding=True,
             huge_candidate=True,
-            estimated_load_sec=90,
-            estimated_memory_gb=240,
+            estimated_load_sec=120,
+            estimated_memory_gb=250,
         ),
         "deepseek-r1": ModelAlias(
             backend="local_mlx",

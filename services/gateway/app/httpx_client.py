@@ -11,21 +11,26 @@ from app.config import S
 async def httpx_client(*, timeout: float | None = None):
     """Create an httpx.AsyncClient configured by gateway backend TLS settings.
 
-    Honors S.BACKEND_VERIFY_TLS, S.BACKEND_CA_BUNDLE, and S.BACKEND_CLIENT_CERT.
+    Honors upstream TLS settings and retries connection establishment failures.
     """
     kwargs: dict[str, object] = {}
+    transport_kwargs: dict[str, object] = {
+        "retries": max(0, int(getattr(S, "BACKEND_CONNECT_RETRIES", 2) or 0)),
+    }
     # verify can be True/False or a path to a CA bundle
     if S.BACKEND_CA_BUNDLE:
-        kwargs["verify"] = S.BACKEND_CA_BUNDLE
+        transport_kwargs["verify"] = S.BACKEND_CA_BUNDLE
     else:
-        kwargs["verify"] = bool(S.BACKEND_VERIFY_TLS)
+        transport_kwargs["verify"] = bool(S.BACKEND_VERIFY_TLS)
 
     if S.BACKEND_CLIENT_CERT:
         parts = [p.strip() for p in S.BACKEND_CLIENT_CERT.split(",") if p.strip()]
         if len(parts) == 1:
-            kwargs["cert"] = parts[0]
+            transport_kwargs["cert"] = parts[0]
         elif len(parts) >= 2:
-            kwargs["cert"] = (parts[0], parts[1])
+            transport_kwargs["cert"] = (parts[0], parts[1])
+
+    kwargs["transport"] = httpx.AsyncHTTPTransport(**transport_kwargs)
 
     async with httpx.AsyncClient(timeout=timeout, **kwargs) as client:
         yield client

@@ -2,6 +2,7 @@
   const statusEl = document.getElementById("admin_models_status");
   const listEl = document.getElementById("admin_models_list");
   const refreshEl = document.getElementById("admin_models_refresh");
+  let hugeLanePollTimer = null;
 
   function handle401(resp) {
     if (resp && resp.status === 401) {
@@ -19,6 +20,13 @@
     } catch (error) {
       return "";
     }
+  }
+
+  function formatDuration(value) {
+    const sec = Number(value || 0);
+    if (!Number.isFinite(sec) || sec <= 0) return "0s";
+    if (sec < 90) return `${Math.round(sec)}s`;
+    return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
   }
 
   function badge(text, tone) {
@@ -45,6 +53,7 @@
       button.type = "button";
       button.textContent = item.text;
       button.dataset.uiRole = item.role || "secondary";
+      button.disabled = item.disabled === true;
       button.addEventListener("click", item.onClick);
       badgeWrap.appendChild(button);
     });
@@ -64,6 +73,75 @@
     return el;
   }
 
+  function scheduleHugeLanePoll(active) {
+    if (!active) {
+      if (hugeLanePollTimer) window.clearTimeout(hugeLanePollTimer);
+      hugeLanePollTimer = null;
+      return;
+    }
+    if (hugeLanePollTimer) return;
+    hugeLanePollTimer = window.setTimeout(() => {
+      hugeLanePollTimer = null;
+      void load();
+    }, 5000);
+  }
+
+  function renderHugeLane(lane) {
+    if (!lane || lane.enabled === false) {
+      scheduleHugeLanePoll(false);
+      return;
+    }
+    const hugeGroup = group("MLX Huge Model");
+    hugeGroup.classList.add("model-admin-huge");
+    const statusBadges = [
+      {
+        text: lane.status_label || lane.status || "unknown",
+        tone: lane.status === "ready" ? "green" : lane.status === "switching" ? "yellow" : "red",
+      },
+    ];
+    if (lane.target_model) statusBadges.push({ text: `target ${lane.target_model}`, tone: "yellow" });
+    if (lane.error) statusBadges.push({ text: String(lane.error).slice(0, 120), tone: "red" });
+    hugeGroup.appendChild(row(lane.active_model || "No active huge model", lane.route_model ? `routing ${lane.route_model}` : "", statusBadges));
+
+    if (lane.status === "switching") {
+      const progress = document.createElement("div");
+      const elapsed = Number(lane.elapsed_sec || 0);
+      const estimate = Math.max(1, Number(lane.estimated_load_sec || 120));
+      progress.className = "model-admin-muted";
+      progress.textContent = `Loading ${formatDuration(elapsed)} / ${formatDuration(estimate)}`;
+      const track = document.createElement("div");
+      track.className = "model-admin-progress";
+      const fill = document.createElement("span");
+      fill.style.width = `${Math.max(0, Math.min(100, (elapsed / estimate) * 100)).toFixed(0)}%`;
+      track.appendChild(fill);
+      progress.appendChild(track);
+      hugeGroup.appendChild(progress);
+    }
+
+    const candidates = Array.isArray(lane.candidates) ? lane.candidates : [];
+    candidates.forEach((candidate) => {
+      const badges = [];
+      if (candidate.active) badges.push({ text: "active", tone: "green" });
+      if (candidate.target) badges.push({ text: "loading", tone: "yellow" });
+      if (candidate.cache_state) badges.push({ text: candidate.cache_state, tone: candidate.cache_state === "cached" ? "green" : "yellow" });
+      const actions = [];
+      if (!candidate.active && !candidate.target) {
+        actions.push({
+          text: "Switch",
+          role: "secondary",
+          disabled: candidate.cache_state !== "cached" || lane.status === "switching",
+          onClick: () => void switchHugeLane(candidate.model, false),
+        });
+      }
+      const details = [candidate.model];
+      if (candidate.estimated_load_sec) details.push(`est ${formatDuration(candidate.estimated_load_sec)}`);
+      if (candidate.estimated_memory_gb) details.push(`~${candidate.estimated_memory_gb} GB`);
+      hugeGroup.appendChild(row(candidate.label || candidate.model || "unknown", details.join(" · "), badges, actions));
+    });
+    listEl.appendChild(hugeGroup);
+    scheduleHugeLanePoll(lane.status === "switching");
+  }
+
   function render(payload) {
     if (!listEl) return;
     listEl.innerHTML = "";
@@ -75,6 +153,8 @@
     const aliases = Array.isArray(payload?.aliases) ? payload.aliases : [];
     const models = Array.isArray(payload?.models) ? payload.models : [];
     const backends = Array.isArray(payload?.backends) ? payload.backends : [];
+
+    renderHugeLane(payload?.mlx_huge_lane || null);
 
     const aliasGroup = group("Aliases");
     if (!aliases.length) {
@@ -177,6 +257,36 @@
       window.setTimeout(() => void load(), 1500);
     } catch (error) {
       if (statusEl) statusEl.textContent = `Prefetch restart failed: ${String(error)}`;
+    }
+  }
+
+  async function switchHugeLane(model, confirmed) {
+    const modelId = String(model || "").trim();
+    if (!modelId) return;
+    if (statusEl) statusEl.textContent = `Switching MLX huge model to ${modelId}...`;
+    try {
+      const resp = await fetch("/ui/api/mlx/huge-lane/switch", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: modelId, confirmed }),
+      });
+      if (handle401(resp)) return;
+      const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        const detail = payload?.detail;
+        const message = typeof detail === "string" ? detail : detail?.error ? `${detail.error}: ${detail.cache_state || ""}` : `HTTP ${resp.status}`;
+        throw new Error(message);
+      }
+      if (payload?.decision === "requires_confirmation" && !confirmed) {
+        const ok = window.confirm(payload.message || `Switch MLX huge model to ${modelId}?`);
+        if (ok) return switchHugeLane(modelId, true);
+        if (statusEl) statusEl.textContent = "MLX huge model switch cancelled.";
+        return;
+      }
+      await load();
+    } catch (error) {
+      if (statusEl) statusEl.textContent = `MLX huge model switch failed: ${String(error?.message || error)}`;
     }
   }
 

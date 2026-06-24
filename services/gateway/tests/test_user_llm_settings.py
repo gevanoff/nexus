@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
+import app.httpx_client as httpx_client_module
 from app import user_llm
 from app import ui_routes
 from app import mlx_huge_lane
@@ -33,6 +34,39 @@ def _settings(api_key: str = "sk-test-value") -> dict:
             },
         }
     }
+
+
+@pytest.mark.asyncio
+async def test_shared_http_client_configures_connect_retries(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeTransport:
+        def __init__(self, **kwargs):
+            captured["transport"] = kwargs
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured["client"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(httpx_client_module.S, "BACKEND_CONNECT_RETRIES", 3, raising=False)
+    monkeypatch.setattr(httpx_client_module.S, "BACKEND_VERIFY_TLS", False, raising=False)
+    monkeypatch.setattr(httpx_client_module.S, "BACKEND_CA_BUNDLE", "", raising=False)
+    monkeypatch.setattr(httpx_client_module.S, "BACKEND_CLIENT_CERT", "", raising=False)
+    monkeypatch.setattr(httpx_client_module.httpx, "AsyncHTTPTransport", FakeTransport)
+    monkeypatch.setattr(httpx_client_module.httpx, "AsyncClient", FakeClient)
+
+    async with httpx_client_module.httpx_client(timeout=12) as client:
+        assert isinstance(client, FakeClient)
+
+    assert captured["transport"] == {"retries": 3, "verify": False}
+    assert captured["client"]["timeout"] == 12
+    assert isinstance(captured["client"]["transport"], FakeTransport)
 
 
 @pytest.mark.asyncio
@@ -209,7 +243,8 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "Session expired. Redirecting to sign in..." in js
     assert "window.location.replace(`/ui/login?next=${back}`)" in js
     assert "settings_logout" in html
-    assert '/static/chat.js?v=17' in html
+    assert '/static/chat.js?v=18' in html
+    assert 'id="loadModels"' not in html
     assert "/ui/api/auth/logout" in js
     assert "resolveRequestedChatModel" in js
     assert "settings-models" not in html
@@ -218,8 +253,10 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/api/admin/models" in admin_models_js
     assert "/ui/api/admin/models/prefetch" in admin_models_js
     assert "Restart fetch" in admin_models_js
-    assert "mlx_huge_lane" in resources_html
-    assert "/ui/api/mlx/huge-lane/switch" in resources_js
+    assert "mlx_huge_lane" not in resources_html
+    assert "/ui/api/mlx/huge-lane/switch" not in resources_js
+    assert "MLX Huge Model" in admin_models_js
+    assert "/ui/api/mlx/huge-lane/switch" in admin_models_js
 
 
 def test_canonical_chat_aliases_match_runtime_lanes():
@@ -246,7 +283,7 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["reasoning"]["model"] == strong_model
     assert aliases["glm-5.2"]["huge_candidate"] is True
     assert aliases["glm-5.2"]["huge_default"] is True
-    assert aliases["minimax-m2.5"]["model"] == "mlx-community/MiniMax-M2.5-8bit"
+    assert aliases["minimax-m3"]["model"] == "mlx-community/MiniMax-M3-4bit"
     assert aliases["deepseek-r1"]["model"] == "mlx-community/DeepSeek-R1-0528-4bit"
 
 
@@ -298,7 +335,7 @@ def test_user_llm_available_models_include_selected_models():
 
 def test_ui_model_alias_hides_fetching_models_and_falls_back(monkeypatch):
     fallback = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
-    primary = "mlx-community/MiniMax-M2.5-8bit"
+    primary = "mlx-community/MiniMax-M3-4bit"
     monkeypatch.setattr(ui_routes.S, "MLX_FALLBACK_BACKEND", "local_vllm_fast", raising=False)
     monkeypatch.setattr(ui_routes.S, "MLX_FALLBACK_MODEL", fallback, raising=False)
 
@@ -369,7 +406,7 @@ def test_ui_model_alias_treats_advertised_missing_model_as_available(monkeypatch
 
 
 def test_ui_runtime_selector_does_not_treat_advertised_fetching_model_as_available(monkeypatch):
-    primary = "mlx-community/MiniMax-M2.5-8bit"
+    primary = "mlx-community/MiniMax-M3-4bit"
 
     class Backend:
         base_url = "http://ai2:10240/v1"
@@ -507,12 +544,12 @@ async def test_ui_models_hides_fetching_probed_backend_models(monkeypatch):
         return (
             [
                 {
-                    "id": "local_mlx:mlx-community/MiniMax-M2.5-8bit",
+                    "id": "local_mlx:mlx-community/MiniMax-M3-4bit",
                     "object": "model",
                     "created": now,
                     "owned_by": "local",
                     "backend": backend_name,
-                    "upstream_model": "mlx-community/MiniMax-M2.5-8bit",
+                    "upstream_model": "mlx-community/MiniMax-M3-4bit",
                 }
             ],
             {"backend": backend_name, "ok": True, "count": 1},
@@ -536,7 +573,7 @@ async def test_ui_models_hides_fetching_probed_backend_models(monkeypatch):
     payload = await ui_routes.ui_models(SimpleNamespace())
 
     assert payload["data"] == []
-    assert payload["diagnostics"]["sources"]["hidden_probed_models"]["local_mlx:mlx-community/MiniMax-M2.5-8bit"]["reason"] == "mlx_huge_lane_controlled"
+    assert payload["diagnostics"]["sources"]["hidden_probed_models"]["local_mlx:mlx-community/MiniMax-M3-4bit"]["reason"] == "mlx_huge_lane_controlled"
 
 
 @pytest.mark.asyncio
@@ -556,12 +593,12 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
         return (
             [
                 {
-                    "id": "local_mlx:mlx-community/MiniMax-M2.5-8bit",
+                    "id": "local_mlx:mlx-community/MiniMax-M3-4bit",
                     "object": "model",
                     "created": now,
                     "owned_by": "local",
                     "backend": backend_name,
-                    "upstream_model": "mlx-community/MiniMax-M2.5-8bit",
+                    "upstream_model": "mlx-community/MiniMax-M3-4bit",
                 }
             ],
             {"backend": backend_name, "ok": True, "count": 1},
@@ -574,18 +611,18 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
     monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
     monkeypatch.setattr(ui_routes, "llm_backends", lambda: [("local_mlx", Backend())])
     monkeypatch.setattr(ui_routes, "_probe_models_for_backend", fake_probe)
-    monkeypatch.setattr(ui_routes, "get_aliases", lambda: {"default": SimpleNamespace(backend="local_mlx", upstream_model="mlx-community/MiniMax-M2.5-8bit", tools=True, context_window=None, max_tokens_cap=None, temperature_cap=None)})
+    monkeypatch.setattr(ui_routes, "get_aliases", lambda: {"default": SimpleNamespace(backend="local_mlx", upstream_model="mlx-community/MiniMax-M3-4bit", tools=True, context_window=None, max_tokens_cap=None, temperature_cap=None)})
     monkeypatch.setattr(ui_routes, "get_aliases_state", lambda: SimpleNamespace(source="test", configured_path="", error=""))
     monkeypatch.setattr(ui_routes, "get_health_checker", lambda: SimpleNamespace(get_status=lambda _name: None))
     monkeypatch.setattr(ui_routes, "backend_hostname", lambda *_args, **_kwargs: "ai2")
-    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda backend, model: "fetching" if backend == "local_mlx" and model.endswith("MiniMax-M2.5-8bit") else None)
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda backend, model: "fetching" if backend == "local_mlx" and model.endswith("MiniMax-M3-4bit") else None)
     monkeypatch.setattr(ui_routes, "fallback_target_for_backend", lambda backend: ("local_vllm_fast", "fast-model") if backend == "local_mlx" else None)
-    monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "fetching" if model.endswith("MiniMax-M2.5-8bit") else None)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "fetching" if model.endswith("MiniMax-M3-4bit") else None)
     monkeypatch.setattr(
         ui_routes,
         "hf_model_cache_details",
         lambda model: {
-            "state": "fetching" if model.endswith("MiniMax-M2.5-8bit") else None,
+            "state": "fetching" if model.endswith("MiniMax-M3-4bit") else None,
             "fetch_activity": {"status": "stalled", "last_progress_age_sec": 999},
         },
     )
@@ -595,7 +632,7 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
 
     assert payload["aliases"][0]["effective_backend"] == "local_vllm_fast"
     assert payload["aliases"][0]["effective_model"] == "fast-model"
-    minimax = next(item for item in payload["models"] if item["model"].endswith("MiniMax-M2.5-8bit"))
+    minimax = next(item for item in payload["models"] if item["model"].endswith("MiniMax-M3-4bit"))
     assert minimax["unavailable_reason"] == "fetching"
     assert minimax["fetch_activity"]["status"] == "stalled"
 
@@ -721,7 +758,7 @@ async def test_ui_admin_model_prefetch_calls_lifecycle_manager(monkeypatch):
 
     payload = await ui_routes.ui_admin_model_prefetch(
         SimpleNamespace(),
-        ui_routes.ModelPrefetchRequest(backend="local_mlx", model="mlx-community/MiniMax-M2.5-8bit"),
+        ui_routes.ModelPrefetchRequest(backend="local_mlx", model="mlx-community/MiniMax-M3-4bit"),
     )
 
     assert payload["decision"] == "prefetch_started"
@@ -729,7 +766,7 @@ async def test_ui_admin_model_prefetch_calls_lifecycle_manager(monkeypatch):
         (
             "POST",
             "/v1/lifecycle/mlx/prefetch",
-            {"backend_class": "local_mlx", "model": "mlx-community/MiniMax-M2.5-8bit"},
+            {"backend_class": "local_mlx", "model": "mlx-community/MiniMax-M3-4bit"},
         )
     ]
 

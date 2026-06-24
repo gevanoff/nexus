@@ -326,7 +326,7 @@ def test_mlx_huge_lane_overrides_long_alias(monkeypatch):
     aliases = {
         "long": SimpleNamespace(
             backend="local_mlx",
-            upstream_model="mlx-community/MiniMax-M2.5-8bit",
+            upstream_model="mlx-community/MiniMax-M3-4bit",
             tools=False,
             context_window=65536,
         ),
@@ -336,7 +336,7 @@ def test_mlx_huge_lane_overrides_long_alias(monkeypatch):
     monkeypatch.setattr(router, "_resolved_backend_name", lambda name: "local_mlx" if name in {"mlx", "local_mlx"} else name)
     monkeypatch.setattr(router, "_known_backend_name", lambda name: None)
     monkeypatch.setattr(router, "backend_provider_name", lambda backend: "mlx" if "mlx" in backend else "vllm")
-    monkeypatch.setattr(router.mlx_huge_lane, "is_huge_model", lambda model: model.endswith("MiniMax-M2.5-8bit"))
+    monkeypatch.setattr(router.mlx_huge_lane, "is_huge_model", lambda model: model.endswith("MiniMax-M3-4bit"))
     monkeypatch.setattr(router.mlx_huge_lane, "route_model", lambda: "mlx-community/DeepSeek-R1-0528-4bit")
 
     decision = router.decide_route(

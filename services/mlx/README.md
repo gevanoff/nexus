@@ -183,7 +183,7 @@ With 512GB unified memory, `ai2` can run very large MLX models. The current larg
 - `mlx`: `mlx-community/GLM-5.2-DQ4plus-q8`
 - `reasoning`: `mlx-community/DeepSeek-R1-0528-4bit`
 - `coder`: `mlx-community/GLM-5.2-DQ4plus-q8`
-- `minimax fallback`: `mlx-community/MiniMax-M2.5-8bit`
+- `minimax fallback`: `mlx-community/MiniMax-M3-4bit` (requires `mlx-vlm>=0.6.3`)
 - `phi-4-reasoning-plus`: `mlx-community/Phi-4-reasoning-plus-4bit` as the smaller reasoning fallback and lightweight chat health model
 - `long`: `mlx-community/GLM-5.2-DQ4plus-q8` with raised `context_window`
 
@@ -246,7 +246,7 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 
 ```bash
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5.2-DQ4plus-q8
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/MiniMax-M2.5-8bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/MiniMax-M3-4bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/DeepSeek-R1-0528-4bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Phi-4-reasoning-plus-4bit
 ```

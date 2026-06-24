@@ -31,6 +31,7 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 
 - `ai2` is the primary target for model-admin and gateway deployment work unless
   the user or current task says otherwise.
+- The former `ai3` host is now named `migraine`; use the `migraine` SSH alias.
 
 ## Change Workflow
 
@@ -76,14 +77,15 @@ model-admin/gateway repair:
   In `services/mlx/config/config.example.yaml`, keep
   `mlx-community/GLM-5.2-DQ4plus-q8` at `on_demand: false` unless the user asks to
   return to a memory-saving mode or live memory pressure makes that necessary.
-  MiniMax should remain present as an on-demand fallback. Do not restore the old
+  `mlx-community/MiniMax-M3-4bit` should remain present as an on-demand fallback.
+  It requires `mlx-vlm>=0.6.3`. Do not restore the removed
   `mlx-community/GLM-5-4bit` cache/config unless explicitly requested.
 - The ai2 native MLX install lives under `/ai-data/var/lib/mlx`. If restarting
   manually, use `MLX_NATIVE_ROOT=/ai-data/var/lib/mlx` unless
   `deploy/scripts/restart-mlx.sh` has already auto-detected that path.
 
-- MiniMax was previously live in the ai2 gateway model list as
-  `local_mlx:mlx-community/MiniMax-M2.5-8bit`.
+- MiniMax M2.5 was removed from ai2 and replaced by the on-demand
+  `local_mlx:mlx-community/MiniMax-M3-4bit` model.
 - Aliases `mlx`, `coder`, and `long` are expected to resolve to
   `local_mlx:mlx-community/GLM-5.2-DQ4plus-q8` unless current config and live
   state prove a better route.
