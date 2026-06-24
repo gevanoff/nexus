@@ -16,8 +16,6 @@ const TELEGRAM_MAX_MESSAGE = Number.parseInt(process.env.TELEGRAM_MAX_MESSAGE ||
 const LOG_LEVEL = String(process.env.LOG_LEVEL || 'info').toLowerCase();
 const LOG_PREVIEW_CHARS = Number.parseInt(process.env.LOG_PREVIEW_CHARS || '320', 10);
 const GATEWAY_SOCKET_TIMEOUT_MS = 60000;
-const GATEWAY_CONNECT_RETRY_COUNT = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_COUNT || '2', 10);
-const GATEWAY_CONNECT_RETRY_DELAY_MS = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_DELAY_MS || '750', 10);
 const FALLBACK_CLARIFICATION_REPLY = 'I need a bit more context to answer reliably. Please clarify what you want to know or share the earlier message.';
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
 const THINK_TAG_RE = /<\/?think>/gi;
@@ -55,22 +53,6 @@ if (Number.isNaN(LOG_PREVIEW_CHARS) || LOG_PREVIEW_CHARS < 0) {
 
 if (Number.isNaN(GATEWAY_SOCKET_TIMEOUT_MS) || GATEWAY_SOCKET_TIMEOUT_MS < 1000) {
   throw new Error('GATEWAY_SOCKET_TIMEOUT_MS must be a positive integer >= 1000');
-}
-
-if (Number.isNaN(GATEWAY_CONNECT_RETRY_COUNT) || GATEWAY_CONNECT_RETRY_COUNT < 0) {
-  throw new Error('GATEWAY_CONNECT_RETRY_COUNT must be a non-negative integer');
-}
-if (Number.isNaN(GATEWAY_CONNECT_RETRY_DELAY_MS) || GATEWAY_CONNECT_RETRY_DELAY_MS < 0) {
-  throw new Error('GATEWAY_CONNECT_RETRY_DELAY_MS must be a non-negative integer');
-}
-
-function isRetryableGatewayConnectError(err) {
-  if (!axios.isAxiosError(err) || err.response) return false;
-  return ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT'].includes(String(err.code || '').toUpperCase());
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const bot = new Bot(TELEGRAM_TOKEN);
@@ -700,11 +682,174 @@ async function handleLinkCommand(ctx, code) {
       `${GATEWAY_BASE_URL}/v1/telegram/link`,
       payload,
       {
+>>>>>>> 393b8102400c719df01f25f875bd4feba381cafc
         headers: {
           Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
           'Content-Type': 'application/json',
         },
         timeout: GATEWAY_SOCKET_TIMEOUT_MS,
+<<<<<<< HEAD
+      });
+      return extractAssistantText(res.data);
+    } catch (caught) {
+      err = caught;
+      if (!isRetryableGatewayConnectError(caught) || attempt >= GATEWAY_CONNECT_RETRY_COUNT) break;
+      const delayMs = GATEWAY_CONNECT_RETRY_DELAY_MS * (attempt + 1);
+      log('warn', 'Retrying gateway connection', { code: caught.code, attempt: attempt + 1, delayMs });
+      await sleep(delayMs);
+    }
+  }
+  if (axios.isAxiosError(err)) {
+    log('error', 'Gateway request failed', {
+      error: err.message,
+      code: err.code,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      url: err.config?.url,
+      timeout: err.config?.timeout,
+      response: err.response?.data,
+    });
+  } else {
+    log('error', 'Gateway request failed', { error: err?.message || String(err) });
+  }
+  throw err;
+}
+
+
+bot.command('start', async (ctx) => {
+  await ctx.reply('Welcome! Send a message to chat with the Gateway. Use /link <code> from Nexus Settings to connect this private chat for notifications.');
+});
+
+bot.command('help', async (ctx) => {
+  await ctx.reply(buildHelpText());
+});
+
+bot.command('reset', async (ctx) => {
+  histories.delete(ctx.chat.id);
+  await ctx.reply('Conversation reset.');
+});
+
+bot.command('history', async (ctx) => {
+  await handleHistoryExport(ctx, getHistory(ctx.chat.id));
+});
+
+bot.command('me', async (ctx) => {
+  const me = await bot.api.getMe();
+  await ctx.reply(`Bot: ${me.first_name}${me.username ? ` (@${me.username})` : ''} | ID: ${me.id}`);
+});
+
+bot.command('whoami', async (ctx) => {
+  if (!ctx.from?.id) {
+    await ctx.reply('Unable to determine your user ID.');
+    return;
+  }
+  const member = await ctx.api.getChatMember(ctx.chat.id, ctx.from.id);
+  await ctx.reply(`You are ${member.status} in this chat.${member.user?.username ? ` (@${member.user.username})` : ''}`);
+});
+
+bot.command('chatinfo', async (ctx) => {
+  const chat = await ctx.api.getChat(ctx.chat.id);
+  const name = chat.title || chat.username || chat.first_name || 'this chat';
+  const description = chat.description ? `\nDescription: ${chat.description}` : '';
+  await ctx.reply(`Chat: ${name}\nType: ${chat.type}\nID: ${chat.id}${description}`);
+});
+
+bot.command('poll', async (ctx) => {
+  const args = String(ctx.match || '').trim();
+  await handlePoll(ctx, args);
+});
+
+async function handleIncomingText(ctx, text, source) {
+  const userText = String(text || '');
+  if (!userText.trim()) {
+    return;
+  }
+
+  log('info', 'Incoming Telegram message', {
+    chatId: ctx.chat?.id,
+    userId: ctx.from?.id,
+    username: ctx.from?.username,
+    source,
+    textPreview: previewText(userText),
+  });
+
+  const history = getHistory(ctx.chat.id);
+
+  try {
+    await ctx.api.sendChatAction(ctx.chat.id, 'typing');
+  } catch (err) {
+    log('warn', 'Failed to send chat action', {
+      chatId: ctx.chat?.id,
+      error: err?.message || String(err),
+    });
+  }
+
+  try {
+    if (await maybeHandleSlashCommand(ctx, userText)) {
+      return;
+    }
+    const gatewayAnswer = await queryGateway(history, userText);
+    const sanitized = sanitizeAssistantReply(gatewayAnswer);
+    const answer = sanitized.content;
+    history.push({ role: 'user', content: userText });
+    history.push({ role: 'assistant', content: answer });
+    histories.set(ctx.chat.id, trimHistory(history));
+    log('info', 'Sending Telegram reply', {
+      chatId: ctx.chat?.id,
+      userId: ctx.from?.id,
+      textPreview: previewText(answer),
+      strippedThinkBlocks: sanitized.meta.strippedThinkBlocks,
+      droppedScratchpadParagraphs: sanitized.meta.droppedScratchpadParagraphs,
+      repeatedSegmentCount: sanitized.meta.repeatedCount,
+      replacedWithFallback: sanitized.meta.replacedWithFallback,
+    });
+    await replyLongText(ctx, answer);
+  } catch (err) {
+    log('error', 'Chat handling failed', {
+      chatId: ctx.chat?.id,
+      userId: ctx.from?.id,
+      error: err?.message || String(err),
+    });
+    await ctx.reply('Error talking to the gateway.');
+  }
+}
+
+bot.on('message:text', async (ctx) => {
+  await handleIncomingText(ctx, ctx.message?.text, 'message');
+});
+
+bot.on('channel_post:text', async (ctx) => {
+  await handleIncomingText(ctx, ctx.channelPost?.text, 'channel_post');
+});
+
+bot.catch((err) => {
+  const error = err?.error || err?.message || err;
+  log('error', 'Telegram bot error', {
+    error: error?.message || String(error),
+    stack: error?.stack,
+  });
+});
+
+async function startBot() {
+  const me = await bot.api.getMe();
+  log('info', 'Telegram bot authenticated', {
+    botId: me.id,
+    username: me.username,
+  });
+
+  await bot.api.setMyCommands(COMMANDS);
+  bot.start();
+  console.log('Telegram gateway bot is running.');
+}
+
+startBot().catch((err) => {
+  log('error', 'Telegram bot startup failed', {
+    error: err?.message || String(err),
+    stack: err?.stack,
+  });
+  process.exit(1);
+});
+=======
       },
     );
     const linkedUser = String(res.data?.username || '').trim();
@@ -785,39 +930,32 @@ async function queryGateway(history, message) {
     stream: false,
   };
 
-  let err;
-  for (let attempt = 0; attempt <= GATEWAY_CONNECT_RETRY_COUNT; attempt += 1) {
-    try {
-      const res = await axios.post(GATEWAY_URL, payload, {
-        headers: {
-          Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: GATEWAY_SOCKET_TIMEOUT_MS,
-      });
-      return extractAssistantText(res.data);
-    } catch (caught) {
-      err = caught;
-      if (!isRetryableGatewayConnectError(caught) || attempt >= GATEWAY_CONNECT_RETRY_COUNT) break;
-      const delayMs = GATEWAY_CONNECT_RETRY_DELAY_MS * (attempt + 1);
-      log('warn', 'Retrying gateway connection', { code: caught.code, attempt: attempt + 1, delayMs });
-      await sleep(delayMs);
-    }
-  }
-  if (axios.isAxiosError(err)) {
-    log('error', 'Gateway request failed', {
-      error: err.message,
-      code: err.code,
-      status: err.response?.status,
-      statusText: err.response?.statusText,
-      url: err.config?.url,
-      timeout: err.config?.timeout,
-      response: err.response?.data,
+  try {
+    const res = await axios.post(GATEWAY_URL, payload, {
+      headers: {
+        Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: GATEWAY_SOCKET_TIMEOUT_MS,
     });
-  } else {
-    log('error', 'Gateway request failed', { error: err?.message || String(err) });
+
+    return extractAssistantText(res.data);
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      log('error', 'Gateway request failed', {
+        error: err.message,
+        code: err.code,
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        url: err.config?.url,
+        timeout: err.config?.timeout,
+        response: err.response?.data,
+      });
+    } else {
+      log('error', 'Gateway request failed', { error: err?.message || String(err) });
+    }
+    throw err;
   }
-  throw err;
 }
 
 

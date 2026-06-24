@@ -72,24 +72,6 @@ def lifecycle_timeout() -> float:
         return 15.0
 
 
-def telegram_gateway_dependency(registry: Any, checker: Any, aliases: Dict[str, Any]) -> tuple[bool, str]:
-    model = (os.getenv("TELEGRAM_GATEWAY_MODEL") or "fast").strip()
-    alias = aliases.get(model.lower())
-    backend_name = ""
-    if alias is not None:
-        backend_name = registry.resolve_backend_class(alias.backend) or alias.backend
-    elif ":" in model:
-        backend_name = registry.resolve_backend_class(model.split(":", 1)[0]) or model.split(":", 1)[0]
-    else:
-        backend_name = registry.resolve_backend_class(model) or model
-    status = checker.get_status(backend_name) if backend_name else None
-    if status is None:
-        return False, f"gateway model {model or 'unknown'} has no backend health state"
-    if not status.is_ready:
-        return False, f"gateway model {model} backend {backend_name} is not ready: {status.error or 'readiness check failed'}"
-    return True, f"gateway model {model} backend {backend_name} is ready"
-
-
 async def call_lifecycle_manager(method: str, path: str, *, json_body: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None) -> Dict[str, Any]:
     base = lifecycle_manager_base_url()
     if not base:
@@ -214,6 +196,7 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                     },
                 }
             )
+<<<<<<< HEAD
         lifecycle_entry = lifecycle_by_backend.get(backend_class)
         if lifecycle_entry:
             entry["lifecycle"] = lifecycle_entry
@@ -462,6 +445,251 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
     control_plane.append(telegram_entry)
 
     backends.sort(key=lambda item: item.get("backend_class") or "")
+=======
+        lifecycle_entry = lifecycle_by_backend.get(backend_class)
+        if lifecycle_entry:
+            entry["lifecycle"] = lifecycle_entry
+            for key in (
+                "active",
+                "healthy",
+                "ready",
+                "drained",
+                "drain_reason",
+                "tier",
+                "tier_rank",
+                "display_name",
+                "estimated_vram_mb",
+                "idle_observed_vram_mb",
+                "peak_observed_vram_mb",
+                "auto_start",
+                "auto_stop",
+                "requires_confirmation",
+                "compose_managed",
+                "status",
+                "status_label",
+                "status_color",
+                "status_rank",
+                "last_checked_at",
+                "last_healthy_at",
+                "last_ready_at",
+                "last_confirmed_working_at",
+                "last_unhealthy_at",
+                "last_stopped_at",
+                "last_health_error",
+                "last_action",
+                "last_action_at",
+                "last_action_error",
+                "last_restart_at",
+                "canary_enabled",
+                "canary_path",
+                "canary_method",
+                "canary_timeout_sec",
+                "canary_failure_threshold",
+                "canary_consecutive_failures",
+                "canary_last_checked_at",
+                "canary_last_success_at",
+                "canary_last_error",
+                "inflight",
+            ):
+                if key in lifecycle_entry:
+                    entry[key] = lifecycle_entry[key]
+            if lifecycle_entry.get("host"):
+                entry["lifecycle_host"] = lifecycle_entry.get("host")
+        if status is not None:
+            check_interval = float(getattr(checker, "check_interval", 30.0) or 30.0)
+            health_is_fresh = (time.time() - float(status.last_check or 0)) <= (check_interval * 3)
+            lifecycle_blocks_ready = lifecycle_entry is not None and lifecycle_entry.get("ready") is False
+            entry["healthy"] = status.is_healthy
+            if not lifecycle_blocks_ready:
+                entry["ready"] = status.is_ready
+            entry["last_check"] = status.last_check
+            if status.error:
+                entry["error"] = status.error
+                entry["health_error"] = status.error
+            elif entry.get("health_error") and status.is_ready:
+                entry["health_error"] = ""
+            if status.is_ready and health_is_fresh and not lifecycle_blocks_ready:
+                entry["active"] = True
+                entry["status"] = "gateway_ready"
+                entry["status_label"] = "Reachable and ready"
+                entry["status_color"] = "green"
+                entry["status_rank"] = 0
+                entry["health_error"] = ""
+                entry["last_health_error"] = ""
+                entry["last_action_error"] = ""
+        backends.append(entry)
+
+    telegram_entry: Dict[str, Any] = {
+        "service_id": "telegram_bot",
+        "display_name": "Telegram Bot",
+        "host": "api.telegram.org",
+        "endpoint": "https://api.telegram.org",
+    }
+    telegram_token = (os.getenv("TELEGRAM_TOKEN") or "").strip()
+    if not telegram_token:
+        telegram_entry.update(
+            {
+                "healthy": False,
+                "ready": False,
+                "active": False,
+                "status": "unconfigured",
+                "status_label": "unconfigured",
+                "status_color": "yellow",
+                "status_rank": 1,
+                "updated_at": time.time(),
+                "error": "TELEGRAM_TOKEN not configured",
+                "notes": "TELEGRAM_TOKEN not configured",
+            }
+        )
+    else:
+        telegram_api_url = f"https://api.telegram.org/bot{telegram_token}/getMe"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(telegram_api_url)
+            payload = resp.json() if resp.content else {}
+            ok = bool(resp.status_code == 200 and isinstance(payload, dict) and payload.get("ok") is True)
+            telegram_entry.update(
+                {
+                    "active": ok,
+                    "healthy": ok,
+                    "ready": ok,
+                    "status": "healthy" if ok else "error",
+                    "status_label": "healthy" if ok else "error",
+                    "status_color": "green" if ok else "red",
+                    "status_rank": 0 if ok else 3,
+                    "last_check": time.time(),
+                    "updated_at": time.time(),
+                }
+            )
+            if not ok:
+                telegram_entry["error"] = f"telegram getMe failed (status {resp.status_code})"
+                telegram_entry["notes"] = telegram_entry["error"]
+            else:
+                telegram_entry["notes"] = "Telegram getMe succeeded"
+        except Exception as exc:
+            telegram_entry.update(
+                {
+                    "active": False,
+                    "healthy": False,
+                    "ready": False,
+                    "status": "error",
+                    "status_label": "error",
+                    "status_color": "red",
+                    "status_rank": 3,
+                    "last_check": time.time(),
+                    "updated_at": time.time(),
+                    "error": f"telegram check failed: {type(exc).__name__}: {exc}",
+                    "notes": f"telegram check failed: {type(exc).__name__}: {exc}",
+                }
+            )
+
+    now = time.time()
+    control_plane: list[Dict[str, Any]] = []
+
+    lifecycle_base = lifecycle_manager_base_url()
+    lifecycle_hosts = lifecycle_payload.get("hosts") if isinstance(lifecycle_payload.get("hosts"), list) else []
+    lifecycle_backends_list = lifecycle_payload.get("backends") if isinstance(lifecycle_payload.get("backends"), list) else []
+    lifecycle_core = lifecycle_payload.get("core_services") if isinstance(lifecycle_payload.get("core_services"), list) else []
+    lifecycle_ok = bool(lifecycle_base) and not lifecycle_error
+    lifecycle_notes: list[str] = []
+    if lifecycle_base:
+        lifecycle_notes.append(f"endpoint {lifecycle_base}")
+    if lifecycle_ok:
+        lifecycle_notes.append(f"{len(lifecycle_hosts)} hosts")
+        lifecycle_notes.append(f"{len(lifecycle_backends_list)} backends")
+        if lifecycle_core:
+            lifecycle_notes.append(f"{len(lifecycle_core)} core services")
+    elif lifecycle_error:
+        lifecycle_notes.append(lifecycle_error)
+    control_plane.append(
+        {
+            "service_id": "lifecycle_manager",
+            "display_name": "Lifecycle Manager",
+            "host": service_host_from_url(lifecycle_base),
+            "endpoint": lifecycle_base,
+            "active": lifecycle_ok,
+            "healthy": lifecycle_ok,
+            "ready": lifecycle_ok,
+            "status": "reachable" if lifecycle_ok else ("unconfigured" if not lifecycle_base else "error"),
+            "status_label": "reachable" if lifecycle_ok else ("unconfigured" if not lifecycle_base else "unreachable"),
+            "status_color": "green" if lifecycle_ok else ("yellow" if not lifecycle_base else "red"),
+            "status_rank": 0 if lifecycle_ok else (1 if not lifecycle_base else 2),
+            "updated_at": float(lifecycle_payload.get("generated_at") or now) if lifecycle_ok else now,
+            "notes": " · ".join(part for part in lifecycle_notes if part),
+        }
+    )
+
+    registry_sync = get_registry_sync_status()
+    etcd_url = str(registry_sync.get("etcd_url") or "").strip()
+    etcd_error = str(registry_sync.get("last_error") or "").strip()
+    etcd_enabled = bool(registry_sync.get("enabled"))
+    etcd_ok = etcd_enabled and not etcd_error and float(registry_sync.get("last_success") or 0) > 0
+    etcd_notes: list[str] = []
+    if etcd_url:
+        etcd_notes.append(f"endpoint {etcd_url}")
+    prefix = str(registry_sync.get("prefix") or "").strip()
+    if prefix:
+        etcd_notes.append(f"prefix {prefix}")
+    seeded_count = int(registry_sync.get("last_seeded_count") or 0)
+    if seeded_count:
+        etcd_notes.append(f"{seeded_count} env-seeded")
+    if etcd_enabled:
+        etcd_notes.append(f"{int(registry_sync.get('last_etcd_count') or 0)} discovered")
+    effective_count = int(registry_sync.get("last_effective_count") or 0)
+    if effective_count:
+        etcd_notes.append(f"{effective_count} active records")
+    if etcd_error:
+        etcd_notes.append(etcd_error)
+    control_plane.append(
+        {
+            "service_id": "etcd_service_discovery",
+            "display_name": "etcd Service Discovery",
+            "host": service_host_from_url(etcd_url),
+            "endpoint": etcd_url,
+            "active": etcd_ok,
+            "healthy": etcd_ok,
+            "ready": etcd_ok,
+            "status": "healthy" if etcd_ok else ("disabled" if not etcd_enabled else ("error" if etcd_error else "pending")),
+            "status_label": "healthy" if etcd_ok else ("disabled" if not etcd_enabled else ("error" if etcd_error else "pending")),
+            "status_color": "green" if etcd_ok else ("grey" if not etcd_enabled else ("red" if etcd_error else "yellow")),
+            "status_rank": 0 if etcd_ok else (1 if not etcd_enabled else (2 if not etcd_error else 3)),
+            "updated_at": float(registry_sync.get("last_success") or registry_sync.get("last_attempt") or now),
+            "notes": " · ".join(part for part in etcd_notes if part),
+        }
+    )
+
+    checker_snapshot = checker.status_snapshot()
+    checker_running = bool(checker_snapshot.get("running"))
+    checker_notes = [
+        f"interval {float(checker_snapshot.get('check_interval') or 0):g}s",
+        f"tracking {int(checker_snapshot.get('tracked_backends') or 0)} backends",
+    ]
+    ready_count = int(checker_snapshot.get("ready_backends") or 0)
+    if ready_count > 0:
+        checker_notes.append(f"{ready_count} ready")
+    unhealthy_count = int(checker_snapshot.get("unhealthy_backends") or 0)
+    if unhealthy_count > 0:
+        checker_notes.append(f"{unhealthy_count} unhealthy")
+    control_plane.append(
+        {
+            "service_id": "gateway_health_checks",
+            "display_name": "Gateway Health Checks",
+            "host": "gateway",
+            "active": checker_running,
+            "healthy": checker_running,
+            "ready": checker_running,
+            "status": "running" if checker_running else "stopped",
+            "status_label": "running" if checker_running else "stopped",
+            "status_color": "green" if checker_running else "red",
+            "status_rank": 0 if checker_running else 2,
+            "updated_at": float(checker_snapshot.get("last_check") or now),
+            "notes": " · ".join(part for part in checker_notes if part),
+        }
+    )
+    control_plane.append(telegram_entry)
+
+    backends.sort(key=lambda item: item.get("backend_class") or "")
+>>>>>>> 393b8102400c719df01f25f875bd4feba381cafc
     return {
         "generated_at": time.time(),
         "settings": {

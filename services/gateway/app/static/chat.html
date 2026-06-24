@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <!doctype html>
 <html lang="en">
   <head>
@@ -861,3 +862,869 @@
     <script src="/static/chat.js?v=18"></script>
   </body>
 </html>
+=======
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Gateway Chat UI</title>
+    <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0d12;
+      --bg-elevated: #0f151f;
+      --panel: #111821;
+      --panel-strong: #141c27;
+      --border: rgba(231,237,246,0.12);
+      --border-strong: rgba(231,237,246,0.2);
+      --text: #e7edf6;
+      --muted: #a9b4c3;
+      --accent: #6fb8ff;
+      --accent-2: #8be3c9;
+    }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% -10%, rgba(111,184,255,0.16), transparent 60%),
+          radial-gradient(900px 500px at 80% 0%, rgba(139,227,201,0.12), transparent 55%),
+          linear-gradient(180deg, #0a0d12 0%, #0c1016 100%);
+        color: var(--text);
+      }
+      main { max-width: 980px; margin: 0 auto; padding: 16px; }
+      header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 12px; }
+      h1 { margin: 0; font-size: 16px; font-weight: 650; }
+      .hint { font-size: 12px; color: var(--muted); }
+      .topbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; position: relative; }
+      select, input, textarea, button { font: inherit; }
+      select, input, textarea {
+        box-sizing: border-box;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(20,26,34,0.95), rgba(14,19,27,0.95));
+        color: var(--text);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      select option,
+      select optgroup {
+        background: #0f151f;
+        color: var(--text);
+      }
+      button {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(22,28,38,0.95), rgba(15,20,28,0.95));
+        color: var(--text);
+        cursor: pointer;
+        transition: transform 0.08s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 10px 20px rgba(8,12,18,0.35);
+      }
+      button:hover { background: linear-gradient(180deg, rgba(26,34,45,0.98), rgba(16,22,31,0.98)); border-color: rgba(111,184,255,0.4); }
+      button:active { transform: translateY(1px) scale(0.98); background: rgba(111,184,255,0.14); }
+      button:focus-visible { outline: 2px solid rgba(111,184,255,0.6); outline-offset: 2px; }
+      button:disabled { opacity: 0.6; cursor: default; transform: none; }
+      .chat {
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95));
+        border-radius: 12px;
+        padding: 12px;
+        min-height: 340px;
+        height: 60vh;
+        overflow-y: auto;
+        box-shadow: 0 12px 30px rgba(6,10,16,0.35);
+      }
+      .msg { display:flex; flex-direction:column; gap:6px; padding: 10px; border-radius: 12px; margin: 10px 0; border: 1px solid rgba(231,237,246,0.10); background: rgba(14,20,30,0.65); }
+      .msg.user { background: linear-gradient(180deg, rgba(50,110,255,0.16), rgba(20,26,36,0.7)); }
+      .msg.assistant { background: linear-gradient(180deg, rgba(231,237,246,0.08), rgba(18,24,32,0.7)); }
+      .msg.system { background: linear-gradient(180deg, rgba(255, 200, 50, 0.12), rgba(32,26,18,0.6)); }
+      .meta { font-size: 12px; color: var(--muted); }
+      .content { white-space: pre-wrap; line-height: 1.5; }
+      .content.markdown { white-space: normal; }
+      .markdown .md-p { margin: 0.35rem 0; white-space: pre-wrap; }
+      .markdown .md-heading { margin: 0.45rem 0 0.3rem; line-height: 1.25; font-weight: 700; }
+      .markdown .md-heading-1 { font-size: 1.28rem; }
+      .markdown .md-heading-2 { font-size: 1.14rem; }
+      .markdown .md-heading-3 { font-size: 1.02rem; }
+      .markdown .md-list { margin: 0.35rem 0; padding-left: 1.35rem; }
+      .markdown .md-list li { margin: 0.18rem 0; }
+      .markdown .md-quote { margin: 0.45rem 0; padding: 0.2rem 0 0.2rem 0.8rem; border-left: 3px solid rgba(111,184,255,0.55); color: #c8d5e7; }
+      .markdown .inline-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.93em; padding: 0.08rem 0.32rem; border-radius: 5px; background: rgba(231,237,246,0.10); color: #f3dc96; border: 1px solid rgba(231,237,246,0.08); }
+      .markdown a { color: #9fc2ff; text-decoration-color: rgba(159,194,255,0.45); }
+      .code-block { margin: 0.65rem 0; border: 1px solid rgba(111,184,255,0.20); border-radius: 8px; overflow: hidden; background: #070b10; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); }
+      .code-block-header { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border-bottom: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(18,25,35,0.96), rgba(10,14,20,0.96)); }
+      .code-block-lang { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: #93a4ba; text-transform: uppercase; letter-spacing: 0.06em; }
+      .code-copy { padding: 4px 8px; border-radius: 6px; font-size: 11px; box-shadow: none; background: rgba(111,184,255,0.10); border-color: rgba(111,184,255,0.24); }
+      .code-block pre { margin: 0; padding: 11px 12px; overflow-x: auto; white-space: pre; line-height: 1.48; }
+      .code-block code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: #dfe7f3; }
+      .md-code-comment { color: #71829a; }
+      .md-code-string { color: #95d99f; }
+      .md-code-number { color: #f0c85a; }
+      .md-code-keyword { color: #8fbaff; font-weight: 650; }
+      .md-code-function { color: #8be3c9; }
+      .md-code-tag { color: #ff9aa8; }
+      .thinking-line { font-size: 12px; color: #93a4ba; font-style: italic; margin-bottom: 6px; }
+      .thinking-panel {
+        display: none;
+        margin-bottom: 8px;
+        border: 1px solid rgba(231,237,246,0.08);
+        border-radius: 10px;
+        background: rgba(10, 14, 20, 0.55);
+        overflow: hidden;
+      }
+      .thinking-panel[open] {
+        background: rgba(10, 14, 20, 0.72);
+      }
+      .thinking-summary {
+        cursor: pointer;
+        list-style: none;
+        font-size: 11px;
+        line-height: 1.4;
+        letter-spacing: 0.02em;
+        color: #9db0c8;
+        padding: 8px 10px;
+        user-select: none;
+      }
+      .thinking-summary::-webkit-details-marker { display: none; }
+      .thinking-summary::before {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin-right: 9px;
+        border-right: 2px solid #8fa2ba;
+        border-bottom: 2px solid #8fa2ba;
+        transform: rotate(-45deg);
+        transition: transform 0.14s ease, border-color 0.14s ease;
+      }
+      .thinking-summary:hover::before { border-color: #6fb8ff; }
+      .thinking-panel[open] .thinking-summary::before {
+        transform: rotate(45deg);
+      }
+      .thinking-body {
+        white-space: pre-wrap;
+        font-size: 11px;
+        line-height: 1.45;
+        color: #8e9fb5;
+        padding: 0 10px 10px;
+        border-top: 1px solid rgba(231,237,246,0.06);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .composer { margin-top: 12px; display:flex; gap:10px; }
+      .composer-main { flex: 1; display:flex; flex-direction:column; gap:8px; min-width:0; }
+      .composer textarea { width: 100%; min-height: 64px; resize: vertical; }
+      .composer-preview { max-height: 240px; overflow:auto; border: 1px solid rgba(111,184,255,0.20); border-radius: 10px; padding: 9px 10px; background: rgba(7,11,16,0.72); }
+      .right { display:flex; flex-direction:column; gap:10px; }
+      .pill {
+        display:inline-flex;
+        gap:8px;
+        align-items:center;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      img.gen { max-width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--border); }
+      .audio-card { display:flex; flex-direction:column; gap:10px; width: 100%; max-width: 640px; }
+      .audio-controls { display:flex; flex-direction:column; gap:6px; }
+      .audio-meta { display:flex; justify-content:space-between; font-size: 12px; color: #a9b4c3; }
+      .audio-sliders { display:flex; gap:10px; align-items:center; }
+      .audio-sliders input[type="range"] { flex: 1; }
+      .msg audio { width: 100%; max-width: 520px; }
+      /* Progress bar */
+      .progress {
+        width: 100%;
+        background: rgba(231,237,246,0.06);
+        border-radius: 8px;
+        height: 10px;
+        overflow: hidden;
+        margin-top: 8px;
+      }
+      .progress-inner { height: 10px; background: linear-gradient(90deg,var(--accent),var(--accent-2)); width: 100%; }
+      .progress-inner.indeterminate { animation: progress-slide 1.2s ease-in-out infinite; transform-origin: left; }
+      .progress-text { font-size: 12px; color: var(--muted); margin-top: 6px; }
+      @keyframes progress-slide {
+        0% { transform: translateX(-70%); }
+        50% { transform: translateX(0%); }
+        100% { transform: translateX(70%); }
+      }
+      @media (max-width: 760px) { .composer { flex-direction: column; } }
+      /* Modal styles */
+      .modal { display: none; }
+      .modal[aria-hidden="false"] { display: block; position: fixed; inset: 0; z-index: 1200; }
+      .modal-backdrop { position: absolute; inset: 0; background: rgba(4,8,12,0.7); backdrop-filter: blur(2px); }
+      .modal-panel {
+        position: relative;
+        width: 100%;
+        max-width: 760px;
+        max-height: calc(100vh - 32px);
+        margin: 16px auto;
+        background: linear-gradient(180deg, rgba(13,20,30,0.96), rgba(9,14,22,0.96));
+        border-radius: 12px;
+        padding: 16px;
+        border: 1px solid rgba(231,237,246,0.12);
+        color: var(--text);
+        z-index: 1210;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.45);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .modal-panel h3 { font-size: 16px; }
+      .modal-panel label { display:block; font-size:13px; }
+      #settingsForm { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+      /* Apps dropdown menu */
+      .apps-menu {
+        position: absolute;
+        right: 0;
+        top: 44px;
+        min-width: 200px;
+        background: linear-gradient(180deg, rgba(13,20,30,0.98), rgba(8,12,20,0.98));
+        border: 1px solid rgba(231,237,246,0.12);
+        border-radius: 8px;
+        padding: 6px;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.6);
+        z-index: 1200;
+        display: none;
+      }
+      .apps-menu .menu-item { display: block; padding: 8px 10px; color: #e7edf6; text-decoration: none; border-radius: 6px; }
+      .apps-menu .menu-item:hover { background: rgba(231,237,246,0.03); }
+      .apps-menu .menu-sep { height: 1px; background: rgba(231,237,246,0.04); margin: 6px 0; }
+      .apps-btn { display:inline-flex; align-items:center; gap:8px; }
+      .apps-btn .caret {
+        display:inline-flex;
+        width:10px;
+        height:10px;
+        margin-left:2px;
+        align-items:center;
+        justify-content:center;
+      }
+      .apps-btn .caret::before {
+        content:"";
+        width:6px;
+        height:6px;
+        border-right:2px solid #93a4ba;
+        border-bottom:2px solid #93a4ba;
+        transform:rotate(45deg);
+        transition:transform 0.16s ease, border-color 0.16s ease;
+      }
+      .apps-btn:hover .caret::before { border-color:#6fb8ff; }
+      .apps-btn[aria-expanded="true"] .caret::before { transform:rotate(225deg); }
+      .apps-menu[aria-hidden="true"] { display: none; }
+      .apps-menu[aria-hidden="false"] { display: block; }
+      .status-panel {
+        margin-top: 12px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 8px 12px;
+        background: linear-gradient(180deg, rgba(16,22,30,0.92), rgba(10,15,22,0.92));
+        box-shadow: 0 10px 24px rgba(6,10,16,0.35);
+      }
+      .status-panel summary { cursor: pointer; font-weight: 600; color: #e7edf6; }
+      .status-body { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+      .status-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .status-list { display: flex; flex-direction: column; gap: 7px; }
+      .status-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #93a4ba; margin-top: 2px; }
+      .status-overview-grid { display: flex; flex-wrap: wrap; gap: 6px; border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 7px; background: rgba(14,20,30,0.42); }
+      .status-overview-card { display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid rgba(231,237,246,0.08); border-radius: 999px; padding: 4px 8px; background: rgba(231,237,246,0.04); }
+      .status-overview-value { font-size: 12px; font-weight: 700; color: #e7edf6; }
+      .status-overview-label { font-size: 11px; color: #93a4ba; }
+      .status-compact-hosts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 7px; }
+      .status-compact-host { display: flex; flex-direction: column; gap: 5px; max-width: 100%; border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 7px 8px; background: rgba(14,20,30,0.42); }
+      .status-compact-host.stale { border-color: rgba(240,200,90,0.72); box-shadow: inset 3px 0 0 rgba(240,200,90,0.70); }
+      .status-compact-host-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+      .status-compact-host-line { font-size: 11px; color: #93a4ba; overflow-wrap: anywhere; }
+      .status-compact-meter { height: 6px; border-radius: 999px; overflow: hidden; background: rgba(231,237,246,0.08); border: 1px solid rgba(231,237,246,0.08); }
+      .status-compact-meter-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #227a52, #56c57e); }
+      .status-compact-meter-fill.warn { background: linear-gradient(90deg, #c99424, #f0c85a); }
+      .status-compact-meter-fill.bad { background: linear-gradient(90deg, #a6162a, #ff4d61); }
+      .status-resource-link { color: #cfe7ff; text-decoration: none; border: 1px solid rgba(111,184,255,0.34); border-radius: 999px; padding: 6px 10px; font-size: 12px; background: rgba(111,184,255,0.10); }
+      .status-resource-link:hover { border-color: rgba(111,184,255,0.58); }
+      .status-host-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+      .status-host-card { border: 1px solid rgba(231,237,246,0.08); border-radius: 10px; padding: 10px; background: linear-gradient(180deg, rgba(20,28,38,0.9), rgba(14,20,28,0.9)); }
+      .status-host-card.stale { border-color: rgba(240,200,90,0.72); box-shadow: inset 3px 0 0 rgba(240,200,90,0.70); }
+      .status-host-name { font-weight: 600; }
+      .status-resource-row { margin-top: 9px; }
+      .status-bar { height: 11px; border-radius: 999px; border: 1px solid rgba(231,237,246,0.10); background: rgba(231,237,246,0.05); overflow: hidden; margin-top: 6px; }
+      .status-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #6fdda8, #6fb8ff); }
+      .status-bar-fill.warn { background: linear-gradient(90deg, #f0c85a, #f59f53); }
+      .status-bar-fill.bad { background: linear-gradient(90deg, #f27474, #ff8585); }
+      .status-group { display: flex; flex-direction: column; gap: 8px; }
+      .status-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #93a4ba; }
+      .status-group-list { display: flex; flex-direction: column; gap: 8px; }
+      .status-row { display: flex; flex-direction: column; gap: 5px; padding: 8px 9px; border-radius: 8px; border: 1px solid rgba(231,237,246,0.08); background: linear-gradient(180deg, rgba(20,28,38,0.82), rgba(14,20,28,0.82)); }
+      .status-row.stale { border-color: rgba(240,200,90,0.72); box-shadow: inset 4px 0 0 rgba(240,200,90,0.72); }
+      .status-row.ok { background: rgba(24, 126, 76, 0.16); border-color: rgba(42, 178, 103, 0.46); }
+      .status-row.warn { background: rgba(255, 200, 50, 0.12); border-color: rgba(255, 200, 50, 0.28); }
+      .status-row.bad { background: rgba(140, 18, 36, 0.22); border-color: rgba(255, 73, 97, 0.58); }
+      .status-row.traded { background: rgba(111,184,255,0.14); border-color: rgba(111,184,255,0.34); }
+      .status-row.inactive-unhealthy { background: rgba(224,0,255,0.30); border-color: rgba(255,0,255,0.80); }
+      .status-row.inactive-unknown { background: rgba(220,228,240,0.12); border-color: rgba(220,228,240,0.38); }
+      .status-row.backend-link { cursor: pointer; }
+      .status-row.backend-link:hover { border-color: rgba(111,184,255,0.58); }
+      .status-row.backend-link:focus-visible { outline: 2px solid rgba(111,184,255,0.62); outline-offset: 2px; }
+      .status-row.tier-crucial { box-shadow: inset 4px 0 0 rgba(111,184,255,0.92), 0 0 0 1px rgba(111,184,255,0.16); }
+      .status-row-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+      .status-name { font-weight: 600; }
+      .status-name-alias { font-weight: 400; color: #93a4ba; }
+      .status-backend-meta { margin-top: 2px; font-size: 12px; color: #93a4ba; overflow-wrap: anywhere; }
+      .status-capabilities { display: flex; gap: 6px; flex-wrap: wrap; }
+      .status-capability { font-size: 11px; padding: 3px 7px; border-radius: 999px; border: 1px solid rgba(111,184,255,0.28); color: #cfe7ff; background: rgba(111,184,255,0.10); }
+      .status-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+      .status-badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid transparent; }
+      .status-badge.ok { background: rgba(111,184,255,0.18); color: #cfe7ff; border-color: rgba(111,184,255,0.4); }
+      .status-badge.warn { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
+      .status-badge.bad { background: rgba(255,120,120,0.12); color: #ffb6b6; border-color: rgba(255,120,120,0.3); }
+      .status-badge.green { background: rgba(0,120,72,0.24); color: #98f0bf; border-color: rgba(56,197,126,0.72); }
+      .status-badge.blue { background: rgba(111,184,255,0.16); color: #cfe7ff; border-color: rgba(111,184,255,0.42); }
+      .status-badge.purple { background: rgba(224,0,255,0.45); color: #ffd0ff; border-color: rgba(255,0,255,0.95); }
+      .status-badge.grey { background: rgba(235,242,250,0.18); color: #f8fbff; border-color: rgba(235,242,250,0.62); }
+      .status-badge.red { background: rgba(170,22,42,0.28); color: #ff9aa8; border-color: rgba(255,73,97,0.78); }
+      .status-badge.yellow { background: rgba(255,200,50,0.12); color: #f6d98b; border-color: rgba(255,200,50,0.3); }
+      .status-badge.crucial { background: rgba(111,184,255,0.16); color: #d7ecff; border-color: rgba(111,184,255,0.52); }
+      .status-badge.high { background: rgba(240,200,90,0.12); color: #f3dc96; border-color: rgba(240,200,90,0.36); }
+      .status-badge.optional { background: rgba(220,228,240,0.11); color: #dfe7f3; border-color: rgba(220,228,240,0.34); }
+      .status-detail { font-size: 12px; color: var(--muted); }
+      .status-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+      .status-actions button { padding: 6px 8px; border-radius: 8px; font-size: 11px; box-shadow: none; }
+      .status-actions button[data-danger="true"] { border-color: rgba(255,133,133,0.30); color: #ffd5d5; }
+      .status-aliases { font-size: 12px; color: #b7c4d6; }
+      .status-error { font-size: 12px; color: #ffb6b6; }
+      .status-empty { font-size: 12px; color: #93a4ba; }
+      .loading-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #93a4ba; }
+      .loading-indicator::before {
+        content: "";
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 2px solid rgba(231,237,246,0.18);
+        border-top-color: #6fb8ff;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .attachments-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+      .attachments-panel .attachments-list { display: flex; flex-direction: column; gap: 6px; }
+      .attachment-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(231,237,246,0.12); background: linear-gradient(180deg, rgba(20,26,36,0.8), rgba(14,19,28,0.8)); font-size: 12px; }
+      .attachment-row .attachment-name { color: #dfe7f3; }
+      .attachment-row .attachment-meta { color: #93a4ba; font-size: 11px; }
+      .attachment-row button { padding: 4px 8px; font-size: 11px; }
+      .message-attachments { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+      .message-attachments a { color: #9fc2ff; }
+      .settings-layout { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: start; min-height: 0; overflow: hidden; }
+      .settings-menu { display: flex; flex-direction: column; gap: 6px; }
+      .settings-menu button { width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; }
+      .settings-menu button.active { background: rgba(111,184,255,0.16); border-color: rgba(111,184,255,0.4); }
+      .settings-content { min-height: 0; overflow-y: auto; max-height: calc(100vh - 178px); padding-right: 4px; }
+      .settings-section { display: none; flex-direction: column; gap: 8px; }
+      .settings-section.active { display: flex; }
+      .user-llm-provider-card {
+        border: 1px solid rgba(231,237,246,0.08);
+        border-radius: 8px;
+        padding: 10px;
+        margin-top: 8px;
+        background: rgba(12,18,27,0.40);
+      }
+      .user-llm-provider-card.key-saved {
+        border-color: rgba(56,197,126,0.64);
+        background: rgba(20,95,58,0.18);
+      }
+      .user-llm-provider-card.key-missing {
+        border-color: rgba(255,133,133,0.38);
+        background: rgba(100,22,34,0.14);
+      }
+      .user-llm-provider-card.key-pending {
+        border-color: rgba(240,200,90,0.52);
+        background: rgba(96,74,22,0.16);
+      }
+      input.user-llm-key-input.key-saved {
+        border-color: rgba(56,197,126,0.72);
+        box-shadow: 0 0 0 1px rgba(56,197,126,0.20), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      input.user-llm-key-input.key-missing {
+        border-color: rgba(255,133,133,0.62);
+        box-shadow: 0 0 0 1px rgba(255,133,133,0.15), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      input.user-llm-key-input.key-pending {
+        border-color: rgba(240,200,90,0.72);
+        box-shadow: 0 0 0 1px rgba(240,200,90,0.18), inset 0 1px 0 rgba(255,255,255,0.04);
+      }
+      .user-llm-key-status.ok { color: #98f0bf; }
+      .user-llm-key-status.bad { color: #ffc3c3; }
+      .user-llm-key-status.pending { color: #f3dc96; }
+      .user-llm-model-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+      .user-llm-model-summary { margin-top: 6px; }
+      .user-llm-model-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+        max-height: 220px;
+        overflow-y: auto;
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(231,237,246,0.08);
+        background: rgba(7,12,20,0.32);
+      }
+      .user-llm-model-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.03);
+        line-height: 1.3;
+        word-break: break-word;
+      }
+      .user-llm-model-option input { width: auto; margin-top: 2px; }
+      .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+      header > div:first-child { flex: 1 1 420px; min-width: 220px; }
+      .header-right { flex: 0 0 auto; max-width: 62%; }
+      .topbar { justify-content: flex-end; }
+      .topbar-secondary { max-width: 100%; }
+      .nav-icon { display:inline-flex; align-items:center; justify-content:center; width:1.1em; min-width:1.1em; color:#cfe7ff; }
+      .nav-icon svg { display:block; }
+      .header-status-row { display:flex; align-items:center; gap:8px; min-height:20px; }
+      .status-indicator {
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        padding:2px 8px;
+        border-radius:999px;
+        border:1px solid rgba(231,237,246,0.08);
+        background: rgba(231,237,246,0.04);
+        color: #9fb3d6;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        box-shadow: none;
+      }
+      .status-indicator::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #8a96a8;
+      }
+      .status-indicator.active {
+        color: #cfe7ff;
+        border-color: rgba(111,184,255,0.22);
+        background: rgba(111,184,255,0.08);
+      }
+      .status-indicator.active::before {
+        background: #6fb8ff;
+      }
+      @media (max-width: 760px) {
+        .header-right { max-width: 100%; }
+        .settings-layout { grid-template-columns: 1fr; }
+        .settings-menu { flex-direction: row; flex-wrap: wrap; }
+        .settings-menu button { width: auto; }
+        .settings-content { max-height: calc(100vh - 250px); }
+      }
+    </style>
+    <link rel="stylesheet" href="/static/ui_roles.css" />
+    <link rel="stylesheet" href="/static/select_marquee.css?v=2" />
+  </head>
+  <body>
+    <main>
+      <link rel="icon" href="/static/ai-infra.png" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png" />
+      <link rel="manifest" href="/static/site.webmanifest">
+      <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#2563eb" />
+      <meta name="msapplication-TileColor" content="#0b0d10">
+      <meta name="msapplication-config" content="/static/browserconfig.xml">
+      <meta name="theme-color" content="#0b0d10">
+      <header>
+        <div>
+          <h1>Gateway chat</h1>
+          <div class="hint">Tokenless UI gated by <code>UI_IP_ALLOWLIST</code>. Streams status + output tokens (no hidden chain-of-thought).</div>
+        </div>
+        <div class="header-right">
+        <div class="topbar">
+          <button id="uiRefreshBtn" class="pill" type="button" data-ui-role="secondary">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.4 6.4L4 8.7"/><path d="M5.8 15A7 7 0 0 0 17.6 17.6L20 15.3"/></svg></span>
+            <span>Refresh</span>
+          </button>
+          <a id="topResourcesLink" class="pill" href="/ui/resources" data-ui-role="nav">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+            <span>Resources</span>
+          </a>
+          <div style="position:relative;">
+            <button id="appsBtn" class="pill apps-btn" type="button" aria-expanded="false" data-ui-role="menu">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></span>
+              <span class="apps-label">Apps</span>
+              <span class="caret" aria-hidden="true"></span>
+            </button>
+            <div id="appsMenu" class="apps-menu" hidden aria-hidden="true">
+              <a class="menu-item" href="/ui/image">Image UI</a>
+              <a class="menu-item" href="/ui/music">Music UI</a>
+              <a class="menu-item" href="/ui/video">Video UI</a>
+              <a class="menu-item" href="/ui/personaplex">PersonaPlex UI</a>
+              <a class="menu-item" href="/ui/tts">Text-to-speech</a>
+              <a class="menu-item" href="/ui/voice-clone">Voice Clone</a>
+              <a class="menu-item" href="/ui/ocr">OCR / Scan</a>
+              <a class="menu-item" href="/ui/coding">Coding Workspaces</a>
+              <a class="menu-item" href="/ui/tasks">Scheduled Tasks</a>
+              <a class="menu-item" href="/ui/sentinel">Sentinel</a>
+              <a class="menu-item" href="/ui/resources">Resources</a>
+              <div class="menu-sep"></div>
+              <a id="modelAdminLink" class="menu-item admin-only" href="/ui/admin/models" style="display:none">Model Admin</a>
+              <a id="adminUiLink" class="menu-item admin-only" href="/ui/admin/users" style="display:none">Admin UI</a>
+            </div>
+          </div>
+          <button id="settingsBtn" type="button" title="Settings" data-ui-role="menu">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M12 8.3A3.7 3.7 0 1 0 12 15.7A3.7 3.7 0 0 0 12 8.3Z"/><path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l2-1.5-2-3.4-2.4 1a8 8 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.6A8 8 0 0 0 7 6.6l-2.4-1-2 3.4 2 1.5a7.8 7.8 0 0 0 0 3l-2 1.5 2 3.4 2.4-1a8 8 0 0 0 2.6 1.5l.4 2.6h4l.4-2.6a8 8 0 0 0 2.6-1.5l2.4 1 2-3.4-2-1.5Z"/></svg></span>
+            <span>Settings</span>
+          </button>
+          <button id="apiKeyStatus" type="button" class="status-indicator" data-ui-role="status" style="display:none">API key active</button>
+        </div>
+        <div class="topbar topbar-secondary">
+          <span class="pill">
+            <span class="hint">Model</span>
+            <select id="model" data-marquee-select data-marquee-width="24rem"></select>
+            <button id="loadModels" type="button" data-ui-role="secondary">Load</button>
+          </span>
+          <button id="clear" type="button" data-ui-role="secondary">Clear message box</button>
+          <button id="clearChat" type="button" data-ui-role="danger">Clear Chat</button>
+          <button id="resetSession" type="button" data-ui-role="danger">Reset Session</button>
+        </div>
+        </div>
+      </header>
+
+      <div id="chat" class="chat" aria-live="polite"></div>
+
+      <div class="composer">
+        <div class="composer-main">
+          <textarea id="input" placeholder="Message (try: /image a cozy cabin in snow at dusk)"></textarea>
+          <div id="inputPreview" class="composer-preview markdown" hidden></div>
+        </div>
+        <div class="right">
+          <button id="send" data-ui-role="action">Send</button>
+          <button id="attachBtn" type="button" data-ui-role="secondary">Attach file</button>
+          <div class="hint">Chat streams from <code>/ui/api/chat_stream</code>. Images use <code>/ui/api/image</code>.</div>
+        </div>
+      </div>
+      <div class="attachments-panel">
+        <input id="fileInput" type="file" multiple hidden />
+        <div id="attachmentsList" class="attachments-list" hidden></div>
+      </div>
+
+      <details open style="margin-top:10px">
+        <summary>Command legend</summary>
+        <div style="margin-top:8px; font-size:13px; color:#c6d2e4;">
+          <ul>
+            <li><strong>/image</strong> — generate images via the Image UI/API. Works: use <code>/image a cozy cabin at dusk</code> or click <a href="/ui/image">Image UI</a>.</li>
+            <li><strong>/music</strong> — generate short music clips via the Music UI/API. Works: try <code>/music chill lo-fi beat</code> or open <a href="/ui/music">Music UI</a>.</li>
+            <li><strong>/speech</strong> (or use the Text-to-Speech UI) — synthesize audio via TTS backends. Works: open <a href="/ui/tts">Text-to-speech</a> or use the TTS controls after chat output.</li>
+            <li><strong>/clone</strong> — open the Voice Library UI to upload and manage reference clips, then use them from <a href="/ui/tts">Text-to-speech</a>. Open <a href="/ui/voice-clone">Voice Clone</a>.</li>
+            <li><strong>/scan</strong> — run OCR against an image URL (LightOnOCR). Works: <code>/scan https://example.org/photo.jpg</code> or open <a href="/ui/ocr">OCR UI</a> if available.</li>
+            <li><strong>/video</strong> — video generation UI via SkyReels-V2. Open <a href="/ui/video">Video UI</a>.</li>
+            <li><strong>/code</strong> — open an isolated coding workspace. Works: <code>/code update the gateway docs</code> or open <a href="/ui/coding">Coding Workspaces</a>.</li>
+          </ul>
+          <div class="hint" style="margin-top:6px">Notes: Chat commands require that the UI is reachable (see <code>UI_IP_ALLOWLIST</code>) and you may need to be authenticated for persisted storage.</div>
+        </div>
+      </details>
+
+      <details id="backendStatusPanel" class="status-panel">
+        <summary>Resources and backend status</summary>
+        <div class="status-body">
+          <div class="status-meta">
+            <span id="backendStatusUpdated" class="hint">Last updated: --</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <a class="status-resource-link" href="/ui/resources">Open Resources</a>
+              <button id="backendStatusRefresh" type="button" data-ui-role="secondary">Refresh</button>
+              <span id="backendStatusSpinner" class="loading-indicator" hidden>Refreshing…</span>
+            </div>
+          </div>
+          <div id="backendStatusError" class="status-error" hidden></div>
+          <div id="backendStatusList" class="status-list">
+            <div class="status-empty">Loading backend status...</div>
+          </div>
+        </div>
+      </details>
+    </main>
+
+    <!-- Settings modal -->
+    <div id="settingsModal" class="modal" aria-hidden="true" role="dialog" aria-modal="true">
+      <div class="modal-backdrop" id="settingsBackdrop"></div>
+      <div class="modal-panel" role="document">
+        <header style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <h3 style="margin:0">User Settings</h3>
+          <button id="settingsClose" aria-label="Close" data-ui-role="secondary">✕</button>
+        </header>
+        <form id="settingsForm">
+          <div class="settings-layout">
+            <nav class="settings-menu">
+              <button type="button" data-section="settings-backends" class="active" data-ui-role="menu">Backends</button>
+              <button type="button" data-section="settings-profile" data-ui-role="menu">Profile</button>
+              <button type="button" data-section="settings-ui" data-ui-role="menu">UI</button>
+              <button type="button" data-section="settings-coding" data-ui-role="menu">Coding</button>
+              <button type="button" data-section="settings-llms" data-ui-role="menu">LLMs</button>
+              <button type="button" data-section="settings-telegram" data-ui-role="menu">Telegram</button>
+              <button type="button" data-section="settings-security" data-ui-role="menu">Security</button>
+            </nav>
+            <div class="settings-content">
+              <section id="settings-backends" class="settings-section active">
+                <label>Preferred chat model
+                  <select id="settings_model_preference" data-marquee-select></select>
+                </label>
+                <label>Preferred TTS backend
+                  <select id="settings_tts_backend"><option value="">(default)</option></select>
+                </label>
+                <label>Preferred TTS voice
+                  <select id="settings_tts_voice"><option value="">(default)</option></select>
+                </label>
+              </section>
+              <section id="settings-profile" class="settings-section">
+                <label>System prompt
+                  <textarea id="settings_system_prompt" placeholder="Optional system prompt to guide assistant for your account" rows="3" style="min-width:100%"></textarea>
+                </label>
+                <label>Tone guidance
+                  <input type="text" id="settings_profile_tone" placeholder="e.g. concise, friendly, expert" />
+                </label>
+              </section>
+              <section id="settings-ui" class="settings-section">
+                <label>Show timestamps
+                  <input type="checkbox" id="settings_show_timestamps" />
+                </label>
+                <label>Audio volume
+                  <input type="range" id="settings_audio_volume" min="0" max="1" step="0.01" />
+                </label>
+                <label>Auto-play TTS
+                  <input type="checkbox" id="settings_autoplay_tts" />
+                </label>
+              </section>
+              <section id="settings-coding" class="settings-section">
+                <label>Preferred coding model
+                  <select id="settings_coding_model_preference" data-marquee-select></select>
+                </label>
+                <fieldset id="settings_coding_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Coding workspaces</legend>
+                  <div id="settings_coding_git_token_status" class="hint" style="margin-bottom:8px"></div>
+                  <label>GitHub token
+                    <input type="password" id="settings_coding_git_token" autocomplete="off" placeholder="Leave blank to keep existing token" />
+                  </label>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_clear_coding_git_token" style="width:auto" />
+                    Clear saved GitHub token
+                  </label>
+                </fieldset>
+              </section>
+              <section id="settings-llms" class="settings-section">
+                <fieldset id="settings_user_llm_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Commercial LLM API keys</legend>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_user_llm_enabled" style="width:auto" />
+                    Enable user API-key models
+                  </label>
+                  <div class="hint" style="margin-bottom:8px">OpenRouter can expose Anthropic, Google, and other commercial models through one OpenAI-compatible API.</div>
+
+                  <div id="settings_user_llm_openai_card" class="user-llm-provider-card">
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openai_enabled" style="width:auto" />
+                      OpenAI
+                    </label>
+                    <div id="settings_user_llm_openai_status" class="hint" style="margin-bottom:6px"></div>
+                    <label>API key
+                      <input type="password" id="settings_user_llm_openai_key" class="user-llm-key-input" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                    </label>
+                    <label>Base URL
+                      <input type="text" id="settings_user_llm_openai_base_url" autocomplete="off" placeholder="https://api.openai.com/v1" />
+                    </label>
+                    <div class="user-llm-model-actions">
+                      <button type="button" id="settings_user_llm_openai_load_models" data-ui-role="secondary">Load models</button>
+                      <button type="button" id="settings_user_llm_openai_select_all_models" data-ui-role="secondary">Select all</button>
+                      <button type="button" id="settings_user_llm_openai_clear_models" data-ui-role="secondary">Clear all</button>
+                      <span id="settings_user_llm_openai_models_status" class="hint"></span>
+                    </div>
+                    <div id="settings_user_llm_openai_models_summary" class="hint user-llm-model-summary"></div>
+                    <div id="settings_user_llm_openai_models_list" class="user-llm-model-list"></div>
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openai_clear" style="width:auto" />
+                      Clear saved OpenAI key
+                    </label>
+                  </div>
+
+                  <div id="settings_user_llm_openrouter_card" class="user-llm-provider-card">
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openrouter_enabled" style="width:auto" />
+                      OpenRouter
+                    </label>
+                    <div id="settings_user_llm_openrouter_status" class="hint" style="margin-bottom:6px"></div>
+                    <label>API key
+                      <input type="password" id="settings_user_llm_openrouter_key" class="user-llm-key-input" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                    </label>
+                    <label>Base URL
+                      <input type="text" id="settings_user_llm_openrouter_base_url" autocomplete="off" placeholder="https://openrouter.ai/api/v1" />
+                    </label>
+                    <div class="user-llm-model-actions">
+                      <button type="button" id="settings_user_llm_openrouter_load_models" data-ui-role="secondary">Load models</button>
+                      <button type="button" id="settings_user_llm_openrouter_select_all_models" data-ui-role="secondary">Select all</button>
+                      <button type="button" id="settings_user_llm_openrouter_clear_models" data-ui-role="secondary">Clear all</button>
+                      <span id="settings_user_llm_openrouter_models_status" class="hint"></span>
+                    </div>
+                    <div id="settings_user_llm_openrouter_models_summary" class="hint user-llm-model-summary"></div>
+                    <div id="settings_user_llm_openrouter_models_list" class="user-llm-model-list"></div>
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_openrouter_clear" style="width:auto" />
+                      Clear saved OpenRouter key
+                    </label>
+                  </div>
+
+                  <div id="settings_user_llm_custom_openai_card" class="user-llm-provider-card">
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_custom_openai_enabled" style="width:auto" />
+                      Custom OpenAI-compatible
+                    </label>
+                    <div id="settings_user_llm_custom_openai_status" class="hint" style="margin-bottom:6px"></div>
+                    <label>API key
+                      <input type="password" id="settings_user_llm_custom_openai_key" class="user-llm-key-input" autocomplete="off" placeholder="Leave blank to keep existing key" />
+                    </label>
+                    <label>Base URL
+                      <input type="text" id="settings_user_llm_custom_openai_base_url" autocomplete="off" placeholder="https://example.com/v1" />
+                    </label>
+                    <div class="user-llm-model-actions">
+                      <button type="button" id="settings_user_llm_custom_openai_load_models" data-ui-role="secondary">Load models</button>
+                      <button type="button" id="settings_user_llm_custom_openai_select_all_models" data-ui-role="secondary">Select all</button>
+                      <button type="button" id="settings_user_llm_custom_openai_clear_models" data-ui-role="secondary">Clear all</button>
+                      <span id="settings_user_llm_custom_openai_models_status" class="hint"></span>
+                    </div>
+                    <div id="settings_user_llm_custom_openai_models_summary" class="hint user-llm-model-summary"></div>
+                    <div id="settings_user_llm_custom_openai_models_list" class="user-llm-model-list"></div>
+                    <label style="display:flex;gap:8px;align-items:center">
+                      <input type="checkbox" id="settings_user_llm_custom_openai_clear" style="width:auto" />
+                      Clear saved custom key
+                    </label>
+                  </div>
+                </fieldset>
+              </section>
+              <section id="settings-telegram" class="settings-section">
+                <fieldset id="settings_telegram_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px">
+                  <legend style="font-size:13px">Telegram connection</legend>
+                  <div class="hint" style="margin-bottom:8px">Username alone is not enough for proactive Telegram delivery. Use the button below to generate a one-time <strong>/link</strong> command, then send it to the bot in a private chat. Telegram-originated generations already deliver their result directly, so they do not need extra notifications.</div>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                    <button type="button" id="settings_telegram_generate_link_code" data-ui-role="secondary">Generate bot link command</button>
+                    <div id="settings_telegram_link_status" class="hint"></div>
+                  </div>
+                  <div id="settings_telegram_link_command_wrap" style="display:none;margin-bottom:8px">
+                    <div class="hint" style="margin-bottom:4px">Send this command to the Telegram bot in a direct message. It expires quickly and is shown only once.</div>
+                    <pre id="settings_telegram_link_command" style="margin:0;padding:10px;border-radius:8px;background:rgba(0,0,0,0.22);white-space:pre-wrap;word-break:break-word"></pre>
+                  </div>
+                  <label style="display:flex;gap:8px;align-items:center">
+                    <input type="checkbox" id="settings_telegram_notifications_enabled" style="width:auto" />
+                    Enable all Telegram notifications
+                  </label>
+                  <label>Telegram chat ID
+                    <input type="text" id="settings_telegram_chat_id" autocomplete="off" placeholder="e.g. 123456789 or -1001234567890" />
+                  </label>
+                  <label>Telegram username
+                    <input type="text" id="settings_telegram_username" autocomplete="off" placeholder="without the @" />
+                  </label>
+                </fieldset>
+                <fieldset id="settings_telegram_apps_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Notification preferences by app</legend>
+                  <div class="hint" style="margin-bottom:8px">Only long-running or wait-for-generation apps are listed here.</div>
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Coding Workspaces</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_enabled" style="width:auto" />
+                        Allow Coding Workspaces notifications
+                      </label>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_attention" style="width:auto" />
+                        Needs attention
+                      </label>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_recovery" style="width:auto" />
+                        Auto-recovery updates
+                      </label>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_coding_noteworthy" style="width:auto" />
+                        Noteworthy updates from Nexus Sentinel
+                      </label>
+                    </div>
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Image UI</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_image_complete" style="width:auto" />
+                        Notify when a UI-started image generation completes
+                      </label>
+                    </div>
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Music UI</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_music_complete" style="width:auto" />
+                        Notify when a UI-started music generation completes
+                      </label>
+                    </div>
+                    <div style="border:1px solid rgba(231,237,246,0.08);border-radius:8px;padding:10px">
+                      <div style="font-weight:600;margin-bottom:6px">Video UI</div>
+                      <label style="display:flex;gap:8px;align-items:center">
+                        <input type="checkbox" id="settings_telegram_video_complete" style="width:auto" />
+                        Notify when a UI-started video generation completes
+                      </label>
+                    </div>
+                  </div>
+                </fieldset>
+              </section>
+              <section id="settings-security" class="settings-section">
+                <fieldset id="settings_password_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px">
+                  <legend style="font-size:13px">Change password</legend>
+                  <label>Current password
+                    <input type="password" id="settings_current_password" />
+                  </label>
+                  <label>New password
+                    <input type="password" id="settings_new_password" />
+                  </label>
+                  <label>Confirm new password
+                    <input type="password" id="settings_confirm_password" />
+                  </label>
+                </fieldset>
+                <fieldset id="settings_api_keys_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">API keys</legend>
+                  <div class="hint" style="margin-bottom:8px">Create personal keys for scripts and API clients. A new key is shown only once.</div>
+                  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+                    <label style="flex:1 1 260px">Key name
+                      <input type="text" id="settings_api_key_name" placeholder="e.g. laptop-cli" />
+                    </label>
+                    <button type="button" id="settings_create_api_key" data-ui-role="action">Create key</button>
+                    <button type="button" id="settings_forget_browser_api_key" data-ui-role="danger">Forget browser key</button>
+                  </div>
+                  <div id="settings_api_key_result" class="hint" style="margin-top:8px;white-space:pre-wrap"></div>
+                  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:10px">
+                    <label style="flex:1 1 260px">Use an existing key in this browser
+                      <input type="password" id="settings_browser_api_key" autocomplete="off" placeholder="Paste a saved API key" />
+                    </label>
+                    <button type="button" id="settings_use_browser_api_key" data-ui-role="secondary">Use key</button>
+                  </div>
+                  <div id="settings_api_keys_list" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+                </fieldset>
+                <fieldset id="settings_session_fieldset" style="border:1px dashed rgba(231,237,246,0.06);padding:8px;border-radius:8px;margin-top:10px">
+                  <legend style="font-size:13px">Browser session</legend>
+                  <div id="settings_session_status" class="hint" style="margin-bottom:8px">Checking session status...</div>
+                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <button type="button" id="settings_logout" data-ui-role="danger">Log out in this browser</button>
+                    <div class="hint">Logs out the current browser session and forgets any saved browser API key.</div>
+                  </div>
+                </fieldset>
+              </section>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+            <button type="button" id="settings_cancel" data-ui-role="secondary">Cancel</button>
+            <button type="button" id="settings_save" data-ui-role="action">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="/static/auth_client.js?v=3"></script>
+    <script src="/static/select_marquee.js?v=1"></script>
+    <script src="/static/chat.js?v=17"></script>
+  </body>
+</html>
+>>>>>>> 393b8102400c719df01f25f875bd4feba381cafc

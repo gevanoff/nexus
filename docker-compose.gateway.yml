@@ -93,12 +93,14 @@ services:
       - "ai1.embrient.com:${NEXUS_HOST_AI1_IP}"
       - "ai2:${NEXUS_HOST_AI2_IP}"
       - "ai2.embrient.com:${NEXUS_HOST_AI2_IP}"
-      - "ai3:${NEXUS_HOST_AI3_IP}"
-      - "ai3.embrient.com:${NEXUS_HOST_AI3_IP}"
+      - "migraine:${NEXUS_HOST_MIGRAINE_IP}"
+      - "migraine.embrient.com:${NEXUS_HOST_MIGRAINE_IP}"
       - "ada2:${NEXUS_HOST_ADA2_IP}"
       - "ada2.embrient.com:${NEXUS_HOST_ADA2_IP}"
       - "meltdown:${NEXUS_HOST_MELTDOWN_IP}"
       - "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}"
+      - "copyfail:${NEXUS_HOST_COPYFAIL_IP}"
+      - "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}"
       - "adada:${NEXUS_HOST_ADADA_IP}"
       - "adada.embrient.com:${NEXUS_HOST_ADADA_IP}"
     networks:
@@ -119,3 +121,4 @@ networks:
         - subnet: 172.28.0.0/16
 
 volumes: {}
+>>>>>>> 393b8102400c719df01f25f875bd4feba381cafc

@@ -7,15 +7,15 @@ services:
       - "${PROXY_HTTPS_PORT:-443}:443"
       - "${PERSONAPLEX_PROXY_HTTPS_PORT:-8998}:8998"
     volumes:
-      - ./compose/nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - /Users/ai/ai/nexus/compose/nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
       - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/nginx/certs:/etc/nginx/certs:ro
     extra_hosts:
       - "ai1:${NEXUS_HOST_AI1_IP}"
       - "ai1.embrient.com:${NEXUS_HOST_AI1_IP}"
       - "ai2:${NEXUS_HOST_AI2_IP}"
       - "ai2.embrient.com:${NEXUS_HOST_AI2_IP}"
-      - "ai3:${NEXUS_HOST_AI3_IP}"
-      - "ai3.embrient.com:${NEXUS_HOST_AI3_IP}"
+      - "migraine:${NEXUS_HOST_MIGRAINE_IP}"
+      - "migraine.embrient.com:${NEXUS_HOST_MIGRAINE_IP}"
       - "ada2:${NEXUS_HOST_ADA2_IP}"
       - "ada2.embrient.com:${NEXUS_HOST_ADA2_IP}"
       - "meltdown:${NEXUS_HOST_MELTDOWN_IP}"

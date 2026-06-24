@@ -77,7 +77,7 @@ def _live_payload() -> dict[str, object]:
                 "updated_at": 1_700_000_006,
             },
             {
-                "name": "ai3",
+                "name": "migraine",
                 "error": "ssh unavailable",
                 "cpu": {},
                 "memory": {},
@@ -107,7 +107,7 @@ def test_lifecycle_payload_updates_runtime_and_cached_snapshot(tmp_path, monkeyp
     assert "NVIDIA GeForce RTX 5060 Ti 15.9 GiB" in prompt_context
     assert "copyfail: linux_x86_64; Test Copyfail Host; 2 logical CPUs" in prompt_context
     assert "Do not schedule model-serving backends here" in prompt_context
-    assert "ai3: macos_arm64; Apple M2" in prompt_context
+    assert "migraine: macos_arm64; Apple M2" in prompt_context
     assert "lifecycle probe failed" in prompt_context
 
 
