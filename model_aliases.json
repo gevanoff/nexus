@@ -3,27 +3,35 @@
     "fast": {
       "backend": "local_vllm_fast",
       "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
-      "context_window": 2048,
-      "tools": false
+      "context_window": 8192,
+      "tools": false,
+      "max_tokens_cap": 1024
     },
     "default": {
       "backend": "local_vllm",
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
-      "tools": true
+      "context_window": 16384,
+      "tools": true,
+      "max_tokens_cap": 2048
     },
     "mlx": {
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-DQ4plus-q8",
-      "tools": true
+      "context_window": 32768,
+      "tools": true,
+      "max_tokens_cap": 2048
     },
     "coder": {
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-DQ4plus-q8",
-      "tools": true
+      "context_window": 32768,
+      "tools": true,
+      "max_tokens_cap": 2048
     },
     "reasoning": {
       "backend": "local_vllm",
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+      "context_window": 16384,
       "tools": true,
       "max_tokens_cap": 2048
     },
@@ -31,7 +39,8 @@
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-DQ4plus-q8",
       "context_window": 65536,
-      "tools": true
+      "tools": true,
+      "max_tokens_cap": 4096
     },
     "glm-5.2": {
       "backend": "local_mlx",

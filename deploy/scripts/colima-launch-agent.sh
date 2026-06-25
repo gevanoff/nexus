@@ -14,6 +14,9 @@ COLIMA_BIN="${COLIMA_BIN:-$(command -v colima || true)}"
 DOCKER_BIN="${DOCKER_BIN:-$(command -v docker || true)}"
 COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 COLIMA_VM_TYPE="${COLIMA_VM_TYPE:-}"
+COLIMA_CPU="${COLIMA_CPU:-}"
+COLIMA_MEMORY="${COLIMA_MEMORY:-}"
+COLIMA_DISK="${COLIMA_DISK:-}"
 COLIMA_USER_HOME="${COLIMA_USER_HOME:-${HOME:-}}"
 COLIMA_HOME="${COLIMA_HOME:-}"
 COLIMA_MOUNTS="${COLIMA_MOUNTS:-}"
@@ -78,6 +81,35 @@ wait_for_colima_home_ready() {
   return 1
 }
 
+wait_for_colima_mounts_ready() {
+  local wait_sec="${COLIMA_MOUNTS_WAIT_SEC:-300}"
+  local elapsed=0
+  local mount_spec=""
+  local mount_path=""
+  local all_ready="true"
+
+  [[ "$wait_sec" =~ ^[0-9]+$ ]] || wait_sec=300
+  [[ -n "${COLIMA_MOUNTS:-}" ]] || return 0
+
+  while [[ "$elapsed" -lt "$wait_sec" ]]; do
+    all_ready="true"
+    IFS=',' read -r -a mount_specs <<<"$COLIMA_MOUNTS"
+    for mount_spec in "${mount_specs[@]:-}"; do
+      [[ -n "${mount_spec:-}" ]] || continue
+      mount_path="${mount_spec%:*}"
+      if [[ ! -d "$mount_path" || ! -x "$mount_path" ]]; then
+        all_ready="false"
+        break
+      fi
+    done
+    [[ "$all_ready" == "true" ]] && return 0
+    sleep 2
+    elapsed=$((elapsed + 2))
+  done
+
+  return 1
+}
+
 if [[ -z "${COLIMA_BIN:-}" ]]; then
   log "ERROR: colima executable not found in PATH"
   exit 1
@@ -91,6 +123,16 @@ status_cmd=("$COLIMA_BIN" status --profile "$COLIMA_PROFILE")
 start_cmd=("$COLIMA_BIN" start --profile "$COLIMA_PROFILE")
 stop_cmd=("$COLIMA_BIN" stop --force --profile "$COLIMA_PROFILE")
 
+if [[ -n "${COLIMA_CPU:-}" ]]; then
+  start_cmd+=("--cpu" "$COLIMA_CPU")
+fi
+if [[ -n "${COLIMA_MEMORY:-}" ]]; then
+  start_cmd+=("--memory" "$COLIMA_MEMORY")
+fi
+if [[ -n "${COLIMA_DISK:-}" ]]; then
+  start_cmd+=("--disk" "$COLIMA_DISK")
+fi
+
 if [[ -n "${COLIMA_MOUNTS:-}" ]]; then
   IFS=',' read -r -a mount_specs <<<"$COLIMA_MOUNTS"
   for mount_spec in "${mount_specs[@]:-}"; do
@@ -102,6 +144,10 @@ fi
 if "${status_cmd[@]}" >/dev/null 2>&1; then
   log "Colima profile '${COLIMA_PROFILE}' already running"
 else
+  if ! wait_for_colima_mounts_ready; then
+    log "WARNING: configured Colima mounts did not become ready in time (${COLIMA_MOUNTS})"
+    exit 75
+  fi
   log "Starting Colima profile '${COLIMA_PROFILE}'"
   # A failed VZ start can leave Lima sockets or disk attachment state behind.
   # Reset only this stopped profile before starting it; this also prevents the
