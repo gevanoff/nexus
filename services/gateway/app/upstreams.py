@@ -11,7 +11,7 @@ from app.config import S
 from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
-from app.openai_utils import sanitize_chat_choices, sse, sse_done
+from app.openai_utils import new_id, now_unix, sanitize_chat_choices, sse, sse_done
 from app.streaming import passthrough_sse
 
 
@@ -121,6 +121,11 @@ def _normalize_openai_tools_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         out["tool_choice"] = _normalize_tool_choice(tool_choice)
 
     return out
+
+
+def _payload_has_tools(payload: Dict[str, Any]) -> bool:
+    tools = payload.get("tools")
+    return isinstance(tools, list) and bool(tools)
 
 
 def _resolve_backend_target(backend_name: str) -> tuple[str, str, str]:
@@ -347,6 +352,98 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
     return req.model_copy(update=updates)
 
 
+def _chat_completion_delta_from_message(message: Dict[str, Any]) -> Dict[str, Any]:
+    delta: Dict[str, Any] = {}
+    content = message.get("content")
+    if isinstance(content, str) and content:
+        delta["content"] = content
+
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        delta["tool_calls"] = tool_calls
+
+    for field in ("thinking", "reasoning_content"):
+        value = message.get(field)
+        if isinstance(value, str) and value:
+            delta[field] = value
+
+    return delta
+
+
+async def _stream_openai_chat_via_non_streaming(
+    payload: Dict[str, Any],
+    *,
+    target: str,
+    backend_name: str,
+) -> AsyncIterator[bytes]:
+    nonstream_payload = dict(payload)
+    nonstream_payload["stream"] = False
+    nonstream_payload.pop("stream_options", None)
+
+    try:
+        async with _httpx_client(timeout=600) as client:
+            r = await client.post(f"{target}/chat/completions", json=nonstream_payload)
+            r.raise_for_status()
+            out = r.json()
+    except httpx.HTTPStatusError as e:
+        detail = await _http_status_error_detail(e, upstream=backend_name)
+        yield sse({"error": {"message": "Upstream error", "type": "upstream_error", "param": None, "code": None, "detail": detail}})
+        yield sse_done()
+        return
+    except httpx.RequestError as e:
+        detail = {"upstream": backend_name, "error": str(e)}
+        yield sse({"error": {"message": "Upstream error", "type": "upstream_error", "param": None, "code": None, "detail": detail}})
+        yield sse_done()
+        return
+
+    if isinstance(out, dict):
+        sanitize_chat_choices(out)
+    else:
+        out = {}
+
+    choices = out.get("choices") if isinstance(out.get("choices"), list) else []
+    choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+    message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+    finish_reason = choice.get("finish_reason") or "stop"
+    chunk_id = str(out.get("id") or new_id("chatcmpl"))
+    created = int(out.get("created") or now_unix())
+    model = str(out.get("model") or payload.get("model") or "")
+
+    yield sse(
+        {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant"}}],
+        }
+    )
+
+    delta = _chat_completion_delta_from_message(message)
+    if delta:
+        yield sse(
+            {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+            }
+        )
+
+    yield sse(
+        {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+            "usage": out.get("usage"),
+        }
+    )
+    yield sse_done()
+
+
 async def call_openai_chat(
     req: ChatCompletionRequest,
     *,
@@ -472,6 +569,11 @@ async def stream_openai_chat(
 
     provider = backend_provider_name(backend_name)
     target = (base_url or _default_base_url_for_provider(provider)).rstrip("/")
+
+    if provider == "mlx" and _payload_has_tools(payload):
+        async for chunk in _stream_openai_chat_via_non_streaming(payload, target=target, backend_name=backend_name):
+            yield chunk
+        return
 
     async with _httpx_client(timeout=None) as client:
         try:
