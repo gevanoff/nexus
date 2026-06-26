@@ -129,6 +129,11 @@ def _model_uses_qwen3_thinking_template(model_name: str) -> bool:
     return "qwen3" in value
 
 
+def _model_uses_glm_thinking_template(model_name: str) -> bool:
+    value = (model_name or "").strip().lower()
+    return "glm-5.2" in value or "glm-5" in value
+
+
 def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name: str, model_name: str) -> Dict[str, Any]:
     provider = backend_provider_name(backend_name)
     if provider == "vllm" and _model_uses_qwen3_thinking_template(model_name):
@@ -139,6 +144,14 @@ def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name:
         kwargs.setdefault("enable_thinking", False)
         out["chat_template_kwargs"] = kwargs
         out.setdefault("repetition_penalty", 1.12)
+        return out
+    if provider == "mlx" and _model_uses_glm_thinking_template(model_name):
+        out = dict(payload)
+        kwargs = out.get("chat_template_kwargs")
+        if not isinstance(kwargs, dict):
+            kwargs = {}
+        kwargs.setdefault("enable_thinking", False)
+        out["chat_template_kwargs"] = kwargs
         return out
     return payload
 
@@ -195,12 +208,50 @@ def _enforce_mlx_glm_input_limit(
     )
 
 
+def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str) -> int | None:
+    alias_name = str(req.model or "").strip().lower()
+    if not alias_name:
+        return None
+    alias = get_alias(alias_name)
+    if alias is None or alias.max_tokens_cap is None:
+        return None
+
+    registry = get_registry()
+    alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
+    resolved_backend = registry.resolve_backend_class(backend_name) or backend_name
+    if alias_backend != resolved_backend:
+        return None
+
+    try:
+        cap = int(alias.max_tokens_cap)
+    except Exception:
+        return None
+    return cap if cap > 0 else None
+
+
+def _bounded_max_tokens(req: ChatCompletionRequest, *, backend_name: str) -> int | None:
+    cap = _alias_max_tokens_cap(req, backend_name=backend_name)
+    if cap is None:
+        return req.max_tokens
+    if req.max_tokens is None:
+        return cap
+    try:
+        requested = int(req.max_tokens)
+    except Exception:
+        return cap
+    return min(requested, cap)
+
+
 def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, model_name: str) -> ChatCompletionRequest:
     _resolved, provider, _base_url = _resolve_backend_target(backend_name)
     if provider not in {"mlx", "vllm"}:
         return req
     _enforce_mlx_glm_input_limit(req, backend_name=_resolved, model_name=model_name)
-    return req.model_copy(update={"model": model_name})
+    updates: Dict[str, Any] = {"model": model_name}
+    max_tokens = _bounded_max_tokens(req, backend_name=_resolved)
+    if max_tokens is not None:
+        updates["max_tokens"] = max_tokens
+    return req.model_copy(update=updates)
 
 
 async def call_openai_chat(
