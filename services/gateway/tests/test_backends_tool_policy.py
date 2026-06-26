@@ -96,4 +96,14 @@ def test_production_topology_sets_vllm_tool_flags_by_validated_lane():
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
-    assert topology["hosts"]["ai2"]["env"]["BACKEND_ENV_BASE_URL_OVERRIDES"] == "local_vllm,local_vllm_fast,local_vllm_embeddings"
+    ai2_overrides = set(topology["hosts"]["ai2"]["env"]["BACKEND_ENV_BASE_URL_OVERRIDES"].split(","))
+    assert {
+        "local_vllm",
+        "local_vllm_fast",
+        "local_vllm_embeddings",
+        "gpu_heavy",
+        "gpu_fast",
+        "lighton_ocr",
+        "personaplex",
+        "skyreels_v2",
+    } <= ai2_overrides

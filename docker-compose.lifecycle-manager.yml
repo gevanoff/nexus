@@ -16,7 +16,7 @@ services:
     ports:
       - "${LIFECYCLE_MANAGER_PORT:-9190}:9190"
     volumes:
-      - ./deploy/topology:/app/config:ro
+      - ${NEXUS_TOPOLOGY_HOST_DIR:-./deploy/topology}:/app/config:ro
       - ${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/lifecycle-manager/ssh:/root/.ssh:ro
       - ${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/lifecycle-manager/state:/app/state
     extra_hosts:
@@ -30,8 +30,6 @@ services:
       - "ada2.embrient.com:${NEXUS_HOST_ADA2_IP}"
       - "meltdown:${NEXUS_HOST_MELTDOWN_IP}"
       - "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}"
-      - "copyfail:${NEXUS_HOST_COPYFAIL_IP}"
-      - "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}"
       - "adada:${NEXUS_HOST_ADADA_IP}"
       - "adada.embrient.com:${NEXUS_HOST_ADADA_IP}"
     networks:

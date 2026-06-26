@@ -49,13 +49,34 @@ def test_meltdown_container_alias_is_available_to_control_plane_compose() -> Non
         text = _read(compose_file)
         assert "meltdown:${NEXUS_HOST_MELTDOWN_IP}" in text
         assert "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}" in text
-        assert "copyfail:${NEXUS_HOST_COPYFAIL_IP}" in text
-        assert "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}" in text
+        assert "copyfail:${NEXUS_HOST_COPYFAIL_IP}" not in text
+        assert "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}" not in text
 
-    assert "NEXUS_HOST_MELTDOWN_IP=10.10.22.186" in _read(".env.example")
-    assert "NEXUS_HOST_COPYFAIL_IP=10.10.22.156" in _read(".env.example")
+    env_example = _read(".env.example")
+    assert "\nNEXUS_HOST_MELTDOWN_IP=\n" in env_example
+    assert "\nNEXUS_HOST_COPYFAIL_IP=\n" in env_example
     assert "NEXUS_HOST_MELTDOWN_IP" in _read("deploy/scripts/_common.sh")
     assert "NEXUS_HOST_COPYFAIL_IP" in _read("deploy/scripts/_common.sh")
+
+
+def test_ai2_uses_boot_persistent_proxies_and_physical_topology_mount() -> None:
+    topology = json.loads(_read("deploy/topology/production.json"))
+    ai2_env = topology["hosts"]["ai2"]["env"]
+    installer = _read("deploy/scripts/install-backend-port-proxy-launchd.sh")
+
+    assert ai2_env["NEXUS_TOPOLOGY_HOST_DIR"] == "/Volumes/ai_data/var/lib/nexus/deploy/topology"
+    assert "${NEXUS_TOPOLOGY_HOST_DIR:-./deploy/topology}:/app/config:ro" in _read(
+        "docker-compose.lifecycle-manager.yml"
+    )
+    assert "/Library/LaunchDaemons/${LABEL}.plist" in installer
+    for forward in (
+        "images=127.0.0.1:17860=ada2:7860",
+        "sdxl-turbo=127.0.0.1:18050=meltdown:9050",
+        "lighton-ocr=127.0.0.1:18155=ada2:9155",
+        "skyreels-v2=127.0.0.1:18180=ada2:9180",
+        "ssh-copyfail=127.0.0.1:19025=copyfail:22",
+    ):
+        assert forward in installer
 
 
 def test_ansible_wrapper_exposes_meltdown_host() -> None:

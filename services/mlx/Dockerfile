@@ -13,7 +13,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-ARG MLX_PIP_PACKAGES="mlx-openai-server"
+ARG MLX_PIP_PACKAGES="mlx-openai-server==1.8.1"
 RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install --no-cache-dir ${MLX_PIP_PACKAGES} \
     && python /usr/local/bin/patch_mlx_openai_server.py
