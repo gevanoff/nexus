@@ -9,11 +9,59 @@ import httpx
 from app.openai_utils import ThinkTagStreamParser, new_id, now_unix, sanitize_chat_choices, sse, sse_done
 
 
+def _append_text_field(target: Dict[str, Any], field: str, text: str) -> None:
+    existing = target.get(field)
+    if isinstance(existing, str) and existing:
+        target[field] = existing + text
+    else:
+        target[field] = text
+
+
+def _tail_delta(visible: str, hidden: str) -> Dict[str, Any]:
+    delta: Dict[str, Any] = {}
+    if visible:
+        delta["content"] = visible
+    if hidden:
+        for field in ("thinking", "reasoning_content"):
+            _append_text_field(delta, field, hidden)
+    return delta
+
+
+def _tail_chunk(visible: str, hidden: str, *, model: str = "") -> bytes | None:
+    delta = _tail_delta(visible, hidden)
+    if not delta:
+        return None
+    return sse(
+        {
+            "id": new_id("chatcmpl"),
+            "object": "chat.completion.chunk",
+            "created": now_unix(),
+            "model": model,
+            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+        }
+    )
+
+
+def _has_terminal_choice(obj: Any) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    choices = obj.get("choices")
+    if not isinstance(choices, list):
+        return False
+    for choice in choices:
+        if isinstance(choice, dict) and choice.get("finish_reason") is not None:
+            return True
+    return False
+
+
 async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
     """
-    Pass-through upstream SSE (already 'data: ...\n\n') from MLX-style OpenAI servers.
+    Normalize upstream OpenAI-style SSE while preserving explicit reasoning side
+    channels and strict OpenAI chunk ordering.
     """
     done_seen = False
+    terminal_seen = False
+    last_model = ""
     parser = ThinkTagStreamParser()
     try:
         async for line in resp.aiter_lines():
@@ -26,24 +74,11 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
             data = line[len("data:") :].strip()
             if data == "[DONE]":
                 done_seen = True
-                tail_visible, tail_thinking = parser.flush()
-                if tail_visible or tail_thinking:
-                    delta: Dict[str, Any] = {}
-                    if tail_visible:
-                        delta["content"] = tail_visible
-                    if tail_thinking:
-                        delta["thinking"] = tail_thinking
-                    if parser.drain_reset():
-                        delta["thinking_reset"] = True
-                    yield sse(
-                        {
-                            "id": new_id("chatcmpl"),
-                            "object": "chat.completion.chunk",
-                            "created": now_unix(),
-                            "model": "",
-                            "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
-                        }
-                    )
+                if not terminal_seen:
+                    tail_visible, tail_hidden = parser.flush()
+                    tail = _tail_chunk(tail_visible, tail_hidden, model=last_model)
+                    if tail is not None:
+                        yield tail
                 yield sse_done()
                 return
 
@@ -52,6 +87,11 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
             except Exception:
                 yield f"{line}\n\n".encode("utf-8")
                 continue
+
+            if isinstance(obj, dict):
+                model = obj.get("model")
+                if isinstance(model, str) and model:
+                    last_model = model
 
             if isinstance(obj, dict) and str(obj.get("type") or "") == "response.output_text.delta":
                 visible = str(obj.get("delta") or "")
@@ -64,35 +104,29 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
                             "id": new_id("chatcmpl"),
                             "object": "chat.completion.chunk",
                             "created": now_unix(),
-                            "model": "",
+                            "model": last_model,
                             "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
                         }
                     )
                 continue
 
-            yield sse(sanitize_chat_choices(obj, stream_parser=parser))
+            sanitized = sanitize_chat_choices(obj, stream_parser=parser)
+            if _has_terminal_choice(sanitized):
+                terminal_seen = True
+                tail_visible, tail_hidden = parser.flush()
+                tail = _tail_chunk(tail_visible, tail_hidden, model=last_model)
+                if tail is not None:
+                    yield tail
+            yield sse(sanitized)
     except asyncio.CancelledError:
         return
 
-    # If upstream ends without a done marker, still end cleanly.
-    tail_visible, tail_thinking = parser.flush()
-    if tail_visible or tail_thinking:
-        delta: Dict[str, Any] = {}
-        if tail_visible:
-            delta["content"] = tail_visible
-        if tail_thinking:
-            delta["thinking"] = tail_thinking
-        if parser.drain_reset():
-            delta["thinking_reset"] = True
-        yield sse(
-            {
-                "id": new_id("chatcmpl"),
-                "object": "chat.completion.chunk",
-                "created": now_unix(),
-                "model": "",
-                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
-            }
-        )
+    # If upstream ends without a done marker, still end cleanly. Do not emit
+    # additional content after a terminal finish_reason chunk has been sent.
+    if not terminal_seen:
+        tail_visible, tail_hidden = parser.flush()
+        tail = _tail_chunk(tail_visible, tail_hidden, model=last_model)
+        if tail is not None:
+            yield tail
     if not done_seen:
         yield sse_done()
-
