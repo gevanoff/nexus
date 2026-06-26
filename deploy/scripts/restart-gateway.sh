@@ -55,6 +55,9 @@ fi
 ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
 export GATEWAY_ENV_FILE
 GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ENV_FILE")"
+host_runtime_root="$(ns_runtime_root "$ROOT_DIR")"
+export NEXUS_RUNTIME_ROOT
+NEXUS_RUNTIME_ROOT="$(ns_resolve_docker_bind_path "$host_runtime_root")"
 ns_seed_gateway_config_files "$ROOT_DIR" refresh
 if [[ -x "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh" ]]; then
   if ! "$ROOT_DIR/deploy/scripts/sync-mlx-cache-status.sh"; then
@@ -72,15 +75,15 @@ fi
 ns_print_header "Restarting Gateway"
 if ! ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml config >/dev/null 2>&1; then
   ns_print_error "Compose failed to parse $ENV_FILE"
-  ns_print_warn "Check for malformed variable syntax (for example an unmatched \\${...} expression)."
+  ns_print_warn "Check for malformed variable syntax (for example an unmatched \${...} expression)."
   ns_print_warn "Hint: inspect around the line number reported by docker compose."
   exit 1
 fi
 
 if [[ "$NO_BUILD" == "true" ]]; then
-  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --force-recreate --remove-orphans gateway
+  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --force-recreate gateway
 else
-  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build --force-recreate --remove-orphans gateway
+  ns_compose --env-file "$ENV_FILE" -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build --force-recreate gateway
 fi
 
 if [[ -f "$ROOT_DIR/docker-compose.nginx.yml" ]]; then
@@ -98,7 +101,7 @@ fi
 obs_port="${obs_port:-8801}"
 obs_health_url="http://127.0.0.1:${obs_port}/health"
 
-for i in {1..60}; do
+for _ in {1..60}; do
   if curl -fsS "$obs_health_url" >/dev/null 2>&1; then
     ns_print_ok "Gateway observability health endpoint is up (${obs_health_url})"
     exit 0

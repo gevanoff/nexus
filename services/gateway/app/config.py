@@ -245,13 +245,17 @@ class Settings(BaseSettings):
     MLX_MODEL_FAST: str = "mlx-community/Phi-4-reasoning-plus-4bit"
     MLX_MODEL_DEFAULT: str = "mlx-community/GLM-5.2-DQ4plus-q8"
     MLX_FALLBACK_BACKEND: str = "local_mlx"
-    MLX_FALLBACK_MODEL: str = "mlx-community/MiniMax-M2.5-8bit"
+    MLX_FALLBACK_MODEL: str = "mlx-community/MiniMax-M3-4bit"
     MLX_HF_CACHE_DIR: str = "/var/lib/gateway/mlx_hf_cache"
     MLX_FETCH_STALLED_AFTER_SEC: int = 600
     MLX_HUGE_LANE_ENABLED: bool = True
     MLX_HUGE_LANE_DEFAULT_MODEL: str = "mlx-community/GLM-5.2-DQ4plus-q8"
-    MLX_HUGE_MODELS: str = "mlx-community/GLM-5.2-DQ4plus-q8,mlx-community/MiniMax-M2.5-8bit,mlx-community/DeepSeek-R1-0528-4bit"
+    MLX_HUGE_MODELS: str = "mlx-community/GLM-5.2-DQ4plus-q8,mlx-community/MiniMax-M3-4bit,mlx-community/DeepSeek-R1-0528-4bit"
     MLX_HUGE_LANE_STATE_PATH: str = "/var/lib/gateway/data/mlx_huge_lane.json"
+    # GLM-5.2 prefill is serialized inside its MLX handler process. Bound the
+    # serialized input so one oversized conversation cannot monopolize it past
+    # mlx-openai-server's 300-second RPC timeout.
+    MLX_GLM_MAX_INPUT_CHARS: int = 60_000
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 
@@ -312,6 +316,9 @@ class Settings(BaseSettings):
     BACKEND_VERIFY_TLS: bool = True
     BACKEND_CA_BUNDLE: str = ""
     BACKEND_CLIENT_CERT: str = ""
+    # Retry connection establishment only. httpx/httpcore does not retry a
+    # request after bytes have been sent, so POST bodies are not duplicated.
+    BACKEND_CONNECT_RETRIES: int = 2
 
     # Tool bus JSONL log file path.
     TOOLS_LOG_PATH: str = "/var/lib/gateway/data/tools/invocations.jsonl"
@@ -457,6 +464,10 @@ class Settings(BaseSettings):
     CODING_AGENT_BACKEND_RETRY_STATUSES: str = "500,502,503,504"
     CODING_AGENT_QUEUE_TIMEOUT_SEC: float = 30.0
     CODING_AGENT_QUEUE_POLL_SEC: float = 1.0
+    CODING_AGENT_MAX_CYCLES_PER_RUN: int = 80
+    CODING_AGENT_MAX_RUNTIME_SEC: int = 21_600
+    CODING_AGENT_CONTEXT_RESET_CYCLES: int = 12
+    CODING_AGENT_CONTEXT_RESET_CHARS: int = 40_000
     CODING_GIT_USERNAME: str = "x-access-token"
     CODING_GIT_TOKEN: str = ""
     CODING_GIT_AUTHOR_NAME: str = "Nexus Coding Agent"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, List
 
@@ -144,10 +143,63 @@ def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name:
     return payload
 
 
+def _mlx_glm_input_chars(req: ChatCompletionRequest) -> int:
+    payload = req.model_dump(
+        include={"messages", "tools", "tool_choice", "response_format", "chat_template_kwargs"},
+        exclude_none=True,
+    )
+    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str))
+
+
+def _enforce_mlx_glm_input_limit(
+    req: ChatCompletionRequest,
+    *,
+    backend_name: str,
+    model_name: str,
+) -> None:
+    if backend_provider_name(backend_name) != "mlx":
+        return
+
+    configured_glm_models = {
+        str(getattr(S, "MLX_MODEL_STRONG", "") or "").strip().lower(),
+        str(getattr(S, "MLX_MODEL_DEFAULT", "") or "").strip().lower(),
+    }
+    normalized_model = str(model_name or "").strip().lower()
+    if normalized_model not in configured_glm_models and "glm-5.2" not in normalized_model:
+        return
+
+    try:
+        limit = int(getattr(S, "MLX_GLM_MAX_INPUT_CHARS", 60_000) or 0)
+    except Exception:
+        limit = 60_000
+    if limit <= 0:
+        return
+
+    input_chars = _mlx_glm_input_chars(req)
+    if input_chars <= limit:
+        return
+
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": "mlx_glm_input_too_large",
+            "model": model_name,
+            "input_chars": input_chars,
+            "max_input_chars": limit,
+            "message": (
+                "GLM-5.2 input exceeds the interactive latency guard. "
+                "Start a new or compacted conversation, reduce attached tool/file context, "
+                "or select a different model."
+            ),
+        },
+    )
+
+
 def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, model_name: str) -> ChatCompletionRequest:
     _resolved, provider, _base_url = _resolve_backend_target(backend_name)
     if provider not in {"mlx", "vllm"}:
         return req
+    _enforce_mlx_glm_input_limit(req, backend_name=_resolved, model_name=model_name)
     return req.model_copy(update={"model": model_name})
 
 

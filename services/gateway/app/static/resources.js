@@ -4,8 +4,6 @@
   const controlPlaneEl = document.getElementById("control_plane");
   const coreServicesSectionEl = document.getElementById("core_services_section");
   const coreServicesEl = document.getElementById("core_services");
-  const mlxHugeLaneSectionEl = document.getElementById("mlx_huge_lane_section");
-  const mlxHugeLaneEl = document.getElementById("mlx_huge_lane");
   const codingSmokeSectionEl = document.getElementById("coding_smoke_section");
   const codingSmokeEl = document.getElementById("coding_smoke");
   const backendsEl = document.getElementById("backends");
@@ -16,7 +14,6 @@
   const STALE_AFTER_POLLS = 3;
   let currentUserIsAdmin = false;
   let currentPollIntervalSec = POLL_INTERVAL_MS / 1000;
-  let hugeLanePollTimer = null;
 
   function setStatus(text, isError) {
     if (!statusEl) return;
@@ -103,21 +100,6 @@
     el.className = `badge ${cls || ""}`.trim();
     el.textContent = text;
     return el;
-  }
-
-  function scheduleHugeLanePoll(active) {
-    if (!active) {
-      if (hugeLanePollTimer) {
-        window.clearTimeout(hugeLanePollTimer);
-        hugeLanePollTimer = null;
-      }
-      return;
-    }
-    if (hugeLanePollTimer) return;
-    hugeLanePollTimer = window.setTimeout(() => {
-      hugeLanePollTimer = null;
-      void loadStatus(false);
-    }, 5000);
   }
 
   function formatTimestamp(tsSeconds) {
@@ -673,101 +655,6 @@
     return btn;
   }
 
-  function renderMlxHugeLane(lane) {
-    if (!mlxHugeLaneSectionEl || !mlxHugeLaneEl) return;
-    mlxHugeLaneEl.innerHTML = "";
-    if (!lane || lane.enabled === false) {
-      mlxHugeLaneSectionEl.hidden = true;
-      scheduleHugeLanePoll(false);
-      return;
-    }
-    mlxHugeLaneSectionEl.hidden = false;
-
-    const card = document.createElement("div");
-    card.className = "huge-lane-card";
-    const title = document.createElement("div");
-    title.className = "backend-name";
-    title.textContent = lane.active_model || "No active huge model";
-    card.appendChild(title);
-
-    const metaParts = [];
-    if (lane.status) metaParts.push(String(lane.status_label || lane.status));
-    if (lane.target_model) metaParts.push(`target ${lane.target_model}`);
-    if (lane.route_model && lane.route_model !== lane.active_model) metaParts.push(`routing ${lane.route_model}`);
-    if (Number(lane.estimated_load_sec || 0) > 0) metaParts.push(`est ${fmtSec(lane.estimated_load_sec)}`);
-    const meta = document.createElement("div");
-    meta.className = lane.error ? "meta error" : "meta";
-    meta.textContent = metaParts.join(" · ");
-    card.appendChild(meta);
-
-    const badges = document.createElement("div");
-    badges.className = "badges";
-    badges.appendChild(badge(lane.status_label || lane.status || "unknown", lane.status === "ready" ? "green" : lane.status === "switching" ? "yellow" : "red"));
-    if (lane.elapsed_sec) badges.appendChild(badge(`elapsed ${fmtSec(lane.elapsed_sec)}`, "blue"));
-    if (lane.switch_completed_at) badges.appendChild(badge(`updated ${formatTimestamp(lane.switch_completed_at) || "recently"}`, "blue"));
-    card.appendChild(badges);
-
-    if (lane.status === "switching") {
-      const progress = document.createElement("div");
-      progress.innerHTML = `<div class="meta">Loading · ${fmtSec(lane.elapsed_sec)} / ${fmtSec(lane.estimated_load_sec)}</div>`;
-      progress.appendChild(bar(Number(lane.elapsed_sec || 0), Math.max(1, Number(lane.estimated_load_sec || 120))));
-      card.appendChild(progress);
-    }
-
-    if (lane.message || lane.error) {
-      const detail = document.createElement("div");
-      detail.className = lane.error ? "meta error" : "meta";
-      detail.style.marginTop = "6px";
-      detail.textContent = lane.error || lane.message;
-      card.appendChild(detail);
-    }
-
-    const candidates = Array.isArray(lane.candidates) ? lane.candidates : [];
-    if (candidates.length) {
-      const list = document.createElement("div");
-      list.className = "huge-lane-candidates";
-      candidates.forEach((candidate) => {
-        const row = document.createElement("div");
-        row.className = "huge-lane-row";
-        const left = document.createElement("div");
-        const name = document.createElement("div");
-        name.className = "backend-name";
-        name.textContent = candidate.label || candidate.model;
-        left.appendChild(name);
-        const detail = document.createElement("div");
-        detail.className = "meta";
-        const parts = [candidate.model];
-        if (candidate.cache_state) parts.push(`cache ${candidate.cache_state}`);
-        if (candidate.estimated_load_sec) parts.push(`est ${fmtSec(candidate.estimated_load_sec)}`);
-        if (candidate.estimated_memory_gb) parts.push(`~${candidate.estimated_memory_gb} GB`);
-        detail.textContent = parts.join(" · ");
-        left.appendChild(detail);
-        row.appendChild(left);
-
-        const actions = document.createElement("div");
-        actions.className = "huge-lane-actions";
-        if (candidate.active) {
-          actions.appendChild(badge("active", "green"));
-        } else if (candidate.target) {
-          actions.appendChild(badge("loading", "yellow"));
-        } else if (currentUserIsAdmin) {
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.textContent = "Switch";
-          btn.disabled = candidate.cache_state !== "cached" || lane.status === "switching";
-          btn.addEventListener("click", () => void switchMlxHugeLane(candidate.model, false));
-          actions.appendChild(btn);
-        }
-        row.appendChild(actions);
-        list.appendChild(row);
-      });
-      card.appendChild(list);
-    }
-
-    mlxHugeLaneEl.appendChild(card);
-    scheduleHugeLanePoll(lane.status === "switching");
-  }
-
   function renderCodingSmoke(smoke) {
     if (!codingSmokeEl) return;
     codingSmokeEl.innerHTML = "";
@@ -1012,7 +899,6 @@
       sectionEl: coreServicesSectionEl,
       hideWhenEmpty: true,
     });
-    renderMlxHugeLane(payload.mlx_huge_lane || null);
     renderCodingSmoke(payload.coding_smoke || null);
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];
@@ -1039,18 +925,16 @@
       const lifecyclePath = `/ui/api/lifecycle/status${forceRefresh ? "?refresh=true" : ""}`;
       const lifecyclePromise = fetchJson(lifecyclePath);
       const registryPromise = fetchJson("/ui/api/backend_status");
-      const hugeLanePromise = fetchJson("/ui/api/mlx/huge-lane");
       const codingSmokePromise = fetchJson("/ui/api/coding/smoke-status?limit=100");
 
-      const [lifecycleResult, registryResult, hugeLaneResult, codingSmokeResult] = await Promise.all([lifecyclePromise, registryPromise, hugeLanePromise, codingSmokePromise]);
-      if (lifecycleResult.redirected || registryResult.redirected || hugeLaneResult.redirected || codingSmokeResult.redirected) return;
+      const [lifecycleResult, registryResult, codingSmokeResult] = await Promise.all([lifecyclePromise, registryPromise, codingSmokePromise]);
+      if (lifecycleResult.redirected || registryResult.redirected || codingSmokeResult.redirected) return;
       let payload = lifecycleResult.data || null;
       if (registryResult.redirected) return;
       if (!payload && !registryResult.data) {
         throw new Error(lifecycleResult.error || registryResult.error || "No status payload returned");
       }
       payload = mergeBackendStatusPayload(payload, registryResult.data);
-      if (hugeLaneResult.data) payload.mlx_huge_lane = hugeLaneResult.data;
       if (codingSmokeResult.data) payload.coding_smoke = codingSmokeResult.data;
       renderPayload(payload, { registryError: registryResult.error });
       saveCachedPayload(payload);
@@ -1060,44 +944,6 @@
       setStatus(`Lifecycle status failed: ${String(error?.message || error)}`, true);
     } finally {
       if (refreshEl) refreshEl.disabled = false;
-    }
-  }
-
-  async function switchMlxHugeLane(model, confirmed) {
-    const modelId = String(model || "").trim();
-    if (!modelId) return;
-    setStatus(`Switching MLX huge model to ${modelId}...`, false);
-    try {
-      const resp = await fetch("/ui/api/mlx/huge-lane/switch", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: modelId, confirmed }),
-      });
-      if (handle401(resp)) return;
-      const payload = await resp.json().catch(() => ({}));
-      if (resp.status === 403) {
-        setStatus("Admin privileges are required to switch the MLX huge model.", true);
-        return;
-      }
-      if (!resp.ok) {
-        const detail = payload?.detail;
-        const message = typeof detail === "string" ? detail : detail?.error ? `${detail.error}: ${detail.cache_state || ""}` : `HTTP ${resp.status}`;
-        throw new Error(message);
-      }
-      if (payload?.decision === "requires_confirmation" && !confirmed) {
-        const ok = window.confirm(payload.message || `Switch MLX huge model to ${modelId}?`);
-        if (ok) return switchMlxHugeLane(modelId, true);
-        setStatus("MLX huge model switch cancelled.", false);
-        return;
-      }
-      if (payload?.lane) {
-        renderMlxHugeLane(payload.lane);
-      }
-      setStatus(`MLX huge model: ${String(payload?.decision || "switch").replace(/_/g, " ")}`, payload?.ok === false);
-      await loadStatus(true);
-    } catch (error) {
-      setStatus(`MLX huge model switch failed: ${String(error?.message || error)}`, true);
     }
   }
 

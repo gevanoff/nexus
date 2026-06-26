@@ -184,9 +184,9 @@ def _context_reset_cycles(value: Optional[int] = None) -> int:
 
 def _context_reset_chars() -> int:
     try:
-        return max(20_000, min(int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 120_000) or 120_000), 1_000_000))
+        return max(20_000, min(int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 40_000) or 40_000), 1_000_000))
     except Exception:
-        return 120_000
+        return 40_000
 
 
 def _run_history_limit() -> int:

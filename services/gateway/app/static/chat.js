@@ -2,7 +2,6 @@
   const $ = (id) => document.getElementById(id);
 
   const modelEl = $("model");
-  const loadModelsEl = $("loadModels");
   const inputEl = $("input");
   const sendEl = $("send");
   const clearEl = $("clear");
@@ -26,7 +25,6 @@
 
     const chatEl = $("chat");
     const modelEl = $("model");
-    const loadModelsEl = $("loadModels");
     const inputEl = $("input");
     const inputPreviewEl = $("inputPreview");
     const sendEl = $("send");
@@ -68,7 +66,6 @@
 
     function showAuthExpiredState() {
       if (sendEl) sendEl.disabled = true;
-      if (loadModelsEl) loadModelsEl.disabled = true;
       if (modelEl) {
         modelEl.disabled = true;
         modelEl.title = "Session expired. Sign in again to load models.";
@@ -2556,7 +2553,6 @@
       if (sendEl) sendEl.disabled = busy;
       if (inputEl) inputEl.disabled = busy;
       if (modelEl) modelEl.disabled = busy;
-      if (loadModelsEl) loadModelsEl.disabled = busy;
     }
 
     // Progress utilities for inline generation (simulated incremental progress)
