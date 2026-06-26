@@ -14,6 +14,9 @@ fi
 
 PROFILE="default"
 VM_TYPE=""
+CPU="${COLIMA_CPU:-}"
+MEMORY="${COLIMA_MEMORY:-}"
+DISK="${COLIMA_DISK:-}"
 START_INTERVAL="60"
 WAIT_TIMEOUT="75"
 NO_WAIT="false"
@@ -31,7 +34,7 @@ declare -a EXTRA_MOUNTS=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--start-interval SEC] [--wait-timeout SEC] [--no-wait] [--no-default-mounts] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL] [--mount PATH[:MODE]]
+Usage: deploy/scripts/install-colima-launchd.sh [--profile NAME] [--vm-type TYPE] [--cpu N] [--memory GiB] [--disk GiB] [--start-interval SEC] [--wait-timeout SEC] [--no-wait] [--no-default-mounts] [--user USER] [--home PATH] [--colima-home PATH] [--colima-user-home PATH] [--runtime-root PATH] [--log-dir PATH] [--label LABEL] [--mount PATH[:MODE]]
 
 Install/reload a macOS LaunchDaemon that starts Colima at boot and runs it
 under the selected unprivileged user account.
@@ -39,6 +42,9 @@ under the selected unprivileged user account.
 Options:
   --profile NAME        Colima profile name (default: default)
   --vm-type TYPE        Optional Colima vm-type override (for example: qemu)
+  --cpu N               Persist the VM CPU count used on every managed start
+  --memory GiB          Persist the VM memory allocation used on every managed start
+  --disk GiB            Persist the VM disk allocation used on every managed start
   --start-interval SEC  Relaunch check interval in seconds (default: 60)
   --wait-timeout SEC    Seconds to wait for Docker readiness after install (default: 75)
   --no-wait             Skip Docker readiness wait and return after launchd reload
@@ -185,6 +191,18 @@ while [[ $# -gt 0 ]]; do
       VM_TYPE="${2:-}"
       shift 2
       ;;
+    --cpu)
+      CPU="${2:-}"
+      shift 2
+      ;;
+    --memory)
+      MEMORY="${2:-}"
+      shift 2
+      ;;
+    --disk)
+      DISK="${2:-}"
+      shift 2
+      ;;
     --start-interval)
       START_INTERVAL="${2:-}"
       shift 2
@@ -244,6 +262,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "${PROFILE:-}" ]] || ns_die "--profile must not be empty"
+[[ -z "${CPU:-}" || "$CPU" =~ ^[1-9][0-9]*$ ]] || ns_die "--cpu must be a positive integer"
+[[ -z "${MEMORY:-}" || "$MEMORY" =~ ^[1-9][0-9]*$ ]] || ns_die "--memory must be a positive integer"
+[[ -z "${DISK:-}" || "$DISK" =~ ^[1-9][0-9]*$ ]] || ns_die "--disk must be a positive integer"
 [[ "$START_INTERVAL" =~ ^[0-9]+$ ]] || ns_die "--start-interval must be an integer"
 [[ "$WAIT_TIMEOUT" =~ ^[0-9]+$ ]] || ns_die "--wait-timeout must be an integer"
 [[ "${COLIMA_RUNTIME_ROOT}" == /* ]] || ns_die "--runtime-root must be an absolute path"
@@ -329,6 +350,9 @@ COLIMA_BIN=${COLIMA_BIN}
 DOCKER_BIN=${DOCKER_BIN}
 COLIMA_PROFILE=${PROFILE}
 COLIMA_VM_TYPE=${VM_TYPE}
+COLIMA_CPU=${CPU}
+COLIMA_MEMORY=${MEMORY}
+COLIMA_DISK=${DISK}
 COLIMA_USER_HOME=${TARGET_COLIMA_USER_HOME}
 COLIMA_HOME=${TARGET_COLIMA_HOME}
 COLIMA_MOUNTS=${colima_mounts_csv}
@@ -401,6 +425,7 @@ fi
 
 sudo launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
 sudo launchctl remove "${LABEL}" >/dev/null 2>&1 || true
+sleep 2
 
 bootstrap_err="$(mktemp)"
 if ! sudo launchctl bootstrap system "$PLIST_PATH" 2>"$bootstrap_err"; then
