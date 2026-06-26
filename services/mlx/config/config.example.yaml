@@ -18,6 +18,9 @@ models:
     on_demand: false
 
   # On-demand fallback for the resident primary profile.
+  # mlx-openai-server 1.8.1 requires mlx-vlm<0.5, while this model requires
+  # mlx-vlm>=0.6.3. Keep the catalog entry for cache/admin visibility, but do
+  # not promote it to a live alias until a compatible server release exists.
   - served_model_name: mlx-community/MiniMax-M3-4bit
     model_path: mlx-community/MiniMax-M3-4bit
     model_type: multimodal

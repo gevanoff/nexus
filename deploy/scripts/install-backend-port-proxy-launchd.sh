@@ -47,6 +47,11 @@ Default forwards:
   vllm-fast=127.0.0.1:18001=ai1:8001
   vllm-embeddings=127.0.0.1:18002=meltdown:8002
   vllm=127.0.0.1:18003=ada2:8003
+  images=127.0.0.1:17860=ada2:7860
+  sdxl-turbo=127.0.0.1:18050=meltdown:9050
+  lighton-ocr=127.0.0.1:18155=ada2:9155
+  personaplex=127.0.0.1:18160=ada2:9160
+  skyreels-v2=127.0.0.1:18180=ada2:9180
   ssh-ai1=127.0.0.1:19022=ai1:22
   ssh-ada2=127.0.0.1:19023=ada2:22
   ssh-meltdown=127.0.0.1:19024=meltdown:22
@@ -136,6 +141,11 @@ if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
     "vllm-fast=127.0.0.1:18001=ai1:8001"
     "vllm-embeddings=127.0.0.1:18002=meltdown:8002"
     "vllm=127.0.0.1:18003=ada2:8003"
+    "images=127.0.0.1:17860=ada2:7860"
+    "sdxl-turbo=127.0.0.1:18050=meltdown:9050"
+    "lighton-ocr=127.0.0.1:18155=ada2:9155"
+    "personaplex=127.0.0.1:18160=ada2:9160"
+    "skyreels-v2=127.0.0.1:18180=ada2:9180"
     "ssh-ai1=127.0.0.1:19022=ai1:22"
     "ssh-ada2=127.0.0.1:19023=ada2:22"
     "ssh-meltdown=127.0.0.1:19024=meltdown:22"
@@ -169,7 +179,7 @@ TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
 BIN_DIR="${LAUNCHD_ROOT}/bin"
 PLIST_DIR="${LAUNCHD_ROOT}/plists"
 PROXY_DST="${BIN_DIR}/backend-port-proxy.py"
-PLIST_PATH="${PLIST_DIR}/${LABEL}.plist"
+PLIST_PATH="/Library/LaunchDaemons/${LABEL}.plist"
 OUT_LOG="${LOG_DIR}/${LABEL}.out.log"
 ERR_LOG="${LOG_DIR}/${LABEL}.err.log"
 
@@ -235,7 +245,15 @@ sudo install -o root -g wheel -m 644 "$tmp_plist" "$PLIST_PATH"
 rm -f "$tmp_plist"
 sudo plutil -lint "$PLIST_PATH" >/dev/null
 
+# LaunchDaemons loaded from arbitrary paths are not rediscovered after a
+# reboot. Keep the canonical plist in /Library/LaunchDaemons so the proxy is
+# restored automatically with the rest of the ai2 control plane.
+sudo rm -f "${PLIST_DIR}/${LABEL}.plist"
+
 sudo launchctl bootout "system/${LABEL}" >/dev/null 2>&1 || true
+# launchd can briefly retain the old label after bootout and reject an
+# immediate bootstrap from the canonical plist with error 5.
+sleep 2
 sudo launchctl bootstrap system "$PLIST_PATH"
 sudo launchctl kickstart -k "system/${LABEL}" || true
 
