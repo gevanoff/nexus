@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import json
-
-import pytest
 
 from app.streaming import passthrough_sse
 
@@ -14,6 +13,10 @@ class FakeSseResponse:
     async def aiter_lines(self):
         for line in self._lines:
             yield line
+
+
+async def _collect(resp: FakeSseResponse) -> list[bytes]:
+    return [chunk async for chunk in passthrough_sse(resp)]
 
 
 def _payloads(chunks: list[bytes]) -> list[dict]:
@@ -30,8 +33,7 @@ def _payloads(chunks: list[bytes]) -> list[dict]:
     return out
 
 
-@pytest.mark.asyncio
-async def test_passthrough_sse_emits_visible_content_before_stop_chunk():
+def test_passthrough_sse_emits_visible_content_before_stop_chunk():
     resp = FakeSseResponse(
         [
             'data: {"id":"upstream","object":"chat.completion.chunk","created":1,"model":"mlx-test","choices":[{"index":0,"delta":{"role":"assistant"}}]}',
@@ -41,7 +43,7 @@ async def test_passthrough_sse_emits_visible_content_before_stop_chunk():
         ]
     )
 
-    chunks = [chunk async for chunk in passthrough_sse(resp)]
+    chunks = asyncio.run(_collect(resp))
     payloads = _payloads(chunks)
 
     content_indexes = [
