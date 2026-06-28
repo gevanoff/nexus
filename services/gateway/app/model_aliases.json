@@ -23,7 +23,7 @@
     },
     "coder": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+      "model": "mlx-community/GLM-5.2-mxfp4"
       "context_window": 32768,
       "tools": true,
       "max_tokens_cap": 2048
@@ -37,14 +37,14 @@
     },
     "long": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+      "model": "mlx-community/GLM-5.2-mxfp4"
       "context_window": 65536,
       "tools": true,
       "max_tokens_cap": 4096
     },
     "glm-5.2": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+      "model": "mlx-community/GLM-5.2-mxfp4"
       "tools": true,
       "label": "GLM-5.2 DQ4plus-q8",
       "coding": true,
