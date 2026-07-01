@@ -14,39 +14,54 @@
       "tools": true,
       "max_tokens_cap": 2048
     },
+    "phi": {
+      "backend": "local_mlx",
+      "model": "mlx-community/Phi-4-reasoning-plus-4bit",
+      "context_window": 32768,
+      "tools": false,
+      "max_tokens_cap": 2048,
+      "label": "Phi-4 Reasoning Plus 4-bit",
+      "coding": false,
+      "huge_candidate": false,
+      "estimated_load_sec": 90,
+      "estimated_memory_gb": 64
+    }
     "mlx": {
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+      "label": "GLM-5.2 DQ4plus-q8",
       "context_window": 32768,
       "tools": true,
       "max_tokens_cap": 2048
     },
     "coder": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-mxfp4",
+      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+      "label": "GLM-5.2 DQ4plus-q8",
       "context_window": 32768,
       "tools": true,
       "max_tokens_cap": 2048
     },
-    "reasoning": {
+    "long": {
+      "backend": "local_mlx",
+      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+      "label": "GLM-5.2 DQ4plus-q8",
+      "context_window": 65536,
+      "tools": true,
+      "max_tokens_cap": 4096
+    },
+    "fast-reasoning": {
       "backend": "local_vllm",
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
       "context_window": 16384,
       "tools": true,
       "max_tokens_cap": 2048
     },
-    "long": {
+    "glm-5.2-mxfp4": {
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-mxfp4",
-      "context_window": 65536,
+      "label": "GLM-5.2 mxfp4",
       "tools": true,
-      "max_tokens_cap": 4096
-    },
-    "glm-5.2": {
-      "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-mxfp4",
-      "tools": true,
-      "label": "GLM-5.2 DQ4plus-q8",
       "coding": true,
       "huge_candidate": true,
       "huge_default": true,
