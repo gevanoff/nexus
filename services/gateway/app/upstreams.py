@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from app.backends import backend_provider_name, get_registry
 from app.config import S
 from app.httpx_client import httpx_client as _httpx_client
-from app.model_aliases import get_alias
+from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
 from app.openai_utils import sanitize_chat_choices, sse, sse_done
 from app.streaming import passthrough_sse
@@ -55,6 +55,71 @@ def _normalize_messages_for_openai_backend(msgs: List[Dict[str, Any]]) -> List[D
         else:
             out.append(normalized_message)
             last_role = role
+    return out
+
+
+def _normalize_openai_tool(tool: Any) -> dict[str, Any] | None:
+    if not isinstance(tool, dict):
+        return None
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return None
+    name = function.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+
+    out_function: dict[str, Any] = {"name": name.strip()}
+
+    description = function.get("description")
+    if isinstance(description, str):
+        out_function["description"] = description
+
+    parameters = function.get("parameters")
+    if isinstance(parameters, dict):
+        out_function["parameters"] = parameters
+    else:
+        out_function["parameters"] = {"type": "object", "properties": {}}
+
+    strict = function.get("strict")
+    if isinstance(strict, bool):
+        out_function["strict"] = strict
+
+    return {"type": "function", "function": out_function}
+
+
+def _normalize_tool_choice(tool_choice: Any) -> Any:
+    if not isinstance(tool_choice, dict):
+        return tool_choice
+    choice_type = str(tool_choice.get("type") or "").strip().lower()
+    if choice_type != "function":
+        return {"type": choice_type} if choice_type else tool_choice
+    function = tool_choice.get("function")
+    if not isinstance(function, dict):
+        return {"type": "function"}
+    name = function.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return {"type": "function"}
+    return {"type": "function", "function": {"name": name.strip()}}
+
+
+def _normalize_openai_tools_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    tools = payload.get("tools")
+    tool_choice = payload.get("tool_choice")
+    if not isinstance(tools, list) and not isinstance(tool_choice, dict):
+        return payload
+
+    out = dict(payload)
+    if isinstance(tools, list):
+        normalized_tools = []
+        for tool in tools:
+            normalized_tool = _normalize_openai_tool(tool)
+            if normalized_tool is not None:
+                normalized_tools.append(normalized_tool)
+        out["tools"] = normalized_tools
+
+    if isinstance(tool_choice, dict):
+        out["tool_choice"] = _normalize_tool_choice(tool_choice)
+
     return out
 
 
@@ -129,6 +194,11 @@ def _model_uses_qwen3_thinking_template(model_name: str) -> bool:
     return "qwen3" in value
 
 
+def _model_uses_glm_thinking_template(model_name: str) -> bool:
+    value = (model_name or "").strip().lower()
+    return "glm-5.2" in value or "glm-5" in value
+
+
 def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name: str, model_name: str) -> Dict[str, Any]:
     provider = backend_provider_name(backend_name)
     if provider == "vllm" and _model_uses_qwen3_thinking_template(model_name):
@@ -139,6 +209,14 @@ def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name:
         kwargs.setdefault("enable_thinking", False)
         out["chat_template_kwargs"] = kwargs
         out.setdefault("repetition_penalty", 1.12)
+        return out
+    if provider == "mlx" and _model_uses_glm_thinking_template(model_name):
+        out = dict(payload)
+        kwargs = out.get("chat_template_kwargs")
+        if not isinstance(kwargs, dict):
+            kwargs = {}
+        kwargs.setdefault("enable_thinking", False)
+        out["chat_template_kwargs"] = kwargs
         return out
     return payload
 
@@ -195,12 +273,78 @@ def _enforce_mlx_glm_input_limit(
     )
 
 
+def _alias_matches_backend(alias: Any, *, backend_name: str) -> bool:
+    registry = get_registry()
+    alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
+    resolved_backend = registry.resolve_backend_class(backend_name) or backend_name
+    return alias_backend == resolved_backend
+
+
+def _alias_cap_value(alias: Any, *, backend_name: str) -> int | None:
+    if alias is None or alias.max_tokens_cap is None:
+        return None
+    if not _alias_matches_backend(alias, backend_name=backend_name):
+        return None
+    try:
+        cap = int(alias.max_tokens_cap)
+    except Exception:
+        return None
+    return cap if cap > 0 else None
+
+
+def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, model_name: str) -> int | None:
+    requested_alias = get_alias(str(req.model or "").strip().lower())
+    cap = _alias_cap_value(requested_alias, backend_name=backend_name)
+    if cap is not None:
+        return cap
+
+    normalized_model = str(model_name or "").strip()
+    caps: list[int] = []
+    for alias in get_aliases().values():
+        if str(alias.upstream_model or "").strip() != normalized_model:
+            continue
+        candidate_cap = _alias_cap_value(alias, backend_name=backend_name)
+        if candidate_cap is not None:
+            caps.append(candidate_cap)
+    if not caps:
+        return None
+    return max(caps)
+
+
+def _bounded_max_tokens(
+    req: ChatCompletionRequest,
+    *,
+    backend_name: str,
+    model_name: str,
+    default_missing: bool,
+) -> int | None:
+    cap = _alias_max_tokens_cap(req, backend_name=backend_name, model_name=model_name)
+    if cap is None:
+        return req.max_tokens
+    if req.max_tokens is None:
+        return cap if default_missing else None
+    try:
+        requested = int(req.max_tokens)
+    except Exception:
+        return cap
+    return min(requested, cap)
+
+
 def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, model_name: str) -> ChatCompletionRequest:
     _resolved, provider, _base_url = _resolve_backend_target(backend_name)
     if provider not in {"mlx", "vllm"}:
         return req
     _enforce_mlx_glm_input_limit(req, backend_name=_resolved, model_name=model_name)
-    return req.model_copy(update={"model": model_name})
+    updates: Dict[str, Any] = {"model": model_name}
+    max_tokens = _bounded_max_tokens(
+        req,
+        backend_name=_resolved,
+        model_name=model_name,
+        default_missing=(provider == "mlx"),
+    )
+    if max_tokens is not None:
+        updates["max_tokens"] = max_tokens
+    return req.model_copy(update=updates)
 
 
 async def call_openai_chat(
@@ -212,6 +356,7 @@ async def call_openai_chat(
     payload = req.model_dump(exclude_none=True)
     if "messages" in payload and isinstance(payload["messages"], list):
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
+    payload = _normalize_openai_tools_payload(payload)
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=req.model)
 
     provider = backend_provider_name(backend_name)
@@ -322,6 +467,7 @@ async def stream_openai_chat(
     if "messages" in payload and isinstance(payload["messages"], list):
         payload = dict(payload)
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
+    payload = _normalize_openai_tools_payload(payload)
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=str(payload.get("model") or ""))
 
     provider = backend_provider_name(backend_name)
