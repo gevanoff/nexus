@@ -251,7 +251,9 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/admin/models" in html
     assert "Nexus model admin" in admin_models_html
     assert "/ui/api/admin/models" in admin_models_js
+    assert "/ui/api/admin/models/benchmark" in admin_models_js
     assert "/ui/api/admin/models/prefetch" in admin_models_js
+    assert "Start benchmark" in admin_models_html
     assert "Restart fetch" in admin_models_js
     assert "mlx_huge_lane" not in resources_html
     assert "/ui/api/mlx/huge-lane/switch" not in resources_js

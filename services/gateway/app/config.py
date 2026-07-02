@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     # - UI_MODELS_CACHE_TTL_SEC caches model lists briefly to avoid repeated upstream calls.
     UI_MODELS_PROBE_TIMEOUT_SEC: float = 4.0
     UI_MODELS_CACHE_TTL_SEC: float = 8.0
+    MODEL_BENCHMARK_LOG_PATH: str = "/var/lib/gateway/data/model_benchmarks/results.jsonl"
 
     # Tokenless UI file attachments (chat uploads)
     UI_FILE_DIR: str = "/var/lib/gateway/data/ui_files"

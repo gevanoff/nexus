@@ -56,6 +56,7 @@ from app import user_store
 from app import user_llm
 from app import agent_tasks
 from app import telegram_notifications
+from app import model_benchmark
 from app.auth import configured_static_bearer_tokens, require_bearer
 from app.agent_runtime_v1 import tools_for_tier
 from app.resources_snapshot import (
@@ -101,6 +102,9 @@ class ModelPrefetchRequest(BaseModel):
 class MlxHugeLaneSwitchRequest(BaseModel):
     model: str
     confirmed: bool = False
+
+
+ModelBenchmarkRequest = model_benchmark.ModelBenchmarkRequest
 
 
 _UI_MODELS_CACHE_LOCK = asyncio.Lock()
@@ -4593,8 +4597,20 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
         "backends": backend_rows,
         "aliases": alias_rows,
         "models": sorted(model_rows.values(), key=lambda row: (str(row.get("backend") or ""), str(row.get("model") or ""))),
+        "benchmarks": model_benchmark.recent_runs(limit=5),
         "diagnostics": {"sources": source_diags, "probe_timeout_sec": probe_timeout_sec},
     }
+
+
+@router.post("/ui/api/admin/models/benchmark", include_in_schema=False)
+async def ui_admin_model_benchmark(req: Request, body: ModelBenchmarkRequest) -> Dict[str, Any]:
+    _require_admin(req)
+    try:
+        return await model_benchmark.run_benchmark(body)
+    except model_benchmark.BenchmarkBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/ui/api/admin/models/prefetch", include_in_schema=False)

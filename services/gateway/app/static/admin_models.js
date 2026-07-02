@@ -2,7 +2,22 @@
   const statusEl = document.getElementById("admin_models_status");
   const listEl = document.getElementById("admin_models_list");
   const refreshEl = document.getElementById("admin_models_refresh");
+  const benchmarkEls = {
+    models: document.getElementById("model_benchmark_models"),
+    maxTokens: document.getElementById("model_benchmark_max_tokens"),
+    runs: document.getElementById("model_benchmark_runs"),
+    warmups: document.getElementById("model_benchmark_warmups"),
+    temperature: document.getElementById("model_benchmark_temperature"),
+    topP: document.getElementById("model_benchmark_top_p"),
+    prompt: document.getElementById("model_benchmark_prompt"),
+    start: document.getElementById("model_benchmark_start"),
+    selectAliases: document.getElementById("model_benchmark_select_aliases"),
+    clear: document.getElementById("model_benchmark_clear"),
+    status: document.getElementById("model_benchmark_status"),
+    results: document.getElementById("model_benchmark_results"),
+  };
   let hugeLanePollTimer = null;
+  let visibleBenchmarkAliases = [];
 
   function handle401(resp) {
     if (resp && resp.status === 401) {
@@ -27,6 +42,19 @@
     if (!Number.isFinite(sec) || sec <= 0) return "0s";
     if (sec < 90) return `${Math.round(sec)}s`;
     return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+  }
+
+  function formatMetric(value, suffix) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return "-";
+    const rendered = num >= 100 ? num.toFixed(0) : num >= 10 ? num.toFixed(1) : num.toFixed(2);
+    return suffix ? `${rendered} ${suffix}` : rendered;
+  }
+
+  function shortModel(value) {
+    const text = String(value || "");
+    if (text.length <= 72) return text;
+    return `${text.slice(0, 34)}...${text.slice(-34)}`;
   }
 
   function badge(text, tone) {
@@ -71,6 +99,146 @@
     heading.textContent = title;
     el.appendChild(heading);
     return el;
+  }
+
+  function benchmarkSelectedModels() {
+    if (!benchmarkEls.models) return [];
+    return Array.from(benchmarkEls.models.selectedOptions || [])
+      .map((option) => String(option.value || "").trim())
+      .filter(Boolean);
+  }
+
+  function numericInput(el, fallback, min, max) {
+    const value = Number(el?.value);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function appendBenchmarkOptionGroup(select, label, items) {
+    if (!items.length) return;
+    const groupEl = document.createElement("optgroup");
+    groupEl.label = label;
+    items.forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      groupEl.appendChild(option);
+    });
+    select.appendChild(groupEl);
+  }
+
+  function populateBenchmarkModels(payload) {
+    const select = benchmarkEls.models;
+    if (!select) return;
+    const previous = new Set(benchmarkSelectedModels());
+    const aliases = Array.isArray(payload?.aliases) ? payload.aliases : [];
+    const models = Array.isArray(payload?.models) ? payload.models : [];
+
+    const selectableAliasNames = new Set();
+    models.forEach((model) => {
+      if (model.selectable !== true || !Array.isArray(model.aliases)) return;
+      model.aliases.forEach((aliasName) => {
+        const clean = String(aliasName || "").replace(/\s+\(fallback\)$/, "").trim();
+        if (clean) selectableAliasNames.add(clean);
+      });
+    });
+
+    const aliasOptions = [];
+    visibleBenchmarkAliases = [];
+    aliases.forEach((alias) => {
+      const value = String(alias.alias || "").trim();
+      if (!value || alias.visible === false || alias.unavailable_reason || !selectableAliasNames.has(value)) return;
+      visibleBenchmarkAliases.push(value);
+      const backend = alias.effective_backend || alias.backend || "";
+      const resolved = alias.effective_model || alias.configured_model || "";
+      aliasOptions.push({ value, label: `${value} -> ${backend}:${shortModel(resolved)}` });
+    });
+
+    const seen = new Set(aliasOptions.map((item) => item.value));
+    const modelOptions = [];
+    models.forEach((model) => {
+      if (model.selectable !== true) return;
+      const backend = String(model.backend || "").trim();
+      const modelName = String(model.model || "").trim();
+      if (!backend || !modelName) return;
+      const value = `${backend}:${modelName}`;
+      if (seen.has(value)) return;
+      seen.add(value);
+      const aliasText = Array.isArray(model.aliases) && model.aliases.length ? ` aliases: ${model.aliases.join(", ")}` : "";
+      modelOptions.push({ value, label: `${backend}:${shortModel(modelName)}${aliasText}` });
+    });
+
+    select.innerHTML = "";
+    appendBenchmarkOptionGroup(select, "Aliases", aliasOptions);
+    appendBenchmarkOptionGroup(select, "Concrete models", modelOptions);
+
+    const wanted = previous.size ? previous : new Set(["fast", "default", "coder"].filter((item) => visibleBenchmarkAliases.includes(item)));
+    Array.from(select.options || []).forEach((option) => {
+      option.selected = wanted.has(option.value);
+    });
+  }
+
+  function renderBenchmarkSummary(payload) {
+    const target = benchmarkEls.results;
+    if (!target) return;
+    const summary = Array.isArray(payload?.summary) ? payload.summary : [];
+    if (!summary.length) {
+      target.innerHTML = '<div class="hint">No benchmark results yet.</div>';
+      return;
+    }
+
+    const table = document.createElement("table");
+    table.className = "model-admin-table";
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    ["Model", "OK", "Tok/s avg", "Tok/s min", "Decode tok/s", "TTFT", "Tokens", "Backend", "Resolved model", "Error"].forEach((label) => {
+      const th = document.createElement("th");
+      th.textContent = label;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    summary.forEach((rowItem) => {
+      const tr = document.createElement("tr");
+      const values = [
+        rowItem.model || "",
+        `${rowItem.ok || 0}/${rowItem.runs || 0}`,
+        formatMetric(rowItem.tokens_per_sec_avg, ""),
+        formatMetric(rowItem.tokens_per_sec_min, ""),
+        formatMetric(rowItem.decode_tokens_per_sec_avg, ""),
+        formatMetric(rowItem.time_to_first_token_ms_avg, "ms"),
+        formatMetric(rowItem.completion_tokens_avg, ""),
+        rowItem.backend || "",
+        rowItem.resolved_model || "",
+        rowItem.error || "",
+      ];
+      values.forEach((value) => {
+        const td = document.createElement("td");
+        td.textContent = String(value || "-");
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    target.innerHTML = "";
+    const caption = document.createElement("div");
+    caption.className = "hint";
+    const completed = formatTimestamp(Number(payload?.generated_at || payload?.completed_at || 0));
+    caption.textContent = payload?.run_id ? `Run ${payload.run_id}${completed ? ` · ${completed}` : ""}` : completed;
+    target.appendChild(caption);
+    target.appendChild(table);
+  }
+
+  function renderBenchmarkHistory(payload) {
+    const recent = Array.isArray(payload?.benchmarks) ? payload.benchmarks : [];
+    if (recent.length) {
+      renderBenchmarkSummary(recent[0]);
+    } else {
+      renderBenchmarkSummary(null);
+    }
   }
 
   function scheduleHugeLanePoll(active) {
@@ -153,6 +321,9 @@
     const aliases = Array.isArray(payload?.aliases) ? payload.aliases : [];
     const models = Array.isArray(payload?.models) ? payload.models : [];
     const backends = Array.isArray(payload?.backends) ? payload.backends : [];
+
+    populateBenchmarkModels(payload);
+    renderBenchmarkHistory(payload);
 
     renderHugeLane(payload?.mlx_huge_lane || null);
 
@@ -260,6 +431,62 @@
     }
   }
 
+  function benchmarkRequestBody() {
+    const models = benchmarkSelectedModels();
+    if (!models.length) throw new Error("Select at least one model.");
+    return {
+      models,
+      max_tokens: numericInput(benchmarkEls.maxTokens, 512, 1, 4096),
+      runs: numericInput(benchmarkEls.runs, 3, 1, 10),
+      warmup_runs: numericInput(benchmarkEls.warmups, 1, 0, 3),
+      temperature: numericInput(benchmarkEls.temperature, 0.2, 0, 2),
+      top_p: numericInput(benchmarkEls.topP, 0.95, 0.01, 1),
+      prompt: String(benchmarkEls.prompt?.value || "").trim(),
+      stream: true,
+    };
+  }
+
+  async function runBenchmark() {
+    if (!benchmarkEls.start) return;
+    benchmarkEls.start.disabled = true;
+    if (benchmarkEls.status) benchmarkEls.status.textContent = "Benchmark running...";
+    try {
+      const body = benchmarkRequestBody();
+      const resp = await fetch("/ui/api/admin/models/benchmark", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await resp.text();
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        let detail = text;
+        try {
+          const parsed = JSON.parse(text);
+          detail = parsed?.detail || text;
+        } catch (error) {
+          detail = text;
+        }
+        throw new Error(`HTTP ${resp.status}: ${detail}`);
+      }
+      const payload = JSON.parse(text);
+      renderBenchmarkSummary(payload);
+      if (benchmarkEls.status) benchmarkEls.status.textContent = `Benchmark complete: ${payload.run_id || ""}`;
+    } catch (error) {
+      if (benchmarkEls.status) benchmarkEls.status.textContent = `Benchmark failed: ${String(error?.message || error)}`;
+    } finally {
+      benchmarkEls.start.disabled = false;
+    }
+  }
+
+  function selectVisibleAliases() {
+    const wanted = new Set(visibleBenchmarkAliases);
+    Array.from(benchmarkEls.models?.options || []).forEach((option) => {
+      option.selected = wanted.has(option.value);
+    });
+  }
+
   async function switchHugeLane(model, confirmed) {
     const modelId = String(model || "").trim();
     if (!modelId) return;
@@ -291,5 +518,11 @@
   }
 
   if (refreshEl) refreshEl.addEventListener("click", () => void load());
+  if (benchmarkEls.start) benchmarkEls.start.addEventListener("click", () => void runBenchmark());
+  if (benchmarkEls.selectAliases) benchmarkEls.selectAliases.addEventListener("click", selectVisibleAliases);
+  if (benchmarkEls.clear) benchmarkEls.clear.addEventListener("click", () => {
+    if (benchmarkEls.results) benchmarkEls.results.innerHTML = '<div class="hint">No benchmark results yet.</div>';
+    if (benchmarkEls.status) benchmarkEls.status.textContent = "";
+  });
   void load();
 })();

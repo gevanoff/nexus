@@ -47,8 +47,24 @@
       .model-admin-huge { border-color: rgba(111,184,255,0.28); }
       .model-admin-progress { height: 7px; overflow: hidden; border-radius: 999px; background: rgba(231,237,246,0.08); margin-top: 8px; }
       .model-admin-progress > span { display: block; height: 100%; background: linear-gradient(90deg, #6fb8ff, #8be3c9); }
+      .model-admin-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+      .model-admin-section-head h2 { margin:0; font-size:14px; font-weight:650; }
+      .model-admin-controls { display:grid; grid-template-columns:minmax(240px,1.6fr) repeat(5,minmax(92px,0.55fr)); gap:10px; align-items:end; }
+      .model-admin-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+      .model-admin-field label { font-size:11px; color:var(--muted); }
+      select, input, textarea { box-sizing:border-box; width:100%; border:1px solid var(--border); border-radius:8px; background:rgba(6,10,16,0.72); color:var(--text); font:inherit; font-size:12px; padding:8px; }
+      select[multiple] { min-height:116px; }
+      textarea { min-height:74px; resize:vertical; }
+      .model-admin-benchmark-actions { margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .model-admin-table-wrap { margin-top:10px; overflow-x:auto; }
+      .model-admin-table { width:100%; border-collapse:collapse; font-size:12px; min-width:860px; }
+      .model-admin-table th, .model-admin-table td { padding:7px 8px; border-top:1px solid rgba(231,237,246,0.08); text-align:left; vertical-align:top; }
+      .model-admin-table th { color:var(--muted); font-weight:600; }
+      .model-admin-table td { overflow-wrap:anywhere; }
       @media (max-width: 820px) {
         .model-admin-row { grid-template-columns: 1fr; }
+        .model-admin-controls { grid-template-columns: 1fr 1fr; }
+        .model-admin-field.models { grid-column: 1 / -1; }
       }
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css?v=2" />
@@ -66,6 +82,52 @@
         </div>
       </header>
 
+      <section class="card" style="margin-bottom:12px">
+        <div class="model-admin-section-head">
+          <div>
+            <h2>Benchmark</h2>
+            <div class="hint">Run chat throughput checks against selected aliases or concrete backend models.</div>
+          </div>
+        </div>
+        <div class="model-admin-controls">
+          <div class="model-admin-field models">
+            <label for="model_benchmark_models">Models</label>
+            <select id="model_benchmark_models" multiple size="6"></select>
+          </div>
+          <div class="model-admin-field">
+            <label for="model_benchmark_max_tokens">Max tokens</label>
+            <input id="model_benchmark_max_tokens" type="number" min="1" max="4096" step="1" value="512" />
+          </div>
+          <div class="model-admin-field">
+            <label for="model_benchmark_runs">Runs</label>
+            <input id="model_benchmark_runs" type="number" min="1" max="10" step="1" value="3" />
+          </div>
+          <div class="model-admin-field">
+            <label for="model_benchmark_warmups">Warmups</label>
+            <input id="model_benchmark_warmups" type="number" min="0" max="3" step="1" value="1" />
+          </div>
+          <div class="model-admin-field">
+            <label for="model_benchmark_temperature">Temperature</label>
+            <input id="model_benchmark_temperature" type="number" min="0" max="2" step="0.05" value="0.2" />
+          </div>
+          <div class="model-admin-field">
+            <label for="model_benchmark_top_p">Top P</label>
+            <input id="model_benchmark_top_p" type="number" min="0.01" max="1" step="0.01" value="0.95" />
+          </div>
+        </div>
+        <div class="model-admin-field" style="margin-top:10px">
+          <label for="model_benchmark_prompt">Prompt</label>
+          <textarea id="model_benchmark_prompt">Generate a long plain-text benchmark response. Write short numbered sentences about operating local AI model infrastructure. Keep going until you reach the requested output limit. Do not summarize, ask questions, or stop early.</textarea>
+        </div>
+        <div class="model-admin-benchmark-actions">
+          <button id="model_benchmark_start" type="button" data-ui-role="action">Start benchmark</button>
+          <button id="model_benchmark_select_aliases" type="button" data-ui-role="secondary">Select visible aliases</button>
+          <button id="model_benchmark_clear" type="button" data-ui-role="secondary">Clear results</button>
+          <div id="model_benchmark_status" class="hint"></div>
+        </div>
+        <div id="model_benchmark_results" class="model-admin-table-wrap"></div>
+      </section>
+
       <section class="card">
         <div id="admin_models_status" class="hint" style="margin-bottom:10px">Loading...</div>
         <div id="admin_models_list" class="model-admin-list"></div>
@@ -73,6 +135,6 @@
     </main>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=7"></script>
-    <script src="/static/admin_models.js?v=3"></script>
+    <script src="/static/admin_models.js?v=4"></script>
   </body>
 </html>
