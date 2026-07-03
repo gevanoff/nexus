@@ -54,7 +54,28 @@ def _has_terminal_choice(obj: Any) -> bool:
     return False
 
 
-async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
+def _normalize_stream_error_payload(payload: Any, *, request_id: str | None = None) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return payload
+    message = error.get("message")
+    if isinstance(message, str) and message.strip():
+        return payload
+
+    normalized = dict(payload)
+    normalized_error = dict(error)
+    req_id = request_id or "-"
+    normalized_error["message"] = f"Upstream returned an empty streaming error; request_id={req_id}"
+    normalized_error.setdefault("type", "server_error")
+    normalized_error.setdefault("param", None)
+    normalized_error.setdefault("code", "500")
+    normalized["error"] = normalized_error
+    return normalized
+
+
+async def passthrough_sse(resp: httpx.Response, *, request_id: str | None = None) -> AsyncIterator[bytes]:
     """
     Normalize upstream OpenAI-style SSE while preserving explicit reasoning side
     channels and strict OpenAI chunk ordering.
@@ -87,6 +108,8 @@ async def passthrough_sse(resp: httpx.Response) -> AsyncIterator[bytes]:
             except Exception:
                 yield f"{line}\n\n".encode("utf-8")
                 continue
+
+            obj = _normalize_stream_error_payload(obj, request_id=request_id)
 
             if isinstance(obj, dict):
                 model = obj.get("model")

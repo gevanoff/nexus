@@ -502,11 +502,20 @@ def test_chat_completions_normalizes_continue_style_request_shape(monkeypatch):
                     {
                         "type": "function",
                         "displayTitle": "Read File",
+                        "wouldLikeTo": "read {{{ filepath }}}",
+                        "readonly": True,
+                        "group": "Built-In",
                         "function": {"name": "read_file", "parameters": {}},
+                        "systemMessageDescription": {"prefix": "Use read_file."},
+                        "defaultToolPolicy": "allowedWithoutPermission",
+                        "toolCallIcon": "DocumentIcon",
                     }
                 ],
                 "toolChoice": "auto",
                 "maxTokens": 128,
+                "temperature": 0.2,
+                "topP": 0.5,
+                "reasoning": False,
             },
             "reasoning": False,
         },
@@ -518,17 +527,86 @@ def test_chat_completions_normalizes_continue_style_request_shape(monkeypatch):
     assert "reasoning" not in routed
     assert routed["tool_choice"] == "auto"
     assert routed["max_tokens"] == 128
+    assert routed["temperature"] == 0.2
+    assert routed["top_p"] == 0.5
     assert routed["tools"][0]["function"]["name"] == "read_file"
+    assert sorted(routed["tools"][0].keys()) == ["function", "type"]
+    assert "displayTitle" not in routed["tools"][0]
     assert [message["role"] for message in routed["messages"]] == [
         "system",
         "user",
         "assistant",
         "tool",
     ]
+    assert captured["req"].messages[2].content is None
+    assert routed["messages"][1]["content"] == "read README.md"
     assert "tool_calls" in routed["messages"][2]
     assert "toolCalls" not in routed["messages"][2]
     assert routed["messages"][3]["tool_call_id"] == "call_1"
     assert "toolCallId" not in routed["messages"][3]
+
+
+def test_chat_completions_rejects_unsupported_continue_content_array(monkeypatch):
+    client = _build_client(monkeypatch, backend_supports_tools=True)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "continue-local",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "https://example.invalid/image.png"},
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert body["error"]["param"] == "messages.0.content"
+    assert "unsupported array content" in body["error"]["message"]
+    assert "request_id=" in body["error"]["message"]
+
+
+def test_chat_completions_debug_diagnostics_are_redacted(monkeypatch, caplog):
+    client = _build_client(monkeypatch, backend_supports_tools=True)
+    monkeypatch.setattr(openai_routes.S, "GATEWAY_DEBUG_OPENAI_REQUESTS", True, raising=False)
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "continue-local",
+                "messages": [{"role": "user", "content": "secret prompt text"}],
+                "completionOptions": {
+                    "tools": [
+                        {
+                            "type": "function",
+                            "displayTitle": "Read File",
+                            "function": {"name": "read_file", "description": "secret description", "parameters": {}},
+                        }
+                    ]
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    messages = [record.getMessage() for record in caplog.records]
+    request_logs = [message for message in messages if "openai request diagnostics" in message]
+    response_logs = [message for message in messages if "openai response diagnostics" in message]
+    assert request_logs
+    assert response_logs
+    assert any('"tools_completion_options_present": true' in message for message in request_logs)
+    assert any('"status_code": 200' in message for message in response_logs)
+    assert all("secret prompt text" not in message for message in messages)
+    assert all("secret description" not in message for message in messages)
 
 
 def test_chat_completions_returns_diagnostic_500_for_handler_exception(monkeypatch):

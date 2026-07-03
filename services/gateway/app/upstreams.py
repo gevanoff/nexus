@@ -513,7 +513,7 @@ async def stream_openai_chat(
                 headers={"accept": "text/event-stream"},
             ) as r:
                 r.raise_for_status()
-                async for chunk in passthrough_sse(r):
+                async for chunk in passthrough_sse(r, request_id=request_id):
                     yield chunk
         except httpx.HTTPStatusError as e:
             detail = await _http_status_error_detail(e, upstream=backend_name)

@@ -202,6 +202,34 @@ _OPENAI_CHAT_REQUEST_KEYS = {
     "stream",
 }
 
+_COMPLETION_OPTION_PROMOTIONS = {
+    "maxTokens": "max_tokens",
+    "max_tokens": "max_tokens",
+    "temperature": "temperature",
+    "topP": "top_p",
+    "top_p": "top_p",
+    "topK": "top_k",
+    "top_k": "top_k",
+    "minP": "min_p",
+    "min_p": "min_p",
+    "frequencyPenalty": "frequency_penalty",
+    "frequency_penalty": "frequency_penalty",
+    "presencePenalty": "presence_penalty",
+    "presence_penalty": "presence_penalty",
+    "parallelToolCalls": "parallel_tool_calls",
+    "parallel_tool_calls": "parallel_tool_calls",
+    "stop": "stop",
+    "seed": "seed",
+    "streamOptions": "stream_options",
+    "stream_options": "stream_options",
+}
+
+
+class _ContinueRequestNormalizationError(ValueError):
+    def __init__(self, message: str, *, param: str | None = None) -> None:
+        super().__init__(message)
+        self.param = param
+
 
 def _content_shape(value: Any) -> str:
     if value is None:
@@ -238,6 +266,18 @@ def _tool_names_from_raw_tools(tools: Any) -> list[str]:
     return names
 
 
+def _tool_top_level_keys_from_raw_tools(tools: Any) -> list[list[str]]:
+    if not isinstance(tools, list):
+        return []
+    out: list[list[str]] = []
+    for tool in tools[:20]:
+        if isinstance(tool, dict):
+            out.append(sorted(str(key) for key in tool.keys()))
+        else:
+            out.append([type(tool).__name__])
+    return out
+
+
 def _raw_message_summary(body: Any) -> list[dict[str, Any]]:
     if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
         return []
@@ -250,9 +290,13 @@ def _raw_message_summary(body: Any) -> list[dict[str, Any]]:
             {
                 "index": idx,
                 "role": message.get("role"),
+                "content_present": "content" in message,
                 "content_shape": _content_shape(message.get("content")),
-                "has_tool_calls": "tool_calls" in message or "toolCalls" in message,
-                "has_tool_call_id": "tool_call_id" in message or "toolCallId" in message,
+                "has_tool_calls": "tool_calls" in message,
+                "has_toolCalls": "toolCalls" in message,
+                "has_tool_call_id": "tool_call_id" in message,
+                "has_toolCallId": "toolCallId" in message,
+                "has_thinking_role": str(message.get("role") or "").strip().lower() == "thinking",
                 "keys": sorted(str(key) for key in message.keys() if key != "content"),
             }
         )
@@ -265,6 +309,82 @@ def _unknown_top_level_fields(body: Any) -> list[str]:
     return sorted(str(key) for key in body.keys() if str(key) not in _OPENAI_CHAT_REQUEST_KEYS)
 
 
+def _normalize_text_content_parts(content: list[Any]) -> str | None:
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            return None
+        item_type = str(item.get("type") or "").strip().lower()
+        if item_type in {"text", "input_text"} and isinstance(item.get("text"), str):
+            parts.append(item["text"])
+            continue
+        return None
+    return "\n".join(part for part in parts if part)
+
+
+def _normalize_message_content_for_gateway(content: Any, *, param: str) -> tuple[Any, bool]:
+    if not isinstance(content, list):
+        return content, False
+    text = _normalize_text_content_parts(content)
+    if text is None:
+        raise _ContinueRequestNormalizationError(
+            "unsupported array content; only text and input_text content parts are supported by this gateway",
+            param=param,
+        )
+    return text, True
+
+
+def _sanitize_openai_tool(tool: Any) -> tuple[dict[str, Any] | None, bool]:
+    if not isinstance(tool, dict):
+        return None, False
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return None, False
+    name = function.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None, False
+
+    out_function: dict[str, Any] = {"name": name.strip()}
+    description = function.get("description")
+    if isinstance(description, str):
+        out_function["description"] = description
+    parameters = function.get("parameters")
+    if isinstance(parameters, dict):
+        out_function["parameters"] = parameters
+    else:
+        out_function["parameters"] = {"type": "object", "properties": {}}
+    strict = function.get("strict")
+    if isinstance(strict, bool):
+        out_function["strict"] = strict
+
+    sanitized = {"type": "function", "function": out_function}
+    return sanitized, sanitized != tool
+
+
+def _sanitize_openai_tools(tools: Any, *, source: str, actions: list[str]) -> Any:
+    if not isinstance(tools, list):
+        return tools
+    sanitized_tools: list[dict[str, Any]] = []
+    sanitized_count = 0
+    dropped_count = 0
+    for tool in tools:
+        sanitized, changed = _sanitize_openai_tool(tool)
+        if sanitized is None:
+            dropped_count += 1
+            continue
+        sanitized_tools.append(sanitized)
+        if changed:
+            sanitized_count += 1
+    if sanitized_count:
+        actions.append(f"sanitized {source} tools={sanitized_count}")
+    if dropped_count:
+        actions.append(f"dropped invalid {source} tools={dropped_count}")
+    return sanitized_tools
+
+
 def _normalize_continue_chat_body(body: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     out = dict(body)
     actions: list[str] = []
@@ -274,6 +394,8 @@ def _normalize_continue_chat_body(body: dict[str, Any]) -> tuple[dict[str, Any],
         if "tools" not in out and isinstance(completion_options.get("tools"), list):
             out["tools"] = completion_options["tools"]
             actions.append("promoted completionOptions.tools")
+        elif "tools" in out and isinstance(completion_options.get("tools"), list):
+            actions.append("ignored completionOptions.tools because top-level tools were present")
         if "tool_choice" not in out:
             if "toolChoice" in completion_options:
                 out["tool_choice"] = completion_options["toolChoice"]
@@ -281,9 +403,16 @@ def _normalize_continue_chat_body(body: dict[str, Any]) -> tuple[dict[str, Any],
             elif "tool_choice" in completion_options:
                 out["tool_choice"] = completion_options["tool_choice"]
                 actions.append("promoted completionOptions.tool_choice")
-        if "max_tokens" not in out and completion_options.get("maxTokens") is not None:
-            out["max_tokens"] = completion_options["maxTokens"]
-            actions.append("promoted completionOptions.maxTokens")
+        for source_key, target_key in _COMPLETION_OPTION_PROMOTIONS.items():
+            if target_key in out or source_key not in completion_options:
+                continue
+            value = completion_options.get(source_key)
+            if value is None:
+                continue
+            out[target_key] = value
+            actions.append(f"promoted completionOptions.{source_key} to {target_key}")
+        if "reasoning" in completion_options:
+            actions.append("ignored completionOptions.reasoning")
         out.pop("completionOptions", None)
         actions.append("dropped completionOptions")
 
@@ -295,6 +424,9 @@ def _normalize_continue_chat_body(body: dict[str, Any]) -> tuple[dict[str, Any],
     if "reasoning" in out:
         out.pop("reasoning", None)
         actions.append("dropped reasoning")
+
+    if isinstance(out.get("tools"), list):
+        out["tools"] = _sanitize_openai_tools(out["tools"], source="request", actions=actions)
 
     messages = out.get("messages")
     if isinstance(messages, list):
@@ -318,6 +450,21 @@ def _normalize_continue_chat_body(body: dict[str, Any]) -> tuple[dict[str, Any],
                     normalized["tool_call_id"] = normalized["toolCallId"]
                     actions.append(f"renamed messages[{idx}].toolCallId to tool_call_id")
                 normalized.pop("toolCallId", None)
+            if "content" in normalized:
+                normalized_content, flattened = _normalize_message_content_for_gateway(
+                    normalized.get("content"),
+                    param=f"messages.{idx}.content",
+                )
+                if flattened:
+                    normalized["content"] = normalized_content
+                    actions.append(f"flattened messages[{idx}].content text array")
+            if (
+                role == "assistant"
+                and normalized.get("content") == ""
+                and normalized.get("tool_calls") is not None
+            ):
+                normalized["content"] = None
+                actions.append(f"normalized messages[{idx}].assistant tool call content to null")
             normalized_messages.append(normalized)
         out["messages"] = normalized_messages
 
@@ -338,9 +485,19 @@ def _http_exception_message(exc: HTTPException) -> str:
     return text or f"HTTP {exc.status_code}"
 
 
+def _diagnostic_exception_message(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        return _validation_error_message(exc)
+    if isinstance(exc, HTTPException):
+        return _http_exception_message(exc)
+    return (str(exc).strip() or type(exc).__name__)[:500]
+
+
 def _log_openai_request_diagnostics(
     *,
     request_id: str,
+    method: str,
+    path: str,
     body: Any,
     normalized_body: Any,
     normalization_actions: list[str],
@@ -353,17 +510,30 @@ def _log_openai_request_diagnostics(
     if not bool(getattr(S, "GATEWAY_DEBUG_OPENAI_REQUESTS", False)):
         return
     completion_options = body.get("completionOptions") if isinstance(body, dict) else None
+    completion_options_tools = completion_options.get("tools") if isinstance(completion_options, dict) else None
+    raw_tools = body.get("tools") if isinstance(body, dict) else None
+    normalized_tools = normalized_body.get("tools") if isinstance(normalized_body, dict) else None
     payload = {
         "request_id": request_id,
+        "method": method,
+        "path": path,
         "model": cc.model,
         "stream": bool(cc.stream),
+        "top_level_keys": _body_keys(body),
+        "normalized_top_level_keys": _body_keys(normalized_body),
+        "upstream_request_keys": _body_keys(cc.model_dump(exclude_none=True)),
         "message_count": len(cc.messages),
         "message_roles": [message.role for message in cc.messages],
         "raw_message_summary": _raw_message_summary(body),
         "content_shapes": [_content_shape(message.content) for message in cc.messages],
+        "tools_top_level_present": isinstance(raw_tools, list),
+        "tools_completion_options_present": isinstance(completion_options_tools, list),
+        "tool_top_level_keys": _tool_top_level_keys_from_raw_tools(raw_tools),
+        "completion_options_tool_top_level_keys": _tool_top_level_keys_from_raw_tools(completion_options_tools),
+        "normalized_tool_top_level_keys": _tool_top_level_keys_from_raw_tools(normalized_tools),
         "has_tools": bool(cc.tools),
         "tool_count": len(cc.tools or []),
-        "tool_names": _tool_names_from_raw_tools(normalized_body.get("tools") if isinstance(normalized_body, dict) else None),
+        "tool_names": _tool_names_from_raw_tools(normalized_tools),
         "tool_choice_present": cc.tool_choice is not None,
         "response_format_present": cc.response_format is not None,
         "reasoning_present": isinstance(body, dict) and "reasoning" in body,
@@ -378,6 +548,33 @@ def _log_openai_request_diagnostics(
         "tool_fields_action": tool_fields_action,
     }
     logger.info("openai request diagnostics %s", json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+
+
+def _log_openai_response_diagnostics(
+    *,
+    request_id: str,
+    status_code: int,
+    stream: bool,
+    backend_class: str = "",
+    model_name: str = "",
+    error_type: str | None = None,
+    exception: Exception | None = None,
+) -> None:
+    if not bool(getattr(S, "GATEWAY_DEBUG_OPENAI_REQUESTS", False)):
+        return
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "status_code": status_code,
+        "stream": stream,
+        "backend_class": backend_class or None,
+        "upstream_model": model_name or None,
+    }
+    if error_type:
+        payload["error_type"] = error_type
+    if exception is not None:
+        payload["exception_class"] = type(exception).__name__
+        payload["exception_message"] = _diagnostic_exception_message(exception)
+    logger.info("openai response diagnostics %s", json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
 
 
 def _request_messages_summary(messages: list[ChatMessage]) -> list[dict[str, Any]]:
@@ -697,21 +894,33 @@ async def chat_completions(req: Request):
     try:
         body = await req.json()
     except Exception as exc:
+        _log_openai_response_diagnostics(request_id=request_id, status_code=400, stream=False, error_type="invalid_json", exception=exc)
         return _openai_error_response(
             f"Unsupported field or invalid request shape: invalid JSON body ({type(exc).__name__}); request_id={request_id}",
             detail={"request_id": request_id},
         )
 
     if not isinstance(body, dict):
+        _log_openai_response_diagnostics(request_id=request_id, status_code=400, stream=False, error_type="invalid_json_shape")
         return _openai_error_response(
             f"Unsupported field or invalid request shape: JSON body must be an object; request_id={request_id}",
             detail={"request_id": request_id},
         )
 
-    normalized_body, normalization_actions = _normalize_continue_chat_body(body)
+    try:
+        normalized_body, normalization_actions = _normalize_continue_chat_body(body)
+    except _ContinueRequestNormalizationError as exc:
+        _log_openai_response_diagnostics(request_id=request_id, status_code=400, stream=False, error_type="normalization_error", exception=exc)
+        return _openai_error_response(
+            f"Unsupported field or invalid request shape: {exc}; request_id={request_id}",
+            param=exc.param,
+            detail={"request_id": request_id},
+        )
+
     try:
         cc = ChatCompletionRequest(**normalized_body)
     except ValidationError as exc:
+        _log_openai_response_diagnostics(request_id=request_id, status_code=400, stream=False, error_type="validation_error", exception=exc)
         return _openai_error_response(
             f"{_validation_error_message(exc)}; request_id={request_id}",
             param=_validation_error_param(exc),
@@ -774,6 +983,8 @@ async def chat_completions(req: Request):
         )
         _log_openai_request_diagnostics(
             request_id=request_id,
+            method=req.method,
+            path=str(req.url.path),
             body=body,
             normalized_body=normalized_body,
             normalization_actions=normalization_actions,
@@ -813,6 +1024,14 @@ async def chat_completions(req: Request):
             pass
 
         if tools_required_error:
+            _log_openai_response_diagnostics(
+                request_id=request_id,
+                status_code=400,
+                stream=bool(cc.stream),
+                backend_class=backend_class,
+                model_name=model_name,
+                error_type="tools_required_error",
+            )
             return _openai_error_response(
                 f"Unsupported field or invalid request shape: tools were explicitly required, but {degradation_reason}; request_id={request_id}",
                 param="tool_choice",
@@ -845,6 +1064,13 @@ async def chat_completions(req: Request):
             out.headers["X-Backend-Used"] = backend
             out.headers["X-Model-Used"] = model_name
             out.headers["X-Router-Reason"] = route.reason
+            _log_openai_response_diagnostics(
+                request_id=request_id,
+                status_code=200,
+                stream=True,
+                backend_class=backend_class,
+                model_name=model_name,
+            )
             return out
 
         t0 = time.monotonic()
@@ -862,6 +1088,13 @@ async def chat_completions(req: Request):
         out.headers["X-Backend-Used"] = backend
         out.headers["X-Model-Used"] = model_name
         out.headers["X-Router-Reason"] = route.reason
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            status_code=200,
+            stream=False,
+            backend_class=backend_class,
+            model_name=model_name,
+        )
         return out
     except HTTPException as exc:
         status_code = int(exc.status_code or 500)
@@ -869,7 +1102,7 @@ async def chat_completions(req: Request):
         code = "500" if status_code >= 500 else "invalid_request"
         message = _http_exception_message(exc)
         if status_code >= 500:
-            logger.warning(
+            logger.exception(
                 "chat.completions HTTPException request_id=%s status=%s backend=%s model=%s detail=%s",
                 request_id,
                 status_code,
@@ -877,6 +1110,15 @@ async def chat_completions(req: Request):
                 model_name or "-",
                 message,
             )
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            status_code=status_code,
+            stream=False,
+            backend_class=backend_class,
+            model_name=model_name,
+            error_type=error_type,
+            exception=exc,
+        )
         return _openai_error_response(
             f"Gateway chat completion failed: {message}; request_id={request_id}",
             status_code=status_code,
@@ -892,6 +1134,15 @@ async def chat_completions(req: Request):
             model_name or "-",
         )
         message = str(exc).strip() or type(exc).__name__
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            status_code=500,
+            stream=False,
+            backend_class=backend_class,
+            model_name=model_name,
+            error_type="server_error",
+            exception=exc,
+        )
         return _openai_error_response(
             f"Gateway failed while handling chat completion: {type(exc).__name__}: {message[:500]}; request_id={request_id}",
             status_code=500,

@@ -15,8 +15,8 @@ class FakeSseResponse:
             yield line
 
 
-async def _collect(resp: FakeSseResponse) -> list[bytes]:
-    return [chunk async for chunk in passthrough_sse(resp)]
+async def _collect(resp: FakeSseResponse, *, request_id: str | None = None) -> list[bytes]:
+    return [chunk async for chunk in passthrough_sse(resp, request_id=request_id)]
 
 
 def _payloads(chunks: list[bytes]) -> list[dict]:
@@ -136,5 +136,23 @@ def test_passthrough_sse_does_not_duplicate_upstream_done_after_terminal_stop():
     assert any(
         payload["choices"][0].get("finish_reason") == "stop" for payload in payloads
     )
+    assert chunks[-1] == b"data: [DONE]\n\n"
+    assert _done_count(chunks) == 1
+
+
+def test_passthrough_sse_fills_empty_stream_error_message_with_request_id():
+    resp = FakeSseResponse(
+        [
+            'data: {"error":{"message":"","type":"server_error","param":null,"code":"500"}}',
+            "data: [DONE]",
+        ]
+    )
+
+    chunks = asyncio.run(_collect(resp, request_id="req-123"))
+    payloads = _payloads(chunks)
+
+    assert payloads[0]["error"]["type"] == "server_error"
+    assert payloads[0]["error"]["code"] == "500"
+    assert payloads[0]["error"]["message"] == "Upstream returned an empty streaming error; request_id=req-123"
     assert chunks[-1] == b"data: [DONE]\n\n"
     assert _done_count(chunks) == 1

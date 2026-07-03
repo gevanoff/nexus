@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from app.models import ChatCompletionRequest
 from app import upstreams
-from app.upstreams import _normalize_messages_for_openai_backend
+from app.upstreams import _normalize_messages_for_openai_backend, _normalize_openai_tools_payload
 
 
 def test_normalize_messages_preserves_tool_call_exchange():
@@ -77,6 +77,42 @@ def test_normalize_messages_handles_continue_camelcase_and_text_parts():
     assert normalized[0] == {"role": "user", "content": "first\nsecond"}
     assert normalized[1] == {"role": "assistant", "content": "", "tool_calls": tool_calls}
     assert normalized[2] == {"role": "tool", "content": "done", "tool_call_id": "call_123"}
+
+
+def test_normalize_openai_tools_payload_drops_continue_metadata():
+    payload = {
+        "model": "upstream",
+        "tools": [
+            {
+                "type": "function",
+                "displayTitle": "Read File",
+                "wouldLikeTo": "read {{{ filepath }}}",
+                "readonly": True,
+                "function": {
+                    "name": "read_file",
+                    "description": "Read a file.",
+                    "parameters": {"type": "object", "properties": {}},
+                    "strict": True,
+                },
+                "systemMessageDescription": {"prefix": "Use read_file."},
+                "defaultToolPolicy": "allowedWithoutPermission",
+            }
+        ],
+    }
+
+    normalized = _normalize_openai_tools_payload(payload)
+
+    assert normalized["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file.",
+                "parameters": {"type": "object", "properties": {}},
+                "strict": True,
+            },
+        }
+    ]
 
 
 def test_glm_input_guard_rejects_oversized_prompt(monkeypatch):
