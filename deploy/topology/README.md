@@ -62,18 +62,18 @@ Compatibility note:
 - `copyfail` has Ubuntu 22.04, an Intel Celeron J3355, 2 logical CPUs, and about 7.4GiB system RAM. It is an infrastructure-only host for metrics collection, deployment orchestration, and general IT operations; do not assign model-serving backends to it.
 - `migraine` has macOS on Apple M2 with 8GB unified memory. Keep it client-only for Hermes/Telegram; do not assign Compose model-serving backends or vLLM lanes to it.
 
-## vLLM Native Tool Calling
+## vLLM Tool Calling
 
-vLLM native tool calling is enabled for the production chat lanes:
+vLLM automatic tool parsing is disabled for the production chat lanes until the model, chat template, and parser combinations are validated end to end:
 
-- strong lane (`ada2`): `VLLM_ENABLE_AUTO_TOOL_CHOICE=true`, `VLLM_TOOL_CALL_PARSER=mistral`, and `VLLM_NATIVE_TOOLS_ENABLED=true`
-- fast lane (`ai1`): native tool parsing is disabled. vLLM 0.10.2 runs this Devstral lane with the matching tokenizer in `mistral` tokenizer mode, but the lane is not validated for native structured tool-call parsing. Gateway should degrade tool-shaped fast-lane requests instead of passing tool fields to this backend.
+- strong lane (`ada2`): auto tool parsing is disabled. The current Magistral artifact emits tool-like text for `tool_choice=auto`, but vLLM does not convert that text into OpenAI `tool_calls` with the current parser/template setup.
+- fast lane (`ai1`): auto tool parsing is disabled. vLLM 0.10.2 runs this Devstral lane with the matching tokenizer in `mistral` tokenizer mode, but the lane is not validated for native automatic structured tool-call parsing.
 
-The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` tool requests may be passed to a backend that is not actually running with `--enable-auto-tool-choice`.
+The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated automatic tool parsing and must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` requests with `tool_choice=auto` may be passed to a backend that is not actually returning structured tool calls. Required and named tool choices are still allowed through vLLM because they use guided decoding instead of the automatic parser.
 
 The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `ai1` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. `meltdown` currently serves the vLLM embeddings lane only; there is no chat tool-call surface on that host unless a chat model is assigned there.
 
-After restarting a lane with native tool flags, validate it directly before flipping the gateway flag:
+After restarting a lane with automatic native tool flags, validate it directly before flipping the gateway flag:
 
 ```bash
 BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh

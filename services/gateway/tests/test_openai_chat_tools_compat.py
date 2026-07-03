@@ -546,7 +546,7 @@ def test_chat_completions_alias_tools_false_degrades_instead_of_400(monkeypatch)
 
 
 def test_chat_completions_returns_openai_error_when_tools_are_required(monkeypatch):
-    client = _build_client(monkeypatch, backend_supports_tools=False)
+    client = _build_client(monkeypatch, backend_name="legacy_chat", backend_supports_tools=False)
 
     payload = {
         "model": "continue-local",
@@ -562,6 +562,97 @@ def test_chat_completions_returns_openai_error_when_tools_are_required(monkeypat
     assert body["error"]["type"] == "invalid_request_error"
     assert body["error"]["param"] == "tool_choice"
     assert "explicitly required" in body["error"]["message"]
+
+
+def test_chat_completions_forwards_required_tools_to_vllm_guided_decoding(monkeypatch):
+    captured = {}
+
+    async def _chat_handler(req, backend: str, model_name: str):
+        captured["req"] = req
+        captured["backend"] = backend
+        captured["model_name"] = model_name
+        return {
+            "id": "chatcmpl_test",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "demo", "arguments": "{}"}}],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+
+    client = _build_client(
+        monkeypatch,
+        backend_name="local_vllm_fast",
+        backend_supports_tools=False,
+        chat_handler=_chat_handler,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "vllm_fast",
+            "messages": [{"role": "user", "content": "must call a tool"}],
+            "tools": [{"type": "function", "function": {"name": "demo", "parameters": {}}}],
+            "tool_choice": "required",
+        },
+    )
+
+    assert response.status_code == 200
+    routed = captured["req"].model_dump(exclude_none=True)
+    assert routed["tools"][0]["function"]["name"] == "demo"
+    assert routed["tool_choice"] == "required"
+    assert response.json()["choices"][0]["message"]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_chat_completions_forwards_named_tools_to_vllm_guided_decoding(monkeypatch):
+    captured = {}
+
+    async def _chat_handler(req, backend: str, model_name: str):
+        captured["req"] = req
+        return {
+            "id": "chatcmpl_test",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "demo", "arguments": "{}"}}],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+
+    client = _build_client(
+        monkeypatch,
+        backend_name="local_vllm",
+        backend_supports_tools=False,
+        chat_handler=_chat_handler,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "vllm",
+            "messages": [{"role": "user", "content": "must call demo"}],
+            "tools": [{"type": "function", "function": {"name": "demo", "parameters": {}}}],
+            "tool_choice": {"type": "function", "function": {"name": "demo"}},
+        },
+    )
+
+    assert response.status_code == 200
+    routed = captured["req"].model_dump(exclude_none=True)
+    assert routed["tools"][0]["function"]["name"] == "demo"
+    assert routed["tool_choice"] == {"type": "function", "function": {"name": "demo"}}
 
 
 def test_responses_shims_tool_fields_and_preserves_tool_calls(monkeypatch):

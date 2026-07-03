@@ -80,16 +80,16 @@ def test_env_base_url_override_keeps_static_proxy_url_for_etcd_record(monkeypatc
     assert registry.service_records["vllm-fast"].hostname == "ai1"
 
 
-def test_production_topology_sets_vllm_tool_flags_by_validated_lane():
+def test_production_topology_disables_unvalidated_vllm_auto_tool_flags():
     repo_root = Path(__file__).resolve().parents[3]
     topology = json.loads((repo_root / "deploy" / "topology" / "production.json").read_text(encoding="utf-8"))
     env = topology["defaults"]["env"]
 
-    assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "true"
+    assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "false"
     assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "false"
-    assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "true"
+    assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "false"
     assert env["VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE"] == "false"
-    assert env["VLLM_TOOL_CALL_PARSER"] == "mistral"
+    assert env["VLLM_TOOL_CALL_PARSER"] == ""
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == ""
     assert "vllm-fast" in topology["hosts"]["ai1"]["components"]
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER"] == "cyankiwi/Devstral-Small-2507-AWQ-4bit"

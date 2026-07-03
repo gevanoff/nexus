@@ -828,6 +828,37 @@ def _tool_choice_requires_tools(tool_choice: Any) -> bool:
     return True
 
 
+def _tool_choice_uses_guided_decoding(tool_choice: Any) -> bool:
+    if isinstance(tool_choice, str):
+        return tool_choice.strip().lower() == "required"
+    if isinstance(tool_choice, dict):
+        normalized = str(tool_choice.get("type") or "").strip().lower()
+        if normalized == "required":
+            return True
+        if normalized != "function":
+            return False
+        function = tool_choice.get("function")
+        return isinstance(function, dict) and bool(str(function.get("name") or "").strip())
+    return False
+
+
+def _backend_is_vllm(backend_class: str) -> bool:
+    try:
+        cfg = get_registry().get_backend(backend_class)
+        provider = str(getattr(cfg, "provider", "") or "").strip().lower() if cfg is not None else ""
+        if provider:
+            return provider == "vllm"
+    except Exception:
+        pass
+
+    normalized = (backend_class or "").strip().lower().replace("-", "_")
+    return normalized in {"vllm", "local_vllm", "local_vllm_fast"} or normalized.startswith("vllm_")
+
+
+def _backend_supports_guided_tool_choice(backend_class: str, tool_choice: Any) -> bool:
+    return _backend_is_vllm(backend_class) and _tool_choice_uses_guided_decoding(tool_choice)
+
+
 def _degradation_reason(*, alias_name: Optional[str], backend_class: str, backend_supports_tools: bool) -> Optional[str]:
     reasons: list[str] = []
     if alias_name and not _alias_allows_tools(alias_name):
@@ -848,14 +879,25 @@ def _normalize_chat_request_for_backend(
     if not _tool_fields_present(cc):
         return cc, None, False
 
-    backend_supports_tools = backend_supports_tool_calling(backend_class)
+    alias_allows_tools = _alias_allows_tools(alias_name)
+    backend_supports_native_tools = backend_supports_tool_calling(backend_class)
+    backend_supports_guided_tools = _backend_supports_guided_tool_choice(backend_class, cc.tool_choice)
+    backend_supports_tools = backend_supports_native_tools or backend_supports_guided_tools
+    if alias_allows_tools and backend_supports_tools:
+        if backend_supports_guided_tools and not backend_supports_native_tools:
+            logger.info(
+                "chat.completions passing required/named tool fields via vllm guided decoding alias=%s backend=%s tool_choice=%r",
+                alias_name or "-",
+                backend_class,
+                cc.tool_choice,
+            )
+        return cc, None, False
+
     degradation_reason = _degradation_reason(
         alias_name=alias_name,
         backend_class=backend_class,
         backend_supports_tools=backend_supports_tools,
     )
-    if degradation_reason is None:
-        return cc, None, False
 
     if _tool_choice_requires_tools(cc.tool_choice):
         return cc, degradation_reason, True

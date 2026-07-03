@@ -52,7 +52,7 @@ Operational implication:
 - Treat `ai1`, `ada2`, and `meltdown` as Linux/NVIDIA hosts; use `deploy/topology/production.json` to decide the active live placement.
 - Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `ai1` for media ingress, secondary `vllm` capacity, and overflow CUDA work.
 - Use `meltdown` for lighter CUDA work such as SDXL-Turbo and embeddings, plus overflow/staging; do not assume it can run workloads sized for `ada2`.
-- Treat `migraine` as a Hermes client host only. For interactive Telegram chat, prefer the `fast-reasoning` alias over `long`; the `long` GLM-5.2 MLX lane is intended for long-context work and has higher response latency.
+- Treat `migraine` as a Hermes client host only. For interactive Telegram chat, prefer the `fast` alias over `long`; the `long` GLM-5.2 MLX lane is intended for long-context work and has higher response latency.
 
 Gateway startup hardware context:
 - On startup, the gateway asks lifecycle-manager for a refreshed hardware-capacity snapshot and caches it at `NEXUS_HARDWARE_SNAPSHOT_PATH` (default: `/var/lib/gateway/data/nexus_hardware_snapshot.json`).
@@ -406,8 +406,8 @@ Nexus includes the following services:
 
 ### Hermes Gateway on `migraine`
 - Host-native Hermes runs outside Nexus Compose on `migraine` and connects to Telegram directly.
-- Configure Hermes to consume the Nexus OpenAI-compatible gateway (`/v1`) with `fast-reasoning` for chat responsiveness; keep `long` for explicit long-context jobs.
-- Keep Hermes Telegram toolsets small enough for the current `fast-reasoning` vLLM context window; use a low output cap such as `max_tokens: 256` for chat-style turns.
+- Configure Hermes to consume the Nexus OpenAI-compatible gateway (`/v1`) with `fast` for chat responsiveness; keep `long` for explicit long-context jobs.
+- Keep Hermes Telegram toolsets disabled or very small for chat-style turns; the current fast vLLM lanes have tight context windows, and tool schemas can push otherwise short Telegram requests over the model limit.
 - Do not place Nexus model-serving backends on `migraine` unless the topology and hardware policy are deliberately changed.
 
 ### Etcd (`etcd`)
