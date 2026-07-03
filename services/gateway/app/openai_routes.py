@@ -270,6 +270,31 @@ def _content_shape(value: Any) -> str:
     return type(value).__name__
 
 
+def _content_text_length(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, list):
+        total = 0
+        for item in value:
+            if isinstance(item, str):
+                total += len(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                total += len(item["text"])
+        return total
+    return 0
+
+
+def _serialized_length(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    except Exception:
+        return len(str(value))
+
+
 def _tool_names_from_raw_tools(tools: Any) -> list[str]:
     if not isinstance(tools, list):
         return []
@@ -545,6 +570,10 @@ def _log_openai_request_diagnostics(
         "path": path,
         "model": cc.model,
         "stream": bool(cc.stream),
+        "stream_options_present": cc.stream_options is not None,
+        "stream_options_keys": _body_keys(cc.stream_options),
+        "max_tokens": cc.max_tokens,
+        "temperature": cc.temperature,
         "top_level_keys": _body_keys(body),
         "normalized_top_level_keys": _body_keys(normalized_body),
         "upstream_request_keys": _body_keys(cc.model_dump(exclude_none=True)),
@@ -552,6 +581,8 @@ def _log_openai_request_diagnostics(
         "message_roles": [message.role for message in cc.messages],
         "raw_message_summary": _raw_message_summary(body),
         "content_shapes": [_content_shape(message.content) for message in cc.messages],
+        "content_text_lengths": [_content_text_length(message.content) for message in cc.messages],
+        "total_text_length": sum(_content_text_length(message.content) for message in cc.messages),
         "tools_top_level_present": isinstance(raw_tools, list),
         "tools_completion_options_present": isinstance(completion_options_tools, list),
         "tool_top_level_keys": _tool_top_level_keys_from_raw_tools(raw_tools),
@@ -560,6 +591,7 @@ def _log_openai_request_diagnostics(
         "has_tools": bool(cc.tools),
         "tool_count": len(cc.tools or []),
         "tool_names": _tool_names_from_raw_tools(normalized_tools),
+        "tool_schema_bytes": _serialized_length(normalized_tools),
         "tool_choice_present": cc.tool_choice is not None,
         "response_format_present": cc.response_format is not None,
         "reasoning_present": isinstance(body, dict) and "reasoning" in body,
@@ -843,6 +875,32 @@ def _normalize_chat_request_for_backend(
     )
 
 
+_BACKENDS_WITH_UNSUPPORTED_STREAM_OPTIONS = {"local_mlx"}
+
+
+def _normalize_stream_options_for_backend(
+    cc: ChatCompletionRequest,
+    *,
+    alias_name: Optional[str],
+    backend_class: str,
+) -> tuple[ChatCompletionRequest, Optional[str]]:
+    if cc.stream_options is None:
+        return cc, None
+    if backend_class not in _BACKENDS_WITH_UNSUPPORTED_STREAM_OPTIONS:
+        return cc, None
+
+    logger.info(
+        "chat.completions dropping stream_options alias=%s backend=%s keys=%s reason=unsupported_by_backend",
+        alias_name or "-",
+        backend_class,
+        _body_keys(cc.stream_options),
+    )
+    return (
+        cc.model_copy(update={"stream_options": None}),
+        f"dropped stream_options for backend '{backend_class}'",
+    )
+
+
 def _route_chat_request(
     cc: ChatCompletionRequest,
     *,
@@ -1093,6 +1151,13 @@ async def chat_completions(req: Request):
             alias_name=alias_name,
             backend_class=backend_class,
         )
+        cc, stream_options_action = _normalize_stream_options_for_backend(
+            cc,
+            alias_name=alias_name,
+            backend_class=backend_class,
+        )
+        if stream_options_action:
+            normalization_actions.append(stream_options_action)
         request_shape_action = "normalized" if normalization_actions else "direct"
         tool_fields_action = _tool_fields_action(
             original_cc,

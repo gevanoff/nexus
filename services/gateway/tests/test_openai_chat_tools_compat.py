@@ -116,6 +116,74 @@ def test_chat_completion_request_allows_openai_tool_fields():
     assert payload["messages"][1]["extra_tool_field"] is True
 
 
+def test_chat_completions_drops_stream_options_for_local_mlx_stream(monkeypatch):
+    captured_requests = []
+
+    def _stream_handler(req, _backend: str, _model_name: str):
+        captured_requests.append(req)
+
+        async def gen():
+            yield b'data: {"id":"chatcmpl_test","object":"chat.completion.chunk"}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return gen()
+
+    client = _build_client(
+        monkeypatch,
+        backend_name="local_mlx",
+        backend_supports_tools=True,
+        stream_handler=_stream_handler,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "long",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_requests
+    assert captured_requests[0].stream_options is None
+
+
+def test_chat_completions_preserves_stream_options_for_other_backends(monkeypatch):
+    captured_requests = []
+
+    def _stream_handler(req, _backend: str, _model_name: str):
+        captured_requests.append(req)
+
+        async def gen():
+            yield b'data: {"id":"chatcmpl_test","object":"chat.completion.chunk"}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return gen()
+
+    client = _build_client(
+        monkeypatch,
+        backend_name="local_vllm",
+        backend_supports_tools=True,
+        stream_handler=_stream_handler,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "long",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured_requests
+    assert captured_requests[0].stream_options == {"include_usage": True}
+
+
 def test_selected_alias_name_prefers_router_fallback_alias(monkeypatch):
     monkeypatch.setattr(openai_routes, "get_aliases", lambda: {"fast": object(), "long": object()})
 
