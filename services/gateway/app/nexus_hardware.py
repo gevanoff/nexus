@@ -73,8 +73,8 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
         "cpu_cores": "8 CPU cores",
         "memory": "8 GiB unified memory",
         "accelerators": ["Apple Silicon integrated GPU"],
-        "role": "Known SSH alias only; not part of the current production model-serving topology.",
-        "notes": "Do not choose migraine for Nexus model placement unless an operator explicitly adds it to topology.",
+        "role": "Client-only Hermes Gateway and Telegram bot host that consumes Nexus models through the gateway.",
+        "notes": "Do not choose migraine for Nexus model placement; keep it out of backend scheduling unless an operator explicitly promotes it into topology.",
     },
 }
 

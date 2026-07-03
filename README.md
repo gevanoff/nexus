@@ -45,13 +45,14 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - `ai1` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x NVIDIA GeForce RTX 3090 24GB): dual-GPU Linux/NVIDIA node used for media ingress and secondary `vllm`/CUDA capacity.
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, NVIDIA RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
 - `meltdown` (Ubuntu 22.04.5, Intel Core i7-5930K, about 47 GiB observed system RAM, NVIDIA GeForce RTX 5060 Ti 16GB class / 15.9 GiB reported VRAM): lighter Linux/NVIDIA host for SDXL-Turbo, vLLM embeddings, overflow, and staging.
-- `migraine` is a known macOS SSH alias (Apple M2, 8GB unified memory), but it is not part of the current production model-serving topology.
+- `migraine` (Mac M2, 8GB unified memory): client-only Hermes Gateway / Telegram bot host. It consumes Nexus models through the gateway and must not be used for production model placement unless it is explicitly promoted into topology.
 
 Operational implication:
 - Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
 - Treat `ai1`, `ada2`, and `meltdown` as Linux/NVIDIA hosts; use `deploy/topology/production.json` to decide the active live placement.
 - Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `ai1` for media ingress, secondary `vllm` capacity, and overflow CUDA work.
 - Use `meltdown` for lighter CUDA work such as SDXL-Turbo and embeddings, plus overflow/staging; do not assume it can run workloads sized for `ada2`.
+- Treat `migraine` as a Hermes client host only. For interactive Telegram chat, prefer the `fast-reasoning` alias over `long`; the `long` GLM-5.2 MLX lane is intended for long-context work and has higher response latency.
 
 Gateway startup hardware context:
 - On startup, the gateway asks lifecycle-manager for a refreshed hardware-capacity snapshot and caches it at `NEXUS_HARDWARE_SNAPSHOT_PATH` (default: `/var/lib/gateway/data/nexus_hardware_snapshot.json`).
@@ -402,6 +403,12 @@ Nexus includes the following services:
 - Telegram chat bridge into Gateway endpoints
 - Uses `TELEGRAM_TOKEN` and `GATEWAY_BEARER_TOKEN` from `.env`
 - Containerized component (no host systemd/launchd required)
+
+### Hermes Gateway on `migraine`
+- Host-native Hermes runs outside Nexus Compose on `migraine` and connects to Telegram directly.
+- Configure Hermes to consume the Nexus OpenAI-compatible gateway (`/v1`) with `fast-reasoning` for chat responsiveness; keep `long` for explicit long-context jobs.
+- Keep Hermes Telegram toolsets small enough for the current `fast-reasoning` vLLM context window; use a low output cap such as `max_tokens: 256` for chat-style turns.
+- Do not place Nexus model-serving backends on `migraine` unless the topology and hardware policy are deliberately changed.
 
 ### Etcd (`etcd`)
 - Service discovery registry for multi-host deployments

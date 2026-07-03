@@ -62,7 +62,8 @@ def test_scheduled_prompt_includes_preface(tmp_path, monkeypatch):
     assert "meltdown: linux_x86_64; Intel Core i7-5930K" in prompt
     assert "NVIDIA GeForce RTX 5060 Ti" in prompt
     assert "migraine: macos_arm64; Apple M2" in prompt
-    assert "not part of the current production model-serving topology" in prompt
+    assert "Client-only Hermes Gateway and Telegram bot host" in prompt
+    assert "Do not choose migraine for Nexus model placement" in prompt
 
 
 def test_coding_supervisor_tasks_are_protected(tmp_path, monkeypatch):

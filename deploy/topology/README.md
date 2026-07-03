@@ -19,6 +19,7 @@ Do not treat etcd as the deployment plan. etcd is the live runtime registry:
 Current tracked topology:
 
 - `production.json`: canonical placement for `ai1`, `ai2`, `ada2`, `meltdown`, and `copyfail`
+- `migraine` is intentionally not a deploy target in this manifest. It is a client-only Hermes Gateway / Telegram host that consumes Nexus models through the gateway.
 
 Typical workflow:
 
@@ -59,6 +60,7 @@ Compatibility note:
 - `ada2` has 128GB system RAM and a 48GB RTX 6000 Ada. Use the RAM for vLLM CPU offload and startup headroom, but continue to schedule CUDA services by VRAM pressure.
 - `meltdown` has Ubuntu 22.04, about 47GB system RAM, and a 16GB RTX 5060 Ti. It currently owns SDXL-Turbo and the vLLM embeddings lane; treat it as a lighter CUDA overflow/staging host, not a replacement for `ada2`.
 - `copyfail` has Ubuntu 22.04, an Intel Celeron J3355, 2 logical CPUs, and about 7.4GiB system RAM. It is an infrastructure-only host for metrics collection, deployment orchestration, and general IT operations; do not assign model-serving backends to it.
+- `migraine` has macOS on Apple M2 with 8GB unified memory. Keep it client-only for Hermes/Telegram; do not assign Compose model-serving backends or vLLM lanes to it.
 
 ## vLLM Native Tool Calling
 

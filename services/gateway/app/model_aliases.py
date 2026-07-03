@@ -56,6 +56,22 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             tools=False,
         ),
         "coder": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True, coding=False),
+        "reasoning": ModelAlias(
+            backend="local_vllm",
+            upstream_model=S.VLLM_MODEL_STRONG,
+            context_window=2_048,
+            tools=True,
+            max_tokens_cap=512,
+            coding=False,
+        ),
+        "fast-reasoning": ModelAlias(
+            backend="local_vllm",
+            upstream_model=S.VLLM_MODEL_STRONG,
+            context_window=2_048,
+            tools=True,
+            max_tokens_cap=256,
+            coding=False,
+        ),
         "long": ModelAlias(
             backend=default_backend,
             upstream_model=default_strong_model,
