@@ -5,6 +5,10 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 
 ## Shell And Repo Work
 
+- At the start of every Nexus task, read this `AGENTS.md` file before any repo
+  inspection, host access, edits, tests, git operations, or deployment commands.
+  If the user provides newer AGENTS-style instructions in chat, follow the newer
+  instructions too and reconcile any conflict explicitly.
 - Never use PowerShell for Nexus repo work, deployment work, or Nexus host
   operations. In Codex `exec_command` calls, explicitly set `shell: "bash"` and
   use POSIX shell syntax.
