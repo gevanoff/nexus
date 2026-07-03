@@ -237,7 +237,8 @@ class Settings(BaseSettings):
     VLLM_MODEL_FAST: str = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     VLLM_MODEL_DEFAULT: str = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
     VLLM_MODEL_EMBEDDINGS: str = "BAAI/bge-small-en-v1.5"
-    VLLM_FAST_MAX_MODEL_LEN: int = 2048
+    VLLM_MAX_MODEL_LEN: int = 8192
+    VLLM_FAST_MAX_MODEL_LEN: int = 8192
     VLLM_NATIVE_TOOLS_ENABLED: bool = False
     VLLM_FAST_NATIVE_TOOLS_ENABLED: bool = False
 

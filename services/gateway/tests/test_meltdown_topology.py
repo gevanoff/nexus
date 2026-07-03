@@ -126,6 +126,37 @@ def test_copyfail_is_infra_only_topology_host() -> None:
         assert backend.get("host") != "copyfail"
 
 
+def test_migraine_is_lifecycle_only_hermes_client_host() -> None:
+    topology = json.loads(_read("deploy/topology/production.json"))
+    lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
+
+    assert "migraine" not in topology["hosts"]
+    assert lifecycle["hosts"]["migraine"]["platform"] == "macos"
+    assert lifecycle["hosts"]["migraine"]["resource_kind"] == "macos"
+    assert lifecycle["hosts"]["migraine"]["ssh_target"] == "ai@migraine"
+    assert lifecycle["core_services"]["hermes_client"]["host"] == "migraine"
+    assert lifecycle["core_services"]["hermes_client"]["components"] == []
+    assert "Client-only Hermes" in lifecycle["core_services"]["hermes_client"]["notes"]
+
+    for backend in lifecycle["backends"].values():
+        assert backend.get("host") != "migraine"
+
+
+def test_adada_is_lifecycle_only_inventory_host() -> None:
+    topology = json.loads(_read("deploy/topology/production.json"))
+    lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
+
+    assert "adada" not in topology["hosts"]
+    assert lifecycle["hosts"]["adada"]["platform"] == "linux"
+    assert lifecycle["hosts"]["adada"]["resource_kind"] == "linux_nvidia"
+    assert lifecycle["hosts"]["adada"]["ssh_target"] == "ai@adada"
+    assert lifecycle["core_services"]["adada_inventory"]["host"] == "adada"
+    assert lifecycle["core_services"]["adada_inventory"]["components"] == []
+
+    for backend in lifecycle["backends"].values():
+        assert backend.get("host") != "adada"
+
+
 def test_ai2_lifecycle_uses_host_side_ssh_proxies_for_remote_hosts() -> None:
     lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
     installer = _read("deploy/scripts/install-backend-port-proxy-launchd.sh")

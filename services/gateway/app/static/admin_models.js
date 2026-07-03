@@ -51,6 +51,22 @@
     return suffix ? `${rendered} ${suffix}` : rendered;
   }
 
+  function benchmarkText(benchmark) {
+    if (!benchmark || typeof benchmark !== "object") return "";
+    const parts = [];
+    const tps = Number(benchmark.tokens_per_sec);
+    if (Number.isFinite(tps)) parts.push(`${formatMetric(tps, "tok/s")}`);
+    const decode = Number(benchmark.decode_tokens_per_sec);
+    if (Number.isFinite(decode)) parts.push(`${formatMetric(decode, "decode tok/s")}`);
+    const ttft = Number(benchmark.time_to_first_token_ms);
+    if (Number.isFinite(ttft)) parts.push(`TTFT ${formatMetric(ttft, "ms")}`);
+    const tokens = Number(benchmark.completion_tokens);
+    if (Number.isFinite(tokens)) parts.push(`${formatMetric(tokens, "tokens")}`);
+    const completed = formatTimestamp(Number(benchmark.completed_at || 0));
+    if (completed) parts.push(completed);
+    return parts.length ? `latest benchmark: ${parts.join(" · ")}` : "";
+  }
+
   function shortModel(value) {
     const text = String(value || "");
     if (text.length <= 72) return text;
@@ -336,7 +352,9 @@
         const configured = `${alias.backend || ""}:${alias.configured_model || ""}`;
         const badges = [{ text: alias.visible ? "visible" : "hidden", tone: alias.visible ? "green" : "red" }];
         if (alias.unavailable_reason) badges.push({ text: alias.unavailable_reason, tone: "yellow" });
-        aliasGroup.appendChild(row(alias.alias || "", `${configured} -> ${effective}`, badges));
+        const benchmark = benchmarkText(alias.benchmark_latest);
+        const details = benchmark ? `${configured} -> ${effective} · ${benchmark}` : `${configured} -> ${effective}`;
+        aliasGroup.appendChild(row(alias.alias || "", details, badges));
       });
     }
     listEl.appendChild(aliasGroup);
@@ -356,6 +374,8 @@
         if (model.cache_only) badges.push({ text: "cache only", tone: "yellow" });
         if (model.advertised) badges.push({ text: "advertised", tone: "" });
         const aliasText = Array.isArray(model.aliases) && model.aliases.length ? `aliases: ${model.aliases.join(", ")}` : model.provider || "";
+        const benchmark = benchmarkText(model.benchmark_latest);
+        const details = benchmark ? `${aliasText || model.provider || ""} · ${benchmark}` : aliasText;
         const actions = [];
         if (model.provider === "mlx" && model.cache_state === "fetching" && activity?.status !== "active") {
           actions.push({
@@ -364,7 +384,7 @@
             onClick: () => void restartFetch(model.backend || "local_mlx", model.model || ""),
           });
         }
-        modelGroup.appendChild(row(`${model.backend || ""}:${model.model || ""}`, aliasText, badges, actions));
+        modelGroup.appendChild(row(`${model.backend || ""}:${model.model || ""}`, details, badges, actions));
       });
     }
     listEl.appendChild(modelGroup);

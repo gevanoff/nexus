@@ -210,16 +210,16 @@ Recommended `ai2` alias-to-model mapping:
 		"reasoning": {
 			"backend": "local_vllm",
 			"model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
-			"context_window": 2048,
+			"context_window": 8192,
 			"tools": true,
-			"max_tokens_cap": 512
+			"max_tokens_cap": 1024
 		},
 		"fast-reasoning": {
 			"backend": "local_vllm",
 			"model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
-			"context_window": 2048,
+			"context_window": 8192,
 			"tools": true,
-			"max_tokens_cap": 256
+			"max_tokens_cap": 512
 		},
 		"long": {
 			"backend": "local_mlx",

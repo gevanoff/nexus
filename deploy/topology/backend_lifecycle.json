@@ -63,6 +63,19 @@
       "ssh_connect_target": "ai@host.docker.internal",
       "ssh_port": 19025,
       "env_file": "deploy/env/.env.prod.copyfail"
+    },
+    "migraine": {
+      "platform": "macos",
+      "resource_kind": "macos",
+      "ssh_target": "ai@migraine",
+      "env_file": "deploy/env/.env.prod.migraine",
+      "remote_shell": "/bin/zsh -lic"
+    },
+    "adada": {
+      "platform": "linux",
+      "resource_kind": "linux_nvidia",
+      "ssh_target": "ai@adada",
+      "env_file": "deploy/env/.env.prod.adada"
     }
   },
   "core_services": {
@@ -100,6 +113,20 @@
       "components": [],
       "tier": "core",
       "notes": "Infrastructure-only host intended for metrics collection, deployment orchestration, and general IT operations. It is intentionally excluded from model backend placement."
+    },
+    "hermes_client": {
+      "display_name": "Hermes Client",
+      "host": "migraine",
+      "components": [],
+      "tier": "core",
+      "notes": "Client-only Hermes and Telegram consumer host. It consumes Nexus models through the gateway and is intentionally excluded from model backend placement."
+    },
+    "adada_inventory": {
+      "display_name": "adada Inventory",
+      "host": "adada",
+      "components": [],
+      "tier": "core",
+      "notes": "Lifecycle-visible Linux/NVIDIA inventory host. It is not assigned model-serving backends in the production topology."
     }
   },
   "backends": {

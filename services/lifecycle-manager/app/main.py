@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -108,6 +109,7 @@ class HostPolicy:
     cpu: Dict[str, Any] = field(default_factory=dict)
     memory: Dict[str, Any] = field(default_factory=dict)
     gpus: List[Dict[str, Any]] = field(default_factory=list)
+    network_interfaces: List[Dict[str, Any]] = field(default_factory=list)
     containers: Dict[str, str] = field(default_factory=dict)
     updated_at: float = 0.0
 
@@ -1275,6 +1277,7 @@ class LifecycleManager:
             "error": host.error,
             "memory": host.memory,
             "gpus": gpus,
+            "network_interfaces": host.network_interfaces[:8],
             "vram": {"total_mb": total, "used_mb": used, "free_mb": free},
             "container_count": len(host.containers),
             "containers": containers[:12],
@@ -1914,6 +1917,27 @@ class LifecycleManager:
             "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu "
             "--format=csv,noheader,nounits 2>/dev/null || true; "
             "printf '__MEM__\\n'; free -m 2>/dev/null | awk '/^Mem:/ {print $2\" \"$3\" \"$7}'; "
+            "printf '__NET__\\n'; "
+            "if [ -d /sys/class/net ]; then "
+            "for net_path in /sys/class/net/*; do "
+            "iface=\"${net_path##*/}\"; "
+            "case \"$iface\" in ''|lo|docker*|br-*|veth*|virbr*|tun*|tap*|cni*|flannel*) continue ;; esac; "
+            "mac=\"$(cat \"$net_path/address\" 2>/dev/null || true)\"; "
+            "operstate=\"$(cat \"$net_path/operstate\" 2>/dev/null || true)\"; "
+            "carrier=\"$(cat \"$net_path/carrier\" 2>/dev/null || true)\"; "
+            "speed=\"$(cat \"$net_path/speed\" 2>/dev/null || true)\"; "
+            "duplex=\"$(cat \"$net_path/duplex\" 2>/dev/null || true)\"; "
+            "if [ \"$speed\" = \"-1\" ]; then speed=\"\"; fi; "
+            "supported=\"\"; current_media=\"\"; "
+            "if command -v ethtool >/dev/null 2>&1; then "
+            "ethtool_out=\"$(ethtool \"$iface\" 2>/dev/null || true)\"; "
+            "supported=\"$(printf '%s\\n' \"$ethtool_out\" | awk '/^[ \\t]*Supported link modes:/ {capture=1; sub(/^[ \\t]*Supported link modes:[ \\t]*/, \"\"); line=$0; next} capture && /^[ \\t]+/ {line=line \" \" $0; next} capture {capture=0} END {gsub(/^[ \\t]+|[ \\t]+$/, \"\", line); print line}')\"; "
+            "current_media=\"$(printf '%s\\n' \"$ethtool_out\" | awk -F: '/^[ \\t]*Speed:/ {speed=$2} /^[ \\t]*Duplex:/ {duplex=$2} /^[ \\t]*Port:/ {port=$2} END {gsub(/^[ \\t]+|[ \\t]+$/, \"\", speed); gsub(/^[ \\t]+|[ \\t]+$/, \"\", duplex); gsub(/^[ \\t]+|[ \\t]+$/, \"\", port); out=speed; if (duplex != \"\") out=out \" \" duplex; if (port != \"\") out=out \" \" port; print out}')\"; "
+            "fi; "
+            "printf 'name=%s\\tmac=%s\\toperstate=%s\\tcarrier=%s\\tcurrent_speed_mbps=%s\\tduplex=%s\\tcurrent_media=%s\\tsupported_media=%s\\n' "
+            "\"$iface\" \"$mac\" \"$operstate\" \"$carrier\" \"$speed\" \"$duplex\" \"$current_media\" \"$supported\"; "
+            "done; "
+            "fi; "
             "printf '__DOCKER__\\n'; "
             f"{cls._docker_probe_command()}"
         )
@@ -1954,6 +1978,20 @@ class LifecycleManager:
             "total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0); total_mb=$((total_bytes / 1024 / 1024)); "
             "printf '%s %s %s\\n' \"$total_mb\" 0 0; "
             "fi; "
+            "printf '__NET__\\n'; "
+            "if command -v networksetup >/dev/null 2>&1 && command -v ifconfig >/dev/null 2>&1; then "
+            "networksetup -listallhardwareports 2>/dev/null | awk -F': ' '/^Hardware Port:/ {port=$2} /^Device:/ {device=$2} /^Ethernet Address:/ {mac=$2; if (device != \"\") print port \"\\t\" device \"\\t\" mac; port=\"\"; device=\"\"; mac=\"\"}' | "
+            "while IFS=\"$(printf '\\t')\" read -r port device mac; do "
+            "if [ -z \"$device\" ]; then continue; fi; "
+            "ifconfig_out=\"$(ifconfig -m \"$device\" 2>/dev/null || true)\"; "
+            "status=\"$(printf '%s\\n' \"$ifconfig_out\" | awk -F': ' '/^[ \\t]*status:/ {print $2; exit}')\"; "
+            "current_media=\"$(printf '%s\\n' \"$ifconfig_out\" | awk -F': ' '/^[ \\t]*media:/ {print $2; exit}')\"; "
+            "supported=\"$(printf '%s\\n' \"$ifconfig_out\" | awk '/^[ \\t]*supported media:/ {capture=1; next} capture && /^[ \\t]*media / {gsub(/^[ \\t]+/, \"\"); line=line \" \" $0; next} capture && !/^[ \\t]*media / {capture=0} END {gsub(/^[ \\t]+|[ \\t]+$/, \"\", line); print line}')\"; "
+            "media_detail=\"$(networksetup -getMedia \"$device\" 2>/dev/null | tr '\\n' ';' || true)\"; "
+            "printf 'name=%s\\tdisplay_name=%s\\tmac=%s\\toperstate=%s\\tcurrent_media=%s\\tsupported_media=%s\\tmedia_detail=%s\\n' "
+            "\"$device\" \"$port\" \"$mac\" \"$status\" \"$current_media\" \"$supported\" \"$media_detail\"; "
+            "done; "
+            "fi; "
             "printf '__DOCKER__\\n'; "
             f"{cls._docker_probe_command()}"
         )
@@ -1985,6 +2023,7 @@ class LifecycleManager:
             bits = mem_lines[0].split()
             if len(bits) >= 3:
                 host.memory = {"total_mb": int(bits[0]), "used_mb": int(bits[1]), "available_mb": int(bits[2])}
+        host.network_interfaces = self._parse_network_interfaces(sections.get("NET", []))
         host.containers = self._parse_containers("\n".join(sections.get("DOCKER", [])))
 
     def _parse_macos_probe(self, host: HostPolicy, raw: str) -> None:
@@ -1996,6 +2035,7 @@ class LifecycleManager:
             bits = mem_lines[0].split()
             if len(bits) >= 3:
                 host.memory = {"total_mb": int(bits[0]), "used_mb": int(bits[1]), "available_mb": int(bits[2])}
+        host.network_interfaces = self._parse_network_interfaces(sections.get("NET", []))
         host.gpus = []
         host.containers = self._parse_containers("\n".join(sections.get("DOCKER", [])))
 
@@ -2032,6 +2072,79 @@ class LifecycleManager:
                     pass
             values[key] = value
         return values
+
+    @classmethod
+    def _parse_network_interfaces(cls, lines: List[str]) -> List[Dict[str, Any]]:
+        interfaces: List[Dict[str, Any]] = []
+        for line in lines:
+            values: Dict[str, str] = {}
+            for part in line.split("\t"):
+                key, sep, value = part.partition("=")
+                if not sep:
+                    continue
+                values[key.strip()] = value.strip()
+            name = values.get("name", "")
+            if not name:
+                continue
+            current_speed = cls._int_or_none(values.get("current_speed_mbps"))
+            current_media = values.get("current_media") or values.get("media_detail") or ""
+            if current_speed is None:
+                current_speed = cls._max_network_speed_mbps(current_media)
+            supported_media = values.get("supported_media") or ""
+            theoretical_speed = cls._max_network_speed_mbps(supported_media)
+            if theoretical_speed is None and current_speed is not None:
+                theoretical_speed = current_speed
+            carrier = values.get("carrier")
+            operstate = values.get("operstate", "")
+            active = carrier == "1" or operstate.lower() in {"active", "up"}
+            interfaces.append(
+                {
+                    "name": name,
+                    "display_name": values.get("display_name") or name,
+                    "mac": values.get("mac") or "",
+                    "operstate": operstate,
+                    "carrier": carrier or "",
+                    "active": active,
+                    "duplex": values.get("duplex") or "",
+                    "current_media": current_media,
+                    "supported_media": supported_media,
+                    "current_speed_mbps": current_speed,
+                    "theoretical_speed_mbps": theoretical_speed,
+                }
+            )
+        interfaces.sort(
+            key=lambda item: (
+                0 if item.get("active") else 1,
+                -int(item.get("theoretical_speed_mbps") or 0),
+                str(item.get("name") or ""),
+            )
+        )
+        return interfaces
+
+    @staticmethod
+    def _int_or_none(value: Any) -> Optional[int]:
+        try:
+            parsed = int(str(value or "").strip())
+        except Exception:
+            return None
+        return parsed if parsed > 0 else None
+
+    @classmethod
+    def _max_network_speed_mbps(cls, text: str) -> Optional[int]:
+        speeds = cls._network_speed_values_mbps(text)
+        return max(speeds) if speeds else None
+
+    @staticmethod
+    def _network_speed_values_mbps(text: str) -> List[int]:
+        value = str(text or "")
+        speeds: List[int] = []
+        for match in re.finditer(r"(\d+(?:\.\d+)?)\s*[Gg]\s*(?:base|bit|b|bps|/s)?", value):
+            speeds.append(int(float(match.group(1)) * 1000))
+        for match in re.finditer(r"(\d+(?:\.\d+)?)\s*[Mm]\s*(?:base|bit|b|bps|/s)?", value):
+            speeds.append(int(float(match.group(1))))
+        for match in re.finditer(r"(?<![A-Za-z])(\d+(?:\.\d+)?)\s*[Bb]ase", value):
+            speeds.append(int(float(match.group(1))))
+        return [speed for speed in speeds if speed > 0]
 
     @staticmethod
     def _parse_containers(raw: str) -> Dict[str, str]:
@@ -2252,6 +2365,7 @@ class LifecycleManager:
                     "cpu": host.cpu,
                     "memory": host.memory,
                     "gpus": host.gpus,
+                    "network_interfaces": host.network_interfaces,
                     "containers": host.containers,
                     "updated_at": host.updated_at,
                 }

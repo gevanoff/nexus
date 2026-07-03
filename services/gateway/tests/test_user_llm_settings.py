@@ -254,6 +254,8 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/api/admin/models/benchmark" in admin_models_js
     assert "/ui/api/admin/models/prefetch" in admin_models_js
     assert "Start benchmark" in admin_models_html
+    assert "benchmarkText" in admin_models_js
+    assert "benchmark_latest" in admin_models_js
     assert "Restart fetch" in admin_models_js
     assert "mlx_huge_lane" not in resources_html
     assert "/ui/api/mlx/huge-lane/switch" not in resources_js
@@ -273,28 +275,35 @@ def test_canonical_chat_aliases_match_runtime_lanes():
 
     assert aliases["default"]["backend"] == "local_vllm"
     assert aliases["default"]["model"] == strong_model
-    assert aliases["default"]["context_window"] == 2048
-    assert aliases["default"]["max_tokens_cap"] == 512
+    assert aliases["default"]["context_window"] == 8192
+    assert aliases["default"]["max_tokens_cap"] == 1024
     assert aliases["coder"]["backend"] == "local_mlx"
     assert aliases["coder"]["model"] == mlx_model
     assert aliases["fast"]["backend"] == "local_vllm_fast"
     assert aliases["fast"]["model"] == fast_model
-    assert aliases["fast"]["context_window"] == 2048
+    assert aliases["fast"]["context_window"] == 8192
     assert aliases["fast"]["tools"] is False
+    assert aliases["fast"]["max_tokens_cap"] == 768
     assert aliases["fast-reasoning"]["backend"] == "local_vllm"
     assert aliases["fast-reasoning"]["model"] == strong_model
-    assert aliases["fast-reasoning"]["context_window"] == 2048
-    assert aliases["fast-reasoning"]["max_tokens_cap"] == 256
+    assert aliases["fast-reasoning"]["context_window"] == 8192
+    assert aliases["fast-reasoning"]["max_tokens_cap"] == 512
     assert aliases["long"]["context_window"] == 65536
     assert aliases["long"]["tools"] is True
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == strong_model
-    assert aliases["reasoning"]["context_window"] == 2048
-    assert aliases["reasoning"]["max_tokens_cap"] == 512
+    assert aliases["reasoning"]["context_window"] == 8192
+    assert aliases["reasoning"]["max_tokens_cap"] == 1024
     assert aliases["glm-5.2"]["huge_candidate"] is True
     assert aliases["glm-5.2"]["huge_default"] is True
+    assert aliases["glm-5.2-mxfp4"]["context_window"] == 32768
+    assert aliases["glm-5.2-mxfp4"]["max_tokens_cap"] == 2048
     assert aliases["minimax-m3"]["model"] == "mlx-community/MiniMax-M3-4bit"
+    assert aliases["minimax-m3"]["context_window"] == 32768
+    assert aliases["minimax-m3"]["max_tokens_cap"] == 2048
     assert aliases["deepseek-r1"]["model"] == "mlx-community/DeepSeek-R1-0528-4bit"
+    assert aliases["deepseek-r1"]["context_window"] == 32768
+    assert aliases["deepseek-r1"]["max_tokens_cap"] == 2048
 
 
 def test_mlx_huge_lane_state_routes_pending_target(monkeypatch, tmp_path):

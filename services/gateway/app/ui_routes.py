@@ -4480,6 +4480,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
 
     advertised_models_by_backend = _ui_advertised_models_by_backend(probed_items)
     aliases = get_aliases()
+    latest_benchmarks = model_benchmark.latest_successful_by_model()
 
     model_rows: Dict[tuple[str, str], Dict[str, Any]] = {}
 
@@ -4499,6 +4500,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
                 "backend": resolved_backend,
                 "provider": backend_provider_name(resolved_backend),
                 "model": model_name,
+                "benchmark_latest": latest_benchmarks.get(f"{resolved_backend}:{model_name}"),
                 "cache_state": cache_state,
                 "fetch_activity": cache_details.get("fetch_activity"),
                 "unavailable_reason": unavailable,
@@ -4557,6 +4559,12 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
         if effective_backend != resolved_backend or effective_model != alias.upstream_model:
             ensure_model_row(effective_backend, effective_model).setdefault("aliases", []).append(f"{alias_name} (fallback)")
 
+        alias_benchmark = (
+            latest_benchmarks.get(alias_name)
+            or latest_benchmarks.get(f"{effective_backend}:{effective_model}")
+            or latest_benchmarks.get(f"{resolved_backend}:{alias.upstream_model}")
+        )
+
         alias_rows.append(
             {
                 "alias": alias_name,
@@ -4570,6 +4578,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
                 "context_window": alias.context_window,
                 "max_tokens_cap": alias.max_tokens_cap,
                 "temperature_cap": alias.temperature_cap,
+                "benchmark_latest": alias_benchmark,
             }
         )
 

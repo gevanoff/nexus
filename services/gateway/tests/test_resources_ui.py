@@ -16,7 +16,7 @@ def test_resources_ui_hides_duplicate_core_services_section() -> None:
 
     assert 'id="control_plane_section"' in html
     assert 'id="core_services_section" class="resource-subsection" hidden' in html
-    assert "/static/resources.js?v=16" in html
+    assert "/static/resources.js?v=17" in html
     assert "splitCoreServicesForResourceUi" in js
     assert "controlPlaneCoreServiceIds" in js
     assert "hideWhenEmpty: true" in js
@@ -37,6 +37,9 @@ def test_resources_ui_can_copy_individual_host_information() -> None:
     assert "Platform:" in js
     assert "Processor:" in js
     assert "Memory:" in js
+    assert "Network:" in js
+    assert "network_interfaces" in js
+    assert "fmtNetworkSpeed" in js
     assert "copyHostInfo(host, generatedAt)" in js
     assert 'copyButton.textContent = "Copy"' in js
     assert "navigator.clipboard.writeText" in js

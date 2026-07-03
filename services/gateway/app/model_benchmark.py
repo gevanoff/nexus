@@ -475,3 +475,35 @@ def recent_runs(*, limit: int = 5, path: Optional[Path] = None) -> list[Dict[str
         )
     runs.sort(key=lambda item: float(item.get("completed_at") or 0), reverse=True)
     return runs[:cap]
+
+
+def _compact_successful_result(item: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "model": item.get("model") or "",
+        "run_id": item.get("run_id") or "",
+        "completed_at": item.get("completed_at") or item.get("created_at") or 0,
+        "backend": item.get("backend") or item.get("backend_class") or "",
+        "resolved_model": item.get("resolved_model") or "",
+        "max_tokens": item.get("max_tokens"),
+        "completion_tokens": item.get("completion_tokens"),
+        "tokens_per_sec": item.get("tokens_per_sec"),
+        "decode_tokens_per_sec": item.get("decode_tokens_per_sec"),
+        "time_to_first_token_ms": item.get("time_to_first_token_ms"),
+    }
+
+
+def latest_successful_by_model(*, path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    items = _read_recent_result_lines(path or benchmark_log_path())
+    latest: Dict[str, Dict[str, Any]] = {}
+    latest_time: Dict[str, float] = {}
+    for item in items:
+        if item.get("phase") != "measure" or item.get("ok") is not True:
+            continue
+        model = str(item.get("model") or "").strip()
+        if not model:
+            continue
+        completed = float(item.get("completed_at") or item.get("created_at") or 0)
+        if model not in latest_time or completed >= latest_time[model]:
+            latest_time[model] = completed
+            latest[model] = _compact_successful_result(item)
+    return latest

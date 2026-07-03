@@ -116,3 +116,23 @@ def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) 
     manager = module.LifecycleManager()
 
     assert manager.backends["local_vllm_fast"].base_url == "http://host.docker.internal:18001/v1"
+
+
+def test_network_probe_parses_current_and_theoretical_speeds() -> None:
+    module = _load_lifecycle_main()
+
+    interfaces = module.LifecycleManager._parse_network_interfaces(
+        [
+            "name=enp7s0\tmac=00:11:22:33:44:55\toperstate=up\tcarrier=1\tcurrent_speed_mbps=1000\tduplex=full\tcurrent_media=1000Mb/s Full Twisted Pair\tsupported_media=1000baseT/Full 2500baseT/Full 10000baseT/Full",
+            "name=en0\tdisplay_name=Ethernet\tmac=aa:bb:cc:dd:ee:ff\toperstate=active\tcurrent_media=autoselect (1000baseT <full-duplex>)\tsupported_media=media 1000baseT mediaopt full-duplex media 10Gbase-T mediaopt full-duplex",
+        ]
+    )
+
+    assert interfaces[0]["name"] == "en0"
+    assert interfaces[0]["display_name"] == "Ethernet"
+    assert interfaces[0]["active"] is True
+    assert interfaces[0]["current_speed_mbps"] == 1000
+    assert interfaces[0]["theoretical_speed_mbps"] == 10000
+    assert interfaces[1]["name"] == "enp7s0"
+    assert interfaces[1]["current_speed_mbps"] == 1000
+    assert interfaces[1]["theoretical_speed_mbps"] == 10000

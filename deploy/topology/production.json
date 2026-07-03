@@ -103,7 +103,7 @@
         "VLLM_FAST_TOKENIZER_MODE": "mistral",
         "VLLM_FAST_CONFIG_FORMAT": "hf",
         "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.82",
-        "VLLM_FAST_MAX_MODEL_LEN": "2048",
+        "VLLM_FAST_MAX_MODEL_LEN": "8192",
         "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0"
       }
     },
@@ -176,7 +176,7 @@
         "VLLM_CONFIG_FORMAT": "hf",
         "VLLM_CPU_OFFLOAD_GB": "8",
         "VLLM_GPU_MEMORY_UTILIZATION": "0.68",
-        "VLLM_MAX_MODEL_LEN": "2048"
+        "VLLM_MAX_MODEL_LEN": "8192"
       }
     },
     "meltdown": {

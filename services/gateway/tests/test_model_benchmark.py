@@ -159,3 +159,50 @@ def test_admin_benchmark_recent_runs_groups_jsonl_by_run_id(tmp_path):
     assert [item["run_id"] for item in recent] == ["newer", "older"]
     assert recent[0]["summary"][0]["tokens_per_sec_avg"] == 10.0
     assert recent[0]["summary"][0]["backend"] == "local_mlx"
+
+
+def test_admin_benchmark_latest_successful_by_model_ignores_errors(tmp_path):
+    path = tmp_path / "bench.jsonl"
+    items = [
+        {
+            "schema": "nexus.model_benchmark.v1",
+            "run_id": "failed",
+            "completed_at": 30,
+            "phase": "measure",
+            "model": "fast",
+            "ok": False,
+            "error": "timeout",
+        },
+        {
+            "schema": "nexus.model_benchmark.v1",
+            "run_id": "older",
+            "completed_at": 20,
+            "phase": "measure",
+            "model": "fast",
+            "ok": True,
+            "tokens_per_sec": 5.0,
+            "completion_tokens": 32,
+        },
+        {
+            "schema": "nexus.model_benchmark.v1",
+            "run_id": "newer",
+            "completed_at": 40,
+            "phase": "measure",
+            "model": "fast",
+            "ok": True,
+            "tokens_per_sec": 10.0,
+            "decode_tokens_per_sec": 12.0,
+            "time_to_first_token_ms": 100.0,
+            "completion_tokens": 64,
+            "backend": "local_vllm_fast",
+            "resolved_model": "actual",
+            "max_tokens": 128,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(item) for item in items) + "\n", encoding="utf-8")
+
+    latest = admin_benchmark.latest_successful_by_model(path=path)
+
+    assert latest["fast"]["run_id"] == "newer"
+    assert latest["fast"]["tokens_per_sec"] == 10.0
+    assert latest["fast"]["backend"] == "local_vllm_fast"

@@ -94,7 +94,9 @@ def test_production_topology_disables_unvalidated_vllm_auto_tool_flags():
     assert "vllm-fast" in topology["hosts"]["ai1"]["components"]
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER"] == "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
+    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_MAX_MODEL_LEN"] == "8192"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
+    assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "8192"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
     ai2_overrides = set(topology["hosts"]["ai2"]["env"]["BACKEND_ENV_BASE_URL_OVERRIDES"].split(","))
     assert {

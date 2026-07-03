@@ -36,6 +36,16 @@
     return `${(mb / 1024).toFixed(mb >= 10240 ? 0 : 1)} GB`;
   }
 
+  function fmtNetworkSpeed(value) {
+    const mbps = Number(value || 0);
+    if (!Number.isFinite(mbps) || mbps <= 0) return "unknown";
+    if (mbps >= 1000) {
+      const gbps = mbps / 1000;
+      return `${gbps >= 10 ? gbps.toFixed(0) : gbps.toFixed(1)} Gbps`;
+    }
+    return `${mbps.toFixed(0)} Mbps`;
+  }
+
   function fmtSec(value) {
     const sec = Number(value || 0);
     if (!Number.isFinite(sec) || sec <= 0) return "0s";
@@ -245,6 +255,45 @@
     return entries.map(([name, status]) => `  - ${name}: ${status}`);
   }
 
+  function networkInterfaces(host) {
+    return Array.isArray(host?.network_interfaces) ? host.network_interfaces : [];
+  }
+
+  function hostNetworkLines(host) {
+    const list = networkInterfaces(host);
+    if (!list.length) return ["  - none reported"];
+    return list.map((item) => {
+      const label = item.display_name && item.display_name !== item.name ? `${item.display_name} (${item.name})` : fmtValue(item.name);
+      const active = item.active ? "active" : (item.operstate || "inactive");
+      const current = fmtNetworkSpeed(item.current_speed_mbps);
+      const theoretical = fmtNetworkSpeed(item.theoretical_speed_mbps);
+      const media = item.current_media ? `, media ${item.current_media}` : "";
+      return `  - ${label}: ${active}, current ${current}, max ${theoretical}${media}`;
+    });
+  }
+
+  function appendNetworkRows(card, host) {
+    const list = networkInterfaces(host);
+    if (!list.length) return false;
+    const wrap = document.createElement("div");
+    wrap.className = "network-list";
+    list.slice(0, 8).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "network-row";
+      const label = item.display_name && item.display_name !== item.name ? `${item.display_name} (${item.name})` : fmtValue(item.name);
+      const bits = [
+        item.active ? "active" : (item.operstate || "inactive"),
+        `current ${fmtNetworkSpeed(item.current_speed_mbps)}`,
+        `max ${fmtNetworkSpeed(item.theoretical_speed_mbps)}`,
+      ];
+      if (item.current_media) bits.push(item.current_media);
+      row.textContent = `${label} · ${bits.join(" · ")}`;
+      wrap.appendChild(row);
+    });
+    card.appendChild(wrap);
+    return true;
+  }
+
   function buildHostInfoText(host, generatedAt) {
     const generated = formatDateTime(generatedAt);
     const lines = [`# Nexus Host Configuration: ${fmtValue(host?.name)}`];
@@ -261,6 +310,8 @@
     if (host?.error) lines.push(`Probe error: ${host.error}`);
     lines.push("GPUs:");
     lines.push(...hostGpuLines(host?.gpus));
+    lines.push("Network:");
+    lines.push(...hostNetworkLines(host));
     lines.push("Containers:");
     lines.push(...hostContainerLines(host?.containers));
     return `${lines.join("\n").trim()}\n`;
@@ -511,7 +562,8 @@
       }
 
       const hasMemory = appendMemoryRow(card, host.memory);
-      if (!gpus.length && !hasMemory) {
+      const hasNetwork = appendNetworkRows(card, host);
+      if (!gpus.length && !hasMemory && !hasNetwork) {
         const empty = document.createElement("div");
         empty.className = "meta";
         empty.style.marginTop = "10px";

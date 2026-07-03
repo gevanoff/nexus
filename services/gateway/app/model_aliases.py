@@ -48,28 +48,36 @@ def _default_aliases() -> Dict[str, ModelAlias]:
 
     return {
         # These four are the canonical policy surface.
-        "default": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True, coding=True),
+        "default": ModelAlias(
+            backend=default_backend,
+            upstream_model=default_strong_model,
+            context_window=S.VLLM_MAX_MODEL_LEN if default_provider == "vllm" else None,
+            tools=True,
+            max_tokens_cap=1024 if default_provider == "vllm" else None,
+            coding=True,
+        ),
         "fast": ModelAlias(
             backend="local_vllm_fast",
             upstream_model=S.VLLM_MODEL_FAST,
             context_window=S.VLLM_FAST_MAX_MODEL_LEN,
             tools=False,
+            max_tokens_cap=768,
         ),
         "coder": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True, coding=False),
         "reasoning": ModelAlias(
             backend="local_vllm",
             upstream_model=S.VLLM_MODEL_STRONG,
-            context_window=2_048,
+            context_window=S.VLLM_MAX_MODEL_LEN,
             tools=True,
-            max_tokens_cap=512,
+            max_tokens_cap=1024,
             coding=False,
         ),
         "fast-reasoning": ModelAlias(
             backend="local_vllm",
             upstream_model=S.VLLM_MODEL_STRONG,
-            context_window=2_048,
+            context_window=S.VLLM_MAX_MODEL_LEN,
             tools=True,
-            max_tokens_cap=256,
+            max_tokens_cap=512,
             coding=False,
         ),
         "long": ModelAlias(
@@ -82,7 +90,9 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "glm-5.2": ModelAlias(
             backend="local_mlx",
             upstream_model="mlx-community/GLM-5.2-DQ4plus-q8",
+            context_window=32_768,
             tools=True,
+            max_tokens_cap=2048,
             label="GLM-5.2 DQ4plus-q8",
             coding=True,
             huge_candidate=True,
@@ -93,7 +103,9 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "minimax-m3": ModelAlias(
             backend="local_mlx",
             upstream_model="mlx-community/MiniMax-M3-4bit",
+            context_window=32_768,
             tools=False,
+            max_tokens_cap=2048,
             label="MiniMax M3 4-bit",
             coding=True,
             huge_candidate=True,
@@ -103,7 +115,9 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "deepseek-r1": ModelAlias(
             backend="local_mlx",
             upstream_model="mlx-community/DeepSeek-R1-0528-4bit",
+            context_window=32_768,
             tools=True,
+            max_tokens_cap=2048,
             label="DeepSeek R1 0528 4-bit",
             coding=True,
             huge_candidate=True,
