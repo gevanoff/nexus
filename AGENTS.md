@@ -5,8 +5,11 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 
 ## Shell And Repo Work
 
+- Never use PowerShell for Nexus repo work, deployment work, or Nexus host
+  operations. In Codex `exec_command` calls, explicitly set `shell: "bash"` and
+  use POSIX shell syntax.
 - Do all Nexus repo inspection, edits, greps, tests, and git operations from the
-  local WSL/Linux checkout. Do not use PowerShell for repository work.
+  local WSL/Linux checkout.
 - From Windows Codex sessions, use this pattern:
 
   ```bash
@@ -16,6 +19,8 @@ state before acting on operational notes; Nexus hosts and model routes can chang
 - If the repo or required helper tools are not accessible through WSL, stop and
   report the missing prerequisite. Do not continue the same repo task through
   PowerShell.
+- If an example or existing command is written in PowerShell syntax, translate it
+  to Bash/WSL before running it.
 - Prefer `rg` and `rg --files` for searches.
 - Do not print, copy, or modify private SSH keys, password files, bearer tokens,
   or private `.env` values unless the user explicitly asks for that exact secret
