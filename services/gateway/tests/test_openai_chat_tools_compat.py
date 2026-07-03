@@ -77,7 +77,11 @@ def _build_client(
     monkeypatch.setattr(openai_routes, "inject_memory", _inject_memory)
     monkeypatch.setattr(openai_routes, "check_capability", _check_capability)
     monkeypatch.setattr(openai_routes, "call_backend_chat", chat_handler or _default_call_backend_chat)
-    monkeypatch.setattr(openai_routes, "stream_backend_chat_as_openai", stream_handler or _default_stream_backend_chat)
+
+    def _stream_backend_chat_as_openai(req, backend: str, model_name: str, **_kwargs):
+        return (stream_handler or _default_stream_backend_chat)(req, backend, model_name)
+
+    monkeypatch.setattr(openai_routes, "stream_backend_chat_as_openai", _stream_backend_chat_as_openai)
 
     app = FastAPI()
     app.include_router(openai_routes.router)
@@ -456,3 +460,96 @@ def test_responses_stream_degrades_tools_for_unsupported_backend(monkeypatch):
     assert "tools" not in routed
     assert "tool_choice" not in routed
     assert "parallel_tool_calls" not in routed
+
+
+
+def test_chat_completions_normalizes_continue_style_request_shape(monkeypatch):
+    captured = {}
+
+    async def _chat_handler(req, backend: str, model_name: str):
+        captured["req"] = req
+        return {
+            "id": "chatcmpl_test",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        }
+
+    client = _build_client(monkeypatch, backend_supports_tools=True, chat_handler=_chat_handler)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "continue-local",
+            "messages": [
+                {"role": "system", "content": "rules"},
+                {"role": "thinking", "content": "internal scratchpad"},
+                {"role": "user", "content": [{"type": "text", "text": "read README.md"}]},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "toolCalls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "toolCallId": "call_1", "content": "README content"},
+            ],
+            "completionOptions": {
+                "tools": [
+                    {
+                        "type": "function",
+                        "displayTitle": "Read File",
+                        "function": {"name": "read_file", "parameters": {}},
+                    }
+                ],
+                "toolChoice": "auto",
+                "maxTokens": 128,
+            },
+            "reasoning": False,
+        },
+    )
+
+    assert response.status_code == 200
+    routed = captured["req"].model_dump(exclude_none=True)
+    assert "completionOptions" not in routed
+    assert "reasoning" not in routed
+    assert routed["tool_choice"] == "auto"
+    assert routed["max_tokens"] == 128
+    assert routed["tools"][0]["function"]["name"] == "read_file"
+    assert [message["role"] for message in routed["messages"]] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert "tool_calls" in routed["messages"][2]
+    assert "toolCalls" not in routed["messages"][2]
+    assert routed["messages"][3]["tool_call_id"] == "call_1"
+    assert "toolCallId" not in routed["messages"][3]
+
+
+def test_chat_completions_returns_diagnostic_500_for_handler_exception(monkeypatch):
+    def _stream_handler(_req, _backend: str, _model_name: str):
+        raise RuntimeError("boom from test")
+
+    client = _build_client(monkeypatch, backend_supports_tools=True, stream_handler=_stream_handler)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "continue-local",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"]["type"] == "server_error"
+    assert body["error"]["code"] == "500"
+    assert "boom from test" in body["error"]["message"]
+    assert "request_id=" in body["error"]["message"]
+    assert body["error"]["detail"]["request_id"]

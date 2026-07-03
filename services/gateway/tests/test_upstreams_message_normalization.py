@@ -50,6 +50,35 @@ def test_normalize_messages_only_merges_plain_text_neighbors():
     ]
 
 
+
+def test_normalize_messages_handles_continue_camelcase_and_text_parts():
+    tool_calls = [
+        {
+            "id": "call_123",
+            "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"},
+        }
+    ]
+
+    normalized = _normalize_messages_for_openai_backend(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "first"},
+                    {"type": "input_text", "text": "second"},
+                ],
+            },
+            {"role": "assistant", "content": "", "toolCalls": tool_calls},
+            {"role": "tool", "toolCallId": "call_123", "content": "done"},
+        ]
+    )
+
+    assert normalized[0] == {"role": "user", "content": "first\nsecond"}
+    assert normalized[1] == {"role": "assistant", "content": "", "tool_calls": tool_calls}
+    assert normalized[2] == {"role": "tool", "content": "done", "tool_call_id": "call_123"}
+
+
 def test_glm_input_guard_rejects_oversized_prompt(monkeypatch):
     monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 100, raising=False)
     request = ChatCompletionRequest(

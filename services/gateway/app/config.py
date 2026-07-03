@@ -372,6 +372,7 @@ class Settings(BaseSettings):
     REQUEST_LOG_ENABLED: bool = True
     REQUEST_LOG_PATH: str = "/var/lib/gateway/data/requests.jsonl"
     OPENAI_DEBUG_LOG_MESSAGE_CONTENT: bool = False
+    GATEWAY_DEBUG_OPENAI_REQUESTS: bool = False
 
     # Agent runtime v1 (single-process, deterministic)
     AGENT_SPECS_PATH: str = "/var/lib/gateway/config/agent_specs.json"

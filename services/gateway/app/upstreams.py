@@ -7,7 +7,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.backends import backend_provider_name, get_registry
-from app.config import S
+from app.config import S, logger
 from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
@@ -15,32 +15,57 @@ from app.openai_utils import sanitize_chat_choices, sse, sse_done
 from app.streaming import passthrough_sse
 
 
+def _normalize_text_content_parts(content: list[Any]) -> str | None:
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+            continue
+        if not isinstance(item, dict):
+            return None
+        item_type = str(item.get("type") or "").strip().lower()
+        if item_type in {"text", "input_text"} and isinstance(item.get("text"), str):
+            parts.append(item["text"])
+            continue
+        return None
+    return "\n".join(part for part in parts if part)
+
+
+def _normalize_content_for_openai_backend(content: Any) -> Any:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text = _normalize_text_content_parts(content)
+        if text is not None:
+            return text
+        return content
+    if isinstance(content, dict):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False)
+    except Exception:
+        return str(content)
+
+
 def _normalize_messages_for_openai_backend(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     last_role: str | None = None
     for m in msgs:
         role = (m.get("role") or "").strip()
-
-        content = m.get("content")
-        if content is None:
-            normalized_content: Any = ""
-        elif isinstance(content, str):
-            normalized_content = content
-        elif isinstance(content, (list, dict)):
-            normalized_content = content
-        else:
-            try:
-                normalized_content = json.dumps(content, ensure_ascii=False)
-            except Exception:
-                normalized_content = str(content)
+        normalized_content = _normalize_content_for_openai_backend(m.get("content"))
 
         normalized_message: Dict[str, Any] = {"role": role, "content": normalized_content}
         if m.get("name") is not None:
             normalized_message["name"] = m.get("name")
-        if m.get("tool_calls") is not None:
-            normalized_message["tool_calls"] = m.get("tool_calls")
-        if m.get("tool_call_id") is not None:
-            normalized_message["tool_call_id"] = m.get("tool_call_id")
+
+        tool_calls = m.get("tool_calls") if m.get("tool_calls") is not None else m.get("toolCalls")
+        tool_call_id = m.get("tool_call_id") if m.get("tool_call_id") is not None else m.get("toolCallId")
+        if tool_calls is not None:
+            normalized_message["tool_calls"] = tool_calls
+        if tool_call_id is not None:
+            normalized_message["tool_call_id"] = tool_call_id
 
         can_merge = set(normalized_message.keys()) == {"role", "content"} and isinstance(normalized_content, str)
         prev_can_merge = (
@@ -458,11 +483,17 @@ async def transcribe_openai_audio(
             raise HTTPException(status_code=502, detail={"upstream": resolved, "error": str(e)})
 
 
+def _safe_exception_text(exc: Exception) -> str:
+    text = str(exc).strip() or type(exc).__name__
+    return text[:500]
+
+
 async def stream_openai_chat(
     payload: Dict[str, Any],
     *,
     base_url: str | None = None,
     backend_name: str = "local_vllm",
+    request_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     if "messages" in payload and isinstance(payload["messages"], list):
         payload = dict(payload)
@@ -492,6 +523,31 @@ async def stream_openai_chat(
             detail = {"upstream": backend_name, "error": str(e)}
             yield sse({"error": {"message": "Upstream error", "type": "upstream_error", "param": None, "code": None, "detail": detail}})
             yield sse_done()
+        except Exception as e:
+            req_id = request_id or "-"
+            logger.exception(
+                "chat.completions stream failed request_id=%s backend=%s model=%s",
+                req_id,
+                backend_name,
+                payload.get("model"),
+            )
+            detail = {
+                "upstream": backend_name,
+                "error": _safe_exception_text(e),
+                "request_id": request_id,
+            }
+            yield sse(
+                {
+                    "error": {
+                        "message": f"Gateway streaming error: {_safe_exception_text(e)}; request_id={req_id}",
+                        "type": "server_error",
+                        "param": None,
+                        "code": "500",
+                        "detail": detail,
+                    }
+                }
+            )
+            yield sse_done()
 
 
 async def call_backend_chat(req: ChatCompletionRequest, backend_name: str, model_name: str) -> Dict[str, Any]:
@@ -500,10 +556,16 @@ async def call_backend_chat(req: ChatCompletionRequest, backend_name: str, model
     return await call_openai_chat(routed_req, base_url=base_url, backend_name=resolved)
 
 
-def stream_backend_chat_as_openai(req: ChatCompletionRequest, backend_name: str, model_name: str) -> AsyncIterator[bytes]:
+def stream_backend_chat_as_openai(
+    req: ChatCompletionRequest,
+    backend_name: str,
+    model_name: str,
+    *,
+    request_id: str | None = None,
+) -> AsyncIterator[bytes]:
     resolved, _provider, base_url = _resolve_backend_target(backend_name)
     routed_req = route_request_for_backend(req, resolved, model_name)
     payload = routed_req.model_dump(exclude_none=True)
     payload["model"] = model_name
     payload["stream"] = True
-    return stream_openai_chat(payload, base_url=base_url, backend_name=resolved)
+    return stream_openai_chat(payload, base_url=base_url, backend_name=resolved, request_id=request_id)

@@ -174,11 +174,218 @@ def _body_keys(body: Any) -> list[str]:
     return sorted(str(key) for key in body.keys())
 
 
+_OPENAI_CHAT_REQUEST_KEYS = {
+    "model",
+    "messages",
+    "n",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "repetition_penalty",
+    "frequency_penalty",
+    "presence_penalty",
+    "stop",
+    "seed",
+    "max_tokens",
+    "response_format",
+    "user",
+    "metadata",
+    "store",
+    "stream_options",
+    "logprobs",
+    "top_logprobs",
+    "chat_template_kwargs",
+    "stream",
+}
+
+
+def _content_shape(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        part_types: list[str] = []
+        for item in value[:8]:
+            if isinstance(item, dict):
+                part_types.append(str(item.get("type") or "object"))
+            else:
+                part_types.append(type(item).__name__)
+        suffix = ",..." if len(value) > 8 else ""
+        return f"array[{','.join(part_types)}{suffix}]"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+def _tool_names_from_raw_tools(tools: Any) -> list[str]:
+    if not isinstance(tools, list):
+        return []
+    names: list[str] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
+def _raw_message_summary(body: Any) -> list[dict[str, Any]]:
+    if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
+        return []
+    out: list[dict[str, Any]] = []
+    for idx, message in enumerate(body["messages"]):
+        if not isinstance(message, dict):
+            out.append({"index": idx, "shape": type(message).__name__})
+            continue
+        out.append(
+            {
+                "index": idx,
+                "role": message.get("role"),
+                "content_shape": _content_shape(message.get("content")),
+                "has_tool_calls": "tool_calls" in message or "toolCalls" in message,
+                "has_tool_call_id": "tool_call_id" in message or "toolCallId" in message,
+                "keys": sorted(str(key) for key in message.keys() if key != "content"),
+            }
+        )
+    return out
+
+
+def _unknown_top_level_fields(body: Any) -> list[str]:
+    if not isinstance(body, dict):
+        return []
+    return sorted(str(key) for key in body.keys() if str(key) not in _OPENAI_CHAT_REQUEST_KEYS)
+
+
+def _normalize_continue_chat_body(body: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    out = dict(body)
+    actions: list[str] = []
+
+    completion_options = out.get("completionOptions")
+    if isinstance(completion_options, dict):
+        if "tools" not in out and isinstance(completion_options.get("tools"), list):
+            out["tools"] = completion_options["tools"]
+            actions.append("promoted completionOptions.tools")
+        if "tool_choice" not in out:
+            if "toolChoice" in completion_options:
+                out["tool_choice"] = completion_options["toolChoice"]
+                actions.append("promoted completionOptions.toolChoice")
+            elif "tool_choice" in completion_options:
+                out["tool_choice"] = completion_options["tool_choice"]
+                actions.append("promoted completionOptions.tool_choice")
+        if "max_tokens" not in out and completion_options.get("maxTokens") is not None:
+            out["max_tokens"] = completion_options["maxTokens"]
+            actions.append("promoted completionOptions.maxTokens")
+        out.pop("completionOptions", None)
+        actions.append("dropped completionOptions")
+
+    if "toolChoice" in out:
+        if "tool_choice" not in out:
+            out["tool_choice"] = out["toolChoice"]
+            actions.append("renamed toolChoice to tool_choice")
+        out.pop("toolChoice", None)
+    if "reasoning" in out:
+        out.pop("reasoning", None)
+        actions.append("dropped reasoning")
+
+    messages = out.get("messages")
+    if isinstance(messages, list):
+        normalized_messages: list[Any] = []
+        for idx, message in enumerate(messages):
+            if not isinstance(message, dict):
+                normalized_messages.append(message)
+                continue
+            normalized = dict(message)
+            role = str(normalized.get("role") or "").strip().lower()
+            if role == "thinking":
+                actions.append(f"dropped messages[{idx}] role=thinking")
+                continue
+            if "toolCalls" in normalized:
+                if "tool_calls" not in normalized:
+                    normalized["tool_calls"] = normalized["toolCalls"]
+                    actions.append(f"renamed messages[{idx}].toolCalls to tool_calls")
+                normalized.pop("toolCalls", None)
+            if "toolCallId" in normalized:
+                if "tool_call_id" not in normalized:
+                    normalized["tool_call_id"] = normalized["toolCallId"]
+                    actions.append(f"renamed messages[{idx}].toolCallId to tool_call_id")
+                normalized.pop("toolCallId", None)
+            normalized_messages.append(normalized)
+        out["messages"] = normalized_messages
+
+    return out, actions
+
+
+def _http_exception_message(exc: HTTPException) -> str:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("error")
+        if isinstance(message, str) and message:
+            return message
+        try:
+            return json.dumps(detail, ensure_ascii=False, default=str)[:500]
+        except Exception:
+            return str(detail)[:500]
+    text = str(detail or "").strip()
+    return text or f"HTTP {exc.status_code}"
+
+
+def _log_openai_request_diagnostics(
+    *,
+    request_id: str,
+    body: Any,
+    normalized_body: Any,
+    normalization_actions: list[str],
+    cc: ChatCompletionRequest,
+    alias_name: Optional[str],
+    route: Any,
+    backend_class: str,
+    tool_fields_action: str,
+) -> None:
+    if not bool(getattr(S, "GATEWAY_DEBUG_OPENAI_REQUESTS", False)):
+        return
+    completion_options = body.get("completionOptions") if isinstance(body, dict) else None
+    payload = {
+        "request_id": request_id,
+        "model": cc.model,
+        "stream": bool(cc.stream),
+        "message_count": len(cc.messages),
+        "message_roles": [message.role for message in cc.messages],
+        "raw_message_summary": _raw_message_summary(body),
+        "content_shapes": [_content_shape(message.content) for message in cc.messages],
+        "has_tools": bool(cc.tools),
+        "tool_count": len(cc.tools or []),
+        "tool_names": _tool_names_from_raw_tools(normalized_body.get("tools") if isinstance(normalized_body, dict) else None),
+        "tool_choice_present": cc.tool_choice is not None,
+        "response_format_present": cc.response_format is not None,
+        "reasoning_present": isinstance(body, dict) and "reasoning" in body,
+        "completion_options_keys": _body_keys(completion_options),
+        "unknown_top_level_fields": _unknown_top_level_fields(body),
+        "normalization_actions": normalization_actions,
+        "selected_alias": alias_name,
+        "route_backend": getattr(route, "backend", None),
+        "backend_class": backend_class,
+        "route_model": getattr(route, "model", None),
+        "route_reason": getattr(route, "reason", None),
+        "tool_fields_action": tool_fields_action,
+    }
+    logger.info("openai request diagnostics %s", json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+
+
 def _request_messages_summary(messages: list[ChatMessage]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for message in messages:
         item = {
             "role": message.role,
+            "content_shape": _content_shape(message.content),
             "has_content": message.content is not None,
             "has_tool_calls": bool(message.tool_calls),
             "has_tool_call_id": message.tool_call_id is not None,
@@ -486,44 +693,97 @@ async def get_model(req: Request, model_id: str):
 @router.post("/v1/chat/completions")
 async def chat_completions(req: Request):
     require_bearer(req)
+    request_id = str(getattr(req.state, "request_id", "") or "-")
     try:
         body = await req.json()
     except Exception as exc:
         return _openai_error_response(
-            f"Unsupported field or invalid request shape: invalid JSON body ({type(exc).__name__})"
+            f"Unsupported field or invalid request shape: invalid JSON body ({type(exc).__name__}); request_id={request_id}",
+            detail={"request_id": request_id},
         )
 
+    if not isinstance(body, dict):
+        return _openai_error_response(
+            f"Unsupported field or invalid request shape: JSON body must be an object; request_id={request_id}",
+            detail={"request_id": request_id},
+        )
+
+    normalized_body, normalization_actions = _normalize_continue_chat_body(body)
     try:
-        cc = ChatCompletionRequest(**body)
+        cc = ChatCompletionRequest(**normalized_body)
     except ValidationError as exc:
         return _openai_error_response(
-            _validation_error_message(exc),
+            f"{_validation_error_message(exc)}; request_id={request_id}",
             param=_validation_error_param(exc),
-            detail=exc.errors(include_url=False),
+            detail={"request_id": request_id, "errors": exc.errors(include_url=False)},
         )
 
-    cc.messages = await inject_memory(cc.messages, req=req)
-
-    hdrs = {k.lower(): v for k, v in req.headers.items()}
-    route, backend_class, alias_name = _route_chat_request(
-        cc,
-        headers=hdrs,
-        enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
-    )
-    backend = route.backend
-    model_name = route.model
-    
-    # Check backend health/readiness
-    check_backend_ready(backend_class, route_kind="chat")
-    
-    # Check capability
-    await check_capability(backend_class, "chat")
-    
-    # Acquire admission slot
-    admission = get_admission_controller()
-    await admission.acquire(backend_class, "chat")
+    admission = None
+    backend_class = ""
+    backend = ""
+    model_name = ""
+    route = None
+    alias_name: Optional[str] = None
+    tool_fields_action = "pending"
+    degradation_reason: Optional[str] = None
 
     try:
+        cc.messages = await inject_memory(cc.messages, req=req)
+
+        hdrs = {k.lower(): v for k, v in req.headers.items()}
+        route, backend_class, alias_name = _route_chat_request(
+            cc,
+            headers=hdrs,
+            enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
+        )
+        backend = route.backend
+        model_name = route.model
+
+        # Check backend health/readiness
+        check_backend_ready(backend_class, route_kind="chat")
+
+        # Check capability
+        await check_capability(backend_class, "chat")
+
+        # Acquire admission slot
+        admission = get_admission_controller()
+        await admission.acquire(backend_class, "chat")
+
+        cc = _apply_alias_constraints(cc, alias_name=alias_name)
+        original_cc = cc
+
+        cc, degradation_reason, tools_required_error = _normalize_chat_request_for_backend(
+            cc,
+            alias_name=alias_name,
+            backend_class=backend_class,
+        )
+        request_shape_action = "normalized" if normalization_actions else "direct"
+        tool_fields_action = _tool_fields_action(
+            original_cc,
+            cc,
+            request_shape_action=request_shape_action,
+        )
+        _log_openai_request(
+            endpoint="/v1/chat/completions",
+            body=body,
+            cc=cc,
+            alias_name=alias_name,
+            route=route,
+            tool_fields_action=tool_fields_action,
+            request_shape_action=request_shape_action,
+        )
+        _log_openai_request_diagnostics(
+            request_id=request_id,
+            body=body,
+            normalized_body=normalized_body,
+            normalization_actions=normalization_actions,
+            cc=cc,
+            alias_name=alias_name,
+            route=route,
+            backend_class=backend_class,
+            tool_fields_action=tool_fields_action,
+        )
+
         # Request instrumentation metadata (used by middleware JSONL logger).
         try:
             inst = getattr(req.state, "instrument", None)
@@ -538,39 +798,26 @@ async def chat_completions(req: Request):
                     "router_reason": route.reason,
                     "has_tools": bool(cc.tools),
                     "request_keys": _body_keys(body),
+                    "normalized_request_keys": _body_keys(normalized_body),
                     "selected_alias": alias_name,
                     "stream": bool(cc.stream),
                     "tool_choice": cc.tool_choice,
                     "tool_fields_action": tool_fields_action,
+                    "normalization_actions": normalization_actions,
+                    "message_roles": [message.role for message in cc.messages],
+                    "content_shapes": [_content_shape(message.content) for message in cc.messages],
                 }
             )
             req.state.instrument = inst
         except Exception:
             pass
 
-        cc = _apply_alias_constraints(cc, alias_name=alias_name)
-        original_cc = cc
-
-        cc, degradation_reason, tools_required_error = _normalize_chat_request_for_backend(
-            cc,
-            alias_name=alias_name,
-            backend_class=backend_class,
-        )
-        tool_fields_action = _tool_fields_action(original_cc, cc, request_shape_action="direct")
-        _log_openai_request(
-            endpoint="/v1/chat/completions",
-            body=body,
-            cc=cc,
-            alias_name=alias_name,
-            route=route,
-            tool_fields_action=tool_fields_action,
-            request_shape_action="direct",
-        )
         if tools_required_error:
             return _openai_error_response(
-                f"Unsupported field or invalid request shape: tools were explicitly required, but {degradation_reason}",
+                f"Unsupported field or invalid request shape: tools were explicitly required, but {degradation_reason}; request_id={request_id}",
                 param="tool_choice",
                 detail={
+                    "request_id": request_id,
                     "backend": backend_class,
                     "alias": alias_name,
                     "tool_choice": cc.tool_choice,
@@ -578,7 +825,8 @@ async def chat_completions(req: Request):
             )
 
         logger.debug(
-            "route chat.completions model=%r alias=%r stream=%s tools=%s tool_choice=%r tool_fields_action=%s degraded_tools=%s -> backend=%s upstream_model=%s reason=%s",
+            "route chat.completions request_id=%s model=%r alias=%r stream=%s tools=%s tool_choice=%r tool_fields_action=%s degraded_tools=%s -> backend=%s upstream_model=%s reason=%s",
+            request_id,
             cc.model,
             alias_name,
             bool(cc.stream),
@@ -592,7 +840,7 @@ async def chat_completions(req: Request):
         )
 
         if cc.stream:
-            gen = stream_backend_chat_as_openai(cc, backend, model_name)
+            gen = stream_backend_chat_as_openai(cc, backend, model_name, request_id=request_id)
             out = StreamingResponse(gen, media_type="text/event-stream")
             out.headers["X-Backend-Used"] = backend
             out.headers["X-Model-Used"] = model_name
@@ -615,9 +863,48 @@ async def chat_completions(req: Request):
         out.headers["X-Model-Used"] = model_name
         out.headers["X-Router-Reason"] = route.reason
         return out
+    except HTTPException as exc:
+        status_code = int(exc.status_code or 500)
+        error_type = "server_error" if status_code >= 500 else "invalid_request_error"
+        code = "500" if status_code >= 500 else "invalid_request"
+        message = _http_exception_message(exc)
+        if status_code >= 500:
+            logger.warning(
+                "chat.completions HTTPException request_id=%s status=%s backend=%s model=%s detail=%s",
+                request_id,
+                status_code,
+                backend_class or "-",
+                model_name or "-",
+                message,
+            )
+        return _openai_error_response(
+            f"Gateway chat completion failed: {message}; request_id={request_id}",
+            status_code=status_code,
+            error_type=error_type,
+            code=code,
+            detail={"request_id": request_id, "detail": exc.detail},
+        )
+    except Exception as exc:
+        logger.exception(
+            "chat.completions failed request_id=%s backend=%s model=%s",
+            request_id,
+            backend_class or "-",
+            model_name or "-",
+        )
+        message = str(exc).strip() or type(exc).__name__
+        return _openai_error_response(
+            f"Gateway failed while handling chat completion: {type(exc).__name__}: {message[:500]}; request_id={request_id}",
+            status_code=500,
+            error_type="server_error",
+            code="500",
+            detail={"request_id": request_id},
+        )
     finally:
-        # Release admission slot
-        admission.release(backend_class, "chat")
+        if admission is not None and backend_class:
+            try:
+                admission.release(backend_class, "chat")
+            except Exception:
+                pass
 
 
 @router.post("/v1/completions")
