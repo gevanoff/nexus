@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -28,7 +29,7 @@ from app.models import (
     EmbeddingsRequest,
     RerankRequest,
 )
-from app.openai_utils import new_id, now_unix, sse_done
+from app.openai_utils import new_id, now_unix, sse, sse_done
 from app.model_aliases import get_aliases
 from app.router import decide_route
 from app.router_cfg import router_cfg
@@ -97,8 +98,9 @@ def _openai_error_payload(
     code: Optional[str] = "invalid_request",
     detail: Any = None,
 ) -> Dict[str, Any]:
+    safe_message = str(message or "").strip() or "Gateway request failed"
     error: Dict[str, Any] = {
-        "message": message,
+        "message": safe_message,
         "type": error_type,
         "param": param,
         "code": code,
@@ -200,6 +202,24 @@ _OPENAI_CHAT_REQUEST_KEYS = {
     "top_logprobs",
     "chat_template_kwargs",
     "stream",
+}
+
+_OPENAI_COMPLETION_REQUEST_KEYS = {
+    "model",
+    "prompt",
+    "suffix",
+    "max_tokens",
+    "temperature",
+    "top_p",
+    "frequency_penalty",
+    "presence_penalty",
+    "stop",
+    "stream",
+    "echo",
+    "best_of",
+    "logprobs",
+    "user",
+    "seed",
 }
 
 _COMPLETION_OPTION_PROMOTIONS = {
@@ -307,6 +327,12 @@ def _unknown_top_level_fields(body: Any) -> list[str]:
     if not isinstance(body, dict):
         return []
     return sorted(str(key) for key in body.keys() if str(key) not in _OPENAI_CHAT_REQUEST_KEYS)
+
+
+def _unknown_completion_fields(body: Any) -> list[str]:
+    if not isinstance(body, dict):
+        return []
+    return sorted(str(key) for key in body.keys() if str(key) not in _OPENAI_COMPLETION_REQUEST_KEYS)
 
 
 def _normalize_text_content_parts(content: list[Any]) -> str | None:
@@ -555,9 +581,12 @@ def _log_openai_response_diagnostics(
     request_id: str,
     status_code: int,
     stream: bool,
+    route: str | None = None,
+    phase: str | None = None,
     backend_class: str = "",
     model_name: str = "",
     error_type: str | None = None,
+    upstream_status: int | None = None,
     exception: Exception | None = None,
 ) -> None:
     if not bool(getattr(S, "GATEWAY_DEBUG_OPENAI_REQUESTS", False)):
@@ -569,12 +598,110 @@ def _log_openai_response_diagnostics(
         "backend_class": backend_class or None,
         "upstream_model": model_name or None,
     }
+    if route:
+        payload["route"] = route
+    if phase:
+        payload["phase"] = phase
     if error_type:
         payload["error_type"] = error_type
+    if upstream_status is not None:
+        payload["upstream_status"] = upstream_status
     if exception is not None:
         payload["exception_class"] = type(exception).__name__
         payload["exception_message"] = _diagnostic_exception_message(exception)
     logger.info("openai response diagnostics %s", json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+
+
+def _prompt_shape(value: Any) -> str:
+    if value is None:
+        return "missing"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        item_types = [type(item).__name__ for item in value[:8]]
+        suffix = ",..." if len(value) > 8 else ""
+        return f"array[{','.join(item_types)}{suffix}]"
+    return type(value).__name__
+
+
+def _prompt_length(value: Any) -> int | None:
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return sum(len(item) for item in value)
+    return None
+
+
+def _completion_prompt_to_text(prompt: Any) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    if isinstance(prompt, list) and all(isinstance(item, str) for item in prompt):
+        return "\n".join(prompt)
+    raise _ContinueRequestNormalizationError("prompt must be a string or list of strings", param="prompt")
+
+
+def _log_openai_completion_request_diagnostics(
+    *,
+    request_id: str,
+    method: str,
+    path: str,
+    body: Any,
+    cr: CompletionRequest,
+    alias_name: Optional[str],
+    route: Any,
+    backend_class: str,
+    upstream_keys: list[str],
+) -> None:
+    if not bool(getattr(S, "GATEWAY_DEBUG_OPENAI_REQUESTS", False)):
+        return
+    prompt = body.get("prompt") if isinstance(body, dict) else None
+    payload = {
+        "request_id": request_id,
+        "method": method,
+        "path": path,
+        "route": "/v1/completions",
+        "adapter_path": "legacy_completions_shim",
+        "model": cr.model,
+        "stream": bool(cr.stream),
+        "top_level_keys": _body_keys(body),
+        "unknown_top_level_fields": _unknown_completion_fields(body),
+        "prompt_shape": _prompt_shape(prompt),
+        "prompt_length": _prompt_length(prompt),
+        "suffix_present": cr.suffix is not None,
+        "max_tokens": cr.max_tokens,
+        "temperature": cr.temperature,
+        "top_p": cr.top_p,
+        "stop_present": cr.stop is not None,
+        "echo": cr.echo,
+        "best_of": cr.best_of,
+        "logprobs": cr.logprobs,
+        "selected_alias": alias_name,
+        "route_backend": getattr(route, "backend", None),
+        "backend_class": backend_class,
+        "route_model": getattr(route, "model", None),
+        "route_reason": getattr(route, "reason", None),
+        "normalized_upstream_top_level_keys": upstream_keys,
+        "completionOptions_present": isinstance(body, dict) and "completionOptions" in body,
+        "completionOptions_tools_present": (
+            isinstance(body, dict)
+            and isinstance(body.get("completionOptions"), dict)
+            and isinstance(body["completionOptions"].get("tools"), list)
+        ),
+        "reasoning_present": isinstance(body, dict) and "reasoning" in body,
+        "response_format_present": isinstance(body, dict) and "response_format" in body,
+    }
+    logger.info("openai completions diagnostics %s", json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+
+
+def _openai_error_sse(
+    message: str,
+    *,
+    error_type: str = "server_error",
+    code: str | None = "500",
+    param: str | None = None,
+    detail: Any = None,
+) -> bytes:
+    return sse(_openai_error_payload(message, error_type=error_type, param=param, code=code, detail=detail))
 
 
 def _request_messages_summary(messages: list[ChatMessage]) -> list[dict[str, Any]]:
@@ -1161,97 +1288,361 @@ async def chat_completions(req: Request):
 @router.post("/v1/completions")
 async def completions(req: Request):
     require_bearer(req)
-    body = await req.json()
-    cr = CompletionRequest(**body)
+    request_id = str(getattr(req.state, "request_id", "") or "-")
+    route_path = "/v1/completions"
+    backend = ""
+    backend_class = ""
+    model_name = ""
+    route = None
+    alias_name: Optional[str] = None
 
-    if isinstance(cr.prompt, str):
-        prompt_text = cr.prompt
-    elif isinstance(cr.prompt, list) and all(isinstance(x, str) for x in cr.prompt):
-        prompt_text = "\n".join(cr.prompt)
-    else:
-        raise HTTPException(status_code=400, detail="prompt must be a string or list of strings")
+    try:
+        body = await req.json()
+    except Exception as exc:
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            route=route_path,
+            phase="parse_json",
+            status_code=400,
+            stream=False,
+            error_type="invalid_json",
+            exception=exc,
+        )
+        return _openai_error_response(
+            f"Unsupported field or invalid request shape: invalid JSON body ({type(exc).__name__}); request_id={request_id}",
+            detail={"request_id": request_id},
+        )
+
+    if not isinstance(body, dict):
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            route=route_path,
+            phase="validate_shape",
+            status_code=400,
+            stream=False,
+            error_type="invalid_json_shape",
+        )
+        return _openai_error_response(
+            f"Unsupported field or invalid request shape: JSON body must be an object; request_id={request_id}",
+            detail={"request_id": request_id},
+        )
+
+    try:
+        cr = CompletionRequest(**body)
+        prompt_text = _completion_prompt_to_text(cr.prompt)
+    except ValidationError as exc:
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            route=route_path,
+            phase="validate_request",
+            status_code=400,
+            stream=bool(body.get("stream")) if isinstance(body, dict) else False,
+            error_type="validation_error",
+            exception=exc,
+        )
+        return _openai_error_response(
+            f"{_validation_error_message(exc)}; request_id={request_id}",
+            param=_validation_error_param(exc),
+            detail={"request_id": request_id, "errors": exc.errors(include_url=False)},
+        )
+    except _ContinueRequestNormalizationError as exc:
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            route=route_path,
+            phase="normalize_prompt",
+            status_code=400,
+            stream=bool(body.get("stream")),
+            error_type="normalization_error",
+            exception=exc,
+        )
+        return _openai_error_response(
+            f"Unsupported field or invalid request shape: {exc}; request_id={request_id}",
+            param=exc.param,
+            detail={"request_id": request_id},
+        )
 
     cc = ChatCompletionRequest(
         model=cr.model,
         messages=[ChatMessage(role="user", content=prompt_text)],
         temperature=cr.temperature,
+        top_p=cr.top_p,
+        frequency_penalty=cr.frequency_penalty,
+        presence_penalty=cr.presence_penalty,
+        stop=cr.stop,
+        seed=cr.seed,
         max_tokens=cr.max_tokens,
         stream=bool(cr.stream),
     )
 
-    hdrs = {k.lower(): v for k, v in req.headers.items()}
-    route = decide_route(
-        cfg=router_cfg(),
-        request_model=cc.model,
-        headers=hdrs,
-        messages=[m.model_dump(exclude_none=True) for m in cc.messages],
-        has_tools=False,
-        enable_policy=S.ROUTER_ENABLE_POLICY,
-    )
-    backend = route.backend
-    model_name = route.model
+    try:
+        hdrs = {k.lower(): v for k, v in req.headers.items()}
+        route, backend_class, alias_name = _route_chat_request(
+            cc,
+            headers=hdrs,
+            enable_request_type=getattr(S, "ROUTER_ENABLE_REQUEST_TYPE", False),
+        )
+        backend = route.backend
+        model_name = route.model
 
-    # Apply caps/constraints based on the chosen alias (if any).
-    alias_name = _selected_alias_name(cc.model, route.reason)
-    cc = _apply_alias_constraints(cc, alias_name=alias_name)
+        cc = _apply_alias_constraints(cc, alias_name=alias_name)
+        upstream_keys = _body_keys(cc.model_dump(exclude_none=True))
+        _log_openai_completion_request_diagnostics(
+            request_id=request_id,
+            method=req.method,
+            path=str(req.url.path),
+            body=body,
+            cr=cr,
+            alias_name=alias_name,
+            route=route,
+            backend_class=backend_class,
+            upstream_keys=upstream_keys,
+        )
 
-    if cc.stream:
-        stream_id = new_id("cmpl")
-        created = now_unix()
-        used_model_id = backend_model_id(backend, model_name)
+        try:
+            inst = getattr(req.state, "instrument", None)
+            if not isinstance(inst, dict):
+                inst = {}
+            inst.update(
+                {
+                    "op": "completions",
+                    "backend": backend,
+                    "backend_class": backend_class,
+                    "upstream_model": model_name,
+                    "router_reason": route.reason,
+                    "selected_alias": alias_name,
+                    "stream": bool(cc.stream),
+                    "prompt_shape": _prompt_shape(body.get("prompt")),
+                    "prompt_length": _prompt_length(body.get("prompt")),
+                    "request_keys": _body_keys(body),
+                    "normalized_request_keys": upstream_keys,
+                }
+            )
+            req.state.instrument = inst
+        except Exception:
+            pass
 
-        async def gen() -> AsyncIterator[bytes]:
-            async for sse_bytes in stream_backend_chat_as_openai(cc, backend, model_name):
-                for line in sse_bytes.splitlines():
-                    if not line.startswith(b"data:"):
-                        continue
-                    data = line[len(b"data:") :].strip()
-                    if data == b"[DONE]":
-                        yield sse_done()
-                        return
-                    try:
-                        j = json.loads(data)
-                    except Exception:
-                        continue
-                    delta = (((j or {}).get("choices") or [{}])[0].get("delta") or {})
-                    text = delta.get("content")
-                    if isinstance(text, str) and text:
-                        yield (
-                            f"data: {json.dumps({'id': stream_id, 'object': 'text_completion', 'created': created, 'model': used_model_id, 'choices': [{'index': 0, 'text': text, 'finish_reason': None}]}, separators=(',', ':'))}\n\n"
-                        ).encode("utf-8")
+        if cc.stream:
+            stream_id = new_id("cmpl")
+            created = now_unix()
+            used_model_id = backend_model_id(backend, model_name)
 
-            yield (
-                f"data: {json.dumps({'id': stream_id, 'object': 'text_completion', 'created': created, 'model': used_model_id, 'choices': [{'index': 0, 'text': '', 'finish_reason': 'stop'}]}, separators=(',', ':'))}\n\n"
-            ).encode("utf-8")
-            yield sse_done()
+            async def gen() -> AsyncIterator[bytes]:
+                terminal_seen = False
+                try:
+                    async for sse_bytes in stream_backend_chat_as_openai(cc, backend, model_name, request_id=request_id):
+                        for line in sse_bytes.splitlines():
+                            if not line.startswith(b"data:"):
+                                continue
+                            data = line[len(b"data:") :].strip()
+                            if data == b"[DONE]":
+                                yield sse_done()
+                                return
+                            try:
+                                j = json.loads(data)
+                            except Exception:
+                                continue
+                            if isinstance(j, dict) and isinstance(j.get("error"), dict):
+                                err = dict(j["error"])
+                                message = str(err.get("message") or "").strip()
+                                if not message:
+                                    message = f"Gateway request failed; request_id={request_id}; route={route_path}; phase=stream; error=empty upstream error"
+                                err["message"] = message
+                                err.setdefault("type", "server_error")
+                                err.setdefault("param", None)
+                                err.setdefault("code", "500")
+                                yield sse({"error": err})
+                                yield sse_done()
+                                return
 
-        out = StreamingResponse(gen(), media_type="text/event-stream")
+                            choice = ((j or {}).get("choices") or [{}])[0]
+                            delta = choice.get("delta") or {}
+                            text = delta.get("content")
+                            if isinstance(text, str) and text:
+                                yield sse(
+                                    {
+                                        "id": stream_id,
+                                        "object": "text_completion.chunk",
+                                        "created": created,
+                                        "model": used_model_id,
+                                        "choices": [{"index": 0, "text": text, "finish_reason": None}],
+                                    }
+                                )
+                            finish_reason = choice.get("finish_reason")
+                            if finish_reason is not None and not terminal_seen:
+                                terminal_seen = True
+                                yield sse(
+                                    {
+                                        "id": stream_id,
+                                        "object": "text_completion.chunk",
+                                        "created": created,
+                                        "model": used_model_id,
+                                        "choices": [{"index": 0, "text": "", "finish_reason": finish_reason}],
+                                    }
+                                )
+                except asyncio.CancelledError:
+                    logger.info("completions stream cancelled request_id=%s backend=%s model=%s", request_id, backend_class or "-", model_name or "-")
+                    return
+                except HTTPException as exc:
+                    status_code = int(exc.status_code or 500)
+                    error_type = "server_error" if status_code >= 500 else "invalid_request_error"
+                    code = "500" if status_code >= 500 else "invalid_request"
+                    message = _http_exception_message(exc)
+                    if status_code >= 500:
+                        logger.exception(
+                            "completions stream HTTPException request_id=%s status=%s backend=%s model=%s detail=%s",
+                            request_id,
+                            status_code,
+                            backend_class or "-",
+                            model_name or "-",
+                            message,
+                        )
+                    yield _openai_error_sse(
+                        f"Gateway request failed; request_id={request_id}; route={route_path}; phase=stream; error=HTTPException: {message}",
+                        error_type=error_type,
+                        code=code,
+                        detail={"request_id": request_id, "detail": exc.detail},
+                    )
+                    yield sse_done()
+                    return
+                except Exception as exc:
+                    logger.exception(
+                        "completions stream failed request_id=%s backend=%s model=%s",
+                        request_id,
+                        backend_class or "-",
+                        model_name or "-",
+                    )
+                    message = str(exc).strip() or type(exc).__name__
+                    yield _openai_error_sse(
+                        f"Gateway request failed; request_id={request_id}; route={route_path}; phase=stream; error={type(exc).__name__}: {message[:500]}",
+                        error_type="server_error",
+                        code="500",
+                        detail={"request_id": request_id},
+                    )
+                    yield sse_done()
+                    return
+
+                if not terminal_seen:
+                    yield sse(
+                        {
+                            "id": stream_id,
+                            "object": "text_completion.chunk",
+                            "created": created,
+                            "model": used_model_id,
+                            "choices": [{"index": 0, "text": "", "finish_reason": "stop"}],
+                        }
+                    )
+                yield sse_done()
+
+            out = StreamingResponse(gen(), media_type="text/event-stream")
+            out.headers["X-Backend-Used"] = backend
+            out.headers["X-Model-Used"] = model_name
+            out.headers["X-Router-Reason"] = route.reason
+            _log_openai_response_diagnostics(
+                request_id=request_id,
+                route=route_path,
+                phase="stream_start",
+                status_code=200,
+                stream=True,
+                backend_class=backend_class,
+                model_name=model_name,
+            )
+            return out
+
+        t0 = time.monotonic()
+        chat_resp = await call_backend_chat(cc, backend, model_name)
+        try:
+            inst = getattr(req.state, "instrument", None)
+            if isinstance(inst, dict):
+                inst["upstream_ms"] = round((time.monotonic() - t0) * 1000.0, 1)
+        except Exception:
+            pass
+
+        msg = ((chat_resp.get("choices") or [{}])[0].get("message") or {})
+        text = msg.get("content")
+        if not isinstance(text, str):
+            text = ""
+
+        resp = {
+            "id": new_id("cmpl"),
+            "object": "text_completion",
+            "created": now_unix(),
+            "model": backend_model_id(backend, model_name),
+            "choices": [{"index": 0, "text": text, "finish_reason": "stop"}],
+            "usage": chat_resp.get("usage") if isinstance(chat_resp.get("usage"), dict) else {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+
+        out = JSONResponse(resp)
         out.headers["X-Backend-Used"] = backend
         out.headers["X-Model-Used"] = model_name
         out.headers["X-Router-Reason"] = route.reason
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            route=route_path,
+            phase="complete",
+            status_code=200,
+            stream=False,
+            backend_class=backend_class,
+            model_name=model_name,
+        )
         return out
-
-    chat_resp = await call_backend_chat(cc, backend, model_name)
-
-    msg = ((chat_resp.get("choices") or [{}])[0].get("message") or {})
-    text = msg.get("content")
-    if not isinstance(text, str):
-        text = ""
-
-    resp = {
-        "id": new_id("cmpl"),
-        "object": "text_completion",
-        "created": now_unix(),
-        "model": backend_model_id(backend, model_name),
-        "choices": [{"index": 0, "text": text, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-    }
-
-    out = JSONResponse(resp)
-    out.headers["X-Backend-Used"] = backend
-    out.headers["X-Model-Used"] = model_name
-    out.headers["X-Router-Reason"] = route.reason
-    return out
+    except HTTPException as exc:
+        status_code = int(exc.status_code or 500)
+        error_type = "server_error" if status_code >= 500 else "invalid_request_error"
+        code = "500" if status_code >= 500 else "invalid_request"
+        message = _http_exception_message(exc)
+        if status_code >= 500:
+            logger.exception(
+                "completions HTTPException request_id=%s status=%s backend=%s model=%s detail=%s",
+                request_id,
+                status_code,
+                backend_class or "-",
+                model_name or "-",
+                message,
+            )
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            route=route_path,
+            phase="route_or_upstream",
+            status_code=status_code,
+            stream=bool(cc.stream),
+            backend_class=backend_class,
+            model_name=model_name,
+            error_type=error_type,
+            exception=exc,
+        )
+        return _openai_error_response(
+            f"Gateway request failed; request_id={request_id}; route={route_path}; phase=route_or_upstream; error=HTTPException: {message}",
+            status_code=status_code,
+            error_type=error_type,
+            code=code,
+            detail={"request_id": request_id, "detail": exc.detail},
+        )
+    except Exception as exc:
+        logger.exception(
+            "completions failed request_id=%s backend=%s model=%s",
+            request_id,
+            backend_class or "-",
+            model_name or "-",
+        )
+        message = str(exc).strip() or type(exc).__name__
+        _log_openai_response_diagnostics(
+            request_id=request_id,
+            route=route_path,
+            phase="route_or_upstream",
+            status_code=500,
+            stream=bool(cc.stream),
+            backend_class=backend_class,
+            model_name=model_name,
+            error_type="server_error",
+            exception=exc,
+        )
+        return _openai_error_response(
+            f"Gateway request failed; request_id={request_id}; route={route_path}; phase=route_or_upstream; error={type(exc).__name__}: {message[:500]}",
+            status_code=500,
+            error_type="server_error",
+            code="500",
+            detail={"request_id": request_id},
+        )
 
 
 @router.post("/v1/rerank")

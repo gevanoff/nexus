@@ -208,6 +208,117 @@ def test_chat_completions_stream_without_tools_still_works(monkeypatch):
     assert "tools" not in captured["req"].model_dump(exclude_none=True)
 
 
+def test_completions_non_stream_shims_to_chat_and_returns_legacy_shape(monkeypatch):
+    captured = {}
+
+    async def _chat_handler(req, backend: str, model_name: str):
+        captured["req"] = req
+        captured["backend"] = backend
+        captured["model_name"] = model_name
+        return {
+            "id": "chatcmpl_test",
+            "object": "chat.completion",
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "def add(a, b): return a + b"}, "finish_reason": "stop"}],
+        }
+
+    client = _build_client(monkeypatch, chat_handler=_chat_handler)
+
+    response = client.post(
+        "/v1/completions",
+        json={
+            "model": "fast",
+            "prompt": "Write add.",
+            "max_tokens": 64,
+            "temperature": 0,
+            "top_p": 0.5,
+            "stop": ["\n\n"],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["object"] == "text_completion"
+    assert body["choices"][0]["text"] == "def add(a, b): return a + b"
+    assert body["usage"]["total_tokens"] == 5
+    routed = captured["req"].model_dump(exclude_none=True)
+    assert routed["messages"] == [{"role": "user", "content": "Write add."}]
+    assert routed["top_p"] == 0.5
+    assert routed["stop"] == ["\n\n"]
+
+
+def test_completions_stream_returns_legacy_chunks_and_done(monkeypatch):
+    def _stream_handler(_req, _backend: str, _model_name: str):
+        async def gen():
+            yield b'data: {"choices":[{"delta":{"content":"def add"}}]}\n\n'
+            yield b'data: {"choices":[{"delta":{"content":"(a, b):"}}]}\n\n'
+            yield b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return gen()
+
+    client = _build_client(monkeypatch, stream_handler=_stream_handler)
+
+    with client.stream(
+        "POST",
+        "/v1/completions",
+        json={
+            "model": "fast",
+            "prompt": "Write add.",
+            "max_tokens": 64,
+            "temperature": 0,
+            "stream": True,
+        },
+    ) as response:
+        body = b"".join(response.iter_bytes())
+
+    assert response.status_code == 200
+    assert b'"object":"text_completion.chunk"' in body
+    assert b'"text":"def add"' in body
+    assert b'"text":"(a, b):"' in body
+    assert b"data: [DONE]\n\n" in body
+
+
+def test_completions_rejects_invalid_prompt_with_request_id(monkeypatch):
+    client = _build_client(monkeypatch)
+
+    response = client.post(
+        "/v1/completions",
+        json={"model": "fast", "prompt": [{"type": "text", "text": "not legacy"}], "stream": False},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert body["error"]["param"] == "prompt"
+    assert "prompt must be a string or list of strings" in body["error"]["message"]
+    assert "request_id=" in body["error"]["message"]
+
+
+def test_completions_stream_fills_empty_upstream_error(monkeypatch):
+    def _stream_handler(_req, _backend: str, _model_name: str):
+        async def gen():
+            yield b'data: {"error":{"message":"","type":"server_error","param":null,"code":"500"}}\n\n'
+            yield b"data: [DONE]\n\n"
+
+        return gen()
+
+    client = _build_client(monkeypatch, stream_handler=_stream_handler)
+
+    with client.stream(
+        "POST",
+        "/v1/completions",
+        json={"model": "fast", "prompt": "Write add.", "stream": True},
+    ) as response:
+        body = b"".join(response.iter_bytes())
+
+    assert response.status_code == 200
+    assert b'"message":"Gateway request failed;' in body
+    assert b"request_id=" in body
+    assert b"data: [DONE]\n\n" in body
+
+
 def test_chat_completions_degrades_streaming_tools_for_unsupported_backend(monkeypatch):
     captured = {}
 

@@ -66,10 +66,22 @@ class EmbeddingsRequest(BaseModel):
 
 
 class CompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     model: str
     prompt: Any
     max_tokens: Optional[int] = None
     temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    stop: Optional[Any] = None
+    seed: Optional[int] = None
+    suffix: Optional[str] = None
+    echo: Optional[bool] = None
+    best_of: Optional[int] = None
+    logprobs: Optional[int] = None
+    user: Optional[str] = None
     stream: Optional[bool] = False
 
 
