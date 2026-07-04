@@ -943,7 +943,14 @@ def latest_by_model(*, path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]
         if not model:
             continue
         completed = float(item.get("completed_at") or item.get("created_at") or 0)
-        if model not in latest_time or completed >= latest_time[model]:
-            latest_time[model] = completed
-            latest[model] = _compact_result(item)
+        keys = [model]
+        backend = str(item.get("backend") or item.get("backend_class") or "").strip()
+        resolved_model = str(item.get("resolved_model") or "").strip()
+        if backend and resolved_model:
+            keys.append(f"{backend}:{resolved_model}")
+        compact = _compact_result(item)
+        for key in keys:
+            if key not in latest_time or completed >= latest_time[key]:
+                latest_time[key] = completed
+                latest[key] = compact
     return latest

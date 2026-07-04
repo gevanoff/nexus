@@ -4568,11 +4568,13 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
             or latest_benchmarks.get(f"{effective_backend}:{effective_model}")
             or latest_benchmarks.get(f"{resolved_backend}:{alias.upstream_model}")
         )
-        alias_tool_qualification = (
-            latest_tool_qualifications.get(alias_name)
-            or latest_tool_qualifications.get(f"{effective_backend}:{effective_model}")
-            or latest_tool_qualifications.get(f"{resolved_backend}:{alias.upstream_model}")
-        )
+        alias_tool_qualification = None
+        if alias.tools is not False:
+            alias_tool_qualification = (
+                latest_tool_qualifications.get(alias_name)
+                or latest_tool_qualifications.get(f"{effective_backend}:{effective_model}")
+                or latest_tool_qualifications.get(f"{resolved_backend}:{alias.upstream_model}")
+            )
 
         alias_rows.append(
             {

@@ -205,6 +205,8 @@ def test_latest_by_model_keeps_latest_failure_for_ui(tmp_path):
         "completed_at": 20,
         "model": "fast",
         "ok": False,
+        "backend": "local_vllm",
+        "resolved_model": "upstream-model",
         "summary": {"passed": 3, "total": 5, "first_error": "auto failed", "by_category": {"auto": {"passed": 0, "total": 2}}},
     }
     path.write_text("\n".join(json.dumps(item) for item in [older, newer]) + "\n", encoding="utf-8")
@@ -214,3 +216,4 @@ def test_latest_by_model_keeps_latest_failure_for_ui(tmp_path):
     assert latest["fast"]["run_id"] == "newer"
     assert latest["fast"]["ok"] is False
     assert latest["fast"]["first_error"] == "auto failed"
+    assert latest["local_vllm:upstream-model"]["run_id"] == "newer"
