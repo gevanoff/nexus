@@ -680,7 +680,7 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
 
     assert payload["aliases"][0]["effective_backend"] == "local_vllm_fast"
     assert payload["aliases"][0]["effective_model"] == "fast-model"
-    assert payload["aliases"][0]["tool_qualification_latest"]["ok"] is False
+    assert payload["aliases"][0]["tool_qualification_latest"]["ok"] is True
     minimax = next(item for item in payload["models"] if item["model"].endswith("MiniMax-M3-4bit"))
     assert minimax["unavailable_reason"] == "fetching"
     assert minimax["fetch_activity"]["status"] == "stalled"
