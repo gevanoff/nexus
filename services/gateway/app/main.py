@@ -161,6 +161,13 @@ async def lifespan(_app: FastAPI):
         await start_sentinel_runtime()
     except Exception as e:
         logger.warning("startup: nexus sentinel unavailable (%s: %s)", type(e).__name__, e)
+
+    try:
+        from app.model_tool_qualification import start_scheduler as start_tool_qualification_scheduler
+
+        await start_tool_qualification_scheduler()
+    except Exception as e:
+        logger.warning("startup: model tool qualification scheduler unavailable (%s: %s)", type(e).__name__, e)
     
     await _startup_check_models()
     yield
@@ -178,6 +185,12 @@ async def lifespan(_app: FastAPI):
         await stop_coding_smoke_scheduler()
     except Exception as e:
         logger.info("shutdown: coding smoke scheduler stop skipped (%s: %s)", type(e).__name__, e)
+    try:
+        from app.model_tool_qualification import stop_scheduler as stop_tool_qualification_scheduler
+
+        await stop_tool_qualification_scheduler()
+    except Exception as e:
+        logger.info("shutdown: model tool qualification scheduler stop skipped (%s: %s)", type(e).__name__, e)
     try:
         from app.sentinel_runtime import stop_runtime as stop_sentinel_runtime
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from app import openai_routes
+from app import model_tool_qualification, openai_routes
 from app.models import ChatCompletionRequest
 
 
@@ -470,6 +470,84 @@ def test_chat_completions_forwards_native_tools_without_server_tool_loop(monkeyp
     assert routed["tool_choice"] == "auto"
     assert routed["parallel_tool_calls"] is True
     assert response.json()["choices"][0]["message"]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_chat_completions_degrades_auto_tools_when_latest_qualification_failed(monkeypatch):
+    captured = {}
+
+    async def _chat_handler(req, backend: str, model_name: str):
+        captured["req"] = req
+        return {
+            "id": "chatcmpl_test",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "QUAL_GUARD_OK"}, "finish_reason": "stop"}],
+        }
+
+    monkeypatch.setattr(
+        model_tool_qualification,
+        "latest_by_model",
+        lambda **_kwargs: {
+            "local_vllm:upstream-model": {
+                "ok": False,
+                "completed_at": 100,
+                "backend": "local_vllm",
+                "resolved_model": "upstream-model",
+                "first_error": "auto failed",
+                "by_category": {"auto": {"passed": 0, "total": 1}},
+            }
+        },
+    )
+    monkeypatch.setattr(model_tool_qualification, "now_unix", lambda: 120)
+    client = _build_client(monkeypatch, backend_supports_tools=True, chat_handler=_chat_handler)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "continue-local",
+            "messages": [{"role": "user", "content": "use a tool if needed"}],
+            "tools": [{"type": "function", "function": {"name": "demo", "parameters": {}}}],
+            "tool_choice": "auto",
+        },
+    )
+
+    assert response.status_code == 200
+    routed = captured["req"].model_dump(exclude_none=True)
+    assert "tools" not in routed
+    assert "tool_choice" not in routed
+
+
+def test_chat_completions_rejects_required_tools_when_latest_qualification_failed(monkeypatch):
+    monkeypatch.setattr(
+        model_tool_qualification,
+        "latest_by_model",
+        lambda **_kwargs: {
+            "local_vllm:upstream-model": {
+                "ok": False,
+                "completed_at": 100,
+                "backend": "local_vllm",
+                "resolved_model": "upstream-model",
+                "first_error": "required failed",
+                "by_category": {"required": {"passed": 0, "total": 1}},
+            }
+        },
+    )
+    monkeypatch.setattr(model_tool_qualification, "now_unix", lambda: 120)
+    client = _build_client(monkeypatch, backend_supports_tools=True)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "continue-local",
+            "messages": [{"role": "user", "content": "must call a tool"}],
+            "tools": [{"type": "function", "function": {"name": "demo", "parameters": {}}}],
+            "tool_choice": "required",
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["error"]["param"] == "tool_choice"
+    assert "tool qualification guardrail" in body["error"]["message"]
 
 
 def test_chat_completions_logs_tool_handling_without_message_content_by_default(monkeypatch, caplog):

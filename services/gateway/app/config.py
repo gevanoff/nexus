@@ -98,6 +98,15 @@ class Settings(BaseSettings):
     MODEL_BENCHMARK_LOG_PATH: str = "/var/lib/gateway/data/model_benchmarks/results.jsonl"
     MODEL_TOOL_QUALIFICATION_LOG_PATH: str = "/var/lib/gateway/data/model_tool_qualification/results.jsonl"
     MODEL_TOOL_QUALIFICATION_CASE_TIMEOUT_SEC: float = 120.0
+    MODEL_TOOL_QUALIFICATION_GUARDRAIL_ENABLED: bool = True
+    MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT: bool = False
+    MODEL_TOOL_QUALIFICATION_MAX_AGE_SEC: int = 60 * 60 * 24 * 7
+    MODEL_TOOL_QUALIFICATION_AUTO_RUN_ENABLED: bool = True
+    MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS: str = "default,reasoning,fast-reasoning"
+    MODEL_TOOL_QUALIFICATION_AUTO_RUN_DELAY_SEC: float = 45.0
+    MODEL_TOOL_QUALIFICATION_AUTO_RUN_INTERVAL_SEC: float = 60 * 60 * 24
+    MODEL_TOOL_QUALIFICATION_AUTO_RUN_INCLUDE_STREAM: bool = True
+    MODEL_TOOL_QUALIFICATION_AUTO_RUN_INCLUDE_ROUNDTRIP: bool = True
 
     # Tokenless UI file attachments (chat uploads)
     UI_FILE_DIR: str = "/var/lib/gateway/data/ui_files"

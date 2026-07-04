@@ -864,12 +864,20 @@ def _backend_supports_guided_tool_choice(backend_class: str, tool_choice: Any) -
     return _backend_is_vllm(backend_class) and _tool_choice_uses_guided_decoding(tool_choice)
 
 
-def _degradation_reason(*, alias_name: Optional[str], backend_class: str, backend_supports_tools: bool) -> Optional[str]:
+def _degradation_reason(
+    *,
+    alias_name: Optional[str],
+    backend_class: str,
+    backend_supports_tools: bool,
+    tool_qualification_reason: Optional[str] = None,
+) -> Optional[str]:
     reasons: list[str] = []
     if alias_name and not _alias_allows_tools(alias_name):
         reasons.append(f"model alias '{alias_name}' disables tools")
     if not backend_supports_tools:
         reasons.append(f"backend '{backend_class}' does not support native tool calling")
+    if tool_qualification_reason:
+        reasons.append(f"tool qualification guardrail: {tool_qualification_reason}")
     if not reasons:
         return None
     return "; ".join(reasons)
@@ -880,6 +888,8 @@ def _normalize_chat_request_for_backend(
     *,
     alias_name: Optional[str],
     backend_class: str,
+    model_name: str = "",
+    enforce_tool_qualification: bool = True,
 ) -> tuple[ChatCompletionRequest, Optional[str], bool]:
     if not _tool_fields_present(cc):
         return cc, None, False
@@ -888,7 +898,29 @@ def _normalize_chat_request_for_backend(
     backend_supports_native_tools = backend_supports_tool_calling(backend_class)
     backend_supports_guided_tools = _backend_supports_guided_tool_choice(backend_class, cc.tool_choice)
     backend_supports_tools = backend_supports_native_tools or backend_supports_guided_tools
-    if alias_allows_tools and backend_supports_tools:
+    tool_qualification_reason: Optional[str] = None
+    if alias_allows_tools and backend_supports_tools and enforce_tool_qualification:
+        try:
+            from app import model_tool_qualification
+
+            tool_qualification_reason = model_tool_qualification.guardrail_reason_for_target(
+                alias_name=alias_name,
+                backend_class=backend_class,
+                resolved_model=model_name or cc.model,
+                tool_choice=cc.tool_choice if cc.tool_choice is not None else "auto",
+                has_tools=bool(cc.tools),
+            )
+        except Exception as exc:
+            logger.info(
+                "chat.completions tool qualification guardrail skipped alias=%s backend=%s model=%s error=%s:%s",
+                alias_name or "-",
+                backend_class,
+                model_name or cc.model,
+                type(exc).__name__,
+                exc,
+            )
+
+    if alias_allows_tools and backend_supports_tools and not tool_qualification_reason:
         if backend_supports_guided_tools and not backend_supports_native_tools:
             logger.info(
                 "chat.completions passing required/named tool fields via vllm guided decoding alias=%s backend=%s tool_choice=%r",
@@ -902,6 +934,7 @@ def _normalize_chat_request_for_backend(
         alias_name=alias_name,
         backend_class=backend_class,
         backend_supports_tools=backend_supports_tools,
+        tool_qualification_reason=tool_qualification_reason,
     )
 
     if _tool_choice_requires_tools(cc.tool_choice):
@@ -1197,6 +1230,7 @@ async def chat_completions(req: Request):
             cc,
             alias_name=alias_name,
             backend_class=backend_class,
+            model_name=model_name,
         )
         cc, stream_options_action = _normalize_stream_options_for_backend(
             cc,
@@ -1909,6 +1943,7 @@ async def responses(req: Request):
             cc,
             alias_name=alias_name,
             backend_class=backend_class,
+            model_name=model_name,
         )
         tool_fields_action = _tool_fields_action(original_cc, cc, request_shape_action="shimmed")
         _log_openai_request(

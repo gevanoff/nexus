@@ -217,3 +217,189 @@ def test_latest_by_model_keeps_latest_failure_for_ui(tmp_path):
     assert latest["fast"]["ok"] is False
     assert latest["fast"]["first_error"] == "auto failed"
     assert latest["local_vllm:upstream-model"]["run_id"] == "newer"
+
+
+def test_latest_by_model_indexes_resolved_backend_class(tmp_path):
+    path = tmp_path / "tools.jsonl"
+    item = {
+        "schema": qual.SCHEMA_VERSION,
+        "run_id": "resolved",
+        "completed_at": 20,
+        "model": "fast",
+        "backend": "route-vllm-fast",
+        "backend_class": "local_vllm_fast",
+        "resolved_model": "upstream-model",
+        "ok": True,
+        "summary": {"passed": 1, "total": 1, "first_error": "", "by_category": {"auto": {"passed": 1, "total": 1}}},
+    }
+    path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    latest = qual.latest_by_model(path=path)
+
+    assert latest["route-vllm-fast:upstream-model"]["run_id"] == "resolved"
+    assert latest["local_vllm_fast:upstream-model"]["run_id"] == "resolved"
+    assert latest["local_vllm_fast:upstream-model"]["backend_class"] == "local_vllm_fast"
+
+
+def test_qualification_cases_include_client_transcript_shapes():
+    req = qual.ModelToolQualificationRequest(models=["fast"], include_stream=False, include_roundtrip=False)
+    cases = qual.qualification_cases(req)
+
+    assert any(case.name == "continue_tool_history_nonstream" and case.client_shape == "continue_tool_history" for case in cases)
+    assert any(case.name == "hermes_tool_history_nonstream" and case.client_shape == "hermes_tool_history" for case in cases)
+
+
+def test_evaluate_tool_response_rejects_bare_raw_tool_text():
+    case = qual.ToolQualificationCase(
+        name="auto",
+        category="auto",
+        prompt="",
+        tool_choice="auto",
+        expect_tool=True,
+        expected_city="Paris",
+    )
+
+    result = qual.evaluate_tool_response(
+        {"choices": [{"message": {"role": "assistant", "content": 'get_weather{"city":"Paris"}'}, "finish_reason": "stop"}]},
+        case,
+    )
+
+    assert result["ok"] is False
+    assert "raw tool-like text" in result["error"]
+    assert result["raw_tool_like_snippet"]
+
+
+def test_qualification_status_blocks_failed_result(tmp_path):
+    path = tmp_path / "tools.jsonl"
+    item = {
+        "schema": qual.SCHEMA_VERSION,
+        "run_id": "failed",
+        "completed_at": 100,
+        "model": "fast",
+        "backend": "local_vllm",
+        "resolved_model": "upstream-model",
+        "ok": False,
+        "summary": {"passed": 1, "total": 2, "first_error": "auto failed", "by_category": {"auto": {"passed": 0, "total": 1}}},
+    }
+    path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    status = qual.qualification_status_for_target(
+        alias_name="fast",
+        backend_class="local_vllm",
+        resolved_model="upstream-model",
+        tool_choice="auto",
+        path=path,
+        now=120,
+    )
+
+    assert status["qualified"] is False
+    assert status["failed"] is True
+    assert "auto failed" in status["reason"]
+
+
+def test_qualification_status_blocks_stale_result(tmp_path, monkeypatch):
+    monkeypatch.setattr(qual.S, "MODEL_TOOL_QUALIFICATION_MAX_AGE_SEC", 10, raising=False)
+    path = tmp_path / "tools.jsonl"
+    item = {
+        "schema": qual.SCHEMA_VERSION,
+        "run_id": "old",
+        "completed_at": 100,
+        "model": "fast",
+        "backend": "local_vllm",
+        "resolved_model": "upstream-model",
+        "ok": True,
+        "summary": {"passed": 2, "total": 2, "first_error": "", "by_category": {"auto": {"passed": 1, "total": 1}}},
+    }
+    path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    status = qual.qualification_status_for_target(
+        alias_name="fast",
+        backend_class="local_vllm",
+        resolved_model="upstream-model",
+        tool_choice="auto",
+        path=path,
+        now=120,
+    )
+
+    assert status["qualified"] is False
+    assert status["stale"] is True
+
+
+def test_qualification_status_blocks_alias_target_mismatch(tmp_path):
+    path = tmp_path / "tools.jsonl"
+    item = {
+        "schema": qual.SCHEMA_VERSION,
+        "run_id": "old-target",
+        "completed_at": 100,
+        "model": "fast",
+        "backend": "local_vllm",
+        "resolved_model": "old-model",
+        "ok": True,
+        "summary": {"passed": 2, "total": 2, "first_error": "", "by_category": {"auto": {"passed": 1, "total": 1}}},
+    }
+    path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    status = qual.qualification_status_for_target(
+        alias_name="fast",
+        backend_class="local_vllm",
+        resolved_model="new-model",
+        tool_choice="auto",
+        path=path,
+        now=120,
+    )
+
+    assert status["qualified"] is False
+    assert status["mismatch"] is True
+
+
+def test_qualification_status_accepts_resolved_backend_class_match(tmp_path):
+    path = tmp_path / "tools.jsonl"
+    item = {
+        "schema": qual.SCHEMA_VERSION,
+        "run_id": "resolved-target",
+        "completed_at": 100,
+        "model": "fast",
+        "backend": "route-vllm-fast",
+        "backend_class": "local_vllm_fast",
+        "resolved_model": "upstream-model",
+        "ok": True,
+        "summary": {"passed": 1, "total": 1, "first_error": "", "by_category": {"auto": {"passed": 1, "total": 1}}},
+    }
+    path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    status = qual.qualification_status_for_target(
+        alias_name="fast",
+        backend_class="local_vllm_fast",
+        resolved_model="upstream-model",
+        tool_choice="auto",
+        path=path,
+        now=120,
+    )
+
+    assert status["qualified"] is True
+
+
+def test_qualification_status_allows_missing_result_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(qual.S, "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT", False, raising=False)
+
+    status = qual.qualification_status_for_target(
+        alias_name="fast",
+        backend_class="local_vllm",
+        resolved_model="new-model",
+        tool_choice="auto",
+        path=tmp_path / "missing.jsonl",
+        now=120,
+    )
+
+    assert status["qualified"] is True
+    assert status["missing"] is True
+
+
+@pytest.mark.asyncio
+async def test_auto_qualification_candidates_include_missing_target(monkeypatch):
+    _setup_runner(monkeypatch, backend="local_vllm", native_tools=True)
+    monkeypatch.setattr(qual, "latest_by_model", lambda **_kwargs: {})
+
+    candidates = await qual.auto_qualification_candidates(["fast"])
+
+    assert candidates == ["fast"]

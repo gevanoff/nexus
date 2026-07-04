@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from pydantic import BaseModel
 
 from app.backends import backend_supports_tool_calling, check_capability, get_admission_controller, get_registry
-from app.config import S
+from app.config import S, logger
 from app.health_checker import check_backend_ready
 from app.model_benchmark import clean_model_list, error_text, iter_sse_payloads
 from app.models import ChatCompletionRequest, ChatMessage
@@ -32,6 +32,8 @@ TOOL_NAME = "get_weather"
 TOOL_RESULT_MARKER = "TOOL_RESULT_OK"
 
 _QUALIFICATION_LOCK = asyncio.Lock()
+_SCHEDULER_TASK: Optional[asyncio.Task] = None
+_SCHEDULER_STOP: Optional[asyncio.Event] = None
 
 
 class ToolQualificationBusy(RuntimeError):
@@ -54,8 +56,10 @@ class ToolQualificationCase:
     tool_choice: Any
     expect_tool: bool
     expected_city: str = "Paris"
+    expected_text: str = ""
     stream: bool = False
     roundtrip: bool = False
+    client_shape: str = ""
 
 
 TOOL_SPEC: Dict[str, Any] = {
@@ -148,6 +152,27 @@ def qualification_cases(req: ModelToolQualificationRequest) -> list[ToolQualific
             tool_choice="none",
             expect_tool=False,
             expected_city="",
+            expected_text="NO_TOOL_OK",
+        ),
+        ToolQualificationCase(
+            name="continue_tool_history_nonstream",
+            category="client_continue",
+            prompt="Continue-style transcript with prior tool result.",
+            tool_choice="none",
+            expect_tool=False,
+            expected_city="",
+            expected_text=TOOL_RESULT_MARKER,
+            client_shape="continue_tool_history",
+        ),
+        ToolQualificationCase(
+            name="hermes_tool_history_nonstream",
+            category="client_hermes",
+            prompt="Hermes-style transcript with prior tool result.",
+            tool_choice="none",
+            expect_tool=False,
+            expected_city="",
+            expected_text=TOOL_RESULT_MARKER,
+            client_shape="hermes_tool_history",
         ),
     ]
     if req.include_stream:
@@ -196,6 +221,52 @@ def _base_messages(prompt: str, *, roundtrip: bool = False) -> list[ChatMessage]
     ]
 
 
+def _client_shape_messages(case: ToolQualificationCase) -> list[ChatMessage] | None:
+    if case.client_shape == "continue_tool_history":
+        return [
+            ChatMessage(role="system", content="You are validating Continue-style OpenAI-compatible tool history."),
+            ChatMessage(role="user", content=[{"type": "text", "text": "What is the weather in Paris? Use the available tool."}]),
+            ChatMessage(
+                role="assistant",
+                content="",
+                toolCalls=[
+                    {
+                        "id": "call_continue_1",
+                        "function": {"name": TOOL_NAME, "arguments": {"city": "Paris"}},
+                    }
+                ],
+            ),
+            ChatMessage(
+                role="tool",
+                toolCallId="call_continue_1",
+                content=json.dumps({"city": "Paris", "forecast": f"{TOOL_RESULT_MARKER} clear"}, separators=(",", ":")),
+            ),
+            ChatMessage(role="user", content=f"Reply with exactly {TOOL_RESULT_MARKER}."),
+        ]
+    if case.client_shape == "hermes_tool_history":
+        return [
+            ChatMessage(role="system", content="You are validating Hermes-style OpenAI-compatible tool history."),
+            ChatMessage(role="user", content="Use a tool to check Paris weather."),
+            ChatMessage(
+                role="assistant",
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call_hermes_1",
+                        "function": {"name": TOOL_NAME, "arguments": {"city": "Paris"}},
+                    }
+                ],
+            ),
+            ChatMessage(
+                role="tool",
+                tool_call_id="call_hermes_1",
+                content={"city": "Paris", "forecast": f"{TOOL_RESULT_MARKER} clear"},
+            ),
+            ChatMessage(role="user", content=f"Reply with exactly {TOOL_RESULT_MARKER}."),
+        ]
+    return None
+
+
 def build_chat_request(
     req: ModelToolQualificationRequest,
     model: str,
@@ -207,7 +278,7 @@ def build_chat_request(
 ) -> ChatCompletionRequest:
     return ChatCompletionRequest(
         model=model,
-        messages=messages or _base_messages(case.prompt, roundtrip=case.roundtrip),
+        messages=messages or _client_shape_messages(case) or _base_messages(case.prompt, roundtrip=case.roundtrip),
         tools=[TOOL_SPEC],
         tool_choice=case.tool_choice if tool_choice is None else tool_choice,
         parallel_tool_calls=False,
@@ -245,6 +316,7 @@ def _prepare_request_for_backend(
     *,
     alias_name: Optional[str],
     backend_class: str,
+    model_name: str,
 ) -> tuple[ChatCompletionRequest, Optional[str], bool]:
     from app import openai_routes as openai_compat
 
@@ -253,6 +325,8 @@ def _prepare_request_for_backend(
         constrained,
         alias_name=alias_name,
         backend_class=backend_class,
+        model_name=model_name,
+        enforce_tool_qualification=False,
     )
 
 
@@ -444,6 +518,17 @@ def evaluate_tool_response(
             "content_snippet": _short_snippet(content),
             "raw_tool_like_snippet": raw,
         }
+    if case.expected_text:
+        content_text = content if isinstance(content, str) else ""
+        if case.expected_text not in content_text:
+            return {
+                "ok": False,
+                "error": f"final answer did not include {case.expected_text}",
+                "stage": stage,
+                "tool_calls_count": 0,
+                "finish_reason": finish_reason,
+                "content_snippet": _short_snippet(content),
+            }
     return {
         "ok": True,
         "stage": stage,
@@ -597,6 +682,7 @@ async def _run_prepared_request(
             cc,
             alias_name=alias_name,
             backend_class=backend_class,
+            model_name=upstream_model,
         )
         base["degraded_tools"] = bool(degradation_reason)
         if degradation_reason:
@@ -883,6 +969,8 @@ def summarize(results: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
                 "stream": by_category.get("stream", {}),
                 "roundtrip": by_category.get("roundtrip", {}),
                 "none": by_category.get("none", {}),
+                "client_continue": by_category.get("client_continue", {}),
+                "client_hermes": by_category.get("client_hermes", {}),
                 "backend": item.get("backend") or item.get("backend_class") or "",
                 "resolved_model": item.get("resolved_model") or "",
                 "error": summary.get("first_error") or "",
@@ -928,6 +1016,7 @@ def _compact_result(item: Dict[str, Any]) -> Dict[str, Any]:
         "total": summary.get("total", 0),
         "by_category": by_category,
         "backend": item.get("backend") or item.get("backend_class") or "",
+        "backend_class": item.get("backend_class") or "",
         "resolved_model": item.get("resolved_model") or "",
         "backend_native_tools": item.get("backend_native_tools"),
         "first_error": summary.get("first_error") or "",
@@ -945,12 +1034,291 @@ def latest_by_model(*, path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]
         completed = float(item.get("completed_at") or item.get("created_at") or 0)
         keys = [model]
         backend = str(item.get("backend") or item.get("backend_class") or "").strip()
+        backend_class = str(item.get("backend_class") or "").strip()
         resolved_model = str(item.get("resolved_model") or "").strip()
         if backend and resolved_model:
             keys.append(f"{backend}:{resolved_model}")
+        if backend_class and backend_class != backend and resolved_model:
+            keys.append(f"{backend_class}:{resolved_model}")
         compact = _compact_result(item)
         for key in keys:
             if key not in latest_time or completed >= latest_time[key]:
                 latest_time[key] = completed
                 latest[key] = compact
     return latest
+
+
+def _max_age_sec() -> int:
+    try:
+        value = int(getattr(S, "MODEL_TOOL_QUALIFICATION_MAX_AGE_SEC", 0) or 0)
+    except Exception:
+        value = 0
+    return max(0, value)
+
+
+def _tool_choice_category(tool_choice: Any, *, has_tools: bool = True) -> str:
+    if isinstance(tool_choice, str):
+        normalized = tool_choice.strip().lower()
+        if normalized == "none":
+            return "none"
+        if normalized == "required":
+            return "required"
+        return "auto"
+    if isinstance(tool_choice, dict):
+        normalized = str(tool_choice.get("type") or "").strip().lower()
+        if normalized == "none":
+            return "none"
+        if normalized in {"required", "function"}:
+            return "named" if normalized == "function" else "required"
+        return "auto"
+    return "auto" if has_tools else "none"
+
+
+def _category_passed(result: Dict[str, Any], category: str) -> bool:
+    if category in {"", "none"}:
+        return True
+    by_category = result.get("by_category")
+    if not isinstance(by_category, dict):
+        return bool(result.get("ok") is True)
+    bucket = by_category.get(category)
+    if not isinstance(bucket, dict):
+        return bool(result.get("ok") is True)
+    try:
+        total = int(bucket.get("total") or 0)
+        passed = int(bucket.get("passed") or 0)
+    except Exception:
+        return False
+    return total > 0 and passed == total
+
+
+def _result_matches_target(result: Dict[str, Any], *, backend_class: str, resolved_model: str) -> bool:
+    result_backend = str(result.get("backend") or "").strip()
+    result_backend_class = str(result.get("backend_class") or "").strip()
+    result_model = str(result.get("resolved_model") or "").strip()
+    if not result_backend and not result_model:
+        return True
+    return result_model == resolved_model and backend_class in {result_backend, result_backend_class}
+
+
+def qualification_status_for_target(
+    *,
+    alias_name: Optional[str],
+    backend_class: str,
+    resolved_model: str,
+    tool_choice: Any = "auto",
+    has_tools: bool = True,
+    path: Optional[Path] = None,
+    now: Optional[int] = None,
+) -> Dict[str, Any]:
+    latest = latest_by_model(path=path)
+    backend_key = f"{backend_class}:{resolved_model}" if backend_class and resolved_model else ""
+    alias_key = (alias_name or "").strip()
+    backend_result = latest.get(backend_key) if backend_key else None
+    alias_result = latest.get(alias_key) if alias_key else None
+    result = backend_result or alias_result
+    category = _tool_choice_category(tool_choice, has_tools=has_tools)
+
+    if category == "none":
+        return {"qualified": True, "category": category, "key": backend_key or alias_key, "result": result}
+
+    if result is None:
+        qualified = not bool(getattr(S, "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT", False))
+        return {
+            "qualified": qualified,
+            "category": category,
+            "key": backend_key or alias_key,
+            "result": None,
+            "reason": "no tool qualification result for selected model",
+            "missing": True,
+        }
+
+    if not _result_matches_target(result, backend_class=backend_class, resolved_model=resolved_model):
+        return {
+            "qualified": False,
+            "category": category,
+            "key": backend_key or alias_key,
+            "result": result,
+            "reason": (
+                "tool qualification target mismatch: "
+                f"latest result is for {result.get('backend') or '-'}:{result.get('resolved_model') or '-'}"
+            ),
+            "mismatch": True,
+        }
+
+    completed_at = int(float(result.get("completed_at") or 0))
+    age_sec = max(0, int((now_unix() if now is None else now) - completed_at)) if completed_at else 0
+    max_age = _max_age_sec()
+    if max_age and completed_at and age_sec > max_age:
+        return {
+            "qualified": False,
+            "category": category,
+            "key": backend_key or alias_key,
+            "result": result,
+            "reason": f"tool qualification is stale ({age_sec}s old, max {max_age}s)",
+            "stale": True,
+            "age_sec": age_sec,
+        }
+
+    if result.get("ok") is not True:
+        reason = str(result.get("first_error") or "latest tool qualification failed")
+        return {
+            "qualified": False,
+            "category": category,
+            "key": backend_key or alias_key,
+            "result": result,
+            "reason": reason,
+            "failed": True,
+            "age_sec": age_sec,
+        }
+
+    if not _category_passed(result, category):
+        return {
+            "qualified": False,
+            "category": category,
+            "key": backend_key or alias_key,
+            "result": result,
+            "reason": f"latest tool qualification did not pass {category} tool calls",
+            "failed": True,
+            "age_sec": age_sec,
+        }
+
+    return {
+        "qualified": True,
+        "category": category,
+        "key": backend_key or alias_key,
+        "result": result,
+        "age_sec": age_sec,
+    }
+
+
+def guardrail_reason_for_target(
+    *,
+    alias_name: Optional[str],
+    backend_class: str,
+    resolved_model: str,
+    tool_choice: Any,
+    has_tools: bool = True,
+) -> Optional[str]:
+    if not bool(getattr(S, "MODEL_TOOL_QUALIFICATION_GUARDRAIL_ENABLED", True)):
+        return None
+    status = qualification_status_for_target(
+        alias_name=alias_name,
+        backend_class=backend_class,
+        resolved_model=resolved_model,
+        tool_choice=tool_choice,
+        has_tools=has_tools,
+    )
+    if status.get("qualified"):
+        return None
+    if status.get("missing") and not bool(getattr(S, "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT", False)):
+        return None
+    return str(status.get("reason") or "latest tool qualification does not allow tool use")
+
+
+def _auto_run_models() -> list[str]:
+    raw = str(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS", "") or "").strip()
+    if raw:
+        return clean_model_list(raw.split(","))
+    try:
+        from app.model_aliases import get_aliases
+
+        aliases = get_aliases()
+        return clean_model_list([name for name, alias in aliases.items() if alias.tools is not False])
+    except Exception:
+        return []
+
+
+async def auto_qualification_candidates(models: Optional[list[str]] = None) -> list[str]:
+    candidates: list[str] = []
+    for model in clean_model_list(models or _auto_run_models()):
+        cc = build_chat_request(
+            ModelToolQualificationRequest(models=[model], include_stream=False, include_roundtrip=False),
+            model,
+            qualification_cases(ModelToolQualificationRequest(models=[model], include_stream=False, include_roundtrip=False))[0],
+        )
+        try:
+            route, backend_class, upstream_model, alias_name = _route_chat_request(cc)
+            status = qualification_status_for_target(
+                alias_name=alias_name,
+                backend_class=backend_class,
+                resolved_model=upstream_model,
+                tool_choice="auto",
+                has_tools=True,
+            )
+        except Exception as exc:
+            logger.info("tool qualification auto-run: skipping model=%s route failed (%s: %s)", model, type(exc).__name__, exc)
+            continue
+        if status.get("missing") or status.get("mismatch") or status.get("stale") or status.get("failed"):
+            candidates.append(model)
+    return clean_model_list(candidates)
+
+
+async def run_auto_qualification_once(*, reason: str = "scheduled") -> Optional[Dict[str, Any]]:
+    models = await auto_qualification_candidates()
+    if not models:
+        logger.info("tool qualification auto-run: no stale or missing configured models reason=%s", reason)
+        return None
+    if _QUALIFICATION_LOCK.locked():
+        logger.info("tool qualification auto-run: skipped because a run is already active reason=%s models=%s", reason, ",".join(models))
+        return None
+
+    logger.info("tool qualification auto-run: starting reason=%s models=%s", reason, ",".join(models))
+    req = ModelToolQualificationRequest(
+        models=models,
+        include_stream=bool(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_INCLUDE_STREAM", True)),
+        include_roundtrip=bool(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_INCLUDE_ROUNDTRIP", True)),
+    )
+    return await run_qualification(req)
+
+
+async def _scheduler_loop(stop_event: asyncio.Event) -> None:
+    delay = max(0.0, float(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_DELAY_SEC", 45.0) or 0.0))
+    interval = max(0.0, float(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_INTERVAL_SEC", 60 * 60 * 24) or 0.0))
+    first_run = True
+    try:
+        if delay:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=delay)
+                return
+            except asyncio.TimeoutError:
+                pass
+        while not stop_event.is_set():
+            try:
+                await run_auto_qualification_once(reason="startup" if first_run else "scheduled")
+            except Exception as exc:
+                logger.warning("tool qualification auto-run failed (%s: %s)", type(exc).__name__, exc)
+            first_run = False
+            if interval <= 0:
+                return
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                continue
+    except asyncio.CancelledError:
+        return
+
+
+async def start_scheduler() -> None:
+    global _SCHEDULER_TASK, _SCHEDULER_STOP
+    if not bool(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_ENABLED", True)):
+        return
+    if _SCHEDULER_TASK is not None and not _SCHEDULER_TASK.done():
+        return
+    _SCHEDULER_STOP = asyncio.Event()
+    _SCHEDULER_TASK = asyncio.create_task(_scheduler_loop(_SCHEDULER_STOP))
+
+
+async def stop_scheduler() -> None:
+    global _SCHEDULER_TASK, _SCHEDULER_STOP
+    if _SCHEDULER_STOP is not None:
+        _SCHEDULER_STOP.set()
+    task = _SCHEDULER_TASK
+    _SCHEDULER_TASK = None
+    _SCHEDULER_STOP = None
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass

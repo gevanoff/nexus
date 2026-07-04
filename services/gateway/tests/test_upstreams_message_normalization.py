@@ -30,7 +30,7 @@ def test_normalize_messages_preserves_tool_call_exchange():
     )
 
     assert normalized[1] == {"role": "assistant", "content": "", "tool_calls": tool_calls}
-    assert normalized[2] == {"role": "tool", "content": {"ok": True}, "tool_call_id": "call_123"}
+    assert normalized[2] == {"role": "tool", "content": '{"ok":true}', "tool_call_id": "call_123"}
 
 
 def test_normalize_messages_only_merges_plain_text_neighbors():

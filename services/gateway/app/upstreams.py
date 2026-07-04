@@ -42,7 +42,10 @@ def _normalize_content_for_openai_backend(content: Any) -> Any:
             return text
         return content
     if isinstance(content, dict):
-        return content
+        try:
+            return json.dumps(content, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        except Exception:
+            return str(content)
     try:
         return json.dumps(content, ensure_ascii=False)
     except Exception:
