@@ -27,6 +27,24 @@ def _hf_cache_root(cache_dir: str | None = None) -> Path:
     return Path((cache_dir or getattr(S, "MLX_HF_CACHE_DIR", "") or "").strip())
 
 
+def _hf_cache_source_root() -> Path:
+    source_dir = (getattr(S, "MLX_HF_CACHE_SOURCE_DIR", "") or "").strip()
+    if source_dir:
+        return Path(source_dir)
+    hf_home = (getattr(S, "HF_HOME", "") or "").strip()
+    if hf_home:
+        return Path(hf_home)
+    for candidate in (
+        Path("/ai-data/huggingface"),
+        Path("/Volumes/ai_data/huggingface"),
+        Path("/private/var/lib/huggingface"),
+        Path("/var/lib/huggingface"),
+    ):
+        if candidate.exists():
+            return candidate
+    return Path("/var/lib/huggingface")
+
+
 _SHARDED_WEIGHT_RE = re.compile(r"^(.+)-(\d{5})-of-(\d{5})\.(safetensors|bin)$")
 
 
@@ -321,29 +339,38 @@ def hf_model_cache_entries(cache_dir: str | None = None) -> dict[str, str]:
 
 def purge_hf_model_cache(model_id: str, cache_dir: str | None = None) -> dict[str, Any]:
     model = (model_id or "").strip()
-    root = _hf_cache_root(cache_dir)
-    if not model or not root.exists():
+    mirror_root = _hf_cache_root(cache_dir)
+    source_root = _hf_cache_source_root()
+    purge_roots = []
+    for root in (source_root, mirror_root):
+        if root and root.exists():
+            purge_roots.append(root)
+    if not model or not purge_roots:
         return {
             "model": model,
-            "cache_root": str(root),
+            "cache_root": str(mirror_root),
+            "source_root": str(source_root),
             "removed_paths": [],
             "metadata_updated": False,
         }
 
-    resolved_root = root.resolve()
+    resolved_roots = {root.resolve() for root in purge_roots}
     removed_paths: list[str] = []
-    for repo in _hf_repo_cache_dirs(model, str(root)):
-        if not repo.exists():
-            continue
-        resolved_repo = repo.resolve()
-        if resolved_repo != resolved_root and resolved_root not in resolved_repo.parents:
-            raise ValueError(f"Refusing to purge cache outside the configured root: {repo}")
-        shutil.rmtree(repo)
-        removed_paths.append(str(repo))
+    for root in purge_roots:
+        for repo in _hf_repo_cache_dirs(model, str(root)):
+            if not repo.exists():
+                continue
+            resolved_repo = repo.resolve()
+            if not any(resolved_repo == resolved_root or resolved_root in resolved_repo.parents for resolved_root in resolved_roots):
+                raise ValueError(f"Refusing to purge cache outside the configured roots: {repo}")
+            shutil.rmtree(repo)
+            removed_paths.append(str(repo))
 
-    metadata_path = root / ".nexus_cache_status.json"
     metadata_updated = False
-    if metadata_path.exists():
+    for root in purge_roots:
+        metadata_path = root / ".nexus_cache_status.json"
+        if not metadata_path.exists():
+            continue
         try:
             payload = json.loads(metadata_path.read_text(encoding="utf-8"))
         except Exception:
@@ -362,7 +389,8 @@ def purge_hf_model_cache(model_id: str, cache_dir: str | None = None) -> dict[st
 
     return {
         "model": model,
-        "cache_root": str(root),
+        "cache_root": str(mirror_root),
+        "source_root": str(source_root),
         "removed_paths": removed_paths,
         "metadata_updated": metadata_updated,
     }
