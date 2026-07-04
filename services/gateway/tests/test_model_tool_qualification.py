@@ -297,6 +297,40 @@ def test_qualification_status_blocks_failed_result(tmp_path):
     assert "auto failed" in status["reason"]
 
 
+def test_qualification_status_allows_passed_category_when_other_category_failed(tmp_path):
+    path = tmp_path / "tools.jsonl"
+    item = {
+        "schema": qual.SCHEMA_VERSION,
+        "run_id": "client-history-failed",
+        "completed_at": 100,
+        "model": "fast",
+        "backend": "local_vllm",
+        "resolved_model": "upstream-model",
+        "ok": False,
+        "summary": {
+            "passed": 8,
+            "total": 9,
+            "first_error": "client history failed",
+            "by_category": {
+                "auto": {"passed": 2, "total": 2},
+                "client_continue": {"passed": 0, "total": 1},
+            },
+        },
+    }
+    path.write_text(json.dumps(item) + "\n", encoding="utf-8")
+
+    status = qual.qualification_status_for_target(
+        alias_name="fast",
+        backend_class="local_vllm",
+        resolved_model="upstream-model",
+        tool_choice="auto",
+        path=path,
+        now=120,
+    )
+
+    assert status["qualified"] is True
+
+
 def test_qualification_status_blocks_stale_result(tmp_path, monkeypatch):
     monkeypatch.setattr(qual.S, "MODEL_TOOL_QUALIFICATION_MAX_AGE_SEC", 10, raising=False)
     path = tmp_path / "tools.jsonl"

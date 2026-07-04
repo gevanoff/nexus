@@ -1195,25 +1195,14 @@ def qualification_status_for_target(
             "age_sec": age_sec,
         }
 
-    if result.get("ok") is not True:
-        reason = str(result.get("first_error") or "latest tool qualification failed")
+    if not _category_passed(result, category):
+        reason = str(result.get("first_error") or f"latest tool qualification did not pass {category} tool calls")
         return {
             "qualified": False,
             "category": category,
             "key": backend_key or alias_key,
             "result": result,
             "reason": reason,
-            "failed": True,
-            "age_sec": age_sec,
-        }
-
-    if not _category_passed(result, category):
-        return {
-            "qualified": False,
-            "category": category,
-            "key": backend_key or alias_key,
-            "result": result,
-            "reason": f"latest tool qualification did not pass {category} tool calls",
             "failed": True,
             "age_sec": age_sec,
         }
