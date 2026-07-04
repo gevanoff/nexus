@@ -79,6 +79,47 @@ def test_normalize_messages_handles_continue_camelcase_and_text_parts():
     assert normalized[2] == {"role": "tool", "content": "done", "tool_call_id": "call_123"}
 
 
+def test_normalize_messages_coerces_tool_call_arguments_to_openai_strings():
+    normalized = _normalize_messages_for_openai_backend(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "toolCalls": [
+                    {
+                        "id": "call_123",
+                        "function": {"name": "read_file", "arguments": {"filepath": "README.md"}},
+                    },
+                    {
+                        "call_id": "call_456",
+                        "name": "list_dir",
+                        "arguments": {"path": "services"},
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert normalized == [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"filepath":"README.md"}'},
+                },
+                {
+                    "id": "call_456",
+                    "type": "function",
+                    "function": {"name": "list_dir", "arguments": '{"path":"services"}'},
+                },
+            ],
+        }
+    ]
+
+
 def test_normalize_openai_tools_payload_drops_continue_metadata():
     payload = {
         "model": "upstream",

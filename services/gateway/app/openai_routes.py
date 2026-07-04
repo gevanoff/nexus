@@ -29,7 +29,7 @@ from app.models import (
     EmbeddingsRequest,
     RerankRequest,
 )
-from app.openai_utils import new_id, now_unix, sse, sse_done
+from app.openai_utils import new_id, normalize_tool_calls_for_openai, now_unix, sse, sse_done
 from app.model_aliases import get_aliases
 from app.router import decide_route
 from app.router_cfg import router_cfg
@@ -509,6 +509,11 @@ def _normalize_continue_chat_body(body: dict[str, Any]) -> tuple[dict[str, Any],
                 if flattened:
                     normalized["content"] = normalized_content
                     actions.append(f"flattened messages[{idx}].content text array")
+            if role == "assistant" and "tool_calls" in normalized:
+                before_tool_calls = normalized.get("tool_calls")
+                normalized["tool_calls"] = normalize_tool_calls_for_openai(before_tool_calls)
+                if normalized.get("tool_calls") != before_tool_calls:
+                    actions.append(f"normalized messages[{idx}].tool_calls")
             if (
                 role == "assistant"
                 and normalized.get("content") == ""

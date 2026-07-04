@@ -11,7 +11,7 @@ from app.config import S, logger
 from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
-from app.openai_utils import sanitize_chat_choices, sse, sse_done
+from app.openai_utils import normalize_tool_calls_for_openai, sanitize_chat_choices, sse, sse_done
 from app.streaming import passthrough_sse
 
 
@@ -63,7 +63,7 @@ def _normalize_messages_for_openai_backend(msgs: List[Dict[str, Any]]) -> List[D
         tool_calls = m.get("tool_calls") if m.get("tool_calls") is not None else m.get("toolCalls")
         tool_call_id = m.get("tool_call_id") if m.get("tool_call_id") is not None else m.get("toolCallId")
         if tool_calls is not None:
-            normalized_message["tool_calls"] = tool_calls
+            normalized_message["tool_calls"] = normalize_tool_calls_for_openai(tool_calls)
         if tool_call_id is not None:
             normalized_message["tool_call_id"] = tool_call_id
 

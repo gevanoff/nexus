@@ -760,8 +760,7 @@ def test_chat_completions_normalizes_continue_style_request_shape(monkeypatch):
                     "toolCalls": [
                         {
                             "id": "call_1",
-                            "type": "function",
-                            "function": {"name": "read_file", "arguments": "{}"},
+                            "function": {"name": "read_file", "arguments": {"filepath": "README.md"}},
                         }
                     ],
                 },
@@ -812,6 +811,8 @@ def test_chat_completions_normalizes_continue_style_request_shape(monkeypatch):
     assert routed["messages"][1]["content"] == "read README.md"
     assert "tool_calls" in routed["messages"][2]
     assert "toolCalls" not in routed["messages"][2]
+    assert routed["messages"][2]["tool_calls"][0]["type"] == "function"
+    assert routed["messages"][2]["tool_calls"][0]["function"]["arguments"] == '{"filepath":"README.md"}'
     assert routed["messages"][3]["tool_call_id"] == "call_1"
     assert "toolCallId" not in routed["messages"][3]
 
