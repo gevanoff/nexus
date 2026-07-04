@@ -57,6 +57,7 @@ from app import user_llm
 from app import agent_tasks
 from app import telegram_notifications
 from app import model_benchmark
+from app import model_tool_qualification
 from app.auth import configured_static_bearer_tokens, require_bearer
 from app.agent_runtime_v1 import tools_for_tier
 from app.resources_snapshot import (
@@ -105,6 +106,7 @@ class MlxHugeLaneSwitchRequest(BaseModel):
 
 
 ModelBenchmarkRequest = model_benchmark.ModelBenchmarkRequest
+ModelToolQualificationRequest = model_tool_qualification.ModelToolQualificationRequest
 
 
 _UI_MODELS_CACHE_LOCK = asyncio.Lock()
@@ -4481,6 +4483,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
     advertised_models_by_backend = _ui_advertised_models_by_backend(probed_items)
     aliases = get_aliases()
     latest_benchmarks = model_benchmark.latest_successful_by_model()
+    latest_tool_qualifications = model_tool_qualification.latest_by_model()
 
     model_rows: Dict[tuple[str, str], Dict[str, Any]] = {}
 
@@ -4501,6 +4504,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
                 "provider": backend_provider_name(resolved_backend),
                 "model": model_name,
                 "benchmark_latest": latest_benchmarks.get(f"{resolved_backend}:{model_name}"),
+                "tool_qualification_latest": latest_tool_qualifications.get(f"{resolved_backend}:{model_name}"),
                 "cache_state": cache_state,
                 "fetch_activity": cache_details.get("fetch_activity"),
                 "unavailable_reason": unavailable,
@@ -4564,6 +4568,11 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
             or latest_benchmarks.get(f"{effective_backend}:{effective_model}")
             or latest_benchmarks.get(f"{resolved_backend}:{alias.upstream_model}")
         )
+        alias_tool_qualification = (
+            latest_tool_qualifications.get(alias_name)
+            or latest_tool_qualifications.get(f"{effective_backend}:{effective_model}")
+            or latest_tool_qualifications.get(f"{resolved_backend}:{alias.upstream_model}")
+        )
 
         alias_rows.append(
             {
@@ -4579,6 +4588,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
                 "max_tokens_cap": alias.max_tokens_cap,
                 "temperature_cap": alias.temperature_cap,
                 "benchmark_latest": alias_benchmark,
+                "tool_qualification_latest": alias_tool_qualification,
             }
         )
 
@@ -4607,6 +4617,7 @@ async def ui_admin_models(req: Request) -> Dict[str, Any]:
         "aliases": alias_rows,
         "models": sorted(model_rows.values(), key=lambda row: (str(row.get("backend") or ""), str(row.get("model") or ""))),
         "benchmarks": model_benchmark.recent_runs(limit=5),
+        "tool_qualifications": model_tool_qualification.recent_runs(limit=5),
         "diagnostics": {"sources": source_diags, "probe_timeout_sec": probe_timeout_sec},
     }
 
@@ -4617,6 +4628,17 @@ async def ui_admin_model_benchmark(req: Request, body: ModelBenchmarkRequest) ->
     try:
         return await model_benchmark.run_benchmark(body)
     except model_benchmark.BenchmarkBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/ui/api/admin/models/tool-qualification", include_in_schema=False)
+async def ui_admin_model_tool_qualification(req: Request, body: ModelToolQualificationRequest) -> Dict[str, Any]:
+    _require_admin(req)
+    try:
+        return await model_tool_qualification.run_qualification(body)
+    except model_tool_qualification.ToolQualificationBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

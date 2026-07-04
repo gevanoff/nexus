@@ -252,10 +252,14 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "Nexus model admin" in admin_models_html
     assert "/ui/api/admin/models" in admin_models_js
     assert "/ui/api/admin/models/benchmark" in admin_models_js
+    assert "/ui/api/admin/models/tool-qualification" in admin_models_js
     assert "/ui/api/admin/models/prefetch" in admin_models_js
     assert "Start benchmark" in admin_models_html
+    assert "Run tool suite" in admin_models_html
     assert "benchmarkText" in admin_models_js
     assert "benchmark_latest" in admin_models_js
+    assert "toolQualificationText" in admin_models_js
+    assert "tool_qualification_latest" in admin_models_js
     assert "Restart fetch" in admin_models_js
     assert "mlx_huge_lane" not in resources_html
     assert "/ui/api/mlx/huge-lane/switch" not in resources_js
@@ -286,8 +290,8 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["fast"]["max_tokens_cap"] == 768
     assert aliases["fast-reasoning"]["backend"] == "local_vllm"
     assert aliases["fast-reasoning"]["model"] == strong_model
-    assert aliases["fast-reasoning"]["context_window"] == 8192
-    assert aliases["fast-reasoning"]["max_tokens_cap"] == 512
+    assert aliases["fast-reasoning"]["context_window"] == 32768
+    assert aliases["fast-reasoning"]["max_tokens_cap"] == 2048
     assert aliases["long"]["context_window"] == 65536
     assert aliases["long"]["tools"] is True
     assert aliases["reasoning"]["backend"] == "local_vllm"
@@ -646,14 +650,37 @@ async def test_admin_models_reports_alias_effective_fallback(monkeypatch):
         },
     )
     monkeypatch.setattr(ui_routes, "hf_model_cache_entries", lambda: {})
+    monkeypatch.setattr(
+        ui_routes.model_tool_qualification,
+        "latest_by_model",
+        lambda: {
+            "default": {
+                "ok": False,
+                "passed": 3,
+                "total": 7,
+                "first_error": "auto failed",
+                "by_category": {"auto": {"passed": 0, "total": 2}},
+            },
+            "local_vllm_fast:fast-model": {
+                "ok": True,
+                "passed": 7,
+                "total": 7,
+                "first_error": "",
+                "by_category": {"auto": {"passed": 2, "total": 2}},
+            },
+        },
+    )
 
     payload = await ui_routes.ui_admin_models(SimpleNamespace())
 
     assert payload["aliases"][0]["effective_backend"] == "local_vllm_fast"
     assert payload["aliases"][0]["effective_model"] == "fast-model"
+    assert payload["aliases"][0]["tool_qualification_latest"]["ok"] is False
     minimax = next(item for item in payload["models"] if item["model"].endswith("MiniMax-M3-4bit"))
     assert minimax["unavailable_reason"] == "fetching"
     assert minimax["fetch_activity"]["status"] == "stalled"
+    fast_model = next(item for item in payload["models"] if item["model"] == "fast-model")
+    assert fast_model["tool_qualification_latest"]["ok"] is True
 
 
 @pytest.mark.asyncio

@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     UI_MODELS_PROBE_TIMEOUT_SEC: float = 4.0
     UI_MODELS_CACHE_TTL_SEC: float = 8.0
     MODEL_BENCHMARK_LOG_PATH: str = "/var/lib/gateway/data/model_benchmarks/results.jsonl"
+    MODEL_TOOL_QUALIFICATION_LOG_PATH: str = "/var/lib/gateway/data/model_tool_qualification/results.jsonl"
+    MODEL_TOOL_QUALIFICATION_CASE_TIMEOUT_SEC: float = 120.0
 
     # Tokenless UI file attachments (chat uploads)
     UI_FILE_DIR: str = "/var/lib/gateway/data/ui_files"

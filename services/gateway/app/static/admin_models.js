@@ -16,8 +16,19 @@
     status: document.getElementById("model_benchmark_status"),
     results: document.getElementById("model_benchmark_results"),
   };
+  const toolEls = {
+    models: document.getElementById("model_tool_qualification_models"),
+    maxTokens: document.getElementById("model_tool_qualification_max_tokens"),
+    temperature: document.getElementById("model_tool_qualification_temperature"),
+    start: document.getElementById("model_tool_qualification_start"),
+    selectAliases: document.getElementById("model_tool_qualification_select_aliases"),
+    clear: document.getElementById("model_tool_qualification_clear"),
+    status: document.getElementById("model_tool_qualification_status"),
+    results: document.getElementById("model_tool_qualification_results"),
+  };
   let hugeLanePollTimer = null;
   let visibleBenchmarkAliases = [];
+  let visibleToolAliases = [];
 
   function handle401(resp) {
     if (resp && resp.status === 401) {
@@ -65,6 +76,44 @@
     const completed = formatTimestamp(Number(benchmark.completed_at || 0));
     if (completed) parts.push(completed);
     return parts.length ? `latest benchmark: ${parts.join(" · ")}` : "";
+  }
+
+  function categoryText(label, value) {
+    if (!value || typeof value !== "object") return "";
+    const passed = Number(value.passed);
+    const total = Number(value.total);
+    if (!Number.isFinite(total) || total <= 0) return "";
+    const ok = Number.isFinite(passed) ? passed : 0;
+    return `${label} ${ok}/${total}`;
+  }
+
+  function toolQualificationText(result) {
+    if (!result || typeof result !== "object") return "";
+    const passed = Number(result.passed);
+    const total = Number(result.total);
+    const parts = [];
+    if (Number.isFinite(passed) && Number.isFinite(total)) {
+      parts.push(`tool qualification: ${result.ok === true ? "pass" : "fail"} ${passed}/${total}`);
+    } else {
+      parts.push(`tool qualification: ${result.ok === true ? "pass" : "fail"}`);
+    }
+    const categories = result.by_category && typeof result.by_category === "object" ? result.by_category : {};
+    ["auto", "required", "named", "stream", "roundtrip"].forEach((name) => {
+      const text = categoryText(name, categories[name]);
+      if (text) parts.push(text);
+    });
+    const completed = formatTimestamp(Number(result.completed_at || 0));
+    if (completed) parts.push(completed);
+    if (result.first_error) parts.push(`error: ${String(result.first_error).slice(0, 120)}`);
+    return parts.join(" · ");
+  }
+
+  function toolQualificationBadge(result) {
+    if (!result || typeof result !== "object") return null;
+    const passed = Number(result.passed);
+    const total = Number(result.total);
+    const countText = Number.isFinite(passed) && Number.isFinite(total) ? ` ${passed}/${total}` : "";
+    return { text: `tools ${result.ok === true ? "pass" : "fail"}${countText}`, tone: result.ok === true ? "green" : "red" };
   }
 
   function shortModel(value) {
@@ -120,6 +169,13 @@
   function benchmarkSelectedModels() {
     if (!benchmarkEls.models) return [];
     return Array.from(benchmarkEls.models.selectedOptions || [])
+      .map((option) => String(option.value || "").trim())
+      .filter(Boolean);
+  }
+
+  function toolQualificationSelectedModels() {
+    if (!toolEls.models) return [];
+    return Array.from(toolEls.models.selectedOptions || [])
       .map((option) => String(option.value || "").trim())
       .filter(Boolean);
   }
@@ -194,6 +250,57 @@
     });
   }
 
+  function populateToolQualificationModels(payload) {
+    const select = toolEls.models;
+    if (!select) return;
+    const previous = new Set(toolQualificationSelectedModels());
+    const aliases = Array.isArray(payload?.aliases) ? payload.aliases : [];
+    const models = Array.isArray(payload?.models) ? payload.models : [];
+
+    const selectableAliasNames = new Set();
+    models.forEach((model) => {
+      if (model.selectable !== true || !Array.isArray(model.aliases)) return;
+      model.aliases.forEach((aliasName) => {
+        const clean = String(aliasName || "").replace(/\s+\(fallback\)$/, "").trim();
+        if (clean) selectableAliasNames.add(clean);
+      });
+    });
+
+    const aliasOptions = [];
+    visibleToolAliases = [];
+    aliases.forEach((alias) => {
+      const value = String(alias.alias || "").trim();
+      if (!value || alias.visible === false || alias.unavailable_reason || alias.tools === false || !selectableAliasNames.has(value)) return;
+      visibleToolAliases.push(value);
+      const backend = alias.effective_backend || alias.backend || "";
+      const resolved = alias.effective_model || alias.configured_model || "";
+      aliasOptions.push({ value, label: `${value} -> ${backend}:${shortModel(resolved)}` });
+    });
+
+    const seen = new Set(aliasOptions.map((item) => item.value));
+    const modelOptions = [];
+    models.forEach((model) => {
+      if (model.selectable !== true) return;
+      const backend = String(model.backend || "").trim();
+      const modelName = String(model.model || "").trim();
+      if (!backend || !modelName) return;
+      const value = `${backend}:${modelName}`;
+      if (seen.has(value)) return;
+      seen.add(value);
+      const aliasText = Array.isArray(model.aliases) && model.aliases.length ? ` aliases: ${model.aliases.join(", ")}` : "";
+      modelOptions.push({ value, label: `${backend}:${shortModel(modelName)}${aliasText}` });
+    });
+
+    select.innerHTML = "";
+    appendBenchmarkOptionGroup(select, "Tool aliases", aliasOptions);
+    appendBenchmarkOptionGroup(select, "Concrete models", modelOptions);
+
+    const wanted = previous.size ? previous : new Set(["fast-reasoning", "fast", "coder", "default"].filter((item) => visibleToolAliases.includes(item)));
+    Array.from(select.options || []).forEach((option) => {
+      option.selected = wanted.has(option.value);
+    });
+  }
+
   function renderBenchmarkSummary(payload) {
     const target = benchmarkEls.results;
     if (!target) return;
@@ -254,6 +361,69 @@
       renderBenchmarkSummary(recent[0]);
     } else {
       renderBenchmarkSummary(null);
+    }
+  }
+
+  function renderToolQualificationSummary(payload) {
+    const target = toolEls.results;
+    if (!target) return;
+    const summary = Array.isArray(payload?.summary) ? payload.summary : [];
+    if (!summary.length) {
+      target.innerHTML = '<div class="hint">No tool qualification results yet.</div>';
+      return;
+    }
+
+    const table = document.createElement("table");
+    table.className = "model-admin-table";
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    ["Model", "OK", "Auto", "Required", "Named", "Stream", "Roundtrip", "Backend", "Resolved model", "Failure"].forEach((label) => {
+      const th = document.createElement("th");
+      th.textContent = label;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    summary.forEach((rowItem) => {
+      const tr = document.createElement("tr");
+      const values = [
+        rowItem.model || "",
+        `${rowItem.passed || 0}/${rowItem.total || 0}`,
+        categoryText("", rowItem.auto).trim() || "-",
+        categoryText("", rowItem.required).trim() || "-",
+        categoryText("", rowItem.named).trim() || "-",
+        categoryText("", rowItem.stream).trim() || "-",
+        categoryText("", rowItem.roundtrip).trim() || "-",
+        rowItem.backend || "",
+        rowItem.resolved_model || "",
+        rowItem.error || "",
+      ];
+      values.forEach((value) => {
+        const td = document.createElement("td");
+        td.textContent = String(value || "-");
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    target.innerHTML = "";
+    const caption = document.createElement("div");
+    caption.className = "hint";
+    const completed = formatTimestamp(Number(payload?.generated_at || payload?.completed_at || 0));
+    caption.textContent = payload?.run_id ? `Run ${payload.run_id}${completed ? ` · ${completed}` : ""}` : completed;
+    target.appendChild(caption);
+    target.appendChild(table);
+  }
+
+  function renderToolQualificationHistory(payload) {
+    const recent = Array.isArray(payload?.tool_qualifications) ? payload.tool_qualifications : [];
+    if (recent.length) {
+      renderToolQualificationSummary(recent[0]);
+    } else {
+      renderToolQualificationSummary(null);
     }
   }
 
@@ -339,7 +509,9 @@
     const backends = Array.isArray(payload?.backends) ? payload.backends : [];
 
     populateBenchmarkModels(payload);
+    populateToolQualificationModels(payload);
     renderBenchmarkHistory(payload);
+    renderToolQualificationHistory(payload);
 
     renderHugeLane(payload?.mlx_huge_lane || null);
 
@@ -352,8 +524,14 @@
         const configured = `${alias.backend || ""}:${alias.configured_model || ""}`;
         const badges = [{ text: alias.visible ? "visible" : "hidden", tone: alias.visible ? "green" : "red" }];
         if (alias.unavailable_reason) badges.push({ text: alias.unavailable_reason, tone: "yellow" });
+        const toolBadge = toolQualificationBadge(alias.tool_qualification_latest);
+        if (toolBadge) badges.push(toolBadge);
         const benchmark = benchmarkText(alias.benchmark_latest);
-        const details = benchmark ? `${configured} -> ${effective} · ${benchmark}` : `${configured} -> ${effective}`;
+        const toolQualification = toolQualificationText(alias.tool_qualification_latest);
+        const details = [benchmark, toolQualification].filter(Boolean).reduce(
+          (text, item) => `${text} · ${item}`,
+          `${configured} -> ${effective}`,
+        );
         aliasGroup.appendChild(row(alias.alias || "", details, badges));
       });
     }
@@ -373,9 +551,15 @@
         if (model.unavailable_reason) badges.push({ text: model.unavailable_reason, tone: "yellow" });
         if (model.cache_only) badges.push({ text: "cache only", tone: "yellow" });
         if (model.advertised) badges.push({ text: "advertised", tone: "" });
+        const toolBadge = toolQualificationBadge(model.tool_qualification_latest);
+        if (toolBadge) badges.push(toolBadge);
         const aliasText = Array.isArray(model.aliases) && model.aliases.length ? `aliases: ${model.aliases.join(", ")}` : model.provider || "";
         const benchmark = benchmarkText(model.benchmark_latest);
-        const details = benchmark ? `${aliasText || model.provider || ""} · ${benchmark}` : aliasText;
+        const toolQualification = toolQualificationText(model.tool_qualification_latest);
+        const details = [benchmark, toolQualification].filter(Boolean).reduce(
+          (text, item) => (text ? `${text} · ${item}` : item),
+          aliasText,
+        );
         const actions = [];
         if (model.provider === "mlx" && model.cache_state === "fetching" && activity?.status !== "active") {
           actions.push({
@@ -500,9 +684,63 @@
     }
   }
 
+  function toolQualificationRequestBody() {
+    const models = toolQualificationSelectedModels();
+    if (!models.length) throw new Error("Select at least one model.");
+    return {
+      models,
+      max_tokens: numericInput(toolEls.maxTokens, 96, 1, 512),
+      temperature: numericInput(toolEls.temperature, 0, 0, 2),
+      include_stream: true,
+      include_roundtrip: true,
+    };
+  }
+
+  async function runToolQualification() {
+    if (!toolEls.start) return;
+    toolEls.start.disabled = true;
+    if (toolEls.status) toolEls.status.textContent = "Tool qualification running...";
+    try {
+      const body = toolQualificationRequestBody();
+      const resp = await fetch("/ui/api/admin/models/tool-qualification", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const text = await resp.text();
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        let detail = text;
+        try {
+          const parsed = JSON.parse(text);
+          detail = parsed?.detail || text;
+        } catch (error) {
+          detail = text;
+        }
+        throw new Error(`HTTP ${resp.status}: ${detail}`);
+      }
+      const payload = JSON.parse(text);
+      renderToolQualificationSummary(payload);
+      if (toolEls.status) toolEls.status.textContent = `Tool qualification complete: ${payload.run_id || ""}`;
+      window.setTimeout(() => void load(), 1000);
+    } catch (error) {
+      if (toolEls.status) toolEls.status.textContent = `Tool qualification failed: ${String(error?.message || error)}`;
+    } finally {
+      toolEls.start.disabled = false;
+    }
+  }
+
   function selectVisibleAliases() {
     const wanted = new Set(visibleBenchmarkAliases);
     Array.from(benchmarkEls.models?.options || []).forEach((option) => {
+      option.selected = wanted.has(option.value);
+    });
+  }
+
+  function selectToolAliases() {
+    const wanted = new Set(visibleToolAliases);
+    Array.from(toolEls.models?.options || []).forEach((option) => {
       option.selected = wanted.has(option.value);
     });
   }
@@ -543,6 +781,12 @@
   if (benchmarkEls.clear) benchmarkEls.clear.addEventListener("click", () => {
     if (benchmarkEls.results) benchmarkEls.results.innerHTML = '<div class="hint">No benchmark results yet.</div>';
     if (benchmarkEls.status) benchmarkEls.status.textContent = "";
+  });
+  if (toolEls.start) toolEls.start.addEventListener("click", () => void runToolQualification());
+  if (toolEls.selectAliases) toolEls.selectAliases.addEventListener("click", selectToolAliases);
+  if (toolEls.clear) toolEls.clear.addEventListener("click", () => {
+    if (toolEls.results) toolEls.results.innerHTML = '<div class="hint">No tool qualification results yet.</div>';
+    if (toolEls.status) toolEls.status.textContent = "";
   });
   void load();
 })();

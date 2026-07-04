@@ -80,23 +80,24 @@ def test_env_base_url_override_keeps_static_proxy_url_for_etcd_record(monkeypatc
     assert registry.service_records["vllm-fast"].hostname == "ai1"
 
 
-def test_production_topology_disables_unvalidated_vllm_auto_tool_flags():
+def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
     repo_root = Path(__file__).resolve().parents[3]
     topology = json.loads((repo_root / "deploy" / "topology" / "production.json").read_text(encoding="utf-8"))
     env = topology["defaults"]["env"]
 
-    assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "false"
+    assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "true"
     assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "false"
-    assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "false"
+    assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "true"
     assert env["VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE"] == "false"
-    assert env["VLLM_TOOL_CALL_PARSER"] == ""
+    assert env["VLLM_TOOL_CALL_PARSER"] == "xlam"
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == ""
+    assert env["VLLM_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
     assert "vllm-fast" in topology["hosts"]["ai1"]["components"]
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER"] == "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
     assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_MAX_MODEL_LEN"] == "8192"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
-    assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "8192"
+    assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "32768"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
     ai2_overrides = set(topology["hosts"]["ai2"]["env"]["BACKEND_ENV_BASE_URL_OVERRIDES"].split(","))
     assert {
