@@ -42,7 +42,7 @@ async def tool_loop(
             model=req.model,
             messages=new_messages,
             tools=req.tools,
-            tool_choice=req.tool_choice,
+            tool_choice="auto" if req.tools else None,
             temperature=req.temperature,
             max_tokens=req.max_tokens,
             stream=False,

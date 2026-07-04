@@ -504,6 +504,7 @@ async def run_agent_v1(
                     model=spec.model,
                     messages=messages,
                     tools=tools,
+                    tool_choice="auto" if tools else None,
                     stream=False,
                 )
 

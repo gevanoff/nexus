@@ -889,7 +889,7 @@ async def test_agent_runtime_uses_user_llm_without_local_router(monkeypatch):
     calls = []
 
     async def fake_call(req, *, model_id, settings):
-        calls.append((req.model, model_id, settings))
+        calls.append((req.model, model_id, settings, req.tool_choice, bool(req.tools)))
         return {
             "choices": [
                 {
@@ -918,6 +918,8 @@ async def test_agent_runtime_uses_user_llm_without_local_router(monkeypatch):
     assert payload["output_text"] == "done"
     assert len(calls) == 2
     assert all(call[1] == "user_llm:openai:gpt-test" for call in calls)
+    assert calls[0][3:] == (None, False)
+    assert calls[1][3:] == ("auto", True)
 
 
 @pytest.mark.asyncio

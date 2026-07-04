@@ -127,6 +127,59 @@ def _append_hidden_fields(target: dict[str, Any], text: str) -> None:
         _append_text_field(target, field, text)
 
 
+def _openai_arguments_string(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    except Exception:
+        return str(value)
+
+
+def _normalize_tool_calls(value: Any, *, stream_delta: bool) -> Any:
+    if not isinstance(value, list):
+        return value
+
+    out: list[Any] = []
+    for item in value:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+
+        normalized: dict[str, Any] = {}
+        if stream_delta and item.get("index") is not None:
+            normalized["index"] = item.get("index")
+
+        call_id = item.get("id")
+        if isinstance(call_id, str) and call_id.strip():
+            normalized["id"] = call_id
+        elif not stream_delta:
+            normalized["id"] = new_id("call")
+
+        call_type = item.get("type")
+        if isinstance(call_type, str) and call_type.strip():
+            normalized["type"] = call_type
+        else:
+            normalized["type"] = "function"
+
+        function = item.get("function")
+        if isinstance(function, dict):
+            normalized_function: dict[str, Any] = {}
+            name = function.get("name")
+            if isinstance(name, str) and name.strip():
+                normalized_function["name"] = name.strip()
+            if "arguments" in function:
+                normalized_function["arguments"] = _openai_arguments_string(function.get("arguments"))
+            elif not stream_delta:
+                normalized_function["arguments"] = ""
+            if normalized_function:
+                normalized["function"] = normalized_function
+        out.append(normalized)
+    return out
+
+
 def sanitize_chat_choices(payload: Any, *, stream_parser: ThinkTagStreamParser | None = None) -> Any:
     if not isinstance(payload, dict):
         return payload
@@ -141,6 +194,8 @@ def sanitize_chat_choices(payload: Any, *, stream_parser: ThinkTagStreamParser |
 
         delta = choice.get("delta")
         if isinstance(delta, dict):
+            if "tool_calls" in delta:
+                delta["tool_calls"] = _normalize_tool_calls(delta.get("tool_calls"), stream_delta=True)
             content = delta.get("content")
             if isinstance(content, str):
                 visible, hidden = stream_parser.feed(content) if stream_parser else split_think_content(content)
@@ -149,6 +204,10 @@ def sanitize_chat_choices(payload: Any, *, stream_parser: ThinkTagStreamParser |
 
         message = choice.get("message")
         if isinstance(message, dict):
+            if "tool_calls" in message:
+                message["tool_calls"] = _normalize_tool_calls(message.get("tool_calls"), stream_delta=False)
+                if message.get("tool_calls") and choice.get("finish_reason") in {None, "", "stop"}:
+                    choice["finish_reason"] = "tool_calls"
             content = message.get("content")
             if isinstance(content, str):
                 visible, hidden = split_think_content(content)
