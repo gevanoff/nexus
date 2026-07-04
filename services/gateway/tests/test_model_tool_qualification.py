@@ -403,3 +403,25 @@ async def test_auto_qualification_candidates_include_missing_target(monkeypatch)
     candidates = await qual.auto_qualification_candidates(["fast"])
 
     assert candidates == ["fast"]
+
+
+@pytest.mark.asyncio
+async def test_auto_qualification_candidates_include_incomplete_suite(monkeypatch):
+    _setup_runner(monkeypatch, backend="local_vllm", native_tools=True)
+    monkeypatch.setattr(
+        qual,
+        "latest_by_model",
+        lambda **_kwargs: {
+            "local_vllm:upstream-model": {
+                "ok": True,
+                "completed_at": 100,
+                "backend": "local_vllm",
+                "resolved_model": "upstream-model",
+                "by_category": {"auto": {"passed": 1, "total": 1}},
+            }
+        },
+    )
+
+    candidates = await qual.auto_qualification_candidates(["fast"])
+
+    assert candidates == ["fast"]

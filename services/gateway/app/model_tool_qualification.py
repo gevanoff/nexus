@@ -1091,6 +1091,42 @@ def _category_passed(result: Dict[str, Any], category: str) -> bool:
     return total > 0 and passed == total
 
 
+def _expected_categories(*, include_stream: bool = True, include_roundtrip: bool = True) -> list[str]:
+    categories = ["auto", "required", "named", "none", "client_continue", "client_hermes"]
+    if include_stream:
+        categories.append("stream")
+    if include_roundtrip:
+        categories.append("roundtrip")
+    return categories
+
+
+def _missing_expected_categories(
+    result: Optional[Dict[str, Any]],
+    *,
+    include_stream: bool = True,
+    include_roundtrip: bool = True,
+) -> list[str]:
+    if not result:
+        return _expected_categories(include_stream=include_stream, include_roundtrip=include_roundtrip)
+    by_category = result.get("by_category")
+    if not isinstance(by_category, dict):
+        return _expected_categories(include_stream=include_stream, include_roundtrip=include_roundtrip)
+
+    missing: list[str] = []
+    for category in _expected_categories(include_stream=include_stream, include_roundtrip=include_roundtrip):
+        bucket = by_category.get(category)
+        if not isinstance(bucket, dict):
+            missing.append(category)
+            continue
+        try:
+            total = int(bucket.get("total") or 0)
+        except Exception:
+            total = 0
+        if total <= 0:
+            missing.append(category)
+    return missing
+
+
 def _result_matches_target(result: Dict[str, Any], *, backend_class: str, resolved_model: str) -> bool:
     result_backend = str(result.get("backend") or "").strip()
     result_backend_class = str(result.get("backend_class") or "").strip()
@@ -1230,6 +1266,8 @@ def _auto_run_models() -> list[str]:
 
 async def auto_qualification_candidates(models: Optional[list[str]] = None) -> list[str]:
     candidates: list[str] = []
+    include_stream = bool(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_INCLUDE_STREAM", True))
+    include_roundtrip = bool(getattr(S, "MODEL_TOOL_QUALIFICATION_AUTO_RUN_INCLUDE_ROUNDTRIP", True))
     for model in clean_model_list(models or _auto_run_models()):
         cc = build_chat_request(
             ModelToolQualificationRequest(models=[model], include_stream=False, include_roundtrip=False),
@@ -1248,7 +1286,18 @@ async def auto_qualification_candidates(models: Optional[list[str]] = None) -> l
         except Exception as exc:
             logger.info("tool qualification auto-run: skipping model=%s route failed (%s: %s)", model, type(exc).__name__, exc)
             continue
-        if status.get("missing") or status.get("mismatch") or status.get("stale") or status.get("failed"):
+        missing_categories = _missing_expected_categories(
+            status.get("result") if isinstance(status.get("result"), dict) else None,
+            include_stream=include_stream,
+            include_roundtrip=include_roundtrip,
+        )
+        if status.get("missing") or status.get("mismatch") or status.get("stale") or status.get("failed") or missing_categories:
+            if missing_categories and not status.get("missing"):
+                logger.info(
+                    "tool qualification auto-run: model=%s missing suite categories=%s",
+                    model,
+                    ",".join(missing_categories),
+                )
             candidates.append(model)
     return clean_model_list(candidates)
 
