@@ -64,9 +64,9 @@ Compatibility note:
 
 ## vLLM Tool Calling
 
-vLLM automatic tool parsing is disabled for the production chat lanes until the model, chat template, and parser combinations are validated end to end:
+vLLM automatic tool parsing is enabled only for production chat lanes whose model, chat template, and parser combinations have been validated end to end:
 
-- strong lane (`ada2`): auto tool parsing is disabled. The current Magistral artifact emits tool-like text for `tool_choice=auto`, but vLLM does not convert that text into OpenAI `tool_calls` with the current parser/template setup.
+- strong lane (`ada2`): auto tool parsing is enabled with vLLM's `mistral` parser and `/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja`. This lane backs tools-capable aliases such as `fast-reasoning`.
 - fast lane (`ai1`): auto tool parsing is disabled. vLLM 0.10.2 runs this Devstral lane with the matching tokenizer in `mistral` tokenizer mode, but the lane is not validated for native automatic structured tool-call parsing.
 
 The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated automatic tool parsing and must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` requests with `tool_choice=auto` may be passed to a backend that is not actually returning structured tool calls. Required and named tool choices are still allowed through vLLM because they use guided decoding instead of the automatic parser.
