@@ -29,6 +29,7 @@
   let hugeLanePollTimer = null;
   let visibleBenchmarkAliases = [];
   let visibleToolAliases = [];
+  const modelActionStatus = new Map();
 
   function handle401(resp) {
     if (resp && resp.status === 401) {
@@ -154,6 +155,19 @@
     el.appendChild(detail);
     el.appendChild(badgeWrap);
     return el;
+  }
+
+  function modelActionKey(backend, model) {
+    return `${String(backend || "").trim()}:${String(model || "").trim()}`;
+  }
+
+  function setModelActionStatus(backend, model, text, tone = "yellow") {
+    const key = modelActionKey(backend, model);
+    if (!String(text || "").trim()) {
+      modelActionStatus.delete(key);
+      return;
+    }
+    modelActionStatus.set(key, { text: String(text), tone });
   }
 
   function group(title) {
@@ -556,6 +570,7 @@
         const aliasText = Array.isArray(model.aliases) && model.aliases.length ? `aliases: ${model.aliases.join(", ")}` : model.provider || "";
         const benchmark = benchmarkText(model.benchmark_latest);
         const toolQualification = toolQualificationText(model.tool_qualification_latest);
+        const actionStatus = modelActionStatus.get(modelActionKey(model.backend || "local_mlx", model.model || ""));
         const details = [benchmark, toolQualification].filter(Boolean).reduce(
           (text, item) => (text ? `${text} · ${item}` : item),
           aliasText,
@@ -581,6 +596,7 @@
             onClick: () => void purgeModelCache(model.backend || "local_mlx", model.model || ""),
           });
         }
+        if (actionStatus) badges.push({ text: actionStatus.text, tone: actionStatus.tone });
         modelGroup.appendChild(row(`${model.backend || ""}:${model.model || ""}`, details, badges, actions));
       });
     }
@@ -651,6 +667,7 @@
   async function redownloadModelCache(backend, model) {
     if (!model) return;
     if (statusEl) statusEl.textContent = `Starting re-download for ${model}...`;
+    setModelActionStatus(backend, model, "re-download requested", "yellow");
     try {
       const resp = await fetch("/ui/api/admin/models/prefetch", {
         method: "POST",
@@ -666,9 +683,11 @@
       }
       const payload = JSON.parse(text);
       if (statusEl) statusEl.textContent = `Re-download started for ${model}${payload.pid ? ` (pid ${payload.pid})` : ""}.`;
+      setModelActionStatus(backend, model, "re-download in progress", "green");
       window.setTimeout(() => void load(), 1500);
     } catch (error) {
       if (statusEl) statusEl.textContent = `Re-download failed: ${String(error)}`;
+      setModelActionStatus(backend, model, "re-download failed", "red");
     }
   }
 
@@ -677,6 +696,7 @@
     const ok = window.confirm(`Purge cached files for ${model}? This removes the local Hugging Face cache and may force a full re-download.`);
     if (!ok) return;
     if (statusEl) statusEl.textContent = `Purging cache for ${model}...`;
+    setModelActionStatus(backend, model, "purge requested", "yellow");
     try {
       const resp = await fetch("/ui/api/admin/models/purge", {
         method: "POST",
@@ -693,9 +713,11 @@
       const payload = JSON.parse(text);
       const removed = Array.isArray(payload.removed_paths) ? payload.removed_paths.length : 0;
       if (statusEl) statusEl.textContent = `Purged cache for ${model}${removed ? ` (${removed} path${removed === 1 ? "" : "s"})` : ""}.`;
+      setModelActionStatus(backend, model, "cache purged", "green");
       window.setTimeout(() => void load(), 1000);
     } catch (error) {
       if (statusEl) statusEl.textContent = `Cache purge failed: ${String(error)}`;
+      setModelActionStatus(backend, model, "purge failed", "red");
     }
   }
 

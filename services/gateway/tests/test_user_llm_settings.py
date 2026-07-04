@@ -263,6 +263,8 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "Restart fetch" in admin_models_js
     assert "Re-download" in admin_models_js
     assert "Purge cache" in admin_models_js
+    assert "re-download in progress" in admin_models_js
+    assert "purge requested" in admin_models_js
     assert "/ui/api/admin/models/purge" in admin_models_js
     assert "mlx_huge_lane" not in resources_html
     assert "/ui/api/mlx/huge-lane/switch" not in resources_js
