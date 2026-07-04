@@ -177,7 +177,7 @@
         "VLLM_CONFIG_FORMAT": "hf",
         "VLLM_CPU_OFFLOAD_GB": "8",
         "VLLM_GPU_MEMORY_UTILIZATION": "0.68",
-        "VLLM_MAX_MODEL_LEN": "8192"
+        "VLLM_MAX_MODEL_LEN": "32768"
       }
     },
     "meltdown": {
