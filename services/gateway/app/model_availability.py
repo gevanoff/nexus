@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -316,6 +317,55 @@ def hf_model_cache_entries(cache_dir: str | None = None) -> dict[str, str]:
         if state:
             entries[repo_id] = state
     return entries
+
+
+def purge_hf_model_cache(model_id: str, cache_dir: str | None = None) -> dict[str, Any]:
+    model = (model_id or "").strip()
+    root = _hf_cache_root(cache_dir)
+    if not model or not root.exists():
+        return {
+            "model": model,
+            "cache_root": str(root),
+            "removed_paths": [],
+            "metadata_updated": False,
+        }
+
+    resolved_root = root.resolve()
+    removed_paths: list[str] = []
+    for repo in _hf_repo_cache_dirs(model, str(root)):
+        if not repo.exists():
+            continue
+        resolved_repo = repo.resolve()
+        if resolved_repo != resolved_root and resolved_root not in resolved_repo.parents:
+            raise ValueError(f"Refusing to purge cache outside the configured root: {repo}")
+        shutil.rmtree(repo)
+        removed_paths.append(str(repo))
+
+    metadata_path = root / ".nexus_cache_status.json"
+    metadata_updated = False
+    if metadata_path.exists():
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        models = payload.get("models")
+        if not isinstance(models, dict):
+            models = {}
+        if model in models:
+            models.pop(model, None)
+            payload["models"] = models
+            payload["generated_at"] = time.time()
+            metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+            metadata_updated = True
+
+    return {
+        "model": model,
+        "cache_root": str(root),
+        "removed_paths": removed_paths,
+        "metadata_updated": metadata_updated,
+    }
 
 
 def model_unavailable_reason(backend: str, model: str) -> Optional[str]:

@@ -568,6 +568,19 @@
             onClick: () => void restartFetch(model.backend || "local_mlx", model.model || ""),
           });
         }
+        if (model.provider === "mlx") {
+          actions.push({
+            text: "Re-download",
+            role: "secondary",
+            disabled: activity?.status === "active",
+            onClick: () => void redownloadModelCache(model.backend || "local_mlx", model.model || ""),
+          });
+          actions.push({
+            text: "Purge cache",
+            role: "secondary",
+            onClick: () => void purgeModelCache(model.backend || "local_mlx", model.model || ""),
+          });
+        }
         modelGroup.appendChild(row(`${model.backend || ""}:${model.model || ""}`, details, badges, actions));
       });
     }
@@ -632,6 +645,57 @@
       window.setTimeout(() => void load(), 1500);
     } catch (error) {
       if (statusEl) statusEl.textContent = `Prefetch restart failed: ${String(error)}`;
+    }
+  }
+
+  async function redownloadModelCache(backend, model) {
+    if (!model) return;
+    if (statusEl) statusEl.textContent = `Starting re-download for ${model}...`;
+    try {
+      const resp = await fetch("/ui/api/admin/models/prefetch", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backend, model }),
+      });
+      const text = await resp.text();
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        if (statusEl) statusEl.textContent = `Re-download failed: HTTP ${resp.status}: ${text}`;
+        return;
+      }
+      const payload = JSON.parse(text);
+      if (statusEl) statusEl.textContent = `Re-download started for ${model}${payload.pid ? ` (pid ${payload.pid})` : ""}.`;
+      window.setTimeout(() => void load(), 1500);
+    } catch (error) {
+      if (statusEl) statusEl.textContent = `Re-download failed: ${String(error)}`;
+    }
+  }
+
+  async function purgeModelCache(backend, model) {
+    if (!model) return;
+    const ok = window.confirm(`Purge cached files for ${model}? This removes the local Hugging Face cache and may force a full re-download.`);
+    if (!ok) return;
+    if (statusEl) statusEl.textContent = `Purging cache for ${model}...`;
+    try {
+      const resp = await fetch("/ui/api/admin/models/purge", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backend, model }),
+      });
+      const text = await resp.text();
+      if (handle401(resp)) return;
+      if (!resp.ok) {
+        if (statusEl) statusEl.textContent = `Cache purge failed: HTTP ${resp.status}: ${text}`;
+        return;
+      }
+      const payload = JSON.parse(text);
+      const removed = Array.isArray(payload.removed_paths) ? payload.removed_paths.length : 0;
+      if (statusEl) statusEl.textContent = `Purged cache for ${model}${removed ? ` (${removed} path${removed === 1 ? "" : "s"})` : ""}.`;
+      window.setTimeout(() => void load(), 1000);
+    } catch (error) {
+      if (statusEl) statusEl.textContent = `Cache purge failed: ${String(error)}`;
     }
   }
 

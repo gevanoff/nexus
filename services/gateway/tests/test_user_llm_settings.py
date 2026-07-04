@@ -261,6 +261,9 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "toolQualificationText" in admin_models_js
     assert "tool_qualification_latest" in admin_models_js
     assert "Restart fetch" in admin_models_js
+    assert "Re-download" in admin_models_js
+    assert "Purge cache" in admin_models_js
+    assert "/ui/api/admin/models/purge" in admin_models_js
     assert "mlx_huge_lane" not in resources_html
     assert "/ui/api/mlx/huge-lane/switch" not in resources_js
     assert "MLX Huge Model" in admin_models_js
@@ -815,6 +818,44 @@ async def test_ui_admin_model_prefetch_calls_lifecycle_manager(monkeypatch):
             {"backend_class": "local_mlx", "model": "mlx-community/MiniMax-M3-4bit"},
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_ui_admin_model_purge_calls_cache_helper(monkeypatch):
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return backend
+
+    calls = []
+
+    def fake_purge(model_name, cache_dir=None):
+        calls.append((model_name, cache_dir))
+        return {
+            "model": model_name,
+            "removed_paths": ["/var/lib/gateway/mlx_hf_cache/models--mlx-community--MiniMax-M3-4bit"],
+            "metadata_updated": True,
+        }
+
+    async def fake_sync():
+        return None
+
+    monkeypatch.setattr(ui_routes, "_require_admin", lambda _req: SimpleNamespace(id=1, admin=True))
+    monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ui_routes, "backend_provider_name", lambda backend: "mlx" if backend == "local_mlx" else "vllm")
+    monkeypatch.setattr(ui_routes, "purge_hf_model_cache", fake_purge)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "missing" if model == "mlx-community/MiniMax-M3-4bit" else None)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_details", lambda model: {"state": "missing", "fetch_activity": None})
+    monkeypatch.setattr(ui_routes, "_sync_mlx_cache_status_best_effort", fake_sync)
+
+    payload = await ui_routes.ui_admin_model_purge(
+        SimpleNamespace(),
+        ui_routes.ModelPurgeRequest(backend="local_mlx", model="mlx-community/MiniMax-M3-4bit"),
+    )
+
+    assert payload["backend"] == "local_mlx"
+    assert payload["cache_state"] == "missing"
+    assert payload["removed_paths"]
+    assert calls == [("mlx-community/MiniMax-M3-4bit", None)]
 
 
 def test_ui_model_alias_hides_embedding_selectors():
