@@ -73,7 +73,7 @@ The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated auto
 
 The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `ai1` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. `meltdown` currently serves the vLLM embeddings lane only; there is no chat tool-call surface on that host unless a chat model is assigned there.
 
-The vLLM chat lanes are configured for an 8192-token context. This is the first production step above the old 2048-token limit, which was too small for Hermes/Continue requests once tool schemas, history, and file context were included. Raise beyond 8192 only as a staged canary because longer contexts increase KV-cache memory, prefill latency, and startup/OOM risk.
+The strong vLLM chat lane is configured for a 32768-token context. Hermes' default tool prompt measured about 16K input tokens, so the earlier 8192-token canary was still too small for Hermes/Continue requests once tool schemas, history, and file context were included. Raise beyond 32768 only as a staged canary because longer contexts increase KV-cache memory, prefill latency, and startup/OOM risk. The fast lane remains at 8192 until automatic tool parsing is validated there separately.
 
 After restarting a lane with automatic native tool flags, validate it directly before flipping the gateway flag:
 

@@ -77,7 +77,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             upstream_model=S.VLLM_MODEL_STRONG,
             context_window=S.VLLM_MAX_MODEL_LEN,
             tools=True,
-            max_tokens_cap=512,
+            max_tokens_cap=2048,
             coding=False,
         ),
         "long": ModelAlias(
