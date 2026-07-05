@@ -705,14 +705,14 @@
     const modelColumns = [
       { label: "Model", className: "model-col-model" },
       { label: "Aliases/provider" },
-      { label: "Selectable" },
-      { label: "Advertised" },
-      { label: "Cache" },
-      { label: "Fetch" },
-      { label: "Availability" },
-      { label: "Tool qualification result" },
+      { label: "Selectable", className: "col-state" },
+      { label: "Advertised", className: "col-state" },
+      { label: "Cache", className: "col-state" },
+      { label: "Fetch", className: "col-state" },
+      { label: "Availability", className: "col-state" },
+      { label: "Tool qualification result", className: "col-tool-result" },
       { label: "Benchmark result" },
-      { label: "Action status" },
+      { label: "Action status", className: "col-state" },
       { label: "Actions", type: "actions" },
     ];
 
@@ -752,7 +752,7 @@
             });
           }
           return [
-            `${model.backend || ""}:${model.model || ""}`,
+            model.model || "",
             aliasText,
             model.selectable ? stateCell("selectable", "green") : stateCell("not selectable", "red"),
             model.advertised ? stateCell("advertised", "green") : "",
