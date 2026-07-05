@@ -200,6 +200,30 @@
     return { kind: "state", text: label, tone: tone || stateTone(label), href: href || "" };
   }
 
+  function sanitizeIdPart(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function aliasAnchorId(aliasName) {
+    const clean = sanitizeIdPart(aliasName);
+    return clean ? `alias-row-${clean}` : "";
+  }
+
+  function aliasLinksCell(aliasValues) {
+    const links = [];
+    (Array.isArray(aliasValues) ? aliasValues : []).forEach((entry) => {
+      const text = String(entry || "").trim();
+      if (!text) return;
+      const baseAlias = text.replace(/\s+\(fallback\)$/i, "").trim();
+      const id = aliasAnchorId(baseAlias);
+      links.push({ text, href: id ? `#${id}` : "" });
+    });
+    return links.length ? { kind: "links", items: links } : "";
+  }
+
   function toolResultCell(result) {
     if (!result || typeof result !== "object") return "";
     const passed = Number(result.passed);
@@ -293,6 +317,25 @@
             chip.textContent = cellValue.text;
             td.appendChild(chip);
           }
+        } else if (cellValue && typeof cellValue === "object" && cellValue.kind === "anchor-text") {
+          const text = String(cellValue.text || "");
+          td.textContent = text;
+          if (cellValue.id) td.id = String(cellValue.id);
+        } else if (cellValue && typeof cellValue === "object" && cellValue.kind === "links") {
+          const items = Array.isArray(cellValue.items) ? cellValue.items : [];
+          items.forEach((item, itemIndex) => {
+            const label = String(item?.text || "").trim();
+            if (!label) return;
+            if (itemIndex > 0) td.appendChild(document.createTextNode(", "));
+            if (item?.href) {
+              const link = document.createElement("a");
+              link.href = String(item.href);
+              link.textContent = label;
+              td.appendChild(link);
+            } else {
+              td.appendChild(document.createTextNode(label));
+            }
+          });
         } else {
           td.textContent = stateValue(cellValue);
         }
@@ -303,7 +346,21 @@
     table.appendChild(tbody);
     tableWrap.appendChild(table);
     wrap.appendChild(tableWrap);
+    updateScrollHintState(tableWrap);
+    tableWrap.addEventListener("scroll", () => updateScrollHintState(tableWrap), { passive: true });
     return wrap;
+  }
+
+  function updateScrollHintState(scroller) {
+    if (!scroller) return;
+    const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    const left = scroller.scrollLeft || 0;
+    scroller.classList.toggle("has-overflow-left", left > 0);
+    scroller.classList.toggle("has-overflow-right", max > 1 && left < max - 1);
+  }
+
+  function refreshAllScrollHints() {
+    document.querySelectorAll(".model-admin-table-wrap").forEach((node) => updateScrollHintState(node));
   }
 
   function benchmarkSelectedModels() {
@@ -675,9 +732,8 @@
     renderHugeLane(payload?.mlx_huge_lane || null);
 
     const aliasColumns = [
-      { label: "Alias" },
-      { label: "Configured" },
-      { label: "Effective" },
+      { label: "Alias", className: "col-key" },
+      { label: "Target" },
       { label: "Visible" },
       { label: "Availability" },
       { label: "Benchmark result" },
@@ -686,11 +742,9 @@
     ];
     const aliasRows = aliases.length
       ? aliases.map((alias) => {
-          const configured = `${alias.backend || ""}:${alias.configured_model || ""}`;
           const effective = `${alias.effective_backend || alias.backend || ""}:${alias.effective_model || ""}`;
           return [
-            alias.alias || "",
-            configured,
+            { kind: "anchor-text", text: alias.alias || "", id: aliasAnchorId(alias.alias || "") },
             effective,
             stateCell(alias.visible ? "visible" : "hidden", alias.visible ? "green" : "red"),
             alias.unavailable_reason ? stateCell(alias.unavailable_reason, "red") : stateCell("available", "green"),
@@ -699,12 +753,12 @@
             [],
           ];
         })
-      : [["None", "", "", "", "", "", "", []]];
+      : [["None", "", "", "", "", "", []]];
     listEl.appendChild(tableGroup("Aliases", aliasColumns, aliasRows));
 
     const modelColumns = [
-      { label: "Model", className: "model-col-model" },
-      { label: "Aliases/provider" },
+      { label: "Model", className: "model-col-model col-key" },
+      { label: "Aliases" },
       { label: "Selectable", className: "col-state" },
       { label: "Advertised", className: "col-state" },
       { label: "Cache", className: "col-state" },
@@ -728,7 +782,7 @@
           if (model.cache_only) availabilityParts.push("cache only");
           const availability = availabilityParts.join(" · ");
 
-          const aliasText = Array.isArray(model.aliases) && model.aliases.length ? model.aliases.join(", ") : model.provider || "";
+          const aliasCell = aliasLinksCell(model.aliases);
           const actionStatus = modelActionStatus.get(modelActionKey(model.backend || "local_mlx", model.model || ""));
           const actions = [];
           if (model.provider === "mlx" && model.cache_state === "fetching" && activity?.status !== "active") {
@@ -753,7 +807,7 @@
           }
           return [
             model.model || "",
-            aliasText,
+            aliasCell,
             model.selectable ? stateCell("selectable", "green") : stateCell("not selectable", "red"),
             model.advertised ? stateCell("advertised", "green") : "",
             model.cache_state ? stateCell(model.cache_state, stateTone(model.cache_state)) : "",
@@ -805,6 +859,7 @@
           listEl.appendChild(tableGroup(title, modelColumns, rows));
         });
     }
+      refreshAllScrollHints();
   }
 
   async function load() {
