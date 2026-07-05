@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, AsyncIterator, Dict, List
 
 import httpx
@@ -12,6 +13,12 @@ from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
 from app.openai_utils import allowed_tool_names_from_specs, normalize_tool_calls_for_openai, sanitize_chat_choices, sse, sse_done
+from app.prompt_canonicalization import (
+    canonicalize_chat_payload,
+    deterministic_json_dumps,
+    get_prefix_observation_cache,
+    prompt_prefix_fingerprint,
+)
 from app.streaming import passthrough_sse
 
 
@@ -413,17 +420,29 @@ async def call_openai_chat(
     *,
     base_url: str | None = None,
     backend_name: str = "local_vllm",
+    request_id: str | None = None,
 ) -> Dict[str, Any]:
     payload = req.model_dump(exclude_none=True)
     if "messages" in payload and isinstance(payload["messages"], list):
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
     payload = _normalize_openai_tools_payload(payload)
+    payload = canonicalize_chat_payload(payload)
+    prefix = prompt_prefix_fingerprint(payload)
+    observed = get_prefix_observation_cache(
+        max_entries=int(getattr(S, "PROMPT_PREFIX_OBSERVATION_CACHE_SIZE", 2048) or 2048)
+    ).observe(
+        model=str(payload.get("model") or req.model or ""),
+        upstream=backend_name,
+        prompt_prefix_hash=prefix.prompt_prefix_hash,
+        prefix_chars=prefix.prompt_prefix_chars,
+    )
     allowed_tool_names = allowed_tool_names_from_specs(payload.get("tools")) if "tools" in payload else None
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=req.model)
 
     provider = backend_provider_name(backend_name)
     target = (base_url or _default_base_url_for_provider(provider)).rstrip("/")
 
+    started = time.monotonic()
     async with _httpx_client(timeout=600) as client:
         try:
             r = await client.post(f"{target}/chat/completions", json=payload)
@@ -443,6 +462,21 @@ async def call_openai_chat(
                     stream=False,
                 )
                 out["model"] = backend_model_id(backend_name, req.model)
+                usage = out.get("usage") if isinstance(out.get("usage"), dict) else {}
+                _emit_chat_latency_log(
+                    model=str(req.model or payload.get("model") or ""),
+                    resolved_model=str(payload.get("model") or req.model or ""),
+                    upstream=backend_name,
+                    stream=False,
+                    request_id=request_id,
+                    usage=usage,
+                    ttft_ms=None,
+                    total_ms=(time.monotonic() - started) * 1000.0,
+                    prompt_prefix_hash=prefix.prompt_prefix_hash,
+                    prompt_prefix_chars=prefix.prompt_prefix_chars,
+                    estimated_reused_prefix_chars=int(observed.get("estimated_reused_prefix_chars") or 0),
+                    cache_candidate=bool(observed.get("cache_candidate")),
+                )
             return out
         except httpx.HTTPStatusError as e:
             detail = {"upstream": backend_name, "status": e.response.status_code, "body": e.response.text[:5000]}
@@ -536,6 +570,105 @@ def _safe_exception_text(exc: Exception) -> str:
     return text[:500]
 
 
+def _sse_event_from_chunk(chunk: bytes) -> Any:
+    text = chunk.decode("utf-8", errors="replace").strip()
+    if not text.startswith("data:"):
+        return None
+    payload = text[5:].strip()
+    if payload == "[DONE]":
+        return "[DONE]"
+    if not payload:
+        return None
+    try:
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
+def _extract_usage(obj: Any) -> Dict[str, Any]:
+    if isinstance(obj, dict) and isinstance(obj.get("usage"), dict):
+        return obj["usage"]
+    return {}
+
+
+def _extract_stream_text_chars(obj: Any) -> int:
+    if not isinstance(obj, dict):
+        return 0
+    choices = obj.get("choices")
+    if not isinstance(choices, list):
+        return 0
+    total = 0
+    for choice in choices:
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+            total += len(delta.get("content") or "")
+    return total
+
+
+def _emit_chat_latency_log(
+    *,
+    model: str,
+    resolved_model: str,
+    upstream: str,
+    stream: bool,
+    request_id: str | None,
+    usage: Dict[str, Any] | None,
+    ttft_ms: float | None,
+    total_ms: float,
+    prompt_prefix_hash: str,
+    prompt_prefix_chars: int,
+    estimated_reused_prefix_chars: int,
+    cache_candidate: bool,
+    completion_chars: int = 0,
+) -> None:
+    if not bool(getattr(S, "PROMPT_PREFIX_TELEMETRY_ENABLED", True)):
+        return
+
+    usage = usage or {}
+    prompt_tokens = usage.get("prompt_tokens") if isinstance(usage.get("prompt_tokens"), (int, float)) else None
+    completion_tokens = usage.get("completion_tokens") if isinstance(usage.get("completion_tokens"), (int, float)) else None
+    total_tokens = usage.get("total_tokens") if isinstance(usage.get("total_tokens"), (int, float)) else None
+
+    completion_tokens_estimated = False
+    if completion_tokens is None and completion_chars > 0:
+        completion_tokens = max(1, int(round(completion_chars / 4.0)))
+        completion_tokens_estimated = True
+
+    decode_tokens_per_sec = None
+    if completion_tokens is not None and total_ms > 0:
+        if ttft_ms is not None and total_ms > ttft_ms:
+            decode_window = max((total_ms - ttft_ms) / 1000.0, 0.001)
+        else:
+            decode_window = max(total_ms / 1000.0, 0.001)
+        decode_tokens_per_sec = round(float(completion_tokens) / decode_window, 2)
+
+    record = {
+        "event": "gateway.chat_latency",
+        "request_id": request_id or "-",
+        "model": model,
+        "resolved_model": resolved_model,
+        "upstream": upstream,
+        "stream": bool(stream),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "ttft_ms": round(ttft_ms, 1) if isinstance(ttft_ms, (int, float)) else None,
+        "total_ms": round(total_ms, 1),
+        "decode_tokens_per_sec": decode_tokens_per_sec,
+        "prompt_prefix_hash": prompt_prefix_hash,
+        "prompt_prefix_chars": prompt_prefix_chars,
+        "estimated_reused_prefix_chars": int(estimated_reused_prefix_chars or 0),
+        "cache_candidate": bool(cache_candidate),
+        "estimated_metrics": {
+            "completion_tokens_estimated": completion_tokens_estimated,
+            "prefix_reuse_estimated": True,
+        },
+    }
+    logger.info("%s", deterministic_json_dumps(record))
+
+
 async def stream_openai_chat(
     payload: Dict[str, Any],
     *,
@@ -547,12 +680,26 @@ async def stream_openai_chat(
         payload = dict(payload)
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
     payload = _normalize_openai_tools_payload(payload)
+    payload = canonicalize_chat_payload(payload)
+    prefix = prompt_prefix_fingerprint(payload)
+    observed = get_prefix_observation_cache(
+        max_entries=int(getattr(S, "PROMPT_PREFIX_OBSERVATION_CACHE_SIZE", 2048) or 2048)
+    ).observe(
+        model=str(payload.get("model") or ""),
+        upstream=backend_name,
+        prompt_prefix_hash=prefix.prompt_prefix_hash,
+        prefix_chars=prefix.prompt_prefix_chars,
+    )
     allowed_tool_names = allowed_tool_names_from_specs(payload.get("tools")) if "tools" in payload else None
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=str(payload.get("model") or ""))
 
     provider = backend_provider_name(backend_name)
     target = (base_url or _default_base_url_for_provider(provider)).rstrip("/")
 
+    started = time.monotonic()
+    ttft_ms: float | None = None
+    usage: Dict[str, Any] = {}
+    completion_chars = 0
     async with _httpx_client(timeout=None) as client:
         try:
             async with client.stream(
@@ -569,6 +716,13 @@ async def stream_openai_chat(
                     backend_name=backend_name,
                     model_name=str(payload.get("model") or ""),
                 ):
+                    event = _sse_event_from_chunk(chunk)
+                    if event != "[DONE]":
+                        usage = _extract_usage(event) or usage
+                        chars = _extract_stream_text_chars(event)
+                        if chars > 0 and ttft_ms is None:
+                            ttft_ms = round((time.monotonic() - started) * 1000.0, 1)
+                        completion_chars += chars
                     yield chunk
         except httpx.HTTPStatusError as e:
             detail = await _http_status_error_detail(e, upstream=backend_name)
@@ -603,12 +757,34 @@ async def stream_openai_chat(
                 }
             )
             yield sse_done()
+        finally:
+            _emit_chat_latency_log(
+                model=str(payload.get("model") or ""),
+                resolved_model=str(payload.get("model") or ""),
+                upstream=backend_name,
+                stream=True,
+                request_id=request_id,
+                usage=usage,
+                ttft_ms=ttft_ms,
+                total_ms=(time.monotonic() - started) * 1000.0,
+                prompt_prefix_hash=prefix.prompt_prefix_hash,
+                prompt_prefix_chars=prefix.prompt_prefix_chars,
+                estimated_reused_prefix_chars=int(observed.get("estimated_reused_prefix_chars") or 0),
+                cache_candidate=bool(observed.get("cache_candidate")),
+                completion_chars=completion_chars,
+            )
 
 
-async def call_backend_chat(req: ChatCompletionRequest, backend_name: str, model_name: str) -> Dict[str, Any]:
+async def call_backend_chat(
+    req: ChatCompletionRequest,
+    backend_name: str,
+    model_name: str,
+    *,
+    request_id: str | None = None,
+) -> Dict[str, Any]:
     resolved, _provider, base_url = _resolve_backend_target(backend_name)
     routed_req = route_request_for_backend(req, resolved, model_name)
-    return await call_openai_chat(routed_req, base_url=base_url, backend_name=resolved)
+    return await call_openai_chat(routed_req, base_url=base_url, backend_name=resolved, request_id=request_id)
 
 
 def stream_backend_chat_as_openai(

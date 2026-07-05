@@ -833,6 +833,22 @@ def _tool_choice_requires_tools(tool_choice: Any) -> bool:
     return True
 
 
+async def _call_backend_chat_with_request_id(
+    cc: ChatCompletionRequest,
+    backend: str,
+    model_name: str,
+    *,
+    request_id: str,
+) -> Dict[str, Any]:
+    try:
+        return await call_backend_chat(cc, backend, model_name, request_id=request_id)
+    except TypeError as exc:
+        # Backward-compatible fallback for tests that monkeypatch a 3-arg stub.
+        if "request_id" in str(exc):
+            return await call_backend_chat(cc, backend, model_name)
+        raise
+
+
 def _tool_choice_uses_guided_decoding(tool_choice: Any) -> bool:
     if isinstance(tool_choice, str):
         return tool_choice.strip().lower() == "required"
@@ -1347,7 +1363,7 @@ async def chat_completions(req: Request):
             return out
 
         t0 = time.monotonic()
-        resp = await call_backend_chat(cc, backend, model_name)
+        resp = await _call_backend_chat_with_request_id(cc, backend, model_name, request_id=request_id)
         try:
             inst = getattr(req.state, "instrument", None)
             if isinstance(inst, dict):
@@ -1695,7 +1711,7 @@ async def completions(req: Request):
             return out
 
         t0 = time.monotonic()
-        chat_resp = await call_backend_chat(cc, backend, model_name)
+        chat_resp = await _call_backend_chat_with_request_id(cc, backend, model_name, request_id=request_id)
         try:
             inst = getattr(req.state, "instrument", None)
             if isinstance(inst, dict):
@@ -1877,6 +1893,7 @@ async def responses(req: Request):
     """
 
     require_bearer(req)
+    request_id = str(getattr(req.state, "request_id", "") or "-")
     try:
         body = await req.json()
     except Exception as exc:
@@ -2051,7 +2068,7 @@ async def responses(req: Request):
             out.headers["X-Router-Reason"] = route.reason
             return out
 
-        chat_resp = await call_backend_chat(cc, backend, model_name)
+        chat_resp = await _call_backend_chat_with_request_id(cc, backend, model_name, request_id=request_id)
 
         msg = ((chat_resp.get("choices") or [{}])[0].get("message") or {})
 

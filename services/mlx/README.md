@@ -238,6 +238,31 @@ Operational note for `ai2`:
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
 - GLM-5.2 uses the GLM `<tool_call><arg_key>...` chat-template shape, so configure it with the `glm4_moe` tool and reasoning parsers. MiniMax uses custom model code, so its fallback config should set `trust_remote_code: true`.
 
+## Low-Latency GLM-5.2 Notes
+
+For coding-agent workloads, the biggest UX gains come from reducing time-to-first-token (TTFT) and maximizing prompt-prefix reuse:
+
+- Keep `mlx-community/GLM-5.2-DQ4plus-q8` resident (`on_demand: false`) to avoid repeated load penalties.
+- Keep system/developer scaffold stable across turns so MLX can reuse longer prompt prefixes.
+- Prewarm after restarts before routing interactive traffic.
+- Prefer deterministic tool/schema ordering in gateway request construction.
+
+Operator memory tuning on large Apple Silicon hosts can also help stability under very large model pressure.
+
+Example temporary values (session-only, not persistent across reboot):
+
+```bash
+sudo sysctl iogpu.wired_limit_mb=380000
+# or (more aggressive)
+sudo sysctl iogpu.wired_limit_mb=430000
+```
+
+Caution:
+
+- Treat these as operator experiments, not universally safe defaults.
+- Higher wired limits can impact overall system responsiveness and other workloads.
+- Validate with your own stability and thermal envelope before making persistent boot-time changes.
+
 ## Are these models already configured?
 
 Yes, in the current packaged Gateway alias file and MLX config example.

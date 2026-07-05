@@ -19,6 +19,7 @@ The Nexus Gateway is the central API gateway that provides:
 - **Focused UIs**: Gateway-served Chat, Resources, Coding Workspaces, Scheduled Tasks, and media/service UIs
 - **Agent Runtime**: Tiered tools bus, persistent agent run logs, scheduled LLM tasks, and multi-backend coordination
 - **Coding Workspaces**: Isolated git clones with scoped file/command/git APIs, agent runs, local checkpoint commits, pushes, and draft PRs
+- **Prompt Prefix Telemetry**: Optional structured latency logs with deterministic prompt-prefix fingerprinting for cache-reuse analysis on coding workloads
 
 ## Endpoints
 
@@ -133,6 +134,10 @@ AGENT_TASKS_DB_PATH=/var/lib/gateway/data/agent/tasks.sqlite
 CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
 CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
 
+# Prompt-prefix latency telemetry
+PROMPT_PREFIX_TELEMETRY_ENABLED=true
+PROMPT_PREFIX_OBSERVATION_CACHE_SIZE=2048
+
 # Operator config (mounted read-only from the host)
 MODEL_ALIASES_PATH=/var/lib/gateway/config/model_aliases.json
 AGENT_SPECS_PATH=/var/lib/gateway/config/agent_specs.json
@@ -195,6 +200,25 @@ docker compose up gateway
 ### Local Development
 
 The gateway source is vendored into this repo under `services/gateway/app` and `services/gateway/tools`.
+
+### GLM-5.2 Latency Benchmark
+
+Use the dedicated benchmark helper to compare cold and warm prompt-prefix behavior:
+
+```bash
+python services/gateway/tools/benchmark_glm52_latency.py \
+  --base-url http://127.0.0.1:8800/v1 \
+  --model glm-5.2 \
+  --api-key "$NEXUS_API_KEY"
+```
+
+The script emits JSON lines per scenario and a final summary line. By default it runs three inspectable cases:
+
+- `cold_long_prompt`
+- `same_prefix_new_user`
+- `continuation_follow_up`
+
+Each output row includes prompt-prefix hash, prefix length, TTFT, total latency, output token estimate, and decode throughput.
 
 ## API Examples
 

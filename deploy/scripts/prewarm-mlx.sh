@@ -230,7 +230,7 @@ fi
 warmup_url="${mlx_base_url}/chat/completions"
 
 for mlx_model in "${models_to_warm[@]}"; do
-  warmup_payload="{\"model\":\"${mlx_model}\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1,\"temperature\":0}"
+  warmup_payload="{\"model\":\"${mlx_model}\",\"messages\":[{\"role\":\"system\",\"content\":\"Nexus warmup request. Keep output minimal and deterministic.\"},{\"role\":\"user\",\"content\":\"Return exactly: warm\"}],\"max_tokens\":4,\"temperature\":0,\"top_p\":1}"
   if [[ "$WARMUP_TIMEOUT_SEC" == "0" ]]; then
     ns_print_warn "Sending warmup request for ${mlx_model} to ${warmup_url} (timeout disabled)"
     if curl -fsS -X POST "$warmup_url" -H "Content-Type: application/json" -d "$warmup_payload" >/dev/null; then

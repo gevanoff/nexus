@@ -282,6 +282,10 @@ class Settings(BaseSettings):
     # "coder" alias.
     ROUTER_ENABLE_REQUEST_TYPE: bool = False
 
+    # Prompt-prefix determinism and observability.
+    PROMPT_PREFIX_TELEMETRY_ENABLED: bool = True
+    PROMPT_PREFIX_OBSERVATION_CACHE_SIZE: int = 2048
+
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
     #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/GLM-5.2-DQ4plus-q8"}}}'
