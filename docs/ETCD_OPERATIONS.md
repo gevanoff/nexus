@@ -34,8 +34,8 @@ Service registration value shape:
 ```json
 {
   "name": "skyreels-v2",
-  "base_url": "http://ai1:9180",
-  "metadata_url": "http://ai1:9180/v1/metadata",
+  "base_url": "http://stackrot:9180",
+  "metadata_url": "http://stackrot:9180/v1/metadata",
   "backend_class": "skyreels_v2"
 }
 ```
@@ -79,7 +79,7 @@ For each host, set:
 
 Use the helper script to write those values into the host env file.
 
-If you want a 3-member cluster across `ai1`, `ai2`, and `ada2`, all three hosts must use the same:
+If you want a 3-member cluster across `stackrot`, `ai2`, and `ada2`, all three hosts must use the same:
 
 - `ETCD_INITIAL_CLUSTER`
 - `ETCD_INITIAL_CLUSTER_TOKEN`
@@ -91,17 +91,17 @@ If one host still has old etcd data, the fresh members will report cluster ID mi
 Example 3-member cluster string:
 
 ```text
-ai1-etcd=http://ai1:2380,ai2-etcd=http://ai2:2380,ada2-etcd=http://ada2:2380
+stackrot-etcd=http://stackrot:2380,ai2-etcd=http://ai2:2380,ada2-etcd=http://ada2:2380
 ```
 
-Example on `ai1`:
+Example on `stackrot`:
 
 ```bash
 ./deploy/scripts/init-etcd-cluster.sh \
-  --name ai1-etcd \
-  --client-url http://ai1:2379 \
-  --peer-url http://ai1:2380 \
-  --initial-cluster ai1-etcd=http://ai1:2380,ai2-etcd=http://ai2:2380,ada2-etcd=http://ada2:2380
+  --name stackrot-etcd \
+  --client-url http://stackrot:2379 \
+  --peer-url http://stackrot:2380 \
+  --initial-cluster stackrot-etcd=http://stackrot:2380,ai2-etcd=http://ai2:2380,ada2-etcd=http://ada2:2380
 ```
 
 Run the equivalent command on `ai2` and `ada2` with their own member names and URLs.
@@ -121,7 +121,7 @@ For a coordinated clean bootstrap across multiple hosts, use:
 ```bash
 ./deploy/scripts/bootstrap-etcd-cluster.sh \
   --leader ai2-etcd \
-  --member ai1-etcd,ai1,ai@ai1 \
+  --member stackrot-etcd,stackrot,ai@stackrot \
   --member ai2-etcd,ai2,ai@ai2 \
   --member ada2-etcd,ada2,ai@ada2
 ```
@@ -177,7 +177,7 @@ Common cases:
 
 Full rebuild note:
 
-- If `ai2` is part of the cluster, wiping only `ai1` and `ada2` is not a full rebuild.
+- If `ai2` is part of the cluster, wiping only `stackrot` and `ada2` is not a full rebuild.
 - A surviving `ai2` member will keep its old cluster ID, and the wiped members will fail to join it if they were bootstrapped as a different new cluster.
 - A true clean rebuild requires stopping and wiping all members that appear in `ETCD_INITIAL_CLUSTER`.
 
@@ -257,7 +257,7 @@ Auto-registration tuning:
 Register a service manually:
 
 ```bash
-./deploy/scripts/register-service.sh skyreels-v2 http://ai1:9180 http://ai1:2379
+./deploy/scripts/register-service.sh skyreels-v2 http://stackrot:9180 http://stackrot:2379
 ```
 
 List registered services:
@@ -270,7 +270,7 @@ By default the script reads Nexus env config and targets the local host-mapped e
 Pass an explicit URL only when you want to query a different member.
 
 ```bash
-./deploy/scripts/list-services.sh http://ai1:2379
+./deploy/scripts/list-services.sh http://stackrot:2379
 ```
 
 Use raw decoded JSON instead of the default table view:

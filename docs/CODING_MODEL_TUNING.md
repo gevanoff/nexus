@@ -11,7 +11,7 @@ Observed from the local Nexus hosts, with hardware refreshed on 2026-05-21:
 | Host | Runtime | Live model/service | Practical role | Notes |
 | --- | --- | --- | --- | --- |
 | `ai2` | MLX, native macOS | `mlx-community/Qwen3.6-27B-4bit`, `mlx-community/Qwen3-30B-A3B-4bit`, `mlx-community/bge-small-en-v1.5-8bit` | Current best `coder` path | Apple M3 Ultra, 512 GB unified memory. Best control-plane fit for long local coding sessions. |
-| `ai1` | vLLM | `unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M` at `max_model_len=2048`; `BAAI/bge-small-en-v1.5` | Fast short edits and embeddings | Intel Core i7-12700F, about 46 GiB observed RAM, 2x RTX 3090 24 GB. Schedule by per-GPU 24 GB VRAM limits. |
+| `stackrot` | vLLM | `unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M` at `max_model_len=2048`; `BAAI/bge-small-en-v1.5` | Fast short edits and embeddings | Intel Core i7-12700F, about 46 GiB observed RAM, 2x RTX 3090 24 GB. Schedule by per-GPU 24 GB VRAM limits. |
 | `ada2` | vLLM | `unsloth/Qwen3-30B-A3B-FP8` at `max_model_len=2048` | Strong CUDA lane, currently too short for repo coding | RTX 6000 Ada 48 GB class / 46 GiB reported VRAM. Media services share this GPU, so long-context coding needs an explicit resource window. |
 | Gateway | OpenAI-compatible | aliases include `coder`, `fast`, `long`, `reasoning`, `local_mlx`, `local_vllm`, `local_vllm_fast` | Routing and caps | Coding agent should default to the most reliable tool-capable backend, not the fastest chat lane. |
 
@@ -38,7 +38,7 @@ benchmark claims.
 | 3 | `Qwen/Qwen2.5-Coder-32B-Instruct` 4-bit/8-bit on MLX or quantized vLLM | Candidate | Conservative dense fallback for repo debugging | Proven coding model family and strong instruction behavior | Dense 32B is slower and heavier than 30B-A3B MoE; use 32K first before YaRN. |
 | 4 | `deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct` GGUF/Ollama or vLLM if supported | Candidate | `coding_fast`, small fixes, low-latency review | Small active parameter count and 128K context | Older model; function/tool behavior and dependency freshness need eval. |
 | 5 | `unsloth/Qwen3-30B-A3B-FP8` on `ada2` vLLM | Live | General reasoning and architecture notes | Strong local reasoning/chat lane | Not coding-tuned and currently served at 2K context, which is inadequate for repo coding. |
-| 6 | `unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M` on `ai1` vLLM | Live | Quick explanations and tiny edits | Fast lane is already online | 2K context, Q4 quality, and non-coder training make it risky for multi-file edits. |
+| 6 | `unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M` on `stackrot` vLLM | Live | Quick explanations and tiny edits | Fast lane is already online | 2K context, Q4 quality, and non-coder training make it risky for multi-file edits. |
 
 ## Recommended Profiles
 
@@ -136,7 +136,7 @@ timeout_sec: 600 for repo tasks
 structured/tool support: enable only after Qwen tool-call format is verified through Gateway
 ```
 
-### `ai1` vLLM fast lane
+### `stackrot` vLLM fast lane
 
 The fast lane should stay latency-oriented.
 
@@ -318,7 +318,7 @@ JSONL schema fields include:
   "model": "gateway model or alias",
   "quantization": "operator supplied",
   "runtime": "mlx/vllm/ollama/llama.cpp",
-  "host": "ai1/ai2/ada2",
+  "host": "stackrot/ai2/ada2",
   "context_length": 32768,
   "temperature": 0.2,
   "top_p": 0.85,

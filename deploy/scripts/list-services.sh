@@ -23,7 +23,7 @@ Usage: deploy/scripts/list-services.sh [--yes] [--json] [etcd-url]
 
 Example:
   deploy/scripts/list-services.sh
-  deploy/scripts/list-services.sh http://ai1:2379
+  deploy/scripts/list-services.sh http://stackrot:2379
 
 Options:
   --yes    Non-interactive mode (assume "yes" for install prompts)

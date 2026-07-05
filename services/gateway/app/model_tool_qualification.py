@@ -17,7 +17,7 @@ from app.config import S, logger
 from app.health_checker import check_backend_ready
 from app.model_benchmark import clean_model_list, error_text, iter_sse_payloads
 from app.models import ChatCompletionRequest, ChatMessage
-from app.openai_utils import now_unix
+from app.openai_utils import now_unix, tool_call_name_error
 from app.router import decide_route
 from app.router_cfg import router_cfg
 from app.upstreams import call_backend_chat, stream_backend_chat_as_openai
@@ -406,7 +406,10 @@ def _validate_tool_call(
         function = {}
 
     name = str(function.get("name") or "").strip()
-    if name != expected_name:
+    name_error = tool_call_name_error(name)
+    if name_error:
+        errors.append(f"{name_error}: {_short_snippet(name) or '<missing>'}")
+    elif name != expected_name:
         errors.append(f"tool call name {name or '<missing>'} != {expected_name}")
 
     args, arg_error = _parse_arguments(function.get("arguments"))

@@ -56,7 +56,7 @@ def test_scheduled_prompt_includes_preface(tmp_path, monkeypatch):
     assert prompt.startswith("Automatic preface\n\nA scheduled Nexus agent task is due.")
     assert "Nexus production host hardware context" in prompt
     assert "ai2: macos_arm64; Apple M3 Ultra" in prompt
-    assert "ai1: linux_x86_64; 12th Gen Intel Core i7-12700F" in prompt
+    assert "stackrot: linux_x86_64; 12th Gen Intel Core i7-12700F" in prompt
     assert "NVIDIA GeForce RTX 3090 24 GiB; NVIDIA GeForce RTX 3090 24 GiB" in prompt
     assert "ada2: linux_x86_64; 13th Gen Intel Core i7-13700K" in prompt
     assert "meltdown: linux_x86_64; Intel Core i7-5930K" in prompt

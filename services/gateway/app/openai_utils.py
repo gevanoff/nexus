@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 from typing import Any
@@ -127,6 +128,129 @@ def _append_hidden_fields(target: dict[str, Any], text: str) -> None:
         _append_text_field(target, field, text)
 
 
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def allowed_tool_names_from_specs(tools: Any) -> set[str] | None:
+    if not isinstance(tools, list):
+        return None
+    names: set[str] = set()
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return names
+
+
+def _normalize_allowed_tool_names(allowed_tool_names: Any) -> set[str] | None:
+    if allowed_tool_names is None:
+        return None
+    if not isinstance(allowed_tool_names, (set, list, tuple)):
+        return None
+    out = {str(name).strip() for name in allowed_tool_names if str(name).strip()}
+    return out
+
+
+def tool_call_name_error(name: Any, allowed_tool_names: Any = None) -> str | None:
+    if not isinstance(name, str) or not name.strip():
+        return "missing tool name"
+    normalized = name.strip()
+    if normalized != name or not _TOOL_NAME_RE.fullmatch(normalized):
+        return "malformed tool name"
+    allowed = _normalize_allowed_tool_names(allowed_tool_names)
+    if allowed is not None and normalized not in allowed:
+        return "unknown tool name"
+    return None
+
+
+def _tool_name_snippet(name: Any, *, limit: int = 160) -> str:
+    text = name if isinstance(name, str) else str(name)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _tool_diagnostic(
+    *,
+    name: Any,
+    reason: str,
+    allowed_tool_names: set[str] | None,
+    stream_index: int | None = None,
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "reason": reason,
+        "name": _tool_name_snippet(name),
+    }
+    if allowed_tool_names is not None:
+        allowed = sorted(allowed_tool_names)
+        out["allowed_tool_count"] = len(allowed)
+        out["allowed_tool_names"] = allowed[:20]
+    if stream_index is not None:
+        out["stream_index"] = stream_index
+    return out
+
+
+class ToolCallValidationState:
+    def __init__(self, allowed_tool_names: Any = None) -> None:
+        self.allowed_tool_names = _normalize_allowed_tool_names(allowed_tool_names)
+        self.invalid_stream_indexes: set[int] = set()
+        self.valid_stream_indexes: set[int] = set()
+        self.invalid_count = 0
+        self.valid_count = 0
+        self.notice_emitted = False
+
+    @staticmethod
+    def stream_index(tool_call: dict[str, Any]) -> int | None:
+        try:
+            return int(tool_call.get("index"))
+        except Exception:
+            return None
+
+    def filter_stream_tool_calls(
+        self,
+        tool_calls: list[Any],
+        *,
+        diagnostics: list[dict[str, Any]] | None = None,
+    ) -> list[Any]:
+        out: list[Any] = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                out.append(tool_call)
+                continue
+            index = self.stream_index(tool_call)
+            if index is not None and index in self.invalid_stream_indexes:
+                continue
+            function = tool_call.get("function")
+            name = function.get("name") if isinstance(function, dict) else None
+            if isinstance(name, str) and name.strip():
+                reason = tool_call_name_error(name, self.allowed_tool_names)
+                if reason:
+                    self.invalid_count += 1
+                    if index is not None:
+                        self.invalid_stream_indexes.add(index)
+                    if diagnostics is not None:
+                        diagnostics.append(
+                            _tool_diagnostic(
+                                name=name,
+                                reason=reason,
+                                allowed_tool_names=self.allowed_tool_names,
+                                stream_index=index,
+                            )
+                        )
+                    continue
+                self.valid_count += 1
+                if index is not None:
+                    self.valid_stream_indexes.add(index)
+            out.append(tool_call)
+        return out
+
+
 def openai_arguments_string(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -214,13 +338,58 @@ def _normalize_tool_calls(value: Any, *, stream_delta: bool) -> Any:
     return normalize_tool_calls_for_openai(value, stream_delta=stream_delta)
 
 
-def sanitize_chat_choices(payload: Any, *, stream_parser: ThinkTagStreamParser | None = None) -> Any:
+def _filter_nonstream_tool_calls(
+    tool_calls: Any,
+    *,
+    allowed_tool_names: set[str] | None,
+    diagnostics: list[dict[str, Any]] | None = None,
+) -> tuple[Any, int]:
+    if not isinstance(tool_calls, list):
+        return tool_calls, 0
+    out: list[Any] = []
+    dropped = 0
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            out.append(tool_call)
+            continue
+        function = tool_call.get("function")
+        name = function.get("name") if isinstance(function, dict) else None
+        reason = tool_call_name_error(name, allowed_tool_names)
+        if reason:
+            dropped += 1
+            if diagnostics is not None:
+                diagnostics.append(
+                    _tool_diagnostic(
+                        name=name,
+                        reason=reason,
+                        allowed_tool_names=allowed_tool_names,
+                    )
+                )
+            continue
+        out.append(tool_call)
+    return out, dropped
+
+
+def _invalid_tool_notice() -> str:
+    return "Nexus suppressed an invalid backend tool call. Retry with a validated tool-calling model."
+
+
+def sanitize_chat_choices(
+    payload: Any,
+    *,
+    stream_parser: ThinkTagStreamParser | None = None,
+    allowed_tool_names: Any = None,
+    tool_diagnostics: list[dict[str, Any]] | None = None,
+    stream_tool_state: ToolCallValidationState | None = None,
+) -> Any:
     if not isinstance(payload, dict):
         return payload
 
     choices = payload.get("choices")
     if not isinstance(choices, list):
         return payload
+
+    allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
     for choice in choices:
         if not isinstance(choice, dict):
@@ -229,7 +398,22 @@ def sanitize_chat_choices(payload: Any, *, stream_parser: ThinkTagStreamParser |
         delta = choice.get("delta")
         if isinstance(delta, dict):
             if "tool_calls" in delta:
-                delta["tool_calls"] = _normalize_tool_calls(delta.get("tool_calls"), stream_delta=True)
+                before = delta.get("tool_calls")
+                normalized_tool_calls = _normalize_tool_calls(before, stream_delta=True)
+                if stream_tool_state is not None and isinstance(normalized_tool_calls, list):
+                    filtered = stream_tool_state.filter_stream_tool_calls(
+                        normalized_tool_calls,
+                        diagnostics=tool_diagnostics,
+                    )
+                    if filtered:
+                        delta["tool_calls"] = filtered
+                    else:
+                        delta.pop("tool_calls", None)
+                        if normalized_tool_calls and not stream_tool_state.notice_emitted:
+                            _append_text_field(delta, "content", _invalid_tool_notice())
+                            stream_tool_state.notice_emitted = True
+                else:
+                    delta["tool_calls"] = normalized_tool_calls
             content = delta.get("content")
             if isinstance(content, str):
                 visible, hidden = stream_parser.feed(content) if stream_parser else split_think_content(content)
@@ -240,6 +424,19 @@ def sanitize_chat_choices(payload: Any, *, stream_parser: ThinkTagStreamParser |
         if isinstance(message, dict):
             if "tool_calls" in message:
                 message["tool_calls"] = _normalize_tool_calls(message.get("tool_calls"), stream_delta=False)
+                message["tool_calls"], dropped = _filter_nonstream_tool_calls(
+                    message.get("tool_calls"),
+                    allowed_tool_names=allowed,
+                    diagnostics=tool_diagnostics,
+                )
+                if not message.get("tool_calls"):
+                    message.pop("tool_calls", None)
+                    if dropped:
+                        if not isinstance(message.get("content"), str) or not str(message.get("content") or "").strip():
+                            message["content"] = _invalid_tool_notice()
+                        if choice.get("finish_reason") in {None, "", "stop", "tool_calls"}:
+                            choice["finish_reason"] = "stop"
+                    continue
                 if message.get("tool_calls") and choice.get("finish_reason") in {None, "", "stop"}:
                     choice["finish_reason"] = "tool_calls"
             content = message.get("content")

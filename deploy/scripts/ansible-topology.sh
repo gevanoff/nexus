@@ -25,13 +25,13 @@ Commands:
   site        Run ansible/playbooks/site.yml, optionally limited to one topology host.
 
 Host:
-  ai1 | ai2 | ada2 | meltdown | copyfail | all
+  stackrot | ai2 | ada2 | meltdown | copyfail | all
   Omit the host (or use all) to target the full topology.
 
 Examples:
   ./deploy/scripts/ansible-topology.sh inventory
   ./deploy/scripts/ansible-topology.sh inventory -- --host ai2
-  ./deploy/scripts/ansible-topology.sh bootstrap ai1 -- --check
+  ./deploy/scripts/ansible-topology.sh bootstrap stackrot -- --check
   ./deploy/scripts/ansible-topology.sh deploy ada2
   ./deploy/scripts/ansible-topology.sh bootstrap meltdown
   ./deploy/scripts/ansible-topology.sh bootstrap copyfail
@@ -76,7 +76,7 @@ case "$command_name" in
       ""|all)
         host_limit=""
         ;;
-      ai1|ai2|ada2|meltdown|copyfail)
+      stackrot|ai2|ada2|meltdown|copyfail)
         ;;
       *)
         ns_print_error "Unknown topology host: ${host_limit}"

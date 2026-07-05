@@ -2971,7 +2971,7 @@ Use the Nexus Coding API for workspace operations. Prefer a tight loop:
 
 Constraints:
 - Work only inside this task workspace repo.
-- Treat plain vLLM chat/embedding models as model availability/configuration changes on ai1 or ada2 lanes, not new backends.
+- Treat plain vLLM chat/embedding models as model availability/configuration changes on stackrot or ada2 lanes, not new backends.
 - Commands are argv arrays, not shell strings.
 - Blocked git operations include reset, clean, rebase, merge, restore, rm, and filter-branch.
 """

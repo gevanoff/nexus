@@ -18,7 +18,7 @@ Do not treat etcd as the deployment plan. etcd is the live runtime registry:
 
 Current tracked topology:
 
-- `production.json`: canonical placement for `ai1`, `ai2`, `ada2`, `meltdown`, and `copyfail`
+- `production.json`: canonical placement for `stackrot`, `ai2`, `ada2`, `meltdown`, and `copyfail`
 - `migraine` is intentionally not a deploy target in this manifest. It is a client-only Hermes Gateway / Telegram host that consumes Nexus models through the gateway.
 
 Typical workflow:
@@ -34,8 +34,8 @@ Use the helper when a backend family needs to move between tracked hosts:
 
 ```bash
 ./deploy/scripts/reassign-topology-family.sh --family vllm --from ai2 --to ada2 --write
-./deploy/scripts/reassign-topology-family.sh --family tts --from ai1 --to ai2 --write
-./deploy/scripts/reassign-topology-family.sh --family qwen3-tts --from ai1 --to ai2 --components-mode ignore --write
+./deploy/scripts/reassign-topology-family.sh --family tts --from stackrot --to ai2 --write
+./deploy/scripts/reassign-topology-family.sh --family qwen3-tts --from stackrot --to ai2 --components-mode ignore --write
 ```
 
 Supported families today:
@@ -56,7 +56,7 @@ Compatibility note:
 - The current vLLM deploy path can be assigned either as the monolithic `vllm` profile or as split lanes: `vllm-strong`, `vllm-fast`, and `vllm-embeddings`.
 - All vLLM profiles are GPU-bound (`docker-compose.vllm*.yml` uses `gpus: all`), so they should only be assigned to GPU-capable hosts.
 - The tracked `vllm` defaults may require Hugging Face auth or higher rate limits, so set `HUGGING_FACE_HUB_TOKEN` on the destination host when needed.
-- `ai1` has two RTX 3090 24GB GPUs. Treat it as two separate 24GB VRAM lanes, not as one large-memory device.
+- `stackrot` has two RTX 3090 24GB GPUs. Treat it as two separate 24GB VRAM lanes, not as one large-memory device.
 - `ada2` has 128GB system RAM and a 48GB RTX 6000 Ada. Use the RAM for vLLM CPU offload and startup headroom, but continue to schedule CUDA services by VRAM pressure.
 - `meltdown` has Ubuntu 22.04, about 47GB system RAM, and a 16GB RTX 5060 Ti. It currently owns SDXL-Turbo and the vLLM embeddings lane; treat it as a lighter CUDA overflow/staging host, not a replacement for `ada2`.
 - `copyfail` has Ubuntu 22.04, an Intel Celeron J3355, 2 logical CPUs, and about 7.4GiB system RAM. It is an infrastructure-only host for metrics collection, deployment orchestration, and general IT operations; do not assign model-serving backends to it.
@@ -67,11 +67,11 @@ Compatibility note:
 vLLM automatic tool parsing is enabled only for production chat lanes whose model, chat template, and parser combinations have been validated end to end:
 
 - strong lane (`ada2`): auto tool parsing is enabled with vLLM's `xlam` parser and `/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja`. This lane backs tools-capable aliases such as `fast-reasoning`.
-- fast lane (`ai1`): auto tool parsing is disabled. vLLM 0.10.2 runs this Devstral lane with the matching tokenizer in `mistral` tokenizer mode, but the lane is not validated for native automatic structured tool-call parsing.
+- fast lane (`stackrot`): auto tool parsing is disabled. vLLM 0.10.2 runs this Devstral lane with the matching tokenizer in `mistral` tokenizer mode, but the lane is not validated for native automatic structured tool-call parsing.
 
 The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated automatic tool parsing and must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` requests with `tool_choice=auto` may be passed to a backend that is not actually returning structured tool calls. Required and named tool choices are still allowed through vLLM because they use guided decoding instead of the automatic parser.
 
-The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `ai1` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. `meltdown` currently serves the vLLM embeddings lane only; there is no chat tool-call surface on that host unless a chat model is assigned there.
+The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `stackrot` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. `meltdown` currently serves the vLLM embeddings lane only; there is no chat tool-call surface on that host unless a chat model is assigned there.
 
 The strong vLLM chat lane is configured for a 32768-token context. Hermes' default tool prompt measured about 16K input tokens, so the earlier 8192-token canary was still too small for Hermes/Continue requests once tool schemas, history, and file context were included. Raise beyond 32768 only as a staged canary because longer contexts increase KV-cache memory, prefill latency, and startup/OOM risk. The fast lane remains at 8192 until automatic tool parsing is validated there separately.
 
@@ -87,7 +87,7 @@ SMOKE_CASES=required,named,none BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-
 
 The ai2 gateway runs in Colima. On this host, the Colima VM may be able to reach ai2 host services while failing to connect directly to the remote LAN model backends. The production ai2 topology therefore points gateway vLLM URLs at loopback host proxies reachable from containers through `host.docker.internal`:
 
-- `VLLM_FAST_BASE_URL=http://host.docker.internal:18001/v1` forwards to `ai1:8001`
+- `VLLM_FAST_BASE_URL=http://host.docker.internal:18001/v1` forwards to `stackrot:8001`
 - `VLLM_EMBEDDINGS_BASE_URL=http://host.docker.internal:18002/v1` forwards to `meltdown:8002`
 - `VLLM_BASE_URL=http://host.docker.internal:18003/v1` forwards to `ada2:8003`
 

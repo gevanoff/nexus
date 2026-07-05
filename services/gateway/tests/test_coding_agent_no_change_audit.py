@@ -641,7 +641,7 @@ def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypat
             self.backends = {
                 "local_mlx": FakeBackend("http://ai2:10240/v1", 2, "mlx", {"supports_tool_calling": True}),
                 "local_vllm": FakeBackend("http://ada2:8000/v1", 4, "vllm", {"supports_tool_calling": False}),
-                "local_vllm_fast": FakeBackend("http://ai1:8001/v1", 4, "vllm", {"supports_tool_calling": False}),
+                "local_vllm_fast": FakeBackend("http://stackrot:8001/v1", 4, "vllm", {"supports_tool_calling": False}),
             }
 
         def get_backend(self, backend_name: str):
@@ -666,7 +666,7 @@ def test_rank_coding_backend_candidates_prefers_less_loaded_ready_host(monkeypat
     monkeypatch.setattr(ca, "get_health_checker", lambda: FakeChecker())
     monkeypatch.setattr(ca, "get_admission_controller", lambda: FakeAdmission())
     monkeypatch.setattr(ca, "llm_backends", lambda: [("local_mlx", object()), ("local_vllm", object()), ("local_vllm_fast", object())])
-    monkeypatch.setattr(ca, "backend_hostname", lambda backend_name, **kwargs: {"local_mlx": "ai2", "local_vllm": "ada2", "local_vllm_fast": "ai1"}[backend_name])
+    monkeypatch.setattr(ca, "backend_hostname", lambda backend_name, **kwargs: {"local_mlx": "ai2", "local_vllm": "ada2", "local_vllm_fast": "stackrot"}[backend_name])
     monkeypatch.setattr(ca, "default_model_for_backend", lambda backend_name, cfg: f"model-for-{backend_name}")
 
     ranked = ca._rank_coding_backend_candidates("coder", "local_mlx", "model-for-local_mlx")

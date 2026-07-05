@@ -14,7 +14,7 @@ from app.config import S
 
 NEXUS_HARDWARE_VERIFIED_AT = "2026-05-26"
 NEXUS_HARDWARE_SNAPSHOT_VERSION = 1
-PRODUCTION_CONTEXT_HOSTS = ("ai2", "ai1", "ada2", "meltdown", "copyfail")
+PRODUCTION_CONTEXT_HOSTS = ("ai2", "stackrot", "ada2", "meltdown", "copyfail")
 KNOWN_NON_PRODUCTION_HOSTS = ("migraine",)
 
 
@@ -28,7 +28,7 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
         "role": "Primary gateway/control-plane host, host-native MLX reasoning/coding lane, and containerized TTS host.",
         "notes": "Best fit for MLX and CPU/unified-memory workloads. Not a CUDA host.",
     },
-    "ai1": {
+    "stackrot": {
         "platform": "linux_x86_64",
         "cpu": "12th Gen Intel Core i7-12700F",
         "cpu_cores": "20 logical CPUs",

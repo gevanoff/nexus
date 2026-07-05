@@ -269,6 +269,44 @@ def test_evaluate_tool_response_rejects_bare_raw_tool_text():
     assert result["raw_tool_like_snippet"]
 
 
+def test_evaluate_tool_response_rejects_contaminated_tool_call_name():
+    case = qual.ToolQualificationCase(
+        name="auto",
+        category="auto",
+        prompt="",
+        tool_choice="auto",
+        expect_tool=True,
+        expected_city="Paris",
+    )
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_bad",
+                            "type": "function",
+                            "function": {
+                                "name": "grep_dirs</arg_value>pattern</arg_key><arg_value>stackrot</arg_value>",
+                                "arguments": json.dumps({"city": "Paris"}),
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+
+    result = qual.evaluate_tool_response(response, case)
+
+    assert result["ok"] is False
+    assert "malformed tool name" in result["error"]
+    assert result["tool_calls"][0]["name"].startswith("grep_dirs</arg_value>")
+
+
 def test_qualification_status_blocks_failed_result(tmp_path):
     path = tmp_path / "tools.jsonl"
     item = {

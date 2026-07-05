@@ -35,11 +35,11 @@
     }
   },
   "hosts": {
-    "ai1": {
+    "stackrot": {
       "resource_kind": "linux_nvidia",
       "ssh_connect_target": "ai@host.docker.internal",
       "ssh_port": 19022,
-      "env_file": "deploy/env/.env.prod.ai1"
+      "env_file": "deploy/env/.env.prod.stackrot"
     },
     "ai2": {
       "resource_kind": "macos",
@@ -195,7 +195,7 @@
     },
     "local_vllm_fast": {
       "display_name": "vLLM Fast",
-      "host": "ai1",
+      "host": "stackrot",
       "component": "vllm-fast",
       "tier": "high",
       "capabilities": ["chat"],
@@ -216,7 +216,7 @@
       "auto_stop": false,
       "compose_file": "docker-compose.vllm-embeddings.yml",
       "ready_path": "/models",
-      "notes": "Assigned to meltdown's 16GB RTX 5060 Ti as the lightweight vLLM embeddings lane. Keep chat lanes on ai1/ada2 unless measurements prove they fit."
+      "notes": "Assigned to meltdown's 16GB RTX 5060 Ti as the lightweight vLLM embeddings lane. Keep chat lanes on stackrot/ada2 unless measurements prove they fit."
     },
     "gpu_fast": {
       "display_name": "SDXL-Turbo",

@@ -11,10 +11,10 @@ Host-native MLX OpenAI-compatible service integration for Nexus.
 ## Current Host Profile Guidance (verified 2026-05-21)
 
 - `ai2` (Mac M3 Ultra, macOS 15.6, 512GB unified memory): primary host for host-native `mlx` and the Apple Silicon reasoning/coding path.
-- `ai1` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x GeForce RTX 3090 24GB): secondary Linux/NVIDIA node suitable for `vllm`, embeddings, and overflow CUDA workloads when the topology assigns them there.
+- `stackrot` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x GeForce RTX 3090 24GB): secondary Linux/NVIDIA node suitable for `vllm`, embeddings, and overflow CUDA workloads when the topology assigns them there.
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary Linux/NVIDIA node for the heaviest CUDA workloads and the largest `vllm`/image/video profiles.
 
-Use this split to avoid cross-host contention: Apple Silicon-native `mlx` on `ai2`, Linux/NVIDIA `vllm` and CUDA workloads on `ai1`/`ada2`, and exact live placement tracked in `deploy/topology/production.json`.
+Use this split to avoid cross-host contention: Apple Silicon-native `mlx` on `ai2`, Linux/NVIDIA `vllm` and CUDA workloads on `stackrot`/`ada2`, and exact live placement tracked in `deploy/topology/production.json`.
 
 ## Platform Compatibility
 

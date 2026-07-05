@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import asyncio
+import logging
 from typing import Any, AsyncIterator, Dict
 
 import httpx
 
-from app.openai_utils import ThinkTagStreamParser, new_id, now_unix, sanitize_chat_choices, sse, sse_done
+from app.openai_utils import ToolCallValidationState, ThinkTagStreamParser, new_id, now_unix, sanitize_chat_choices, sse, sse_done
+
+
+log = logging.getLogger("uvicorn.error")
 
 
 def _append_text_field(target: Dict[str, Any], field: str, text: str) -> None:
@@ -54,6 +58,42 @@ def _has_terminal_choice(obj: Any) -> bool:
     return False
 
 
+def _downgrade_invalid_tool_finish(obj: Any, state: ToolCallValidationState) -> None:
+    if state.invalid_count <= 0 or state.valid_count > 0:
+        return
+    if not isinstance(obj, dict):
+        return
+    choices = obj.get("choices")
+    if not isinstance(choices, list):
+        return
+    for choice in choices:
+        if isinstance(choice, dict) and choice.get("finish_reason") == "tool_calls":
+            choice["finish_reason"] = "stop"
+
+
+def _log_invalid_tool_diagnostics(
+    diagnostics: list[dict[str, Any]],
+    *,
+    request_id: str | None,
+    backend_name: str,
+    model_name: str,
+) -> None:
+    if not diagnostics:
+        return
+    for item in diagnostics[:5]:
+        log.warning(
+            "openai stream suppressed invalid backend tool call request_id=%s backend=%s model=%s reason=%s name=%r stream_index=%s allowed_tool_count=%s allowed_tools=%s",
+            request_id or "-",
+            backend_name or "-",
+            model_name or "-",
+            item.get("reason") or "",
+            item.get("name") or "",
+            item.get("stream_index"),
+            item.get("allowed_tool_count"),
+            item.get("allowed_tool_names"),
+        )
+
+
 def _normalize_stream_error_payload(payload: Any, *, request_id: str | None = None) -> Any:
     if not isinstance(payload, dict):
         return payload
@@ -75,7 +115,14 @@ def _normalize_stream_error_payload(payload: Any, *, request_id: str | None = No
     return normalized
 
 
-async def passthrough_sse(resp: httpx.Response, *, request_id: str | None = None) -> AsyncIterator[bytes]:
+async def passthrough_sse(
+    resp: httpx.Response,
+    *,
+    request_id: str | None = None,
+    allowed_tool_names: Any = None,
+    backend_name: str = "",
+    model_name: str = "",
+) -> AsyncIterator[bytes]:
     """
     Normalize upstream OpenAI-style SSE while preserving explicit reasoning side
     channels and strict OpenAI chunk ordering.
@@ -84,6 +131,7 @@ async def passthrough_sse(resp: httpx.Response, *, request_id: str | None = None
     terminal_seen = False
     last_model = ""
     parser = ThinkTagStreamParser()
+    tool_state = ToolCallValidationState(allowed_tool_names)
     try:
         async for line in resp.aiter_lines():
             if not line:
@@ -133,7 +181,21 @@ async def passthrough_sse(resp: httpx.Response, *, request_id: str | None = None
                     )
                 continue
 
-            sanitized = sanitize_chat_choices(obj, stream_parser=parser)
+            diagnostics: list[dict[str, Any]] = []
+            sanitized = sanitize_chat_choices(
+                obj,
+                stream_parser=parser,
+                allowed_tool_names=allowed_tool_names,
+                tool_diagnostics=diagnostics,
+                stream_tool_state=tool_state,
+            )
+            _downgrade_invalid_tool_finish(sanitized, tool_state)
+            _log_invalid_tool_diagnostics(
+                diagnostics,
+                request_id=request_id,
+                backend_name=backend_name,
+                model_name=model_name or last_model,
+            )
             if _has_terminal_choice(sanitized):
                 terminal_seen = True
                 tail_visible, tail_hidden = parser.flush()

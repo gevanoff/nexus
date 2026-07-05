@@ -243,7 +243,7 @@ class Settings(BaseSettings):
     ETCD_TIMEOUT_SEC: float = 5.0
 
     # vLLM-backed lightweight/utility models, typically hosted on Linux/NVIDIA
-    # nodes such as ai1 or ada2.
+    # nodes such as stackrot or ada2.
     VLLM_MODEL_STRONG: str = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
     VLLM_MODEL_FAST: str = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     VLLM_MODEL_DEFAULT: str = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"

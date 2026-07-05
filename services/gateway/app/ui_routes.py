@@ -489,7 +489,7 @@ def _request_url_port(req: Request) -> Optional[int]:
 
 def _public_proxy_hostname(hostname: str) -> str:
     host = (hostname or "").strip().strip("[]")
-    if host.lower() in {"ai1", "ai2", "migraine", "ada2", "meltdown", "copyfail", "adada"}:
+    if host.lower() in {"stackrot", "ai2", "migraine", "ada2", "meltdown", "copyfail", "adada"}:
         return f"{host}.local"
     return host
 

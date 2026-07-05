@@ -5,7 +5,7 @@ Use this directory for host-specific Ansible overrides that should not live in t
 Typical examples:
 
 - `ansible/inventory/host_vars/ai2.yml`
-- `ansible/inventory/host_vars/ai1.yml`
+- `ansible/inventory/host_vars/stackrot.yml`
 - `ansible/inventory/host_vars/ada2.yml`
 - `ansible/inventory/host_vars/meltdown.yml`
 

@@ -15,8 +15,20 @@ class FakeSseResponse:
             yield line
 
 
-async def _collect(resp: FakeSseResponse, *, request_id: str | None = None) -> list[bytes]:
-    return [chunk async for chunk in passthrough_sse(resp, request_id=request_id)]
+async def _collect(
+    resp: FakeSseResponse,
+    *,
+    request_id: str | None = None,
+    allowed_tool_names=None,
+) -> list[bytes]:
+    return [
+        chunk
+        async for chunk in passthrough_sse(
+            resp,
+            request_id=request_id,
+            allowed_tool_names=allowed_tool_names,
+        )
+    ]
 
 
 def _payloads(chunks: list[bytes]) -> list[dict]:
@@ -119,6 +131,77 @@ def test_passthrough_sse_appends_done_after_terminal_tool_calls_without_upstream
     )
     assert chunks[-1] == b"data: [DONE]\n\n"
     assert _done_count(chunks) == 1
+
+
+def test_passthrough_sse_suppresses_contaminated_tool_name_and_followup_chunks():
+    bad_tool_name = "grep_dirs</arg_value>pattern</arg_key><arg_value>stackrot</arg_value>"
+    first_chunk = {
+        "id": "upstream",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "mlx-test",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_bad",
+                            "type": "function",
+                            "function": {"name": bad_tool_name},
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+    followup_chunk = {
+        "id": "upstream",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "mlx-test",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "function": {"arguments": '{"path":"nexus"}'},
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    terminal_chunk = {
+        "id": "upstream",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "mlx-test",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+    }
+    resp = FakeSseResponse(
+        [
+            f"data: {json.dumps(first_chunk)}",
+            f"data: {json.dumps(followup_chunk)}",
+            f"data: {json.dumps(terminal_chunk)}",
+        ]
+    )
+
+    chunks = asyncio.run(_collect(resp, allowed_tool_names={"grep_dirs"}))
+    payloads = _payloads(chunks)
+
+    assert not any(payload["choices"][0].get("delta", {}).get("tool_calls") for payload in payloads)
+    assert any(
+        "suppressed an invalid backend tool call" in payload["choices"][0].get("delta", {}).get("content", "")
+        for payload in payloads
+    )
+    assert any(payload["choices"][0].get("finish_reason") == "stop" for payload in payloads)
+    assert not any(payload["choices"][0].get("finish_reason") == "tool_calls" for payload in payloads)
+    assert chunks[-1] == b"data: [DONE]\n\n"
 
 
 def test_passthrough_sse_does_not_duplicate_upstream_done_after_terminal_stop():

@@ -31,7 +31,7 @@ This guide answers three practical questions:
 2. Start remote backend services using `deploy/docker-compose/*.yml` or `deploy/containerd/*.yml`, with `NEXUS_RUNTIME_ROOT` set explicitly in the selected host env file.
 3. Register remote backends in etcd:
    ```bash
-   ./deploy/scripts/register-service.sh ollama http://ai1:11434 http://ai2:2379
+   ./deploy/scripts/register-service.sh ollama http://stackrot:11434 http://ai2:2379
    ```
 4. Verify discovered services from gateway host.
 

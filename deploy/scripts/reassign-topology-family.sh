@@ -32,9 +32,9 @@ Supported families:
   qwen3-tts
 
 Examples:
-  deploy/scripts/reassign-topology-family.sh --family vllm --from ai1 --to ada2 --write
-  deploy/scripts/reassign-topology-family.sh --family tts --from ai1 --to ai2 --write
-  deploy/scripts/reassign-topology-family.sh --family qwen3-tts --from ai1 --to ai2 --components-mode ignore --write
+  deploy/scripts/reassign-topology-family.sh --family vllm --from stackrot --to ada2 --write
+  deploy/scripts/reassign-topology-family.sh --family tts --from stackrot --to ai2 --write
+  deploy/scripts/reassign-topology-family.sh --family qwen3-tts --from stackrot --to ai2 --components-mode ignore --write
 EOF
 }
 

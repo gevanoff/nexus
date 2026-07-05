@@ -7,7 +7,7 @@ This port preserves both proxy mode and subprocess mode from `ai-infra`, but the
 ## Runtime
 
 - Recommended host: `ada2`
-- Possible host: `ai1` if VRAM is sufficient
+- Possible host: `stackrot` if VRAM is sufficient
 - Default port: `9155`
 - The container is ready at idle without holding persistent VRAM; model load occurs inside the request subprocess.
 

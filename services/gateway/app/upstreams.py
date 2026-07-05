@@ -11,7 +11,7 @@ from app.config import S, logger
 from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
-from app.openai_utils import normalize_tool_calls_for_openai, sanitize_chat_choices, sse, sse_done
+from app.openai_utils import allowed_tool_names_from_specs, normalize_tool_calls_for_openai, sanitize_chat_choices, sse, sse_done
 from app.streaming import passthrough_sse
 
 
@@ -249,6 +249,39 @@ def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name:
     return payload
 
 
+def _log_invalid_response_tool_calls(
+    diagnostics: list[dict[str, Any]],
+    *,
+    backend_name: str,
+    model_name: str,
+    request_id: str | None = None,
+    stream: bool = False,
+) -> None:
+    if not diagnostics:
+        return
+    for item in diagnostics[:5]:
+        logger.warning(
+            "openai response suppressed invalid backend tool call request_id=%s backend=%s model=%s stream=%s reason=%s name=%r allowed_tool_count=%s allowed_tools=%s",
+            request_id or "-",
+            backend_name,
+            model_name,
+            stream,
+            item.get("reason") or "",
+            item.get("name") or "",
+            item.get("allowed_tool_count"),
+            item.get("allowed_tool_names"),
+        )
+    if len(diagnostics) > 5:
+        logger.warning(
+            "openai response suppressed %s additional invalid backend tool calls request_id=%s backend=%s model=%s stream=%s",
+            len(diagnostics) - 5,
+            request_id or "-",
+            backend_name,
+            model_name,
+            stream,
+        )
+
+
 def _mlx_glm_input_chars(req: ChatCompletionRequest) -> int:
     payload = req.model_dump(
         include={"messages", "tools", "tool_choice", "response_format", "chat_template_kwargs"},
@@ -385,6 +418,7 @@ async def call_openai_chat(
     if "messages" in payload and isinstance(payload["messages"], list):
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
     payload = _normalize_openai_tools_payload(payload)
+    allowed_tool_names = allowed_tool_names_from_specs(payload.get("tools")) if "tools" in payload else None
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=req.model)
 
     provider = backend_provider_name(backend_name)
@@ -396,7 +430,18 @@ async def call_openai_chat(
             r.raise_for_status()
             out = r.json()
             if isinstance(out, dict):
-                sanitize_chat_choices(out)
+                diagnostics: list[dict[str, Any]] = []
+                sanitize_chat_choices(
+                    out,
+                    allowed_tool_names=allowed_tool_names,
+                    tool_diagnostics=diagnostics,
+                )
+                _log_invalid_response_tool_calls(
+                    diagnostics,
+                    backend_name=backend_name,
+                    model_name=req.model,
+                    stream=False,
+                )
                 out["model"] = backend_model_id(backend_name, req.model)
             return out
         except httpx.HTTPStatusError as e:
@@ -502,6 +547,7 @@ async def stream_openai_chat(
         payload = dict(payload)
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
     payload = _normalize_openai_tools_payload(payload)
+    allowed_tool_names = allowed_tool_names_from_specs(payload.get("tools")) if "tools" in payload else None
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=str(payload.get("model") or ""))
 
     provider = backend_provider_name(backend_name)
@@ -516,7 +562,13 @@ async def stream_openai_chat(
                 headers={"accept": "text/event-stream"},
             ) as r:
                 r.raise_for_status()
-                async for chunk in passthrough_sse(r, request_id=request_id):
+                async for chunk in passthrough_sse(
+                    r,
+                    request_id=request_id,
+                    allowed_tool_names=allowed_tool_names,
+                    backend_name=backend_name,
+                    model_name=str(payload.get("model") or ""),
+                ):
                     yield chunk
         except httpx.HTTPStatusError as e:
             detail = await _http_status_error_detail(e, upstream=backend_name)

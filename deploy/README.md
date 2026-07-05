@@ -38,7 +38,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <dev|prod> <branch> [user@host]`: deploy selected components over SSH
 - `./deploy/scripts/cutover-tts-one-way.sh [--env-file PATH] [--no-build] [--skip-gateway]`: disable legacy native TTS launchd jobs, seed Nexus runtime mounts from `/ai-data/var/lib/...`, and cut over Pocket/Lux/Qwen TTS to the tracked containerized shims
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
-- `./deploy/scripts/topology-ssh.sh [--print-target] <ai1|ai2|ada2|meltdown|copyfail> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
+- `./deploy/scripts/topology-ssh.sh [--print-target] <stackrot|ai2|ada2|meltdown|copyfail> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
 - `./deploy/scripts/reassign-topology-family.sh --family <name> --from <host> --to <host> [--write]`: move a tracked backend family between topology hosts
 - `./deploy/scripts/materialize-sops-env.sh --environment <dev|prod> [--topology-host <host>]`: materialize tracked SOPS secret files into generated `*.sops.local` overlays
@@ -66,13 +66,13 @@ Example: deploy an NVIDIA image stack on Linux:
 ./deploy/scripts/deploy.sh --components invokeai,images,sdxl-turbo prod main
 ```
 
-Example: deploy the streaming stack on `ai1`:
+Example: deploy the streaming stack on `stackrot`:
 
 ```bash
 ./deploy/scripts/deploy.sh --components mediamtx prod main
 ```
 
-Example: deploy only the vLLM fast + embeddings lanes on `ai1`:
+Example: deploy only the vLLM fast + embeddings lanes on `stackrot`:
 
 ```bash
 ./deploy/scripts/deploy.sh --components vllm-fast,vllm-embeddings prod main
@@ -84,18 +84,18 @@ Example: deploy only the vLLM strong lane on `ada2`:
 ./deploy/scripts/deploy.sh --components vllm-strong prod main
 ```
 
-Example: deploy the explicit `ai1` topology profile:
+Example: deploy the explicit `stackrot` topology profile:
 
 ```bash
-./deploy/scripts/deploy.sh --topology-host ai1 prod main
+./deploy/scripts/deploy.sh --topology-host stackrot prod main
 ```
 
-Example: deploy the explicit `ai1` topology profile over SSH without repeating the host target:
+Example: deploy the explicit `stackrot` topology profile over SSH without repeating the host target:
 
 ```bash
-./deploy/scripts/remote-deploy.sh --topology-host ai1 prod main
-./deploy/scripts/ansible-topology.sh deploy ai1
-./deploy/scripts/topology-ssh.sh ai1 docker ps
+./deploy/scripts/remote-deploy.sh --topology-host stackrot prod main
+./deploy/scripts/ansible-topology.sh deploy stackrot
+./deploy/scripts/topology-ssh.sh stackrot docker ps
 ```
 
 Example: prepare `copyfail` as the lightweight infrastructure control host:
@@ -215,7 +215,7 @@ Remote host deploy:
 		 - Linux: `ai:ai`
 2. Clone this repo to the platform-specific repo path on the remote host (as the `ai` user)
 3. Run `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>` from your local machine
-4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <ai1|ai2|ada2|meltdown|copyfail> <dev|prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
+4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <stackrot|ai2|ada2|meltdown|copyfail> <dev|prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
 
 ## Windows development note
 
@@ -239,7 +239,7 @@ pre-commit install
 ## Notes
 
 - These manifests assume a shared `nexus` network for multi-host deployments.
-- `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `ai1`/`ai2`/`ada2`/`meltdown` cluster plus the `copyfail` infrastructure-control host. `migraine` is client-only for Hermes/Telegram and is intentionally not a model-serving topology target.
+- `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `stackrot`/`ai2`/`ada2`/`meltdown` cluster plus the `copyfail` infrastructure-control host. `migraine` is client-only for Hermes/Telegram and is intentionally not a model-serving topology target.
 - etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
 - Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
 - `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, and `vllm-embeddings` when different hosts should own different inference lanes.

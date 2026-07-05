@@ -2,11 +2,11 @@
 
 Containerized MediaMTX streaming service for RTMP ingest with browser-consumable playback on Linux hosts.
 
-This is the recommended Nexus component when you want one or more publishers to send RTMP into a host like `ai1`, while multiple downstream consumers read the same stream through HLS, WebRTC, RTSP, or RTMP.
+This is the recommended Nexus component when you want one or more publishers to send RTMP into a host like `stackrot`, while multiple downstream consumers read the same stream through HLS, WebRTC, RTSP, or RTMP.
 
 ## Runtime
 
-- Recommended host: `ai1`
+- Recommended host: `stackrot`
 - RTMP ingest port: `1935`
 - HLS playback port: `8888`
 - WebRTC playback port: `8889`
@@ -38,23 +38,23 @@ For Nexus, MediaMTX is a better fit than nginx-rtmp when you already expect mult
 The compose stack registers MediaMTX in etcd as an operational service record named `mediamtx`.
 That record is intended for operator visibility and future frontend discovery, not as a normal model backend.
 
-- `MEDIAMTX_ADVERTISE_BASE_URL` should usually point to the browser-friendly playback root, for example `http://ai1:8888`.
-- `MEDIAMTX_API_ADVERTISE_URL` should point to the API root, for example `http://ai1:9997`.
-- Publishers can push to `rtmp://ai1:1935/live/<stream-key>`.
-- HLS playback is available at `http://ai1:8888/live/<stream-key>/index.m3u8`.
+- `MEDIAMTX_ADVERTISE_BASE_URL` should usually point to the browser-friendly playback root, for example `http://stackrot:8888`.
+- `MEDIAMTX_API_ADVERTISE_URL` should point to the API root, for example `http://stackrot:9997`.
+- Publishers can push to `rtmp://stackrot:1935/live/<stream-key>`.
+- HLS playback is available at `http://stackrot:8888/live/<stream-key>/index.m3u8`.
 
 ## Example workflow
 
 Publish from OBS or ffmpeg:
 
 ```bash
-ffmpeg -re -stream_loop -1 -i sample.mp4 -c copy -f flv rtmp://ai1:1935/live/demo
+ffmpeg -re -stream_loop -1 -i sample.mp4 -c copy -f flv rtmp://stackrot:1935/live/demo
 ```
 
 Open the HLS output in a browser/player:
 
 ```bash
-http://ai1:8888/live/demo/index.m3u8
+http://stackrot:8888/live/demo/index.m3u8
 ```
 
 ## Config

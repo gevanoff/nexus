@@ -22,7 +22,7 @@ def _live_payload() -> dict[str, object]:
                 "updated_at": 1_700_000_001,
             },
             {
-                "name": "ai1",
+                "name": "stackrot",
                 "cpu": {"model_name": "Test Intel Workstation", "logical_cpus": 64},
                 "memory": {"total_mb": 131072, "used_mb": 2000, "available_mb": 129000},
                 "gpus": [
@@ -99,9 +99,9 @@ def test_lifecycle_payload_updates_runtime_and_cached_snapshot(tmp_path, monkeyp
     assert snapshot["source"] == "live_lifecycle_refresh"
     assert snapshot_path.exists()
     cached = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert cached["hosts"]["ai1"]["cpu"] == "Test Intel Workstation"
+    assert cached["hosts"]["stackrot"]["cpu"] == "Test Intel Workstation"
     assert "source: live_lifecycle_refresh" in prompt_context
-    assert "ai1: linux_x86_64; Test Intel Workstation; 64 logical CPUs" in prompt_context
+    assert "stackrot: linux_x86_64; Test Intel Workstation; 64 logical CPUs" in prompt_context
     assert "NVIDIA Test GPU 80 GiB" in prompt_context
     assert "meltdown: linux_x86_64; Test Meltdown Host; 12 logical CPUs" in prompt_context
     assert "NVIDIA GeForce RTX 5060 Ti 15.9 GiB" in prompt_context
@@ -139,7 +139,7 @@ async def test_startup_refresh_falls_back_to_baseline_when_lifecycle_is_unconfig
     snapshot = await nexus_hardware.refresh_hardware_snapshot_from_lifecycle()
 
     assert snapshot["source"] == "checked_in_baseline"
-    assert snapshot["hosts"]["ai1"]["cpu"] == "12th Gen Intel Core i7-12700F"
+    assert snapshot["hosts"]["stackrot"]["cpu"] == "12th Gen Intel Core i7-12700F"
     assert snapshot["hosts"]["meltdown"]["cpu"] == "Intel Core i7-5930K"
     assert snapshot["hosts"]["copyfail"]["cpu"] == "Intel Celeron J3355 @ 2.00GHz"
     assert "lifecycle manager URL is not configured" in " ".join(snapshot["warnings"])

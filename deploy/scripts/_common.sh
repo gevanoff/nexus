@@ -181,7 +181,7 @@ ns_is_valid_ipv4() {
 
 ns_gateway_extra_host_env_keys() {
   printf '%s\n' \
-    NEXUS_HOST_AI1_IP \
+    NEXUS_HOST_STACKROT_IP \
     NEXUS_HOST_AI2_IP \
     NEXUS_HOST_MIGRAINE_IP \
     NEXUS_HOST_ADA2_IP \

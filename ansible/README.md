@@ -29,12 +29,12 @@ Short wrappers for the most common flows live in `deploy/scripts/`:
 
 ```bash
 ./deploy/scripts/ansible-topology.sh inventory
-./deploy/scripts/ansible-topology.sh bootstrap ai1 -- --check
+./deploy/scripts/ansible-topology.sh bootstrap stackrot -- --check
 ./deploy/scripts/ansible-topology.sh deploy ada2
 ./deploy/scripts/ansible-topology.sh bootstrap meltdown
 ./deploy/scripts/ansible-topology.sh bootstrap copyfail
 ./deploy/scripts/topology-ssh.sh ai2
-./deploy/scripts/topology-ssh.sh ai1 docker ps
+./deploy/scripts/topology-ssh.sh stackrot docker ps
 ```
 
 Inspect inventory derived from topology:
@@ -97,7 +97,7 @@ Linux Docker defaults prefer Docker's official apt repository on Debian/Ubuntu h
 - The deploy role delegates to `deploy/scripts/deploy.sh --topology-host ...` so there is still one deploy implementation path.
 - The deploy playbook now includes `nexus_secret_overlay`, which decrypts tracked SOPS secret files on the control node and syncs the generated `*.sops.local` overlays to the remote host before preflight/deploy.
 - Inventory exposes `platform_macos` and `platform_linux` groups from the topology manifest so repo layout and other hosttype defaults can live in group vars.
-- Inventory also exposes `resource_linux_nvidia` for CUDA-capable Linux hosts such as `ai1`, `ada2`, and `meltdown`.
+- Inventory also exposes `resource_linux_nvidia` for CUDA-capable Linux hosts such as `stackrot`, `ada2`, and `meltdown`.
 - Inventory exposes `resource_linux_infra` for `copyfail`. Treat `copyfail` as a deployment/metrics/IT control host only; it intentionally has no model-serving components.
 - Mixed Linux/macOS roles dispatch into platform-specific task files (`linux.yml`, `macos.yml`) from a shared entrypoint and fail clearly on unsupported platforms.
 - The bootstrap playbook now covers the main non-interactive host setup path: Python bootstrap, common packages, Linux Docker engine setup, macOS Colima setup, and optional MLX pf allowlisting.

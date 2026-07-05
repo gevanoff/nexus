@@ -460,7 +460,7 @@ Note: Nexus uses host bind mounts under `./.runtime/` (not Docker named volumes)
 |---------|----------|-----------------|-----------------|
 | Gateway | `ai2:8800` | `8800` | `gateway:8800` |
 | Observability | `ai2:8801` | `8801` | `gateway:8801` |
-| Ollama | `ai1:11434` | `11434` | `ollama:11434` |
+| Ollama | `stackrot:11434` | `11434` | `ollama:11434` |
 | InvokeAI | `ada2:7860` | `7860` | `images:7860` |
 
 ### Data Directories
@@ -581,7 +581,7 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 
 ## Multi-Host Migration
 
-If you had services on different hosts (ai1, ai2, ada2), you have options:
+If you had services on different hosts (stackrot, ai2, ada2), you have options:
 
 ### Option 1: Single-Host Deployment
 

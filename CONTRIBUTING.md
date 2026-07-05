@@ -235,7 +235,7 @@ Edit files in `services/gateway/app/` or other service directories.
 
 On Windows, treat WSL as the default authoring and execution shell for Nexus operational scripts. Avoid running nested `wsl ... ssh ... bash -lc ...` one-liners from PowerShell when a checked-in script or stdin-fed remote script will do.
 
-For deployed Nexus hosts (`ai2`, `ai1`, `ada2`), do not live-edit tracked code in the host checkout. Commit and push from your development checkout, then deploy the intended branch with the repo deployment scripts. Runtime state under `${NEXUS_RUNTIME_ROOT}/` is host-local and is the exception; for local repo-root runs, `.env.example` defaults that variable to `./.runtime`.
+For deployed Nexus hosts (`ai2`, `stackrot`, `ada2`), do not live-edit tracked code in the host checkout. Commit and push from your development checkout, then deploy the intended branch with the repo deployment scripts. Runtime state under `${NEXUS_RUNTIME_ROOT}/` is host-local and is the exception; for local repo-root runs, `.env.example` defaults that variable to `./.runtime`.
 
 5. **Restart services**
 

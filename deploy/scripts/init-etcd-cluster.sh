@@ -23,10 +23,10 @@ Usage: deploy/scripts/init-etcd-cluster.sh --name NAME --client-url URL --peer-u
 
 Example:
   ./deploy/scripts/init-etcd-cluster.sh \
-    --name ai1-etcd \
-    --client-url http://ai1:2379 \
-    --peer-url http://ai1:2380 \
-    --initial-cluster ai1-etcd=http://ai1:2380,ada2-etcd=http://ada2:2380
+    --name stackrot-etcd \
+    --client-url http://stackrot:2379 \
+    --peer-url http://stackrot:2380 \
+    --initial-cluster stackrot-etcd=http://stackrot:2380,ada2-etcd=http://ada2:2380
 
 This updates the target env file with the etcd member settings needed by docker-compose.etcd.yml.
 Run it once on each etcd host with that host's own name/client/peer URLs.

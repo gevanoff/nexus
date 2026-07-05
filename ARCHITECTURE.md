@@ -124,7 +124,7 @@ Nexus is designed to run in a multi-host environment where containers are distri
 Example topology (illustrative, not prescriptive):
 
 ```
-Client → Gateway (ai2) → Ollama (ai1) → Images (ada2)
+Client → Gateway (ai2) → Ollama (stackrot) → Images (ada2)
 ```
 
 Key considerations:

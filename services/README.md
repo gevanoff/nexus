@@ -316,7 +316,7 @@ Service DNS names match their docker compose service names:
 
 In the current multi-host deployment, some accelerators are intentionally host-native or remote rather than Compose-local:
 - `local_mlx` is typically host-native on `ai2` at port `10240`.
-- vLLM services live on Linux/NVIDIA hosts such as `ai1` or `ada2`.
+- vLLM services live on Linux/NVIDIA hosts such as `stackrot` or `ada2`.
 - Lifecycle-manager and etcd/topology config determine which optional backends are active and where they are hosted.
 
 ## Resource Management

@@ -138,7 +138,7 @@ Important gateway data under `./.runtime/gateway/data` includes:
 - Gateway operator config is materialized under `./.runtime/gateway/config/`. The deploy scripts refresh `model_aliases.json` from the tracked `services/gateway/app/model_aliases.json` catalog; other operator files remain host-managed.
 - Configure model names, Coding/Sentinel choices, huge-lane candidates, labels, and load estimates once in the tracked alias catalog, then redeploy or restart Gateway.
 
-For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `ai1`, `ada2`, or `meltdown`. Commit and push from a development checkout, then deploy by pulling the intended branch on the target host with `deploy/scripts/deploy.sh` or the remote deploy wrapper. The runtime directories above are host state and are the exception.
+For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `stackrot`, `ada2`, or `meltdown`. Commit and push from a development checkout, then deploy by pulling the intended branch on the target host with `deploy/scripts/deploy.sh` or the remote deploy wrapper. The runtime directories above are host state and are the exception.
 
 ## Deployment Scripts
 

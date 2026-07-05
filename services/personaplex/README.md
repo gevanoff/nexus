@@ -26,7 +26,7 @@ Current placement guidance:
 - `ada2` is the appropriate production host because it has the only single GPU
   in the cluster with enough headroom class for this workload: RTX 6000 Ada
   48GB.
-- `ai1` is not a good default while `vllm-fast`, embeddings, and SDXL-Turbo are
+- `stackrot` is not a good default while `vllm-fast`, embeddings, and SDXL-Turbo are
   resident. Its 24GB RTX 3090 is marginal for PersonaPlex and would likely need
   CPU offload after freeing other services.
 - `ai2` has ample unified memory, but the tracked Nexus service is the upstream

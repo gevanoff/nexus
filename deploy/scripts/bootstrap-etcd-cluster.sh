@@ -29,7 +29,7 @@ It is not a forced etcd raft leader.
 Required:
   --leader NAME                Member name to use as coordinator (must match one --member NAME)
   --member NAME,HOST,SSH       Repeat once per cluster member
-                               Example: --member ai1-etcd,ai1,ai@ai1
+                               Example: --member stackrot-etcd,stackrot,ai@stackrot
 
 Options:
   --yes                        Non-interactive SSH mode
@@ -43,7 +43,7 @@ Options:
 Example:
   ./deploy/scripts/bootstrap-etcd-cluster.sh \
     --leader ai2-etcd \
-    --member ai1-etcd,ai1,ai@ai1 \
+    --member stackrot-etcd,stackrot,ai@stackrot \
     --member ai2-etcd,ai2,ai@ai2 \
     --member ada2-etcd,ada2,ai@ada2
 EOF

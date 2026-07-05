@@ -69,7 +69,7 @@ _VLLM_UNSUPPORTED_MARKERS = {
     "whisper",
 }
 _FALLBACK_HOSTS = {
-    "ai1": {
+    "stackrot": {
         "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress and secondary vLLM/CUDA capacity.",
         "platform": "linux",
         "resource_kind": "linux_nvidia",
@@ -108,7 +108,7 @@ _FALLBACK_BACKENDS = {
     },
     "local_vllm_fast": {
         "display_name": "vLLM Fast",
-        "host": "ai1",
+        "host": "stackrot",
         "estimated_vram_mb": 22000,
         "compose_file": "docker-compose.vllm-fast.yml",
         "ready_path": "/models",
@@ -617,7 +617,7 @@ def integration_host_lanes() -> list[Dict[str, Any]]:
     lanes: list[Dict[str, Any]] = []
     for backend_name, label, route_kinds in (
         ("local_mlx", "ai2 / MLX", ["chat"]),
-        ("local_vllm_fast", "ai1 / vLLM Fast", ["chat", "json"]),
+        ("local_vllm_fast", "stackrot / vLLM Fast", ["chat", "json"]),
         ("local_vllm_embeddings", "meltdown / vLLM Embeddings", ["embeddings"]),
         ("local_vllm", "ada2 / vLLM Strong", ["chat", "json"]),
         ("gpu_fast", "meltdown / SDXL-Turbo", ["images"]),
@@ -689,7 +689,7 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
         if route_kind == "embeddings":
             return _deployment_target_from_backend(
                 "local_vllm_embeddings",
-                reason="Embeddings map to the dedicated meltdown embeddings lane, which uses the lighter 16GB CUDA host while leaving the larger chat lanes on ai1 and ada2.",
+                reason="Embeddings map to the dedicated meltdown embeddings lane, which uses the lighter 16GB CUDA host while leaving the larger chat lanes on stackrot and ada2.",
             )
         if size_b is not None and size_b >= 24:
             return _deployment_target_from_backend(
@@ -698,7 +698,7 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
             )
         return _deployment_target_from_backend(
             "local_vllm_fast",
-            reason="Standard chat models that do not clearly need the heavy lane should start on ai1, which is the dual-NVIDIA fast vLLM path.",
+            reason="Standard chat models that do not clearly need the heavy lane should start on stackrot, which is the dual-NVIDIA fast vLLM path.",
         )
     if route_kind == "ocr":
         return _deployment_target_from_backend(
@@ -750,11 +750,11 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
     if size_b is not None and size_b >= 24:
         return _deployment_target_from_backend(
             "local_vllm",
-            reason=f"Even with a transformers shim, a text model around {size_b:g}B scale should assume ada2-class GPU capacity first, not the lighter ai1 lane.",
+            reason=f"Even with a transformers shim, a text model around {size_b:g}B scale should assume ada2-class GPU capacity first, not the lighter stackrot lane.",
         )
     return _deployment_target_from_backend(
         "local_vllm_fast",
-        reason="Fallback text/json shims should start from ai1 unless the model clearly needs the heavier ada2 lane or an MLX host-native path.",
+        reason="Fallback text/json shims should start from stackrot unless the model clearly needs the heavier ada2 lane or an MLX host-native path.",
     )
 
 
@@ -867,7 +867,7 @@ def _runtime_from_metadata(model_id: str, metadata: Dict[str, Any], route_kind: 
     if any(marker in haystack for marker in _VLLM_UNSUPPORTED_MARKERS):
         return "transformers", "Model metadata points at a format or multimodal architecture that should not be treated as a plain vLLM text backend."
     if route_kind == "embeddings":
-        return "vllm", "Text embeddings map cleanly to the existing vLLM embeddings lane on ai1."
+        return "vllm", "Text embeddings map cleanly to the existing vLLM embeddings lane on stackrot."
     if pipeline_tag not in _TEXT_GENERATION_PIPELINES:
         return "transformers", f"Pipeline `{pipeline_tag}` is not a standard chat/text-generation lane for vLLM."
     if any("causallm" in architecture for architecture in architectures):

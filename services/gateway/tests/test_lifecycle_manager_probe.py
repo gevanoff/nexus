@@ -48,8 +48,8 @@ def test_ssh_probe_uses_configured_connect_target_and_port(monkeypatch) -> None:
     manager = object.__new__(module.LifecycleManager)
     manager.ssh_identity_file = ""
     host = module.HostPolicy(
-        name="ai1",
-        ssh_target="ai@ai1",
+        name="stackrot",
+        ssh_target="ai@stackrot",
         ssh_connect_target="ai@host.docker.internal",
         ssh_port=19022,
         repo_dir="",
@@ -70,7 +70,7 @@ def test_ssh_probe_uses_configured_connect_target_and_port(monkeypatch) -> None:
     args = calls[0]
     assert args[args.index("-p") + 1] == "19022"
     assert "ai@host.docker.internal" in args
-    assert "ai@ai1" not in args
+    assert "ai@stackrot" not in args
 
 
 def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) -> None:
@@ -84,7 +84,7 @@ def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) 
   "settings": {"mode": "assisted"},
   "backends": {
     "local_vllm_fast": {
-      "host": "ai1",
+      "host": "stackrot",
       "component": "vllm-fast"
     }
   }
@@ -97,11 +97,11 @@ def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) 
 {
   "defaults": {
     "env": {
-      "VLLM_FAST_BASE_URL": "http://ai1:8001/v1"
+      "VLLM_FAST_BASE_URL": "http://stackrot:8001/v1"
     }
   },
   "hosts": {
-    "ai1": {"platform": "linux", "ssh_target": "ai@ai1"}
+    "stackrot": {"platform": "linux", "ssh_target": "ai@stackrot"}
   }
 }
 """,

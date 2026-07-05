@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "nexus-production",
-  "description": "Canonical multi-host production placement for ai1, ai2, ada2, meltdown, and copyfail.",
+  "description": "Canonical multi-host production placement for stackrot, ai2, ada2, meltdown, and copyfail.",
   "defaults": {
     "repo_dir_by_platform": {
       "macos": "/ai-data/var/lib/nexus",
@@ -40,8 +40,8 @@
       "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
       "VLLM_BASE_URL": "http://ada2:8003/v1",
       "VLLM_ADVERTISE_BASE_URL": "http://ada2:8003/v1",
-      "VLLM_FAST_BASE_URL": "http://ai1:8001/v1",
-      "VLLM_FAST_ADVERTISE_BASE_URL": "http://ai1:8001/v1",
+      "VLLM_FAST_BASE_URL": "http://stackrot:8001/v1",
+      "VLLM_FAST_ADVERTISE_BASE_URL": "http://stackrot:8001/v1",
       "VLLM_EMBEDDINGS_BASE_URL": "http://meltdown:8002/v1",
       "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://meltdown:8002/v1",
       "VLLM_PORT": "8003",
@@ -68,9 +68,9 @@
       "QWEN3_TTS_BASE_URL": "http://ai2:9175",
       "QWEN3_TTS_ADVERTISE_BASE_URL": "http://ai2:9175",
       "MEDIAMTX_HLS_PORT": "8891",
-      "MEDIAMTX_ADVERTISE_BASE_URL": "http://ai1:8891",
-      "MEDIAMTX_API_ADVERTISE_URL": "http://ai1:9997",
-      "MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS": "ai1",
+      "MEDIAMTX_ADVERTISE_BASE_URL": "http://stackrot:8891",
+      "MEDIAMTX_API_ADVERTISE_URL": "http://stackrot:9997",
+      "MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS": "stackrot",
       "DEFAULT_BACKEND": "local_mlx",
       "EMBEDDINGS_BACKEND": "local_mlx",
       "EMBEDDINGS_MODEL": "mlx-community/bge-small-en-v1.5-8bit",
@@ -86,11 +86,11 @@
     }
   },
   "hosts": {
-    "ai1": {
+    "stackrot": {
       "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress and secondary vLLM/CUDA capacity.",
       "platform": "linux",
       "resource_kind": "linux_nvidia",
-      "ssh_target": "ai@ai1",
+      "ssh_target": "ai@stackrot",
       "components": [
         "mediamtx",
         "vllm-fast"

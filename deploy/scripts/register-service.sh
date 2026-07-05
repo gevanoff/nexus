@@ -19,7 +19,7 @@ usage() {
 Usage: deploy/scripts/register-service.sh [--yes] [--backend-class CLASS] [--hostname HOSTNAME] <service-name> <base-url> <etcd-url>
 
 Example:
-  deploy/scripts/register-service.sh --backend-class local_vllm --hostname ai1 vllm http://ai1:8000/v1 http://etcd:2379
+  deploy/scripts/register-service.sh --backend-class local_vllm --hostname stackrot vllm http://stackrot:8000/v1 http://etcd:2379
 
 Options:
   --backend-class CLASS  Canonical backend class (for example: local_vllm, gpu_heavy)

@@ -65,3 +65,66 @@ def test_sanitize_chat_choices_normalizes_stream_delta_tool_arguments_without_ne
         "name": "get_weather",
         "arguments": '{"city":"Paris"}',
     }
+
+
+def test_sanitize_chat_choices_suppresses_contaminated_nonstream_tool_name():
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "grep_dirs</arg_value>pattern</arg_key><arg_value>stackrot</arg_value>",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+    diagnostics = []
+
+    out = sanitize_chat_choices(payload, allowed_tool_names={"grep_dirs"}, tool_diagnostics=diagnostics)
+    choice = out["choices"][0]
+    message = choice["message"]
+
+    assert "tool_calls" not in message
+    assert "suppressed an invalid backend tool call" in message["content"]
+    assert choice["finish_reason"] == "stop"
+    assert diagnostics[0]["reason"] == "malformed tool name"
+    assert "grep_dirs" in diagnostics[0]["allowed_tool_names"]
+
+
+def test_sanitize_chat_choices_suppresses_unknown_nonstream_tool_name():
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "grep_dirs", "arguments": "{}"},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+    diagnostics = []
+
+    out = sanitize_chat_choices(payload, allowed_tool_names={"search_text"}, tool_diagnostics=diagnostics)
+
+    assert "tool_calls" not in out["choices"][0]["message"]
+    assert out["choices"][0]["finish_reason"] == "stop"
+    assert diagnostics[0]["reason"] == "unknown tool name"

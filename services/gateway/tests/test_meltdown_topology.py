@@ -29,8 +29,8 @@ def test_meltdown_owns_lightweight_gpu_backends() -> None:
     topology = json.loads(_read("deploy/topology/production.json"))
     lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
 
-    assert "sdxl-turbo" not in topology["hosts"]["ai1"]["components"]
-    assert "vllm-embeddings" not in topology["hosts"]["ai1"]["components"]
+    assert "sdxl-turbo" not in topology["hosts"]["stackrot"]["components"]
+    assert "vllm-embeddings" not in topology["hosts"]["stackrot"]["components"]
     assert topology["defaults"]["env"]["SDXL_TURBO_BASE_URL"] == "http://meltdown:9050"
     assert topology["defaults"]["env"]["VLLM_EMBEDDINGS_BASE_URL"] == "http://meltdown:8002/v1"
     assert topology["hosts"]["meltdown"]["env"]["SDXL_TURBO_CUDA_VISIBLE_DEVICES"] == "0"
@@ -82,7 +82,7 @@ def test_ai2_uses_boot_persistent_proxies_and_physical_topology_mount() -> None:
 def test_ansible_wrapper_exposes_meltdown_host() -> None:
     wrapper = _read("deploy/scripts/ansible-topology.sh")
 
-    assert "ai1|ai2|ada2|meltdown" in wrapper
+    assert "stackrot|ai2|ada2|meltdown" in wrapper
     assert "copyfail" in wrapper
     assert "bootstrap meltdown" in wrapper
     assert "bootstrap copyfail" in wrapper
@@ -161,7 +161,7 @@ def test_ai2_lifecycle_uses_host_side_ssh_proxies_for_remote_hosts() -> None:
     lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
     installer = _read("deploy/scripts/install-backend-port-proxy-launchd.sh")
     expected_ports = {
-        "ai1": 19022,
+        "stackrot": 19022,
         "ada2": 19023,
         "meltdown": 19024,
         "copyfail": 19025,

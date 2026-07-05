@@ -20,8 +20,8 @@ services:
       - ${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/lifecycle-manager/ssh:/root/.ssh:ro
       - ${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/lifecycle-manager/state:/app/state
     extra_hosts:
-      - "ai1:${NEXUS_HOST_AI1_IP}"
-      - "ai1.embrient.com:${NEXUS_HOST_AI1_IP}"
+      - "stackrot:${NEXUS_HOST_STACKROT_IP}"
+      - "stackrot.embrient.com:${NEXUS_HOST_STACKROT_IP}"
       - "ai2:${NEXUS_HOST_AI2_IP}"
       - "ai2.embrient.com:${NEXUS_HOST_AI2_IP}"
       - "migraine:${NEXUS_HOST_MIGRAINE_IP}"

@@ -464,7 +464,7 @@ def test_ui_runtime_selector_falls_back_to_advertised_model_id(monkeypatch):
     served = "unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M"
 
     class Backend:
-        base_url = "http://ai1:8001/v1"
+        base_url = "http://stackrot:8001/v1"
 
     class Registry:
         def resolve_backend_class(self, backend):
@@ -545,6 +545,7 @@ async def test_ui_models_includes_probed_backend_models(monkeypatch):
     monkeypatch.setattr(ui_routes, "get_aliases", lambda: {})
     monkeypatch.setattr(ui_routes, "get_health_checker", lambda: SimpleNamespace(get_status=lambda _name: None))
     monkeypatch.setattr(ui_routes, "_settings_for_optional_user", lambda _user: {})
+    monkeypatch.setattr(ui_routes, "model_unavailable_reason", lambda _backend, _model: None)
     monkeypatch.setattr(ui_routes.user_llm, "model_entries", lambda _settings, created: [])
 
     payload = await ui_routes.ui_models(SimpleNamespace())

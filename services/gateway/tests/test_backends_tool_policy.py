@@ -65,9 +65,9 @@ def test_env_base_url_override_keeps_static_proxy_url_for_etcd_record(monkeypatc
     records = {
         "vllm-fast": backends.ServiceRecord(
             name="vllm-fast",
-            base_url="http://ai1:8001/v1",
+            base_url="http://stackrot:8001/v1",
             backend_class="local_vllm_fast",
-            hostname="ai1",
+            hostname="stackrot",
             source="etcd",
         )
     }
@@ -77,7 +77,7 @@ def test_env_base_url_override_keeps_static_proxy_url_for_etcd_record(monkeypatc
     assert registry.get_backend("local_vllm_fast").base_url == "http://host.docker.internal:18001/v1"
     assert registry.service_records["vllm-fast"].base_url == "http://host.docker.internal:18001/v1"
     assert registry.service_records["vllm-fast"].metadata_url == "http://host.docker.internal:18001/v1/metadata"
-    assert registry.service_records["vllm-fast"].hostname == "ai1"
+    assert registry.service_records["vllm-fast"].hostname == "stackrot"
 
 
 def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
@@ -92,10 +92,10 @@ def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
     assert env["VLLM_TOOL_CALL_PARSER"] == "xlam"
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == ""
     assert env["VLLM_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
-    assert "vllm-fast" in topology["hosts"]["ai1"]["components"]
-    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER"] == "cyankiwi/Devstral-Small-2507-AWQ-4bit"
-    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
-    assert topology["hosts"]["ai1"]["env"]["VLLM_FAST_MAX_MODEL_LEN"] == "8192"
+    assert "vllm-fast" in topology["hosts"]["stackrot"]["components"]
+    assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_TOKENIZER"] == "cyankiwi/Devstral-Small-2507-AWQ-4bit"
+    assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
+    assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_MAX_MODEL_LEN"] == "8192"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
     assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "32768"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"

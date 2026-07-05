@@ -44,7 +44,7 @@ Options:
   --no-default-forwards   Do not install the production default forwards
 
 Default forwards:
-  vllm-fast=127.0.0.1:18001=ai1:8001
+  vllm-fast=127.0.0.1:18001=stackrot:8001
   vllm-embeddings=127.0.0.1:18002=meltdown:8002
   vllm=127.0.0.1:18003=ada2:8003
   images=127.0.0.1:17860=ada2:7860
@@ -52,7 +52,7 @@ Default forwards:
   lighton-ocr=127.0.0.1:18155=ada2:9155
   personaplex=127.0.0.1:18160=ada2:9160
   skyreels-v2=127.0.0.1:18180=ada2:9180
-  ssh-ai1=127.0.0.1:19022=ai1:22
+  ssh-stackrot=127.0.0.1:19022=stackrot:22
   ssh-ada2=127.0.0.1:19023=ada2:22
   ssh-meltdown=127.0.0.1:19024=meltdown:22
   ssh-copyfail=127.0.0.1:19025=copyfail:22
@@ -138,7 +138,7 @@ done
 
 if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
   DEFAULT_FORWARDS=(
-    "vllm-fast=127.0.0.1:18001=ai1:8001"
+    "vllm-fast=127.0.0.1:18001=stackrot:8001"
     "vllm-embeddings=127.0.0.1:18002=meltdown:8002"
     "vllm=127.0.0.1:18003=ada2:8003"
     "images=127.0.0.1:17860=ada2:7860"
@@ -146,7 +146,7 @@ if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
     "lighton-ocr=127.0.0.1:18155=ada2:9155"
     "personaplex=127.0.0.1:18160=ada2:9160"
     "skyreels-v2=127.0.0.1:18180=ada2:9180"
-    "ssh-ai1=127.0.0.1:19022=ai1:22"
+    "ssh-stackrot=127.0.0.1:19022=stackrot:22"
     "ssh-ada2=127.0.0.1:19023=ada2:22"
     "ssh-meltdown=127.0.0.1:19024=meltdown:22"
     "ssh-copyfail=127.0.0.1:19025=copyfail:22"
