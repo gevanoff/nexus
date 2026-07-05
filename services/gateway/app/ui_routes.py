@@ -4724,7 +4724,8 @@ def _mlx_chat_completions_url() -> str:
 async def _warm_mlx_huge_lane_model(model_name: str) -> None:
     try:
         info = mlx_huge_lane.model_info(model_name)
-        timeout = max(300.0, float(info.get("estimated_load_sec") or 120) + 180.0)
+        configured_min_timeout = max(600.0, float(getattr(S, "MLX_HUGE_LANE_WARMUP_TIMEOUT_SEC", 600.0) or 600.0))
+        timeout = max(configured_min_timeout, float(info.get("estimated_load_sec") or 120) + 180.0)
         payload = {
             "model": model_name,
             "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
