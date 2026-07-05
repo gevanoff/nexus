@@ -108,6 +108,11 @@
         left: 0;
         z-index: 2;
         background: linear-gradient(180deg, rgba(17,24,33,0.98), rgba(11,16,23,0.98));
+        transition: box-shadow 120ms ease, border-color 120ms ease;
+      }
+      .model-admin-table-wrap.has-overflow-left .model-admin-table .col-key {
+        box-shadow: inset 18px 0 18px -14px rgba(111,184,255,0.82);
+        border-left-color: rgba(111,184,255,0.5);
       }
       .model-admin-table .col-state { min-width: 120px; }
       .model-admin-table .col-tool-result { min-width: 110px; white-space: nowrap; }
