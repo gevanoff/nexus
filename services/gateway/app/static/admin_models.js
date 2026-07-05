@@ -185,6 +185,54 @@
     return text;
   }
 
+  function stateTone(text) {
+    const value = String(text || "").trim().toLowerCase();
+    if (!value) return "";
+    if (/(^|\s)(fail|failed|error|not ready|not selectable|hidden|missing|stalled|stopped|unknown|unavailable)(\s|$)/.test(value)) return "red";
+    if (/(^|\s)(fetch|purge|requested|cache only|not_advertised)(\s|$)/.test(value)) return "yellow";
+    if (/(^|\s)(ok|pass|passed|ready|available|visible|advertised|selectable|cached|downloading|in progress)(\s|$)/.test(value)) return "green";
+    return "neutral";
+  }
+
+  function stateCell(text, tone, href) {
+    const label = stateValue(text);
+    if (!label) return "";
+    return { kind: "state", text: label, tone: tone || stateTone(label), href: href || "" };
+  }
+
+  function toolResultCell(result) {
+    if (!result || typeof result !== "object") return "";
+    const passed = Number(result.passed);
+    const total = Number(result.total);
+    if (!Number.isFinite(total) || total <= 0) return "";
+    const ok = Number.isFinite(passed) ? passed : 0;
+    return stateCell(`${ok}/${total}`, result.ok === true ? "green" : "red", "#model_tool_qualification_section");
+  }
+
+  function benchmarkResultCell(result) {
+    if (!result || typeof result !== "object") return "";
+    const text = stripPrefix(benchmarkText(result), "latest benchmark:");
+    if (!text) return "";
+    return stateCell(text, "neutral", "#model_benchmark_start");
+  }
+
+  function isEmbeddingModel(model) {
+    const backend = String(model?.backend || "").toLowerCase();
+    const name = String(model?.model || "").toLowerCase();
+    const provider = String(model?.provider || "").toLowerCase();
+    return backend.includes("embedding") || name.includes("embedding") || provider.includes("embedding");
+  }
+
+  function splitModels(models) {
+    const llm = [];
+    const nonLlm = [];
+    (models || []).forEach((model) => {
+      if (model?.chat_candidate === true && !isEmbeddingModel(model)) llm.push(model);
+      else nonLlm.push(model);
+    });
+    return { llm, nonLlm };
+  }
+
   function stripPrefix(text, prefix) {
     const source = String(text || "");
     return source.startsWith(prefix) ? source.slice(prefix.length).trim() : source;
@@ -196,12 +244,14 @@
     tableWrap.className = "model-admin-table-wrap";
     const table = document.createElement("table");
     table.className = "model-admin-table";
+    const normalizedColumns = (columns || []).map((column) => (typeof column === "string" ? { label: column } : column || { label: "" }));
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    columns.forEach((column) => {
+    normalizedColumns.forEach((column) => {
       const th = document.createElement("th");
-      th.textContent = column;
+      th.textContent = column.label || "";
+      if (column.className) th.classList.add(column.className);
       headRow.appendChild(th);
     });
     thead.appendChild(headRow);
@@ -212,7 +262,9 @@
       const tr = document.createElement("tr");
       cells.forEach((cellValue, index) => {
         const td = document.createElement("td");
-        if (index === cells.length - 1 && Array.isArray(cellValue)) {
+        const column = normalizedColumns[index] || {};
+        if (column.className) td.classList.add(column.className);
+        if (column.type === "actions" && Array.isArray(cellValue)) {
           if (!cellValue.length) {
             td.textContent = "";
           } else {
@@ -225,6 +277,21 @@
               button.addEventListener("click", item.onClick);
               td.appendChild(button);
             });
+          }
+        } else if (cellValue && typeof cellValue === "object" && cellValue.kind === "state") {
+          if (!cellValue.text) {
+            td.textContent = "";
+          } else if (cellValue.href) {
+            const link = document.createElement("a");
+            link.className = `model-admin-state ${cellValue.tone || ""}`.trim();
+            link.href = cellValue.href;
+            link.textContent = cellValue.text;
+            td.appendChild(link);
+          } else {
+            const chip = document.createElement("span");
+            chip.className = `model-admin-state ${cellValue.tone || ""}`.trim();
+            chip.textContent = cellValue.text;
+            td.appendChild(chip);
           }
         } else {
           td.textContent = stateValue(cellValue);
@@ -586,17 +653,36 @@
     renderBenchmarkHistory(payload);
     renderToolQualificationHistory(payload);
 
+    const backendByName = new Map(backends.map((item) => [String(item.backend || ""), item]));
+
+    const backendGroup = group("Backends");
+    if (!backends.length) {
+      backendGroup.appendChild(row("None", "", []));
+    } else {
+      backends.forEach((backend) => {
+        const badges = [
+          {
+            text: backend.ready === true ? "ready" : backend.ready === false ? "not ready" : "unknown",
+            tone: backend.ready === true ? "green" : backend.ready === false ? "red" : "yellow",
+          },
+        ];
+        if (backend.error) badges.push({ text: String(backend.error).slice(0, 80), tone: "red" });
+        backendGroup.appendChild(row(backend.backend || "", backend.hostname || backend.base_url || "", badges));
+      });
+    }
+    listEl.appendChild(backendGroup);
+
     renderHugeLane(payload?.mlx_huge_lane || null);
 
     const aliasColumns = [
-      "Alias",
-      "Configured",
-      "Effective",
-      "Visible",
-      "Availability",
-      "Benchmark result",
-      "Tool qualification result",
-      "Actions",
+      { label: "Alias" },
+      { label: "Configured" },
+      { label: "Effective" },
+      { label: "Visible" },
+      { label: "Availability" },
+      { label: "Benchmark result" },
+      { label: "Tool qualification result" },
+      { label: "Actions", type: "actions" },
     ];
     const aliasRows = aliases.length
       ? aliases.map((alias) => {
@@ -606,10 +692,10 @@
             alias.alias || "",
             configured,
             effective,
-            alias.visible ? "visible" : "hidden",
-            alias.unavailable_reason || "",
-            stripPrefix(benchmarkText(alias.benchmark_latest), "latest benchmark:"),
-            stripPrefix(toolQualificationText(alias.tool_qualification_latest), "tool qualification:"),
+            stateCell(alias.visible ? "visible" : "hidden", alias.visible ? "green" : "red"),
+            alias.unavailable_reason ? stateCell(alias.unavailable_reason, "red") : stateCell("available", "green"),
+            benchmarkResultCell(alias.benchmark_latest),
+            toolResultCell(alias.tool_qualification_latest),
             [],
           ];
         })
@@ -617,20 +703,20 @@
     listEl.appendChild(tableGroup("Aliases", aliasColumns, aliasRows));
 
     const modelColumns = [
-      "Model",
-      "Aliases/provider",
-      "Selectable",
-      "Advertised",
-      "Cache",
-      "Fetch",
-      "Availability",
-      "Tool qualification result",
-      "Benchmark result",
-      "Action status",
-      "Actions",
+      { label: "Model", className: "model-col-model" },
+      { label: "Aliases/provider" },
+      { label: "Selectable" },
+      { label: "Advertised" },
+      { label: "Cache" },
+      { label: "Fetch" },
+      { label: "Availability" },
+      { label: "Tool qualification result" },
+      { label: "Benchmark result" },
+      { label: "Action status" },
+      { label: "Actions", type: "actions" },
     ];
-    const modelRows = models.length
-      ? models.map((model) => {
+
+    function modelRow(model) {
           const activity = model.fetch_activity && typeof model.fetch_activity === "object" ? model.fetch_activity : null;
           let fetchState = "";
           if (activity?.status === "active") fetchState = "downloading";
@@ -668,36 +754,57 @@
           return [
             `${model.backend || ""}:${model.model || ""}`,
             aliasText,
-            model.selectable ? "selectable" : "not selectable",
-            model.advertised ? "advertised" : "",
-            model.cache_state || "",
-            fetchState,
-            availability,
-            stripPrefix(toolQualificationText(model.tool_qualification_latest), "tool qualification:"),
-            stripPrefix(benchmarkText(model.benchmark_latest), "latest benchmark:"),
-            actionStatus?.text || "",
+            model.selectable ? stateCell("selectable", "green") : stateCell("not selectable", "red"),
+            model.advertised ? stateCell("advertised", "green") : "",
+            model.cache_state ? stateCell(model.cache_state, stateTone(model.cache_state)) : "",
+            fetchState ? stateCell(fetchState, stateTone(fetchState)) : "",
+            availability ? stateCell(availability, stateTone(availability)) : stateCell("available", "green"),
+            toolResultCell(model.tool_qualification_latest),
+            benchmarkResultCell(model.benchmark_latest),
+            actionStatus?.text ? stateCell(actionStatus.text, actionStatus.tone || stateTone(actionStatus.text)) : "",
             actions,
           ];
-        })
-      : [["None", "", "", "", "", "", "", "", "", "", []]];
-    listEl.appendChild(tableGroup("Models", modelColumns, modelRows));
-
-    const backendGroup = group("Backends");
-    if (!backends.length) {
-      backendGroup.appendChild(row("None", "", []));
-    } else {
-      backends.forEach((backend) => {
-        const badges = [
-          {
-            text: backend.ready === true ? "ready" : backend.ready === false ? "not ready" : "unknown",
-            tone: backend.ready === true ? "green" : backend.ready === false ? "red" : "yellow",
-          },
-        ];
-        if (backend.error) badges.push({ text: String(backend.error).slice(0, 80), tone: "red" });
-        backendGroup.appendChild(row(backend.backend || "", backend.hostname || backend.base_url || "", badges));
-      });
     }
-    listEl.appendChild(backendGroup);
+
+    const separated = splitModels(models);
+    const llmByBackend = new Map();
+    separated.llm.forEach((model) => {
+      const key = String(model.backend || "");
+      if (!llmByBackend.has(key)) llmByBackend.set(key, []);
+      llmByBackend.get(key).push(model);
+    });
+
+    if (!llmByBackend.size) {
+      listEl.appendChild(tableGroup("LLM Models", modelColumns, [["None", "", "", "", "", "", "", "", "", "", []]]));
+    } else {
+      Array.from(llmByBackend.keys())
+        .sort((a, b) => a.localeCompare(b))
+        .forEach((backendName) => {
+          const backendInfo = backendByName.get(backendName) || {};
+          const host = String(backendInfo.hostname || backendInfo.base_url || "").trim();
+          const title = host ? `LLM Models - ${backendName} (${host})` : `LLM Models - ${backendName}`;
+          const rows = (llmByBackend.get(backendName) || []).map((model) => modelRow(model));
+          listEl.appendChild(tableGroup(title, modelColumns, rows));
+        });
+    }
+
+    const nonLlmByBackend = new Map();
+    separated.nonLlm.forEach((model) => {
+      const key = String(model.backend || "");
+      if (!nonLlmByBackend.has(key)) nonLlmByBackend.set(key, []);
+      nonLlmByBackend.get(key).push(model);
+    });
+    if (nonLlmByBackend.size) {
+      Array.from(nonLlmByBackend.keys())
+        .sort((a, b) => a.localeCompare(b))
+        .forEach((backendName) => {
+          const backendInfo = backendByName.get(backendName) || {};
+          const host = String(backendInfo.hostname || backendInfo.base_url || "").trim();
+          const title = host ? `Non-LLM / Embeddings - ${backendName} (${host})` : `Non-LLM / Embeddings - ${backendName}`;
+          const rows = (nonLlmByBackend.get(backendName) || []).map((model) => modelRow(model));
+          listEl.appendChild(tableGroup(title, modelColumns, rows));
+        });
+    }
   }
 
   async function load() {
