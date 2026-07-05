@@ -262,6 +262,14 @@
     return source.startsWith(prefix) ? source.slice(prefix.length).trim() : source;
   }
 
+  function addClassTokens(el, className) {
+    const tokens = String(className || "")
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+    if (tokens.length) el.classList.add(...tokens);
+  }
+
   function tableGroup(title, columns, rows) {
     const wrap = group(title);
     const tableWrap = document.createElement("div");
@@ -275,7 +283,7 @@
     normalizedColumns.forEach((column) => {
       const th = document.createElement("th");
       th.textContent = column.label || "";
-      if (column.className) th.classList.add(column.className);
+      if (column.className) addClassTokens(th, column.className);
       headRow.appendChild(th);
     });
     thead.appendChild(headRow);
@@ -287,7 +295,7 @@
       cells.forEach((cellValue, index) => {
         const td = document.createElement("td");
         const column = normalizedColumns[index] || {};
-        if (column.className) td.classList.add(column.className);
+        if (column.className) addClassTokens(td, column.className);
         if (column.type === "actions" && Array.isArray(cellValue)) {
           if (!cellValue.length) {
             td.textContent = "";
