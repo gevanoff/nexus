@@ -82,7 +82,12 @@
         </div>
       </header>
 
-      <section class="card" style="margin-bottom:12px">
+      <section class="card">
+        <div id="admin_models_status" class="hint" style="margin-bottom:10px">Loading...</div>
+        <div id="admin_models_list" class="model-admin-list"></div>
+      </section>
+
+      <section class="card" style="margin-top:12px; margin-bottom:12px">
         <div class="model-admin-section-head">
           <div>
             <h2>Benchmark</h2>
@@ -156,11 +161,6 @@
           <div id="model_tool_qualification_status" class="hint"></div>
         </div>
         <div id="model_tool_qualification_results" class="model-admin-table-wrap"></div>
-      </section>
-
-      <section class="card">
-        <div id="admin_models_status" class="hint" style="margin-bottom:10px">Loading...</div>
-        <div id="admin_models_list" class="model-admin-list"></div>
       </section>
     </main>
     <script src="/static/auth_client.js?v=3"></script>

@@ -180,6 +180,65 @@
     return el;
   }
 
+  function stateValue(value) {
+    const text = String(value || "").trim();
+    return text;
+  }
+
+  function stripPrefix(text, prefix) {
+    const source = String(text || "");
+    return source.startsWith(prefix) ? source.slice(prefix.length).trim() : source;
+  }
+
+  function tableGroup(title, columns, rows) {
+    const wrap = group(title);
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "model-admin-table-wrap";
+    const table = document.createElement("table");
+    table.className = "model-admin-table";
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    columns.forEach((column) => {
+      const th = document.createElement("th");
+      th.textContent = column;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    (rows || []).forEach((cells) => {
+      const tr = document.createElement("tr");
+      cells.forEach((cellValue, index) => {
+        const td = document.createElement("td");
+        if (index === cells.length - 1 && Array.isArray(cellValue)) {
+          if (!cellValue.length) {
+            td.textContent = "";
+          } else {
+            cellValue.forEach((item) => {
+              const button = document.createElement("button");
+              button.type = "button";
+              button.textContent = item.text;
+              button.dataset.uiRole = item.role || "secondary";
+              button.disabled = item.disabled === true;
+              button.addEventListener("click", item.onClick);
+              td.appendChild(button);
+            });
+          }
+        } else {
+          td.textContent = stateValue(cellValue);
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    wrap.appendChild(tableWrap);
+    return wrap;
+  }
+
   function benchmarkSelectedModels() {
     if (!benchmarkEls.models) return [];
     return Array.from(benchmarkEls.models.selectedOptions || [])
@@ -529,78 +588,99 @@
 
     renderHugeLane(payload?.mlx_huge_lane || null);
 
-    const aliasGroup = group("Aliases");
-    if (!aliases.length) {
-      aliasGroup.appendChild(row("None", "", []));
-    } else {
-      aliases.forEach((alias) => {
-        const effective = `${alias.effective_backend || alias.backend}:${alias.effective_model || ""}`;
-        const configured = `${alias.backend || ""}:${alias.configured_model || ""}`;
-        const badges = [{ text: alias.visible ? "visible" : "hidden", tone: alias.visible ? "green" : "red" }];
-        if (alias.unavailable_reason) badges.push({ text: alias.unavailable_reason, tone: "yellow" });
-        const toolBadge = toolQualificationBadge(alias.tool_qualification_latest);
-        if (toolBadge) badges.push(toolBadge);
-        const benchmark = benchmarkText(alias.benchmark_latest);
-        const toolQualification = toolQualificationText(alias.tool_qualification_latest);
-        const details = [benchmark, toolQualification].filter(Boolean).reduce(
-          (text, item) => `${text} · ${item}`,
-          `${configured} -> ${effective}`,
-        );
-        aliasGroup.appendChild(row(alias.alias || "", details, badges));
-      });
-    }
-    listEl.appendChild(aliasGroup);
+    const aliasColumns = [
+      "Alias",
+      "Configured",
+      "Effective",
+      "Visible",
+      "Availability",
+      "Benchmark result",
+      "Tool qualification result",
+      "Actions",
+    ];
+    const aliasRows = aliases.length
+      ? aliases.map((alias) => {
+          const configured = `${alias.backend || ""}:${alias.configured_model || ""}`;
+          const effective = `${alias.effective_backend || alias.backend || ""}:${alias.effective_model || ""}`;
+          return [
+            alias.alias || "",
+            configured,
+            effective,
+            alias.visible ? "visible" : "hidden",
+            alias.unavailable_reason || "",
+            stripPrefix(benchmarkText(alias.benchmark_latest), "latest benchmark:"),
+            stripPrefix(toolQualificationText(alias.tool_qualification_latest), "tool qualification:"),
+            [],
+          ];
+        })
+      : [["None", "", "", "", "", "", "", []]];
+    listEl.appendChild(tableGroup("Aliases", aliasColumns, aliasRows));
 
-    const modelGroup = group("Models");
-    if (!models.length) {
-      modelGroup.appendChild(row("None", "", []));
-    } else {
-      models.forEach((model) => {
-        const badges = [{ text: model.selectable ? "selectable" : "not selectable", tone: model.selectable ? "green" : "red" }];
-        if (model.cache_state) badges.push({ text: model.cache_state, tone: model.cache_state === "cached" ? "green" : "yellow" });
-        const activity = model.fetch_activity && typeof model.fetch_activity === "object" ? model.fetch_activity : null;
-        if (activity?.status === "active") badges.push({ text: "downloading", tone: "green" });
-        if (activity?.status === "stalled") badges.push({ text: "stalled/stopped", tone: "red" });
-        if (activity?.status === "unknown") badges.push({ text: "fetch unknown", tone: "yellow" });
-        if (model.unavailable_reason) badges.push({ text: model.unavailable_reason, tone: "yellow" });
-        if (model.cache_only) badges.push({ text: "cache only", tone: "yellow" });
-        if (model.advertised) badges.push({ text: "advertised", tone: "" });
-        const toolBadge = toolQualificationBadge(model.tool_qualification_latest);
-        if (toolBadge) badges.push(toolBadge);
-        const aliasText = Array.isArray(model.aliases) && model.aliases.length ? `aliases: ${model.aliases.join(", ")}` : model.provider || "";
-        const benchmark = benchmarkText(model.benchmark_latest);
-        const toolQualification = toolQualificationText(model.tool_qualification_latest);
-        const actionStatus = modelActionStatus.get(modelActionKey(model.backend || "local_mlx", model.model || ""));
-        const details = [benchmark, toolQualification].filter(Boolean).reduce(
-          (text, item) => (text ? `${text} · ${item}` : item),
-          aliasText,
-        );
-        const actions = [];
-        if (model.provider === "mlx" && model.cache_state === "fetching" && activity?.status !== "active") {
-          actions.push({
-            text: "Restart fetch",
-            role: "secondary",
-            onClick: () => void restartFetch(model.backend || "local_mlx", model.model || ""),
-          });
-        }
-        if (model.provider === "mlx") {
-          actions.push({
-            text: "Re-download",
-            role: "secondary",
-            disabled: activity?.status === "active",
-            onClick: () => void redownloadModelCache(model.backend || "local_mlx", model.model || ""),
-          });
-          actions.push({
-            text: "Purge cache",
-            role: "secondary",
-            onClick: () => void purgeModelCache(model.backend || "local_mlx", model.model || ""),
-          });
-        }
-        if (actionStatus) badges.push({ text: actionStatus.text, tone: actionStatus.tone });
-        modelGroup.appendChild(row(`${model.backend || ""}:${model.model || ""}`, details, badges, actions));
-      });
-    }
-    listEl.appendChild(modelGroup);
+    const modelColumns = [
+      "Model",
+      "Aliases/provider",
+      "Selectable",
+      "Advertised",
+      "Cache",
+      "Fetch",
+      "Availability",
+      "Tool qualification result",
+      "Benchmark result",
+      "Action status",
+      "Actions",
+    ];
+    const modelRows = models.length
+      ? models.map((model) => {
+          const activity = model.fetch_activity && typeof model.fetch_activity === "object" ? model.fetch_activity : null;
+          let fetchState = "";
+          if (activity?.status === "active") fetchState = "downloading";
+          else if (activity?.status === "stalled") fetchState = "stalled/stopped";
+          else if (activity?.status === "unknown") fetchState = "fetch unknown";
+
+          const availabilityParts = [];
+          if (model.unavailable_reason) availabilityParts.push(String(model.unavailable_reason));
+          if (model.cache_only) availabilityParts.push("cache only");
+          const availability = availabilityParts.join(" · ");
+
+          const aliasText = Array.isArray(model.aliases) && model.aliases.length ? model.aliases.join(", ") : model.provider || "";
+          const actionStatus = modelActionStatus.get(modelActionKey(model.backend || "local_mlx", model.model || ""));
+          const actions = [];
+          if (model.provider === "mlx" && model.cache_state === "fetching" && activity?.status !== "active") {
+            actions.push({
+              text: "Restart fetch",
+              role: "secondary",
+              onClick: () => void restartFetch(model.backend || "local_mlx", model.model || ""),
+            });
+          }
+          if (model.provider === "mlx") {
+            actions.push({
+              text: "Re-download",
+              role: "secondary",
+              disabled: activity?.status === "active",
+              onClick: () => void redownloadModelCache(model.backend || "local_mlx", model.model || ""),
+            });
+            actions.push({
+              text: "Purge cache",
+              role: "secondary",
+              onClick: () => void purgeModelCache(model.backend || "local_mlx", model.model || ""),
+            });
+          }
+          return [
+            `${model.backend || ""}:${model.model || ""}`,
+            aliasText,
+            model.selectable ? "selectable" : "not selectable",
+            model.advertised ? "advertised" : "",
+            model.cache_state || "",
+            fetchState,
+            availability,
+            stripPrefix(toolQualificationText(model.tool_qualification_latest), "tool qualification:"),
+            stripPrefix(benchmarkText(model.benchmark_latest), "latest benchmark:"),
+            actionStatus?.text || "",
+            actions,
+          ];
+        })
+      : [["None", "", "", "", "", "", "", "", "", "", []]];
+    listEl.appendChild(tableGroup("Models", modelColumns, modelRows));
 
     const backendGroup = group("Backends");
     if (!backends.length) {
