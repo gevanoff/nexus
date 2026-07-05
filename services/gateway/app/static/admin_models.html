@@ -56,31 +56,23 @@
       select[multiple] { min-height:116px; }
       textarea { min-height:74px; resize:vertical; }
       .model-admin-benchmark-actions { margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-      .model-admin-table-wrap { margin-top:10px; overflow-x:auto; position:relative; }
-      .model-admin-table-wrap::before,
-      .model-admin-table-wrap::after {
-        content: "";
-        position: sticky;
-        top: 0;
-        bottom: 0;
-        width: 20px;
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity 120ms ease;
-        z-index: 3;
+      .model-admin-table-wrap {
+        margin-top:10px;
+        overflow-x:auto;
+        position:relative;
+        transition: box-shadow 120ms ease;
       }
-      .model-admin-table-wrap::before {
-        left: 0;
-        float: left;
-        background: linear-gradient(90deg, rgba(10,13,18,0.9), rgba(10,13,18,0));
+      .model-admin-table-wrap.has-overflow-left {
+        box-shadow: inset 22px 0 18px -16px rgba(0,0,0,0.78);
       }
-      .model-admin-table-wrap::after {
-        right: 0;
-        float: right;
-        background: linear-gradient(270deg, rgba(10,13,18,0.9), rgba(10,13,18,0));
+      .model-admin-table-wrap.has-overflow-right {
+        box-shadow: inset -22px 0 18px -16px rgba(0,0,0,0.78);
       }
-      .model-admin-table-wrap.has-overflow-left::before { opacity: 1; }
-      .model-admin-table-wrap.has-overflow-right::after { opacity: 1; }
+      .model-admin-table-wrap.has-overflow-left.has-overflow-right {
+        box-shadow:
+          inset 22px 0 18px -16px rgba(0,0,0,0.78),
+          inset -22px 0 18px -16px rgba(0,0,0,0.78);
+      }
       .model-admin-table { width:100%; border-collapse:collapse; font-size:12px; min-width:860px; }
       .model-admin-table th, .model-admin-table td { padding:7px 8px; border-top:1px solid rgba(231,237,246,0.08); text-align:left; vertical-align:top; }
       .model-admin-table th { color:var(--muted); font-weight:600; }
@@ -205,6 +197,6 @@
     </main>
     <script src="/static/auth_client.js?v=3"></script>
     <script src="/static/focused_nav.js?v=7"></script>
-    <script src="/static/admin_models.js?v=9"></script>
+    <script src="/static/admin_models.js?v=10"></script>
   </body>
 </html>
