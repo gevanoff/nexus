@@ -57,6 +57,11 @@
     let modelOptionLabels = new Map();
     let modelOptionItems = new Map();
     let codingModelOptionsCache = [];
+    let modelDefaultsCache = {
+      chat: { model: "default" },
+      coding: { model: "coder", track_model: "coder" },
+      scheduled_tasks: { llm: "default", coder: "coder" },
+    };
     let currentUserIsAdmin = false;
     let authRedirectPending = false;
     const BACKEND_STATUS_CACHE_KEY = "nexus.chat.backendStatus.v1";
@@ -2067,8 +2072,8 @@
           autoPlayTTS: !!(s.audio && s.audio.autoPlayTTS || s.autoPlayTTS),
           systemPrompt: (s.profile && s.profile.system_prompt) || s.profile?.system_prompt || s.profile?.systemPrompt || "",
           profileTone: (s.profile && s.profile.tone) || s.profile?.tone || "",
-          preferredModel: (s.chat && s.chat.model_preference) || s.model_preference || s.modelPreference || "default",
-          preferredCodingModel: (s.coding && s.coding.model_preference) || s.coding_model_preference || s.codingModelPreference || "coder",
+          preferredModel: (s.chat && s.chat.model_preference) || s.model_preference || s.modelPreference || modelDefaultsCache?.chat?.model || "default",
+          preferredCodingModel: (s.coding && s.coding.model_preference) || s.coding_model_preference || s.codingModelPreference || modelDefaultsCache?.coding?.model || "coder",
           codingGitTokenConfigured: !!(s.coding && s.coding.git_token_configured),
           codingGitTokenHint: (s.coding && s.coding.git_token_hint) || "",
           commercialLlms: loadCommercialLlms(s),
@@ -2704,7 +2709,8 @@
     function normalizePreferredModel(preferred) {
       const desired = canonicalizeUiModelId(preferred);
       if (!modelOptionsCache.length) return desired || "default";
-      return modelOptionsCache.includes(desired) ? desired : "default";
+      const fallback = canonicalizeUiModelId(modelDefaultsCache?.chat?.model || "default") || "default";
+      return modelOptionsCache.includes(desired) ? desired : fallback;
     }
 
     function normalizePreferredCodingModel(preferred) {
@@ -2712,7 +2718,22 @@
       const match = codingModelOptionsCache.find((item) => {
         return String(item?.value || "") === raw || String(item?.model || "") === raw;
       });
-      return match ? String(match.value || "coder") : raw;
+      if (match) return String(match.value || "coder");
+      const fallback = String(modelDefaultsCache?.coding?.model || "coder").trim() || "coder";
+      return raw || fallback;
+    }
+
+    async function loadModelDefaults() {
+      try {
+        const resp = await fetch("/ui/api/model-defaults", { method: "GET", credentials: "same-origin" });
+        const text = await resp.text();
+        if (handle401(resp)) return;
+        if (!resp.ok) throw new Error(text || `HTTP ${resp.status}`);
+        const payload = text ? JSON.parse(text) : {};
+        modelDefaultsCache = payload && typeof payload === "object" ? payload : modelDefaultsCache;
+      } catch (error) {
+        // Keep local static defaults if endpoint is unavailable.
+      }
     }
 
     function _setModelOptions(modelIds, preferred) {
@@ -2740,7 +2761,7 @@
       } catch (error) {
         codingModelOptionsCache = [{ value: "coder", label: "Track current coder", model: "" }];
       }
-      syncSettingsCodingModelSelect(userSettings.preferredCodingModel || "coder");
+      syncSettingsCodingModelSelect(userSettings.preferredCodingModel || modelDefaultsCache?.coding?.model || "coder");
     }
 
     async function loadModels() {
@@ -2750,7 +2771,7 @@
         if (handle401(resp)) return;
         if (!resp.ok) {
           setModelOptionLabels([]);
-          _setModelOptions(["default"], userSettings.preferredModel || "default");
+          _setModelOptions(["default"], userSettings.preferredModel || modelDefaultsCache?.chat?.model || "default");
           addMessage({ role: "system", content: text, meta: `Models HTTP ${resp.status}` });
           return;
         }
@@ -2760,7 +2781,7 @@
           payload = JSON.parse(text);
         } catch {
           setModelOptionLabels([]);
-          _setModelOptions(["default"], userSettings.preferredModel || "default");
+          _setModelOptions(["default"], userSettings.preferredModel || modelDefaultsCache?.chat?.model || "default");
           addMessage({ role: "system", content: "Models: invalid JSON" });
           return;
         }
@@ -2768,10 +2789,10 @@
         const data = payload && Array.isArray(payload.data) ? payload.data : [];
         setModelOptionLabels(data);
         const ids = data.map((m) => m && m.id).filter((x) => typeof x === "string");
-        _setModelOptions(ids, userSettings.preferredModel || "default");
+        _setModelOptions(ids, userSettings.preferredModel || modelDefaultsCache?.chat?.model || "default");
       } catch (e) {
         setModelOptionLabels([]);
-        _setModelOptions(["default"], userSettings.preferredModel || "default");
+        _setModelOptions(["default"], userSettings.preferredModel || modelDefaultsCache?.chat?.model || "default");
         addMessage({ role: "system", content: `Models error: ${String(e)}` });
       }
     }
@@ -3368,9 +3389,11 @@
 
     document.addEventListener('DOMContentLoaded', () => {
       if (!chatEl) return;
+      void loadModelDefaults();
       void loadModels();
       void loadCodingModelCatalog();
       (async () => {
+        await loadModelDefaults();
         await loadUserSettings();
         await resetSession();
       })();
@@ -3428,6 +3451,7 @@
       if (sendEl) sendEl.addEventListener('click', () => void handleSendClick());
       if (uiRefreshBtn) {
         uiRefreshBtn.addEventListener('click', () => {
+          void loadModelDefaults();
           void loadModels();
           void loadCodingModelCatalog();
           void loadBackendStatus({ refresh: true });

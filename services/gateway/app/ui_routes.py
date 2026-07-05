@@ -1275,6 +1275,17 @@ def _merge_user_settings_with_secrets(current: Dict[str, Any], patch: Dict[str, 
     merged_coding.pop("clear_git_token", None)
     merged_coding.pop("git_token_configured", None)
     merged_coding.pop("git_token_hint", None)
+
+    if "model_preference" in patch_coding or "preferred_model" in patch_coding:
+        raw_preference = str(
+            merged_coding.get("model_preference")
+            or merged_coding.get("preferred_model")
+            or coding_model_policy.TRACK_CODER_MODEL
+        ).strip()
+        normalized_preference = coding_model_policy.normalize_preferred_coding_model(raw_preference)
+        merged_coding["model_preference"] = normalized_preference
+        if "preferred_model" in merged_coding:
+            merged_coding["preferred_model"] = normalized_preference
     return merged
 
 
@@ -4803,6 +4814,67 @@ async def ui_model_catalogs(req: Request) -> Dict[str, Any]:
     _require_ui_access(req)
     _require_user(req)
     return {"coding": coding_model_policy.options_payload()}
+
+
+def _ui_coding_model_preference_for_user(user: Any) -> str:
+    if user is None or getattr(user, "id", None) is None:
+        return coding_model_policy.TRACK_CODER_MODEL
+    try:
+        settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user.id))
+    except Exception:
+        settings = {}
+    coding = settings.get("coding") if isinstance(settings, dict) else None
+    if not isinstance(coding, dict):
+        return coding_model_policy.TRACK_CODER_MODEL
+    preferred = str(coding.get("model_preference") or coding.get("preferred_model") or "").strip()
+    return coding_model_policy.normalize_preferred_coding_model(preferred)
+
+
+def _ui_chat_model_preference_for_user(user: Any) -> str:
+    if user is None or getattr(user, "id", None) is None:
+        return "default"
+    try:
+        settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user.id))
+    except Exception:
+        settings = {}
+    chat = settings.get("chat") if isinstance(settings, dict) else None
+    preferred = ""
+    if isinstance(chat, dict):
+        preferred = str(chat.get("model_preference") or "").strip()
+    if not preferred and isinstance(settings, dict):
+        preferred = str(settings.get("model_preference") or settings.get("modelPreference") or "").strip()
+    return preferred or "default"
+
+
+def _ui_model_defaults_payload(user: Any) -> Dict[str, Any]:
+    task_defaults: Dict[str, str] = {}
+    for item in _task_type_capabilities():
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("id") or "").strip()
+        if not task_id or not bool(item.get("enabled")):
+            continue
+        default_model = str(item.get("default_model") or "").strip()
+        if default_model:
+            task_defaults[task_id] = default_model
+    return {
+        "source": "gateway_model_defaults.v1",
+        "chat": {
+            "model": _ui_chat_model_preference_for_user(user),
+        },
+        "coding": {
+            "model": _ui_coding_model_preference_for_user(user),
+            "track_model": coding_model_policy.TRACK_CODER_MODEL,
+        },
+        "scheduled_tasks": task_defaults,
+    }
+
+
+@router.get("/ui/api/model-defaults", include_in_schema=False)
+async def ui_model_defaults(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    user = _require_user(req)
+    return _ui_model_defaults_payload(user)
 
 
 @router.get("/ui/api/models", include_in_schema=False)

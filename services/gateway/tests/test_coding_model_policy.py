@@ -150,3 +150,34 @@ def test_default_alias_is_not_coder_tracking_policy(monkeypatch, tmp_path):
     assert policy["status"] == "alias"
     assert policy["resolved_model"] == "qwen-default"
     assert policy["backend"] == "local_vllm"
+
+
+def test_normalize_preferred_coding_model_maps_upstream_to_alias(monkeypatch):
+    monkeypatch.setattr(
+        coding_model_policy,
+        "options_payload",
+        lambda: {
+            "options": [
+                {"value": "coder", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+                {"value": "reasoning", "model": "qwen-reasoning"},
+            ]
+        },
+    )
+
+    assert coding_model_policy.normalize_preferred_coding_model("mlx-community/GLM-5.2-DQ4plus-q8") == "coder"
+    assert coding_model_policy.normalize_preferred_coding_model("reasoning") == "reasoning"
+
+
+def test_normalize_preferred_coding_model_falls_back_for_stale_value(monkeypatch):
+    monkeypatch.setattr(
+        coding_model_policy,
+        "options_payload",
+        lambda: {
+            "options": [
+                {"value": "coder", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+            ]
+        },
+    )
+
+    assert coding_model_policy.normalize_preferred_coding_model("mlx-community/GLM-5-4bit") == "coder"
+    assert coding_model_policy.normalize_preferred_coding_model("") == "coder"

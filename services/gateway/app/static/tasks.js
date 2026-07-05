@@ -64,6 +64,7 @@
 
   const state = {
     capabilities: null,
+    modelDefaults: null,
     models: [],
     tasks: [],
     selectedId: "",
@@ -568,6 +569,7 @@
   function applyTaskTypeDefaults() {
     const config = taskTypeConfig();
     const isCoder = String(els.taskType?.value || "") === "coder";
+    const taskType = String(els.taskType?.value || "llm").trim() || "llm";
     const isModelIntegration = isCoder && String(els.codingMode?.value || "agent") === "model_integration";
     if (els.codingModeFields) els.codingModeFields.hidden = !isCoder;
     if (els.modelIntegrationFields) els.modelIntegrationFields.hidden = !isModelIntegration;
@@ -578,8 +580,21 @@
     if (els.tier && config.default_tier !== undefined && config.default_tier !== null) {
       els.tier.value = String(config.default_tier);
     }
-    if (config.default_model) setModelSelectValue(config.default_model);
+    const sharedDefaults = state.modelDefaults && state.modelDefaults.scheduled_tasks && typeof state.modelDefaults.scheduled_tasks === "object"
+      ? state.modelDefaults.scheduled_tasks
+      : {};
+    const sharedModel = String(sharedDefaults[taskType] || "").trim();
+    if (sharedModel) setModelSelectValue(sharedModel);
+    else if (config.default_model) setModelSelectValue(config.default_model);
     renderTools({ reset: true });
+  }
+
+  async function loadModelDefaults() {
+    try {
+      state.modelDefaults = await fetchJson("/ui/api/model-defaults");
+    } catch (_error) {
+      state.modelDefaults = null;
+    }
   }
 
   function modelIntegrationPayload() {
@@ -970,6 +985,7 @@
 
     try {
       setStatus("Loading scheduled tasks...");
+      await loadModelDefaults();
       await loadCapabilities();
       await loadModels();
       await loadTasks({ keepSelection: false });

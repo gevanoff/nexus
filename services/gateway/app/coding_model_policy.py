@@ -69,6 +69,38 @@ def is_tracking_coder_model(model: str) -> bool:
     return str(model or "").strip().lower() in _TRACKING_VALUES
 
 
+def normalize_preferred_coding_model(model: str, *, fallback: str = TRACK_CODER_MODEL) -> str:
+    raw = str(model or "").strip()
+    if not raw:
+        return fallback
+    if is_tracking_coder_model(raw):
+        return TRACK_CODER_MODEL
+
+    payload = options_payload()
+    options = payload.get("options") if isinstance(payload, dict) else []
+    if not isinstance(options, list):
+        return fallback
+
+    value_map: Dict[str, str] = {}
+    model_map: Dict[str, str] = {}
+    for item in options:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("value") or "").strip()
+        if value:
+            value_map[value.lower()] = value
+        option_model = str(item.get("model") or "").strip()
+        if option_model and value:
+            model_map[option_model.lower()] = value
+
+    lowered = raw.lower()
+    if lowered in value_map:
+        return value_map[lowered]
+    if lowered in model_map:
+        return model_map[lowered]
+    return fallback
+
+
 def pinned_huge_model(model: str) -> str:
     candidate = _strip_mlx_prefix(model)
     if not candidate or is_tracking_coder_model(candidate):

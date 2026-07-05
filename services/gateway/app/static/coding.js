@@ -94,6 +94,7 @@
 
   const state = {
     config: null,
+    modelDefaults: null,
     modelCatalog: null,
     modelCatalogLoadedAt: 0,
     tasks: [],
@@ -1428,6 +1429,23 @@
     }
   }
 
+  async function loadModelDefaults() {
+    const payload = await fetchJson("/ui/api/model-defaults");
+    state.modelDefaults = payload && typeof payload === "object" ? payload : {};
+    return state.modelDefaults;
+  }
+
+  function defaultCodingModel() {
+    const shared = state.modelDefaults && state.modelDefaults.coding && state.modelDefaults.coding.model
+      ? String(state.modelDefaults.coding.model).trim()
+      : "";
+    if (shared) return shared;
+    const preferred = state.config && state.config.preferred_coding_model
+      ? String(state.config.preferred_coding_model).trim()
+      : "";
+    return preferred || "coder";
+  }
+
   async function loadModelCatalog({ force = false } = {}) {
     if (!force && state.modelCatalog && Date.now() - state.modelCatalogLoadedAt < 30000) {
       return state.modelCatalog;
@@ -1462,6 +1480,7 @@
       base_branch: els.baseBranch ? els.baseBranch.value.trim() : "",
       branch_name: els.branchName ? els.branchName.value.trim() : "",
       prompt: buildModePrompt(mode, els.taskPrompt ? els.taskPrompt.value.trim() : ""),
+      coding_model: selectedWorkspaceModelValue(),
     };
   }
 
@@ -1481,7 +1500,8 @@
   }
 
   function selectedWorkspaceModelValue() {
-    return els.workspaceModelInput ? String(els.workspaceModelInput.value || "").trim() : "";
+    const selected = els.workspaceModelInput ? String(els.workspaceModelInput.value || "").trim() : "";
+    return selected || defaultCodingModel();
   }
 
   function modelIntegrationBody() {
@@ -1494,6 +1514,7 @@
       base_branch: els.baseBranch ? els.baseBranch.value.trim() : "",
       branch_name: els.modelIntegrationBranchName ? els.modelIntegrationBranchName.value.trim() : "",
       prompt: els.modelIntegrationPrompt ? els.modelIntegrationPrompt.value.trim() : "",
+      coding_model: selectedWorkspaceModelValue(),
     };
   }
 
@@ -2108,7 +2129,13 @@
     if (els.taskFilter) els.taskFilter.value = state.taskFilter;
     setCreateMode(params.get("create") || "agent");
     renderSelected();
-    await Promise.all([loadConfig(), loadModelCatalog({ force: true })]);
+    await Promise.all([loadConfig(), loadModelCatalog({ force: true }), loadModelDefaults()]);
+    if (els.workspaceModelInput && !String(els.workspaceModelInput.value || "").trim()) {
+      const preferred = defaultCodingModel();
+      renderWorkspaceModelOptions(null);
+      els.workspaceModelInput.value = preferred;
+      renderWorkspaceModelHint(null);
+    }
     await loadTasks({ keepSelection: false });
     if (state.selectedId) {
       await loadDiffSummary({ quiet: true, taskId: state.selectedId });
@@ -2118,7 +2145,7 @@
   }
 
   wire("refreshTasks", async () => {
-    await Promise.all([loadConfig(), loadModelCatalog({ force: true })]);
+    await Promise.all([loadConfig(), loadModelCatalog({ force: true }), loadModelDefaults()]);
     await loadTasks({ keepSelection: true });
   });
   wire("createAndRun", createAndRun);

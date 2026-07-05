@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.auth import require_bearer
 from app.config import S
 from app import coding_agent as ca
+from app import coding_model_policy
 from app import coding_smoke_status
 from app import coding_workspace as cw
 from app.tools_bus import tool_web_browse
@@ -237,7 +238,8 @@ def _coding_model_for_user(user: Any, requested: Optional[str] = None) -> str:
     if explicit:
         return explicit
     coding = _coding_settings_for_user(user)
-    return str(coding.get("model_preference") or coding.get("preferred_model") or "coder").strip() or "coder"
+    preferred = str(coding.get("model_preference") or coding.get("preferred_model") or "coder").strip() or "coder"
+    return coding_model_policy.normalize_preferred_coding_model(preferred)
 
 
 async def _to_thread(func, *args, **kwargs):

@@ -85,6 +85,30 @@ async def test_ui_model_catalogs_exposes_shared_coding_catalog(monkeypatch):
     assert payload["coding"]["options"] == [{"value": "coder"}]
 
 
+@pytest.mark.asyncio
+async def test_ui_model_defaults_exposes_shared_defaults(monkeypatch):
+    monkeypatch.setattr(ui_routes, "_require_ui_access", lambda _req: None)
+    monkeypatch.setattr(ui_routes, "_require_user", lambda _req: SimpleNamespace(id=1))
+    monkeypatch.setattr(ui_routes, "_ui_chat_model_preference_for_user", lambda _user: "default")
+    monkeypatch.setattr(ui_routes, "_ui_coding_model_preference_for_user", lambda _user: "coder")
+    monkeypatch.setattr(
+        ui_routes,
+        "_task_type_capabilities",
+        lambda: [
+            {"id": "llm", "enabled": True, "default_model": "default"},
+            {"id": "coder", "enabled": True, "default_model": "coder"},
+            {"id": "image", "enabled": False, "default_model": "image"},
+        ],
+    )
+
+    payload = await ui_routes.ui_model_defaults(SimpleNamespace())
+
+    assert payload["source"] == "gateway_model_defaults.v1"
+    assert payload["chat"]["model"] == "default"
+    assert payload["coding"]["model"] == "coder"
+    assert payload["scheduled_tasks"] == {"llm": "default", "coder": "coder"}
+
+
 def test_user_llm_settings_sanitize_hides_keys():
     sanitized = ui_routes._sanitize_user_settings_for_response(_settings("sk-secret-1234"))
 
@@ -127,6 +151,28 @@ def test_user_llm_settings_merge_preserves_and_clears_keys():
     }
     cleared = ui_routes._merge_user_settings_with_secrets(merged, clear_patch)
     assert "api_key" not in cleared["commercial_llms"]["providers"]["openai"]
+
+
+def test_user_settings_merge_normalizes_stale_coding_model_preference(monkeypatch):
+    monkeypatch.setattr(
+        ui_routes.coding_model_policy,
+        "normalize_preferred_coding_model",
+        lambda value: "coder" if value == "mlx-community/GLM-5-4bit" else value,
+    )
+    current = {
+        "coding": {
+            "model_preference": "coder",
+        }
+    }
+    patch = {
+        "coding": {
+            "model_preference": "mlx-community/GLM-5-4bit",
+        }
+    }
+
+    merged = ui_routes._merge_user_settings_with_secrets(current, patch)
+
+    assert merged["coding"]["model_preference"] == "coder"
 
 
 def test_user_llm_model_entries_require_enabled_key_and_models():
