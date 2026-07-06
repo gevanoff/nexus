@@ -235,8 +235,8 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/preflight-check.sh`: dependency + permission checks
 - `deploy/scripts/install-colima-launchd.sh`: install a macOS LaunchDaemon that auto-starts Colima at boot under your user account
 - `deploy/scripts/restart-colima.sh`: restart/verify the Colima LaunchDaemon on macOS
-- `deploy/scripts/deploy.sh <dev|prod> <branch>`: host-local deployment
-- `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/deploy.sh <prod> <branch>`: host-local deployment
+- `deploy/scripts/remote-deploy.sh <prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/cutover-tts-one-way.sh`: one-way cutover from legacy native TTS launchd jobs to the tracked Nexus Pocket/Lux/Qwen container stack
 - `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
 - `deploy/scripts/restart-gateway.sh`: restart/rebuild only Gateway so code/config updates are picked up quickly
@@ -474,16 +474,16 @@ docker compose exec gateway pytest
 docker compose exec gateway python tools/verify_gateway.py
 ```
 
-### Development Mode
+### Operations
 
 ```bash
-# Start with hot reload
-docker compose -f docker-compose.gateway.yml -f docker-compose.gateway.dev.yml up -d
+# Start core services
+docker compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d
 
-# View logs for specific service
-docker compose logs -f ollama
+# View logs for a specific service
+docker compose logs -f gateway
 
-# Restart a service
+# Restart gateway
 docker compose restart gateway
 ```
 

@@ -16,7 +16,7 @@ Suggested order (typical):
   1) ./deploy/scripts/install-host-deps.sh
   2) ./deploy/scripts/import-env.sh   (this script)
   3) ./deploy/scripts/preflight-check.sh --mode deploy
-  4) ./deploy/scripts/deploy.sh dev main   (or prod)
+  4) ./deploy/scripts/deploy.sh prod main
 
 Creates repo-root .env from .env.example if it doesn't exist.
 

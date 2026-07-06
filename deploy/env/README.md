@@ -17,13 +17,11 @@ Set `NEXUS_RUNTIME_ROOT` explicitly in deployed host env files. Use an absolute 
 
 Then create one of:
 
-- `deploy/env/.env.dev` (for `deploy/scripts/deploy.sh dev ...`)
 - `deploy/env/.env.prod` (for `deploy/scripts/deploy.sh prod ...`)
 - `deploy/env/.env.prod.stackrot`, `deploy/env/.env.prod.ai2`, `deploy/env/.env.prod.ada2`, `deploy/env/.env.prod.meltdown`, `deploy/env/.env.prod.copyfail` when using topology-driven multi-host deploys
 
 Optional untracked overlays:
 
-- `deploy/env/.env.dev.local`
 - `deploy/env/.env.prod.local`
 - `deploy/env/.env.prod.stackrot.local`, `deploy/env/.env.prod.ai2.local`, `deploy/env/.env.prod.ada2.local`, `deploy/env/.env.prod.meltdown.local`, `deploy/env/.env.prod.copyfail.local`
 
@@ -31,7 +29,6 @@ These `.local` files are git-ignored and are applied after the tracked template/
 
 Generated SOPS overlays:
 
-- `deploy/env/.env.dev.sops.common.local`
 - `deploy/env/.env.prod.sops.common.local`
 - `deploy/env/.env.prod.stackrot.sops.local`, `deploy/env/.env.prod.ai2.sops.local`, `deploy/env/.env.prod.ada2.sops.local`, `deploy/env/.env.prod.meltdown.sops.local`, `deploy/env/.env.prod.copyfail.sops.local`
 
@@ -46,9 +43,9 @@ Use the generated SOPS overlays as the versioned source of truth for host-specif
 
 ## Auto-create behavior
 
-If you run `deploy/scripts/deploy.sh <dev|prod> <branch>` and it selects `deploy/env/.env.<environment>` (because you did not pass `--env-file` and there is no repo-root `.env`), it will create the file automatically from the repo-root `.env.example`.
+If you run `deploy/scripts/deploy.sh <prod> <branch>` and it selects `deploy/env/.env.<environment>` (because you did not pass `--env-file` and there is no repo-root `.env`), it will create the file automatically from the repo-root `.env.example`.
 
-If you run `deploy/scripts/deploy.sh --topology-host <host> <dev|prod> <branch>`, it materializes `deploy/env/.env.<environment>.<host>` from the tracked topology manifest before deploy.
+If you run `deploy/scripts/deploy.sh --topology-host <host> <prod> <branch>`, it materializes `deploy/env/.env.<environment>.<host>` from the tracked topology manifest before deploy.
 
 If tracked SOPS secret files exist, the deploy scripts first materialize sibling generated overlays and then merge them into the selected env file before preflight and compose startup. Plain `.local` overlays are merged last.
 
@@ -56,7 +53,7 @@ This logic is implemented in `deploy/scripts/_common.sh` together with `deploy/s
 
 You can also bypass these defaults and use any env file path with:
 
-- `deploy/scripts/deploy.sh --env-file /path/to/env <dev|prod> <branch>`
+- `deploy/scripts/deploy.sh --env-file /path/to/env <prod> <branch>`
 
 ## Permissions
 

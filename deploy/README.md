@@ -7,13 +7,13 @@ This directory provides per-service manifests for Docker Compose and containerd 
 Use the deployment wrappers instead of manual compose command sequences. From the repository root:
 
 ```bash
-./deploy/scripts/deploy.sh dev dev
+./deploy/scripts/deploy.sh prod main
 ```
 
 For remote hosts:
 
 ```bash
-./deploy/scripts/remote-deploy.sh dev dev user@dev-host
+./deploy/scripts/remote-deploy.sh prod main user@prod-host
 ```
 
 ## containerd (nerdctl)
@@ -34,8 +34,8 @@ Script entrypoints (all invoked from repo root):
 
 - `./quickstart.sh`: interactive local bootstrap (preflight + `.env` + startup)
 - `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
-- `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: deploy selected components on a host
-- `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <dev|prod> <branch> [user@host]`: deploy selected components over SSH
+- `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <prod> <branch>`: deploy selected components on a host
+- `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <prod> <branch> [user@host]`: deploy selected components over SSH
 - `./deploy/scripts/cutover-tts-one-way.sh [--env-file PATH] [--no-build] [--skip-gateway]`: disable legacy native TTS launchd jobs, seed Nexus runtime mounts from `/ai-data/var/lib/...`, and cut over Pocket/Lux/Qwen TTS to the tracked containerized shims
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
 - `./deploy/scripts/topology-ssh.sh [--print-target] <stackrot|ai2|ada2|meltdown|copyfail> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
@@ -214,8 +214,8 @@ Remote host deploy:
 		 - macOS: `ai:staff`
 		 - Linux: `ai:ai`
 2. Clone this repo to the platform-specific repo path on the remote host (as the `ai` user)
-3. Run `./deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>` from your local machine
-4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <stackrot|ai2|ada2|meltdown|copyfail> <dev|prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
+3. Run `./deploy/scripts/remote-deploy.sh <prod> <branch> <ai@host>` from your local machine
+4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <stackrot|ai2|ada2|meltdown|copyfail> <prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
 
 ## Windows development note
 

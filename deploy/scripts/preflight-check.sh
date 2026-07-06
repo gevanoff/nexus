@@ -337,17 +337,12 @@ if [[ -f .env ]]; then
   check_env_file_perms ".env" ".env"
 fi
 
-if [[ -f deploy/env/.env.dev || -f deploy/env/.env.prod ]]; then
+if [[ -f deploy/env/.env.prod ]]; then
   has_any_env="true"
-  if [[ -f deploy/env/.env.dev ]]; then
-    existing_envs+=("deploy/env/.env.dev")
-    ok "Host env present: deploy/env/.env.dev"
-  fi
   if [[ -f deploy/env/.env.prod ]]; then
     existing_envs+=("deploy/env/.env.prod")
     ok "Host env present: deploy/env/.env.prod"
   fi
-  [[ -f deploy/env/.env.dev ]] && check_env_file_perms "deploy/env/.env.dev" "deploy/env/.env.dev"
   [[ -f deploy/env/.env.prod ]] && check_env_file_perms "deploy/env/.env.prod" "deploy/env/.env.prod"
 fi
 
@@ -380,7 +375,7 @@ if [[ "$has_any_env" != "true" ]]; then
       warn "Missing .env (quickstart will create it from .env.example)"
       ;;
     deploy)
-      warn "No env file found (.env or deploy/env/.env.dev|.env.prod)."
+      warn "No env file found (.env or deploy/env/.env.prod)."
       warn "Create one from .env.example, or pass --env-file to deploy/scripts/deploy.sh."
       ;;
     *)
@@ -637,7 +632,7 @@ fi
 if [[ "$missing_lsof" == "true" ]]; then
   echo "  3) Install lsof (required for port diagnostics): ./deploy/scripts/install-host-deps.sh"
   echo "  4) Re-run: ./deploy/scripts/preflight-check.sh --mode ${mode}"
-  echo "  5) Deploy:  ./deploy/scripts/deploy.sh dev main   (or prod)"
+  echo "  5) Deploy:  ./deploy/scripts/deploy.sh prod main"
   echo "  6) Verify:  ./deploy/scripts/verify-gateway.sh && ./deploy/scripts/smoke-test-gateway.sh"
   echo
   echo "Preflight completed with $failures failure(s) and $warnings warning(s)."
@@ -656,7 +651,7 @@ else
   echo "  4) Preflight looks good; proceed to deploy"
 fi
 
-echo "  5) Deploy:  ./deploy/scripts/deploy.sh dev main   (or prod)"
+echo "  5) Deploy:  ./deploy/scripts/deploy.sh prod main"
 echo "  6) Verify:  ./deploy/scripts/verify-gateway.sh && ./deploy/scripts/smoke-test-gateway.sh"
 
 echo

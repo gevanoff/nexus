@@ -114,8 +114,8 @@ bash deploy/scripts/smoke-test-tts.sh
 ### Alternative deployment wrappers
 
 ```bash
-./deploy/scripts/deploy.sh dev dev
-./deploy/scripts/remote-deploy.sh dev dev user@dev-host
+./deploy/scripts/deploy.sh prod main
+./deploy/scripts/remote-deploy.sh prod main user@prod-host
 ```
 
 ### Gateway persistence + tools registry
@@ -145,10 +145,10 @@ For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `stack
 - `deploy/scripts/install-host-deps.sh`: interactive host dependency installer for Docker/Compose (+ optional NVIDIA runtime)
 - `quickstart.sh`: interactive setup/install flow for local environments
 - `deploy/scripts/preflight-check.sh`: validates dependencies, files, and script permissions
-- `deploy/scripts/deploy.sh <dev|prod> <branch>`: environment-aware local deployment
-- `deploy/scripts/deploy.sh [--component NAME|--components LIST] <dev|prod> <branch>`: environment-aware local deployment
-- `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <user@host>`: remote deployment wrapper
-- `deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] <dev|prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/deploy.sh <prod> <branch>`: environment-aware local deployment
+- `deploy/scripts/deploy.sh [--component NAME|--components LIST] <prod> <branch>`: environment-aware local deployment
+- `deploy/scripts/remote-deploy.sh <prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] <prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: manually registers non-compose or custom service metadata in etcd (requires `python3`)
 - `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd (requires `python3`)
 - `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from legacy ai-infra deployments
@@ -160,7 +160,7 @@ All Nexus management scripts share common bash helpers in `deploy/scripts/_commo
 ### Env file locations
 
 - Local quickstart uses `./.env` (created from `./.env.example`).
-- Host/CI deploys can store secrets in `deploy/env/.env.dev` and `deploy/env/.env.prod` (see `deploy/env/README.md`).
+- Host/CI deploys store secrets in `deploy/env/.env.prod` (see `deploy/env/README.md`).
 - `deploy/scripts/deploy.sh` will prefer `deploy/env/.env.<environment>` if present; otherwise it falls back to `./.env`.
 
 ## Recommended Script Sequence
@@ -186,7 +186,7 @@ All Nexus management scripts share common bash helpers in `deploy/scripts/_commo
      - macOS: `ai:staff`
      - Linux: `ai:ai`
 2. On the remote host: clone Nexus to `/opt/nexus` (as the `ai` user).
-3. From your local machine: `deploy/scripts/remote-deploy.sh <dev|prod> <branch> <ai@host>`.
+3. From your local machine: `deploy/scripts/remote-deploy.sh <prod> <branch> <ai@host>`.
   - Internally runs remote preflight + remote `deploy/scripts/deploy.sh`.
 
 ### Remote (multi-host)

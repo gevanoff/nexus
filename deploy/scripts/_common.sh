@@ -374,10 +374,6 @@ ns_guess_env_file() {
     echo "$repo_root/.env"
     return 0
   fi
-  if [[ -f "$repo_root/deploy/env/.env.dev" ]]; then
-    echo "$repo_root/deploy/env/.env.dev"
-    return 0
-  fi
   if [[ -f "$repo_root/deploy/env/.env.prod" ]]; then
     echo "$repo_root/deploy/env/.env.prod"
     return 0

@@ -18,7 +18,7 @@ This repository also includes manual GitHub Actions workflows that build and pus
 
 ## Secrets Management
 
-- Store secrets in a **host-side env file** (recommended: `deploy/env/.env.dev` and `deploy/env/.env.prod`).
+- Store secrets in a **host-side env file** (recommended: `deploy/env/.env.prod`).
 - Keep env files **out of git** and managed by host admins.
 - For stronger isolation, use **Docker secrets** or a secrets manager (Vault, AWS Secrets Manager).
 - Store CI secrets in GitHub Actions **Secrets** (registry credentials, SSH keys).
@@ -55,26 +55,11 @@ chmod +x deploy/scripts/*.sh quickstart.sh
 - `deploy/scripts/list-services.sh`: list registered services from etcd.
 - `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from ai-infra to Nexus.
 
-## Dev Branch Deployment
+## Branch Deployment
 
-- Create a permanent `dev` branch.
-- Configure hosts to run dev containers with `docker-compose.<service>.dev.yml` overrides (e.g. `docker-compose.gateway.dev.yml`).
-- Use separate ports, volumes, and network names to avoid collisions with production.
-
-### Example: Deploy dev branch
-
-```bash
-./deploy/scripts/deploy.sh dev dev
-```
-
-By default, `deploy/scripts/deploy.sh` will use `deploy/env/.env.dev` if it exists, otherwise it falls back to `./.env`.
-Create `deploy/env/.env.dev` by copying from `./.env.example` (see `deploy/env/README.md`).
-
-### Remote deployment (from CI or operator machine)
-
-```bash
-./deploy/scripts/remote-deploy.sh dev dev user@dev-host
-```
+- Deploy any branch through the production deployment path.
+- Use `deploy/scripts/deploy.sh prod <branch>` for host-local deploys.
+- Use `deploy/scripts/remote-deploy.sh prod <branch> <user@host>` for remote deploys.
 
 ## Production Deployment
 

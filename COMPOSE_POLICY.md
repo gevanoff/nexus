@@ -21,16 +21,6 @@ Base component files (production-ish defaults):
 - `docker-compose.qwen3-tts.yml`
 - `docker-compose.telegram-bot.yml`
 
-Dev overrides (optional, layer on top):
-
-- `docker-compose.gateway.dev.yml`
-- `docker-compose.ollama.dev.yml`
-- `docker-compose.etcd.dev.yml`
-- `docker-compose.images.dev.yml`
-- `docker-compose.tts.dev.yml`
-
-Note: `telegram-bot` currently uses only a base compose file (no dev override).
-
 ## Usage
 
 Core stack:
@@ -52,16 +42,3 @@ Core + Telegram bot:
 docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.telegram-bot.yml up -d
 ```
 
-Dev gateway:
-
-```bash
-docker compose -f docker-compose.gateway.yml -f docker-compose.gateway.dev.yml up -d
-```
-
-Dev core stack:
-
-```bash
-docker compose -f docker-compose.gateway.yml -f docker-compose.gateway.dev.yml \
-  -f docker-compose.ollama.yml -f docker-compose.ollama.dev.yml \
-  -f docker-compose.etcd.yml -f docker-compose.etcd.dev.yml up -d
-```

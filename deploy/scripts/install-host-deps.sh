@@ -6,7 +6,7 @@ umask 077
 #  1) ./deploy/scripts/install-host-deps.sh
 #  2) ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
 #  3) ./deploy/scripts/preflight-check.sh --mode deploy
-#  4) ./deploy/scripts/deploy.sh dev main   (or prod)
+#  4) ./deploy/scripts/deploy.sh prod main
 #  5) ./deploy/scripts/verify-gateway.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

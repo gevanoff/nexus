@@ -11,14 +11,6 @@ Current layout (preferred): per-component compose files live in the `nexus/` roo
 - `docker-compose.tts.yml`
 - `docker-compose.telegram-bot.yml`
 
-Dev overrides (layer on top of the corresponding base file):
-
-- `docker-compose.gateway.dev.yml`
-- `docker-compose.vllm.dev.yml`
-- `docker-compose.etcd.dev.yml`
-- `docker-compose.images.dev.yml`
-- `docker-compose.tts.dev.yml`
-
 This `compose/` directory is kept only for historical context; the active compose entrypoints are the root-level files listed above.
 
 Its file-local `../.runtime` defaults are compatibility leftovers for repo-local experimentation, not the deployment standard for managed hosts.
