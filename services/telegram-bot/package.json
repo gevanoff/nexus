@@ -2,9 +2,9 @@
   "name": "telegram-gateway-bot",
   "version": "1.0.0",
   "description": "Telegram bot client for Gateway OpenAI-style chat API",
-  "main": "telegram_gateway_bot.js",
+  "main": "telegram_gateway_bot_filtered.js",
   "scripts": {
-    "start": "node telegram_gateway_bot.js"
+    "start": "node telegram_gateway_bot_filtered.js"
   },
   "keywords": [
     "telegram",
