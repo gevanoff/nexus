@@ -30,11 +30,11 @@ Suggested order (typical):
   1) ./deploy/scripts/install-host-deps.sh
   2) ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
   3) ./deploy/scripts/preflight-check.sh --mode deploy
-  4) ./deploy/scripts/deploy.sh dev main   (or prod)
+  4) ./deploy/scripts/deploy.sh prod main
   5) ./deploy/scripts/verify-gateway.sh
 
 Arguments:
-  environment: dev | prod
+  environment: prod
   branch: git branch to deploy (e.g., dev or main)
 
 Options:
@@ -163,16 +163,6 @@ component_base_compose_file() {
   esac
 }
 
-component_dev_compose_file() {
-  case "$1" in
-    gateway) echo "docker-compose.gateway.dev.yml" ;;
-    etcd) echo "docker-compose.etcd.dev.yml" ;;
-    images) echo "docker-compose.images.dev.yml" ;;
-    tts) echo "docker-compose.tts.dev.yml" ;;
-    *) echo "" ;;
-  esac
-}
-
 component_extra_compose_file() {
   case "$1" in
     *) echo "" ;;
@@ -181,18 +171,12 @@ component_extra_compose_file() {
 
 compose_files_for_component() {
   local component="$1"
-  local base_file dev_file extra_file
+  local base_file extra_file
   base_file="$(component_base_compose_file "$component")" || return 1
   printf '%s\n' "$base_file"
   extra_file="$(component_extra_compose_file "$component")"
   if [[ -n "$extra_file" && -f "$ROOT_DIR/$extra_file" ]]; then
     printf '%s\n' "$extra_file"
-  fi
-  if [[ "$environment" == "dev" ]]; then
-    dev_file="$(component_dev_compose_file "$component")"
-    if [[ -n "$dev_file" && -f "$ROOT_DIR/$dev_file" ]]; then
-      printf '%s\n' "$dev_file"
-    fi
   fi
 }
 
@@ -269,10 +253,10 @@ if [[ ! "$branch" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
 fi
 
 case "$environment" in
-  dev|prod)
+  prod)
     ;;
   *)
-    ns_print_error "Unknown environment: $environment"
+    ns_print_error "Unsupported environment: $environment (only 'prod' is allowed)"
     exit 1
     ;;
 esac

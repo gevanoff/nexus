@@ -38,10 +38,10 @@ Suggested order (typical):
   3) On the remote host: ./deploy/scripts/install-host-deps.sh
   4) On the remote host: ./deploy/scripts/import-env.sh   (or: cp .env.example .env)
   5) On the remote host: ./deploy/scripts/preflight-check.sh --mode deploy
-  6) From your machine: ./deploy/scripts/remote-deploy.sh dev main ai@host
+  6) From your machine: ./deploy/scripts/remote-deploy.sh prod main ai@host
 
 Arguments:
-  environment: dev | prod
+  environment: prod
   branch: git branch to deploy (e.g., dev or main)
   host: user@hostname (SSH target). Optional when --topology-host is set.
 
@@ -153,9 +153,9 @@ if [[ -z "${host:-}" && -z "${TOPOLOGY_HOST:-}" ]]; then
 fi
 
 case "$environment" in
-  dev|prod) ;;
+  prod) ;;
   *)
-    ns_print_error "Unknown environment: $environment"
+    ns_print_error "Unsupported environment: $environment (only 'prod' is allowed)"
     exit 1
     ;;
 esac
