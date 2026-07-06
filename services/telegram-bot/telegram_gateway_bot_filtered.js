@@ -43,7 +43,7 @@ function compileMentionPatterns(value) {
         if (entry.startsWith('re:')) {
           return { source: entry, regex: new RegExp(entry.slice(3), 'i') };
         }
-        const literal = entry.startsWith('@') ? entry : `\\b${escapeRegex(entry)}\\b`;
+        const literal = entry.startsWith('@') ? escapeRegex(entry) : `\\b${escapeRegex(entry)}\\b`;
         return { source: entry, regex: new RegExp(literal, 'i') };
       } catch (err) {
         routingLog('warn', 'Ignoring invalid Telegram mention pattern', {
