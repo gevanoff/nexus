@@ -39,6 +39,36 @@ Recommended defaults:
 
 The Telegram bot defaults to the `fast` alias rather than `auto` so direct chat traffic stays on the user-facing fast tier instead of the default MLX reasoning lane.
 
+## Group routing controls
+
+The bot can be constrained in group chats so it does not respond to ambient group chatter or messages meant for other bots.
+
+Optional `.env` settings:
+
+```bash
+# Comma-separated Telegram chat IDs. Empty means all chats are allowed.
+TELEGRAM_ALLOWED_CHATS=-1003875008006
+
+# When true, group/supergroup messages only trigger replies when the bot is addressed.
+TELEGRAM_REQUIRE_MENTION=true
+
+# When true, ignore messages containing @OtherBot mentions and commands like /help@OtherBot.
+TELEGRAM_EXCLUSIVE_BOT_MENTIONS=true
+
+# Comma-separated wake words or regexes. Literal entries are case-insensitive.
+# Regex entries use the re: prefix.
+TELEGRAM_MENTION_PATTERNS=Nexus,Hermes,re:\\boperator\\b
+```
+
+A group message is considered addressed to this bot when one of these is true:
+
+- the message mentions the bot username, for example `@YourBot`
+- the message is a reply to the bot
+- the message matches one of `TELEGRAM_MENTION_PATTERNS`
+- the message is a bare slash command, such as `/help`
+
+Messages and slash commands explicitly addressed to another bot are ignored before they reach the Gateway.
+
 ## Start / restart
 
 From `nexus/`:
