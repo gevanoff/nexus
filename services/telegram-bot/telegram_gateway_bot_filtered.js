@@ -130,7 +130,7 @@ function otherBotMentions(text) {
   if (!TELEGRAM_EXCLUSIVE_BOT_MENTIONS) return [];
   const own = ownUsername();
   const mentions = [];
-  const re = /@([a-z0-9_]{5,32})/gi;
+  const re = /(?:^|[^a-z0-9_])@([a-z0-9_]{5,32})/gi;
   let match;
   while ((match = re.exec(String(text || ''))) !== null) {
     const username = String(match[1] || '').toLowerCase();
