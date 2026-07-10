@@ -41,16 +41,16 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 
 ### Current Host Inventory (verified 2026-05-25)
 
-- `ai2` (Mac M3 Ultra, macOS 15.6, 512GB unified memory): primary control-plane host, gateway/nginx/etcd/lifecycle-manager host, host-native `mlx` node, and current home for the containerized TTS stack.
-- `stackrot` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x NVIDIA GeForce RTX 3090 24GB): dual-GPU Linux/NVIDIA node used for media ingress and secondary `vllm`/CUDA capacity.
+- `ai2` (Mac M3 Ultra, macOS 15.6, 512GB unified memory): primary control-plane host, gateway/nginx/etcd/lifecycle-manager host, and host-native `mlx` node.
+- `stackrot` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x NVIDIA GeForce RTX 3090 24GB): dual-GPU Linux/NVIDIA node used for media ingress, containerized TTS, and secondary `vllm`/CUDA capacity.
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, NVIDIA RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
 - `meltdown` (Ubuntu 22.04.5, Intel Core i7-5930K, about 47 GiB observed system RAM, NVIDIA GeForce RTX 5060 Ti 16GB class / 15.9 GiB reported VRAM): lighter Linux/NVIDIA host for SDXL-Turbo, vLLM embeddings, overflow, and staging.
 - `migraine` (Mac M2, 8GB unified memory): client-only Hermes Gateway / Telegram bot host. It consumes Nexus models through the gateway and must not be used for production model placement unless it is explicitly promoted into topology.
 
 Operational implication:
-- Keep gateway, default MLX routing, and containerized TTS concentrated on `ai2`.
+- Keep gateway and host-native MLX routing on `ai2`; run containerized TTS on `stackrot` with Qwen3-TTS isolated to its second GPU.
 - Treat `stackrot`, `ada2`, and `meltdown` as Linux/NVIDIA hosts; use `deploy/topology/production.json` to decide the active live placement.
-- Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `stackrot` for media ingress, secondary `vllm` capacity, and overflow CUDA work.
+- Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `stackrot` for media ingress, TTS, secondary `vllm` capacity, and overflow CUDA work.
 - Use `meltdown` for lighter CUDA work such as SDXL-Turbo and embeddings, plus overflow/staging; do not assume it can run workloads sized for `ada2`.
 - Treat `migraine` as a Hermes client host only. For interactive Telegram chat, prefer the `fast` alias over `long`; the `long` GLM-5.2 MLX lane is intended for long-context work and has higher response latency.
 

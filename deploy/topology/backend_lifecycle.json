@@ -44,7 +44,7 @@
     "ai2": {
       "resource_kind": "macos",
       "env_file": "deploy/env/.env.prod.ai2",
-      "remote_shell": "/bin/zsh -lic"
+      "remote_shell": "/bin/bash -lc"
     },
     "ada2": {
       "resource_kind": "linux_nvidia",
@@ -68,13 +68,17 @@
       "platform": "macos",
       "resource_kind": "macos",
       "ssh_target": "ai@migraine",
+      "ssh_connect_target": "ai@host.docker.internal",
+      "ssh_port": 19026,
       "env_file": "deploy/env/.env.prod.migraine",
-      "remote_shell": "/bin/zsh -lic"
+      "remote_shell": "/bin/bash -lc"
     },
     "adada": {
       "platform": "linux",
       "resource_kind": "linux_nvidia",
       "ssh_target": "ai@adada",
+      "ssh_connect_target": "ai@host.docker.internal",
+      "ssh_port": 19027,
       "env_file": "deploy/env/.env.prod.adada"
     }
   },
@@ -285,7 +289,7 @@
     },
     "pocket_tts": {
       "display_name": "Pocket TTS",
-      "host": "ai2",
+      "host": "stackrot",
       "component": "tts",
       "tier": "high",
       "capabilities": ["tts"],
@@ -297,7 +301,7 @@
     },
     "luxtts": {
       "display_name": "LuxTTS",
-      "host": "ai2",
+      "host": "stackrot",
       "component": "luxtts",
       "tier": "high",
       "capabilities": ["tts"],
@@ -310,11 +314,11 @@
     },
     "qwen3_tts": {
       "display_name": "Qwen3 TTS",
-      "host": "ai2",
+      "host": "stackrot",
       "component": "qwen3-tts",
       "tier": "optional",
       "capabilities": ["tts"],
-      "estimated_vram_mb": 0,
+      "estimated_vram_mb": 6000,
       "auto_start": true,
       "auto_stop": true,
       "compose_file": "docker-compose.qwen3-tts.yml",

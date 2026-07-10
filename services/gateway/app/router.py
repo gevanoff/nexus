@@ -199,11 +199,12 @@ def _effective_alias_model(alias_name: str, alias: Any, backend: Backend) -> str
 
 def _effective_alias_backend_model(alias_name: str, alias: Any, cfg: RouterConfig) -> tuple[Backend, str]:
     name = str(alias_name or "").strip().lower()
-    if name == "coder":
+    resolved_backend = _resolved_backend_name(alias.backend) or alias.backend
+    if name == "coder" and backend_provider_name(resolved_backend) == "mlx":
         coder_model = coding_model_policy.current_coder_model()
         if coder_model:
             return _provider_default_backend("mlx"), coder_model
-    backend = _resolved_backend_name(alias.backend) or alias.backend
+    backend = resolved_backend
     return backend, _normalize_model(_effective_alias_model(name, alias, backend), backend, cfg)
 
 

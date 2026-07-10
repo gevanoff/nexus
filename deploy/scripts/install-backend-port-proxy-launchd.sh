@@ -56,6 +56,8 @@ Default forwards:
   ssh-ada2=127.0.0.1:19023=ada2:22
   ssh-meltdown=127.0.0.1:19024=meltdown:22
   ssh-copyfail=127.0.0.1:19025=copyfail:22
+  ssh-migraine=127.0.0.1:19026=migraine:22
+  ssh-adada=127.0.0.1:19027=adada:22
 EOF
 }
 
@@ -150,6 +152,8 @@ if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
     "ssh-ada2=127.0.0.1:19023=ada2:22"
     "ssh-meltdown=127.0.0.1:19024=meltdown:22"
     "ssh-copyfail=127.0.0.1:19025=copyfail:22"
+    "ssh-migraine=127.0.0.1:19026=migraine:22"
+    "ssh-adada=127.0.0.1:19027=adada:22"
   )
   if [[ ${#FORWARDS[@]} -gt 0 ]]; then
     FORWARDS=("${DEFAULT_FORWARDS[@]}" "${FORWARDS[@]}")

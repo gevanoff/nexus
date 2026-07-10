@@ -479,8 +479,9 @@ async def call_openai_chat(
                 )
             return out
         except httpx.HTTPStatusError as e:
-            detail = {"upstream": backend_name, "status": e.response.status_code, "body": e.response.text[:5000]}
-            raise HTTPException(status_code=502, detail=detail)
+            upstream_status = int(getattr(e.response, "status_code", 502) or 502)
+            detail = {"upstream": backend_name, "status": upstream_status, "body": e.response.text[:5000]}
+            raise HTTPException(status_code=upstream_status, detail=detail)
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail={"upstream": backend_name, "error": str(e)})
 
@@ -512,8 +513,9 @@ async def embed_openai_backend(
                 raise HTTPException(status_code=502, detail={"upstream": backend_name, "error": "Unexpected embeddings shape"})
             return out
         except httpx.HTTPStatusError as e:
-            detail = {"upstream": backend_name, "status": e.response.status_code, "body": e.response.text[:5000]}
-            raise HTTPException(status_code=502, detail=detail)
+            upstream_status = int(getattr(e.response, "status_code", 502) or 502)
+            detail = {"upstream": backend_name, "status": upstream_status, "body": e.response.text[:5000]}
+            raise HTTPException(status_code=upstream_status, detail=detail)
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail={"upstream": backend_name, "error": str(e)})
 
@@ -559,8 +561,9 @@ async def transcribe_openai_audio(
                 return "json", r.json(), response_type
             return "text", r.text, response_type or "text/plain; charset=utf-8"
         except httpx.HTTPStatusError as e:
-            detail = {"upstream": resolved, "status": e.response.status_code, "body": e.response.text[:5000]}
-            raise HTTPException(status_code=502, detail=detail)
+            upstream_status = int(getattr(e.response, "status_code", 502) or 502)
+            detail = {"upstream": resolved, "status": upstream_status, "body": e.response.text[:5000]}
+            raise HTTPException(status_code=upstream_status, detail=detail)
         except httpx.RequestError as e:
             raise HTTPException(status_code=502, detail={"upstream": resolved, "error": str(e)})
 

@@ -25,7 +25,7 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
         "cpu_cores": "32 CPU cores",
         "memory": "512 GiB unified memory",
         "accelerators": ["Apple Silicon GPU/Neural Engine through host-native MLX"],
-        "role": "Primary gateway/control-plane host, host-native MLX reasoning/coding lane, and containerized TTS host.",
+        "role": "Primary gateway/control-plane host and host-native MLX reasoning/coding lane.",
         "notes": "Best fit for MLX and CPU/unified-memory workloads. Not a CUDA host.",
     },
     "stackrot": {
@@ -37,8 +37,8 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
             "NVIDIA GeForce RTX 3090 24 GiB",
             "NVIDIA GeForce RTX 3090 24 GiB",
         ],
-        "role": "Dual-GPU Linux/NVIDIA host for media ingress, secondary vLLM/CUDA capacity, embeddings, and overflow CUDA work.",
-        "notes": "Schedule by per-GPU 24 GiB VRAM limits; do not assume a single 48 GiB CUDA device.",
+        "role": "Dual-GPU Linux/NVIDIA host for media ingress, containerized TTS, secondary vLLM/CUDA capacity, and overflow CUDA work.",
+        "notes": "Schedule by per-GPU 24 GiB VRAM limits; vLLM fast uses GPU 0 and Qwen3-TTS uses GPU 1.",
     },
     "ada2": {
         "platform": "linux_x86_64",

@@ -73,6 +73,7 @@ MLX_LOG_DIR="${MLX_LOG_DIR:-/var/log/mlx}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-${MLX_HOME}/cache}"
 HF_HOME="${HF_HOME:-/var/lib/huggingface}"
 MLX_PIP_PACKAGES="${MLX_PIP_PACKAGES:-mlx-openai-server==1.8.1}"
+MLX_MODEL_READY_TIMEOUT_SEC="${MLX_MODEL_READY_TIMEOUT_SEC:-900}"
 LAUNCHD_LABEL="${LAUNCHD_LABEL:-com.nexus.mlx.openai.server}"
 PLIST_PATH="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
 CREATE_USER="${CREATE_USER:-1}"
@@ -222,6 +223,10 @@ if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid --port value: ${MLX_PORT}" >&2
   exit 2
 fi
+if [[ ! "$MLX_MODEL_READY_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || (( MLX_MODEL_READY_TIMEOUT_SEC < 300 )); then
+  echo "ERROR: MLX_MODEL_READY_TIMEOUT_SEC must be an integer >= 300" >&2
+  exit 2
+fi
 
 case "$(lowercase_value "$PREFETCH_BEFORE_START")" in
   1|true|yes|on) PREFETCH_BEFORE_START="1" ;;
@@ -349,6 +354,7 @@ update_env_file_key "${MLX_ENV_FILE}" MLX_CONFIG_PATH "${MLX_CONFIG_PATH}"
 update_env_file_key "${MLX_ENV_FILE}" XDG_CACHE_HOME "${XDG_CACHE_HOME}"
 update_env_file_key "${MLX_ENV_FILE}" HF_HOME "${HF_HOME}"
 update_env_file_key "${MLX_ENV_FILE}" PREFETCH_BEFORE_START "${PREFETCH_BEFORE_START}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_MODEL_READY_TIMEOUT_SEC "${MLX_MODEL_READY_TIMEOUT_SEC}"
 
 if [[ "$PREFETCH_BEFORE_START" == "1" ]]; then
   echo "Prefetching MLX model repositories before starting launchd service..." >&2

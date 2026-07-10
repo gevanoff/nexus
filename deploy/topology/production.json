@@ -61,17 +61,17 @@
       "PERSONAPLEX_ADVERTISE_BASE_URL": "http://ada2:9160",
       "SKYREELS_V2_BASE_URL": "http://ada2:9180",
       "SKYREELS_V2_ADVERTISE_BASE_URL": "http://ada2:9180",
-      "POCKET_TTS_BASE_URL": "http://ai2:9940",
-      "POCKET_TTS_ADVERTISE_BASE_URL": "http://ai2:9940",
-      "LUXTTS_BASE_URL": "http://ai2:9170",
-      "LUXTTS_ADVERTISE_BASE_URL": "http://ai2:9170",
-      "QWEN3_TTS_BASE_URL": "http://ai2:9175",
-      "QWEN3_TTS_ADVERTISE_BASE_URL": "http://ai2:9175",
+      "POCKET_TTS_BASE_URL": "http://stackrot:9940",
+      "POCKET_TTS_ADVERTISE_BASE_URL": "http://stackrot:9940",
+      "LUXTTS_BASE_URL": "http://stackrot:9170",
+      "LUXTTS_ADVERTISE_BASE_URL": "http://stackrot:9170",
+      "QWEN3_TTS_BASE_URL": "http://stackrot:9175",
+      "QWEN3_TTS_ADVERTISE_BASE_URL": "http://stackrot:9175",
       "MEDIAMTX_HLS_PORT": "8891",
       "MEDIAMTX_ADVERTISE_BASE_URL": "http://stackrot:8891",
       "MEDIAMTX_API_ADVERTISE_URL": "http://stackrot:9997",
       "MEDIAMTX_WEBRTC_ADDITIONAL_HOSTS": "stackrot",
-      "DEFAULT_BACKEND": "local_mlx",
+      "DEFAULT_BACKEND": "local_vllm",
       "EMBEDDINGS_BACKEND": "local_mlx",
       "EMBEDDINGS_MODEL": "mlx-community/bge-small-en-v1.5-8bit",
       "TRANSCRIPTION_BACKEND_CLASS": "local_mlx",
@@ -87,13 +87,16 @@
   },
   "hosts": {
     "stackrot": {
-      "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress and secondary vLLM/CUDA capacity.",
+      "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, TTS, and secondary vLLM/CUDA capacity.",
       "platform": "linux",
       "resource_kind": "linux_nvidia",
       "ssh_target": "ai@stackrot",
       "components": [
         "mediamtx",
-        "vllm-fast"
+        "vllm-fast",
+        "tts",
+        "luxtts",
+        "qwen3-tts"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
@@ -105,22 +108,26 @@
         "VLLM_FAST_CONFIG_FORMAT": "hf",
         "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.82",
         "VLLM_FAST_MAX_MODEL_LEN": "8192",
-        "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0"
+        "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0",
+        "LUXTTS_UPSTREAM_BASE_URL": "http://qwen3-tts:9175",
+        "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",
+        "QWEN3_TTS_CUDA_VISIBLE_DEVICES": "1",
+        "QWEN3_TTS_DEVICE_MAP": "cuda:0",
+        "QWEN3_TTS_DTYPE": "float16",
+        "QWEN3_TTS_ATTN_IMPL": "sdpa"
       }
     },
     "ai2": {
-      "description": "Mac M3 Ultra with 512GB unified memory for gateway/control plane, containerized TTS, and host-native MLX reasoning.",
+      "description": "Mac M3 Ultra with 512GB unified memory for gateway/control plane and host-native MLX reasoning.",
       "platform": "macos",
       "resource_kind": "macos",
+      "remote_shell": "/bin/bash -lc",
       "ssh_target": "ai@ai2",
       "components": [
         "gateway",
         "etcd",
         "lifecycle-manager",
-        "telegram-bot",
-        "tts",
-        "luxtts",
-        "qwen3-tts"
+        "telegram-bot"
       ],
       "native_services": [
         "mlx"
@@ -130,9 +137,9 @@
         "NEXUS_TOPOLOGY_HOST_DIR": "/Volumes/ai_data/var/lib/nexus/deploy/topology",
         "MLX_BASE_URL": "http://ai2:10240/v1",
         "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
-        "VLLM_BASE_URL": "http://ada2:8003/v1",
-        "VLLM_FAST_BASE_URL": "http://stackrot:8001/v1",
-        "VLLM_EMBEDDINGS_BASE_URL": "http://meltdown:8002/v1",
+        "VLLM_BASE_URL": "http://host.docker.internal:18003/v1",
+        "VLLM_FAST_BASE_URL": "http://host.docker.internal:18001/v1",
+        "VLLM_EMBEDDINGS_BASE_URL": "http://host.docker.internal:18002/v1",
         "IMAGES_HTTP_BASE_URL": "http://host.docker.internal:17860",
         "IMAGES_ADVERTISE_BASE_URL": "http://host.docker.internal:17860",
         "SDXL_TURBO_BASE_URL": "http://host.docker.internal:18050",
@@ -144,15 +151,12 @@
         "SKYREELS_V2_BASE_URL": "http://host.docker.internal:18180",
         "SKYREELS_V2_ADVERTISE_BASE_URL": "http://host.docker.internal:18180",
         "BACKEND_ENV_BASE_URL_OVERRIDES": "local_vllm,local_vllm_fast,local_vllm_embeddings,gpu_heavy,gpu_fast,lighton_ocr,personaplex,skyreels_v2",
-        "LUXTTS_UPSTREAM_BASE_URL": "http://qwen3-tts:9175",
-        "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",
-        "QWEN3_TTS_DEVICE_MAP": "auto",
-        "QWEN3_TTS_DTYPE": "float16",
-        "QWEN3_TTS_ATTN_IMPL": "sdpa",
+        "MLX_FALLBACK_BACKEND": "local_vllm_fast",
+        "MLX_FALLBACK_MODEL": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
         "UI_IP_ALLOWLIST": "127.0.0.1,172.28.0.1,10.10.22.0/24",
         "TOOLS_ALLOWLIST": "echo,lighton_ocr,skyreels_generate,cluster_resources",
         "DISABLED_BACKEND_CLASSES": "followyourcanvas,heartmula_music,personaplex",
-        "DEFAULT_BACKEND": "local_mlx"
+        "DEFAULT_BACKEND": "local_vllm"
       }
     },
     "ada2": {

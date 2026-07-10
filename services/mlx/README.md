@@ -80,7 +80,7 @@ The provided `services/mlx/config/config.example.yaml` includes commented exampl
 Startup troubleshooting notes:
 
 - Warnings like `Class AVFFrameReceiver is implemented in both .../site-packages/av/... and .../site-packages/cv2/...` come from PyAV/OpenCV shipping overlapping macOS video dylibs. They are noisy, but they are not usually the root cause of MLX startup failure.
-- A message like `Handler process for '<model>' did not become ready within 300 s` is the important failure signal. That means one configured model did not finish initializing in time, and MLX may exit before binding the HTTP port.
+- A message like `Handler process for '<model>' did not become ready within 900 s` is the important failure signal. Nexus patches the upstream 300-second handler limit and exposes `MLX_MODEL_READY_TIMEOUT_SEC` (default `900`) because very large models can need more than five minutes to initialize.
 - If you hit that condition, reduce the config to a minimal known-good set first, verify `curl -fsS http://127.0.0.1:10240/v1/models`, then re-add models one by one.
 - For very large first-time downloads, set `HF_TOKEN` in `/var/lib/mlx/mlx.env` to avoid Hugging Face anonymous rate limits.
 - If prefetch fails with `No space left on device`, move `XDG_CACHE_HOME` and `HF_HOME` in `/var/lib/mlx/mlx.env` to a larger disk, rerun the installer once, then prefetch again.
@@ -243,6 +243,7 @@ Operational note for `ai2`:
 For coding-agent workloads, the biggest UX gains come from reducing time-to-first-token (TTFT) and maximizing prompt-prefix reuse:
 
 - Keep `mlx-community/GLM-5.2-DQ4plus-q8` resident (`on_demand: false`) to avoid repeated load penalties.
+- Keep `MLX_MODEL_READY_TIMEOUT_SEC=900` or higher for this model; its initial load can exceed the upstream server's 300-second default.
 - Keep system/developer scaffold stable across turns so MLX can reuse longer prompt prefixes.
 - Prewarm after restarts before routing interactive traffic.
 - Prefer deterministic tool/schema ordering in gateway request construction.

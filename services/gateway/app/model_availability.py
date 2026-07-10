@@ -427,6 +427,11 @@ def fallback_target_for_backend(backend: str) -> Optional[tuple[str, str]]:
 
 
 def route_with_model_fallback(route):
+    # Keep explicit MLX alias routing deterministic. If an alias selected an MLX
+    # model, route there directly instead of silently switching providers.
+    if str(getattr(route, "reason", "") or "").startswith("alias:model") and backend_provider_name(route.backend) == "mlx":
+        return route
+
     reason = model_unavailable_reason(route.backend, route.model)
     if not reason:
         return route

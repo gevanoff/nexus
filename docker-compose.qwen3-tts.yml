@@ -7,6 +7,7 @@ services:
       context: ./services/qwen3-tts
       dockerfile: Dockerfile
     container_name: nexus-qwen3-tts
+    gpus: all
     ports:
       - "${QWEN3_TTS_PORT:-9175}:9175"
     environment:
@@ -37,6 +38,8 @@ services:
       - QWEN3_TTS_DEVICE_MAP=${QWEN3_TTS_DEVICE_MAP:-cpu}
       - QWEN3_TTS_DTYPE=${QWEN3_TTS_DTYPE:-float32}
       - QWEN3_TTS_ATTN_IMPL=${QWEN3_TTS_ATTN_IMPL:-}
+      - NVIDIA_VISIBLE_DEVICES=${QWEN3_TTS_CUDA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES=${QWEN3_TTS_CUDA_VISIBLE_DEVICES:-all}
       - QWEN3_TTS_TIMEOUT_SEC=${QWEN3_TTS_TIMEOUT_SEC:-300}
       - QWEN3_TTS_READYZ_TIMEOUT_SEC=${QWEN3_TTS_READYZ_TIMEOUT_SEC:-20}
       - QWEN3_TTS_WORKDIR=${QWEN3_TTS_WORKDIR:-/app}

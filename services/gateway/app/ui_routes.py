@@ -369,7 +369,9 @@ def _ui_alias_display_model(
     advertised_models_by_backend: Optional[Dict[str, set[str]]] = None,
 ) -> tuple[bool, str, Optional[str]]:
     backend_name = registry.resolve_backend_class(alias.backend) or alias.backend
-    if str(alias_name or "").strip().lower() == "coder":
+    # Keep chat alias presentation backend-consistent. The dynamic huge-lane
+    # coder model should only override display for MLX-backed coder aliases.
+    if str(alias_name or "").strip().lower() == "coder" and backend_provider_name(backend_name) == "mlx":
         alias_model = coding_model_policy.current_coder_model()
         if alias_model:
             unavailable = _ui_model_unavailable_reason(

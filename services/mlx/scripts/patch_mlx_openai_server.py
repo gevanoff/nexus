@@ -219,6 +219,20 @@ GLM_DSA_INDEXSHARE_CACHE = """    def make_cache(self):
         ]
 """
 
+HANDLER_READY_TIMEOUT_IMPORT_MARKER = "import os\n"
+HANDLER_READY_TIMEOUT_CONSTANT_MARKER = '_CANCEL = "__CANCEL__"\n'
+HANDLER_READY_TIMEOUT_CALL = "response = await self._wait_for_ready(ready_queue, timeout=300)"
+HANDLER_READY_TIMEOUT_HELPER = '''
+
+def _nexus_model_ready_timeout_seconds() -> float:
+    """Allow very large local models enough time to initialize."""
+    raw = os.getenv("MLX_MODEL_READY_TIMEOUT_SEC", "900")
+    try:
+        return max(300.0, float(raw))
+    except (TypeError, ValueError):
+        return 900.0
+'''
+
 GLM_DSA_PATCHED_TEXT = '''# Copyright © 2025 Apple Inc.
 
 from dataclasses import dataclass
@@ -592,6 +606,28 @@ def _patch_glm_moe_dsa_model_text(text: str) -> tuple[str, list[str]]:
     return GLM_DSA_PATCHED_TEXT, ["GLM DSA IndexShare model"]
 
 
+def _patch_handler_process_text(text: str) -> tuple[str, list[str]]:
+    if "def _nexus_model_ready_timeout_seconds()" in text:
+        return text, []
+    if HANDLER_READY_TIMEOUT_IMPORT_MARKER not in text:
+        raise PatchError("could not find handler-process os import")
+    if HANDLER_READY_TIMEOUT_CONSTANT_MARKER not in text:
+        raise PatchError("could not find handler-process IPC constants")
+    if text.count(HANDLER_READY_TIMEOUT_CALL) != 2:
+        raise PatchError("expected two handler-process model-ready timeout calls")
+
+    text = text.replace(
+        HANDLER_READY_TIMEOUT_CONSTANT_MARKER,
+        HANDLER_READY_TIMEOUT_CONSTANT_MARKER + HANDLER_READY_TIMEOUT_HELPER,
+        1,
+    )
+    text = text.replace(
+        HANDLER_READY_TIMEOUT_CALL,
+        "response = await self._wait_for_ready(ready_queue, timeout=_nexus_model_ready_timeout_seconds())",
+    )
+    return text, ["configurable large-model ready timeout"]
+
+
 def _find_package_path(venv: Path | None, relative_path: str, import_name: str) -> Path:
     if venv is not None:
         matches = sorted(venv.glob(f"lib/python*/site-packages/{relative_path}"))
@@ -668,6 +704,15 @@ def main() -> int:
                     ),
                     _patch_glm_moe_dsa_model_text,
                     "glm-dsa-indexshare",
+                ),
+                (
+                    _find_package_path(
+                        args.venv,
+                        "app/core/handler_process.py",
+                        "app.core.handler_process",
+                    ),
+                    _patch_handler_process_text,
+                    "model-ready-timeout",
                 ),
             ]
         )

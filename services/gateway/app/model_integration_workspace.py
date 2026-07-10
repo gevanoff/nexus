@@ -70,12 +70,12 @@ _VLLM_UNSUPPORTED_MARKERS = {
 }
 _FALLBACK_HOSTS = {
     "stackrot": {
-        "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress and secondary vLLM/CUDA capacity.",
+        "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, TTS, and secondary vLLM/CUDA capacity.",
         "platform": "linux",
         "resource_kind": "linux_nvidia",
     },
     "ai2": {
-        "description": "Mac M3 Ultra with 512GB unified memory for gateway/control plane, containerized TTS, and host-native MLX reasoning.",
+        "description": "Mac M3 Ultra with 512GB unified memory for gateway/control plane and host-native MLX reasoning.",
         "platform": "macos",
         "resource_kind": "macos",
     },
@@ -732,20 +732,20 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
             reason="Image-generation adapters should target the CUDA image lane on ada2 rather than the CPU or MLX hosts.",
         )
     if route_kind == "tts":
-        ai2 = _host_profile("ai2")
+        stackrot = _host_profile("stackrot")
         return {
-            "host": "ai2",
-            "host_description": ai2.get("description") or "",
-            "platform": ai2.get("platform") or "",
-            "resource_kind": ai2.get("resource_kind") or "",
-            "backend_lane": "tts_ai2",
-            "backend_display_name": "ai2 TTS lane",
+            "host": "stackrot",
+            "host_description": stackrot.get("description") or "",
+            "platform": stackrot.get("platform") or "",
+            "resource_kind": stackrot.get("resource_kind") or "",
+            "backend_lane": "tts_stackrot",
+            "backend_display_name": "stackrot TTS lane",
             "deployment_mode": "compose",
             "compose_file": "docker-compose.<service>.yml",
             "estimated_vram_mb": 0,
             "ready_path": "/readyz",
-            "reason": "TTS services in this cluster already live on ai2, where the M3 Ultra and large unified-memory pool are a better default fit than the CUDA image/video lanes.",
-            "notes": "Promote to a CUDA host only if the selected model or runtime proves to require NVIDIA-specific acceleration.",
+            "reason": "TTS services run on stackrot so Qwen3-TTS can use the otherwise free second RTX 3090 without competing with ai2's resident MLX model.",
+            "notes": "Keep vLLM fast on GPU 0 and Qwen3-TTS on GPU 1.",
         }
     if size_b is not None and size_b >= 24:
         return _deployment_target_from_backend(

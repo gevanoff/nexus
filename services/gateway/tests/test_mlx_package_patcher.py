@@ -89,3 +89,24 @@ def test_mlx_patcher_upgrades_glm_dsa_shared_cache_shape():
 
     assert changes == ["GLM DSA shared-layer cache shape"]
     assert "else CacheList(KVCache())" in patched
+
+
+def test_mlx_patcher_extends_large_model_ready_timeout():
+    patcher = _load_patcher()
+    source = "\n".join(
+        [
+            "import os",
+            patcher.HANDLER_READY_TIMEOUT_CONSTANT_MARKER.rstrip(),
+            f"                {patcher.HANDLER_READY_TIMEOUT_CALL}",
+            f"            {patcher.HANDLER_READY_TIMEOUT_CALL}",
+        ]
+    )
+
+    patched, changes = patcher._patch_handler_process_text(source)
+    patched_again, changes_again = patcher._patch_handler_process_text(patched)
+
+    assert changes == ["configurable large-model ready timeout"]
+    assert changes_again == []
+    assert 'os.getenv("MLX_MODEL_READY_TIMEOUT_SEC", "900")' in patched
+    assert patched.count("timeout=_nexus_model_ready_timeout_seconds()") == 2
+    assert patched_again == patched

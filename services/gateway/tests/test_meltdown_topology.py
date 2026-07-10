@@ -39,6 +39,27 @@ def test_meltdown_owns_lightweight_gpu_backends() -> None:
     assert lifecycle["backends"]["local_vllm_embeddings"]["host"] == "meltdown"
 
 
+def test_stackrot_owns_tts_stack_on_second_gpu() -> None:
+    topology = json.loads(_read("deploy/topology/production.json"))
+    lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
+
+    stackrot = topology["hosts"]["stackrot"]
+    ai2 = topology["hosts"]["ai2"]
+    defaults = topology["defaults"]["env"]
+
+    assert {"tts", "luxtts", "qwen3-tts"}.issubset(stackrot["components"])
+    assert {"tts", "luxtts", "qwen3-tts"}.isdisjoint(ai2["components"])
+    assert stackrot["env"]["QWEN3_TTS_CUDA_VISIBLE_DEVICES"] == "1"
+    assert stackrot["env"]["QWEN3_TTS_DEVICE_MAP"] == "cuda:0"
+    assert defaults["POCKET_TTS_BASE_URL"] == "http://stackrot:9940"
+    assert defaults["LUXTTS_BASE_URL"] == "http://stackrot:9170"
+    assert defaults["QWEN3_TTS_BASE_URL"] == "http://stackrot:9175"
+    assert lifecycle["backends"]["pocket_tts"]["host"] == "stackrot"
+    assert lifecycle["backends"]["luxtts"]["host"] == "stackrot"
+    assert lifecycle["backends"]["qwen3_tts"]["host"] == "stackrot"
+    assert "gpus: all" in _read("docker-compose.qwen3-tts.yml")
+
+
 def test_meltdown_container_alias_is_available_to_control_plane_compose() -> None:
     for compose_file in (
         "docker-compose.gateway.yml",

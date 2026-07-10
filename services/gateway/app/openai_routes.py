@@ -1388,7 +1388,7 @@ async def chat_completions(req: Request):
     except HTTPException as exc:
         status_code = int(exc.status_code or 500)
         error_type = "server_error" if status_code >= 500 else "invalid_request_error"
-        code = "500" if status_code >= 500 else "invalid_request"
+        code = str(status_code) if status_code >= 500 else "invalid_request"
         message = _http_exception_message(exc)
         if status_code >= 500:
             logger.exception(
@@ -1647,7 +1647,7 @@ async def completions(req: Request):
                 except HTTPException as exc:
                     status_code = int(exc.status_code or 500)
                     error_type = "server_error" if status_code >= 500 else "invalid_request_error"
-                    code = "500" if status_code >= 500 else "invalid_request"
+                    code = str(status_code) if status_code >= 500 else "invalid_request"
                     message = _http_exception_message(exc)
                     if status_code >= 500:
                         logger.exception(
@@ -1750,7 +1750,7 @@ async def completions(req: Request):
     except HTTPException as exc:
         status_code = int(exc.status_code or 500)
         error_type = "server_error" if status_code >= 500 else "invalid_request_error"
-        code = "500" if status_code >= 500 else "invalid_request"
+        code = str(status_code) if status_code >= 500 else "invalid_request"
         message = _http_exception_message(exc)
         if status_code >= 500:
             logger.exception(

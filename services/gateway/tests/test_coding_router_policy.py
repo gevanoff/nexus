@@ -8,7 +8,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 from app import router
 
 
-def test_tool_bearing_coding_requests_prefer_coder_alias(monkeypatch):
+def test_tool_bearing_coding_requests_keep_alias_backend_tool_policy(monkeypatch):
     aliases = {
         "default": SimpleNamespace(backend="local_mlx", upstream_model="default-model", tools=True),
         "coder": SimpleNamespace(backend="local_vllm", upstream_model="coder-model", tools=True),
@@ -37,8 +37,8 @@ def test_tool_bearing_coding_requests_prefer_coder_alias(monkeypatch):
     )
 
     assert decision.backend == "local_mlx"
-    assert decision.model == "active-mlx-huge-model"
-    assert decision.reason == "policy:tools->coding->alias:coder"
+    assert decision.model == "default-model"
+    assert decision.reason == "policy:tools->alias:default"
 
 
 def test_tool_request_skips_vllm_default_alias_without_native_tools(monkeypatch):
@@ -205,7 +205,7 @@ def test_direct_default_alias_with_tools_uses_vllm_when_native_tools_enabled(mon
     assert decision.reason == "alias:model"
 
 
-def test_direct_coder_alias_tracks_active_mlx_huge_model(monkeypatch):
+def test_direct_coder_alias_keeps_configured_vllm_backend(monkeypatch):
     aliases = {
         "coder": SimpleNamespace(backend="local_vllm", upstream_model="stale-coder-model", tools=True),
     }
@@ -230,12 +230,12 @@ def test_direct_coder_alias_tracks_active_mlx_huge_model(monkeypatch):
         enable_request_type=False,
     )
 
-    assert decision.backend == "local_mlx"
-    assert decision.model == "active-mlx-huge-model"
+    assert decision.backend == "local_vllm"
+    assert decision.model == "stale-coder-model"
     assert decision.reason == "alias:model"
 
 
-def test_policy_coding_without_tools_uses_active_mlx_coder(monkeypatch):
+def test_policy_coding_without_tools_keeps_configured_vllm_coder(monkeypatch):
     aliases = {
         "coder": SimpleNamespace(backend="local_vllm", upstream_model="stale-coder-model", tools=True),
     }
@@ -261,8 +261,8 @@ def test_policy_coding_without_tools_uses_active_mlx_coder(monkeypatch):
         enable_request_type=True,
     )
 
-    assert decision.backend == "local_mlx"
-    assert decision.model == "active-mlx-huge-model"
+    assert decision.backend == "local_vllm"
+    assert decision.model == "stale-coder-model"
     assert decision.reason == "policy:coding->alias:coder"
 
 
