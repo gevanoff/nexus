@@ -954,6 +954,62 @@ class LifecycleManager:
             "backend": self._backend_status(backend),
         }
 
+    async def purge_mlx_model_cache(self, req: MlxPrefetchRequest) -> Dict[str, Any]:
+        backend = self._backend_or_404(req.backend_class)
+        if backend.backend_class != "local_mlx":
+            raise HTTPException(status_code=400, detail="MLX cache purge is only supported for local_mlx")
+        model = req.model.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", model):
+            raise HTTPException(status_code=400, detail="model must be a Hugging Face repository id in ORG/REPO form")
+        host = self.hosts.get(backend.host)
+        if host is None:
+            raise HTTPException(status_code=400, detail=f"unknown host {backend.host}")
+
+        mlx_root = _path_env("MLX_NATIVE_ROOT", "/var/lib/mlx")
+        command = (
+            f"cd {shlex.quote(host.repo_dir)} && "
+            f"MLX_NATIVE_ROOT={shlex.quote(mlx_root)} "
+            f"./deploy/scripts/purge-mlx-model-cache.sh --model {shlex.quote(model)}"
+        )
+        backend.last_action = "purge_cache"
+        backend.last_action_at = time.time()
+        try:
+            stdout = await self._ssh(host, command, timeout=600)
+        except Exception as exc:
+            backend.last_action_error = f"{type(exc).__name__}: {exc}"
+            self._save_state()
+            raise
+
+        removed_paths = [
+            line.split("=", 1)[1]
+            for line in (stdout or "").splitlines()
+            if line.startswith("removed_path=")
+        ]
+        backend.last_action_error = ""
+        self._save_state()
+        return {
+            "ok": True,
+            "decision": "cache_purged",
+            "backend_class": backend.backend_class,
+            "host": backend.host,
+            "model": model,
+            "removed_paths": removed_paths,
+            "backend": self._backend_status(backend),
+        }
+
+    async def redownload_mlx_model(self, req: MlxPrefetchRequest) -> Dict[str, Any]:
+        purge = await self.purge_mlx_model_cache(req)
+        prefetch = await self.prefetch_mlx_model(req)
+        return {
+            "ok": True,
+            "decision": "redownload_started",
+            "model": req.model.strip(),
+            "purge": purge,
+            "prefetch": prefetch,
+            "pid": prefetch.get("pid", ""),
+            "log_path": prefetch.get("log_path", ""),
+        }
+
     async def sync_mlx_cache_status(self) -> Dict[str, Any]:
         backend = self._backend_or_404("local_mlx")
         host = self.hosts.get(backend.host)
@@ -2427,6 +2483,16 @@ async def lifecycle_action(req: ActionRequest) -> Dict[str, Any]:
 @app.post("/v1/lifecycle/mlx/prefetch")
 async def lifecycle_mlx_prefetch(req: MlxPrefetchRequest) -> Dict[str, Any]:
     return await manager.prefetch_mlx_model(req)
+
+
+@app.post("/v1/lifecycle/mlx/cache/purge")
+async def lifecycle_mlx_cache_purge(req: MlxPrefetchRequest) -> Dict[str, Any]:
+    return await manager.purge_mlx_model_cache(req)
+
+
+@app.post("/v1/lifecycle/mlx/cache/redownload")
+async def lifecycle_mlx_cache_redownload(req: MlxPrefetchRequest) -> Dict[str, Any]:
+    return await manager.redownload_mlx_model(req)
 
 
 @app.post("/v1/lifecycle/mlx/cache-status/sync")

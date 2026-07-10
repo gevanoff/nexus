@@ -40,7 +40,7 @@ from app.backends import (
 from app.config import S
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
-from app.model_availability import fallback_target_for_backend, hf_model_cache_details, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason, purge_hf_model_cache
+from app.model_availability import fallback_target_for_backend, hf_model_cache_details, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason
 from app.models import ChatCompletionRequest, ChatMessage
 from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
@@ -4697,7 +4697,40 @@ async def ui_admin_model_purge(req: Request, body: ModelPurgeRequest) -> Dict[st
     if backend_provider_name(backend_name) != "mlx":
         raise HTTPException(status_code=400, detail="purge is currently supported only for MLX models")
 
-    payload = purge_hf_model_cache(model_name)
+    payload = await call_lifecycle_manager(
+        "POST",
+        "/v1/lifecycle/mlx/cache/purge",
+        json_body={"backend_class": backend_name, "model": model_name},
+        timeout=max(600.0, lifecycle_timeout()),
+    )
+    _clear_ui_models_cache()
+    await _sync_mlx_cache_status_best_effort()
+    return {
+        **payload,
+        "backend": backend_name,
+        "cache_state": hf_model_cache_state(model_name),
+        "fetch_activity": hf_model_cache_details(model_name).get("fetch_activity"),
+    }
+
+
+@router.post("/ui/api/admin/models/redownload", include_in_schema=False)
+async def ui_admin_model_redownload(req: Request, body: ModelPurgeRequest) -> Dict[str, Any]:
+    _require_admin(req)
+
+    registry = get_registry()
+    backend_name = registry.resolve_backend_class(body.backend) or body.backend
+    model_name = (body.model or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail="model is required")
+    if backend_provider_name(backend_name) != "mlx":
+        raise HTTPException(status_code=400, detail="re-download is currently supported only for MLX models")
+
+    payload = await call_lifecycle_manager(
+        "POST",
+        "/v1/lifecycle/mlx/cache/redownload",
+        json_body={"backend_class": backend_name, "model": model_name},
+        timeout=max(600.0, lifecycle_timeout()),
+    )
     _clear_ui_models_cache()
     await _sync_mlx_cache_status_best_effort()
     return {

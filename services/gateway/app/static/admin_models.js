@@ -916,10 +916,12 @@
 
   async function redownloadModelCache(backend, model) {
     if (!model) return;
+    const ok = window.confirm(`Erase all cached files for ${model} and download it again? This can transfer hundreds of gigabytes.`);
+    if (!ok) return;
     if (statusEl) statusEl.textContent = `Starting re-download for ${model}...`;
     setModelActionStatus(backend, model, "re-download requested", "yellow");
     try {
-      const resp = await fetch("/ui/api/admin/models/prefetch", {
+      const resp = await fetch("/ui/api/admin/models/redownload", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },

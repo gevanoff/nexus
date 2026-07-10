@@ -96,7 +96,7 @@ if [[ -f "$package_patcher" && -x "${mlx_venv}/bin/python" ]]; then
 fi
 
 cleanup_mlx_processes() {
-  local pids protected pid ppid
+  local pids protected pid ppid all_pids parents descendants
   protected=" "
   pid="$$"
   while [[ -n "$pid" && "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 ]]; do
@@ -113,6 +113,20 @@ cleanup_mlx_processes() {
     ($2 == mlx_user || $2 == "root" || $2 == "ai") && index($0, root) { print $1 }
   ')"
   if [[ -n "$pids" ]]; then
+    # Capture the complete process trees before terminating their parents;
+    # spawned MLX workers otherwise become PID-1 orphans and evade root-path matching.
+    all_pids="$pids"
+    while true; do
+      parents=" $(printf '%s\n' "$all_pids" | tr '\n' ' ') "
+      descendants="$(ps -axo pid=,ppid= | awk -v parents="$parents" '
+        index(parents, " " $2 " ") && !index(parents, " " $1 " ") { print $1 }
+      ')"
+      if [[ -z "$descendants" ]]; then
+        break
+      fi
+      all_pids="${all_pids}"$'\n'"${descendants}"
+    done
+    pids="$(printf '%s\n' "$all_pids" | sort -rn | uniq)"
     sudo kill $pids 2>/dev/null || true
     sleep 2
     sudo kill -9 $pids 2>/dev/null || true

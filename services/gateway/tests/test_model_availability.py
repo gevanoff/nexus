@@ -135,11 +135,19 @@ def test_route_with_model_fallback_can_switch_to_fast_backend(monkeypatch):
     assert route.reason == "policy:model->fallback:fetching:local_mlx:minimax"
 
 
-def test_route_with_model_fallback_keeps_explicit_mlx_alias(monkeypatch):
+def test_route_with_model_fallback_moves_explicit_mlx_alias_during_download(monkeypatch):
     monkeypatch.setattr(model_availability.S, "MLX_FALLBACK_BACKEND", "local_vllm_fast", raising=False)
     monkeypatch.setattr(model_availability.S, "MLX_FALLBACK_MODEL", "fast-model", raising=False)
-    monkeypatch.setattr(model_availability, "model_unavailable_reason", lambda _backend, _model: "fetching")
+    monkeypatch.setattr(
+        model_availability,
+        "model_unavailable_reason",
+        lambda backend, model: "fetching" if backend == "local_mlx" and model == "glm" else None,
+    )
 
     route = model_availability.route_with_model_fallback(Route("local_mlx", "glm", "alias:model"))
 
-    assert route == Route("local_mlx", "glm", "alias:model")
+    assert route == Route(
+        "local_vllm_fast",
+        "fast-model",
+        "alias:model->fallback:fetching:local_mlx:glm",
+    )

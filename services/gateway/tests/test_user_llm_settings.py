@@ -312,6 +312,7 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "re-download in progress" in admin_models_js
     assert "purge requested" in admin_models_js
     assert "/ui/api/admin/models/purge" in admin_models_js
+    assert "/ui/api/admin/models/redownload" in admin_models_js
     assert "mlx_huge_lane" not in resources_html
     assert "/ui/api/mlx/huge-lane/switch" not in resources_js
     assert "MLX Huge Model" in admin_models_js
@@ -877,12 +878,13 @@ async def test_ui_admin_model_purge_calls_cache_helper(monkeypatch):
 
     calls = []
 
-    def fake_purge(model_name, cache_dir=None):
-        calls.append((model_name, cache_dir))
+    async def fake_lifecycle(method, path, *, json_body=None, timeout=None):
+        calls.append((method, path, json_body, timeout))
         return {
-            "model": model_name,
-            "removed_paths": ["/var/lib/gateway/mlx_hf_cache/models--mlx-community--MiniMax-M3-4bit"],
-            "metadata_updated": True,
+            "ok": True,
+            "decision": "cache_purged",
+            "model": json_body["model"],
+            "removed_paths": ["/ai-data/huggingface/models--mlx-community--MiniMax-M3-4bit"],
         }
 
     async def fake_sync():
@@ -891,7 +893,8 @@ async def test_ui_admin_model_purge_calls_cache_helper(monkeypatch):
     monkeypatch.setattr(ui_routes, "_require_admin", lambda _req: SimpleNamespace(id=1, admin=True))
     monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
     monkeypatch.setattr(ui_routes, "backend_provider_name", lambda backend: "mlx" if backend == "local_mlx" else "vllm")
-    monkeypatch.setattr(ui_routes, "purge_hf_model_cache", fake_purge)
+    monkeypatch.setattr(ui_routes, "call_lifecycle_manager", fake_lifecycle)
+    monkeypatch.setattr(ui_routes, "lifecycle_timeout", lambda: 3.0)
     monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda model: "missing" if model == "mlx-community/MiniMax-M3-4bit" else None)
     monkeypatch.setattr(ui_routes, "hf_model_cache_details", lambda model: {"state": "missing", "fetch_activity": None})
     monkeypatch.setattr(ui_routes, "_sync_mlx_cache_status_best_effort", fake_sync)
@@ -904,7 +907,55 @@ async def test_ui_admin_model_purge_calls_cache_helper(monkeypatch):
     assert payload["backend"] == "local_mlx"
     assert payload["cache_state"] == "missing"
     assert payload["removed_paths"]
-    assert calls == [("mlx-community/MiniMax-M3-4bit", None)]
+    assert calls == [
+        (
+            "POST",
+            "/v1/lifecycle/mlx/cache/purge",
+            {"backend_class": "local_mlx", "model": "mlx-community/MiniMax-M3-4bit"},
+            600.0,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ui_admin_model_redownload_calls_lifecycle_manager(monkeypatch):
+    class Registry:
+        def resolve_backend_class(self, backend):
+            return backend
+
+    calls = []
+
+    async def fake_lifecycle(method, path, *, json_body=None, timeout=None):
+        calls.append((method, path, json_body, timeout))
+        return {"ok": True, "decision": "redownload_started", "pid": "1234"}
+
+    async def fake_sync():
+        return None
+
+    monkeypatch.setattr(ui_routes, "_require_admin", lambda _req: SimpleNamespace(id=1, admin=True))
+    monkeypatch.setattr(ui_routes, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ui_routes, "backend_provider_name", lambda backend: "mlx" if backend == "local_mlx" else "vllm")
+    monkeypatch.setattr(ui_routes, "call_lifecycle_manager", fake_lifecycle)
+    monkeypatch.setattr(ui_routes, "lifecycle_timeout", lambda: 3.0)
+    monkeypatch.setattr(ui_routes, "hf_model_cache_state", lambda _model: "fetching")
+    monkeypatch.setattr(ui_routes, "hf_model_cache_details", lambda _model: {"state": "fetching", "fetch_activity": {"status": "active"}})
+    monkeypatch.setattr(ui_routes, "_sync_mlx_cache_status_best_effort", fake_sync)
+
+    payload = await ui_routes.ui_admin_model_redownload(
+        SimpleNamespace(),
+        ui_routes.ModelPurgeRequest(backend="local_mlx", model="mlx-community/GLM-5.2-DQ4plus-q8"),
+    )
+
+    assert payload["decision"] == "redownload_started"
+    assert payload["cache_state"] == "fetching"
+    assert calls == [
+        (
+            "POST",
+            "/v1/lifecycle/mlx/cache/redownload",
+            {"backend_class": "local_mlx", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+            600.0,
+        )
+    ]
 
 
 def test_ui_model_alias_hides_embedding_selectors():

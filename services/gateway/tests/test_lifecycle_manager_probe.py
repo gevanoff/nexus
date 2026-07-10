@@ -73,6 +73,80 @@ def test_ssh_probe_uses_configured_connect_target_and_port(monkeypatch) -> None:
     assert "ai@stackrot" not in args
 
 
+def test_mlx_cache_purge_runs_guarded_host_script(monkeypatch) -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    backend = SimpleNamespace(
+        backend_class="local_mlx",
+        host="ai2",
+        last_action="",
+        last_action_at=0.0,
+        last_action_error="",
+    )
+    host = module.HostPolicy(
+        name="ai2",
+        ssh_target="ai@ai2",
+        ssh_connect_target="",
+        ssh_port=22,
+        repo_dir="/ai-data/var/lib/nexus",
+        env_file="",
+        platform="macos",
+        resource_kind="macos",
+    )
+    calls = []
+
+    manager.hosts = {"ai2": host}
+    manager._backend_or_404 = lambda _backend: backend
+    manager._save_state = lambda: None
+    manager._backend_status = lambda _backend: {"backend_class": "local_mlx"}
+
+    async def fake_ssh(target, command, *, timeout=30):
+        calls.append((target, command, timeout))
+        return "removed_path=/ai-data/huggingface/models--mlx-community--GLM-5.2-DQ4plus-q8\nremoved_count=1\n"
+
+    manager._ssh = fake_ssh
+    payload = asyncio.run(
+        manager.purge_mlx_model_cache(
+            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-DQ4plus-q8")
+        )
+    )
+
+    assert payload["decision"] == "cache_purged"
+    assert payload["removed_paths"] == ["/ai-data/huggingface/models--mlx-community--GLM-5.2-DQ4plus-q8"]
+    assert calls[0][0] is host
+    assert "./deploy/scripts/purge-mlx-model-cache.sh --model mlx-community/GLM-5.2-DQ4plus-q8" in calls[0][1]
+    assert calls[0][2] == 600
+
+
+def test_mlx_cache_redownload_purges_before_prefetch() -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    calls = []
+
+    async def fake_purge(req):
+        calls.append(("purge", req.model))
+        return {"ok": True, "removed_paths": ["cache"]}
+
+    async def fake_prefetch(req):
+        calls.append(("prefetch", req.model))
+        return {"ok": True, "pid": "1234", "log_path": "/tmp/prefetch.log"}
+
+    manager.purge_mlx_model_cache = fake_purge
+    manager.prefetch_mlx_model = fake_prefetch
+    payload = asyncio.run(
+        manager.redownload_mlx_model(
+            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-DQ4plus-q8")
+        )
+    )
+
+    assert calls == [
+        ("purge", "mlx-community/GLM-5.2-DQ4plus-q8"),
+        ("prefetch", "mlx-community/GLM-5.2-DQ4plus-q8"),
+    ]
+    assert payload["decision"] == "redownload_started"
+    assert payload["pid"] == "1234"
+
+
 def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) -> None:
     module = _load_lifecycle_main()
     policy_path = tmp_path / "backend_lifecycle.json"
