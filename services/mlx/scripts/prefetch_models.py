@@ -6,6 +6,10 @@ import os
 import sys
 from pathlib import Path
 
+# This helper is intentionally the online cache-fill boundary. Set the mode
+# before importing huggingface_hub, which snapshots this setting at import.
+os.environ["HF_HUB_OFFLINE"] = "0"
+
 import yaml
 from huggingface_hub import snapshot_download
 

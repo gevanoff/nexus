@@ -12,10 +12,14 @@ if [[ -f "$MLX_ENV_FILE" ]]; then
   set +a
 fi
 
+# Prefetching is the explicit online cache-fill path, even when inference runs
+# with HF_HUB_OFFLINE=1 to prevent accidental downloads.
+HF_HUB_OFFLINE=0
+
 HOME="${HOME:-$MLX_HOME}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-${MLX_HOME}/cache}"
 HF_HOME="${HF_HOME:-${XDG_CACHE_HOME}/huggingface}"
-export HOME XDG_CACHE_HOME HF_HOME
+export HOME XDG_CACHE_HOME HF_HOME HF_HUB_OFFLINE
 
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_PY="${THIS_DIR}/prefetch_models.py"

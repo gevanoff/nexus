@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -145,6 +146,29 @@ def test_mlx_cache_redownload_purges_before_prefetch() -> None:
     ]
     assert payload["decision"] == "redownload_started"
     assert payload["pid"] == "1234"
+
+
+def test_mlx_prefetch_forces_hugging_face_online_mode() -> None:
+    root = Path(__file__).resolve().parents[3]
+    wrapper = (root / "services" / "mlx" / "scripts" / "prefetch-models.sh").read_text(encoding="utf-8")
+    helper = (root / "services" / "mlx" / "scripts" / "prefetch_models.py").read_text(encoding="utf-8")
+
+    assert wrapper.index('HF_HUB_OFFLINE=0') > wrapper.index('. "$MLX_ENV_FILE"')
+    assert "export HOME XDG_CACHE_HOME HF_HOME HF_HUB_OFFLINE" in wrapper
+    assert helper.index('os.environ["HF_HUB_OFFLINE"] = "0"') < helper.index(
+        "from huggingface_hub import snapshot_download"
+    )
+
+
+def test_mlx_lifecycle_canary_does_not_probe_an_on_demand_huge_model() -> None:
+    root = Path(__file__).resolve().parents[3]
+    policy = json.loads(
+        (root / "deploy" / "topology" / "backend_lifecycle.json").read_text(encoding="utf-8")
+    )
+
+    canary = policy["backends"]["local_mlx"]["canary"]
+    assert canary["enabled"] is False
+    assert canary["payload"]["model"] == "mlx-community/GLM-5.2-DQ4plus-q8"
 
 
 def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) -> None:
