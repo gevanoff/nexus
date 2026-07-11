@@ -91,6 +91,7 @@ if find "$CACHE_PATH" -type f -name '*.incomplete' -print -quit | grep -q .; the
   ns_die "Resident model cache is incomplete: $CACHE_PATH"
 fi
 
+mkdir -p "$(dirname "$LOCK_DIR")"
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
   ns_die "Another MLX Huge transition is already active: $LOCK_DIR"
 fi
