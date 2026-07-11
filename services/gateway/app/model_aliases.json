@@ -61,7 +61,7 @@
       "coding": true,
       "huge_candidate": true,
       "huge_default": true,
-      "estimated_load_sec": 420,
+      "estimated_load_sec": 1800,
       "estimated_memory_gb": 465,
       "max_tokens_cap": 2048
     },
@@ -74,7 +74,7 @@
       "coding": true,
       "huge_candidate": true,
       "huge_default": true,
-      "estimated_load_sec": 420,
+      "estimated_load_sec": 1800,
       "estimated_memory_gb": 465,
       "max_tokens_cap": 2048
     },
@@ -86,6 +86,7 @@
       "context_window": 32768,
       "coding": true,
       "huge_candidate": true,
+      "huge_switchable": false,
       "estimated_load_sec": 120,
       "estimated_memory_gb": 250,
       "max_tokens_cap": 2048

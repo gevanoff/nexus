@@ -6,7 +6,7 @@ and environment-specific secret overlays.
 ## Layout
 
 - `deploy/secrets/prod/common.env.sops`
-- `deploy/secrets/prod/ai1.env.sops`
+- `deploy/secrets/prod/stackrot.env.sops`
 - `deploy/secrets/prod/ai2.env.sops`
 - `deploy/secrets/prod/ada2.env.sops`
 - `deploy/secrets/prod/meltdown.env.sops`

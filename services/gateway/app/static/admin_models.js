@@ -683,8 +683,9 @@
       if (candidate.active) badges.push({ text: "active", tone: "green" });
       if (candidate.target) badges.push({ text: "loading", tone: "yellow" });
       if (candidate.cache_state) badges.push({ text: candidate.cache_state, tone: candidate.cache_state === "cached" ? "green" : "yellow" });
+      if (candidate.switchable === false) badges.push({ text: "not resident-compatible", tone: "red" });
       const actions = [];
-      if (!candidate.active && !candidate.target) {
+      if (!candidate.active && !candidate.target && candidate.switchable !== false) {
         actions.push({
           text: "Switch",
           role: "secondary",

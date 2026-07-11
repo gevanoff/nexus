@@ -17,46 +17,9 @@ models:
     reasoning_parser: glm4_moe
     on_demand: false
 
-  # On-demand fallback for the resident primary profile.
-  # mlx-openai-server 1.8.1 requires mlx-vlm<0.5, while this model requires
-  # mlx-vlm>=0.6.3. Keep the catalog entry for cache/admin visibility, but do
-  # not promote it to a live alias until a compatible server release exists.
-  - served_model_name: mlx-community/MiniMax-M3-4bit
-    model_path: mlx-community/MiniMax-M3-4bit
-    model_type: multimodal
-    trust_remote_code: true
-    # mlx-openai-server 1.8.1 has no MiniMax M3 tool/reasoning parser yet;
-    # advertise this fallback without tool capability in the gateway catalog.
-    on_demand: true
-    on_demand_idle_timeout: 300
-
-  # Deep reasoning profile.
-  - served_model_name: mlx-community/DeepSeek-R1-0528-4bit
-    model_path: mlx-community/DeepSeek-R1-0528-4bit
-    model_type: lm
-    reasoning_parser: qwen3
-    on_demand: true
-    on_demand_idle_timeout: 300
-    default_max_tokens: 2048
-
-  # Smaller reasoning fallback.
-  - served_model_name: mlx-community/Phi-4-reasoning-plus-4bit
-    model_path: mlx-community/Phi-4-reasoning-plus-4bit
-    model_type: lm
-    default_max_tokens: 2048
-
-  # Add large optional models incrementally. Use on_demand for very large models
-  # so first request pays the load cost and idle models are unloaded later.
-  # Only advertise optional repos after their local Hugging Face cache is complete.
-
-  # Optional higher-quality GLM coding profile.
-  # - served_model_name: mlx-community/GLM-5-8bit-MXFP8
-  #   model_path: mlx-community/GLM-5-8bit-MXFP8
-  #   model_type: lm
-  #   tool_call_parser: glm4_moe
-  #   reasoning_parser: glm4_moe
-  #   on_demand: true
-  #   on_demand_idle_timeout: 300
+  # Exactly one Huge model is advertised and resident. Use the guarded Model
+  # Admin switch operation to replace it; never add another Huge on-demand model
+  # here because an ordinary request must not initiate a memory transition.
 
   # Optional image generation model. Uncomment after installing the image extras
   # for mlx-openai-server and selecting a config_name supported by that model.

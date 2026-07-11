@@ -53,9 +53,9 @@ Example config template:
 
 Operational note:
 
-- `mlx-openai-server` supports `on_demand: true` for large models in config mode; these models are advertised in `/v1/models` but loaded only when requested.
-- The current `ai2` operating profile keeps GLM-5.2 resident to avoid repeated multi-minute reloads for `long` and coding requests, while MiniMax remains available as an on-demand fallback.
-- Only one idle on-demand model is kept loaded at a time, so use on-demand for optional 200GB+ MLX models that do not need to stay hot.
+- Although `mlx-openai-server` supports `on_demand: true`, do not use it for Huge models. Request-time loading cannot provide a guarded transition or useful service while hundreds of gigabytes are being loaded.
+- The current `ai2` operating profile exposes exactly one resident Huge model. Replace it only through the guarded Model Admin operation.
+- Keep other Huge models in the cache/admin catalog but out of the live MLX config until an administrator selects one.
 - Non-on-demand models are initialized during server startup. Keep at least one small known-good chat model or embeddings model available for health checks.
 - Add optional models incrementally and keep a known-good minimal config available for rollback.
 
@@ -178,7 +178,7 @@ Gateway integration pattern:
 
 ## Recommended Model Strategy for `ai2` (512GB)
 
-With 512GB unified memory, `ai2` can run very large MLX models. The current large-model profile keeps GLM-5.2 resident because it backs the `mlx`, `coder`, and `long` aliases and has expensive reload latency. MiniMax stays configured as the on-demand fallback. Other heavy MLX profiles should stay on-demand unless there is a specific reason to keep them hot:
+With 512GB unified memory, `ai2` can run very large MLX models. The current profile keeps GLM-5.2 resident because it backs the `mlx`, `coder`, and `long` aliases and has expensive reload latency. Other Huge profiles remain cache-only candidates and require an explicit guarded resident switch:
 
 - `mlx`: `mlx-community/GLM-5.2-DQ4plus-q8`
 - `reasoning`: `mlx-community/DeepSeek-R1-0528-4bit`
@@ -234,7 +234,7 @@ Recommended `ai2` alias-to-model mapping:
 Operational note for `ai2`:
 
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
-- Configure GLM-5.2 with `on_demand: false` so it stays resident. Keep MiniMax on-demand as the fallback; first request loads it, later requests reuse it until the idle timeout.
+- Configure exactly one Huge model with `on_demand: false`. Never advertise another Huge model as on-demand; select replacements through Model Admin so ordinary requests cannot initiate a memory transition.
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
 - GLM-5.2 uses the GLM `<tool_call><arg_key>...` chat-template shape, so configure it with the `glm4_moe` tool and reasoning parsers. MiniMax uses custom model code, so its fallback config should set `trust_remote_code: true`.
 
@@ -243,24 +243,23 @@ Operational note for `ai2`:
 For coding-agent workloads, the biggest UX gains come from reducing time-to-first-token (TTFT) and maximizing prompt-prefix reuse:
 
 - Keep `mlx-community/GLM-5.2-DQ4plus-q8` resident (`on_demand: false`) to avoid repeated load penalties.
-- Keep `MLX_MODEL_READY_TIMEOUT_SEC=900` or higher for this model; its initial load can exceed the upstream server's 300-second default.
+- Keep `MLX_MODEL_READY_TIMEOUT_SEC=3600` for this model. Its 433 GB cache lives on `/ai-data`, so a guarded cold transition can be storage-bound. The gateway allows 600 seconds for ordinary non-streaming calls and has no streaming read timeout, but interactive requests must only reach MLX after the resident handler is ready.
 - Keep system/developer scaffold stable across turns so MLX can reuse longer prompt prefixes.
 - Prewarm after restarts before routing interactive traffic.
 - Prefer deterministic tool/schema ordering in gateway request construction.
 
 Operator memory tuning on large Apple Silicon hosts can also help stability under very large model pressure.
 
-Example temporary values (session-only, not persistent across reboot):
+The guarded resident switch records and applies a model-specific value. On the
+512 GB ai2 host, GLM-5.2 DQ4plus-q8 requires the following ceiling:
 
 ```bash
-sudo sysctl iogpu.wired_limit_mb=380000
-# or (more aggressive)
-sudo sysctl iogpu.wired_limit_mb=430000
+sudo sysctl iogpu.wired_limit_mb=480000
 ```
 
 Caution:
 
-- Treat these as operator experiments, not universally safe defaults.
+- Treat this as an ai2/model-specific setting, not a portable default.
 - Higher wired limits can impact overall system responsiveness and other workloads.
 - Validate with your own stability and thermal envelope before making persistent boot-time changes.
 

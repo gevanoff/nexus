@@ -26,6 +26,7 @@ class ModelAlias:
     coding: Optional[bool] = None
     huge_candidate: bool = False
     huge_default: bool = False
+    huge_switchable: bool = True
     estimated_load_sec: Optional[int] = None
     estimated_memory_gb: Optional[float] = None
 
@@ -97,7 +98,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             coding=True,
             huge_candidate=True,
             huge_default=True,
-            estimated_load_sec=420,
+            estimated_load_sec=1800,
             estimated_memory_gb=465,
         ),
         "minimax-m3": ModelAlias(
@@ -109,6 +110,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             label="MiniMax M3 4-bit",
             coding=True,
             huge_candidate=True,
+            huge_switchable=False,
             estimated_load_sec=120,
             estimated_memory_gb=250,
         ),
@@ -189,6 +191,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         coding: Optional[bool] = coding_raw if isinstance(coding_raw, bool) else None
         huge_candidate = v.get("huge_candidate") is True
         huge_default = v.get("huge_default") is True
+        huge_switchable = v.get("huge_switchable") is not False
 
         load_raw = v.get("estimated_load_sec")
         estimated_load_sec: Optional[int] = None
@@ -211,6 +214,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             coding=coding,
             huge_candidate=huge_candidate,
             huge_default=huge_default,
+            huge_switchable=huge_switchable,
             estimated_load_sec=estimated_load_sec,
             estimated_memory_gb=estimated_memory_gb,
         )

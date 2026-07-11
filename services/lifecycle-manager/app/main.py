@@ -1010,6 +1010,45 @@ class LifecycleManager:
             "log_path": prefetch.get("log_path", ""),
         }
 
+    async def switch_mlx_huge_model(self, req: MlxPrefetchRequest) -> Dict[str, Any]:
+        backend = self._backend_or_404(req.backend_class)
+        if backend.backend_class != "local_mlx":
+            raise HTTPException(status_code=400, detail="MLX Huge switching is only supported for local_mlx")
+        model = req.model.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*", model):
+            raise HTTPException(status_code=400, detail="model must be a Hugging Face repository id in ORG/REPO form")
+        host = self.hosts.get(backend.host)
+        if host is None:
+            raise HTTPException(status_code=400, detail=f"unknown host {backend.host}")
+
+        mlx_root = _path_env("MLX_NATIVE_ROOT", "/var/lib/mlx")
+        command = (
+            f"cd {shlex.quote(host.repo_dir)} && "
+            f"MLX_NATIVE_ROOT={shlex.quote(mlx_root)} "
+            f"./deploy/scripts/switch-mlx-huge-model.sh --model {shlex.quote(model)} --timeout-sec 3600"
+        )
+        backend.last_action = "switch_resident_huge_model"
+        backend.last_action_at = time.time()
+        try:
+            stdout = await self._ssh(host, command, timeout=3900)
+        except Exception as exc:
+            backend.last_action_error = f"{type(exc).__name__}: {exc}"
+            self._save_state()
+            raise
+
+        backend.last_action_error = ""
+        self._save_state()
+        await self.refresh()
+        return {
+            "ok": True,
+            "decision": "resident_huge_model_ready",
+            "backend_class": backend.backend_class,
+            "host": backend.host,
+            "model": model,
+            "stdout": (stdout or "").strip(),
+            "backend": self._backend_status(backend),
+        }
+
     async def sync_mlx_cache_status(self) -> Dict[str, Any]:
         backend = self._backend_or_404("local_mlx")
         host = self.hosts.get(backend.host)
@@ -2493,6 +2532,11 @@ async def lifecycle_mlx_cache_purge(req: MlxPrefetchRequest) -> Dict[str, Any]:
 @app.post("/v1/lifecycle/mlx/cache/redownload")
 async def lifecycle_mlx_cache_redownload(req: MlxPrefetchRequest) -> Dict[str, Any]:
     return await manager.redownload_mlx_model(req)
+
+
+@app.post("/v1/lifecycle/mlx/huge-lane/switch")
+async def lifecycle_mlx_huge_lane_switch(req: MlxPrefetchRequest) -> Dict[str, Any]:
+    return await manager.switch_mlx_huge_model(req)
 
 
 @app.post("/v1/lifecycle/mlx/cache-status/sync")

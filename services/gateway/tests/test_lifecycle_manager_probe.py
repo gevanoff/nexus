@@ -148,6 +148,53 @@ def test_mlx_cache_redownload_purges_before_prefetch() -> None:
     assert payload["pid"] == "1234"
 
 
+def test_mlx_huge_switch_runs_guarded_host_operation() -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    backend = SimpleNamespace(
+        backend_class="local_mlx",
+        host="ai2",
+        last_action="",
+        last_action_at=0.0,
+        last_action_error="",
+    )
+    host = module.HostPolicy(
+        name="ai2",
+        ssh_target="ai@ai2",
+        ssh_connect_target="",
+        ssh_port=22,
+        repo_dir="/ai-data/var/lib/nexus",
+        env_file="",
+        platform="macos",
+        resource_kind="macos",
+    )
+    calls = []
+
+    manager.hosts = {"ai2": host}
+    manager._backend_or_404 = lambda _backend: backend
+    manager._save_state = lambda: None
+    manager._backend_status = lambda _backend: {"backend_class": "local_mlx", "ready": True}
+
+    async def fake_ssh(target, command, *, timeout=30):
+        calls.append((target, command, timeout))
+        return "resident_model=mlx-community/GLM-5.2-DQ4plus-q8\n"
+
+    async def fake_refresh():
+        return None
+
+    manager._ssh = fake_ssh
+    manager.refresh = fake_refresh
+    payload = asyncio.run(
+        manager.switch_mlx_huge_model(
+            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-DQ4plus-q8")
+        )
+    )
+
+    assert payload["decision"] == "resident_huge_model_ready"
+    assert "./deploy/scripts/switch-mlx-huge-model.sh --model mlx-community/GLM-5.2-DQ4plus-q8" in calls[0][1]
+    assert calls[0][2] == 3900
+
+
 def test_mlx_prefetch_forces_hugging_face_online_mode() -> None:
     root = Path(__file__).resolve().parents[3]
     wrapper = (root / "services" / "mlx" / "scripts" / "prefetch-models.sh").read_text(encoding="utf-8")

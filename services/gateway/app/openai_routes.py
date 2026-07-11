@@ -41,7 +41,7 @@ from app.upstreams import (
     stream_backend_chat_as_openai,
 )
 from app.memory_routes import inject_memory
-from app import memory_v2
+from app import memory_v2, mlx_huge_lane
 
 
 router = APIRouter()
@@ -1016,6 +1016,11 @@ def _route_chat_request(
         enable_request_type=enable_request_type,
     )
     backend_class = get_registry().resolve_backend_class(route.backend)
+    if backend_class == "local_mlx":
+        block = mlx_huge_lane.request_block(route.model)
+        if block:
+            status_code = 503 if block.get("retryable") or block.get("error") == "mlx_huge_transition_failed" else 409
+            raise HTTPException(status_code=status_code, detail=block)
     alias_name = _selected_alias_name(cc.model, route.reason)
     return route, backend_class, alias_name
 

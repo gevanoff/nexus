@@ -37,6 +37,7 @@ def configured_candidates() -> List[Dict[str, Any]]:
                 "estimated_load_sec": alias.estimated_load_sec or 120,
                 "estimated_memory_gb": alias.estimated_memory_gb,
                 "default": bool(alias.huge_default),
+                "switchable": bool(alias.huge_switchable),
             }
         )
     return candidates
@@ -112,7 +113,9 @@ def load_state() -> Dict[str, Any]:
     if target_model not in models:
         target_model = ""
 
-    route_model = target_model if status == "switching" and target_model else active_model
+    # Requests stay pinned to the last confirmed resident model. A transition
+    # is an administrative operation, never an implicit request-time route.
+    route_model = active_model
     now = time.time()
     started_at = float(payload.get("switch_started_at") or 0)
     elapsed_sec = max(0.0, now - started_at) if status == "switching" and started_at else 0.0
@@ -155,6 +158,43 @@ def active_model() -> str:
     if not enabled():
         return ""
     return str(load_state().get("active_model") or "").strip()
+
+
+def request_block(model: str) -> Dict[str, Any] | None:
+    """Describe why a Huge request must not be sent to MLX right now."""
+    model_id = str(model or "").strip()
+    if not enabled() or not is_huge_model(model_id):
+        return None
+
+    state = load_state()
+    status = str(state.get("status") or "ready")
+    active = str(state.get("active_model") or "").strip()
+    target = str(state.get("target_model") or "").strip()
+    if status == "switching":
+        return {
+            "error": "mlx_huge_transition_in_progress",
+            "message": "The resident MLX Huge model is being replaced by an administrator.",
+            "active_model": active,
+            "target_model": target,
+            "retryable": True,
+        }
+    if status == "error":
+        return {
+            "error": "mlx_huge_transition_failed",
+            "message": str(state.get("error") or "The resident MLX Huge model transition failed."),
+            "active_model": active,
+            "target_model": target,
+            "retryable": False,
+        }
+    if not active or model_id != active:
+        return {
+            "error": "mlx_huge_model_not_resident",
+            "message": "This Huge model must be selected manually in Model Admin before use.",
+            "active_model": active,
+            "requested_model": model_id,
+            "retryable": False,
+        }
+    return None
 
 
 def write_state(update: Dict[str, Any]) -> Dict[str, Any]:

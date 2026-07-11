@@ -79,6 +79,11 @@ mlx_host="$(ns_env_get "$MLX_ENV_FILE" MLX_HOST "127.0.0.1")"
 mlx_port="$(ns_env_get "$MLX_ENV_FILE" MLX_PORT "10240")"
 mlx_log_dir="$(ns_env_get "$MLX_ENV_FILE" MLX_LOG_DIR "${MLX_NATIVE_ROOT}/logs")"
 mlx_venv="$(ns_env_get "$MLX_ENV_FILE" MLX_VENV "${MLX_NATIVE_ROOT}/env")"
+mlx_wired_limit_mb="$(ns_env_get "$MLX_ENV_FILE" MLX_WIRED_LIMIT_MB "0")"
+
+if [[ ! "$mlx_wired_limit_mb" =~ ^[0-9]+$ ]]; then
+  ns_die "Invalid MLX_WIRED_LIMIT_MB value: $mlx_wired_limit_mb"
+fi
 
 if [[ "$mlx_host" == "0.0.0.0" || -z "$mlx_host" ]]; then
   health_host="127.0.0.1"
@@ -147,6 +152,11 @@ else
 fi
 
 cleanup_mlx_processes
+if (( mlx_wired_limit_mb > 0 )); then
+  ns_print_header "Applying MLX wired-memory ceiling"
+  sudo sysctl -w "iogpu.wired_limit_mb=${mlx_wired_limit_mb}" >/dev/null
+  ns_print_ok "iogpu.wired_limit_mb=${mlx_wired_limit_mb}"
+fi
 sudo launchctl bootstrap system "$PLIST_PATH"
 
 ns_print_header "Waiting for MLX health"

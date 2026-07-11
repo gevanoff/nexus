@@ -4760,31 +4760,17 @@ def _mlx_huge_lane_payload() -> Dict[str, Any]:
     return state
 
 
-def _mlx_chat_completions_url() -> str:
-    base_url = _backend_base_url("local_mlx").rstrip("/")
-    if not base_url:
-        raise HTTPException(status_code=503, detail="MLX backend URL is not configured")
-    return f"{base_url}/chat/completions"
-
-
-async def _warm_mlx_huge_lane_model(model_name: str) -> None:
+async def _switch_mlx_huge_lane_model(model_name: str) -> None:
     try:
-        info = mlx_huge_lane.model_info(model_name)
-        configured_min_timeout = max(600.0, float(getattr(S, "MLX_HUGE_LANE_WARMUP_TIMEOUT_SEC", 600.0) or 600.0))
-        timeout = max(configured_min_timeout, float(info.get("estimated_load_sec") or 120) + 180.0)
-        payload = {
-            "model": model_name,
-            "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
-            "max_tokens": 8,
-            "temperature": 0,
-            "stream": False,
-        }
-        async with _httpx_client(timeout=timeout) as client:
-            resp = await client.post(_mlx_chat_completions_url(), json=payload)
-            if resp.status_code >= 400:
-                body = resp.text[:500] if resp.text else ""
-                raise RuntimeError(f"MLX warmup failed HTTP {resp.status_code}: {body}")
-        mlx_huge_lane.mark_ready(model_name, message=f"{model_name} is loaded")
+        payload = await call_lifecycle_manager(
+            "POST",
+            "/v1/lifecycle/mlx/huge-lane/switch",
+            json_body={"backend_class": "local_mlx", "model": model_name},
+            timeout=max(600.0, float(getattr(S, "MLX_HUGE_LANE_SWITCH_TIMEOUT_SEC", 3900.0) or 3900.0)),
+        )
+        if not payload.get("ok"):
+            raise RuntimeError(str(payload.get("detail") or payload.get("decision") or "resident switch failed"))
+        mlx_huge_lane.mark_ready(model_name, message=f"{model_name} is resident")
     except Exception as exc:
         logger.warning("MLX huge lane switch failed model=%s error=%s", model_name, exc)
         mlx_huge_lane.mark_error(model_name, f"{type(exc).__name__}: {exc}")
@@ -4826,6 +4812,15 @@ async def ui_mlx_huge_lane_switch(req: Request, body: MlxHugeLaneSwitchRequest) 
         return {"ok": True, "decision": "already_active", "lane": _mlx_huge_lane_payload()}
 
     info = mlx_huge_lane.model_info(model_name)
+    if info.get("switchable") is False:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "model_not_resident_compatible",
+                "model": model_name,
+                "message": "The installed MLX server cannot host this model as the resident Huge model.",
+            },
+        )
     if not body.confirmed:
         return {
             "ok": False,
@@ -4833,14 +4828,15 @@ async def ui_mlx_huge_lane_switch(req: Request, body: MlxHugeLaneSwitchRequest) 
             "message": (
                 f"Switch MLX huge lane to {model_name}? "
                 f"Estimated cold-load time is about {int(info.get('estimated_load_sec') or 120)} seconds. "
-                "The selected model will be warmed immediately; avoid starting another huge MLX chat until it is ready."
+                "This stops MLX, replaces the sole resident Huge model, and rejects Huge requests until readiness. "
+                "The previous runtime configuration is restored automatically if activation fails."
             ),
             "lane": _mlx_huge_lane_payload(),
         }
 
     mlx_huge_lane.mark_switching(model_name)
     _clear_ui_models_cache()
-    asyncio.create_task(_warm_mlx_huge_lane_model(model_name))
+    asyncio.create_task(_switch_mlx_huge_lane_model(model_name))
     return {"ok": True, "decision": "switch_started", "lane": _mlx_huge_lane_payload()}
 
 

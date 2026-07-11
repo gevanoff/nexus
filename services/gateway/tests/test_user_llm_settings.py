@@ -317,6 +317,8 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/api/mlx/huge-lane/switch" not in resources_js
     assert "MLX Huge Model" in admin_models_js
     assert "/ui/api/mlx/huge-lane/switch" in admin_models_js
+    assert "not resident-compatible" in admin_models_js
+    assert "admin_models.js?v=12" in admin_models_html
 
 
 def test_canonical_chat_aliases_match_runtime_lanes():
@@ -355,6 +357,7 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["glm-5.2-mxfp4"]["context_window"] == 32768
     assert aliases["glm-5.2-mxfp4"]["max_tokens_cap"] == 2048
     assert aliases["minimax-m3"]["model"] == "mlx-community/MiniMax-M3-4bit"
+    assert aliases["minimax-m3"]["huge_switchable"] is False
     assert aliases["minimax-m3"]["context_window"] == 32768
     assert aliases["minimax-m3"]["max_tokens_cap"] == 2048
     assert aliases["deepseek-r1"]["model"] == "mlx-community/DeepSeek-R1-0528-4bit"
@@ -362,7 +365,7 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["deepseek-r1"]["max_tokens_cap"] == 2048
 
 
-def test_mlx_huge_lane_state_routes_pending_target(monkeypatch, tmp_path):
+def test_mlx_huge_lane_state_keeps_requests_on_confirmed_resident(monkeypatch, tmp_path):
     state_path = tmp_path / "mlx_huge_lane.json"
     monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_STATE_PATH", str(state_path), raising=False)
     monkeypatch.setattr(mlx_huge_lane.S, "MLX_HUGE_LANE_ENABLED", True, raising=False)
@@ -380,13 +383,18 @@ def test_mlx_huge_lane_state_routes_pending_target(monkeypatch, tmp_path):
     switching = mlx_huge_lane.mark_switching("model-b")
     assert switching["active_model"] == "model-a"
     assert switching["target_model"] == "model-b"
-    assert switching["route_model"] == "model-b"
-    assert mlx_huge_lane.route_model() == "model-b"
+    assert switching["route_model"] == "model-a"
+    assert mlx_huge_lane.route_model() == "model-a"
+    block = mlx_huge_lane.request_block("model-a")
+    assert block["error"] == "mlx_huge_transition_in_progress"
+    assert block["target_model"] == "model-b"
 
     ready = mlx_huge_lane.mark_ready("model-b")
     assert ready["active_model"] == "model-b"
     assert ready["target_model"] == ""
     assert ready["route_model"] == "model-b"
+    assert mlx_huge_lane.request_block("model-a")["error"] == "mlx_huge_model_not_resident"
+    assert mlx_huge_lane.request_block("model-b") is None
 
 
 def test_user_llm_available_models_include_selected_models():
@@ -955,6 +963,35 @@ async def test_ui_admin_model_redownload_calls_lifecycle_manager(monkeypatch):
             {"backend_class": "local_mlx", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
             600.0,
         )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_huge_lane_switch_uses_lifecycle_resident_operation(monkeypatch):
+    calls = []
+    ready = []
+
+    async def fake_lifecycle(method, path, *, json_body=None, timeout=None):
+        calls.append((method, path, json_body, timeout))
+        return {"ok": True, "decision": "resident_huge_model_ready"}
+
+    monkeypatch.setattr(ui_routes, "call_lifecycle_manager", fake_lifecycle)
+    monkeypatch.setattr(ui_routes.S, "MLX_HUGE_LANE_SWITCH_TIMEOUT_SEC", 3900.0, raising=False)
+    monkeypatch.setattr(ui_routes.mlx_huge_lane, "mark_ready", lambda model, message="": ready.append((model, message)))
+    monkeypatch.setattr(ui_routes, "_clear_ui_models_cache", lambda: None)
+
+    await ui_routes._switch_mlx_huge_lane_model("mlx-community/GLM-5.2-DQ4plus-q8")
+
+    assert calls == [
+        (
+            "POST",
+            "/v1/lifecycle/mlx/huge-lane/switch",
+            {"backend_class": "local_mlx", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+            3900.0,
+        )
+    ]
+    assert ready == [
+        ("mlx-community/GLM-5.2-DQ4plus-q8", "mlx-community/GLM-5.2-DQ4plus-q8 is resident")
     ]
 
 

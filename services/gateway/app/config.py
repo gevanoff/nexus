@@ -265,7 +265,7 @@ class Settings(BaseSettings):
     MLX_HUGE_LANE_DEFAULT_MODEL: str = "mlx-community/GLM-5.2-DQ4plus-q8"
     MLX_HUGE_MODELS: str = "mlx-community/GLM-5.2-DQ4plus-q8,mlx-community/MiniMax-M3-4bit,mlx-community/DeepSeek-R1-0528-4bit"
     MLX_HUGE_LANE_STATE_PATH: str = "/var/lib/gateway/data/mlx_huge_lane.json"
-    MLX_HUGE_LANE_WARMUP_TIMEOUT_SEC: float = 600.0
+    MLX_HUGE_LANE_SWITCH_TIMEOUT_SEC: float = 3900.0
     # GLM-5.2 prefill is serialized inside its MLX handler process. Bound the
     # serialized input so one oversized conversation cannot monopolize it past
     # mlx-openai-server's 300-second RPC timeout.
