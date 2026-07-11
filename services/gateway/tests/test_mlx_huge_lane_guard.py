@@ -72,7 +72,14 @@ def test_nonresident_huge_request_requires_admin_switch(monkeypatch) -> None:
     assert exc.value.detail["error"] == "mlx_huge_model_not_resident"
 
 
-def test_request_alias_resolves_to_huge_upstream() -> None:
+def test_request_alias_resolves_to_huge_upstream(monkeypatch) -> None:
     assert mlx_huge_lane.resolve_request_model("coder") == "mlx-community/GLM-5.2-4bit"
     assert mlx_huge_lane.resolve_request_model("deepseek-r1") == "mlx-community/DeepSeek-R1-0528-4bit"
     assert mlx_huge_lane.resolve_request_model("fast") == ""
+
+    monkeypatch.setattr(
+        mlx_huge_lane,
+        "load_state",
+        lambda: {"route_model": "mlx-community/DeepSeek-R1-0528-4bit"},
+    )
+    assert mlx_huge_lane.resolve_request_model("coder") == "mlx-community/DeepSeek-R1-0528-4bit"

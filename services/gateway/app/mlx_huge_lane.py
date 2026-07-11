@@ -63,6 +63,8 @@ def resolve_model(model_or_alias: str) -> str:
 def resolve_request_model(model_or_alias: str) -> str:
     """Resolve any request alias that ultimately targets a Huge MLX model."""
     value = str(model_or_alias or "").strip()
+    if value.lower() in {"coder", "mlx", "long"}:
+        return route_model() or default_model()
     candidate = resolve_model(value)
     if candidate:
         return candidate
