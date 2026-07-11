@@ -1003,7 +1003,7 @@ def _route_chat_request(
     headers: Dict[str, str],
     enable_request_type: bool = False,
 ) -> tuple[Any, str, Optional[str]]:
-    requested_huge_model = mlx_huge_lane.resolve_model(cc.model)
+    requested_huge_model = mlx_huge_lane.resolve_request_model(cc.model)
     if requested_huge_model:
         block = mlx_huge_lane.request_block(requested_huge_model)
         if block:
@@ -1229,6 +1229,12 @@ async def chat_completions(req: Request):
     degradation_reason: Optional[str] = None
 
     try:
+        requested_huge_model = mlx_huge_lane.resolve_request_model(cc.model)
+        if requested_huge_model:
+            block = mlx_huge_lane.request_block(requested_huge_model)
+            if block:
+                status_code = 503 if block.get("retryable") or block.get("error") == "mlx_huge_transition_failed" else 409
+                raise HTTPException(status_code=status_code, detail=block)
         cc.messages = await inject_memory(cc.messages, req=req)
 
         hdrs = {k.lower(): v for k, v in req.headers.items()}

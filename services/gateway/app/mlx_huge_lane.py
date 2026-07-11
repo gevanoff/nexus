@@ -60,6 +60,17 @@ def resolve_model(model_or_alias: str) -> str:
     return ""
 
 
+def resolve_request_model(model_or_alias: str) -> str:
+    """Resolve any request alias that ultimately targets a Huge MLX model."""
+    value = str(model_or_alias or "").strip()
+    candidate = resolve_model(value)
+    if candidate:
+        return candidate
+    alias = get_aliases().get(value.lower())
+    upstream = str(alias.upstream_model or "").strip() if alias is not None else ""
+    return upstream if is_huge_model(upstream) else ""
+
+
 def default_model() -> str:
     candidates = configured_candidates()
     for candidate in candidates:

@@ -7,6 +7,7 @@ from fastapi import HTTPException
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import openai_routes
+from app import mlx_huge_lane
 from app.models import ChatCompletionRequest, ChatMessage
 
 
@@ -69,3 +70,9 @@ def test_nonresident_huge_request_requires_admin_switch(monkeypatch) -> None:
 
     assert exc.value.status_code == 409
     assert exc.value.detail["error"] == "mlx_huge_model_not_resident"
+
+
+def test_request_alias_resolves_to_huge_upstream() -> None:
+    assert mlx_huge_lane.resolve_request_model("coder") == "mlx-community/GLM-5.2-DQ4plus-q8"
+    assert mlx_huge_lane.resolve_request_model("deepseek-r1") == "mlx-community/DeepSeek-R1-0528-4bit"
+    assert mlx_huge_lane.resolve_request_model("fast") == ""
