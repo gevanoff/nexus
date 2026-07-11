@@ -19,7 +19,7 @@ def _request(model: str = "coder") -> ChatCompletionRequest:
 
 
 def test_huge_request_is_rejected_during_manual_transition(monkeypatch) -> None:
-    route = SimpleNamespace(backend="local_mlx", model="mlx-community/GLM-5.2-DQ4plus-q8", reason="alias:coder")
+    route = SimpleNamespace(backend="local_mlx", model="mlx-community/GLM-5.2-4bit", reason="alias:coder")
     monkeypatch.setattr(openai_routes, "decide_route", lambda **_kwargs: route)
     monkeypatch.setattr(
         openai_routes,
@@ -44,7 +44,7 @@ def test_huge_request_is_rejected_during_manual_transition(monkeypatch) -> None:
 
 
 def test_nonresident_huge_request_requires_admin_switch(monkeypatch) -> None:
-    route = SimpleNamespace(backend="local_mlx", model="mlx-community/GLM-5.2-DQ4plus-q8", reason="alias:deepseek-r1")
+    route = SimpleNamespace(backend="local_mlx", model="mlx-community/GLM-5.2-4bit", reason="alias:deepseek-r1")
     monkeypatch.setattr(openai_routes, "decide_route", lambda **_kwargs: route)
     monkeypatch.setattr(
         openai_routes,
@@ -73,6 +73,6 @@ def test_nonresident_huge_request_requires_admin_switch(monkeypatch) -> None:
 
 
 def test_request_alias_resolves_to_huge_upstream() -> None:
-    assert mlx_huge_lane.resolve_request_model("coder") == "mlx-community/GLM-5.2-DQ4plus-q8"
+    assert mlx_huge_lane.resolve_request_model("coder") == "mlx-community/GLM-5.2-4bit"
     assert mlx_huge_lane.resolve_request_model("deepseek-r1") == "mlx-community/DeepSeek-R1-0528-4bit"
     assert mlx_huge_lane.resolve_request_model("fast") == ""

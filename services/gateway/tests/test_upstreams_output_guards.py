@@ -41,7 +41,7 @@ def _patch_backend(
         aliases = {
             "long": _alias(
                 backend="local_mlx" if provider == "mlx" else "local_vllm",
-                upstream_model="mlx-community/GLM-5.2-DQ4plus-q8" if provider == "mlx" else "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+                upstream_model="mlx-community/GLM-5.2-4bit" if provider == "mlx" else "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
                 cap=cap,
             )
         }
@@ -59,10 +59,10 @@ def test_route_request_for_backend_defaults_missing_max_tokens_to_mlx_alias_cap(
     routed = upstreams.route_request_for_backend(
         _request(max_tokens=None),
         "local_mlx",
-        "mlx-community/GLM-5.2-DQ4plus-q8",
+        "mlx-community/GLM-5.2-4bit",
     )
 
-    assert routed.model == "mlx-community/GLM-5.2-DQ4plus-q8"
+    assert routed.model == "mlx-community/GLM-5.2-4bit"
     assert routed.max_tokens == 64
 
 
@@ -72,7 +72,7 @@ def test_route_request_for_backend_caps_oversized_max_tokens(monkeypatch):
     routed = upstreams.route_request_for_backend(
         _request(max_tokens=1024),
         "local_mlx",
-        "mlx-community/GLM-5.2-DQ4plus-q8",
+        "mlx-community/GLM-5.2-4bit",
     )
 
     assert routed.max_tokens == 64
@@ -84,7 +84,7 @@ def test_route_request_for_backend_preserves_lower_requested_max_tokens(monkeypa
     routed = upstreams.route_request_for_backend(
         _request(max_tokens=32),
         "local_mlx",
-        "mlx-community/GLM-5.2-DQ4plus-q8",
+        "mlx-community/GLM-5.2-4bit",
     )
 
     assert routed.max_tokens == 32
@@ -113,7 +113,7 @@ def test_route_request_for_backend_uses_routed_alias_cap_for_auto_selector(monke
     aliases = {
         "long": _alias(
             backend="local_mlx",
-            upstream_model="mlx-community/GLM-5.2-DQ4plus-q8",
+            upstream_model="mlx-community/GLM-5.2-4bit",
             cap=64,
         )
     }
@@ -122,7 +122,7 @@ def test_route_request_for_backend_uses_routed_alias_cap_for_auto_selector(monke
     routed = upstreams.route_request_for_backend(
         _request(model="auto", max_tokens=None),
         "local_mlx",
-        "mlx-community/GLM-5.2-DQ4plus-q8",
+        "mlx-community/GLM-5.2-4bit",
     )
 
     assert routed.max_tokens == 64

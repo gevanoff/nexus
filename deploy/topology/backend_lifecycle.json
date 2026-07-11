@@ -152,7 +152,7 @@
         "timeout_sec": 15,
         "failure_threshold": 4,
         "payload": {
-          "model": "mlx-community/GLM-5.2-DQ4plus-q8",
+          "model": "mlx-community/GLM-5.2-4bit",
           "messages": [
             {
               "role": "user",

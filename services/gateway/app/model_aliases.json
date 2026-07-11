@@ -16,24 +16,24 @@
     },
     "mlx": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
-      "label": "GLM-5.2 DQ4plus-q8",
+      "model": "mlx-community/GLM-5.2-4bit",
+      "label": "GLM-5.2 4-bit",
       "context_window": 32768,
       "tools": true,
       "max_tokens_cap": 2048
     },
     "coder": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
-      "label": "GLM-5.2 DQ4plus-q8",
+      "model": "mlx-community/GLM-5.2-4bit",
+      "label": "GLM-5.2 4-bit",
       "context_window": 32768,
       "tools": true,
       "max_tokens_cap": 2048
     },
     "long": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
-      "label": "GLM-5.2 DQ4plus-q8",
+      "model": "mlx-community/GLM-5.2-4bit",
+      "label": "GLM-5.2 4-bit",
       "context_window": 65536,
       "tools": true,
       "max_tokens_cap": 4096
@@ -54,41 +54,15 @@
     },
     "glm-5.2": {
       "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-DQ4plus-q8",
-      "label": "GLM-5.2 DQ4plus-q8",
+      "model": "mlx-community/GLM-5.2-4bit",
+      "label": "GLM-5.2 4-bit",
       "context_window": 32768,
       "tools": true,
       "coding": true,
       "huge_candidate": true,
       "huge_default": true,
       "estimated_load_sec": 1800,
-      "estimated_memory_gb": 465,
-      "max_tokens_cap": 2048
-    },
-    "glm-5.2-mxfp4": {
-      "backend": "local_mlx",
-      "model": "mlx-community/GLM-5.2-mxfp4",
-      "label": "GLM-5.2 mxfp4",
-      "context_window": 32768,
-      "tools": true,
-      "coding": true,
-      "huge_candidate": true,
-      "huge_default": true,
-      "estimated_load_sec": 1800,
-      "estimated_memory_gb": 465,
-      "max_tokens_cap": 2048
-    },
-    "minimax-m3": {
-      "backend": "local_mlx",
-      "model": "mlx-community/MiniMax-M3-4bit",
-      "tools": false,
-      "label": "MiniMax M3 4-bit",
-      "context_window": 32768,
-      "coding": true,
-      "huge_candidate": true,
-      "huge_switchable": false,
-      "estimated_load_sec": 120,
-      "estimated_memory_gb": 250,
+      "estimated_memory_gb": 420,
       "max_tokens_cap": 2048
     },
     "deepseek-r1": {

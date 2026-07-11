@@ -32,7 +32,7 @@ Nexus Gateway reaches it over HTTP via `MLX_BASE_URL`.
 See `env/mlx.env.example` for primary variables:
 
 - `MLX_PORT` (default `10240`)
-- `MLX_MODEL_PATH` (default `mlx-community/GLM-5.2-DQ4plus-q8`)
+- `MLX_MODEL_PATH` (default `mlx-community/GLM-5.2-4bit`)
 - `MLX_MODEL_TYPE` (default `lm`)
 - `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
 - `XDG_CACHE_HOME` / `HF_HOME` (optional; move MLX/Hugging Face caches to a larger volume)
@@ -122,7 +122,7 @@ After first install, the native launchd job reads runtime settings from `/var/li
 To change models later, update that file and restart the service without rewriting the plist:
 
 ```bash
-sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/GLM-5.2-DQ4plus-q8#' /var/lib/mlx/mlx.env
+sudo sed -i '' 's#^MLX_MODEL_PATH=.*#MLX_MODEL_PATH=mlx-community/GLM-5.2-4bit#' /var/lib/mlx/mlx.env
 ./deploy/scripts/restart-mlx.sh
 ```
 
@@ -180,12 +180,11 @@ Gateway integration pattern:
 
 With 512GB unified memory, `ai2` can run very large MLX models. The current profile keeps GLM-5.2 resident because it backs the `mlx`, `coder`, and `long` aliases and has expensive reload latency. Other Huge profiles remain cache-only candidates and require an explicit guarded resident switch:
 
-- `mlx`: `mlx-community/GLM-5.2-DQ4plus-q8`
+- `mlx`: `mlx-community/GLM-5.2-4bit`
 - `reasoning`: `mlx-community/DeepSeek-R1-0528-4bit`
-- `coder`: `mlx-community/GLM-5.2-DQ4plus-q8`
-- `minimax candidate`: `mlx-community/MiniMax-M3-4bit` requires `mlx-vlm>=0.6.3`, which is not compatible with `mlx-openai-server==1.8.1`; keep it out of live routing until a compatible server release is available
+- `coder`: `mlx-community/GLM-5.2-4bit`
 - `phi-4-reasoning-plus`: `mlx-community/Phi-4-reasoning-plus-4bit` as the smaller reasoning fallback and lightweight chat health model
-- `long`: `mlx-community/GLM-5.2-DQ4plus-q8` with raised `context_window`
+- `long`: `mlx-community/GLM-5.2-4bit` with raised `context_window`
 
 Recommended `ai2` alias-to-model mapping:
 
@@ -199,12 +198,12 @@ Recommended `ai2` alias-to-model mapping:
 		},
 		"mlx": {
 			"backend": "local_mlx",
-			"model": "mlx-community/GLM-5.2-DQ4plus-q8",
+			"model": "mlx-community/GLM-5.2-4bit",
 			"tools": true
 		},
 		"coder": {
 			"backend": "local_mlx",
-			"model": "mlx-community/GLM-5.2-DQ4plus-q8",
+			"model": "mlx-community/GLM-5.2-4bit",
 			"tools": true
 		},
 		"reasoning": {
@@ -223,7 +222,7 @@ Recommended `ai2` alias-to-model mapping:
 		},
 		"long": {
 			"backend": "local_mlx",
-			"model": "mlx-community/GLM-5.2-DQ4plus-q8",
+			"model": "mlx-community/GLM-5.2-4bit",
 			"context_window": 65536,
 			"tools": true
 		}
@@ -236,14 +235,14 @@ Operational note for `ai2`:
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
 - Configure exactly one Huge model with `on_demand: false`. Never advertise another Huge model as on-demand; select replacements through Model Admin so ordinary requests cannot initiate a memory transition.
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
-- GLM-5.2 uses the GLM `<tool_call><arg_key>...` chat-template shape, so configure it with the `glm4_moe` tool and reasoning parsers. MiniMax uses custom model code, so its fallback config should set `trust_remote_code: true`.
+- GLM-5.2 uses the GLM `<tool_call><arg_key>...` chat-template shape, so configure it with the `glm4_moe` tool and reasoning parsers.
 
 ## Low-Latency GLM-5.2 Notes
 
 For coding-agent workloads, the biggest UX gains come from reducing time-to-first-token (TTFT) and maximizing prompt-prefix reuse:
 
-- Keep `mlx-community/GLM-5.2-DQ4plus-q8` resident (`on_demand: false`) to avoid repeated load penalties.
-- Keep `MLX_MODEL_READY_TIMEOUT_SEC=3600` for this model. Its 433 GB cache lives on `/ai-data`, so a guarded cold transition can be storage-bound. The gateway allows 600 seconds for ordinary non-streaming calls and has no streaming read timeout, but interactive requests must only reach MLX after the resident handler is ready.
+- Keep `mlx-community/GLM-5.2-4bit` resident (`on_demand: false`) to avoid repeated load penalties.
+- Keep `MLX_MODEL_READY_TIMEOUT_SEC=3600` for this model. Its roughly 390 GB cache lives on `/ai-data`, so a guarded cold transition can be storage-bound. The gateway allows 600 seconds for ordinary non-streaming calls and has no streaming read timeout, but interactive requests must only reach MLX after the resident handler is ready.
 - Keep system/developer scaffold stable across turns so MLX can reuse longer prompt prefixes.
 - Prewarm after restarts before routing interactive traffic.
 - Prefer deterministic tool/schema ordering in gateway request construction.
@@ -251,10 +250,10 @@ For coding-agent workloads, the biggest UX gains come from reducing time-to-firs
 Operator memory tuning on large Apple Silicon hosts can also help stability under very large model pressure.
 
 The guarded resident switch records and applies a model-specific value. On the
-512 GB ai2 host, GLM-5.2 DQ4plus-q8 requires the following ceiling:
+512 GB ai2 host, GLM-5.2 4-bit requires the following ceiling:
 
 ```bash
-sudo sysctl iogpu.wired_limit_mb=480000
+sudo sysctl iogpu.wired_limit_mb=450000
 ```
 
 Caution:
@@ -278,8 +277,7 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 - Prewarm MLX aliases/models:
 
 ```bash
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5.2-DQ4plus-q8
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/MiniMax-M3-4bit
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5.2-4bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/DeepSeek-R1-0528-4bit
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Phi-4-reasoning-plus-4bit
 ```

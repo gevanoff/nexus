@@ -167,7 +167,7 @@ def test_glm_input_guard_rejects_oversized_prompt(monkeypatch):
         upstreams._enforce_mlx_glm_input_limit(
             request,
             backend_name="local_mlx",
-            model_name="mlx-community/GLM-5.2-DQ4plus-q8",
+            model_name="mlx-community/GLM-5.2-4bit",
         )
 
     assert exc_info.value.status_code == 400

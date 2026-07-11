@@ -254,16 +254,16 @@ class Settings(BaseSettings):
     VLLM_FAST_NATIVE_TOOLS_ENABLED: bool = False
 
     # MLX-hosted reasoning models, typically on ai2.
-    MLX_MODEL_STRONG: str = "mlx-community/GLM-5.2-DQ4plus-q8"
+    MLX_MODEL_STRONG: str = "mlx-community/GLM-5.2-4bit"
     MLX_MODEL_FAST: str = "mlx-community/Phi-4-reasoning-plus-4bit"
-    MLX_MODEL_DEFAULT: str = "mlx-community/GLM-5.2-DQ4plus-q8"
+    MLX_MODEL_DEFAULT: str = "mlx-community/GLM-5.2-4bit"
     MLX_FALLBACK_BACKEND: str = "local_mlx"
-    MLX_FALLBACK_MODEL: str = "mlx-community/MiniMax-M3-4bit"
+    MLX_FALLBACK_MODEL: str = "mlx-community/DeepSeek-R1-0528-4bit"
     MLX_HF_CACHE_DIR: str = "/var/lib/gateway/mlx_hf_cache"
     MLX_FETCH_STALLED_AFTER_SEC: int = 600
     MLX_HUGE_LANE_ENABLED: bool = True
-    MLX_HUGE_LANE_DEFAULT_MODEL: str = "mlx-community/GLM-5.2-DQ4plus-q8"
-    MLX_HUGE_MODELS: str = "mlx-community/GLM-5.2-DQ4plus-q8,mlx-community/MiniMax-M3-4bit,mlx-community/DeepSeek-R1-0528-4bit"
+    MLX_HUGE_LANE_DEFAULT_MODEL: str = "mlx-community/GLM-5.2-4bit"
+    MLX_HUGE_MODELS: str = "mlx-community/GLM-5.2-4bit,mlx-community/DeepSeek-R1-0528-4bit"
     MLX_HUGE_LANE_STATE_PATH: str = "/var/lib/gateway/data/mlx_huge_lane.json"
     MLX_HUGE_LANE_SWITCH_TIMEOUT_SEC: float = 3900.0
     # GLM-5.2 prefill is serialized inside its MLX handler process. Bound the
@@ -288,7 +288,7 @@ class Settings(BaseSettings):
 
     # Model alias registry (JSON via env, or JSON file on disk)
     # Example env:
-    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/GLM-5.2-DQ4plus-q8"}}}'
+    #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/GLM-5.2-4bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
 

@@ -62,17 +62,14 @@ WIRED_LIMIT_MB=""
 TOOL_CALL_PARSER=""
 REASONING_PARSER=""
 case "$MODEL" in
-  mlx-community/GLM-5.2-DQ4plus-q8|mlx-community/GLM-5.2-mxfp4)
-    WIRED_LIMIT_MB="480000"
+  mlx-community/GLM-5.2-4bit)
+    WIRED_LIMIT_MB="450000"
     TOOL_CALL_PARSER="glm4_moe"
     REASONING_PARSER="glm4_moe"
     ;;
   mlx-community/DeepSeek-R1-0528-4bit)
     WIRED_LIMIT_MB="430000"
     REASONING_PARSER="qwen3"
-    ;;
-  mlx-community/MiniMax-M3-4bit)
-    ns_die "MiniMax M3 cannot be made resident with the installed mlx-openai-server/mlx-vlm versions"
     ;;
   *)
     ns_die "Model is not approved for the resident MLX Huge lane: $MODEL"

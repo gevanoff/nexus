@@ -158,13 +158,13 @@ def test_normalize_preferred_coding_model_maps_upstream_to_alias(monkeypatch):
         "options_payload",
         lambda: {
             "options": [
-                {"value": "coder", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+                {"value": "coder", "model": "mlx-community/GLM-5.2-4bit"},
                 {"value": "reasoning", "model": "qwen-reasoning"},
             ]
         },
     )
 
-    assert coding_model_policy.normalize_preferred_coding_model("mlx-community/GLM-5.2-DQ4plus-q8") == "coder"
+    assert coding_model_policy.normalize_preferred_coding_model("mlx-community/GLM-5.2-4bit") == "coder"
     assert coding_model_policy.normalize_preferred_coding_model("reasoning") == "reasoning"
 
 
@@ -174,7 +174,7 @@ def test_normalize_preferred_coding_model_falls_back_for_stale_value(monkeypatch
         "options_payload",
         lambda: {
             "options": [
-                {"value": "coder", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+                {"value": "coder", "model": "mlx-community/GLM-5.2-4bit"},
             ]
         },
     )

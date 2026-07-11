@@ -103,19 +103,19 @@ def test_mlx_cache_purge_runs_guarded_host_script(monkeypatch) -> None:
 
     async def fake_ssh(target, command, *, timeout=30):
         calls.append((target, command, timeout))
-        return "removed_path=/ai-data/huggingface/models--mlx-community--GLM-5.2-DQ4plus-q8\nremoved_count=1\n"
+        return "removed_path=/ai-data/huggingface/models--mlx-community--GLM-5.2-4bit\nremoved_count=1\n"
 
     manager._ssh = fake_ssh
     payload = asyncio.run(
         manager.purge_mlx_model_cache(
-            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-DQ4plus-q8")
+            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-4bit")
         )
     )
 
     assert payload["decision"] == "cache_purged"
-    assert payload["removed_paths"] == ["/ai-data/huggingface/models--mlx-community--GLM-5.2-DQ4plus-q8"]
+    assert payload["removed_paths"] == ["/ai-data/huggingface/models--mlx-community--GLM-5.2-4bit"]
     assert calls[0][0] is host
-    assert "./deploy/scripts/purge-mlx-model-cache.sh --model mlx-community/GLM-5.2-DQ4plus-q8" in calls[0][1]
+    assert "./deploy/scripts/purge-mlx-model-cache.sh --model mlx-community/GLM-5.2-4bit" in calls[0][1]
     assert calls[0][2] == 600
 
 
@@ -136,13 +136,13 @@ def test_mlx_cache_redownload_purges_before_prefetch() -> None:
     manager.prefetch_mlx_model = fake_prefetch
     payload = asyncio.run(
         manager.redownload_mlx_model(
-            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-DQ4plus-q8")
+            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-4bit")
         )
     )
 
     assert calls == [
-        ("purge", "mlx-community/GLM-5.2-DQ4plus-q8"),
-        ("prefetch", "mlx-community/GLM-5.2-DQ4plus-q8"),
+        ("purge", "mlx-community/GLM-5.2-4bit"),
+        ("prefetch", "mlx-community/GLM-5.2-4bit"),
     ]
     assert payload["decision"] == "redownload_started"
     assert payload["pid"] == "1234"
@@ -177,7 +177,7 @@ def test_mlx_huge_switch_runs_guarded_host_operation() -> None:
 
     async def fake_ssh(target, command, *, timeout=30):
         calls.append((target, command, timeout))
-        return "resident_model=mlx-community/GLM-5.2-DQ4plus-q8\n"
+        return "resident_model=mlx-community/GLM-5.2-4bit\n"
 
     async def fake_refresh():
         return None
@@ -186,12 +186,12 @@ def test_mlx_huge_switch_runs_guarded_host_operation() -> None:
     manager.refresh = fake_refresh
     payload = asyncio.run(
         manager.switch_mlx_huge_model(
-            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-DQ4plus-q8")
+            module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-4bit")
         )
     )
 
     assert payload["decision"] == "resident_huge_model_ready"
-    assert "./deploy/scripts/switch-mlx-huge-model.sh --model mlx-community/GLM-5.2-DQ4plus-q8" in calls[0][1]
+    assert "./deploy/scripts/switch-mlx-huge-model.sh --model mlx-community/GLM-5.2-4bit" in calls[0][1]
     assert calls[0][2] == 3900
 
 
@@ -215,7 +215,7 @@ def test_mlx_lifecycle_canary_does_not_probe_an_on_demand_huge_model() -> None:
 
     canary = policy["backends"]["local_mlx"]["canary"]
     assert canary["enabled"] is False
-    assert canary["payload"]["model"] == "mlx-community/GLM-5.2-DQ4plus-q8"
+    assert canary["payload"]["model"] == "mlx-community/GLM-5.2-4bit"
 
 
 def test_runtime_env_base_url_overrides_topology_default(monkeypatch, tmp_path) -> None:

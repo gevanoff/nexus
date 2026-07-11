@@ -84,22 +84,17 @@ model-admin/gateway repair:
 
 - GLM-5.2 is intentionally resident on `ai2` for the current operating profile.
   In `services/mlx/config/config.example.yaml`, keep
-  `mlx-community/GLM-5.2-DQ4plus-q8` at `on_demand: false` unless the user asks to
+  `mlx-community/GLM-5.2-4bit` at `on_demand: false` unless the user asks to
   return to a memory-saving mode or live memory pressure makes that necessary.
-  `mlx-community/MiniMax-M3-4bit` should remain present as an on-demand fallback.
-  It requires `mlx-vlm>=0.6.3`. Do not restore the removed
-  `mlx-community/GLM-5-4bit` cache/config unless explicitly requested.
+  Do not restore `mlx-community/GLM-5.2-mxfp4` or
+  `mlx-community/MiniMax-M3-4bit`; both are excluded from live routing.
 - The ai2 native MLX install lives under `/ai-data/var/lib/mlx`. If restarting
   manually, use `MLX_NATIVE_ROOT=/ai-data/var/lib/mlx` unless
   `deploy/scripts/restart-mlx.sh` has already auto-detected that path.
 
-- MiniMax M2.5 was removed from ai2 and replaced by the on-demand
-  `local_mlx:mlx-community/MiniMax-M3-4bit` model.
 - Aliases `mlx`, `coder`, and `long` are expected to resolve to
-  `local_mlx:mlx-community/GLM-5.2-DQ4plus-q8` unless current config and live
+  `local_mlx:mlx-community/GLM-5.2-4bit` unless current config and live
   state prove a better route.
-- Model admin was showing MiniMax as hidden/missing despite live gateway state;
-  that inconsistency should be fixed by correcting stale config or metadata.
 - Purge Qwen3 LLM/model and embedding references when requested, but preserve
   Qwen3 TTS. Do not remove, rename, disable, or edit the `qwen3_tts` backend
   unless the user explicitly asks or it is required to protect TTS cache paths.

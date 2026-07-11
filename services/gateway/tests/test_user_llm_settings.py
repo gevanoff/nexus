@@ -329,7 +329,7 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     aliases = payload["aliases"]
     strong_model = "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic"
     fast_model = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
-    mlx_model = "mlx-community/GLM-5.2-DQ4plus-q8"
+    mlx_model = "mlx-community/GLM-5.2-4bit"
 
     assert aliases["default"]["backend"] == "local_vllm"
     assert aliases["default"]["model"] == strong_model
@@ -354,12 +354,8 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["reasoning"]["max_tokens_cap"] == 1024
     assert aliases["glm-5.2"]["huge_candidate"] is True
     assert aliases["glm-5.2"]["huge_default"] is True
-    assert aliases["glm-5.2-mxfp4"]["context_window"] == 32768
-    assert aliases["glm-5.2-mxfp4"]["max_tokens_cap"] == 2048
-    assert aliases["minimax-m3"]["model"] == "mlx-community/MiniMax-M3-4bit"
-    assert aliases["minimax-m3"]["huge_switchable"] is False
-    assert aliases["minimax-m3"]["context_window"] == 32768
-    assert aliases["minimax-m3"]["max_tokens_cap"] == 2048
+    assert "glm-5.2-mxfp4" not in aliases
+    assert "minimax-m3" not in aliases
     assert aliases["deepseek-r1"]["model"] == "mlx-community/DeepSeek-R1-0528-4bit"
     assert aliases["deepseek-r1"]["context_window"] == 32768
     assert aliases["deepseek-r1"]["max_tokens_cap"] == 2048
@@ -467,7 +463,7 @@ def test_ui_model_alias_does_not_treat_advertised_fetching_model_as_available(mo
 
 
 def test_ui_model_alias_treats_advertised_missing_model_as_available(monkeypatch):
-    primary = "mlx-community/GLM-5.2-DQ4plus-q8"
+    primary = "mlx-community/GLM-5.2-4bit"
 
     class Registry:
         def resolve_backend_class(self, backend):
@@ -628,12 +624,12 @@ async def test_ui_models_hides_fetching_probed_backend_models(monkeypatch):
         return (
             [
                 {
-                    "id": "local_mlx:mlx-community/MiniMax-M3-4bit",
+                    "id": "local_mlx:mlx-community/DeepSeek-R1-0528-4bit",
                     "object": "model",
                     "created": now,
                     "owned_by": "local",
                     "backend": backend_name,
-                    "upstream_model": "mlx-community/MiniMax-M3-4bit",
+                    "upstream_model": "mlx-community/DeepSeek-R1-0528-4bit",
                 }
             ],
             {"backend": backend_name, "ok": True, "count": 1},
@@ -657,7 +653,7 @@ async def test_ui_models_hides_fetching_probed_backend_models(monkeypatch):
     payload = await ui_routes.ui_models(SimpleNamespace())
 
     assert payload["data"] == []
-    assert payload["diagnostics"]["sources"]["hidden_probed_models"]["local_mlx:mlx-community/MiniMax-M3-4bit"]["reason"] == "mlx_huge_lane_controlled"
+    assert payload["diagnostics"]["sources"]["hidden_probed_models"]["local_mlx:mlx-community/DeepSeek-R1-0528-4bit"]["reason"] == "mlx_huge_lane_controlled"
 
 
 @pytest.mark.asyncio
@@ -757,7 +753,7 @@ async def test_admin_models_treats_advertised_missing_mlx_model_as_selectable(mo
     async def fake_client(*, timeout=None):
         yield object()
 
-    model_id = "mlx-community/GLM-5.2-DQ4plus-q8"
+    model_id = "mlx-community/GLM-5.2-4bit"
 
     async def fake_probe(_client, _registry, backend_name, _base_url, now):
         return (
@@ -951,7 +947,7 @@ async def test_ui_admin_model_redownload_calls_lifecycle_manager(monkeypatch):
 
     payload = await ui_routes.ui_admin_model_redownload(
         SimpleNamespace(),
-        ui_routes.ModelPurgeRequest(backend="local_mlx", model="mlx-community/GLM-5.2-DQ4plus-q8"),
+        ui_routes.ModelPurgeRequest(backend="local_mlx", model="mlx-community/GLM-5.2-4bit"),
     )
 
     assert payload["decision"] == "redownload_started"
@@ -960,7 +956,7 @@ async def test_ui_admin_model_redownload_calls_lifecycle_manager(monkeypatch):
         (
             "POST",
             "/v1/lifecycle/mlx/cache/redownload",
-            {"backend_class": "local_mlx", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+            {"backend_class": "local_mlx", "model": "mlx-community/GLM-5.2-4bit"},
             600.0,
         )
     ]
@@ -980,18 +976,18 @@ async def test_huge_lane_switch_uses_lifecycle_resident_operation(monkeypatch):
     monkeypatch.setattr(ui_routes.mlx_huge_lane, "mark_ready", lambda model, message="": ready.append((model, message)))
     monkeypatch.setattr(ui_routes, "_clear_ui_models_cache", lambda: None)
 
-    await ui_routes._switch_mlx_huge_lane_model("mlx-community/GLM-5.2-DQ4plus-q8")
+    await ui_routes._switch_mlx_huge_lane_model("mlx-community/GLM-5.2-4bit")
 
     assert calls == [
         (
             "POST",
             "/v1/lifecycle/mlx/huge-lane/switch",
-            {"backend_class": "local_mlx", "model": "mlx-community/GLM-5.2-DQ4plus-q8"},
+            {"backend_class": "local_mlx", "model": "mlx-community/GLM-5.2-4bit"},
             3900.0,
         )
     ]
     assert ready == [
-        ("mlx-community/GLM-5.2-DQ4plus-q8", "mlx-community/GLM-5.2-DQ4plus-q8 is resident")
+        ("mlx-community/GLM-5.2-4bit", "mlx-community/GLM-5.2-4bit is resident")
     ]
 
 

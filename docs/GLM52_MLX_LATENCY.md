@@ -70,7 +70,7 @@ Track these fields across runs:
 Use stable warm prompts for GLM-5.2 after restart:
 
 ```bash
-./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5.2-DQ4plus-q8
+./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/GLM-5.2-4bit
 ```
 
 Default warm prompt is deterministic and coding-oriented to keep startup behavior inspectable and closer to real traffic.
