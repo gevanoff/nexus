@@ -208,10 +208,12 @@ async def run_gateway_tool_loop(
     allowed = enabled_tool_names(set(policy.toolsets))
     calls_seen: list[str] = []
     executed: list[str] = []
+    rounds_seen: int = 0
 
     async def loop() -> GatewayToolLoopResult:
-        nonlocal req
+        nonlocal req, rounds_seen
         for round_index in range(policy.max_tool_rounds + 1):
+            rounds_seen = round_index
             response = await call_backend(req)
             choice = ((response.get("choices") or [{}])[0] if isinstance(response, dict) else {}) or {}
             message = choice.get("message") if isinstance(choice, dict) else {}
@@ -245,8 +247,8 @@ async def run_gateway_tool_loop(
     try:
         result = await asyncio.wait_for(loop(), timeout=policy.loop_timeout_sec)
     except asyncio.TimeoutError:
-        response = _max_rounds_response(req.model, len(calls_seen))
-        result = GatewayToolLoopResult(response, tuple(calls_seen), tuple(executed), len(calls_seen), "loop_timeout")
+        response = _max_rounds_response(req.model, rounds_seen)
+        result = GatewayToolLoopResult(response, tuple(calls_seen), tuple(executed), rounds_seen, "loop_timeout")
     log.info(
         "gateway tool loop request_id=%s model=%s rounds=%s calls=%s executed=%s stop=%s",
         request_id,
