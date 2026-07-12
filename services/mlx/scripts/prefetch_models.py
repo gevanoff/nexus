@@ -12,6 +12,7 @@ os.environ["HF_HUB_OFFLINE"] = "0"
 
 import yaml
 from huggingface_hub import snapshot_download
+from verify_model_snapshot import verify_snapshot
 
 
 def _normalize_model_path(raw: str) -> str:
@@ -100,12 +101,15 @@ def main() -> int:
 
         print(f"PREFETCH {model}")
         try:
-            snapshot_download(
+            snapshot_path = snapshot_download(
                 repo_id=model,
                 cache_dir=cache_dir,
                 token=token,
                 resume_download=True,
             )
+            snapshot_errors = verify_snapshot(Path(snapshot_path))
+            if snapshot_errors:
+                raise RuntimeError("; ".join(snapshot_errors))
             print(f"OK {model}")
         except Exception as exc:
             failures += 1

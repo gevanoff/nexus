@@ -87,6 +87,12 @@ SYSCTL_PLIST="/Library/LaunchDaemons/com.nexus.mlx.wired-limit.plist"
 if find "$CACHE_PATH" -type f -name '*.incomplete' -print -quit | grep -q .; then
   ns_die "Resident model cache is incomplete: $CACHE_PATH"
 fi
+snapshot_ref="$(cat "$CACHE_PATH/refs/main" 2>/dev/null || true)"
+snapshot_path="$CACHE_PATH/snapshots/$snapshot_ref"
+[[ -n "$snapshot_ref" && -d "$snapshot_path" ]] || ns_die "Resident model snapshot is missing: $CACHE_PATH"
+if ! python3 "$ROOT_DIR/services/mlx/scripts/verify_model_snapshot.py" "$snapshot_path"; then
+  ns_die "Resident model cache has missing numbered shards: $CACHE_PATH"
+fi
 
 mkdir -p "$(dirname "$LOCK_DIR")"
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
