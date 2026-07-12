@@ -49,7 +49,8 @@ def _csv(value: str) -> set[str]:
 
 def resolve_execution_policy(req: ChatCompletionRequest, alias: ModelAlias | None) -> NexusToolExecutionPolicy:
     extension = req.x_nexus if isinstance(req.x_nexus, dict) else {}
-    mode = str(extension.get("tool_execution_mode") or S.NEXUS_TOOL_EXECUTION_DEFAULT).strip().lower()
+    alias_default = str(getattr(alias, "tool_mode", "") or "").strip().lower() if alias is not None else ""
+    mode = str(extension.get("tool_execution_mode") or alias_default or S.NEXUS_TOOL_EXECUTION_DEFAULT).strip().lower()
     if mode not in {"gateway_exec", "client_exec", "disabled"}:
         raise ValueError("x_nexus.tool_execution_mode must be gateway_exec, client_exec, or disabled")
     configured_toolsets = extension.get("toolsets")
