@@ -51,7 +51,7 @@ class NexusToolDefinition:
 
 def redact_secrets(value: Any) -> Any:
     if isinstance(value, str):
-        return _SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", value)
+        return _SECRET_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}{match.group(3) or ''}[REDACTED]", value)
     if isinstance(value, list):
         return [redact_secrets(item) for item in value]
     if isinstance(value, dict):
