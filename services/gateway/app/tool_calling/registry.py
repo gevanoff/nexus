@@ -165,7 +165,10 @@ async def _file_grep(args: dict[str, Any]) -> dict[str, Any]:
     pattern = str(args["pattern"])
     if not pattern or len(pattern) > 500:
         return {"ok": False, "error": "pattern must contain 1-500 characters"}
-    matcher = re.compile(pattern)
+    try:
+        matcher = re.compile(pattern)
+    except re.error as exc:
+        return {"ok": False, "error": f"invalid_regex: {exc}"}
     glob = args["glob"]
     limit = args["limit"]
     matches: list[dict[str, Any]] = []
