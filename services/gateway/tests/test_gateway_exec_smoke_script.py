@@ -26,3 +26,15 @@ def test_streaming_smoke_requires_success_status_and_done_event():
 
     assert smoke.final_answer_seen(200, body, stream=True) is True
     assert smoke.final_answer_seen(503, body, stream=True) is False
+
+
+def test_smoke_prompt_includes_exact_tool_arguments():
+    smoke = load_smoke_module()
+
+    prompt = smoke.tool_prompt(
+        "nexus_file_read",
+        {"path": "README.md", "start_line": 1, "end_line": 8, "max_chars": 2000},
+    )
+
+    assert "Call nexus_file_read exactly once" in prompt
+    assert '{"end_line":8,"max_chars":2000,"path":"README.md","start_line":1}' in prompt

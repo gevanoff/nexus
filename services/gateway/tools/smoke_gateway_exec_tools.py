@@ -35,6 +35,11 @@ def final_answer_seen(status: int, body: str, *, stream: bool) -> bool:
     return bool((parsed_body.get("choices") or [{}])[0].get("message", {}).get("content"))
 
 
+def tool_prompt(tool_name: str, arguments: dict) -> str:
+    encoded = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"Call {tool_name} exactly once with these arguments: {encoded}. Then summarize the result in one sentence."
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test Nexus Gateway-side tool execution")
     parser.add_argument("--base-url", default="http://127.0.0.1:8800/v1")
@@ -60,7 +65,7 @@ def main() -> int:
         for tool_name, toolset, tool_arguments, stream in runs:
             payload = {
                 "model": model,
-                "messages": [{"role": "user", "content": f"Use {tool_name}, then summarize the result in one sentence."}],
+                "messages": [{"role": "user", "content": tool_prompt(tool_name, tool_arguments)}],
                 "tool_choice": {"type": "function", "function": {"name": tool_name}},
                 "stream": stream,
                 "x_nexus": {
