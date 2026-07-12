@@ -385,7 +385,7 @@ class Settings(BaseSettings):
     NEXUS_TOOL_OUTPUT_MAX_CHARS: int = 12000
     NEXUS_TOOL_AUDIT_PATH: str = "/var/lib/gateway/data/tools/gateway_exec.jsonl"
     NEXUS_TOOL_ENABLED: str = ""
-    NEXUS_TOOL_DISABLED: str = "nexus_apply_patch,nexus_service_restart,nexus_docker_restart,nexus_git_commit,nexus_shell_exec,nexus_python_sandbox"
+    NEXUS_TOOL_DISABLED: str = "nexus_apply_patch,nexus_service_restart,nexus_shell_exec,nexus_python_sandbox"
     NEXUS_TOOL_FS_ROOTS: str = "/workspace/nexus,/var/lib/gateway/app,/var/lib/gateway/config"
     NEXUS_TOOL_HTTP_HOSTS: str = "127.0.0.1,localhost,gateway,host.docker.internal,ai2,lifecycle-manager"
     NEXUS_TOOL_HTTP_PORTS: str = "8800,9190,10240"
