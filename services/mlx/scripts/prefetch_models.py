@@ -143,17 +143,16 @@ def _shard_progress(repo_path: Path, revision: str, expected_shards: list[str]) 
         )
         expected = len(expected_shards)
     else:
-        observed: set[tuple[str, int]] = set()
-        expected = 0
+        groups: dict[tuple[str, int], set[int]] = {}
         for snapshot in snapshots:
             for path in snapshot.rglob("*"):
                 match = SHARD_RE.match(path.name)
                 if not match or not path.is_file():
                     continue
                 total = int(match.group("total"))
-                expected = max(expected, total)
-                observed.add((match.group("prefix"), int(match.group("index"))))
-        downloaded = len(observed)
+                groups.setdefault((match.group("prefix"), total), set()).add(int(match.group("index")))
+        downloaded = sum(len(present) for present in groups.values())
+        expected = sum(total for (_prefix, total) in groups) if groups else 0
 
     incomplete_bytes = 0
     blobs = repo_path / "blobs"
