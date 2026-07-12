@@ -73,7 +73,7 @@ The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated auto
 
 The production vLLM chat lanes use Mistral-family safetensors (`cyankiwi/Devstral-Small-2507-AWQ-4bit` on `stackrot` and `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`) rather than GGUF artifacts. The `ada2` model is text-only because the available Mistral3 multimodal Magistral repos either failed vLLM v0.10.2 initialization or produced invalid text in smoke tests. `meltdown` currently serves the vLLM embeddings lane only; there is no chat tool-call surface on that host unless a chat model is assigned there.
 
-The strong vLLM chat lane is configured for a 65536-token context because Hermes Agent rejects models advertised below 64000 tokens. The RTX 6000 Ada lane measured capacity for 88704 KV-cache tokens at its production GPU allocation, so one 64K request fits, but concurrency at the full window is limited. The fast lane remains at 8192 until automatic tool parsing is validated there separately.
+The strong vLLM chat lane is configured for a 65536-token context because Hermes Agent rejects models advertised below 64000 tokens. The RTX 6000 Ada lane measured capacity for 88704 KV-cache tokens at its production GPU allocation, so one 64K request fits, but concurrency at the full window is limited. The single-RTX-3090 fast lane remains at 8192: a 65536-token canary required 10.00 GiB of KV cache while only 6.55-7.37 GiB was available, for a measured ceiling of roughly 43000-48000 tokens. CPU weight offload did not free enough VRAM for that KV cache, and assigning its second GPU would displace the Qwen3 TTS lane.
 
 After restarting a lane with automatic native tool flags, validate it directly before flipping the gateway flag:
 

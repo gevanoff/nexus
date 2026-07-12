@@ -10,7 +10,7 @@
     "default": {
       "backend": "local_vllm",
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
-      "context_window": 8192,
+      "context_window": 65536,
       "tools": true,
       "max_tokens_cap": 1024
     },
@@ -18,7 +18,7 @@
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-4bit",
       "label": "GLM-5.2 4-bit",
-      "context_window": 32768,
+      "context_window": 65536,
       "tools": true,
       "max_tokens_cap": 2048
     },
@@ -26,7 +26,7 @@
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-4bit",
       "label": "GLM-5.2 4-bit",
-      "context_window": 32768,
+      "context_window": 65536,
       "tools": true,
       "max_tokens_cap": 2048
     },
@@ -48,7 +48,7 @@
     "reasoning": {
       "backend": "local_vllm",
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
-      "context_window": 8192,
+      "context_window": 65536,
       "tools": true,
       "max_tokens_cap": 1024
     },
@@ -56,7 +56,7 @@
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-4bit",
       "label": "GLM-5.2 4-bit",
-      "context_window": 32768,
+      "context_window": 65536,
       "tools": true,
       "coding": true,
       "huge_candidate": true,
@@ -70,7 +70,7 @@
       "model": "mlx-community/DeepSeek-R1-0528-4bit",
       "tools": true,
       "label": "DeepSeek R1 0528 4-bit",
-      "context_window": 32768,
+      "context_window": 65536,
       "coding": true,
       "huge_candidate": true,
       "estimated_load_sec": 110,

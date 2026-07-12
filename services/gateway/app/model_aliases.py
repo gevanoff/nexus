@@ -46,13 +46,14 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         default_strong_model = S.VLLM_MODEL_STRONG
     else:
         default_strong_model = S.MLX_MODEL_STRONG
+    strong_context_window = S.VLLM_MAX_MODEL_LEN if default_provider == "vllm" else 65_536
 
     return {
         # These four are the canonical policy surface.
         "default": ModelAlias(
             backend=default_backend,
             upstream_model=default_strong_model,
-            context_window=S.VLLM_MAX_MODEL_LEN if default_provider == "vllm" else None,
+            context_window=strong_context_window,
             tools=True,
             max_tokens_cap=1024 if default_provider == "vllm" else None,
             coding=True,
@@ -64,7 +65,13 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             tools=False,
             max_tokens_cap=768,
         ),
-        "coder": ModelAlias(backend=default_backend, upstream_model=default_strong_model, tools=True, coding=False),
+        "coder": ModelAlias(
+            backend=default_backend,
+            upstream_model=default_strong_model,
+            context_window=strong_context_window,
+            tools=True,
+            coding=False,
+        ),
         "reasoning": ModelAlias(
             backend="local_vllm",
             upstream_model=S.VLLM_MODEL_STRONG,
@@ -91,7 +98,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "glm-5.2": ModelAlias(
             backend="local_mlx",
             upstream_model="mlx-community/GLM-5.2-4bit",
-            context_window=32_768,
+            context_window=65_536,
             tools=True,
             max_tokens_cap=2048,
             label="GLM-5.2 4-bit",
@@ -104,7 +111,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "deepseek-r1": ModelAlias(
             backend="local_mlx",
             upstream_model="mlx-community/DeepSeek-R1-0528-4bit",
-            context_window=32_768,
+            context_window=65_536,
             tools=True,
             max_tokens_cap=2048,
             label="DeepSeek R1 0528 4-bit",

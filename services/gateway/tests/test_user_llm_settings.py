@@ -333,10 +333,12 @@ def test_canonical_chat_aliases_match_runtime_lanes():
 
     assert aliases["default"]["backend"] == "local_vllm"
     assert aliases["default"]["model"] == strong_model
-    assert aliases["default"]["context_window"] == 8192
+    assert aliases["default"]["context_window"] == 65536
     assert aliases["default"]["max_tokens_cap"] == 1024
     assert aliases["coder"]["backend"] == "local_mlx"
     assert aliases["coder"]["model"] == mlx_model
+    assert aliases["coder"]["context_window"] == 65536
+    assert aliases["mlx"]["context_window"] == 65536
     assert aliases["fast"]["backend"] == "local_vllm_fast"
     assert aliases["fast"]["model"] == fast_model
     assert aliases["fast"]["context_window"] == 8192
@@ -350,14 +352,15 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["long"]["tools"] is True
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == strong_model
-    assert aliases["reasoning"]["context_window"] == 8192
+    assert aliases["reasoning"]["context_window"] == 65536
     assert aliases["reasoning"]["max_tokens_cap"] == 1024
     assert aliases["glm-5.2"]["huge_candidate"] is True
     assert aliases["glm-5.2"]["huge_default"] is True
+    assert aliases["glm-5.2"]["context_window"] == 65536
     assert "glm-5.2-mxfp4" not in aliases
     assert "minimax-m3" not in aliases
     assert aliases["deepseek-r1"]["model"] == "mlx-community/DeepSeek-R1-0528-4bit"
-    assert aliases["deepseek-r1"]["context_window"] == 32768
+    assert aliases["deepseek-r1"]["context_window"] == 65536
     assert aliases["deepseek-r1"]["max_tokens_cap"] == 2048
 
 
