@@ -143,6 +143,8 @@ async def _file_list(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _file_read(args: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_path(args["path"], require_dir=False)
+    if path.stat().st_size > int(args["max_chars"]) * 8:
+        return {"ok": False, "error": "file_too_large", "path": str(path)}
     data = path.read_bytes()
     if b"\x00" in data[:4096]:
         return {"ok": False, "error": "binary_file_rejected", "path": str(path)}
