@@ -49,7 +49,7 @@ Optional `.env` settings:
 # Comma-separated Telegram chat IDs. Empty means all chats are allowed.
 TELEGRAM_ALLOWED_CHATS=-1003875008006
 
-# When true, group/supergroup messages only trigger replies when the bot is addressed.
+# Shared chats require addressing by default. Set false only for a dedicated room.
 TELEGRAM_REQUIRE_MENTION=true
 
 # When true, ignore messages containing @OtherBot mentions and commands like /help@OtherBot.
@@ -63,6 +63,7 @@ TELEGRAM_MENTION_PATTERNS=Nexus,Hermes,re:\\boperator\\b
 A group message is considered addressed to this bot when one of these is true:
 
 - the message mentions the bot username, for example `@YourBot`
+- the message includes the bot's Telegram display name
 - the message is a reply to the bot
 - the message matches one of `TELEGRAM_MENTION_PATTERNS`
 - the message is a bare slash command, such as `/help`

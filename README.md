@@ -408,6 +408,8 @@ Nexus includes the following services:
 - Host-native Hermes runs outside Nexus Compose on `migraine` and connects to Telegram directly.
 - Configure Hermes to consume the Nexus OpenAI-compatible gateway (`/v1`) with `fast` for chat responsiveness; keep `long` for explicit long-context jobs.
 - Keep Hermes Telegram toolsets disabled or very small for chat-style turns; the current fast vLLM lanes have tight context windows, and tool schemas can push otherwise short Telegram requests over the model limit.
+- When Hermes uses `fast-reasoning`, keep `model.context_length` aligned to the 32768-token strong lane and give the model enough one-call output headroom to finish a concise response instead of triggering Hermes continuation retries.
+- Enable Hermes native streaming, but use a conservative Telegram edit interval (about four seconds) to avoid Bot API flood-control delays. Use an idle/daily session reset so stale group history does not grow without bound.
 - Do not place Nexus model-serving backends on `migraine` unless the topology and hardware policy are deliberately changed.
 
 ### Etcd (`etcd`)

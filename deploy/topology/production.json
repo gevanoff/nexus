@@ -82,7 +82,9 @@
       "NEXUS_REGISTRATION_LEASE_TTL_SEC": "90",
       "LIFECYCLE_MANAGER_BASE_URL": "http://lifecycle-manager:9190",
       "LIFECYCLE_MANAGER_ADVERTISE_BASE_URL": "http://ai2:9190",
-      "NEXUS_LIFECYCLE_MODE": "assisted"
+      "NEXUS_LIFECYCLE_MODE": "assisted",
+      "TELEGRAM_REQUIRE_MENTION": "true",
+      "TELEGRAM_MENTION_PATTERNS": "Nexus"
     }
   },
   "hosts": {
