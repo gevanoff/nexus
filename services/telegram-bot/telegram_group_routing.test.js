@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { createTelegramGroupRouter } = require('./telegram_group_routing');
+const { createTelegramGroupRouter, createTelegramRoutingMiddleware } = require('./telegram_group_routing');
 
 function context(text, { type = 'supergroup', chatId = '-1001', replyUserId } = {}) {
   const message = { text };
@@ -30,8 +30,26 @@ test('username, Telegram display name, configured nicknames, and replies activat
   assert.equal(router.shouldHandleContext(context('@NexusBridgeBot please answer')), true);
   assert.equal(router.shouldHandleContext(context('Nexus, please answer')), true);
   assert.equal(router.shouldHandleContext(context('Hermes, please answer')), true);
+  assert.equal(router.shouldHandleContext(context('What do you think, Nexus?')), true);
   assert.equal(router.shouldHandleContext(context('please answer', { replyUserId: 42 })), true);
   assert.equal(router.shouldHandleContext(context('hermesian architecture')), false);
+  assert.equal(router.shouldHandleContext(context('The Nexus deployment is healthy')), false);
+  assert.equal(router.shouldHandleContext(context('We discussed Hermes yesterday')), false);
+});
+
+test('routing middleware blocks ambient shared-chat updates before bot handlers', async () => {
+  const router = configuredRouter();
+  const middleware = createTelegramRoutingMiddleware(router);
+  let handled = 0;
+  const next = async () => {
+    handled += 1;
+  };
+
+  await middleware(context('ambient room chatter'), next);
+  await middleware(context('Nexus, please answer'), next);
+  await middleware(context('private message', { type: 'private', chatId: '7' }), next);
+
+  assert.equal(handled, 2);
 });
 
 test('commands for this bot work and messages addressed to other bots are ignored', () => {

@@ -55,7 +55,7 @@ TELEGRAM_REQUIRE_MENTION=true
 # When true, ignore messages containing @OtherBot mentions and commands like /help@OtherBot.
 TELEGRAM_EXCLUSIVE_BOT_MENTIONS=true
 
-# Comma-separated wake words or regexes. Literal entries are case-insensitive.
+# Comma-separated direct-address names or regexes. Literal entries are case-insensitive.
 # Regex entries use the re: prefix.
 TELEGRAM_MENTION_PATTERNS=Nexus,Hermes,re:\\boperator\\b
 ```
@@ -63,9 +63,9 @@ TELEGRAM_MENTION_PATTERNS=Nexus,Hermes,re:\\boperator\\b
 A group message is considered addressed to this bot when one of these is true:
 
 - the message mentions the bot username, for example `@YourBot`
-- the message includes the bot's Telegram display name
+- the message directly addresses the bot's display name, such as `Nexus, answer this`
 - the message is a reply to the bot
-- the message matches one of `TELEGRAM_MENTION_PATTERNS`
+- the message directly addresses a literal `TELEGRAM_MENTION_PATTERNS` name, or matches an explicitly configured `re:` pattern
 - the message is a bare slash command, such as `/help`
 
 Messages and slash commands explicitly addressed to another bot are ignored before they reach the Gateway.

@@ -1,5 +1,6 @@
 const { Bot, InputFile } = require('grammy');
 const axios = require('axios');
+const { createTelegramGroupRouter, createTelegramRoutingMiddleware } = require('./telegram_group_routing');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const GATEWAY_PORT = Number.parseInt(process.env.GATEWAY_PORT || '8800', 10);
@@ -121,6 +122,10 @@ function log(level, message, meta = {}) {
     console.log(line);
   }
 }
+
+const groupRouter = createTelegramGroupRouter({ log });
+bot.use(createTelegramRoutingMiddleware(groupRouter));
+log('info', 'Telegram routing controls initialized', groupRouter.config);
 
 function previewText(text) {
   const content = String(text || '');
@@ -937,6 +942,7 @@ bot.catch((err) => {
 
 async function startBot() {
   const me = await bot.api.getMe();
+  groupRouter.rememberBotIdentity(me);
   log('info', 'Telegram bot authenticated', {
     botId: me.id,
     username: me.username,

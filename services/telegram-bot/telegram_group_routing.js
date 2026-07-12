@@ -22,6 +22,15 @@ function literalMentionRegex(value) {
   return new RegExp(`(?:^|[^a-z0-9_])${escaped}(?=$|[^a-z0-9_])`, 'i');
 }
 
+function directAddressRegex(value) {
+  const escaped = escapeRegex(value);
+  if (!escaped) return null;
+  return new RegExp(
+    `(?:^\\s*(?:hey\\s+)?${escaped}(?:\\s*[,;:!?-]\\s*|\\s*$)|[,;:]\\s*${escaped}\\s*[.!?]*\\s*$)`,
+    'i',
+  );
+}
+
 function compileMentionPatterns(value, log) {
   return String(value || '')
     .split(',')
@@ -31,7 +40,7 @@ function compileMentionPatterns(value, log) {
       try {
         return {
           source: entry,
-          regex: entry.startsWith('re:') ? new RegExp(entry.slice(3), 'i') : literalMentionRegex(entry),
+          regex: entry.startsWith('re:') ? new RegExp(entry.slice(3), 'i') : directAddressRegex(entry),
         };
       } catch (err) {
         log('warn', 'Ignoring invalid Telegram mention pattern', {
@@ -110,7 +119,7 @@ function createTelegramGroupRouter({ env = process.env, log = () => {} } = {}) {
       if (usernamePattern?.test(String(text || ''))) return true;
     }
     if (botIdentity.firstName) {
-      const namePattern = literalMentionRegex(botIdentity.firstName);
+      const namePattern = directAddressRegex(botIdentity.firstName);
       if (namePattern?.test(String(text || ''))) return true;
     }
     return false;
@@ -176,4 +185,14 @@ function createTelegramGroupRouter({ env = process.env, log = () => {} } = {}) {
   };
 }
 
-module.exports = { createTelegramGroupRouter };
+function createTelegramRoutingMiddleware(router, options = { allowBareCommands: true }) {
+  if (!router || typeof router.shouldHandleContext !== 'function') {
+    throw new TypeError('Telegram group router is required');
+  }
+  return async (ctx, next) => {
+    if (!router.shouldHandleContext(ctx, options)) return undefined;
+    return next();
+  };
+}
+
+module.exports = { createTelegramGroupRouter, createTelegramRoutingMiddleware };
