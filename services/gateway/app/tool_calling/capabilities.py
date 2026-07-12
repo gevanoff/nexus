@@ -16,6 +16,7 @@ def capability_for_alias(name: str, alias: ModelAlias) -> dict[str, Any]:
         "upstream_model": alias.upstream_model,
         "tools_enabled": alias.tools is True,
         "tool_execution_mode": alias.tool_mode,
+        "tool_execution_mode_explicit": alias.tool_mode_explicit,
         "tool_choice_modes": supports,
         "parallel_tool_calls": alias.supports_parallel_tool_calls,
         "tool_call_parser": alias.preferred_tool_call_parser or None,

@@ -49,8 +49,8 @@ def _csv(value: str) -> set[str]:
 
 def resolve_execution_policy(req: ChatCompletionRequest, alias: ModelAlias | None) -> NexusToolExecutionPolicy:
     extension = req.x_nexus if isinstance(req.x_nexus, dict) else {}
-    alias_default = str(getattr(alias, "tool_mode", "") or "").strip().lower() if alias is not None else ""
-    mode = str(extension.get("tool_execution_mode") or alias_default or S.NEXUS_TOOL_EXECUTION_DEFAULT).strip().lower()
+    alias_mode = alias.tool_mode if alias is not None and alias.tool_mode_explicit else ""
+    mode = str(extension.get("tool_execution_mode") or alias_mode or S.NEXUS_TOOL_EXECUTION_DEFAULT).strip().lower()
     if mode not in {"gateway_exec", "client_exec", "disabled"}:
         raise ValueError("x_nexus.tool_execution_mode must be gateway_exec, client_exec, or disabled")
     configured_toolsets = extension.get("toolsets")
@@ -63,8 +63,15 @@ def resolve_execution_policy(req: ChatCompletionRequest, alias: ModelAlias | Non
     client_policy = str(extension.get("client_tools") or S.NEXUS_CLIENT_TOOL_POLICY).strip().lower()
     if client_policy not in {"replace", "merge", "client"}:
         raise ValueError("x_nexus.client_tools must be replace, merge, or client")
-    max_rounds = min(max(int(extension.get("max_tool_rounds") or (getattr(alias, "max_tool_rounds", None) if alias else 0) or S.NEXUS_TOOL_MAX_ROUNDS), 1), 16)
-    max_parallel = min(max(int(extension.get("max_parallel_tools") or S.NEXUS_TOOL_MAX_PARALLEL), 1), 16)
+    server_round_cap = min(max(int(S.NEXUS_TOOL_MAX_ROUNDS), 1), 16)
+    alias_round_cap = getattr(alias, "max_tool_rounds", None) if alias else None
+    if isinstance(alias_round_cap, int) and alias_round_cap > 0:
+        server_round_cap = min(server_round_cap, alias_round_cap)
+    requested_rounds = extension.get("max_tool_rounds")
+    max_rounds = min(max(int(requested_rounds if requested_rounds is not None else server_round_cap), 1), server_round_cap)
+    server_parallel_cap = min(max(int(S.NEXUS_TOOL_MAX_PARALLEL), 1), 16)
+    requested_parallel = extension.get("max_parallel_tools")
+    max_parallel = min(max(int(requested_parallel if requested_parallel is not None else server_parallel_cap), 1), server_parallel_cap)
     return NexusToolExecutionPolicy(
         mode=mode,  # type: ignore[arg-type]
         toolsets=frozenset(toolsets),

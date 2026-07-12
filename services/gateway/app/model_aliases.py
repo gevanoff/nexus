@@ -30,6 +30,7 @@ class ModelAlias:
     estimated_load_sec: Optional[int] = None
     estimated_memory_gb: Optional[float] = None
     tool_mode: str = "client_exec"
+    tool_mode_explicit: bool = False
     supports_tool_choice: tuple[str, ...] = ()
     supports_parallel_tool_calls: bool = False
     preferred_tool_call_parser: str = ""
@@ -232,7 +233,9 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         if isinstance(memory_raw, (int, float)) and memory_raw > 0:
             estimated_memory_gb = float(memory_raw)
 
-        tool_mode = str(v.get("tool_mode") or "client_exec").strip().lower()
+        tool_mode_raw = v.get("tool_mode")
+        tool_mode = str(tool_mode_raw or "client_exec").strip().lower()
+        tool_mode_explicit = isinstance(tool_mode_raw, str) and tool_mode in {"gateway_exec", "client_exec", "disabled"}
         if tool_mode not in {"gateway_exec", "client_exec", "disabled"}:
             tool_mode = "client_exec"
         choices_raw = v.get("supports_tool_choice")
@@ -263,6 +266,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             estimated_load_sec=estimated_load_sec,
             estimated_memory_gb=estimated_memory_gb,
             tool_mode=tool_mode,
+            tool_mode_explicit=tool_mode_explicit,
             supports_tool_choice=supports_tool_choice,
             supports_parallel_tool_calls=supports_parallel_tool_calls,
             preferred_tool_call_parser=preferred_tool_call_parser,
