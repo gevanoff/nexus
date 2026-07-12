@@ -84,7 +84,11 @@
       "LIFECYCLE_MANAGER_ADVERTISE_BASE_URL": "http://ai2:9190",
       "NEXUS_LIFECYCLE_MODE": "assisted",
       "TELEGRAM_REQUIRE_MENTION": "true",
-      "TELEGRAM_MENTION_PATTERNS": "Nexus"
+      "TELEGRAM_MENTION_PATTERNS": "Nexus",
+      "NEXUS_TOOL_EXECUTION_DEFAULT": "client_exec",
+      "NEXUS_AUTO_INJECT_TOOLS": "true",
+      "NEXUS_AUTO_INJECT_TOOLSETS": "core,repo,ops",
+      "NEXUS_UI_GATEWAY_EXEC": "false"
     }
   },
   "hosts": {

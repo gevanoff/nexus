@@ -73,6 +73,17 @@ services:
       - TOOLS_LOG_DIR=/var/lib/gateway/data/tools
       - TOOLS_SHELL_CWD=/var/lib/gateway/data/tools_work
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
+      - NEXUS_TOOL_EXECUTION_DEFAULT=${NEXUS_TOOL_EXECUTION_DEFAULT:-client_exec}
+      - NEXUS_AUTO_INJECT_TOOLS=${NEXUS_AUTO_INJECT_TOOLS:-false}
+      - NEXUS_AUTO_INJECT_TOOLSETS=${NEXUS_AUTO_INJECT_TOOLSETS:-core,repo,ops}
+      - NEXUS_CLIENT_TOOL_POLICY=${NEXUS_CLIENT_TOOL_POLICY:-replace}
+      - NEXUS_TOOL_MAX_ROUNDS=${NEXUS_TOOL_MAX_ROUNDS:-4}
+      - NEXUS_TOOL_MAX_PARALLEL=${NEXUS_TOOL_MAX_PARALLEL:-4}
+      - NEXUS_TOOL_TIMEOUT_SEC=${NEXUS_TOOL_TIMEOUT_SEC:-20}
+      - NEXUS_TOOL_LOOP_TIMEOUT_SEC=${NEXUS_TOOL_LOOP_TIMEOUT_SEC:-120}
+      - NEXUS_TOOL_OUTPUT_MAX_CHARS=${NEXUS_TOOL_OUTPUT_MAX_CHARS:-12000}
+      - NEXUS_TOOL_FS_ROOTS=${NEXUS_TOOL_FS_ROOTS:-/workspace/nexus,/var/lib/gateway/app,/var/lib/gateway/config}
+      - NEXUS_UI_GATEWAY_EXEC=${NEXUS_UI_GATEWAY_EXEC:-false}
 
       # Memory v2
       - MEMORY_V2_ENABLED=true
@@ -88,6 +99,10 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: .
+        target: /workspace/nexus
+        read_only: true
     extra_hosts:
       - "stackrot:${NEXUS_HOST_STACKROT_IP}"
       - "stackrot.embrient.com:${NEXUS_HOST_STACKROT_IP}"

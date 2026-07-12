@@ -231,8 +231,60 @@ def _fetch_activity_from_metadata(
     stalled_after_sec: float,
     now: float,
 ) -> Optional[dict[str, Any]]:
-    if state != "fetching":
+    job = metadata.get("download_job") if isinstance(metadata.get("download_job"), dict) else {}
+    job_state = str(job.get("state") or "").strip()
+    if state != "fetching" and job_state not in {"failed", "complete"}:
         return None
+
+    if job_state:
+        updated_at = _float_metadata(job.get("updated_at"))
+        last_progress_at = _float_metadata(job.get("last_progress_at"))
+        heartbeat_age = max(0.0, now - updated_at) if updated_at > 0 else 0.0
+        last_progress_age = max(0.0, now - last_progress_at) if last_progress_at > 0 else 0.0
+        if job_state == "failed":
+            activity_status = "failed"
+            label = "download failed"
+        elif job_state == "complete":
+            activity_status = "complete"
+            label = "download complete"
+        elif updated_at <= 0:
+            activity_status = "unknown"
+            label = "fetch state unknown"
+        elif heartbeat_age > stalled_after_sec:
+            activity_status = "stalled"
+            label = "download worker stopped"
+        else:
+            activity_status = "active"
+            label = "waiting to retry" if job_state == "retry_wait" else "actively downloading"
+
+        downloaded_shards = _int_metadata(job.get("downloaded_shards"))
+        expected_shards = _int_metadata(job.get("expected_shards"))
+        progress_percent = (
+            min(100.0, (downloaded_shards / expected_shards) * 100.0)
+            if expected_shards > 0
+            else None
+        )
+        return {
+            "status": activity_status,
+            "label": label,
+            "job_state": job_state,
+            "pid": _int_metadata(job.get("pid")),
+            "attempt": _int_metadata(job.get("attempt")),
+            "max_attempts": _int_metadata(job.get("max_attempts")),
+            "retry_count": _int_metadata(job.get("retry_count")),
+            "next_retry_at": _float_metadata(job.get("next_retry_at")),
+            "downloaded_shards": downloaded_shards,
+            "expected_shards": expected_shards,
+            "progress_percent": progress_percent,
+            "incomplete_bytes": _int_metadata(job.get("incomplete_bytes")),
+            "last_progress_at": last_progress_at,
+            "last_progress_age_sec": last_progress_age,
+            "heartbeat_at": updated_at,
+            "heartbeat_age_sec": heartbeat_age,
+            "stalled_after_sec": stalled_after_sec,
+            "error": str(job.get("error") or "")[:1000],
+            "status_generated_at": _float_metadata(metadata.get("status_generated_at")),
+        }
 
     if not metadata:
         metadata = _fallback_incomplete_metadata(model, root)

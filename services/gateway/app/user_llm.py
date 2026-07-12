@@ -301,6 +301,7 @@ def user_backend_name(provider: str) -> str:
 
 def _payload_for_user_chat(req: ChatCompletionRequest, upstream_model: str, *, stream: Optional[bool] = None) -> Dict[str, Any]:
     payload = req.model_dump(exclude_none=True)
+    payload.pop("x_nexus", None)
     payload["model"] = upstream_model
     if stream is not None:
         payload["stream"] = bool(stream)

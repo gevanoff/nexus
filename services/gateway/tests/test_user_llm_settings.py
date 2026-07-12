@@ -300,6 +300,10 @@ def test_user_llm_settings_ui_has_key_status_and_model_loading_controls():
     assert "/ui/api/admin/models/benchmark" in admin_models_js
     assert "/ui/api/admin/models/tool-qualification" in admin_models_js
     assert "/ui/api/admin/models/prefetch" in admin_models_js
+    assert "downloaded_shards" in admin_models_js
+    assert "expected_shards" in admin_models_js
+    assert "model-admin-fetch-progress" in admin_models_js
+    assert "scheduleModelFetchPoll" in admin_models_js
     assert "Start benchmark" in admin_models_html
     assert "Run tool suite" in admin_models_html
     assert "benchmarkText" in admin_models_js

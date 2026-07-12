@@ -12,6 +12,11 @@
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
       "context_window": 65536,
       "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "xlam",
+      "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja",
       "max_tokens_cap": 1024
     },
     "mlx": {
@@ -20,6 +25,11 @@
       "label": "GLM-5.2 4-bit",
       "context_window": 65536,
       "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "glm4_moe",
+      "reasoning_parser": "glm4_moe",
       "max_tokens_cap": 2048
     },
     "coder": {
@@ -28,6 +38,11 @@
       "label": "GLM-5.2 4-bit",
       "context_window": 65536,
       "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "glm4_moe",
+      "reasoning_parser": "glm4_moe",
       "max_tokens_cap": 2048
     },
     "long": {
@@ -36,6 +51,11 @@
       "label": "GLM-5.2 4-bit",
       "context_window": 65536,
       "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "glm4_moe",
+      "reasoning_parser": "glm4_moe",
       "max_tokens_cap": 4096
     },
     "fast-reasoning": {
@@ -43,6 +63,10 @@
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
       "context_window": 65536,
       "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "xlam",
       "max_tokens_cap": 768
     },
     "reasoning": {
@@ -50,6 +74,10 @@
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
       "context_window": 65536,
       "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "xlam",
       "max_tokens_cap": 1024
     },
     "glm-5.2": {
@@ -58,6 +86,11 @@
       "label": "GLM-5.2 4-bit",
       "context_window": 65536,
       "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "glm4_moe",
+      "reasoning_parser": "glm4_moe",
       "coding": true,
       "huge_candidate": true,
       "huge_default": true,
@@ -68,7 +101,10 @@
     "deepseek-r1": {
       "backend": "local_mlx",
       "model": "mlx-community/DeepSeek-R1-0528-4bit",
-      "tools": true,
+      "tools": false,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none"],
+      "reasoning_parser": "qwen3",
       "label": "DeepSeek R1 0528 4-bit",
       "context_window": 65536,
       "coding": true,

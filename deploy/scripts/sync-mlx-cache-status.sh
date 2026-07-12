@@ -84,6 +84,40 @@ def repo_id_from_cache_dir(path: Path) -> str:
 
 
 SHARDED_WEIGHT_RE = re.compile(r"^(.+)-(\d{5})-of-(\d{5})\.(safetensors|bin)$")
+DOWNLOAD_JOB_FILE = ".nexus_download_status.json"
+DOWNLOAD_JOB_FIELDS = {
+    "version",
+    "model",
+    "state",
+    "pid",
+    "started_at",
+    "updated_at",
+    "last_progress_at",
+    "completed_at",
+    "failed_at",
+    "attempt",
+    "max_attempts",
+    "retry_count",
+    "revision",
+    "downloaded_shards",
+    "expected_shards",
+    "incomplete_bytes",
+    "next_retry_at",
+    "error",
+}
+
+
+def download_job_status(repo: Path, model: str) -> dict[str, object]:
+    try:
+        payload = json.loads((repo / DOWNLOAD_JOB_FILE).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict) or str(payload.get("model") or "") != model:
+        return {}
+    status = {key: value for key, value in payload.items() if key in DOWNLOAD_JOB_FIELDS}
+    if "error" in status:
+        status["error"] = str(status["error"] or "")[:1000]
+    return status
 
 
 def snapshot_weight_status(snapshot: Path) -> tuple[str, int, int, list[str]]:
@@ -175,9 +209,16 @@ if src.exists():
                 "expected_safetensors_count": 0,
                 "missing_weight_files": [],
                 "newest_snapshot_mtime": 0.0,
+                "download_job": {},
             },
         )
         entry["repo_paths"].append(str(repo))
+
+        download_job = download_job_status(repo, model)
+        current_job = entry.get("download_job")
+        current_updated = float(current_job.get("updated_at") or 0.0) if isinstance(current_job, dict) else 0.0
+        if download_job and float(download_job.get("updated_at") or 0.0) >= current_updated:
+            entry["download_job"] = download_job
 
         incomplete_paths = list((repo / "blobs").glob("*.incomplete")) if (repo / "blobs").exists() else []
         mtimes: list[float] = []
@@ -228,8 +269,14 @@ if src.exists():
         snapshot_count = int(entry["snapshot_count"] or 0)
         complete_snapshot_count = int(entry["complete_snapshot_count"] or 0)
         incomplete_snapshot_count = int(entry["incomplete_snapshot_count"] or 0)
+        job = entry.get("download_job")
+        job_state = str(job.get("state") or "") if isinstance(job, dict) else ""
         if complete_snapshot_count > 0:
             entry["state"] = "cached"
+        elif job_state in {"starting", "downloading", "retry_wait"}:
+            entry["state"] = "fetching"
+        elif job_state == "failed":
+            entry["state"] = "missing"
         elif incomplete_count > 0:
             entry["state"] = "fetching"
         elif incomplete_snapshot_count > 0:

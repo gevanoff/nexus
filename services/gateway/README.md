@@ -264,10 +264,7 @@ Nexus supports Continue.dev as an OpenAI-compatible provider, including OpenAI-s
 tool-calling request and message shapes used by `capabilities: [tool_use]`.
 The gateway prefers compatibility and graceful degradation over strict rejection.
 
-Server-side arbitrary tool execution is intentionally not implemented for these
-OpenAI-compatible endpoints. Continue is expected to execute tools client-side;
-Nexus accepts, normalizes, forwards, or gracefully ignores tool-related fields
-so the surrounding OpenAI request/response/message shapes remain compatible.
+Gateway-side execution is available through `x_nexus.tool_execution_mode=gateway_exec` for approved, bounded Nexus tools. Continue and external agents retain `client_exec`, which returns normalized tool calls without executing them. See `docs/TOOL_CALLING.md` for toolsets, policy, provider configuration, and smoke tests; surrounding OpenAI request, response, and message shapes remain compatible.
 
 Minimal Continue `config.yaml` example:
 
@@ -302,6 +299,8 @@ context:
 Compatibility notes:
 
 - `/v1/chat/completions` and `/v1/responses` accept OpenAI-style `tools`, `tool_choice`, `parallel_tool_calls`, assistant `tool_calls`, and `role: "tool"` messages.
+- `/v1/chat/completions` supports optional Gateway execution and auto-injected `core`, `repo`, and `ops` tools; `/v1/responses` rejects Gateway execution explicitly instead of dropping it.
+- `GET /v1/tool-calling/diagnostics` reports alias/provider parser and execution capabilities.
 - Unknown extra OpenAI-compatible fields are accepted unless they create a concrete validation, security, or routing problem.
 - If a selected alias or backend does not support native tool calling, Nexus strips tool fields and answers normally unless the request explicitly requires tools, such as `tool_choice: "required"`.
 - Validation failures return OpenAI-style JSON errors instead of empty-body `400` responses.

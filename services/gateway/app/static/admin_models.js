@@ -27,6 +27,7 @@
     results: document.getElementById("model_tool_qualification_results"),
   };
   let hugeLanePollTimer = null;
+  let modelFetchPollTimer = null;
   let visibleBenchmarkAliases = [];
   let visibleToolAliases = [];
   const modelActionStatus = new Map();
@@ -200,6 +201,40 @@
     return { kind: "state", text: label, tone: tone || stateTone(label), href: href || "" };
   }
 
+  function fetchProgressCell(activity, cacheState) {
+    if (!activity || typeof activity !== "object") {
+      return cacheState === "fetching" ? stateCell("fetch state unknown", "red") : "";
+    }
+    const downloaded = Number(activity.downloaded_shards);
+    const expected = Number(activity.expected_shards);
+    const attempt = Number(activity.attempt);
+    const maxAttempts = Number(activity.max_attempts);
+    const details = [];
+    if (Number.isFinite(downloaded) && Number.isFinite(expected) && expected > 0) {
+      details.push(`${downloaded}/${expected} shards`);
+    }
+    if (Number.isFinite(attempt) && Number.isFinite(maxAttempts) && maxAttempts > 0) {
+      details.push(`attempt ${attempt}/${maxAttempts}`);
+    }
+    if (activity.job_state === "retry_wait" && Number(activity.next_retry_at) > 0) {
+      details.push(`retry ${formatTimestamp(Number(activity.next_retry_at))}`);
+    }
+    if (activity.error) details.push(String(activity.error).slice(0, 180));
+    const rawPercent = activity.progress_percent;
+    const percent = rawPercent === null || rawPercent === undefined ? Number.NaN : Number(rawPercent);
+    let tone = "neutral";
+    if (activity.status === "failed" || activity.status === "stalled") tone = "red";
+    else if (activity.status === "complete") tone = "green";
+    else if (activity.status === "active") tone = "yellow";
+    return {
+      kind: "download-progress",
+      text: activity.label || activity.status || "download",
+      tone,
+      details: details.join(" · "),
+      percent,
+    };
+  }
+
   function sanitizeIdPart(value) {
     return String(value || "")
       .toLowerCase()
@@ -325,6 +360,28 @@
             chip.textContent = cellValue.text;
             td.appendChild(chip);
           }
+        } else if (cellValue && typeof cellValue === "object" && cellValue.kind === "download-progress") {
+          const wrap = document.createElement("div");
+          wrap.className = "model-admin-fetch";
+          const chip = document.createElement("span");
+          chip.className = `model-admin-state ${cellValue.tone || ""}`.trim();
+          chip.textContent = cellValue.text || "download";
+          wrap.appendChild(chip);
+          if (cellValue.details) {
+            const details = document.createElement("div");
+            details.className = "model-admin-fetch-detail";
+            details.textContent = cellValue.details;
+            wrap.appendChild(details);
+          }
+          if (Number.isFinite(cellValue.percent)) {
+            const track = document.createElement("div");
+            track.className = "model-admin-progress model-admin-fetch-progress";
+            const fill = document.createElement("span");
+            fill.style.width = `${Math.max(0, Math.min(100, cellValue.percent)).toFixed(1)}%`;
+            track.appendChild(fill);
+            wrap.appendChild(track);
+          }
+          td.appendChild(wrap);
         } else if (cellValue && typeof cellValue === "object" && cellValue.kind === "anchor-text") {
           const text = String(cellValue.text || "");
           td.textContent = text;
@@ -645,6 +702,19 @@
     }, 5000);
   }
 
+  function scheduleModelFetchPoll(active) {
+    if (!active) {
+      if (modelFetchPollTimer) window.clearTimeout(modelFetchPollTimer);
+      modelFetchPollTimer = null;
+      return;
+    }
+    if (modelFetchPollTimer) return;
+    modelFetchPollTimer = window.setTimeout(() => {
+      modelFetchPollTimer = null;
+      void load();
+    }, 5000);
+  }
+
   function renderHugeLane(lane) {
     if (!lane || lane.enabled === false) {
       scheduleHugeLanePoll(false);
@@ -781,10 +851,7 @@
 
     function modelRow(model) {
           const activity = model.fetch_activity && typeof model.fetch_activity === "object" ? model.fetch_activity : null;
-          let fetchState = "";
-          if (activity?.status === "active") fetchState = "downloading";
-          else if (activity?.status === "stalled") fetchState = "stalled/stopped";
-          else if (activity?.status === "unknown") fetchState = "fetch unknown";
+          const fetchState = fetchProgressCell(activity, model.cache_state);
 
           const availabilityParts = [];
           if (model.unavailable_reason) availabilityParts.push(String(model.unavailable_reason));
@@ -794,7 +861,7 @@
           const aliasCell = aliasLinksCell(model.aliases);
           const actionStatus = modelActionStatus.get(modelActionKey(model.backend || "local_mlx", model.model || ""));
           const actions = [];
-          if (model.provider === "mlx" && model.cache_state === "fetching" && activity?.status !== "active") {
+          if (model.provider === "mlx" && ((model.cache_state === "fetching" && activity?.status !== "active") || activity?.status === "failed")) {
             actions.push({
               text: "Restart fetch",
               role: "secondary",
@@ -820,7 +887,7 @@
             model.selectable ? stateCell("selectable", "green") : stateCell("not selectable", "red"),
             model.advertised ? stateCell("advertised", "green") : "",
             model.cache_state ? stateCell(model.cache_state, stateTone(model.cache_state)) : "",
-            fetchState ? stateCell(fetchState, stateTone(fetchState)) : "",
+            fetchState,
             availability ? stateCell(availability, stateTone(availability)) : stateCell("available", "green"),
             toolResultCell(model.tool_qualification_latest),
             benchmarkResultCell(model.benchmark_latest),
@@ -868,6 +935,11 @@
           listEl.appendChild(tableGroup(title, modelColumns, rows));
         });
     }
+      const hasActiveFetch = models.some((model) => {
+        const activity = model?.fetch_activity;
+        return activity?.status === "active" || activity?.job_state === "retry_wait";
+      });
+      scheduleModelFetchPoll(hasActiveFetch);
       refreshAllScrollHints();
   }
 
