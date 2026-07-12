@@ -234,8 +234,17 @@ def _model_uses_glm_thinking_template(model_name: str) -> bool:
     return "glm-5.2" in value or "glm-5" in value
 
 
+def _model_uses_magistral_template(model_name: str) -> bool:
+    return "magistral" in (model_name or "").strip().lower()
+
+
 def _apply_backend_generation_defaults(payload: Dict[str, Any], *, backend_name: str, model_name: str) -> Dict[str, Any]:
     provider = backend_provider_name(backend_name)
+    if provider == "vllm" and _model_uses_magistral_template(model_name):
+        out = dict(payload)
+        out.setdefault("temperature", 0.7)
+        out.setdefault("top_p", 0.95)
+        return out
     if provider == "vllm" and _model_uses_qwen3_thinking_template(model_name):
         out = dict(payload)
         kwargs = out.get("chat_template_kwargs")
@@ -408,7 +417,7 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
         req,
         backend_name=_resolved,
         model_name=model_name,
-        default_missing=(provider == "mlx"),
+        default_missing=True,
     )
     if max_tokens is not None:
         updates["max_tokens"] = max_tokens

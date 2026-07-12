@@ -61,3 +61,23 @@ def test_vllm_qwen3_defaults_disable_thinking_without_overriding_user_values(mon
     )
     assert payload["chat_template_kwargs"]["enable_thinking"] is False
     assert payload["repetition_penalty"] == 1.12
+
+
+def test_vllm_magistral_defaults_use_recommended_sampling_without_overriding_user_values(monkeypatch):
+    monkeypatch.setattr(upstreams, "backend_provider_name", lambda backend_name: "vllm")
+
+    payload = upstreams._apply_backend_generation_defaults(
+        {"model": "Magistral-test", "messages": []},
+        backend_name="local_vllm",
+        model_name="ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+    )
+    assert payload["temperature"] == 0.7
+    assert payload["top_p"] == 0.95
+
+    payload = upstreams._apply_backend_generation_defaults(
+        {"model": "Magistral-test", "messages": [], "temperature": 0.2, "top_p": 0.8},
+        backend_name="local_vllm",
+        model_name="ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+    )
+    assert payload["temperature"] == 0.2
+    assert payload["top_p"] == 0.8

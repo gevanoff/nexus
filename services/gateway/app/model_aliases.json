@@ -43,7 +43,7 @@
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
       "context_window": 32768,
       "tools": true,
-      "max_tokens_cap": 2048
+      "max_tokens_cap": 768
     },
     "reasoning": {
       "backend": "local_vllm",

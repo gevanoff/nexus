@@ -90,7 +90,7 @@ def test_route_request_for_backend_preserves_lower_requested_max_tokens(monkeypa
     assert routed.max_tokens == 32
 
 
-def test_route_request_for_backend_does_not_default_missing_vllm_max_tokens(monkeypatch):
+def test_route_request_for_backend_defaults_missing_vllm_max_tokens_to_alias_cap(monkeypatch):
     aliases = {
         "default": _alias(
             backend="local_vllm",
@@ -106,7 +106,7 @@ def test_route_request_for_backend_does_not_default_missing_vllm_max_tokens(monk
         "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
     )
 
-    assert routed.max_tokens is None
+    assert routed.max_tokens == 2048
 
 
 def test_route_request_for_backend_uses_routed_alias_cap_for_auto_selector(monkeypatch):
