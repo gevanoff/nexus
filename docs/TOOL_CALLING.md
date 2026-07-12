@@ -33,8 +33,8 @@ With `stream=true`, Gateway buffers internal model/tool rounds and emits only th
 - `core`: `nexus_health`, `nexus_models_list`, `nexus_alias_resolve`, `nexus_tool_diagnostics`
 - `repo`: `nexus_file_list`, `nexus_file_read`, `nexus_file_grep`, `nexus_git_status`, `nexus_git_diff`
 - `ops`: `nexus_resources_snapshot`, `nexus_docker_ps`, `nexus_docker_logs`, `nexus_service_status`, `nexus_http_request`
-- `write_ops`: write/restart tools, disabled by default
-- `shell`: shell and Python execution, disabled by default
+- `write_ops`: write/restart tools (definitions present but not executable until implementations are added), disabled by default
+- `shell`: shell and Python execution (definitions present but not executable until implementations are added), disabled by default
 
 All built-in schemas are strict OpenAI function schemas: object parameters, every property required, nullable optional values represented with `null`, `additionalProperties=false`, and `strict=true`.
 
