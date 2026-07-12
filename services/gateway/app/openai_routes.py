@@ -1384,9 +1384,15 @@ async def chat_completions(req: Request):
         )
 
         if execution_policy is not None and execution_policy.mode == "gateway_exec":
+            if degradation_reason:
+                return _openai_error_response(
+                    f"Unsupported field or invalid request shape: gateway_exec requested, but {degradation_reason}; request_id={request_id}",
+                    param="x_nexus.tool_execution_mode",
+                    detail={"request_id": request_id, "backend": backend_class, "alias": alias_name},
+                )
+
             async def gateway_exec_call(loop_req: ChatCompletionRequest) -> Dict[str, Any]:
                 return await _call_backend_chat_with_request_id(loop_req, backend, model_name, request_id=request_id)
-
             t0 = time.monotonic()
             loop_result = await run_gateway_tool_loop(
                 cc,
