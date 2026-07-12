@@ -11,6 +11,7 @@ const GATEWAY_BASE_URL = GATEWAY_BASE_URL_RAW || `${GATEWAY_SCHEME}://${GATEWAY_
 const GATEWAY_URL = `${GATEWAY_BASE_URL}/v1/chat/completions`;
 const GATEWAY_BEARER_TOKEN = process.env.GATEWAY_BEARER_TOKEN;
 const GATEWAY_MODEL = process.env.GATEWAY_MODEL || 'fast';
+const TELEGRAM_GATEWAY_EXEC = ['1', 'true', 'yes', 'on'].includes(String(process.env.TELEGRAM_GATEWAY_EXEC || 'false').trim().toLowerCase());
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
 const MAX_HISTORY = Number.parseInt(process.env.MAX_HISTORY || '20', 10);
 const TELEGRAM_MAX_MESSAGE = Number.parseInt(process.env.TELEGRAM_MAX_MESSAGE || '3900', 10);
@@ -789,6 +790,9 @@ async function queryGateway(history, message) {
     messages: [...history, { role: 'user', content: message }],
     stream: false,
   };
+  if (TELEGRAM_GATEWAY_EXEC) {
+    payload.x_nexus = { tool_execution_mode: 'gateway_exec' };
+  }
 
   let err;
   for (let attempt = 0; attempt <= GATEWAY_CONNECT_RETRY_COUNT; attempt += 1) {

@@ -46,6 +46,8 @@ from app.openai_utils import now_unix, sse, sse_done
 from app.router import decide_route
 from app.router_cfg import router_cfg
 from app.upstreams import call_backend_chat, stream_backend_chat_as_openai
+from app.tool_calling.executor import resolve_execution_policy, run_gateway_tool_loop
+from app.tool_calling.streaming import stream_final_chat_response
 from app.images_backend import generate_images, resolve_images_backend_class
 from app.ocr_backend import extract_ocr_text, scan_ocr
 from app.tts_backend import generate_tts, _effective_tts_base_url
@@ -6031,7 +6033,24 @@ async def ui_chat_stream(req: Request):
     await admission.acquire(backend_class, "chat")
 
     try:
-        upstream_gen = stream_backend_chat_as_openai(cc, backend, upstream_model)
+        alias = get_aliases().get(model)
+        if S.NEXUS_UI_GATEWAY_EXEC and alias is not None and alias.tools is True:
+            cc = cc.model_copy(update={"x_nexus": {"tool_execution_mode": "gateway_exec"}})
+            policy = resolve_execution_policy(cc, alias)
+
+            async def ui_gateway_exec_call(loop_req: ChatCompletionRequest) -> Dict[str, Any]:
+                return await call_backend_chat(loop_req, backend, upstream_model)
+
+            loop_result = await run_gateway_tool_loop(
+                cc,
+                policy=policy,
+                alias=alias,
+                call_backend=ui_gateway_exec_call,
+                request_id=str(getattr(req.state, "request_id", "") or "ui"),
+            )
+            upstream_gen = stream_final_chat_response(loop_result.response)
+        else:
+            upstream_gen = stream_backend_chat_as_openai(cc, backend, upstream_model)
     except Exception:
         admission.release(backend_class, "chat")
         raise

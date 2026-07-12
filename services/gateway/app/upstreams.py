@@ -440,6 +440,7 @@ async def call_openai_chat(
     request_id: str | None = None,
 ) -> Dict[str, Any]:
     payload = req.model_dump(exclude_none=True)
+    payload.pop("x_nexus", None)
     if "messages" in payload and isinstance(payload["messages"], list):
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
     payload = _normalize_openai_tools_payload(payload)
@@ -817,6 +818,7 @@ def stream_backend_chat_as_openai(
     resolved, _provider, base_url = _resolve_backend_target(backend_name)
     routed_req = route_request_for_backend(req, resolved, model_name)
     payload = routed_req.model_dump(exclude_none=True)
+    payload.pop("x_nexus", None)
     payload["model"] = model_name
     payload["stream"] = True
     return stream_openai_chat(payload, base_url=base_url, backend_name=resolved, request_id=request_id)

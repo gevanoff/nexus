@@ -372,6 +372,27 @@ class Settings(BaseSettings):
     TOOLS_GIT_CWD: str = "/var/lib/gateway"
     TOOLS_GIT_TIMEOUT_SEC: int = 20
 
+    # Provider-neutral model tool calling. External OpenAI-compatible clients
+    # remain client-executed unless they explicitly request gateway_exec.
+    NEXUS_TOOL_EXECUTION_DEFAULT: Literal["gateway_exec", "client_exec", "disabled"] = "client_exec"
+    NEXUS_AUTO_INJECT_TOOLS: bool = False
+    NEXUS_AUTO_INJECT_TOOLSETS: str = "core,repo,ops"
+    NEXUS_CLIENT_TOOL_POLICY: Literal["replace", "merge", "client"] = "replace"
+    NEXUS_TOOL_MAX_ROUNDS: int = 4
+    NEXUS_TOOL_MAX_PARALLEL: int = 4
+    NEXUS_TOOL_TIMEOUT_SEC: float = 20.0
+    NEXUS_TOOL_LOOP_TIMEOUT_SEC: float = 120.0
+    NEXUS_TOOL_OUTPUT_MAX_CHARS: int = 12000
+    NEXUS_TOOL_AUDIT_PATH: str = "/var/lib/gateway/data/tools/gateway_exec.jsonl"
+    NEXUS_TOOL_ENABLED: str = ""
+    NEXUS_TOOL_DISABLED: str = "nexus_apply_patch,nexus_service_restart,nexus_docker_restart,nexus_git_commit,nexus_shell_exec,nexus_python_sandbox"
+    NEXUS_TOOL_FS_ROOTS: str = "/workspace/nexus,/var/lib/gateway/app,/var/lib/gateway/config"
+    NEXUS_TOOL_HTTP_HOSTS: str = "127.0.0.1,localhost,gateway,host.docker.internal,ai2,lifecycle-manager"
+    NEXUS_TOOL_HTTP_PORTS: str = "8800,9190,10240"
+    NEXUS_TOOL_CONTAINERS: str = "nexus-gateway,nexus-telegram-bot"
+    NEXUS_TOOL_SERVICES: str = "gateway,telegram-bot,mlx-openai-server"
+    NEXUS_UI_GATEWAY_EXEC: bool = False
+
     EMBEDDINGS_BACKEND: str = "local_mlx"
     EMBEDDINGS_MODEL: str = ""
 

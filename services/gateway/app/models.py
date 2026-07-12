@@ -57,6 +57,7 @@ class ChatCompletionRequest(BaseModel):
     logprobs: Optional[bool] = None
     top_logprobs: Optional[int] = None
     chat_template_kwargs: Optional[Dict[str, Any]] = None
+    x_nexus: Optional[Dict[str, Any]] = None
     stream: Optional[bool] = False
 
 

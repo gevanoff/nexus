@@ -29,6 +29,16 @@ class ModelAlias:
     huge_switchable: bool = True
     estimated_load_sec: Optional[int] = None
     estimated_memory_gb: Optional[float] = None
+    tool_mode: str = "client_exec"
+    supports_tool_choice: tuple[str, ...] = ()
+    supports_parallel_tool_calls: bool = False
+    preferred_tool_call_parser: str = ""
+    preferred_chat_template: str = ""
+    reasoning_parser: str = ""
+    strict_tools: bool = True
+    auto_inject_tools: bool = False
+    toolsets: tuple[str, ...] = ()
+    max_tool_rounds: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +57,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
     else:
         default_strong_model = S.MLX_MODEL_STRONG
     strong_context_window = S.VLLM_MAX_MODEL_LEN if default_provider == "vllm" else 65_536
+    strong_tool_parser = "xlam" if default_provider == "vllm" else "glm4_moe"
 
     return {
         # These four are the canonical policy surface.
@@ -57,6 +68,10 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             tools=True,
             max_tokens_cap=1024 if default_provider == "vllm" else None,
             coding=True,
+            supports_tool_choice=("none", "auto", "required", "named"),
+            supports_parallel_tool_calls=True,
+            preferred_tool_call_parser="xlam",
+            preferred_chat_template="tool_chat_template_mistral_parallel.jinja",
         ),
         "fast": ModelAlias(
             backend="local_vllm_fast",
@@ -71,6 +86,10 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             context_window=strong_context_window,
             tools=True,
             coding=False,
+            supports_tool_choice=("none", "auto", "required", "named"),
+            supports_parallel_tool_calls=True,
+            preferred_tool_call_parser=strong_tool_parser,
+            reasoning_parser="" if default_provider == "vllm" else "glm4_moe",
         ),
         "reasoning": ModelAlias(
             backend="local_vllm",
@@ -79,6 +98,9 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             tools=True,
             max_tokens_cap=1024,
             coding=False,
+            supports_tool_choice=("none", "auto", "required", "named"),
+            supports_parallel_tool_calls=True,
+            preferred_tool_call_parser="xlam",
         ),
         "fast-reasoning": ModelAlias(
             backend="local_vllm",
@@ -87,6 +109,9 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             tools=True,
             max_tokens_cap=768,
             coding=False,
+            supports_tool_choice=("none", "auto", "required", "named"),
+            supports_parallel_tool_calls=True,
+            preferred_tool_call_parser="xlam",
         ),
         "long": ModelAlias(
             backend=default_backend,
@@ -94,6 +119,10 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             context_window=65_536,
             tools=True,
             coding=False,
+            supports_tool_choice=("none", "auto", "required", "named"),
+            supports_parallel_tool_calls=True,
+            preferred_tool_call_parser=strong_tool_parser,
+            reasoning_parser="" if default_provider == "vllm" else "glm4_moe",
         ),
         "glm-5.2": ModelAlias(
             backend="local_mlx",
@@ -107,6 +136,10 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             huge_default=True,
             estimated_load_sec=1800,
             estimated_memory_gb=420,
+            supports_tool_choice=("none", "auto", "required", "named"),
+            supports_parallel_tool_calls=True,
+            preferred_tool_call_parser="glm4_moe",
+            reasoning_parser="glm4_moe",
         ),
         "deepseek-r1": ModelAlias(
             backend="local_mlx",
@@ -119,6 +152,8 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             huge_candidate=True,
             estimated_load_sec=110,
             estimated_memory_gb=370,
+            supports_tool_choice=("none",),
+            reasoning_parser="qwen3",
         ),
     }
 
@@ -197,6 +232,22 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         if isinstance(memory_raw, (int, float)) and memory_raw > 0:
             estimated_memory_gb = float(memory_raw)
 
+        tool_mode = str(v.get("tool_mode") or "client_exec").strip().lower()
+        if tool_mode not in {"gateway_exec", "client_exec", "disabled"}:
+            tool_mode = "client_exec"
+        choices_raw = v.get("supports_tool_choice")
+        supports_tool_choice = tuple(str(item).strip() for item in choices_raw if str(item).strip()) if isinstance(choices_raw, list) else ()
+        supports_parallel_tool_calls = v.get("supports_parallel_tool_calls") is True
+        preferred_tool_call_parser = str(v.get("preferred_tool_call_parser") or v.get("tool_call_parser") or "").strip()
+        preferred_chat_template = str(v.get("preferred_chat_template") or v.get("chat_template") or "").strip()
+        reasoning_parser = str(v.get("reasoning_parser") or "").strip()
+        strict_tools = v.get("strict_tools") is not False
+        auto_inject_tools = v.get("auto_inject_tools") is True
+        toolsets_raw = v.get("toolsets")
+        toolsets = tuple(str(item).strip() for item in toolsets_raw if str(item).strip()) if isinstance(toolsets_raw, list) else ()
+        rounds_raw = v.get("max_tool_rounds")
+        max_tool_rounds = rounds_raw if isinstance(rounds_raw, int) and rounds_raw > 0 else None
+
         return ModelAlias(
             backend=backend,
             upstream_model=model,
@@ -211,6 +262,16 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             huge_switchable=huge_switchable,
             estimated_load_sec=estimated_load_sec,
             estimated_memory_gb=estimated_memory_gb,
+            tool_mode=tool_mode,
+            supports_tool_choice=supports_tool_choice,
+            supports_parallel_tool_calls=supports_parallel_tool_calls,
+            preferred_tool_call_parser=preferred_tool_call_parser,
+            preferred_chat_template=preferred_chat_template,
+            reasoning_parser=reasoning_parser,
+            strict_tools=strict_tools,
+            auto_inject_tools=auto_inject_tools,
+            toolsets=toolsets,
+            max_tool_rounds=max_tool_rounds,
         )
 
     return None

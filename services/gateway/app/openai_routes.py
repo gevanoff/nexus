@@ -42,9 +42,18 @@ from app.upstreams import (
 )
 from app.memory_routes import inject_memory
 from app import memory_v2, mlx_huge_lane
+from app.tool_calling.capabilities import tool_calling_diagnostics
+from app.tool_calling.executor import prepare_tools, resolve_execution_policy, run_gateway_tool_loop
+from app.tool_calling.streaming import stream_final_chat_response
 
 
 router = APIRouter()
+
+
+@router.get("/v1/tool-calling/diagnostics")
+async def tool_calling_diagnostics_route(req: Request):
+    require_bearer(req)
+    return {"object": "list", "data": tool_calling_diagnostics()}
 
 
 _ALIAS_IN_REASON = re.compile(r"\balias:([a-z0-9_\-]+)\b", re.IGNORECASE)
@@ -201,6 +210,7 @@ _OPENAI_CHAT_REQUEST_KEYS = {
     "logprobs",
     "top_logprobs",
     "chat_template_kwargs",
+    "x_nexus",
     "stream",
 }
 
@@ -1227,6 +1237,8 @@ async def chat_completions(req: Request):
     alias_name: Optional[str] = None
     tool_fields_action = "pending"
     degradation_reason: Optional[str] = None
+    execution_policy = None
+    requested_stream = bool(cc.stream)
 
     try:
         requested_huge_model = mlx_huge_lane.resolve_request_model(cc.model)
@@ -1257,6 +1269,13 @@ async def chat_completions(req: Request):
         await admission.acquire(backend_class, "chat")
 
         cc = _apply_alias_constraints(cc, alias_name=alias_name)
+        alias_config = get_aliases().get(alias_name) if alias_name else None
+        try:
+            execution_policy = resolve_execution_policy(cc, alias_config)
+            if execution_policy.mode == "gateway_exec":
+                cc = prepare_tools(cc, execution_policy, alias_config)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail={"error": "invalid_tool_execution_policy", "message": str(exc)}) from exc
         original_cc = cc
 
         cc, degradation_reason, tools_required_error = _normalize_chat_request_for_backend(
@@ -1363,6 +1382,41 @@ async def chat_completions(req: Request):
             model_name,
             route.reason,
         )
+
+        if execution_policy is not None and execution_policy.mode == "gateway_exec":
+            async def gateway_exec_call(loop_req: ChatCompletionRequest) -> Dict[str, Any]:
+                return await _call_backend_chat_with_request_id(loop_req, backend, model_name, request_id=request_id)
+
+            t0 = time.monotonic()
+            loop_result = await run_gateway_tool_loop(
+                cc,
+                policy=execution_policy,
+                alias=alias_config,
+                call_backend=gateway_exec_call,
+                request_id=request_id,
+            )
+            resp = loop_result.response
+            try:
+                inst = getattr(req.state, "instrument", None)
+                if isinstance(inst, dict):
+                    inst["gateway_tool_loop_ms"] = round((time.monotonic() - t0) * 1000.0, 1)
+                    inst["tool_execution_mode"] = "gateway_exec"
+                    inst["tool_calls_returned"] = list(loop_result.calls_seen)
+                    inst["tools_executed"] = list(loop_result.tools_executed)
+                    inst["tool_rounds"] = loop_result.rounds
+            except Exception:
+                pass
+            if requested_stream:
+                out = StreamingResponse(stream_final_chat_response(resp), media_type="text/event-stream")
+            else:
+                out = JSONResponse(resp)
+            out.headers["X-Backend-Used"] = backend
+            out.headers["X-Model-Used"] = model_name
+            out.headers["X-Router-Reason"] = route.reason
+            out.headers["X-Nexus-Tool-Execution"] = "gateway_exec"
+            out.headers["X-Nexus-Tools-Executed"] = ",".join(loop_result.tools_executed)
+            out.headers["X-Nexus-Tool-Rounds"] = str(loop_result.rounds)
+            return out
 
         if cc.stream:
             gen = stream_backend_chat_as_openai(cc, backend, model_name, request_id=request_id)
@@ -1919,6 +1973,13 @@ async def responses(req: Request):
         )
     if not isinstance(body, dict):
         return _openai_error_response("Unsupported field or invalid request shape: body must be an object")
+
+    response_extension = body.get("x_nexus")
+    if isinstance(response_extension, dict) and str(response_extension.get("tool_execution_mode") or "").strip().lower() == "gateway_exec":
+        return _openai_error_response(
+            "Gateway-side tool execution is not supported by /v1/responses; use /v1/chat/completions",
+            param="x_nexus.tool_execution_mode",
+        )
 
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():

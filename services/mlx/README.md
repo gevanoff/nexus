@@ -240,6 +240,7 @@ Operational note for `ai2`:
 - Configure exactly one Huge model with `on_demand: false`. Never advertise another Huge model as on-demand; select replacements through Model Admin so ordinary requests cannot initiate a memory transition.
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
 - GLM-5.2 uses the GLM `<tool_call><arg_key>...` chat-template shape, so configure it with the `glm4_moe` tool and reasoning parsers.
+- Gateway-side execution is provider-neutral: MLX emits OpenAI-compatible `tool_calls`, then Gateway executes approved tools and sends `role: tool` results back to MLX. Keep unsupported MLX aliases at `tools: false`; see `docs/TOOL_CALLING.md` and `/v1/tool-calling/diagnostics`.
 
 ## Low-Latency GLM-5.2 Notes
 
