@@ -6035,20 +6035,24 @@ async def ui_chat_stream(req: Request):
     try:
         alias = get_aliases().get(model)
         if S.NEXUS_UI_GATEWAY_EXEC and alias is not None and alias.tools is True:
-            cc = cc.model_copy(update={"x_nexus": {"tool_execution_mode": "gateway_exec"}})
-            policy = resolve_execution_policy(cc, alias)
+            try:
+                cc = cc.model_copy(update={"x_nexus": {"tool_execution_mode": "gateway_exec"}})
+                policy = resolve_execution_policy(cc, alias)
 
-            async def ui_gateway_exec_call(loop_req: ChatCompletionRequest) -> Dict[str, Any]:
-                return await call_backend_chat(loop_req, backend, upstream_model)
+                async def ui_gateway_exec_call(loop_req: ChatCompletionRequest) -> Dict[str, Any]:
+                    return await call_backend_chat(loop_req, backend, upstream_model)
 
-            loop_result = await run_gateway_tool_loop(
-                cc,
-                policy=policy,
-                alias=alias,
-                call_backend=ui_gateway_exec_call,
-                request_id=str(getattr(req.state, "request_id", "") or "ui"),
-            )
-            upstream_gen = stream_final_chat_response(loop_result.response)
+                loop_result = await run_gateway_tool_loop(
+                    cc,
+                    policy=policy,
+                    alias=alias,
+                    call_backend=ui_gateway_exec_call,
+                    request_id=str(getattr(req.state, "request_id", "") or "ui"),
+                )
+                upstream_gen = stream_final_chat_response(loop_result.response)
+            except (TypeError, ValueError) as exc:
+                logger.warning("UI gateway tool execution disabled for request after policy error: %s", exc)
+                upstream_gen = stream_backend_chat_as_openai(cc.model_copy(update={"x_nexus": None}), backend, upstream_model)
         else:
             upstream_gen = stream_backend_chat_as_openai(cc, backend, upstream_model)
     except Exception:

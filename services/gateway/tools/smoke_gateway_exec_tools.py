@@ -23,6 +23,18 @@ def request(base_url: str, token: str, payload: dict, timeout: float) -> tuple[i
         return exc.code, {key.lower(): value for key, value in exc.headers.items()}, exc.read().decode("utf-8", errors="replace")
 
 
+def final_answer_seen(status: int, body: str, *, stream: bool) -> bool:
+    if stream:
+        return status == 200 and "[DONE]" in body and "chat.completion.chunk" in body
+    if status != 200:
+        return False
+    try:
+        parsed_body = json.loads(body)
+    except json.JSONDecodeError:
+        return False
+    return bool((parsed_body.get("choices") or [{}])[0].get("message", {}).get("content"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test Nexus Gateway-side tool execution")
     parser.add_argument("--base-url", default="http://127.0.0.1:8800/v1")
@@ -60,7 +72,7 @@ def main() -> int:
             started = time.monotonic()
             status, headers, body = request(args.base_url, args.token, payload, args.timeout)
             executed = [item for item in headers.get("x-nexus-tools-executed", "").split(",") if item]
-            final_seen = ("[DONE]" in body and "chat.completion.chunk" in body) if stream else bool((json.loads(body).get("choices") or [{}])[0].get("message", {}).get("content")) if status == 200 else False
+            final_seen = final_answer_seen(status, body, stream=stream)
             passed = status == 200 and tool_name in executed and final_seen
             row = {
                 "model": model,

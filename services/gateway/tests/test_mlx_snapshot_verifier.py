@@ -24,3 +24,13 @@ def test_snapshot_verifier_accepts_complete_shards(tmp_path):
     for index in range(1, 4):
         (tmp_path / f"model-{index:05d}-of-00003.safetensors").write_bytes(b"")
     assert verifier.verify_snapshot(tmp_path) == []
+
+
+def test_snapshot_verifier_checks_nested_shard_groups(tmp_path):
+    verifier = load_verifier()
+    weights = tmp_path / "weights" / "language"
+    weights.mkdir(parents=True)
+    (weights / "model-00001-of-00003.safetensors").write_bytes(b"")
+    (weights / "model-00003-of-00003.safetensors").write_bytes(b"")
+
+    assert verifier.verify_snapshot(tmp_path) == ["weights/language/model is missing 1 of 3 shards: 2"]

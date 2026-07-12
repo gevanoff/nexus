@@ -1272,7 +1272,7 @@ async def chat_completions(req: Request):
         alias_config = get_aliases().get(alias_name) if alias_name else None
         try:
             execution_policy = resolve_execution_policy(cc, alias_config)
-            if execution_policy.mode == "gateway_exec":
+            if execution_policy.mode in {"gateway_exec", "disabled"}:
                 cc = prepare_tools(cc, execution_policy, alias_config)
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail={"error": "invalid_tool_execution_policy", "message": str(exc)}) from exc
@@ -1368,6 +1368,18 @@ async def chat_completions(req: Request):
                 },
             )
 
+        if execution_policy is not None and execution_policy.mode == "gateway_exec" and degradation_reason:
+            return _openai_error_response(
+                f"Gateway tool execution is unavailable because {degradation_reason}; request_id={request_id}",
+                param="tools",
+                detail={
+                    "request_id": request_id,
+                    "backend": backend_class,
+                    "alias": alias_name,
+                    "degradation_reason": degradation_reason,
+                },
+            )
+
         logger.debug(
             "route chat.completions request_id=%s model=%r alias=%r stream=%s tools=%s tool_choice=%r tool_fields_action=%s degraded_tools=%s -> backend=%s upstream_model=%s reason=%s",
             request_id,
@@ -1384,13 +1396,6 @@ async def chat_completions(req: Request):
         )
 
         if execution_policy is not None and execution_policy.mode == "gateway_exec":
-            if degradation_reason:
-                return _openai_error_response(
-                    f"Unsupported field or invalid request shape: gateway_exec requested, but {degradation_reason}; request_id={request_id}",
-                    param="x_nexus.tool_execution_mode",
-                    detail={"request_id": request_id, "backend": backend_class, "alias": alias_name},
-                )
-
             async def gateway_exec_call(loop_req: ChatCompletionRequest) -> Dict[str, Any]:
                 return await _call_backend_chat_with_request_id(loop_req, backend, model_name, request_id=request_id)
             t0 = time.monotonic()

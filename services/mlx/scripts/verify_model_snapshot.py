@@ -14,12 +14,15 @@ def verify_snapshot(path: Path) -> list[str]:
     if not path.is_dir():
         return [f"snapshot directory is missing: {path}"]
     groups: dict[tuple[str, int], set[int]] = {}
-    for item in path.iterdir():
+    for item in path.rglob("*"):
+        if not item.is_file():
+            continue
         match = SHARD_RE.match(item.name)
         if not match:
             continue
         total = int(match.group("total"))
-        groups.setdefault((match.group("prefix"), total), set()).add(int(match.group("index")))
+        relative_prefix = (item.relative_to(path).parent / match.group("prefix")).as_posix()
+        groups.setdefault((relative_prefix, total), set()).add(int(match.group("index")))
     for (prefix, total), present in sorted(groups.items()):
         expected = set(range(1, total + 1))
         missing = sorted(expected - present)

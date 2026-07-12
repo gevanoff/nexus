@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import os
 import re
@@ -168,13 +169,14 @@ async def _file_grep(args: dict[str, Any]) -> dict[str, Any]:
     try:
         matcher = re.compile(pattern)
     except re.error as exc:
-        return {"ok": False, "error": f"invalid_regex: {exc}"}
+        return {"ok": False, "error": "invalid_regex", "detail": str(exc)[:300]}
     glob = args["glob"]
     limit = args["limit"]
     matches: list[dict[str, Any]] = []
     scanned = 0
     for path in root.rglob("*"):
-        if not path.is_file() or (glob and not path.match(glob)):
+        relative_path = path.relative_to(root)
+        if not path.is_file() or (glob and not fnmatch.fnmatchcase(relative_path.as_posix(), glob)):
             continue
         scanned += 1
         if scanned > 2000:
@@ -184,7 +186,7 @@ async def _file_grep(args: dict[str, Any]) -> dict[str, Any]:
                 continue
             for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 if matcher.search(line):
-                    matches.append({"path": str(path.relative_to(root)), "line": number, "text": redact_secrets(line[:500])})
+                    matches.append({"path": relative_path.as_posix(), "line": number, "text": redact_secrets(line[:500])})
                     if len(matches) >= limit:
                         return {"ok": True, "matches": matches, "truncated": True}
         except OSError:

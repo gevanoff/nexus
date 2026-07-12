@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
-from app import model_tool_qualification, openai_routes
+from app import model_tool_qualification, openai_routes, user_llm
 from app.models import ChatCompletionRequest
 from app.config import S
 from app.model_aliases import ModelAlias
@@ -184,6 +184,66 @@ def test_chat_completions_gateway_exec_streams_only_final_answer(monkeypatch, tm
     assert "streamed final" in response.text
     assert "nexus_health" not in response.text
     assert response.text.endswith("data: [DONE]\n\n")
+
+
+def test_chat_completions_disabled_mode_rejects_tool_fields(monkeypatch):
+    client = _build_client(monkeypatch, backend_supports_tools=True)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "default",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{"type": "function", "function": {"name": "demo", "parameters": {"type": "object", "properties": {}}}}],
+            "x_nexus": {"tool_execution_mode": "disabled"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["detail"]["detail"]["error"] == "invalid_tool_execution_policy"
+
+
+def test_gateway_exec_does_not_bypass_backend_tool_degradation(monkeypatch):
+    calls = []
+
+    async def handler(req, _backend: str, _model_name: str):
+        calls.append(req)
+        return {"choices": [{"message": {"role": "assistant", "content": "unexpected"}}]}
+
+    monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLS", True)
+    monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLSETS", "core")
+    client = _build_client(monkeypatch, backend_supports_tools=False, chat_handler=handler)
+    monkeypatch.setattr(
+        openai_routes,
+        "get_aliases",
+        lambda: {"default": ModelAlias(backend="local_vllm", upstream_model="upstream-model", tools=True)},
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "default",
+            "messages": [{"role": "user", "content": "check health"}],
+            "x_nexus": {"tool_execution_mode": "gateway_exec"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["param"] == "tools"
+    assert not calls
+
+
+def test_user_llm_payload_drops_internal_nexus_extension():
+    req = ChatCompletionRequest(
+        model="user:openai:test",
+        messages=[{"role": "user", "content": "hello"}],
+        x_nexus={"tool_execution_mode": "gateway_exec"},
+    )
+
+    payload = user_llm._payload_for_user_chat(req, "external-model")
+
+    assert payload["model"] == "external-model"
+    assert "x_nexus" not in payload
 
 
 def test_chat_completions_drops_stream_options_for_local_mlx_stream(monkeypatch):
