@@ -41,7 +41,7 @@
     "fast-reasoning": {
       "backend": "local_vllm",
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
-      "context_window": 32768,
+      "context_window": 65536,
       "tools": true,
       "max_tokens_cap": 768
     },

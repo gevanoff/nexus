@@ -99,7 +99,8 @@ def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_MAX_MODEL_LEN"] == "8192"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
-    assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "32768"
+    assert env["VLLM_MAX_MODEL_LEN"] == "65536"
+    assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "65536"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
     ai2_overrides = set(topology["hosts"]["ai2"]["env"]["BACKEND_ENV_BASE_URL_OVERRIDES"].split(","))
     assert {

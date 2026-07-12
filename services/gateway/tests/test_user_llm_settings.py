@@ -344,7 +344,7 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["fast"]["max_tokens_cap"] == 768
     assert aliases["fast-reasoning"]["backend"] == "local_vllm"
     assert aliases["fast-reasoning"]["model"] == strong_model
-    assert aliases["fast-reasoning"]["context_window"] == 32768
+    assert aliases["fast-reasoning"]["context_window"] == 65536
     assert aliases["fast-reasoning"]["max_tokens_cap"] == 768
     assert aliases["long"]["context_window"] == 65536
     assert aliases["long"]["tools"] is True
