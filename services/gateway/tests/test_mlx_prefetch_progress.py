@@ -73,6 +73,22 @@ def test_shard_progress_does_not_count_an_old_revision(tmp_path):
     assert expected == 2
 
 
+def test_shard_progress_sums_nested_groups_when_manifest_is_unavailable(tmp_path):
+    prefetch = load_prefetch_module()
+    snapshot = tmp_path / "snapshots" / "revision"
+    language = snapshot / "language"
+    vision = snapshot / "vision"
+    language.mkdir(parents=True)
+    vision.mkdir(parents=True)
+    (language / "model-00001-of-00002.safetensors").write_bytes(b"language")
+    (vision / "model-00001-of-00003.safetensors").write_bytes(b"vision")
+
+    downloaded, expected, _incomplete_bytes = prefetch._shard_progress(tmp_path, "", [])
+
+    assert downloaded == 2
+    assert expected == 5
+
+
 def test_download_status_writes_atomic_shard_progress(tmp_path):
     prefetch = load_prefetch_module()
     snapshot = tmp_path / "snapshots" / "revision"

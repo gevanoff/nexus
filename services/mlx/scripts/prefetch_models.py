@@ -150,7 +150,8 @@ def _shard_progress(repo_path: Path, revision: str, expected_shards: list[str]) 
                 if not match or not path.is_file():
                     continue
                 total = int(match.group("total"))
-                groups.setdefault((match.group("prefix"), total), set()).add(int(match.group("index")))
+                relative_prefix = (path.relative_to(snapshot).parent / match.group("prefix")).as_posix()
+                groups.setdefault((relative_prefix, total), set()).add(int(match.group("index")))
         downloaded = sum(len(present) for present in groups.values())
         expected = sum(total for (_prefix, total) in groups) if groups else 0
 
