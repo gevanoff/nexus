@@ -791,7 +791,7 @@ async function queryGateway(history, message) {
     stream: false,
   };
   if (TELEGRAM_GATEWAY_EXEC) {
-    payload.x_nexus = { tool_execution_mode: 'gateway_exec' };
+    payload.x_nexus = { tool_execution_mode: 'gateway_exec', toolsets: ['core'], max_tool_rounds: 2 };
   }
 
   let err;
