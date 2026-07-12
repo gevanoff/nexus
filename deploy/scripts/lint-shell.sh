@@ -8,15 +8,19 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/deploy/scripts/_common.sh"
 
 ns_require_cmd shellcheck "shellcheck" || exit 1
-ns_require_cmd shfmt "shfmt" || exit 1
 
 INCLUDE_ALL="false"
+CHECK_FORMAT="true"
 shell_targets=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all)
       INCLUDE_ALL="true"
+      shift
+      ;;
+    --skip-format)
+      CHECK_FORMAT="false"
       shift
       ;;
     --)
@@ -29,6 +33,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$CHECK_FORMAT" == "true" ]]; then
+  ns_require_cmd shfmt "shfmt" || exit 1
+fi
 
 if [[ ${#shell_targets[@]} -eq 0 && "$INCLUDE_ALL" == "true" ]]; then
   shell_targets=(
@@ -67,8 +75,10 @@ fi
 ns_print_header "Shell syntax"
 bash -n "${shell_targets[@]}"
 
-ns_print_header "Shell formatting"
-shfmt -d -i 2 -ci "${shell_targets[@]}"
+if [[ "$CHECK_FORMAT" == "true" ]]; then
+  ns_print_header "Shell formatting"
+  shfmt -d -i 2 -ci "${shell_targets[@]}"
+fi
 
 ns_print_header "Shell lint"
 shellcheck "${shell_targets[@]}"

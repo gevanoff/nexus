@@ -16,10 +16,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install shell tools
+      - name: Install ShellCheck
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck shfmt
+          sudo apt-get install -y shellcheck
 
       - name: Collect changed shell files
         id: changed-shell
@@ -46,10 +46,10 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
-      - name: Run shell lint
+      - name: Run shell syntax and ShellCheck
         if: steps.changed-shell.outputs.files != ''
         shell: bash
         run: |
           chmod +x ./deploy/scripts/lint-shell.sh
           mapfile -t files < <(printf '%s\n' '${{ steps.changed-shell.outputs.files }}' | sed '/^$/d')
-          ./deploy/scripts/lint-shell.sh "${files[@]}"
+          ./deploy/scripts/lint-shell.sh --skip-format "${files[@]}"

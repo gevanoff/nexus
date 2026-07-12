@@ -81,3 +81,21 @@ def test_vllm_magistral_defaults_use_recommended_sampling_without_overriding_use
     )
     assert payload["temperature"] == 0.2
     assert payload["top_p"] == 0.8
+
+
+def test_vllm_devstral_defaults_use_recommended_temperature_without_overriding_user_value(monkeypatch):
+    monkeypatch.setattr(upstreams, "backend_provider_name", lambda backend_name: "vllm")
+
+    payload = upstreams._apply_backend_generation_defaults(
+        {"model": "Devstral-test", "messages": []},
+        backend_name="local_vllm_fast",
+        model_name="cyankiwi/Devstral-Small-2507-AWQ-4bit",
+    )
+    assert payload["temperature"] == 0.15
+
+    payload = upstreams._apply_backend_generation_defaults(
+        {"model": "Devstral-test", "messages": [], "temperature": 0.4},
+        backend_name="local_vllm_fast",
+        model_name="cyankiwi/Devstral-Small-2507-AWQ-4bit",
+    )
+    assert payload["temperature"] == 0.4
