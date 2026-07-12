@@ -22,7 +22,7 @@ from app.tool_calling.schemas import strict_object_schema
 
 
 ToolImplementation = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
-_SECRET_RE = re.compile(r"(?i)(authorization|bearer|api[_-]?key|password|secret|token|cookie)(\s*[:=]\s*)([^\s,;]+)")
+_SECRET_RE = re.compile(r"(?i)\b(authorization|bearer|api[_-]?key|password|secret|token|cookie)\b(\s*[:=]\s*)(bearer\s+)?([^\s,;]+)")
 
 
 @dataclass(frozen=True)
