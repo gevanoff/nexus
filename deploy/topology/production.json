@@ -110,7 +110,7 @@
         "VLLM_FAST_CONFIG_FORMAT": "hf",
         "VLLM_FAST_GPU_MEMORY_UTILIZATION": "0.90",
         "VLLM_FAST_MAX_MODEL_LEN": "65536",
-        "VLLM_FAST_CPU_OFFLOAD_GB": "4",
+        "VLLM_FAST_CPU_OFFLOAD_GB": "9",
         "VLLM_FAST_CUDA_VISIBLE_DEVICES": "0",
         "LUXTTS_UPSTREAM_BASE_URL": "http://qwen3-tts:9175",
         "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",

@@ -100,7 +100,7 @@ def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
     assert env["VLLM_FAST_MAX_MODEL_LEN"] == "65536"
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_GPU_MEMORY_UTILIZATION"] == "0.90"
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_MAX_MODEL_LEN"] == "65536"
-    assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_CPU_OFFLOAD_GB"] == "4"
+    assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_CPU_OFFLOAD_GB"] == "9"
     assert "vllm-strong" in topology["hosts"]["ada2"]["components"]
     assert env["VLLM_MAX_MODEL_LEN"] == "65536"
     assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "65536"
