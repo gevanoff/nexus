@@ -85,6 +85,9 @@ Startup troubleshooting notes:
 - For very large first-time downloads, set `HF_TOKEN` in `/var/lib/mlx/mlx.env` to avoid Hugging Face anonymous rate limits.
 - If prefetch fails with `No space left on device`, move `XDG_CACHE_HOME` and `HF_HOME` in `/var/lib/mlx/mlx.env` to a larger disk, rerun the installer once, then prefetch again.
 - Prefetching large model repos before starting launchd is now supported with `services/mlx/scripts/prefetch-models.sh`.
+- Prefetch writes an atomic `.nexus_download_status.json` beside each Hugging Face model cache. Model Admin shows completed/total weight shards, current attempt, retry state, and the latest error while polling active jobs.
+- Transient failures resume automatically with bounded exponential backoff. Defaults are five attempts, 30-second initial delay, and a 300-second delay cap; configure `MLX_PREFETCH_MAX_ATTEMPTS`, `MLX_PREFETCH_RETRY_BASE_SEC`, `MLX_PREFETCH_RETRY_MAX_SEC`, and `MLX_PREFETCH_PROGRESS_INTERVAL_SEC` on lifecycle-manager.
+- One per-model lock prevents duplicate download workers. A failed job leaves its resumable cache intact; **Restart fetch** resumes it, while **Re-download** explicitly purges it first.
 - When `PREFETCH_BEFORE_START=1` is set in `/var/lib/mlx/mlx.env`, the native MLX launcher also runs that prefetch step before every service start, including `deploy/scripts/restart-mlx.sh` and plain `launchctl kickstart` restarts.
 - `install-native-macos.sh` wires this in by default and preserves existing extra keys in `/var/lib/mlx/mlx.env` such as `HF_TOKEN`.
 

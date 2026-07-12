@@ -119,6 +119,75 @@ def test_hf_model_cache_details_marks_fetching_active_or_stalled_from_metadata(t
     assert stalled["fetch_activity"]["last_progress_age_sec"] == 1000
 
 
+def test_hf_model_cache_details_reports_shard_progress_and_retry_attempt(tmp_path):
+    payload = {
+        "generated_at": 2000,
+        "models": {
+            "mlx-community/GLM": {
+                "state": "fetching",
+                "download_job": {
+                    "model": "mlx-community/GLM",
+                    "state": "retry_wait",
+                    "pid": 123,
+                    "attempt": 2,
+                    "max_attempts": 5,
+                    "retry_count": 1,
+                    "downloaded_shards": 42,
+                    "expected_shards": 91,
+                    "incomplete_bytes": 4096,
+                    "updated_at": 1995,
+                    "last_progress_at": 1990,
+                    "next_retry_at": 2030,
+                    "error": "network timeout",
+                },
+            }
+        },
+    }
+    (tmp_path / ".nexus_cache_status.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    details = hf_model_cache_details("mlx-community/GLM", str(tmp_path), stalled_after_sec=600, now=2000)
+    activity = details["fetch_activity"]
+
+    assert details["state"] == "fetching"
+    assert activity["status"] == "active"
+    assert activity["label"] == "waiting to retry"
+    assert activity["downloaded_shards"] == 42
+    assert activity["expected_shards"] == 91
+    assert round(activity["progress_percent"], 2) == 46.15
+    assert activity["attempt"] == 2
+    assert activity["max_attempts"] == 5
+    assert activity["next_retry_at"] == 2030
+
+
+def test_hf_model_cache_details_preserves_failed_download_status(tmp_path):
+    payload = {
+        "generated_at": 2000,
+        "models": {
+            "mlx-community/Failed": {
+                "state": "missing",
+                "download_job": {
+                    "model": "mlx-community/Failed",
+                    "state": "failed",
+                    "attempt": 5,
+                    "max_attempts": 5,
+                    "downloaded_shards": 40,
+                    "expected_shards": 91,
+                    "updated_at": 1900,
+                    "last_progress_at": 1800,
+                    "error": "connection reset",
+                },
+            }
+        },
+    }
+    (tmp_path / ".nexus_cache_status.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    details = hf_model_cache_details("mlx-community/Failed", str(tmp_path), now=2000)
+
+    assert details["state"] == "missing"
+    assert details["fetch_activity"]["status"] == "failed"
+    assert details["fetch_activity"]["error"] == "connection reset"
+
+
 def test_route_with_model_fallback_can_switch_to_fast_backend(monkeypatch):
     monkeypatch.setattr(model_availability.S, "MLX_FALLBACK_BACKEND", "local_vllm_fast", raising=False)
     monkeypatch.setattr(model_availability.S, "MLX_FALLBACK_MODEL", "fast-model", raising=False)

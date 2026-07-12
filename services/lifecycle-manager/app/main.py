@@ -226,6 +226,13 @@ class LifecycleManager:
         self.state_path = Path(_env("NEXUS_LIFECYCLE_STATE_PATH", "/app/state/backend_state.json"))
         self.mode = _env("NEXUS_LIFECYCLE_MODE", "")
         self.poll_interval_sec = _int_env("NEXUS_LIFECYCLE_POLL_INTERVAL_SEC", 15)
+        self.mlx_prefetch_max_attempts = max(1, _int_env("MLX_PREFETCH_MAX_ATTEMPTS", 5))
+        self.mlx_prefetch_retry_base_sec = max(1, _int_env("MLX_PREFETCH_RETRY_BASE_SEC", 30))
+        self.mlx_prefetch_retry_max_sec = max(
+            self.mlx_prefetch_retry_base_sec,
+            _int_env("MLX_PREFETCH_RETRY_MAX_SEC", 300),
+        )
+        self.mlx_prefetch_progress_interval_sec = max(1, _int_env("MLX_PREFETCH_PROGRESS_INTERVAL_SEC", 5))
         self.request_hot_window_sec = 900
         self.optional_idle_stop_sec = 1800
         self.memory_pressure_used_ratio = 0.9
@@ -918,15 +925,22 @@ class LifecycleManager:
         safe_name = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in model)[:160] or "model"
         mlx_root = _path_env("MLX_NATIVE_ROOT", "/var/lib/mlx")
         log_path = f"{mlx_root}/logs/prefetch-{safe_name}.log"
+        prefetch_script = f"{host.repo_dir}/services/mlx/scripts/prefetch-models.sh"
+        max_attempts = max(1, int(getattr(self, "mlx_prefetch_max_attempts", 5)))
+        retry_base_sec = max(1, int(getattr(self, "mlx_prefetch_retry_base_sec", 30)))
+        retry_max_sec = max(retry_base_sec, int(getattr(self, "mlx_prefetch_retry_max_sec", 300)))
+        progress_interval_sec = max(1, int(getattr(self, "mlx_prefetch_progress_interval_sec", 5)))
         inner_command = (
-            f"{shlex.quote(mlx_root)}/env/bin/mlx-prefetch-models --model {shlex.quote(model)} "
+            f"{shlex.quote(prefetch_script)} --model {shlex.quote(model)} "
+            f"--max-attempts {max_attempts} --retry-base-sec {retry_base_sec} "
+            f"--retry-max-sec {retry_max_sec} --progress-interval-sec {progress_interval_sec} "
             f">>{shlex.quote(log_path)} 2>&1 </dev/null & "
             "pid=$!; disown \"$pid\" 2>/dev/null || true; echo \"$pid\""
         )
         command = (
             f"sudo -n install -d -o mlx -m 775 {shlex.quote(mlx_root)}/logs; "
-            f"if [ ! -x {shlex.quote(mlx_root)}/env/bin/mlx-prefetch-models ]; then "
-            "echo 'mlx-prefetch-models helper not found' >&2; exit 127; "
+            f"if [ ! -x {shlex.quote(prefetch_script)} ]; then "
+            "echo 'repository MLX prefetch helper not found' >&2; exit 127; "
             "fi; "
             "sudo -n -H -u mlx env "
             f"MLX_ENV_FILE={shlex.quote(mlx_root)}/mlx.env "
@@ -951,6 +965,10 @@ class LifecycleManager:
             "model": model,
             "pid": (stdout or "").strip().splitlines()[-1] if (stdout or "").strip() else "",
             "log_path": log_path,
+            "max_attempts": max_attempts,
+            "retry_base_sec": retry_base_sec,
+            "retry_max_sec": retry_max_sec,
+            "progress_interval_sec": progress_interval_sec,
             "backend": self._backend_status(backend),
         }
 

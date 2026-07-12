@@ -81,7 +81,7 @@ removed_count=0
 
 if [[ "$DRY_RUN" != "true" ]]; then
   prefetch_pids="$(ps -axo pid=,user=,command= | awk -v model="$MODEL" '
-    $2 == "mlx" && index($0, "mlx-prefetch-models") && index($0, "--model " model) { print $1 }
+    $2 == "mlx" && ($0 ~ /mlx-prefetch-models|prefetch-models\.sh|prefetch_models\.py/) && index($0, "--model " model) { print $1 }
   ')"
   if [[ -n "$prefetch_pids" ]]; then
     sudo -n kill $prefetch_pids 2>/dev/null || true

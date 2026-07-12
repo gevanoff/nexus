@@ -148,6 +148,57 @@ def test_mlx_cache_redownload_purges_before_prefetch() -> None:
     assert payload["pid"] == "1234"
 
 
+def test_mlx_prefetch_uses_tracked_retrying_worker() -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    backend = SimpleNamespace(
+        backend_class="local_mlx",
+        host="ai2",
+        last_action="",
+        last_action_at=0.0,
+        last_action_error="",
+    )
+    host = module.HostPolicy(
+        name="ai2",
+        ssh_target="ai@ai2",
+        ssh_connect_target="",
+        ssh_port=22,
+        repo_dir="/ai-data/var/lib/nexus",
+        env_file="",
+        platform="macos",
+        resource_kind="macos",
+    )
+    calls = []
+    manager.hosts = {"ai2": host}
+    manager._backend_or_404 = lambda _backend: backend
+    manager._save_state = lambda: None
+    manager._backend_status = lambda _backend: {"backend_class": "local_mlx"}
+    manager.mlx_prefetch_max_attempts = 5
+    manager.mlx_prefetch_retry_base_sec = 30
+    manager.mlx_prefetch_retry_max_sec = 300
+    manager.mlx_prefetch_progress_interval_sec = 5
+
+    async def fake_ssh(target, command, *, timeout=30):
+        calls.append((target, command, timeout))
+        return "2468\n"
+
+    manager._ssh = fake_ssh
+    payload = asyncio.run(
+        manager.prefetch_mlx_model(module.MlxPrefetchRequest(model="mlx-community/GLM-5.2-4bit"))
+    )
+
+    assert payload["decision"] == "prefetch_started"
+    assert payload["pid"] == "2468"
+    assert payload["max_attempts"] == 5
+    command = calls[0][1]
+    assert "/ai-data/var/lib/nexus/services/mlx/scripts/prefetch-models.sh" in command
+    assert "--max-attempts 5" in command
+    assert "--retry-base-sec 30" in command
+    assert "--retry-max-sec 300" in command
+    assert "--progress-interval-sec 5" in command
+    assert calls[0][2] == 30
+
+
 def test_mlx_huge_switch_runs_guarded_host_operation() -> None:
     module = _load_lifecycle_main()
     manager = object.__new__(module.LifecycleManager)
@@ -202,9 +253,7 @@ def test_mlx_prefetch_forces_hugging_face_online_mode() -> None:
 
     assert wrapper.index('HF_HUB_OFFLINE=0') > wrapper.index('. "$MLX_ENV_FILE"')
     assert "export HOME XDG_CACHE_HOME HF_HOME HF_HUB_OFFLINE" in wrapper
-    assert helper.index('os.environ["HF_HUB_OFFLINE"] = "0"') < helper.index(
-        "from huggingface_hub import snapshot_download"
-    )
+    assert helper.index('os.environ["HF_HUB_OFFLINE"] = "0"') < helper.index("from huggingface_hub import HfApi, snapshot_download")
 
 
 def test_mlx_lifecycle_canary_does_not_probe_an_on_demand_huge_model() -> None:
