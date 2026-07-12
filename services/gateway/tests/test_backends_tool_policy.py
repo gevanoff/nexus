@@ -89,9 +89,9 @@ def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
     assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "false"
     assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "true"
     assert env["VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE"] == "false"
-    assert env["VLLM_TOOL_CALL_PARSER"] == "mistral"
+    assert env["VLLM_TOOL_CALL_PARSER"] == "xlam"
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == ""
-    assert env["VLLM_CHAT_TEMPLATE"] == ""
+    assert env["VLLM_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
     assert "vllm-fast" in topology["hosts"]["stackrot"]["components"]
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_TOKENIZER"] == "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
