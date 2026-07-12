@@ -35,16 +35,25 @@ def main() -> int:
         parser.error("--token or GATEWAY_BEARER_TOKEN is required")
 
     failed = 0
+    scenarios = [
+        ("nexus_health", "core", {"include_upstreams": False, "include_models": False}),
+        ("nexus_file_read", "repo", {"path": "README.md", "start_line": 1, "end_line": 8, "max_chars": 2000}),
+        ("nexus_resources_snapshot", "ops", {"scope": "local"}),
+    ]
+    selected_toolsets = [item.strip() for item in args.toolsets.split(",") if item.strip()]
     for model in [item.strip() for item in args.models.split(",") if item.strip()]:
-        for stream in (False, True):
+        runs = [(name, toolset, arguments, False) for name, toolset, arguments in scenarios if toolset in selected_toolsets]
+        if "core" in selected_toolsets:
+            runs.append(("nexus_health", "core", scenarios[0][2], True))
+        for tool_name, toolset, tool_arguments, stream in runs:
             payload = {
                 "model": model,
-                "messages": [{"role": "user", "content": "Use nexus_health, then summarize the result in one sentence."}],
-                "tool_choice": {"type": "function", "function": {"name": "nexus_health"}},
+                "messages": [{"role": "user", "content": f"Use {tool_name}, then summarize the result in one sentence."}],
+                "tool_choice": {"type": "function", "function": {"name": tool_name}},
                 "stream": stream,
                 "x_nexus": {
                     "tool_execution_mode": "gateway_exec",
-                    "toolsets": [item.strip() for item in args.toolsets.split(",") if item.strip()],
+                    "toolsets": selected_toolsets,
                     "max_tool_rounds": 4,
                 },
             }
@@ -52,11 +61,12 @@ def main() -> int:
             status, headers, body = request(args.base_url, args.token, payload, args.timeout)
             executed = [item for item in headers.get("x-nexus-tools-executed", "").split(",") if item]
             final_seen = ("[DONE]" in body and "chat.completion.chunk" in body) if stream else bool((json.loads(body).get("choices") or [{}])[0].get("message", {}).get("content")) if status == 200 else False
-            passed = status == 200 and "nexus_health" in executed and final_seen
+            passed = status == 200 and tool_name in executed and final_seen
             row = {
                 "model": model,
                 "mode": "gateway_exec",
-                "scenario": "nexus_health_stream" if stream else "nexus_health",
+                "scenario": f"{tool_name}_stream" if stream else tool_name,
+                "toolset": toolset,
                 "http_status": status,
                 "tool_calls_seen": executed,
                 "tools_executed": executed,
