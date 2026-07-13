@@ -1389,7 +1389,7 @@
     if (els.modelIntegrationRepoUrl && !els.modelIntegrationRepoUrl.value) els.modelIntegrationRepoUrl.value = payload.default_repo_url || "";
     if (els.baseBranch && !els.baseBranch.value) els.baseBranch.value = payload.default_base_branch || "main";
     if (els.agentMaxCycles && !els.agentMaxCycles.value) {
-      els.agentMaxCycles.value = storageGet("horizon.maxCycles", payload.agent_max_cycles_per_run || 80);
+      els.agentMaxCycles.value = storageGet("horizon.maxCycles", payload.agent_max_cycles_per_run || 1000);
     }
     if (els.agentMaxRuntimeMinutes && !els.agentMaxRuntimeMinutes.value) {
       const defaultMinutes = Math.max(1, Math.round(Number(payload.agent_max_runtime_sec || 21600) / 60));
@@ -1413,7 +1413,7 @@
       bits.push(payload.git_token_configured ? "git token configured" : "no git token");
       if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
       if (payload.agent_checkpoint_commits) bits.push("checkpoint commits on");
-      bits.push(`horizon: ${payload.agent_max_cycles_per_run || 80} cycles / ${fmtDuration(payload.agent_max_runtime_sec || 21600)}`);
+      bits.push(`horizon: ${payload.agent_max_cycles_per_run || 1000} cycles / ${fmtDuration(payload.agent_max_runtime_sec || 21600)}`);
       bits.push(`context compaction: ${payload.agent_context_reset_cycles || 12} cycles`);
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
