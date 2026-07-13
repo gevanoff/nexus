@@ -25,7 +25,7 @@ services:
   # a compatibility fallback until TELEGRAM_AI2_TOKEN is provisioned.
   telegram-bot:
     <<: *telegram-bot
-    container_name: nexus-telegram-bot-ai2
+    container_name: nexus-telegram-bot
     environment:
       <<: *telegram-environment
       TELEGRAM_TOKEN: ${TELEGRAM_AI2_TOKEN:-}
