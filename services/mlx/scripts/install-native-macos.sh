@@ -74,6 +74,11 @@ XDG_CACHE_HOME="${XDG_CACHE_HOME:-${MLX_HOME}/cache}"
 HF_HOME="${HF_HOME:-/var/lib/huggingface}"
 MLX_PIP_PACKAGES="${MLX_PIP_PACKAGES:-mlx-openai-server==1.8.1}"
 MLX_MODEL_READY_TIMEOUT_SEC="${MLX_MODEL_READY_TIMEOUT_SEC:-900}"
+MLX_SERVER_IMPL="${MLX_SERVER_IMPL:-mlx_openai}"
+MLX_DECODE_CONCURRENCY="${MLX_DECODE_CONCURRENCY:-1}"
+MLX_PROMPT_CONCURRENCY="${MLX_PROMPT_CONCURRENCY:-1}"
+MLX_PROMPT_CACHE_SIZE="${MLX_PROMPT_CACHE_SIZE:-1}"
+MLX_MAX_TOKENS="${MLX_MAX_TOKENS:-768}"
 LAUNCHD_LABEL="${LAUNCHD_LABEL:-com.nexus.mlx.openai.server}"
 PLIST_PATH="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
 CREATE_USER="${CREATE_USER:-1}"
@@ -94,6 +99,7 @@ MODEL_TYPE_FROM_SHELL="false"
 CONFIG_PATH_FROM_SHELL="false"
 PREFETCH_FROM_CLI="false"
 DISABLE_BATCHING_FROM_CLI="false"
+SERVER_IMPL_FROM_CLI="false"
 CACHE_HOME_FROM_SHELL="false"
 HF_HOME_FROM_SHELL="false"
 
@@ -131,6 +137,7 @@ Options:
   --skip-prefetch     Do not prefetch model repos before starting the service
   --prefetch-only     Prefetch model repos and exit without restarting launchd
   --disable-batching  Disable continuous batching for single-request/constrained hosts
+  --server-impl NAME  Server implementation: mlx_openai (default) or mlx_lm
 EOF
 }
 
@@ -190,6 +197,11 @@ while [[ $# -gt 0 ]]; do
       DISABLE_BATCHING_FROM_CLI="true"
       shift
       ;;
+    --server-impl)
+      MLX_SERVER_IMPL="${2:-}"
+      SERVER_IMPL_FROM_CLI="true"
+      shift 2
+      ;;
     -h | --help)
       usage
       exit 0
@@ -229,6 +241,9 @@ if [[ -f "$MLX_ENV_FILE" ]]; then
   if [[ "$DISABLE_BATCHING_FROM_CLI" != "true" ]]; then
     MLX_DISABLE_BATCHING="$(env_file_get "$MLX_ENV_FILE" MLX_DISABLE_BATCHING "$MLX_DISABLE_BATCHING")"
   fi
+  if [[ "$SERVER_IMPL_FROM_CLI" != "true" ]]; then
+    MLX_SERVER_IMPL="$(env_file_get "$MLX_ENV_FILE" MLX_SERVER_IMPL "$MLX_SERVER_IMPL")"
+  fi
 fi
 
 if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
@@ -257,6 +272,28 @@ case "$(lowercase_value "$MLX_DISABLE_BATCHING")" in
     exit 2
     ;;
 esac
+
+case "$(lowercase_value "$MLX_SERVER_IMPL")" in
+  mlx_openai | mlx-openai | mlx_openai_server | mlx-openai-server) MLX_SERVER_IMPL="mlx_openai" ;;
+  mlx_lm | mlx-lm) MLX_SERVER_IMPL="mlx_lm" ;;
+  *)
+    echo "ERROR: MLX_SERVER_IMPL must be mlx_openai or mlx_lm: ${MLX_SERVER_IMPL}" >&2
+    exit 2
+    ;;
+esac
+
+for numeric_name in MLX_DECODE_CONCURRENCY MLX_PROMPT_CONCURRENCY MLX_PROMPT_CACHE_SIZE MLX_MAX_TOKENS; do
+  numeric_value="${!numeric_name}"
+  if [[ ! "$numeric_value" =~ ^[0-9]+$ ]] || ((numeric_value < 1)); then
+    echo "ERROR: ${numeric_name} must be a positive integer" >&2
+    exit 2
+  fi
+done
+
+if [[ "$MLX_SERVER_IMPL" == "mlx_lm" && -n "$MLX_CONFIG_PATH" ]]; then
+  echo "ERROR: MLX_CONFIG_PATH is not supported with MLX_SERVER_IMPL=mlx_lm" >&2
+  exit 2
+fi
 
 if [[ -n "$MLX_CONFIG_PATH" && ! -f "$MLX_CONFIG_PATH" ]]; then
   echo "ERROR: MLX config file not found: ${MLX_CONFIG_PATH}" >&2
@@ -378,6 +415,11 @@ update_env_file_key "${MLX_ENV_FILE}" HF_HOME "${HF_HOME}"
 update_env_file_key "${MLX_ENV_FILE}" PREFETCH_BEFORE_START "${PREFETCH_BEFORE_START}"
 update_env_file_key "${MLX_ENV_FILE}" MLX_MODEL_READY_TIMEOUT_SEC "${MLX_MODEL_READY_TIMEOUT_SEC}"
 update_env_file_key "${MLX_ENV_FILE}" MLX_DISABLE_BATCHING "${MLX_DISABLE_BATCHING}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_SERVER_IMPL "${MLX_SERVER_IMPL}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_DECODE_CONCURRENCY "${MLX_DECODE_CONCURRENCY}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_PROMPT_CONCURRENCY "${MLX_PROMPT_CONCURRENCY}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_PROMPT_CACHE_SIZE "${MLX_PROMPT_CACHE_SIZE}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_MAX_TOKENS "${MLX_MAX_TOKENS}"
 
 if [[ "$PREFETCH_BEFORE_START" == "1" ]]; then
   echo "Prefetching MLX model repositories before starting launchd service..." >&2

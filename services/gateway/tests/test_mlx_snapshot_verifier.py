@@ -53,3 +53,15 @@ def test_native_mlx_installer_persists_batching_mode_and_honors_readiness_timeou
     assert 'update_env_file_key "${MLX_ENV_FILE}" MLX_DISABLE_BATCHING' in installer
     assert "SECONDS + MLX_MODEL_READY_TIMEOUT_SEC" in installer
     assert 'batching_args+=(--disable-batching)' in launcher
+
+
+def test_native_mlx_launcher_supports_constrained_official_server_mode():
+    root = Path(__file__).resolve().parents[3]
+    installer = (root / "services" / "mlx" / "scripts" / "install-native-macos.sh").read_text(encoding="utf-8")
+    launcher = (root / "services" / "mlx" / "scripts" / "run-native-macos.sh").read_text(encoding="utf-8")
+
+    assert "--server-impl" in installer
+    assert 'update_env_file_key "${MLX_ENV_FILE}" MLX_SERVER_IMPL' in installer
+    assert '-m mlx_lm server' in launcher
+    assert '--decode-concurrency "$MLX_DECODE_CONCURRENCY"' in launcher
+    assert '--prompt-cache-size "$MLX_PROMPT_CACHE_SIZE"' in launcher

@@ -103,7 +103,7 @@ def test_ai2_uses_boot_persistent_proxies_and_physical_topology_mount() -> None:
 def test_ansible_wrapper_exposes_meltdown_host() -> None:
     wrapper = _read("deploy/scripts/ansible-topology.sh")
 
-    assert "stackrot|ai2|ada2|meltdown|migraine" in wrapper
+    assert "stackrot | ai2 | ada2 | meltdown | migraine | copyfail" in wrapper
     assert "copyfail" in wrapper
     assert "bootstrap meltdown" in wrapper
     assert "bootstrap migraine" in wrapper

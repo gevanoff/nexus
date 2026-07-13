@@ -8,11 +8,12 @@ Host-native MLX OpenAI-compatible service integration for Nexus.
 - CPU-only backends that do not benefit from NVIDIA acceleration should run as containers on a Mac (currently only `ai2`).
 - NVIDIA-accelerated workloads should run on Linux/NVIDIA hosts.
 
-## Current Host Profile Guidance (verified 2026-05-21)
+## Current Host Profile Guidance (verified 2026-07-12)
 
 - `ai2` (Mac M3 Ultra, macOS 15.6, 512GB unified memory): primary host for host-native `mlx` and the Apple Silicon reasoning/coding path.
 - `stackrot` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x GeForce RTX 3090 24GB): secondary Linux/NVIDIA node suitable for `vllm`, embeddings, and overflow CUDA workloads when the topology assigns them there.
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary Linux/NVIDIA node for the heaviest CUDA workloads and the largest `vllm`/image/video profiles.
+- `migraine` (Mac M2, macOS 15.3.1, 8GB unified memory): Hermes plus one constrained `mlx_lm` server running `mlx-community/Llama-3.2-3B-Instruct-4bit`, with one request and one prompt cache at a time.
 
 Use this split to avoid cross-host contention: Apple Silicon-native `mlx` on `ai2`, Linux/NVIDIA `vllm` and CUDA workloads on `stackrot`/`ada2`, and exact live placement tracked in `deploy/topology/production.json`.
 
@@ -35,6 +36,7 @@ See `env/mlx.env.example` for primary variables:
 - `MLX_MODEL_PATH` (default `mlx-community/GLM-5.2-4bit`)
 - `MLX_MODEL_TYPE` (default `lm`)
 - `MLX_CONFIG_PATH` (optional; when set, launch MLX in multi-model config mode)
+- `MLX_SERVER_IMPL` (`mlx_openai` by default; use `mlx_lm` for the constrained official server mode)
 - `XDG_CACHE_HOME` / `HF_HOME` (optional; move MLX/Hugging Face caches to a larger volume)
 
 ### Config Mode
@@ -46,6 +48,20 @@ Nexus now supports MLX config-mode launch via `MLX_CONFIG_PATH`.
 - Config mode:
   - uses `MLX_CONFIG_PATH`
   - lets one MLX server expose multiple model ids and types, such as `lm`, `embeddings`, `multimodal`, `image-generation`, `image-edit`, and `whisper`
+
+### Constrained Official Server Mode
+
+For a small single-model host, the installer can launch the OpenAI-compatible server shipped with `mlx-lm`:
+
+```bash
+./services/mlx/scripts/install-native-macos.sh \
+  --server-impl mlx_lm \
+  --model-path mlx-community/Llama-3.2-3B-Instruct-4bit \
+  --host 0.0.0.0 \
+  --port 10241
+```
+
+This mode does not support `MLX_CONFIG_PATH` or non-language model types. It honors `MLX_DECODE_CONCURRENCY`, `MLX_PROMPT_CONCURRENCY`, `MLX_PROMPT_CACHE_SIZE`, and `MLX_MAX_TOKENS`; all default conservatively to `1`, `1`, `1`, and `768` respectively.
 
 Example config template:
 
