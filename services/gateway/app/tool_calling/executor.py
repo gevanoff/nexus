@@ -47,6 +47,10 @@ def _csv(value: str) -> set[str]:
     return {part.strip() for part in str(value or "").split(",") if part.strip()}
 
 
+def _request_has_tool_intent(req: ChatCompletionRequest) -> bool:
+    return bool(req.tools) or req.tool_choice is not None or req.parallel_tool_calls is not None
+
+
 def resolve_execution_policy(req: ChatCompletionRequest, alias: ModelAlias | None) -> NexusToolExecutionPolicy:
     extension = req.x_nexus if isinstance(req.x_nexus, dict) else {}
     alias_mode = getattr(alias, "tool_mode", "") if alias is not None and getattr(alias, "tool_mode_explicit", False) else ""
@@ -87,7 +91,7 @@ def resolve_execution_policy(req: ChatCompletionRequest, alias: ModelAlias | Non
 
 def prepare_tools(req: ChatCompletionRequest, policy: NexusToolExecutionPolicy, alias: ModelAlias | None) -> ChatCompletionRequest:
     if policy.mode == "disabled":
-        if req.tools or req.tool_choice is not None:
+        if _request_has_tool_intent(req):
             raise ValueError("tool use is disabled for this request")
         return req
     if policy.mode != "gateway_exec":

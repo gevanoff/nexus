@@ -38,6 +38,12 @@ def test_disabled_mode_rejects_tool_fields():
         prepare_tools(req, resolve_execution_policy(req, None), None)
 
 
+def test_disabled_mode_rejects_parallel_tool_intent():
+    req = request(parallel_tool_calls=True, x_nexus={"tool_execution_mode": "disabled"})
+    with pytest.raises(ValueError, match="disabled"):
+        prepare_tools(req, resolve_execution_policy(req, None), None)
+
+
 def test_gateway_exec_rejects_unapproved_named_tool(monkeypatch):
     monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLS", True)
     req = request(
