@@ -245,7 +245,7 @@ def test_run_horizon_helpers_bound_values_and_measure_messages(monkeypatch):
     monkeypatch.setattr(ca.S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12, raising=False)
 
     assert ca._max_cycles_per_run(None) == 80
-    assert ca._max_cycles_per_run(9999) == 500
+    assert ca._max_cycles_per_run(9999) == 1000
     assert ca._max_runtime_sec(1) == 60
     assert ca._context_reset_cycles(2) == 4
     assert ca._messages_char_count([ca.ChatMessage(role="user", content="hello")]) >= 5
