@@ -74,6 +74,7 @@ XDG_CACHE_HOME="${XDG_CACHE_HOME:-${MLX_HOME}/cache}"
 HF_HOME="${HF_HOME:-/var/lib/huggingface}"
 MLX_PIP_PACKAGES="${MLX_PIP_PACKAGES:-mlx-openai-server==1.8.1}"
 MLX_MODEL_READY_TIMEOUT_SEC="${MLX_MODEL_READY_TIMEOUT_SEC:-900}"
+MLX_SERVICE_STOP_TIMEOUT_SEC="${MLX_SERVICE_STOP_TIMEOUT_SEC:-120}"
 MLX_SERVER_IMPL="${MLX_SERVER_IMPL:-mlx_openai}"
 MLX_DECODE_CONCURRENCY="${MLX_DECODE_CONCURRENCY:-1}"
 MLX_PROMPT_CONCURRENCY="${MLX_PROMPT_CONCURRENCY:-1}"
@@ -252,6 +253,10 @@ if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$MLX_MODEL_READY_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || ((MLX_MODEL_READY_TIMEOUT_SEC < 300)); then
   echo "ERROR: MLX_MODEL_READY_TIMEOUT_SEC must be an integer >= 300" >&2
+  exit 2
+fi
+if [[ ! "$MLX_SERVICE_STOP_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || ((MLX_SERVICE_STOP_TIMEOUT_SEC < 10)); then
+  echo "ERROR: MLX_SERVICE_STOP_TIMEOUT_SEC must be an integer >= 10" >&2
   exit 2
 fi
 
@@ -488,6 +493,15 @@ sudo chmod 644 "${PLIST_PATH}"
 sudo plutil -lint "${PLIST_PATH}" >/dev/null
 
 sudo launchctl bootout "system/${LAUNCHD_LABEL}" 2>/dev/null || true
+stop_deadline=$((SECONDS + MLX_SERVICE_STOP_TIMEOUT_SEC))
+while pgrep -f "${MLX_VENV}/bin/" >/dev/null 2>&1; do
+  if ((SECONDS >= stop_deadline)); then
+    echo "ERROR: previous MLX service processes did not stop within ${MLX_SERVICE_STOP_TIMEOUT_SEC}s" >&2
+    pgrep -fl "${MLX_VENV}/bin/" >&2 || true
+    exit 1
+  fi
+  sleep 2
+done
 sudo launchctl remove "${LAUNCHD_LABEL}" 2>/dev/null || true
 sudo rm -f "${PLIST_PATH}.bak" 2>/dev/null || true
 sudo cp "${PLIST_PATH}" "${PLIST_PATH}.bak"

@@ -52,6 +52,8 @@ def test_native_mlx_installer_persists_batching_mode_and_honors_readiness_timeou
     assert "--disable-batching" in installer
     assert 'update_env_file_key "${MLX_ENV_FILE}" MLX_DISABLE_BATCHING' in installer
     assert "SECONDS + MLX_MODEL_READY_TIMEOUT_SEC" in installer
+    assert "SECONDS + MLX_SERVICE_STOP_TIMEOUT_SEC" in installer
+    assert 'pgrep -f "${MLX_VENV}/bin/"' in installer
     assert 'batching_args+=(--disable-batching)' in launcher
 
 
