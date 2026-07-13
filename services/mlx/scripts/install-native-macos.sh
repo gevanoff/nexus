@@ -82,6 +82,7 @@ MLX_LAUNCHER="${MLX_VENV}/bin/mlx-openai-launch"
 MLX_PREFETCHER="${MLX_VENV}/bin/mlx-prefetch-models"
 MLX_PREFETCH_HELPER="${MLX_VENV}/bin/mlx-prefetch-models.py"
 MLX_PREFETCH_HELPER_COMPAT="${MLX_VENV}/bin/prefetch_models.py"
+MLX_SNAPSHOT_VERIFIER="${MLX_VENV}/bin/verify_model_snapshot.py"
 MLX_PACKAGE_PATCHER="${MLX_VENV}/bin/mlx-patch-openai-server.py"
 PREFETCH_BEFORE_START="${PREFETCH_BEFORE_START:-1}"
 
@@ -181,7 +182,7 @@ while [[ $# -gt 0 ]]; do
       PREFETCH_FROM_CLI="prefetch_only"
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -223,14 +224,14 @@ if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid --port value: ${MLX_PORT}" >&2
   exit 2
 fi
-if [[ ! "$MLX_MODEL_READY_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || (( MLX_MODEL_READY_TIMEOUT_SEC < 300 )); then
+if [[ ! "$MLX_MODEL_READY_TIMEOUT_SEC" =~ ^[0-9]+$ ]] || ((MLX_MODEL_READY_TIMEOUT_SEC < 300)); then
   echo "ERROR: MLX_MODEL_READY_TIMEOUT_SEC must be an integer >= 300" >&2
   exit 2
 fi
 
 case "$(lowercase_value "$PREFETCH_BEFORE_START")" in
-  1|true|yes|on) PREFETCH_BEFORE_START="1" ;;
-  0|false|no|off) PREFETCH_BEFORE_START="0" ;;
+  1 | true | yes | on) PREFETCH_BEFORE_START="1" ;;
+  0 | false | no | off) PREFETCH_BEFORE_START="0" ;;
   *)
     echo "ERROR: invalid PREFETCH_BEFORE_START value: ${PREFETCH_BEFORE_START}" >&2
     exit 2
@@ -328,9 +329,10 @@ sudo chmod 755 "${MLX_LAUNCHER}"
 sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch-models.sh" "${MLX_PREFETCHER}"
 sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch_models.py" "${MLX_PREFETCH_HELPER}"
 sudo cp "${ROOT_DIR}/services/mlx/scripts/prefetch_models.py" "${MLX_PREFETCH_HELPER_COMPAT}"
+sudo cp "${ROOT_DIR}/services/mlx/scripts/verify_model_snapshot.py" "${MLX_SNAPSHOT_VERIFIER}"
 sudo cp "${ROOT_DIR}/services/mlx/scripts/patch_mlx_openai_server.py" "${MLX_PACKAGE_PATCHER}"
-sudo chown root:wheel "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}" "${MLX_PACKAGE_PATCHER}"
-sudo chmod 755 "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}" "${MLX_PACKAGE_PATCHER}"
+sudo chown root:wheel "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}" "${MLX_SNAPSHOT_VERIFIER}" "${MLX_PACKAGE_PATCHER}"
+sudo chmod 755 "${MLX_PREFETCHER}" "${MLX_PREFETCH_HELPER}" "${MLX_PREFETCH_HELPER_COMPAT}" "${MLX_SNAPSHOT_VERIFIER}" "${MLX_PACKAGE_PATCHER}"
 
 update_env_file_key() {
   local file="$1"

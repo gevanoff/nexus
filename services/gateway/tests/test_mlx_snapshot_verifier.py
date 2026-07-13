@@ -34,3 +34,11 @@ def test_snapshot_verifier_checks_nested_shard_groups(tmp_path):
     (weights / "model-00003-of-00003.safetensors").write_bytes(b"")
 
     assert verifier.verify_snapshot(tmp_path) == ["weights/language/model is missing 1 of 3 shards: 2"]
+
+
+def test_native_mlx_installer_ships_prefetch_verifier_next_to_helper():
+    root = Path(__file__).resolve().parents[3]
+    installer = (root / "services" / "mlx" / "scripts" / "install-native-macos.sh").read_text(encoding="utf-8")
+
+    assert 'MLX_SNAPSHOT_VERIFIER="${MLX_VENV}/bin/verify_model_snapshot.py"' in installer
+    assert 'verify_model_snapshot.py" "${MLX_SNAPSHOT_VERIFIER}' in installer
