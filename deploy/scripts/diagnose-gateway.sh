@@ -220,7 +220,7 @@ fi
 http_check "GET ${BASE_URL}/v1/models" "GET" "${BASE_URL}/v1/models" "true"
 http_check "GET ${BASE_URL}/v1/gateway/status" "GET" "${BASE_URL}/v1/gateway/status" "true"
 http_check "GET ${OBS_URL}/health/upstreams" "GET" "${OBS_URL}/health/upstreams" "false"
-http_check "POST ${BASE_URL}/v1/embeddings" "POST" "${BASE_URL}/v1/embeddings" "true" '{"model":"embeddings","input":"diagnose"}'
+http_check "POST ${BASE_URL}/v1/embeddings" "POST" "${BASE_URL}/v1/embeddings" "true" '{"model":"default","input":"diagnose"}'
 
 print_step "vLLM upstream checks"
 probe_models "strong vLLM" "${vllm_base_url}" "${strong_model}"

@@ -101,6 +101,13 @@ def test_gateway_verifier_uses_running_container_not_compose_selection():
     assert "with-mlx" not in script
 
 
+def test_gateway_diagnostics_use_router_alias_for_embeddings():
+    script = _read("deploy/scripts/diagnose-gateway.sh")
+
+    assert """'{"model":"default","input":"diagnose"}'""" in script
+    assert """'{"model":"embeddings""" not in script
+
+
 def test_script_map_declares_single_topology_deployment_engine():
     guide = _read("deploy/SCRIPTS.md")
 
