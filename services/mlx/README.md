@@ -159,14 +159,13 @@ Prewarm from Gateway alias config (`.runtime/gateway/config/model_aliases.json`)
 
 ```bash
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --from-aliases
-./deploy/scripts/prewarm-models.sh --external-ollama --from-aliases
+./deploy/scripts/prewarm-vllm.sh
 ```
 
 Notes:
 
 - `prewarm-mlx.sh --from-aliases` warms every unique alias with `"backend": "mlx"` or `"backend": "local_mlx"`.
-- `prewarm-models.sh --from-aliases` checks/pulls every unique alias with `"backend": "ollama"`.
-- Both scripts also support `--aliases-file <path>` to point at a non-default alias file.
+- `prewarm-mlx.sh` also supports `--aliases-file <path>` to point at a non-default alias file.
 - `prewarm-mlx.sh` uses `--timeout-sec 0` by default (no timeout), which is recommended for large model first-run warmups.
 - When `MLX_CONFIG_PATH` is set, use `--model` and/or `--from-aliases` with `prewarm-mlx.sh` for deterministic warmup.
 - `prewarm-mlx.sh` assumes the MLX HTTP server is already up. Use `prefetch-models.sh` first when a new config prevents MLX from binding its port.
@@ -290,24 +289,21 @@ Yes—after changing aliases or restarting services, prewarm the selected runtim
 ./deploy/scripts/prewarm-mlx.sh --mlx-base-url http://127.0.0.1:10240/v1 --model mlx-community/Phi-4-reasoning-plus-4bit
 ```
 
-- Prewarm remote Ollama checker models:
+- Prewarm the configured vLLM lanes:
 
 ```bash
-./deploy/scripts/prewarm-models.sh --external-ollama --model <your-coder-model>
+./deploy/scripts/prewarm-vllm.sh
 ```
 
 If models are not already present locally, first-request warmup may trigger a download/conversion step and take significantly longer.
 
-Why keep Ollama alongside MLX (even on `ai2`):
-
-- Ollama gives broader one-command model availability and easier fallback coverage.
-- MLX gives top Apple Silicon efficiency and excellent low-latency local inference.
-- Running both lets Gateway keep MLX as the primary local path while still using remote Ollama models as independent checks or fallback reviewers.
+The tracked fallback path is vLLM on its assigned NVIDIA hosts. Ollama is not a
+production fallback for the current topology.
 
 Then restart Gateway so aliases are reloaded:
 
 ```bash
-docker-compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build gateway
+./deploy/scripts/restart-gateway.sh
 ```
 
 Usage via OpenAI-compatible API with the example alias profiles above:
@@ -321,7 +317,8 @@ Usage via OpenAI-compatible API with the example alias profiles above:
 
 1. Run MLX natively on an Apple Silicon macOS host.
 2. Point Gateway at that host by setting `MLX_BASE_URL` in `nexus/.env`.
-3. Use `--external-mlx` for Gateway verification/diagnostics.
+3. Run `verify-gateway.sh` and `diagnose-gateway.sh`; both inspect the running
+   deployment and no longer need provider-placement flags.
 
 Example:
 
@@ -341,11 +338,11 @@ curl -fsS http://127.0.0.1:10240/v1/models
 # 3) Update nexus/.env
 # MLX_BASE_URL=http://host.docker.internal:10240/v1
 
-# 4) Start Nexus without mlx container
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d --build
+# 4) Deploy the tracked host topology
+./deploy/scripts/deploy.sh --topology-host ai2 prod main
 
-# 5) Verify gateway contract using external/native MLX
-./deploy/scripts/verify-gateway.sh --external-mlx
+# 5) Verify the running gateway contract
+./deploy/scripts/verify-gateway.sh
 ```
 
 `docker-compose.mlx.yml` remains in the repo as a legacy scaffold, but it is not the recommended path for `ai2`.

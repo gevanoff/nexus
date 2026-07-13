@@ -53,26 +53,6 @@ Options:
 EOF
 }
 
-resolve_runtime_root() {
-  local repo_dir="$1"
-  local env_file="$2"
-  local configured_root=""
-
-  configured_root="$(ns_env_get "$env_file" NEXUS_RUNTIME_ROOT "")"
-  if [[ -z "$configured_root" ]]; then
-    printf '%s\n' "${repo_dir}/.runtime"
-    return 0
-  fi
-  case "$configured_root" in
-    /*)
-      printf '%s\n' "$configured_root"
-      ;;
-    *)
-      printf '%s\n' "${repo_dir}/${configured_root#./}"
-      ;;
-  esac
-}
-
 resolve_target_user() {
   if [[ -n "${TARGET_USER:-}" ]]; then
     printf '%s\n' "$TARGET_USER"
@@ -212,7 +192,7 @@ fi
 
 TARGET_USER="$(resolve_target_user)"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
-RUNTIME_ROOT="$(resolve_runtime_root "$REPO_DIR" "$NEXUS_ENV_FILE")"
+RUNTIME_ROOT="$(ns_runtime_root_from_env "$REPO_DIR" "$NEXUS_ENV_FILE")"
 
 if [[ -z "$BACKUP_DIR" ]]; then
   BACKUP_DIR="${RUNTIME_ROOT}/etcd/backups"

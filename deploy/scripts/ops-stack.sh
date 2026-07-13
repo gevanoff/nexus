@@ -2,221 +2,161 @@
 set -euo pipefail
 umask 077
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 cd "$ROOT_DIR"
 
-# shellcheck source=/dev/null
-source "$ROOT_DIR/deploy/scripts/_common.sh"
-
-ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
-BRANCH=""
-NO_PULL="false"
-NO_BUILD="false"
-NO_VERIFY="false"
-WITH_TELEGRAM="false"
-EXTERNAL_VLLM="false"
-EXTERNAL_VLLM_SET="false"
-WITH_MLX="false"
-EXTERNAL_MLX="false"
-EXTERNAL_MLX_SET="false"
+# Compatibility entrypoint only. Keep deployment behavior in deploy.sh.
+TOPOLOGY_HOST=""
+ENV_FILE=""
+TOPOLOGY_FILE=""
+ENVIRONMENT="prod"
+BRANCH="main"
+BRANCH_SET="false"
+AUTO_YES="false"
+COMPONENT_ARGS=()
+POSITIONAL=()
 
 usage() {
   cat <<'EOF'
-Usage: deploy/scripts/ops-stack.sh [--env-file PATH] [--branch BRANCH] [--no-pull] [--no-build] [--no-verify]
+Usage: deploy/scripts/ops-stack.sh --topology-host HOST [OPTIONS] [prod BRANCH]
 
-Host-local daily operations helper for Nexus core stack:
-  1) (optional) git pull
-  2) ensure Docker daemon
-  3) restart core containers (gateway + vllm + etcd, plus optional mlx)
-  4) run gateway verifier
+Topology-aware convenience wrapper for deploy/scripts/deploy.sh. Production
+deployment behavior lives in deploy.sh; this wrapper only supplies the common
+prod/main defaults and prevents the retired compose-selection path from being
+used accidentally.
 
 Options:
-  --env-file PATH   Env file path (default: ./.env)
-  --branch BRANCH   If set, checkout+pull this branch before restart
-  --no-pull         Skip git fetch/pull
-  --no-build        Skip image rebuild (use compose up -d without --build)
-  --no-verify       Skip gateway verifier after restart
-  --external-vllm   Use external/native vLLM (do not include docker-compose.vllm.yml).
-                    If not set explicitly, auto-detected from VLLM_BASE_URL.
-  --with-telegram   Include telegram-bot component (docker-compose.telegram-bot.yml)
-  --with-mlx        Include legacy MLX compose component (docker-compose.mlx.yml)
-  --external-mlx    Use external/native MLX (do not include docker-compose.mlx.yml).
-                     If not set explicitly, auto-detected from MLX_BASE_URL.
+  --topology-host HOST  Required tracked production host (for example ai2 or stackrot)
+  --env-file PATH       Forward an explicit env file to deploy.sh
+  --topology-file PATH  Forward an alternate topology manifest to deploy.sh
+  --component NAME      Deploy one component (repeatable)
+  --components LIST     Deploy a comma-separated component list
+  --branch BRANCH       Compatibility spelling for the optional BRANCH argument
+  --yes                 Forward non-interactive confirmation to deploy.sh
+
+Defaults:
+  environment: prod
+  branch:      main
+
+Examples:
+  ./deploy/scripts/ops-stack.sh --topology-host ai2
+  ./deploy/scripts/ops-stack.sh --topology-host stackrot prod main
+  ./deploy/scripts/ops-stack.sh --topology-host ai2 --component gateway
+
+The retired --no-pull, --no-build, --no-verify, --external-vllm,
+--external-mlx, --with-mlx, and --with-telegram flags are intentionally not
+supported. Use a focused restart helper for no-build operations, or select
+components through the topology-aware deploy command.
 EOF
+}
+
+require_value() {
+  local option="$1"
+  local value="${2:-}"
+  if [[ -z "$value" || "$value" == -* ]]; then
+    printf 'ERROR: %s requires a value.\n' "$option" >&2
+    exit 2
+  fi
+}
+
+legacy_option_error() {
+  local option="$1"
+  printf 'ERROR: %s belonged to the retired compose-selection implementation.\n' "$option" >&2
+  printf 'Use --topology-host HOST with this wrapper, deploy.sh directly, or a focused restart helper.\n' >&2
+  exit 2
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --topology-host)
+      require_value "$1" "${2:-}"
+      TOPOLOGY_HOST="$2"
+      shift 2
+      ;;
     --env-file)
-      ENV_FILE="${2:-}"
+      require_value "$1" "${2:-}"
+      ENV_FILE="$2"
+      shift 2
+      ;;
+    --topology-file)
+      require_value "$1" "${2:-}"
+      TOPOLOGY_FILE="$2"
+      shift 2
+      ;;
+    --component | --components)
+      require_value "$1" "${2:-}"
+      COMPONENT_ARGS+=("$1" "$2")
       shift 2
       ;;
     --branch)
-      BRANCH="${2:-}"
+      require_value "$1" "${2:-}"
+      BRANCH="$2"
+      BRANCH_SET="true"
       shift 2
       ;;
-    --no-pull)
-      NO_PULL="true"
+    --yes)
+      AUTO_YES="true"
       shift
       ;;
-    --no-build)
-      NO_BUILD="true"
-      shift
+    --no-pull | --no-build | --no-verify | --external-vllm | --external-mlx | --with-mlx | --with-telegram)
+      legacy_option_error "$1"
       ;;
-    --no-verify)
-      NO_VERIFY="true"
-      shift
-      ;;
-    --external-vllm)
-      EXTERNAL_VLLM="true"
-      EXTERNAL_VLLM_SET="true"
-      shift
-      ;;
-    --with-telegram)
-      WITH_TELEGRAM="true"
-      shift
-      ;;
-    --with-mlx)
-      WITH_MLX="true"
-      shift
-      ;;
-    --external-mlx)
-      EXTERNAL_MLX="true"
-      EXTERNAL_MLX_SET="true"
-      shift
-      ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
+    --)
+      shift
+      while [[ $# -gt 0 ]]; do
+        POSITIONAL+=("$1")
+        shift
+      done
+      ;;
+    -*)
+      printf 'ERROR: Unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
     *)
-      ns_die "Unknown argument: $1"
+      POSITIONAL+=("$1")
+      shift
       ;;
   esac
 done
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  ns_print_warn "Env file not found at $ENV_FILE; creating from .env.example"
-  ns_ensure_env_file "$ENV_FILE" "$ROOT_DIR"
+if [[ -z "$TOPOLOGY_HOST" ]]; then
+  printf 'ERROR: --topology-host is required; the legacy host-agnostic core stack is retired.\n' >&2
+  usage >&2
+  exit 2
 fi
 
-if [[ "$EXTERNAL_VLLM_SET" != "true" ]]; then
-  vllm_base_url="$(ns_env_get "$ENV_FILE" VLLM_BASE_URL "http://host.docker.internal:8000/v1")"
-  vllm_base_url="${vllm_base_url%/}"
-  if [[ "$vllm_base_url" != "http://vllm:8000/v1" ]]; then
-    EXTERNAL_VLLM="true"
+if [[ ${#POSITIONAL[@]} -gt 2 ]]; then
+  printf 'ERROR: Expected at most environment and branch positional arguments.\n' >&2
+  usage >&2
+  exit 2
+fi
+if [[ ${#POSITIONAL[@]} -ge 1 ]]; then
+  ENVIRONMENT="${POSITIONAL[0]}"
+fi
+if [[ ${#POSITIONAL[@]} -eq 2 ]]; then
+  if [[ "$BRANCH_SET" == "true" ]]; then
+    printf 'ERROR: Specify the branch with either --branch or a positional argument, not both.\n' >&2
+    exit 2
   fi
+  BRANCH="${POSITIONAL[1]}"
 fi
 
-if [[ "$EXTERNAL_MLX_SET" != "true" ]]; then
-  mlx_base_url="$(ns_env_get "$ENV_FILE" MLX_BASE_URL "")"
-  mlx_base_url="${mlx_base_url%/}"
-  if [[ -n "$mlx_base_url" && "$mlx_base_url" != "http://mlx:10240/v1" ]]; then
-    EXTERNAL_MLX="true"
-  fi
+DEPLOY_ARGS=(--topology-host "$TOPOLOGY_HOST")
+if [[ -n "$ENV_FILE" ]]; then
+  DEPLOY_ARGS+=(--env-file "$ENV_FILE")
 fi
-
-COMPOSE_ARGS=(-f docker-compose.gateway.yml -f docker-compose.etcd.yml)
-if [[ "$EXTERNAL_VLLM" != "true" ]]; then
-  COMPOSE_ARGS+=(-f docker-compose.vllm.yml)
+if [[ -n "$TOPOLOGY_FILE" ]]; then
+  DEPLOY_ARGS+=(--topology-file "$TOPOLOGY_FILE")
 fi
-if [[ "$WITH_TELEGRAM" == "true" ]]; then
-  COMPOSE_ARGS+=(-f docker-compose.telegram-bot.yml)
+if [[ "$AUTO_YES" == "true" ]]; then
+  DEPLOY_ARGS+=(--yes)
 fi
-if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" == "true" ]]; then
-  ns_die "Use either --with-mlx (containerized MLX) or --external-mlx (host-native MLX), not both."
-fi
-if [[ "$WITH_MLX" == "true" && "$EXTERNAL_MLX" != "true" ]]; then
-  COMPOSE_ARGS+=(-f docker-compose.mlx.yml)
-fi
+DEPLOY_ARGS+=("${COMPONENT_ARGS[@]}")
 
-ns_print_header "Nexus Ops: update + restart + verify"
-
-ns_ensure_project_env_bind_source "$ROOT_DIR" "$ENV_FILE"
-export GATEWAY_ENV_FILE
-GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ENV_FILE")"
-
-if [[ "$NO_PULL" != "true" ]]; then
-  ns_print_header "Updating code"
-  if ! ns_have_cmd git; then
-    ns_die "git is required for update step"
-  fi
-
-  if [[ -n "$BRANCH" ]]; then
-    if [[ ! "$BRANCH" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
-      ns_die "Invalid branch name: $BRANCH"
-    fi
-    git fetch origin "$BRANCH"
-    git checkout "$BRANCH"
-    git pull --ff-only origin "$BRANCH"
-  else
-    current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-    if [[ -n "$current_branch" ]]; then
-      git fetch origin "$current_branch"
-      git pull --ff-only origin "$current_branch"
-    else
-      ns_print_warn "Could not detect current branch; skipping pull"
-    fi
-  fi
-fi
-
-ns_print_header "Ensuring Docker runtime"
-ns_ensure_prereqs true true false false false false || true
-if ! ns_ensure_docker_daemon true; then
-  ns_die "Docker daemon is not reachable"
-fi
-if ! ns_compose_available; then
-  ns_die "Docker Compose is not available"
-fi
-
-ns_print_header "Preparing runtime"
-ns_ensure_runtime_dirs "$ROOT_DIR"
-ns_seed_gateway_config_files "$ROOT_DIR"
-ns_verify_docker_bind_source "$ROOT_DIR"
-ns_verify_docker_bind_source "$ROOT_DIR/.env"
-
-ns_print_header "Restarting core stack"
-if [[ "$NO_BUILD" == "true" ]]; then
-  ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" up -d
-else
-  ns_compose --env-file "$ENV_FILE" "${COMPOSE_ARGS[@]}" up -d --build
-fi
-
-ns_print_header "Waiting for gateway health"
-obs_port="${OBSERVABILITY_PORT:-}"
-if [[ -z "${obs_port}" && -f "$ENV_FILE" ]]; then
-  obs_port="$(ns_env_get "$ENV_FILE" OBSERVABILITY_PORT 8801)"
-fi
-obs_port="${obs_port:-8801}"
-obs_health_url="http://127.0.0.1:${obs_port}/health"
-
-for i in {1..60}; do
-  if curl -fsS "$obs_health_url" >/dev/null 2>&1; then
-    ns_print_ok "Gateway observability health endpoint is up (${obs_health_url})"
-    break
-  fi
-  sleep 2
-  if [[ "$i" -eq 60 ]]; then
-    ns_print_error "Gateway did not become healthy in time (${obs_health_url})"
-    ns_compose "${COMPOSE_ARGS[@]}" ps || true
-    ns_compose "${COMPOSE_ARGS[@]}" logs --tail=120 gateway || true
-    exit 1
-  fi
-done
-
-if [[ "$NO_VERIFY" != "true" ]]; then
-  ns_print_header "Running verifier"
-  verify_args=()
-  if [[ "$EXTERNAL_VLLM" == "true" ]]; then
-    verify_args+=(--external-vllm)
-  fi
-  if [[ "$WITH_MLX" == "true" ]]; then
-    verify_args+=(--with-mlx)
-  elif [[ "$EXTERNAL_MLX" == "true" ]]; then
-    verify_args+=(--external-mlx)
-  fi
-  ENV_FILE="$ENV_FILE" "$ROOT_DIR/deploy/scripts/verify-gateway.sh" "${verify_args[@]}"
-fi
-
-ns_print_header "Ops complete"
-ns_compose "${COMPOSE_ARGS[@]}" ps
+printf 'Delegating topology-aware deployment to deploy/scripts/deploy.sh (%s/%s).\n' "$ENVIRONMENT" "$BRANCH"
+exec "$ROOT_DIR/deploy/scripts/deploy.sh" "${DEPLOY_ARGS[@]}" "$ENVIRONMENT" "$BRANCH"

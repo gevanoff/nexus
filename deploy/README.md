@@ -1,5 +1,8 @@
 # Deployment Manifests
 
+See [SCRIPTS.md](SCRIPTS.md) for the authoritative script map, command hierarchy,
+retired entry points, and maintenance rules.
+
 This directory provides per-service manifests for Docker Compose and containerd (via nerdctl).
 
 ## Docker Compose
@@ -35,8 +38,8 @@ Script entrypoints (all invoked from repo root):
 - `./quickstart.sh`: interactive local bootstrap (preflight + `.env` + startup)
 - `./deploy/scripts/preflight-check.sh`: host validation for required tools/files/permissions
 - `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <prod> <branch>`: deploy selected components on a host
+- `./deploy/scripts/ops-stack.sh --topology-host <host> [prod main]`: guarded convenience wrapper around `deploy.sh` with production defaults
 - `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <prod> <branch> [user@host]`: deploy selected components over SSH
-- `./deploy/scripts/cutover-tts-one-way.sh [--env-file PATH] [--no-build] [--skip-gateway]`: disable legacy native TTS launchd jobs, seed Nexus runtime mounts from `/ai-data/var/lib/...`, and cut over Pocket/Lux/Qwen TTS to the tracked containerized shims
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
 - `./deploy/scripts/topology-ssh.sh [--print-target] <stackrot|ai2|ada2|meltdown|copyfail> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
@@ -52,7 +55,6 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
 - `./deploy/scripts/smoke-test-video.sh`: run a SkyReels video smoke test (direct backend by default, or the gateway UI path when UI credentials are provided)
-- `./deploy/scripts/backup-and-deploy-parallel.sh`: backup legacy host data (best-effort) and deploy Nexus on parallel ports
 
 Example: deploy only the images component to a GPU host:
 
@@ -142,10 +144,10 @@ Recommended SOPS bootstrap on the control node:
 ./deploy/scripts/sops-secrets.sh edit --environment prod --host ai2
 ```
 
-Example: deploy Linux/NVIDIA Ollama explicitly with the GPU override:
+Example: deploy the strong vLLM lane explicitly:
 
 ```bash
-./deploy/scripts/deploy.sh --component ollama-linux-nvidia prod main
+./deploy/scripts/deploy.sh --component vllm-strong prod main
 ```
 
 Gateway DB backup examples:
@@ -198,10 +200,6 @@ Manual local alternative:
 1. `./deploy/scripts/preflight-check.sh`
 2. `cp .env.example .env` (edit as needed)
 3. `docker compose up -d`
-
-Parallel (side-by-side with an existing gateway/ai-infra deployment):
-
-1. `./deploy/scripts/backup-and-deploy-parallel.sh` (recommended for first parallel cutover)
 
 Remote host deploy:
 

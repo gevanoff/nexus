@@ -292,8 +292,8 @@ curl -fsS http://127.0.0.1:11434/api/version
 # 4) Start Nexus without ollama container
 docker compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build
 
-# 5) Verify gateway contract using external/native Ollama
-./deploy/scripts/verify-gateway.sh --external-ollama
+# 5) Verify the running gateway contract
+./deploy/scripts/verify-gateway.sh
 ```
 
 ### Native-macOS security baseline

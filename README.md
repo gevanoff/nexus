@@ -110,25 +110,22 @@ Important persistent gateway state includes:
 
 ### Start the Stack
 
+For local development, use the bootstrap entry point:
+
 ```bash
-# Start core services (gateway + ollama + etcd)
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml up -d
-
-# Start core + Telegram bot (optional)
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.telegram-bot.yml up -d
-
-# Start core + MLX component (optional)
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml -f docker-compose.mlx.yml up -d
-
-# Check service health
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml ps
-
-# View gateway logs
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml logs -f gateway
-
-# Stop services
-docker compose -f docker-compose.gateway.yml -f docker-compose.ollama.yml -f docker-compose.etcd.yml down
+./quickstart.sh
 ```
+
+For a tracked production host, deploy its declared topology instead of manually
+assembling Compose files:
+
+```bash
+./deploy/scripts/deploy.sh --topology-host ai2 prod main
+./deploy/scripts/remote-deploy.sh --topology-host stackrot prod main
+```
+
+Use focused restart helpers only when topology and configuration are already
+correct. See [deploy/SCRIPTS.md](deploy/SCRIPTS.md).
 
 ### HTTPS Proxy (nginx: 80 -> 443 redirect)
 
@@ -144,26 +141,11 @@ Start nginx TLS terminator in front of gateway:
 docker compose -f docker-compose.gateway.yml -f docker-compose.nginx.yml up -d --build
 ```
 
-### Native Apple Silicon Accelerator Mode (Recommended for Ollama + MLX)
+### Native Apple Silicon MLX
 
-For Apple-accelerated inference, run Ollama/MLX natively on a macOS Apple Silicon host and keep Nexus control-plane services in containers.
-
-```bash
-# Containerized control plane only (no ollama/mlx containers)
-docker compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d
-```
-
-Set these in `.env` so Gateway targets native services:
-
-```bash
-# Same-machine macOS host from inside Docker Desktop containers
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-MLX_BASE_URL=http://host.docker.internal:10240/v1
-
-# Or remote Mac accelerator node
-# OLLAMA_BASE_URL=http://mac-accelerator-01:11434
-# MLX_BASE_URL=http://mac-accelerator-01:10240/v1
-```
+MLX runs host-native on the tracked Apple Silicon host. Its route is rendered
+from `production.json`; use `restart-mlx.sh` only to recycle that already
+configured service and use the guarded Huge-model switch for resident changes.
 
 Security recommendations for native accelerator hosts:
 - Bind native inference services to loopback when possible and front them with a local reverse proxy.
@@ -183,49 +165,15 @@ To allow multiple client IPs:
 ./deploy/scripts/allowlist-mlx-macos.sh --allow 10.10.22.156 --allow 10.10.22.157
 ```
 
-### Ollama + MLX Container-to-Bare-Metal Migration Runbook
+### Production Topology
 
-Use this when moving inference from `docker-compose.ollama.yml` / `docker-compose.mlx.yml` to a macOS Apple Silicon host.
+Production placement is tracked in `deploy/topology/production.json`. Deploy a
+host through `deploy.sh --topology-host HOST prod main`; do not reconstruct the
+stack from old Ollama/MLX Compose examples. Native MLX on Apple Silicon is
+managed separately and routed through the topology env.
 
-1. On the macOS host, install native services:
-
-```bash
-./services/ollama/scripts/install-native-macos.sh --host 127.0.0.1 --port 11434
-./services/mlx/scripts/install-native-macos.sh --host 127.0.0.1 --port 10240
-```
-
-2. Verify native service health on the macOS host:
-
-```bash
-curl -fsS http://127.0.0.1:11434/api/version
-curl -fsS http://127.0.0.1:10240/v1/models
-```
-
-3. In `nexus/.env`, set external/native targets:
-
-```bash
-# Same machine (Docker Desktop on macOS)
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-MLX_BASE_URL=http://host.docker.internal:10240/v1
-
-# Or remote macOS accelerator node
-# OLLAMA_BASE_URL=http://<mac-host-or-ip>:11434
-# MLX_BASE_URL=http://<mac-host-or-ip>:10240/v1
-```
-
-4. Restart Nexus without containerized Ollama/MLX:
-
-```bash
-docker compose -f docker-compose.gateway.yml -f docker-compose.etcd.yml up -d --build
-```
-
-5. Verify Gateway against external/native backends:
-
-```bash
-./deploy/scripts/verify-gateway.sh --external-ollama --external-mlx
-```
-
-6. After successful verification, keep `docker-compose.ollama.yml` and `docker-compose.mlx.yml` out of steady-state compose invocations.
+See [deploy/SCRIPTS.md](deploy/SCRIPTS.md) for the supported command hierarchy
+and [docs/MIGRATION.md](docs/MIGRATION.md) for historical migration guidance.
 
 ### Setup/Install Scripts Reference
 
@@ -237,19 +185,17 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/restart-colima.sh`: restart/verify the Colima LaunchDaemon on macOS
 - `deploy/scripts/deploy.sh <prod> <branch>`: host-local deployment
 - `deploy/scripts/remote-deploy.sh <prod> <branch> <user@host>`: remote deployment wrapper
-- `deploy/scripts/cutover-tts-one-way.sh`: one-way cutover from legacy native TTS launchd jobs to the tracked Nexus Pocket/Lux/Qwen container stack
-- `deploy/scripts/ops-stack.sh [--branch <name>]`: host-local daily ops (`git pull` + restart core stack + verify)
+- `deploy/scripts/ops-stack.sh --topology-host <host> [prod main]`: guarded convenience wrapper around the topology-aware `deploy.sh`
 - `deploy/scripts/restart-gateway.sh`: restart/rebuild only Gateway so code/config updates are picked up quickly
-- `deploy/scripts/redeploy-tts-shims.sh`: redeploy containerized `pocket_tts` + `luxtts` + `qwen3-tts` and optionally restart Gateway
+- `deploy/scripts/redeploy-tts-shims.sh`: redeploy containerized `pocket_tts` + `luxtts` + `qwen3-tts` without touching Gateway
 - `deploy/scripts/reassign-topology-family.sh`: move a tracked backend family between topology hosts and print the rollout order
 - `deploy/scripts/seed-tts-refs.sh --source <path>`: seed shared `${NEXUS_RUNTIME_ROOT}/tts_refs` from local audio files with content-hash dedup
-- `deploy/scripts/prewarm-models.sh`: prewarm Ollama models (container or host-native mode)
+- `deploy/scripts/prewarm-vllm.sh`: check and warm the strong, fast, and embeddings vLLM lanes
 - `deploy/scripts/prewarm-mlx.sh`: prewarm MLX model runtime (host-native recommended)
 - `docker-compose.mediamtx.yml`: RTMP ingest + HLS/WebRTC playback stack for multi-consumer streaming on `stackrot`
 
 Alias-aware prewarm options:
 
-- `deploy/scripts/prewarm-models.sh --from-aliases`: include all `backend=ollama` models from `${NEXUS_RUNTIME_ROOT}/gateway/config/model_aliases.json`
 - `deploy/scripts/prewarm-mlx.sh --from-aliases`: include all `backend=mlx` models from `${NEXUS_RUNTIME_ROOT}/gateway/config/model_aliases.json`
 - `services/ollama/scripts/install-native-macos.sh`: install/manage host-native Ollama (launchd)
 - `services/mlx/scripts/install-native-macos.sh`: install/manage host-native MLX (launchd)
@@ -564,7 +510,7 @@ Nexus replaces the host-based `ai-infra` deployment with containers:
 | `/var/lib/gateway` | `./.runtime/gateway/*` bind mounts | Persistent data + operator config |
 | SSH + manual deploys | `docker compose up` | One command deploys |
 
-See [docs/MIGRATION.md](docs/MIGRATION.md) for the scripted migration workflow (`deploy/scripts/migrate-from-ai-infra.sh`) and detailed manual migration guide.
+See [docs/MIGRATION.md](docs/MIGRATION.md) for historical migration guidance and current data-specific recovery tools.
 
 ## Troubleshooting
 
@@ -579,11 +525,7 @@ curl http://localhost:8800/health
 
 ### Can't connect to backend
 ```bash
-# Verify service is running
-docker compose ps
-
-# Check network connectivity
-docker compose exec gateway curl http://ollama:11434/health
+./deploy/scripts/diagnose-gateway.sh
 ```
 
 ### GPU not detected
@@ -591,7 +533,8 @@ docker compose exec gateway curl http://ollama:11434/health
 # Verify NVIDIA runtime
 docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 
-# Update docker-compose.ollama.yml to use gpus
+# Inspect the topology host's selected NVIDIA service containers
+./deploy/scripts/topology-ssh.sh <host> docker ps
 ```
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for additional operational guidance.

@@ -52,11 +52,12 @@ done
 
 [[ -n "$SNAPSHOT_PATH" ]] || ns_die "--snapshot is required"
 [[ -f "$SNAPSHOT_PATH" ]] || ns_die "Snapshot not found: $SNAPSHOT_PATH"
+[[ -f "$ENV_FILE" ]] || ns_die "Env file not found: $ENV_FILE"
 
 ns_require_cmd gzip "gzip" || exit 1
 ns_require_cmd sqlite3 "sqlite3" || exit 1
 
-runtime_root="$(ns_runtime_root "$ROOT_DIR")"
+runtime_root="$(ns_runtime_root_from_env "$ROOT_DIR" "$ENV_FILE")"
 if [[ -z "$DB_PATH" ]]; then
   DB_PATH="${runtime_root}/gateway/data/users.sqlite"
 fi

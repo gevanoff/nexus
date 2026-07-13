@@ -11,7 +11,7 @@ source "$ROOT_DIR/deploy/scripts/_common.sh"
 ENV_FILE="${ENV_FILE:-$ROOT_DIR/.env}"
 SNAPSHOT_PATH=""
 CONTAINER_NAME=""
-DATA_DIR="$(ns_runtime_root "$ROOT_DIR")/etcd/data"
+DATA_DIR=""
 FORCE="false"
 
 usage() {
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
       FORCE="true"
       shift
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -57,6 +57,7 @@ done
 
 [[ -n "$SNAPSHOT_PATH" ]] || ns_die "--snapshot is required"
 [[ -f "$SNAPSHOT_PATH" ]] || ns_die "Snapshot not found: $SNAPSHOT_PATH"
+[[ -f "$ENV_FILE" ]] || ns_die "Env file not found: $ENV_FILE"
 
 ns_require_cmd docker "docker" || exit 1
 if ! ns_compose_available; then
@@ -68,6 +69,10 @@ if [[ -z "$CONTAINER_NAME" && -f "$ENV_FILE" ]]; then
 fi
 CONTAINER_NAME="${CONTAINER_NAME:-nexus-etcd}"
 
+if [[ -z "$DATA_DIR" ]]; then
+  DATA_DIR="$(ns_runtime_root_from_env "$ROOT_DIR" "$ENV_FILE")/etcd/data"
+fi
+
 member_name="$(ns_env_get "$ENV_FILE" ETCD_NAME nexus-etcd)"
 peer_url="$(ns_env_get "$ENV_FILE" ETCD_INITIAL_ADVERTISE_PEER_URLS http://etcd:2380)"
 initial_cluster="$(ns_env_get "$ENV_FILE" ETCD_INITIAL_CLUSTER nexus-etcd=http://etcd:2380)"
@@ -77,8 +82,11 @@ if [[ "$FORCE" != "true" ]]; then
   echo "This will stop ${CONTAINER_NAME}, move the current etcd data aside, restore ${SNAPSHOT_PATH}, and restart etcd."
   read -r -p "Continue? [y/N] " answer
   case "$answer" in
-    [yY]|[yY][eE][sS]) ;;
-    *) echo "Aborted."; exit 1 ;;
+    [yY] | [yY][eE][sS]) ;;
+    *)
+      echo "Aborted."
+      exit 1
+      ;;
   esac
 fi
 
@@ -102,11 +110,11 @@ docker run --rm \
   -v "$DATA_DIR:/restore-data" \
   quay.io/coreos/etcd:v3.5.11 \
   /usr/local/bin/etcdctl snapshot restore /snapshot.db \
-    --name "$member_name" \
-    --data-dir /restore-data \
-    --initial-cluster "$initial_cluster" \
-    --initial-advertise-peer-urls "$peer_url" \
-    --initial-cluster-token "$cluster_token"
+  --name "$member_name" \
+  --data-dir /restore-data \
+  --initial-cluster "$initial_cluster" \
+  --initial-advertise-peer-urls "$peer_url" \
+  --initial-cluster-token "$cluster_token"
 
 ns_compose --env-file "$ENV_FILE" -f docker-compose.etcd.yml up -d
 

@@ -51,26 +51,6 @@ Options:
 EOF
 }
 
-resolve_runtime_root() {
-  local repo_dir="$1"
-  local env_file="$2"
-  local configured_root=""
-
-  configured_root="$(ns_env_get "$env_file" NEXUS_RUNTIME_ROOT "")"
-  if [[ -z "$configured_root" ]]; then
-    printf '%s\n' "${repo_dir}/.runtime"
-    return 0
-  fi
-  case "$configured_root" in
-    /*)
-      printf '%s\n' "$configured_root"
-      ;;
-    *)
-      printf '%s\n' "${repo_dir}/${configured_root#./}"
-      ;;
-  esac
-}
-
 resolve_target_user() {
   if [[ -n "${TARGET_USER:-}" ]]; then
     printf '%s\n' "$TARGET_USER"
@@ -123,26 +103,71 @@ PY
 append_env_line() {
   local key="$1"
   local value="$2"
-  printf '%s=%q\n' "$key" "$value" >> "$JOB_ENV_FILE_TMP"
+  printf '%s=%q\n' "$key" "$value" >>"$JOB_ENV_FILE_TMP"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --user) TARGET_USER="${2:-}"; shift 2 ;;
-    --home) TARGET_HOME="${2:-}"; shift 2 ;;
-    --repo-dir) REPO_DIR="${2:-}"; shift 2 ;;
-    --env-file) NEXUS_ENV_FILE="${2:-}"; shift 2 ;;
-    --backup-dir) BACKUP_DIR="${2:-}"; shift 2 ;;
-    --db-path) DB_PATH="${2:-}"; shift 2 ;;
-    --keep) KEEP_COUNT="${2:-}"; shift 2 ;;
-    --start-interval) START_INTERVAL="${2:-}"; shift 2 ;;
-    --ssh-target) SSH_TARGET="${2:-}"; shift 2 ;;
-    --ssh-dir) SSH_DIR="${2:-}"; shift 2 ;;
-    --rclone-remote) RCLONE_REMOTE="${2:-}"; shift 2 ;;
-    --log-dir) LOG_DIR="${2:-}"; shift 2 ;;
-    --label) LABEL="${2:-}"; shift 2 ;;
-    --launchd-root) LAUNCHD_ROOT="${2:-}"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
+    --user)
+      TARGET_USER="${2:-}"
+      shift 2
+      ;;
+    --home)
+      TARGET_HOME="${2:-}"
+      shift 2
+      ;;
+    --repo-dir)
+      REPO_DIR="${2:-}"
+      shift 2
+      ;;
+    --env-file)
+      NEXUS_ENV_FILE="${2:-}"
+      shift 2
+      ;;
+    --backup-dir)
+      BACKUP_DIR="${2:-}"
+      shift 2
+      ;;
+    --db-path)
+      DB_PATH="${2:-}"
+      shift 2
+      ;;
+    --keep)
+      KEEP_COUNT="${2:-}"
+      shift 2
+      ;;
+    --start-interval)
+      START_INTERVAL="${2:-}"
+      shift 2
+      ;;
+    --ssh-target)
+      SSH_TARGET="${2:-}"
+      shift 2
+      ;;
+    --ssh-dir)
+      SSH_DIR="${2:-}"
+      shift 2
+      ;;
+    --rclone-remote)
+      RCLONE_REMOTE="${2:-}"
+      shift 2
+      ;;
+    --log-dir)
+      LOG_DIR="${2:-}"
+      shift 2
+      ;;
+    --label)
+      LABEL="${2:-}"
+      shift 2
+      ;;
+    --launchd-root)
+      LAUNCHD_ROOT="${2:-}"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
     *) ns_die "Unknown argument: $1" ;;
   esac
 done
@@ -161,7 +186,7 @@ fi
 
 TARGET_USER="$(resolve_target_user)"
 TARGET_HOME="$(resolve_home_for_user "$TARGET_USER")"
-RUNTIME_ROOT="$(resolve_runtime_root "$REPO_DIR" "$NEXUS_ENV_FILE")"
+RUNTIME_ROOT="$(ns_runtime_root_from_env "$REPO_DIR" "$NEXUS_ENV_FILE")"
 
 if [[ -z "$BACKUP_DIR" ]]; then
   BACKUP_DIR="${RUNTIME_ROOT}/gateway/backups"

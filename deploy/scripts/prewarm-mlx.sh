@@ -13,7 +13,7 @@ CHECK_ONLY="false"
 MLX_BASE_URL_OVERRIDE="${PREWARM_MLX_BASE_URL:-}"
 WARMUP_TIMEOUT_SEC="${MLX_WARMUP_TIMEOUT_SEC:-0}"
 FROM_ALIASES="false"
-ALIASES_FILE="$(ns_runtime_root "$ROOT_DIR")/gateway/config/model_aliases.json"
+ALIASES_FILE=""
 
 declare -a MLX_MODEL_OVERRIDES=()
 
@@ -82,7 +82,7 @@ while [[ $# -gt 0 ]]; do
       WARMUP_TIMEOUT_SEC="${2:-}"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -97,12 +97,15 @@ if [[ ! "$WARMUP_TIMEOUT_SEC" =~ ^[0-9]+$ ]]; then
 fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  ns_print_warn "Env file not found at $ENV_FILE; creating from .env.example"
-  ns_ensure_env_file "$ENV_FILE" "$ROOT_DIR"
+  ns_die "Env file not found: $ENV_FILE"
 fi
 
 ns_require_cmd curl || exit 1
 ns_require_cmd python3 || exit 1
+
+if [[ -z "$ALIASES_FILE" ]]; then
+  ALIASES_FILE="$(ns_runtime_root_from_env "$ROOT_DIR" "$ENV_FILE")/gateway/config/model_aliases.json"
+fi
 
 if [[ -n "${MLX_BASE_URL_OVERRIDE:-}" ]]; then
   mlx_base_url="$MLX_BASE_URL_OVERRIDE"
@@ -133,7 +136,8 @@ if [[ "$FROM_ALIASES" == "true" ]]; then
   fi
   while IFS= read -r alias_model; do
     add_unique_model "$alias_model"
-  done < <(python3 - "$ALIASES_FILE" <<'PY'
+  done < <(
+    python3 - "$ALIASES_FILE" <<'PY'
 import json
 import sys
 
@@ -151,7 +155,7 @@ for alias in payload.get("aliases", {}).values():
     if model:
         print(model)
 PY
-)
+  )
 fi
 
 models_url="${mlx_base_url}/models"

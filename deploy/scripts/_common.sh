@@ -99,8 +99,8 @@ ns_persist_colima_docker_context() {
 # belongs to the selected Colima profile, even if the user's global context was
 # changed by another Docker client.
 if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" &&
-  "${NS_MACOS_DOCKER_PROVIDER:-colima}" == "colima" &&
-  -n "$(command -v colima 2>/dev/null || true)" ]]; then
+"${NS_MACOS_DOCKER_PROVIDER:-colima}" == "colima" &&
+-n "$(command -v colima 2>/dev/null || true)" ]]; then
   COLIMA_HOME="${COLIMA_HOME:-${HOME:-}/.colima}"
   export COLIMA_HOME
   ns_activate_colima_docker_context
@@ -141,15 +141,16 @@ ns_env_get() {
   echo "$value"
 }
 
-ns_runtime_root() {
-  # Resolve the host runtime root for bind-mounted Nexus state.
-  # Usage: ns_runtime_root <repo_root>
+ns_runtime_root_from_env() {
+  # Resolve the host runtime root from an explicit dotenv file.
+  # Usage: ns_runtime_root_from_env <repo_root> <env_file>
   local repo_root="$1"
+  local env_file="${2:-${repo_root}/.env}"
   local configured_root=""
 
   configured_root="${NEXUS_RUNTIME_ROOT:-}"
   if [[ -z "${configured_root:-}" ]]; then
-    configured_root="$(ns_env_get "${repo_root}/.env" NEXUS_RUNTIME_ROOT "")"
+    configured_root="$(ns_env_get "$env_file" NEXUS_RUNTIME_ROOT "")"
   fi
   if [[ -z "${configured_root:-}" ]]; then
     echo "${repo_root}/.runtime"
@@ -166,6 +167,13 @@ ns_runtime_root() {
   esac
 }
 
+ns_runtime_root() {
+  # Resolve the host runtime root from the repo's default .env file.
+  # Usage: ns_runtime_root <repo_root>
+  local repo_root="$1"
+  ns_runtime_root_from_env "$repo_root" "${repo_root}/.env"
+}
+
 ns_is_valid_ipv4() {
   # Usage: ns_is_valid_ipv4 <value>
   local value="$1"
@@ -175,7 +183,7 @@ ns_is_valid_ipv4() {
   IFS=. read -r a b c d <<<"$value"
   for octet in "$a" "$b" "$c" "$d"; do
     [[ "$octet" =~ ^[0-9]+$ ]] || return 1
-    (( octet >= 0 && octet <= 255 )) || return 1
+    ((octet >= 0 && octet <= 255)) || return 1
   done
 }
 
@@ -464,7 +472,7 @@ ns_port_listener_process_summary() {
       ps_line="$(ps -o pid= -o ppid= -o comm= -p "$pid" 2>/dev/null | head -n 1 || true)"
       if [[ -n "${ps_line:-}" ]]; then
         # Normalize whitespace and split (trim leading spaces).
-        ps_line="$(echo "$ps_line" | tr -s ' ' )"
+        ps_line="$(echo "$ps_line" | tr -s ' ')"
         while [[ "${ps_line:0:1}" == " " ]]; do
           ps_line="${ps_line:1}"
         done
@@ -566,7 +574,7 @@ ns_wait_for_docker_daemon() {
   # Usage: ns_wait_for_docker_daemon [timeout_seconds]
   local timeout_sec="${1:-60}"
   local i=0
-  while (( i < timeout_sec )); do
+  while ((i < timeout_sec)); do
     if docker info >/dev/null 2>&1; then
       return 0
     fi
@@ -912,7 +920,7 @@ ns_detect_platform() {
         echo "linux"
       fi
       ;;
-    MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+    MINGW* | MSYS* | CYGWIN*) echo "windows" ;;
     *) echo "unknown" ;;
   esac
 }
@@ -1019,11 +1027,16 @@ ns_confirm_default_yes() {
 }
 
 ns_install_prereqs_linux() {
-  local need_docker="$1"; shift
-  local need_curl="$1"; shift
-  local need_openssl="$1"; shift
-  local need_git="$1"; shift
-  local need_python="$1"; shift
+  local need_docker="$1"
+  shift
+  local need_curl="$1"
+  shift
+  local need_openssl="$1"
+  shift
+  local need_git="$1"
+  shift
+  local need_python="$1"
+  shift
 
   local SUDO
   if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
@@ -1101,11 +1114,16 @@ ns_install_prereqs_linux() {
 }
 
 ns_install_prereqs_macos() {
-  local need_docker="$1"; shift
-  local need_curl="$1"; shift
-  local need_openssl="$1"; shift
-  local need_git="$1"; shift
-  local need_python="$1"; shift
+  local need_docker="$1"
+  shift
+  local need_curl="$1"
+  shift
+  local need_openssl="$1"
+  shift
+  local need_git="$1"
+  shift
+  local need_python="$1"
+  shift
 
   if ! ns_have_cmd brew; then
     ns_print_error "Homebrew not found. Install Homebrew: https://brew.sh"
@@ -1151,12 +1169,18 @@ ns_install_docker_windows() {
 
 ns_ensure_prereqs() {
   # ns_ensure_prereqs <need_docker> <need_curl> <need_openssl> <need_git> <need_python> <need_ssh>
-  local need_docker="$1"; shift
-  local need_curl="$1"; shift
-  local need_openssl="$1"; shift
-  local need_git="$1"; shift
-  local need_python="$1"; shift
-  local need_ssh="$1"; shift
+  local need_docker="$1"
+  shift
+  local need_curl="$1"
+  shift
+  local need_openssl="$1"
+  shift
+  local need_git="$1"
+  shift
+  local need_python="$1"
+  shift
+  local need_ssh="$1"
+  shift
 
   local platform
   platform="$(ns_detect_platform)"
@@ -1182,15 +1206,21 @@ ns_ensure_prereqs() {
 
   case "$platform" in
     linux)
-      ns_confirm "Attempt to install missing tools with sudo?" && ns_install_prereqs_linux "$need_docker" "$need_curl" "$need_openssl" "$need_git" "$need_python" || true
+      if ns_confirm "Attempt to install missing tools with sudo?"; then
+        ns_install_prereqs_linux "$need_docker" "$need_curl" "$need_openssl" "$need_git" "$need_python" || true
+      fi
       ;;
     macos)
-      ns_confirm "Attempt to install missing tools via Homebrew?" && ns_install_prereqs_macos "$need_docker" "$need_curl" "$need_openssl" "$need_git" "$need_python" || true
+      if ns_confirm "Attempt to install missing tools via Homebrew?"; then
+        ns_install_prereqs_macos "$need_docker" "$need_curl" "$need_openssl" "$need_git" "$need_python" || true
+      fi
       ;;
     windows)
       ns_print_warn "Windows support here is development-only. For deployment/operations, use macOS/Linux hosts."
       if [[ "$need_docker" == "true" ]] && ! ns_have_cmd docker; then
-        ns_confirm "Install Docker Desktop via winget? (Windows dev only)" && ns_install_docker_windows || true
+        if ns_confirm "Install Docker Desktop via winget? (Windows dev only)"; then
+          ns_install_docker_windows || true
+        fi
       fi
       ;;
     wsl)
@@ -1471,7 +1501,6 @@ ns_verify_docker_bind_source() {
   # Especially important for Colima, where only selected host paths are mounted.
   # Usage: ns_verify_docker_bind_source <path>
   local bind_path="$1"
-  local abs_path=""
   local abs_path_logical=""
   local abs_path_physical=""
 
@@ -1487,8 +1516,6 @@ ns_verify_docker_bind_source() {
 
   abs_path_logical="$(cd "$(dirname "$bind_path")" && pwd)/$(basename "$bind_path")"
   abs_path_physical="$(cd "$(dirname "$bind_path")" && pwd -P)/$(basename "$bind_path")"
-  abs_path="$abs_path_physical"
-
   local ctx
   ctx="$(docker context show 2>/dev/null || true)"
 

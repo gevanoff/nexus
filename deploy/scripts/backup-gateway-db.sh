@@ -41,30 +41,6 @@ Environment variable defaults:
 EOF
 }
 
-resolve_runtime_root() {
-  local repo_dir="$1"
-  local env_file="$2"
-  local configured_root=""
-
-  configured_root="${NEXUS_RUNTIME_ROOT:-}"
-  if [[ -z "$configured_root" ]]; then
-    configured_root="$(ns_env_get "$env_file" NEXUS_RUNTIME_ROOT "")"
-  fi
-  if [[ -z "$configured_root" ]]; then
-    printf '%s\n' "${repo_dir}/.runtime"
-    return 0
-  fi
-
-  case "$configured_root" in
-    /*)
-      printf '%s\n' "$configured_root"
-      ;;
-    *)
-      printf '%s\n' "${repo_dir}/${configured_root#./}"
-      ;;
-  esac
-}
-
 sha256_file() {
   local file_path="$1"
   if ns_have_cmd sha256sum; then
@@ -95,6 +71,7 @@ mirror_to_ssh() {
   ns_require_cmd ssh "ssh" || exit 1
   local quoted_dir
   quoted_dir="$(printf '%q' "$SSH_DIR")"
+  # shellcheck disable=SC2029
   ssh "$SSH_TARGET" "mkdir -p ${quoted_dir}"
 
   if ns_have_cmd rsync; then
@@ -128,7 +105,7 @@ prune_local_backups() {
   local keep_count="$2"
   local host_tag="$3"
 
-  (( keep_count > 0 )) || return 0
+  ((keep_count > 0)) || return 0
   [[ -d "$backup_dir" ]] || return 0
 
   local -a backup_files=()
@@ -138,10 +115,10 @@ prune_local_backups() {
   done < <(find "$backup_dir" -maxdepth 1 -type f -name "gateway-users-${host_tag}-*.sqlite3.gz" -print | sort)
 
   local file_count="${#backup_files[@]}"
-  (( file_count > keep_count )) || return 0
+  ((file_count > keep_count)) || return 0
 
   local prune_count=$((file_count - keep_count))
-  for ((idx=0; idx<prune_count; idx+=1)); do
+  for ((idx = 0; idx < prune_count; idx += 1)); do
     file_path="${backup_files[$idx]}"
     rm -f "$file_path" "$file_path.sha256" "${file_path%.sqlite3.gz}.json"
   done
@@ -181,7 +158,7 @@ while [[ $# -gt 0 ]]; do
       RCLONE_REMOTE="${2:-}"
       shift 2
       ;;
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -194,8 +171,9 @@ done
 require_integer "$KEEP_COUNT" "--keep"
 ns_require_cmd sqlite3 "sqlite3" || exit 1
 ns_require_cmd gzip "gzip" || exit 1
+[[ -f "$ENV_FILE" ]] || ns_die "Env file not found: $ENV_FILE"
 
-runtime_root="$(resolve_runtime_root "$ROOT_DIR" "$ENV_FILE")"
+runtime_root="$(ns_runtime_root_from_env "$ROOT_DIR" "$ENV_FILE")"
 
 if [[ -z "$DB_PATH" ]]; then
   DB_PATH="${runtime_root}/gateway/data/users.sqlite"
@@ -244,13 +222,13 @@ if ! printf '%s\n' "$integrity_result" | grep -qx 'ok'; then
   ns_die "Backup integrity check failed: ${integrity_result}"
 fi
 
-gzip -n -c "$tmp_db" > "$OUTPUT_PATH"
+gzip -n -c "$tmp_db" >"$OUTPUT_PATH"
 compressed_sha="$(sha256_file "$OUTPUT_PATH")"
-compressed_size="$(wc -c < "$OUTPUT_PATH" | tr -d '[:space:]')"
-source_size="$(wc -c < "$tmp_db" | tr -d '[:space:]')"
+compressed_size="$(wc -c <"$OUTPUT_PATH" | tr -d '[:space:]')"
+source_size="$(wc -c <"$tmp_db" | tr -d '[:space:]')"
 
-printf '%s  %s\n' "$compressed_sha" "$(basename "$OUTPUT_PATH")" > "$SHA_PATH"
-cat > "$MANIFEST_PATH" <<EOF
+printf '%s  %s\n' "$compressed_sha" "$(basename "$OUTPUT_PATH")" >"$SHA_PATH"
+cat >"$MANIFEST_PATH" <<EOF
 {
   "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "host": "${host_tag}",

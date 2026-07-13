@@ -158,6 +158,7 @@ done
 require_integer "$KEEP_COUNT" "--keep"
 
 ns_require_cmd docker "docker" || exit 1
+[[ -f "$ENV_FILE" ]] || ns_die "Env file not found: $ENV_FILE"
 
 if [[ -z "$CONTAINER_NAME" && -f "$ENV_FILE" ]]; then
   CONTAINER_NAME="$(ns_env_get "$ENV_FILE" ETCD_CONTAINER_NAME nexus-etcd)"
@@ -168,7 +169,7 @@ ENDPOINTS="${ENDPOINTS:-http://127.0.0.1:2379}"
 
 if [[ -z "$OUTPUT_PATH" ]]; then
   timestamp="$(date +%Y%m%d-%H%M%S)"
-  OUTPUT_PATH="$(ns_runtime_root "$ROOT_DIR")/etcd/backups/etcd-snapshot-${timestamp}.db"
+  OUTPUT_PATH="$(ns_runtime_root_from_env "$ROOT_DIR" "$ENV_FILE")/etcd/backups/etcd-snapshot-${timestamp}.db"
 fi
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"

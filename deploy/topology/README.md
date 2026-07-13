@@ -95,7 +95,7 @@ Install or refresh the host-side launchd proxy on ai2 before restarting gateway:
 
 ```bash
 ./deploy/scripts/install-backend-port-proxy-launchd.sh --user ai
-./deploy/scripts/deploy.sh --topology-host ai2 --components gateway
+./deploy/scripts/deploy.sh --topology-host ai2 --components gateway prod main
 ```
 
 ## Image Interfaces

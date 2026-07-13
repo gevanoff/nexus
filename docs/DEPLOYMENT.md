@@ -1,5 +1,10 @@
 # Deployment Guide
 
+For tracked production hosts, `deploy/topology/production.json` and
+`deploy/scripts/deploy.sh --topology-host ...` supersede the older generic
+single-host Compose examples in this document. The authoritative command and
+script lifecycle map is [deploy/SCRIPTS.md](../deploy/SCRIPTS.md).
+
 This guide covers deploying Nexus in different environments.
 
 ## Quick Start (Development)
@@ -82,10 +87,10 @@ Linux/NVIDIA example for image generation hosts:
 ./deploy/scripts/deploy.sh --components invokeai,images,sdxl-turbo prod main
 ```
 
-Linux/NVIDIA example for Ollama with the GPU override compose:
+Linux/NVIDIA example for the strong vLLM lane:
 
 ```bash
-./deploy/scripts/deploy.sh --component ollama-linux-nvidia prod main
+./deploy/scripts/deploy.sh --component vllm-strong prod main
 ```
 
 4. **Verify deployment**
@@ -151,7 +156,7 @@ For tracked Nexus code changes, do not edit live host checkouts on `ai2`, `stack
 - `deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] <prod> <branch> <user@host>`: remote deployment wrapper
 - `deploy/scripts/register-service.sh <name> <base-url> <etcd-url>`: manually registers non-compose or custom service metadata in etcd (requires `python3`)
 - `deploy/scripts/list-services.sh <etcd-url>`: reads service registrations from etcd (requires `python3`)
-- `deploy/scripts/migrate-from-ai-infra.sh`: interactive migration helper from legacy ai-infra deployments
+- `docs/MIGRATION.md`: historical migration notes and current data-specific recovery commands
 
 ### Shared script library
 
@@ -192,7 +197,7 @@ All Nexus management scripts share common bash helpers in `deploy/scripts/_commo
 ### Remote (multi-host)
 
 1. Deploy etcd + gateway on one host.
-2. Deploy backends (ollama/images/tts) on other hosts.
+2. Deploy vLLM, images, TTS, and other backends on their tracked topology hosts.
 3. Start each compose-managed backend stack; the bundled registrar sidecar will publish its record into etcd after the service is healthy.
 4. Use `deploy/scripts/register-service.sh` only for non-compose or externally managed backends.
 5. Confirm registrations with `deploy/scripts/list-services.sh`.
