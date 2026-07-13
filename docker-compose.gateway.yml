@@ -65,6 +65,7 @@ services:
       - CODING_WORKSPACE_ROOT=/var/lib/gateway/data/coding/workspaces
       - CODING_TASKS_DIR=/var/lib/gateway/data/coding/tasks
       - CODING_DEFAULT_REPO_URL=${CODING_DEFAULT_REPO_URL:-https://github.com/gevanoff/nexus.git}
+      - CODING_ARTIFACT_MAX_BYTES=${CODING_ARTIFACT_MAX_BYTES:-50000000}
       - CODING_ALLOWED_REPOS=${CODING_ALLOWED_REPOS:-https://github.com/gevanoff/nexus.git}
       - CODING_REQUIRE_ADMIN=${CODING_REQUIRE_ADMIN:-true}
       - CODING_SMOKE_REPORT_DIR=/var/lib/gateway/coding_smoke_reports
@@ -78,7 +79,7 @@ services:
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
       - NEXUS_TOOL_EXECUTION_DEFAULT=${NEXUS_TOOL_EXECUTION_DEFAULT:-client_exec}
       - NEXUS_AUTO_INJECT_TOOLS=${NEXUS_AUTO_INJECT_TOOLS:-false}
-      - NEXUS_AUTO_INJECT_TOOLSETS=${NEXUS_AUTO_INJECT_TOOLSETS:-core,repo,ops}
+      - NEXUS_AUTO_INJECT_TOOLSETS=${NEXUS_AUTO_INJECT_TOOLSETS:-core,repo,ops,workspace}
       - NEXUS_CLIENT_TOOL_POLICY=${NEXUS_CLIENT_TOOL_POLICY:-replace}
       - NEXUS_TOOL_MAX_ROUNDS=${NEXUS_TOOL_MAX_ROUNDS:-4}
       - NEXUS_TOOL_MAX_PARALLEL=${NEXUS_TOOL_MAX_PARALLEL:-4}

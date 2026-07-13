@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
 from app.config import S
+from app.agent_api.auth import AgentToolCaller
 from app.models import ChatCompletionRequest, ChatMessage
 from app.model_aliases import ModelAlias
 from app.openai_utils import new_id, now_unix, normalize_tool_calls_for_openai
@@ -169,7 +170,13 @@ def _audit(event: dict[str, Any]) -> None:
         log.warning("gateway tool audit write failed path=%s", path)
 
 
-async def _execute_one(call: dict[str, Any], policy: NexusToolExecutionPolicy, allowed: set[str], request_id: str) -> tuple[str, str, dict[str, Any]]:
+async def _execute_one(
+    call: dict[str, Any],
+    policy: NexusToolExecutionPolicy,
+    allowed: set[str],
+    request_id: str,
+    caller: AgentToolCaller | None,
+) -> tuple[str, str, dict[str, Any]]:
     function = call.get("function") if isinstance(call, dict) else None
     name = str((function or {}).get("name") or "").strip()
     call_id = str(call.get("id") or new_id("call"))
@@ -191,7 +198,9 @@ async def _execute_one(call: dict[str, Any], policy: NexusToolExecutionPolicy, a
             result = {"ok": False, "error": "invalid_arguments", "issues": issues}
         else:
             try:
-                result = await asyncio.wait_for(definition.implementation(arguments), timeout=min(policy.per_tool_timeout_sec, definition.timeout_sec))
+                implementation = definition.implementation
+                invocation = implementation(arguments, caller) if definition.uses_caller_context else implementation(arguments)
+                result = await asyncio.wait_for(invocation, timeout=min(policy.per_tool_timeout_sec, definition.timeout_sec))
             except asyncio.TimeoutError:
                 result = {"ok": False, "error": "tool_timeout"}
             except Exception as exc:
@@ -225,6 +234,7 @@ async def run_gateway_tool_loop(
     alias: ModelAlias | None,
     call_backend: Callable[[ChatCompletionRequest], Awaitable[dict[str, Any]]],
     request_id: str,
+    caller: AgentToolCaller | None = None,
 ) -> GatewayToolLoopResult:
     req = prepare_tools(initial_req, policy, alias)
     allowed = enabled_tool_names(set(policy.toolsets))
@@ -255,7 +265,7 @@ async def run_gateway_tool_loop(
 
             async def guarded(call: dict[str, Any]):
                 async with semaphore:
-                    return await _execute_one(call, policy, allowed, request_id)
+                    return await _execute_one(call, policy, allowed, request_id, caller)
 
             results = await asyncio.gather(*(guarded(call) for call in tool_calls))
             for call_id, name, result in results:

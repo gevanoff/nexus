@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.agent_api.auth import AgentToolCaller
+from app.agent_api.constants import OPERATIONS as AGENT_API_OPERATIONS
+from app.agent_api.tool import execute_agent_api_tool
 from app.config import S
 from app.model_aliases import get_aliases, get_aliases_state
 from app.resources_snapshot import build_resources_snapshot
@@ -23,7 +26,7 @@ from app.tool_calling.capabilities import tool_calling_diagnostics
 from app.tool_calling.schemas import strict_object_schema
 
 
-ToolImplementation = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+ToolImplementation = Callable[..., Awaitable[dict[str, Any]]]
 _SECRET_RE = re.compile(r"(?i)\b(authorization|bearer|api[_-]?key|password|secret|token|cookie)\b(\s*[:=]\s*)(bearer\s+)?([^\s,;]+)")
 
 
@@ -38,6 +41,7 @@ class NexusToolDefinition:
     timeout_sec: float = 20.0
     output_limit: int = 12000
     implementation: ToolImplementation | None = None
+    uses_caller_context: bool = False
 
     def as_openai(self) -> dict[str, Any]:
         return {
@@ -346,6 +350,10 @@ async def _http_request(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": response.is_success, "status": response.status_code, "body": text[: args["max_chars"]], "truncated": len(text) > args["max_chars"]}
 
 
+async def _agent_api(args: dict[str, Any], caller: AgentToolCaller | None) -> dict[str, Any]:
+    return await execute_agent_api_tool(args, caller)
+
+
 def _props(**items: Any) -> dict[str, Any]:
     return strict_object_schema(items)
 
@@ -367,6 +375,34 @@ _DEFINITIONS = [
     NexusToolDefinition("nexus_docker_logs", "Tail bounded, redacted logs from allowlisted Nexus containers.", _props(container={"type": "string"}, tail={"type": "integer", "minimum": 1, "maximum": 500}, since={"type": ["string", "null"]}), "ops", implementation=_docker_logs),
     NexusToolDefinition("nexus_service_status", "Inspect one allowlisted Nexus service.", _props(service={"type": "string"}), "ops", implementation=_service_status),
     NexusToolDefinition("nexus_http_request", "Perform a bounded HTTP request to an allowlisted internal Nexus endpoint.", _props(method={"type": "string", "enum": ["GET", "POST"]}, url={"type": "string"}, json_body={"type": ["object", "null"]}, timeout_seconds={"type": "integer", "minimum": 1, "maximum": 20}, max_chars={"type": "integer", "minimum": 1, "maximum": 50000}), "ops", output_limit=50000, implementation=_http_request),
+    NexusToolDefinition(
+        "nexus_agent_api",
+        (
+            "Use the authenticated Nexus Agent API to manage coding workspaces, tasks, execution, and artifacts. "
+            "Set workspace_id and task_id to null when the selected operation does not use them. Parameters mirror "
+            "the REST request or query fields; use an empty object when none are needed. Binary artifact content is base64."
+        ),
+        _props(
+            operation={"type": "string", "enum": list(AGENT_API_OPERATIONS), "description": "Agent API operation to perform."},
+            workspace_id={"type": ["string", "null"], "description": "Workspace id for workspace-scoped operations; otherwise null."},
+            task_id={"type": ["string", "null"], "description": "Task id for get, update, delete, and retry task operations; otherwise null."},
+            parameters={
+                "type": "object",
+                "description": (
+                    "Operation fields: create_workspace uses name, description, metadata; update_workspace uses changed fields; "
+                    "list operations use status, limit, cursor; create_task uses instruction, context, priority, max_retries; "
+                    "update_task uses status and/or priority; execute uses command or code plus language; upload_artifact uses "
+                    "filename, mime_type, optional task_id, content_base64; download_artifact uses artifact_id and optional max_bytes."
+                ),
+            },
+        ),
+        "workspace",
+        risk="write",
+        timeout_sec=120.0,
+        output_limit=60000,
+        implementation=_agent_api,
+        uses_caller_context=True,
+    ),
     NexusToolDefinition("nexus_apply_patch", "Apply a patch to Nexus when explicitly enabled.", _props(repo={"type": "string"}, patch={"type": "string"}, dry_run={"type": "boolean"}), "write_ops", risk="write", default_enabled=False),
     NexusToolDefinition("nexus_service_restart", "Restart an allowlisted service when explicitly enabled.", _props(service={"type": "string"}, dry_run={"type": "boolean"}), "write_ops", risk="destructive", default_enabled=False),
     NexusToolDefinition("nexus_shell_exec", "Execute an allowlisted shell command when explicitly enabled.", _props(command={"type": "string"}, dry_run={"type": "boolean"}), "shell", risk="shell", default_enabled=False),

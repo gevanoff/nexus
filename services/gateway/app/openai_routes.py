@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from app.auth import require_bearer
+from app.agent_api.auth import agent_tool_caller_from_request
 from app.config import S, logger
 from app.backends import (
     backend_supports_tool_calling,
@@ -1440,6 +1441,7 @@ async def chat_completions(req: Request):
                 alias=alias_config,
                 call_backend=gateway_exec_call,
                 request_id=request_id,
+                caller=agent_tool_caller_from_request(req),
             )
             resp = loop_result.response
             try:

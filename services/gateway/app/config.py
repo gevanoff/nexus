@@ -382,7 +382,7 @@ class Settings(BaseSettings):
     # remain client-executed unless they explicitly request gateway_exec.
     NEXUS_TOOL_EXECUTION_DEFAULT: Literal["gateway_exec", "client_exec", "disabled"] = "client_exec"
     NEXUS_AUTO_INJECT_TOOLS: bool = False
-    NEXUS_AUTO_INJECT_TOOLSETS: str = "core,repo,ops"
+    NEXUS_AUTO_INJECT_TOOLSETS: str = "core,repo,ops,workspace"
     NEXUS_CLIENT_TOOL_POLICY: Literal["replace", "merge", "client"] = "replace"
     NEXUS_TOOL_MAX_ROUNDS: int = 4
     NEXUS_TOOL_MAX_PARALLEL: int = 4
@@ -496,6 +496,7 @@ class Settings(BaseSettings):
     CODING_SMOKE_STALLED_AFTER_SEC: int = 180
     CODING_MAX_OUTPUT_CHARS: int = 40_000
     CODING_FILE_MAX_BYTES: int = 500_000
+    CODING_ARTIFACT_MAX_BYTES: int = 50_000_000
     CODING_AGENT_MAX_EVENTS: int = 120
     CODING_AGENT_MAX_TOOL_RESULT_CHARS: int = 100_000
     CODING_AGENT_MAX_TOKENS: int = 8192

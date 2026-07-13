@@ -52,6 +52,7 @@ The Nexus Gateway is the central API gateway that provides:
 - `GET /v1/tools` / `POST /v1/tools/{name}` - Inspect and execute registered tools, subject to auth/policy
 - `POST /v1/memory/*` and `GET /v1/memory/*` - Persistent memory operations
 - `/v1/coding/*` - Isolated coding workspace API for tree/file/search/patch/command/git/agent operations
+- `/api/v1/*` - Scoped personal-token API for external agents managing coding workspaces, tasks, execution, and artifacts
 
 ### Backend Status/UI Helper Endpoints
 
@@ -398,6 +399,64 @@ creation remain explicit approval steps; successful runs can optionally make a
 local commit. Coding runs can also be steered after creation with workspace
 messages (`POST /v1/coding/tasks/{task_id}/messages` or the UI chat controls),
 so one workspace/branch can receive additional requests after the first run.
+
+#### Agent API v1
+
+External agents should use `/api/v1` rather than the UI-oriented routes. This
+API uses personal access tokens generated in User Settings. New tokens use the
+`nxs_pat_` prefix; existing hashed personal keys remain valid. Cluster-wide
+static gateway bearer tokens are intentionally rejected by this API.
+
+The default token scopes are `workspaces:read`, `workspaces:write`,
+`tasks:read`, `tasks:write`, `execute`, `artifacts:read`, and
+`artifacts:write`. A key policy can provide a smaller `scopes` list and an
+optional `workspace_id` binding. Every workspace request also enforces the
+owning user ID.
+
+```bash
+# Create a workspace using the configured default repository.
+curl -X POST http://localhost:8800/api/v1/workspaces \
+  -H "Authorization: Bearer nxs_pat_REDACTED" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Gateway update","description":"Implement and verify the change"}'
+
+# Start it before direct command or code execution.
+curl -X POST http://localhost:8800/api/v1/workspaces/WORKSPACE_ID/start \
+  -H "Authorization: Bearer nxs_pat_REDACTED"
+```
+
+The API provides workspace lifecycle routes, nested task CRUD/retry routes,
+allowlisted command or Python/JavaScript execution, and multipart artifact
+upload/download. List routes use opaque cursor pagination. All failures use the
+same `error.code`, `error.message`, `error.request_id`, and `error.details`
+envelope. The authenticated OpenAPI 3.0 document is available from
+`GET /api/v1/schema`; only `GET /api/v1/health` is unauthenticated.
+
+Local models can use the same service layer through the built-in
+`nexus_agent_api` function in the `workspace` toolset. The function accepts an
+`operation`, nullable `workspace_id` and `task_id`, and a `parameters` object.
+It supports workspace lifecycle, task CRUD/retry, execution, and bounded
+base64 artifact upload/download. For example:
+
+```json
+{
+  "operation": "create_task",
+  "workspace_id": "code_abcdef123456",
+  "task_id": null,
+  "parameters": {
+    "instruction": "Add regression coverage for the gateway change",
+    "priority": "high",
+    "max_retries": 2
+  }
+}
+```
+
+The tool never accepts a token as a model argument. Gateway execution passes
+the authenticated caller internally: personal tokens retain their exact scopes
+and optional workspace binding, while Chat UI sessions act only as their logged
+in user. Static service bearer tokens and unauthenticated scheduled runs cannot
+use the tool. The default gateway-exec toolsets include `workspace`; global
+`client_exec` versus `gateway_exec` behavior is otherwise unchanged.
 
 ### Scheduled Tasks
 

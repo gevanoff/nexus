@@ -32,6 +32,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from app.auth import require_bearer
+from app.agent_api.auth import AgentToolCaller, agent_tool_caller_from_request
+from app.agent_api.constants import OPERATIONS as AGENT_API_OPERATIONS
 from app.backends import backend_provider_name, llm_backends
 from app.config import S
 from app.models import ToolExecRequest
@@ -406,7 +408,7 @@ def _tool_category(name: str) -> str:
         return "scheduling"
     if name.startswith("memory_"):
         return "memory"
-    if name in {"coding_task_create", "coding_task_intervene"}:
+    if name in {"coding_task_create", "coding_task_intervene", "nexus_agent_api"}:
         return "workspace"
     if name in {"write_file", "git", "shell", "coding_model_integration"}:
         return "workspace"
@@ -453,6 +455,8 @@ def tool_usage_guidance(names: set[str] | list[str] | tuple[str, ...]) -> list[s
         guidance.append("Use coding_task_monitor to triage coding workspaces, coding_task_inspect for one workspace, and coding_task_intervene only for bounded actions like resume or guidance.")
     if "coding_task_create" in allowed:
         guidance.append("Use coding_task_create to create a general coding workspace only when the scheduled task has a concrete implementation prompt and target repository.")
+    if "nexus_agent_api" in allowed:
+        guidance.append("Use nexus_agent_api for authenticated coding workspace lifecycle, task, execution, and artifact operations; begin with me or list_workspaces when identifiers are unknown.")
     if "coding_task_notify" in allowed:
         guidance.append("Use coding_task_notify when Nexus Sentinel finds a user-facing noteworthy update that should be sent as a Telegram alert for a coding workspace owner.")
     if allowed.intersection({"write_file", "git", "shell"}):
@@ -1571,6 +1575,18 @@ def tool_coding_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": task.get("status") != "error", "task": task}
 
 
+def tool_nexus_agent_api(args: Dict[str, Any]) -> Dict[str, Any]:
+    from app.agent_api.tool import execute_agent_api_tool
+
+    caller = args.pop("__caller", None)
+    return _run_coroutine_sync(
+        execute_agent_api_tool(
+            args,
+            caller if isinstance(caller, AgentToolCaller) else None,
+        )
+    )
+
+
 def tool_coding_task_monitor(args: Dict[str, Any]) -> Dict[str, Any]:
     limit = int(args.get("limit") or 20)
     stalled_after_sec = float(args.get("stalled_after_sec") or 900.0)
@@ -1829,6 +1845,7 @@ TOOL_IMPL = {
     "models_refresh": tool_models_refresh,
     "coding_model_integration": tool_coding_model_integration,
     "coding_task_create": tool_coding_task_create,
+    "nexus_agent_api": tool_nexus_agent_api,
     "coding_task_monitor": tool_coding_task_monitor,
     "coding_task_inspect": tool_coding_task_inspect,
     "coding_task_intervene": tool_coding_task_intervene,
@@ -1910,6 +1927,8 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
         allowed.add("coding_model_integration")
     if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_supervision", True)):
         allowed.update({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene", "coding_task_notify"})
+    if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_agent_api", True)):
+        allowed.add("nexus_agent_api")
     return allowed
 
 
@@ -2233,6 +2252,25 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
+    "nexus_agent_api": {
+        "name": "nexus_agent_api",
+        "version": "1",
+        "description": (
+            "Use the authenticated Nexus Agent API to manage coding workspaces, tasks, execution, and artifacts. "
+            "Parameters mirror REST request or query fields; binary artifact content is base64."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operation": {"type": "string", "enum": list(AGENT_API_OPERATIONS)},
+                "workspace_id": {"type": ["string", "null"]},
+                "task_id": {"type": ["string", "null"]},
+                "parameters": {"type": "object"},
+            },
+            "required": ["operation", "workspace_id", "task_id", "parameters"],
+            "additionalProperties": False,
+        },
+    },
     "coding_task_monitor": {
         "name": "coding_task_monitor",
         "version": "1",
@@ -2419,7 +2457,13 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def run_tool_call(name: str, arguments_json: str, *, allowed_tools: set[str] | None = None) -> Dict[str, Any]:
+def run_tool_call(
+    name: str,
+    arguments_json: str,
+    *,
+    allowed_tools: set[str] | None = None,
+    caller: AgentToolCaller | None = None,
+) -> Dict[str, Any]:
     if not isinstance(name, str) or not name.strip():
         return {
             "ok": False,
@@ -2466,7 +2510,7 @@ def run_tool_call(name: str, arguments_json: str, *, allowed_tools: set[str] | N
 
     try:
         # Delegate to the same deterministic executor used by /v1/tools.
-        return _execute_tool(name, args, allowed_tools=allowed_tools)
+        return _execute_tool(name, args, allowed_tools=allowed_tools, caller=caller)
     except HTTPException as e:
         detail = e.detail
         if isinstance(detail, dict):
@@ -2496,7 +2540,13 @@ def run_tool_call(name: str, arguments_json: str, *, allowed_tools: set[str] | N
         }
 
 
-def _execute_tool(name: str, args: Dict[str, Any], *, allowed_tools: set[str] | None = None) -> Dict[str, Any]:
+def _execute_tool(
+    name: str,
+    args: Dict[str, Any],
+    *,
+    allowed_tools: set[str] | None = None,
+    caller: AgentToolCaller | None = None,
+) -> Dict[str, Any]:
     """Execute a tool with validation + replay ID + deterministic logging."""
 
     sem = _tools_concurrency_sem()
@@ -2587,6 +2637,8 @@ def _execute_tool(name: str, args: Dict[str, Any], *, allowed_tools: set[str] | 
                 impl_args = dict(args)
                 if name == "tool_manifest" and allowed_tools is not None:
                     impl_args["__allowed_tools"] = sorted(allowed_tools)
+                if name == "nexus_agent_api":
+                    impl_args["__caller"] = caller
                 out = _normalize_tool_result(TOOL_IMPL[name](impl_args))
         except Exception as e:
             out = _normalize_tool_result({"ok": False, "error": f"{type(e).__name__}: {e}"})
@@ -2636,6 +2688,14 @@ def _execute_tool(name: str, args: Dict[str, Any], *, allowed_tools: set[str] | 
             if isinstance(se, str):
                 tool_io_bytes += len(se.encode("utf-8", errors="ignore"))
 
+    logged_args = args
+    if name == "nexus_agent_api" and str(args.get("operation") or "") == "upload_artifact":
+        logged_args = dict(args)
+        parameters = dict(args.get("parameters") or {}) if isinstance(args.get("parameters"), dict) else {}
+        encoded = parameters.get("content_base64")
+        if isinstance(encoded, str):
+            parameters["content_base64"] = f"[OMITTED {len(encoded)} base64 characters]"
+        logged_args["parameters"] = parameters
     event = {
         "ts": ts,
         "replay_id": replay_id,
@@ -2646,7 +2706,7 @@ def _execute_tool(name: str, args: Dict[str, Any], *, allowed_tools: set[str] | 
         "tool_runtime_ms": tool_runtime_ms,
         "tool_cpu_ms": tool_cpu_ms,
         "tool_io_bytes": tool_io_bytes,
-        "args": _truncate(args, max_chars=10_000),
+        "args": _truncate(logged_args, max_chars=10_000),
         "result": _truncate(out, max_chars=20_000),
     }
 
@@ -2826,6 +2886,7 @@ async def v1_tools_dispatch(req: Request):
         name.strip(),
         args,
         allowed_tools=_allowed_tool_names_for_req(req),
+        caller=agent_tool_caller_from_request(req),
     )
 
 
@@ -2849,4 +2910,5 @@ async def v1_tools_exec(req: Request, name: str):
         name,
         args,
         allowed_tools=_allowed_tool_names_for_req(req),
+        caller=agent_tool_caller_from_request(req),
     )

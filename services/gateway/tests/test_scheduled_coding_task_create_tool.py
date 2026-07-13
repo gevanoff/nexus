@@ -26,7 +26,9 @@ class _JsonRequest:
 
 def test_coding_task_create_is_selectable_but_default_off_for_scheduled_tasks():
     assert "coding_task_create" in ar.tools_for_tier(1)
+    assert "nexus_agent_api" in ar.tools_for_tier(1)
     assert "coding_task_create" not in ui_routes._default_task_tools(1)
+    assert "nexus_agent_api" not in ui_routes._default_task_tools(1)
     assert "coding workspaces" in ui_routes._task_tool_default_off_reason("coding_task_create")
 
     selected = ui_routes._coerce_selected_tools(["coding_task_create"], 1)

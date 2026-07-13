@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import HTTPException
 
 from app.models import ChatCompletionRequest, ChatMessage
+from app.agent_api.auth import AgentToolCaller
 from app.tools_bus import run_tool_call
 from app.upstreams import call_backend_chat
 
@@ -16,6 +17,7 @@ async def tool_loop(
     model_name: str,
     max_steps: int = 8,
     allowed_tools: set[str] | None = None,
+    caller: AgentToolCaller | None = None,
 ) -> Dict[str, Any]:
     req = initial_req
     for _ in range(max_steps):
@@ -35,7 +37,7 @@ async def tool_loop(
             fn = (tc or {}).get("function") or {}
             name = fn.get("name")
             arguments = fn.get("arguments", "")
-            result = run_tool_call(name, arguments, allowed_tools=allowed_tools)
+            result = run_tool_call(name, arguments, allowed_tools=allowed_tools, caller=caller)
             new_messages.append(ChatMessage(role="tool", tool_call_id=tc.get("id"), content=json.dumps(result)))
 
         req = ChatCompletionRequest(

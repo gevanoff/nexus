@@ -120,7 +120,9 @@ def _hash_api_key(token: str) -> str:
 
 
 def _new_api_key_token() -> str:
-    return "gk_" + secrets.token_urlsafe(40).replace("-", "_")
+    # Existing gk_ tokens remain valid because authentication is hash-based.
+    # New personal access tokens use the public Agent API token format.
+    return "nxs_pat_" + secrets.token_hex(32)
 
 
 def _api_key_hint(token: str) -> str:

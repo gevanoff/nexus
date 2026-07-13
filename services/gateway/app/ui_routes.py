@@ -61,6 +61,7 @@ from app import telegram_notifications
 from app import model_benchmark
 from app import model_tool_qualification
 from app.auth import configured_static_bearer_tokens, require_bearer
+from app.agent_api.auth import agent_tool_caller_from_request
 from app.agent_runtime_v1 import tools_for_tier
 from app.resources_snapshot import (
     build_registry_backend_status_payload,
@@ -1074,12 +1075,13 @@ def _require_user(req: Request) -> Optional[user_store.User]:
     if not getattr(S, "USER_AUTH_ENABLED", True):
         return None
     token = _session_token_from_req(req)
+    key_meta = None
     user = user_store.get_user_by_session(S.USER_DB_PATH, token=token)
     if user is None and token:
         try:
             resolved = user_store.get_user_by_api_key(S.USER_DB_PATH, token=token, touch_last_used=True)
             if resolved:
-                user, _key_meta = resolved
+                user, key_meta = resolved
         except Exception:
             user = None
     if user is None and token:
@@ -1091,6 +1093,9 @@ def _require_user(req: Request) -> Optional[user_store.User]:
         raise HTTPException(status_code=401, detail="authentication required")
     try:
         req.state.user = user
+        if isinstance(key_meta, dict):
+            req.state.api_key = key_meta
+            req.state.auth_kind = "api_key"
     except Exception:
         pass
     return user
@@ -2541,7 +2546,7 @@ def _tool_tier(name: str) -> int:
 def _task_tool_category(name: str) -> str:
     if name.startswith("agent_task_"):
         return "scheduling"
-    if name in {"coding_model_integration", "coding_task_create"}:
+    if name in {"coding_model_integration", "coding_task_create", "nexus_agent_api"}:
         return "coding_workspace"
     if name.startswith("coding_task_"):
         return "coding_supervision"
@@ -2567,6 +2572,8 @@ def _task_tool_default_off_reason(name: str) -> str:
         return "off by default: can create model-integration coding workspaces and optionally start coding agents"
     if name == "coding_task_create":
         return "off by default: can create coding workspaces and optionally start coding agents"
+    if name == "nexus_agent_api":
+        return "off by default: requires an interactive authenticated caller and can modify coding workspaces"
     if name == "shell":
         return "off by default: can execute configured shell commands"
     return ""
@@ -6052,6 +6059,7 @@ async def ui_chat_stream(req: Request):
                     alias=alias,
                     call_backend=ui_gateway_exec_call,
                     request_id=str(getattr(req.state, "request_id", "") or "ui"),
+                    caller=agent_tool_caller_from_request(req, allow_session_user=True),
                 )
                 upstream_gen = stream_final_chat_response(loop_result.response)
         else:

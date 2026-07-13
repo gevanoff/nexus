@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from fastapi import HTTPException, Request
 
 from app.backends import backend_provider_name
+from app.agent_api.auth import agent_tool_caller_from_request
 from app.config import S, logger
 from app.models import AgentRunRequest, AgentSpecModel, ChatCompletionRequest, ChatMessage, ToolFunction, ToolSpec
 from app.openai_utils import new_id, now_unix
@@ -26,6 +27,7 @@ _LIGHT_TIER1_TOOLS = frozenset(
     {
         "coding_model_integration",
         "coding_task_create",
+        "nexus_agent_api",
         "coding_task_monitor",
         "coding_task_inspect",
         "coding_task_intervene",
@@ -162,6 +164,7 @@ def tools_for_tier(tier: int) -> set[str]:
         "memory_v2_list",
         "memory_v2_delete",
         "heartmula_generate",
+        "nexus_agent_api",
         "coding_model_integration",
         "coding_task_create",
         "coding_task_monitor",
@@ -540,7 +543,12 @@ async def run_agent_v1(
                     if not isinstance(name, str) or not name.strip():
                         raise HTTPException(status_code=502, detail="invalid tool call from model")
 
-                    tool_res = run_tool_call(name.strip(), arguments if isinstance(arguments, str) else "", allowed_tools=set(allowed))
+                    tool_res = run_tool_call(
+                        name.strip(),
+                        arguments if isinstance(arguments, str) else "",
+                        allowed_tools=set(allowed),
+                        caller=agent_tool_caller_from_request(req),
+                    )
 
                     try:
                         io_bytes = tool_res.get("tool_io_bytes")
