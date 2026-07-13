@@ -3101,7 +3101,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
             "finished_at": task.get("agent_finished_at"),
             "elapsed_runtime_sec": agent_elapsed,
             "cycle": int(task.get("agent_cycle") or 0),
-            "max_cycles": int(task.get("agent_max_cycles") or getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80) or 80),
+            "max_cycles": int(task.get("agent_max_cycles") or getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 1000) or 1000),
             "max_runtime_sec": int(task.get("agent_max_runtime_sec") or getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60)),
             "context_reset_cycles": int(task.get("agent_context_reset_cycles") or getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12),
             "last_event_at": task.get("agent_last_event_at"),
