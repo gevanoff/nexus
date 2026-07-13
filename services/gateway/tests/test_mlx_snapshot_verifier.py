@@ -42,3 +42,14 @@ def test_native_mlx_installer_ships_prefetch_verifier_next_to_helper():
 
     assert 'MLX_SNAPSHOT_VERIFIER="${MLX_VENV}/bin/verify_model_snapshot.py"' in installer
     assert 'verify_model_snapshot.py" "${MLX_SNAPSHOT_VERIFIER}' in installer
+
+
+def test_native_mlx_installer_persists_batching_mode_and_honors_readiness_timeout():
+    root = Path(__file__).resolve().parents[3]
+    installer = (root / "services" / "mlx" / "scripts" / "install-native-macos.sh").read_text(encoding="utf-8")
+    launcher = (root / "services" / "mlx" / "scripts" / "run-native-macos.sh").read_text(encoding="utf-8")
+
+    assert "--disable-batching" in installer
+    assert 'update_env_file_key "${MLX_ENV_FILE}" MLX_DISABLE_BATCHING' in installer
+    assert "SECONDS + MLX_MODEL_READY_TIMEOUT_SEC" in installer
+    assert 'batching_args+=(--disable-batching)' in launcher

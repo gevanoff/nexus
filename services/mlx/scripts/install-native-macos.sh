@@ -85,6 +85,7 @@ MLX_PREFETCH_HELPER_COMPAT="${MLX_VENV}/bin/prefetch_models.py"
 MLX_SNAPSHOT_VERIFIER="${MLX_VENV}/bin/verify_model_snapshot.py"
 MLX_PACKAGE_PATCHER="${MLX_VENV}/bin/mlx-patch-openai-server.py"
 PREFETCH_BEFORE_START="${PREFETCH_BEFORE_START:-1}"
+MLX_DISABLE_BATCHING="${MLX_DISABLE_BATCHING:-0}"
 
 HOST_FROM_SHELL="false"
 PORT_FROM_SHELL="false"
@@ -92,6 +93,7 @@ MODEL_PATH_FROM_SHELL="false"
 MODEL_TYPE_FROM_SHELL="false"
 CONFIG_PATH_FROM_SHELL="false"
 PREFETCH_FROM_CLI="false"
+DISABLE_BATCHING_FROM_CLI="false"
 CACHE_HOME_FROM_SHELL="false"
 HF_HOME_FROM_SHELL="false"
 
@@ -128,6 +130,7 @@ Options:
   --user USER         Service user (default: mlx)
   --skip-prefetch     Do not prefetch model repos before starting the service
   --prefetch-only     Prefetch model repos and exit without restarting launchd
+  --disable-batching  Disable continuous batching for single-request/constrained hosts
 EOF
 }
 
@@ -182,6 +185,11 @@ while [[ $# -gt 0 ]]; do
       PREFETCH_FROM_CLI="prefetch_only"
       shift
       ;;
+    --disable-batching)
+      MLX_DISABLE_BATCHING="1"
+      DISABLE_BATCHING_FROM_CLI="true"
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -218,6 +226,9 @@ if [[ -f "$MLX_ENV_FILE" ]]; then
   if [[ "$PREFETCH_FROM_CLI" != "true" && "$PREFETCH_FROM_CLI" != "prefetch_only" ]]; then
     PREFETCH_BEFORE_START="$(env_file_get "$MLX_ENV_FILE" PREFETCH_BEFORE_START "$PREFETCH_BEFORE_START")"
   fi
+  if [[ "$DISABLE_BATCHING_FROM_CLI" != "true" ]]; then
+    MLX_DISABLE_BATCHING="$(env_file_get "$MLX_ENV_FILE" MLX_DISABLE_BATCHING "$MLX_DISABLE_BATCHING")"
+  fi
 fi
 
 if [[ ! "$MLX_PORT" =~ ^[0-9]+$ ]]; then
@@ -234,6 +245,15 @@ case "$(lowercase_value "$PREFETCH_BEFORE_START")" in
   0 | false | no | off) PREFETCH_BEFORE_START="0" ;;
   *)
     echo "ERROR: invalid PREFETCH_BEFORE_START value: ${PREFETCH_BEFORE_START}" >&2
+    exit 2
+    ;;
+esac
+
+case "$(lowercase_value "$MLX_DISABLE_BATCHING")" in
+  1 | true | yes | on) MLX_DISABLE_BATCHING="1" ;;
+  0 | false | no | off) MLX_DISABLE_BATCHING="0" ;;
+  *)
+    echo "ERROR: invalid MLX_DISABLE_BATCHING value: ${MLX_DISABLE_BATCHING}" >&2
     exit 2
     ;;
 esac
@@ -357,6 +377,7 @@ update_env_file_key "${MLX_ENV_FILE}" XDG_CACHE_HOME "${XDG_CACHE_HOME}"
 update_env_file_key "${MLX_ENV_FILE}" HF_HOME "${HF_HOME}"
 update_env_file_key "${MLX_ENV_FILE}" PREFETCH_BEFORE_START "${PREFETCH_BEFORE_START}"
 update_env_file_key "${MLX_ENV_FILE}" MLX_MODEL_READY_TIMEOUT_SEC "${MLX_MODEL_READY_TIMEOUT_SEC}"
+update_env_file_key "${MLX_ENV_FILE}" MLX_DISABLE_BATCHING "${MLX_DISABLE_BATCHING}"
 
 if [[ "$PREFETCH_BEFORE_START" == "1" ]]; then
   echo "Prefetching MLX model repositories before starting launchd service..." >&2
@@ -440,15 +461,21 @@ if ! sudo launchctl bootstrap system "${PLIST_PATH}"; then
 fi
 sudo launchctl kickstart -k "system/${LAUNCHD_LABEL}"
 
-for _ in {1..20}; do
-  if curl -fsS "http://${MLX_HOST}:${MLX_PORT}/v1/models" >/dev/null 2>&1; then
+health_host="${MLX_HOST}"
+if [[ "$health_host" == "0.0.0.0" || "$health_host" == "::" ]]; then
+  health_host="127.0.0.1"
+fi
+health_url="http://${health_host}:${MLX_PORT}/v1/models"
+readiness_deadline=$((SECONDS + MLX_MODEL_READY_TIMEOUT_SEC))
+while ((SECONDS < readiness_deadline)); do
+  if curl -fsS "$health_url" >/dev/null 2>&1; then
     break
   fi
-  sleep 1
+  sleep 2
 done
 
-if ! curl -fsS "http://${MLX_HOST}:${MLX_PORT}/v1/models" >/dev/null 2>&1; then
-  echo "ERROR: launchd service started but health endpoint is not reachable yet: http://${MLX_HOST}:${MLX_PORT}/v1/models" >&2
+if ! curl -fsS "$health_url" >/dev/null 2>&1; then
+  echo "ERROR: launchd service did not become ready within ${MLX_MODEL_READY_TIMEOUT_SEC}s: ${health_url}" >&2
   echo "Check service state:" >&2
   echo "  sudo launchctl print system/${LAUNCHD_LABEL}" >&2
   echo "Check logs:" >&2
@@ -458,5 +485,5 @@ if ! curl -fsS "http://${MLX_HOST}:${MLX_PORT}/v1/models" >/dev/null 2>&1; then
 fi
 
 echo "Installed ${LAUNCHD_LABEL} (${MLX_USER}) on ${MLX_HOST}:${MLX_PORT}" >&2
-echo "Health check: curl -fsS http://${MLX_HOST}:${MLX_PORT}/v1/models" >&2
+echo "Health check: curl -fsS ${health_url}" >&2
 echo "Runtime config: ${MLX_ENV_FILE} (edit and kickstart ${LAUNCHD_LABEL} to change model/path)" >&2

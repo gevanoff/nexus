@@ -17,6 +17,7 @@ MLX_MODEL_PATH="${MLX_MODEL_PATH:-mlx-community/GLM-5.2-4bit}"
 MLX_MODEL_TYPE="${MLX_MODEL_TYPE:-lm}"
 MLX_CONFIG_PATH="${MLX_CONFIG_PATH:-}"
 PREFETCH_BEFORE_START="${PREFETCH_BEFORE_START:-0}"
+MLX_DISABLE_BATCHING="${MLX_DISABLE_BATCHING:-0}"
 MLX_PREFETCHER="${MLX_VENV}/bin/mlx-prefetch-models"
 
 lowercase_value() {
@@ -24,15 +25,15 @@ lowercase_value() {
 }
 
 case "$(lowercase_value "$PREFETCH_BEFORE_START")" in
-  1|true|yes|on)
+  1 | true | yes | on)
     if [[ -x "$MLX_PREFETCHER" ]]; then
       "$MLX_PREFETCHER"
     else
       echo "WARNING: PREFETCH_BEFORE_START is enabled but prefetch helper is missing: ${MLX_PREFETCHER}" >&2
     fi
     ;;
-  0|false|no|off)
-    ;;
+  0 | false | no | off) ;;
+
   *)
     echo "ERROR: invalid PREFETCH_BEFORE_START value: ${PREFETCH_BEFORE_START}" >&2
     exit 2
@@ -44,8 +45,19 @@ if [[ -n "$MLX_CONFIG_PATH" ]]; then
     --config "$MLX_CONFIG_PATH"
 fi
 
+batching_args=()
+case "$(lowercase_value "$MLX_DISABLE_BATCHING")" in
+  1 | true | yes | on) batching_args+=(--disable-batching) ;;
+  0 | false | no | off) ;;
+  *)
+    echo "ERROR: invalid MLX_DISABLE_BATCHING value: ${MLX_DISABLE_BATCHING}" >&2
+    exit 2
+    ;;
+esac
+
 exec "${MLX_VENV}/bin/mlx-openai-server" launch \
   --model-path "$MLX_MODEL_PATH" \
   --model-type "$MLX_MODEL_TYPE" \
   --host "$MLX_HOST" \
-  --port "$MLX_PORT"
+  --port "$MLX_PORT" \
+  "${batching_args[@]}"
