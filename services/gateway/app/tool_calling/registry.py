@@ -7,7 +7,9 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlsplit
@@ -161,6 +163,18 @@ async def _file_read(args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "path": str(path), "start_line": start, "end_line": min(end, len(lines)), "content": redact_secrets(content[:max_chars]), "truncated": truncated}
 
 
+async def _file_stat(args: dict[str, Any]) -> dict[str, Any]:
+    path = _resolve_path(args["path"])
+    stat = path.stat()
+    return {
+        "ok": True,
+        "path": str(path),
+        "type": "directory" if path.is_dir() else "file",
+        "size_bytes": stat.st_size,
+        "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+    }
+
+
 async def _file_grep(args: dict[str, Any]) -> dict[str, Any]:
     root = _resolve_path(args["root"], require_dir=True)
     pattern = str(args["pattern"])
@@ -213,6 +227,71 @@ async def _git_diff(args: dict[str, Any]) -> dict[str, Any]:
     if args["path"]:
         command.extend(["--", args["path"]])
     return await asyncio.to_thread(_git, command, repo, args["max_chars"])
+
+
+def _git_log_command(repo: Path, *, limit: int, path: str | None) -> list[str]:
+    command = [
+        "git",
+        "-C",
+        str(repo),
+        "log",
+        f"--max-count={limit}",
+        "--date=iso-strict",
+        "--format=%H%x1f%h%x1f%aI%x1f%an%x1f%s%x1e",
+    ]
+    if path:
+        relative = Path(path)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("path must be relative to the repository")
+        command.extend(["--", path])
+    return command
+
+
+def _git_log_result(stdout: str, stderr: str, returncode: int) -> dict[str, Any]:
+    commits: list[dict[str, Any]] = []
+    for record in stdout.split("\x1e"):
+        fields = record.strip().split("\x1f")
+        if len(fields) != 5:
+            continue
+        commits.append(
+            {
+                "commit": fields[0],
+                "short_commit": fields[1],
+                "authored_at": fields[2],
+                "author": redact_secrets(fields[3]),
+                "subject": redact_secrets(fields[4]),
+            }
+        )
+    return {
+        "ok": returncode == 0,
+        "exit_code": returncode,
+        "commits": commits,
+        "error": redact_secrets(stderr.strip()) if returncode else None,
+    }
+
+
+def _run_git_log(command: list[str]) -> dict[str, Any]:
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        try:
+            result = subprocess.run(command, stdout=stdout_file, stderr=stderr_file, timeout=20, check=False)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": "git log timed out"}
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read().decode("utf-8", errors="replace")
+        stderr = stderr_file.read().decode("utf-8", errors="replace")
+    return _git_log_result(stdout, stderr, result.returncode)
+
+
+async def _git_log(args: dict[str, Any]) -> dict[str, Any]:
+    repo = _resolve_path(args["repo"], require_dir=True)
+    try:
+        command = _git_log_command(repo, limit=args["limit"], path=args["path"])
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if os.name == "nt":
+        return _run_git_log(command)
+    return await asyncio.to_thread(_run_git_log, command)
 
 
 async def _resources(args: dict[str, Any]) -> dict[str, Any]:
@@ -278,9 +357,11 @@ _DEFINITIONS = [
     NexusToolDefinition("nexus_tool_diagnostics", "Report provider-neutral tool-calling capabilities for every alias.", _props(), "core", implementation=_diagnostics),
     NexusToolDefinition("nexus_file_list", "List bounded files under allowlisted Nexus roots.", _props(path={"type": "string"}, max_depth={"type": "integer", "minimum": 0, "maximum": 5}, limit={"type": "integer", "minimum": 1, "maximum": 200}), "repo", implementation=_file_list),
     NexusToolDefinition("nexus_file_read", "Read a bounded text file under allowlisted Nexus roots.", _props(path={"type": "string"}, start_line={"type": ["integer", "null"], "minimum": 1}, end_line={"type": ["integer", "null"], "minimum": 1}, max_chars={"type": "integer", "minimum": 1, "maximum": 50000}), "repo", output_limit=50000, implementation=_file_read),
+    NexusToolDefinition("nexus_file_stat", "Inspect metadata for a file or directory under allowlisted Nexus roots.", _props(path={"type": "string"}), "repo", implementation=_file_stat),
     NexusToolDefinition("nexus_file_grep", "Search text under an allowlisted Nexus root.", _props(root={"type": "string"}, pattern={"type": "string"}, glob={"type": ["string", "null"]}, limit={"type": "integer", "minimum": 1, "maximum": 200}), "repo", implementation=_file_grep),
     NexusToolDefinition("nexus_git_status", "Inspect an allowlisted Nexus repository status.", _props(repo={"type": "string"}, short={"type": "boolean"}), "repo", implementation=_git_status),
     NexusToolDefinition("nexus_git_diff", "Read a bounded diff from an allowlisted Nexus repository.", _props(repo={"type": "string"}, path={"type": ["string", "null"]}, cached={"type": "boolean"}, max_chars={"type": "integer", "minimum": 1, "maximum": 60000}), "repo", output_limit=60000, implementation=_git_diff),
+    NexusToolDefinition("nexus_git_log", "Read structured recent history from an allowlisted Nexus repository.", _props(repo={"type": "string"}, path={"type": ["string", "null"]}, limit={"type": "integer", "minimum": 1, "maximum": 50}), "repo", implementation=_git_log),
     NexusToolDefinition("nexus_resources_snapshot", "Return a bounded Nexus hardware and service resource snapshot.", _props(scope={"type": "string", "enum": ["local", "cluster"]}), "ops", implementation=_resources),
     NexusToolDefinition("nexus_docker_ps", "List Nexus containers without exposing environment values.", _props(all={"type": "boolean"}), "ops", implementation=_docker_ps),
     NexusToolDefinition("nexus_docker_logs", "Tail bounded, redacted logs from allowlisted Nexus containers.", _props(container={"type": "string"}, tail={"type": "integer", "minimum": 1, "maximum": 500}, since={"type": ["string", "null"]}), "ops", implementation=_docker_logs),

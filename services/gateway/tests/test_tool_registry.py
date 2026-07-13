@@ -61,3 +61,45 @@ async def test_file_grep_matches_glob_relative_to_selected_root(monkeypatch, tmp
 
     assert result["ok"] is True
     assert [match["path"] for match in result["matches"]] == ["src/wanted.py"]
+
+
+@pytest.mark.asyncio
+async def test_file_stat_returns_bounded_metadata(monkeypatch, tmp_path):
+    path = tmp_path / "README.md"
+    path.write_text("hello\n", encoding="utf-8")
+    monkeypatch.setattr(S, "NEXUS_TOOL_FS_ROOTS", str(tmp_path))
+
+    result = await registry.builtin_tool_definitions()["nexus_file_stat"].implementation({"path": "README.md"})
+
+    assert result["ok"] is True
+    assert result["type"] == "file"
+    assert result["size_bytes"] == path.stat().st_size
+    assert result["modified_at"].endswith("+00:00")
+
+
+@pytest.mark.asyncio
+async def test_git_log_returns_structured_history(monkeypatch, tmp_path):
+    (tmp_path / "README.md").write_text("hello\n", encoding="utf-8")
+    monkeypatch.setattr(S, "NEXUS_TOOL_FS_ROOTS", str(tmp_path))
+    captured = {}
+
+    def fake_git_log(command):
+        captured["command"] = command
+        return registry._git_log_result(
+            "a" * 40 + "\x1f" + "a" * 7 + "\x1f2026-07-12T12:00:00+00:00\x1fNexus Test\x1fInitial commit\x1e",
+            "",
+            0,
+        )
+
+    monkeypatch.setattr(registry, "_run_git_log", fake_git_log)
+
+    result = await registry.builtin_tool_definitions()["nexus_git_log"].implementation(
+        {"repo": ".", "path": "README.md", "limit": 5}
+    )
+
+    assert result["ok"] is True
+    assert len(result["commits"]) == 1
+    assert result["commits"][0]["subject"] == "Initial commit"
+    assert len(result["commits"][0]["commit"]) == 40
+    assert "--max-count=5" in captured["command"]
+    assert captured["command"][-2:] == ["--", "README.md"]

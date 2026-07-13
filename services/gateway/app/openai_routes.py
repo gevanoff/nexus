@@ -43,8 +43,15 @@ from app.upstreams import (
 from app.memory_routes import inject_memory
 from app import memory_v2, mlx_huge_lane
 from app.tool_calling.capabilities import tool_calling_diagnostics
-from app.tool_calling.executor import prepare_tools, resolve_execution_policy, run_gateway_tool_loop
+from app.tool_calling.executor import (
+    prepare_tools,
+    request_has_tool_intent,
+    resolve_execution_policy,
+    run_gateway_tool_loop,
+    tool_intent_param,
+)
 from app.tool_calling.streaming import stream_final_chat_response
+from app.souls import apply_alias_soul
 
 
 router = APIRouter()
@@ -177,6 +184,14 @@ def _alias_allows_tools(alias_name: Optional[str]) -> bool:
 
 def _tool_fields_present(cc: ChatCompletionRequest) -> bool:
     return bool(cc.tools) or cc.tool_choice is not None or cc.parallel_tool_calls is not None
+
+
+def _tool_execution_disabled_response(cc: ChatCompletionRequest, *, request_id: str) -> JSONResponse:
+    return _openai_error_response(
+        "Tool use is disabled for this request; omit tools and parallel_tool_calls, and set tool_choice to none or omit it.",
+        param=tool_intent_param(cc) or "tools",
+        detail={"request_id": request_id, "error": "tool_execution_disabled"},
+    )
 
 
 def _body_keys(body: Any) -> list[str]:
@@ -981,7 +996,7 @@ def _normalize_chat_request_for_backend(
     )
 
 
-_BACKENDS_WITH_UNSUPPORTED_STREAM_OPTIONS = {"local_mlx"}
+_BACKENDS_WITH_UNSUPPORTED_STREAM_OPTIONS = {"local_mlx", "local_mlx_migraine"}
 
 
 def _normalize_stream_options_for_backend(
@@ -1229,6 +1244,22 @@ async def chat_completions(req: Request):
             detail={"request_id": request_id, "errors": exc.errors(include_url=False)},
         )
 
+    # Disabled tool execution is a request boundary, not a backend capability.
+    # Enforce it before routing, normalization, admission, or upstream dispatch.
+    try:
+        requested_alias = get_aliases().get(cc.model)
+        preflight_policy = resolve_execution_policy(cc, requested_alias)
+        if preflight_policy.mode == "disabled":
+            if request_has_tool_intent(cc):
+                return _tool_execution_disabled_response(cc, request_id=request_id)
+            cc = prepare_tools(cc, preflight_policy, requested_alias)
+    except (TypeError, ValueError) as exc:
+        return _openai_error_response(
+            f"Invalid Nexus tool execution policy: {exc}",
+            param="x_nexus.tool_execution_mode",
+            detail={"request_id": request_id, "error": "invalid_tool_execution_policy"},
+        )
+
     admission = None
     backend_class = ""
     backend = ""
@@ -1258,6 +1289,18 @@ async def chat_completions(req: Request):
         backend = route.backend
         model_name = route.model
 
+        cc = _apply_alias_constraints(cc, alias_name=alias_name)
+        alias_config = get_aliases().get(alias_name) if alias_name else None
+        cc = apply_alias_soul(cc, alias_config)
+        try:
+            execution_policy = resolve_execution_policy(cc, alias_config)
+            if execution_policy.mode in {"gateway_exec", "disabled"}:
+                if execution_policy.mode == "disabled" and request_has_tool_intent(cc):
+                    return _tool_execution_disabled_response(cc, request_id=request_id)
+                cc = prepare_tools(cc, execution_policy, alias_config)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail={"error": "invalid_tool_execution_policy", "message": str(exc)}) from exc
+
         # Check backend health/readiness
         check_backend_ready(backend_class, route_kind="chat")
 
@@ -1268,14 +1311,6 @@ async def chat_completions(req: Request):
         admission = get_admission_controller()
         await admission.acquire(backend_class, "chat")
 
-        cc = _apply_alias_constraints(cc, alias_name=alias_name)
-        alias_config = get_aliases().get(alias_name) if alias_name else None
-        try:
-            execution_policy = resolve_execution_policy(cc, alias_config)
-            if execution_policy.mode in {"gateway_exec", "disabled"}:
-                cc = prepare_tools(cc, execution_policy, alias_config)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail={"error": "invalid_tool_execution_policy", "message": str(exc)}) from exc
         original_cc = cc
 
         cc, degradation_reason, tools_required_error = _normalize_chat_request_for_backend(

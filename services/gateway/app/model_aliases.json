@@ -69,6 +69,41 @@
       "preferred_tool_call_parser": "xlam",
       "max_tokens_cap": 768
     },
+    "ai2-chat": {
+      "backend": "local_mlx",
+      "model": "mlx-community/GLM-5.2-4bit",
+      "label": "ai2 - GLM-5.2 4-bit",
+      "context_window": 65536,
+      "tools": false,
+      "max_tokens_cap": 1024,
+      "soul": "ai2"
+    },
+    "ada2-chat": {
+      "backend": "local_vllm",
+      "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
+      "label": "ada2 - Magistral Small",
+      "context_window": 65536,
+      "tools": false,
+      "max_tokens_cap": 1024,
+      "soul": "ada2"
+    },
+    "stackrot-chat": {
+      "backend": "local_vllm_fast",
+      "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
+      "label": "stackrot - Devstral Small",
+      "context_window": 8192,
+      "tools": false,
+      "max_tokens_cap": 768,
+      "soul": "stackrot"
+    },
+    "migraine-chat": {
+      "backend": "local_mlx_migraine",
+      "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+      "label": "migraine - Llama 3.2 3B",
+      "context_window": 8192,
+      "tools": false,
+      "max_tokens_cap": 768
+    },
     "reasoning": {
       "backend": "local_vllm",
       "model": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",

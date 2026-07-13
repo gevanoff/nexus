@@ -1,0 +1,12 @@
+nexus_manage_checkout: true
+nexus_repo_url: https://github.com/gevanoff/nexus.git
+nexus_sync_existing_checkout: true
+
+# migraine runs Hermes and one small host-native MLX model. Do not add Colima
+# or other model services to this 8 GB machine.
+nexus_manage_docker_runtime: false
+nexus_manage_nvidia_container_runtime: false
+nexus_nvidia_container_runtime_validate: false
+nexus_manage_mlx_host_prep: true
+nexus_verify_gateway: false
+nexus_mlx_port: 10241

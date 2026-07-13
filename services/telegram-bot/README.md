@@ -26,18 +26,38 @@ The bot will bind that private chat to the signed-in Nexus user account so Gatew
 
 Set these in `nexus/.env`:
 
-- `TELEGRAM_TOKEN` (from @BotFather)
+- `TELEGRAM_AI2_TOKEN` (from @BotFather), or the legacy `TELEGRAM_TOKEN`
 - `GATEWAY_BEARER_TOKEN` (same token Gateway expects)
 
 Recommended defaults:
 
 - `TELEGRAM_GATEWAY_BASE_URL=http://gateway:8800`
-- `TELEGRAM_GATEWAY_MODEL=fast`
+- `TELEGRAM_AI2_MODEL=ai2-chat`
 - `TELEGRAM_MAX_HISTORY=20`
 - `TELEGRAM_MAX_MESSAGE=3900`
 - `TELEGRAM_LOG_LEVEL=info`
 
-The Telegram bot defaults to the `fast` alias rather than `auto` so direct chat traffic stays on the user-facing fast tier instead of the default MLX reasoning lane.
+The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use their corresponding `ada2-chat` and `stackrot-chat` aliases.
+
+## Host bot identities
+
+The default service is the `ai2` bot. Two additional services are available under the `host-bots` profile:
+
+| Service | Token | Model alias | SOUL.md |
+| --- | --- | --- | --- |
+| `telegram-bot` | `TELEGRAM_AI2_TOKEN` or legacy `TELEGRAM_TOKEN` | `ai2-chat` | `souls/ai2/SOUL.md` |
+| `telegram-bot-ada2` | `TELEGRAM_ADA2_TOKEN` | `ada2-chat` | `souls/ada2/SOUL.md` |
+| `telegram-bot-stackrot` | `TELEGRAM_STACKROT_TOKEN` | `stackrot-chat` | `souls/stackrot/SOUL.md` |
+
+Each service requires a distinct BotFather token. Start the additional bots only after both tokens are configured:
+
+```bash
+docker compose --profile host-bots --env-file .env \
+  -f docker-compose.gateway.yml -f docker-compose.telegram-bot.yml \
+  up -d --build telegram-bot telegram-bot-ada2 telegram-bot-stackrot
+```
+
+`migraine` is intentionally absent from this Compose profile because its existing Hermes gateway already owns that Telegram identity and `~/.hermes/SOUL.md`.
 
 ## Group routing controls
 

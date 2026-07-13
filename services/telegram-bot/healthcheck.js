@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const TELEGRAM_TOKEN = String(process.env.TELEGRAM_TOKEN || '').trim();
+const TELEGRAM_TOKEN = String(process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_TOKEN_FALLBACK || '').trim();
 const GATEWAY_BEARER_TOKEN = String(process.env.GATEWAY_BEARER_TOKEN || '').trim();
 const GATEWAY_BASE_URL = String(process.env.GATEWAY_BASE_URL || 'http://gateway:8800').replace(/\/+$/, '');
 const GATEWAY_MODEL = String(process.env.GATEWAY_MODEL || 'fast').trim();

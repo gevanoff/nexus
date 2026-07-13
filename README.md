@@ -45,14 +45,14 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - `stackrot` (Ubuntu Linux, Intel Core i7-12700F, about 46 GiB observed system RAM, 2x NVIDIA GeForce RTX 3090 24GB): dual-GPU Linux/NVIDIA node used for media ingress, containerized TTS, and secondary `vllm`/CUDA capacity.
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, NVIDIA RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
 - `meltdown` (Ubuntu 22.04.5, Intel Core i7-5930K, about 47 GiB observed system RAM, NVIDIA GeForce RTX 5060 Ti 16GB class / 15.9 GiB reported VRAM): lighter Linux/NVIDIA host for SDXL-Turbo, vLLM embeddings, overflow, and staging.
-- `migraine` (Mac M2, 8GB unified memory): client-only Hermes Gateway / Telegram bot host. It consumes Nexus models through the gateway and must not be used for production model placement unless it is explicitly promoted into topology.
+- `migraine` (Mac M2, 8GB unified memory): Hermes Gateway / Telegram host plus one tightly bounded native MLX lane for `mlx-community/Llama-3.2-3B-Instruct-4bit`.
 
 Operational implication:
 - Keep gateway and host-native MLX routing on `ai2`; run containerized TTS on `stackrot` with Qwen3-TTS isolated to its second GPU.
 - Treat `stackrot`, `ada2`, and `meltdown` as Linux/NVIDIA hosts; use `deploy/topology/production.json` to decide the active live placement.
 - Prefer `ada2` for the heaviest CUDA image/video jobs and largest `vllm` footprints; use `stackrot` for media ingress, TTS, secondary `vllm` capacity, and overflow CUDA work.
 - Use `meltdown` for lighter CUDA work such as SDXL-Turbo and embeddings, plus overflow/staging; do not assume it can run workloads sized for `ada2`.
-- Treat `migraine` as a Hermes client host only. For interactive Telegram chat, prefer the `fast` alias over `long`; the `long` GLM-5.2 MLX lane is intended for long-context work and has higher response latency.
+- Treat `migraine` as a constrained host: keep Hermes' existing `~/.hermes/SOUL.md` authoritative, limit local MLX to one small model and one request at a time, and route larger work to the rest of the cluster.
 
 Gateway startup hardware context:
 - On startup, the gateway asks lifecycle-manager for a refreshed hardware-capacity snapshot and caches it at `NEXUS_HARDWARE_SNAPSHOT_PATH` (default: `/var/lib/gateway/data/nexus_hardware_snapshot.json`).
@@ -347,7 +347,9 @@ Nexus includes the following services:
 
 ### Telegram Bot (`services/telegram-bot/`)
 - Telegram chat bridge into Gateway endpoints
-- Uses `TELEGRAM_TOKEN` and `GATEWAY_BEARER_TOKEN` from `.env`
+- The default service is the `ai2` identity and retains `TELEGRAM_TOKEN` as a compatibility fallback.
+- The `host-bots` Compose profile adds distinct `ada2` and `stackrot` bots after separate BotFather tokens are configured.
+- `migraine` continues to use its existing Hermes-managed Telegram bot and `~/.hermes/SOUL.md`.
 - Containerized component (no host systemd/launchd required)
 
 ### Hermes Gateway on `migraine`
@@ -356,7 +358,7 @@ Nexus includes the following services:
 - Keep Hermes Telegram toolsets disabled or very small for chat-style turns; the current fast vLLM lanes have tight context windows, and tool schemas can push otherwise short Telegram requests over the model limit.
 - Hermes requires at least 64000 tokens. When it uses `fast-reasoning`, set `model.context_length` to 65536 to match the strong lane and give the model enough one-call output headroom to finish a concise response instead of triggering Hermes continuation retries.
 - Enable Hermes native streaming, but use a conservative Telegram edit interval (about four seconds) to avoid Bot API flood-control delays. Use an idle/daily session reset so stale group history does not grow without bound.
-- Do not place Nexus model-serving backends on `migraine` unless the topology and hardware policy are deliberately changed.
+- The only Nexus model placement on `migraine` is the memory-bounded `migraine-chat` MLX alias; do not add larger or concurrent model lanes.
 
 ### Etcd (`etcd`)
 - Service discovery registry for multi-host deployments

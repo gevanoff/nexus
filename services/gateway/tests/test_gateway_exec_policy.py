@@ -38,8 +38,31 @@ def test_disabled_mode_rejects_tool_fields():
         prepare_tools(req, resolve_execution_policy(req, None), None)
 
 
+@pytest.mark.parametrize("tool_choice", ["auto", "required", {"type": "function", "function": {"name": "demo"}}])
+def test_disabled_mode_rejects_every_tool_choice_except_none(tool_choice):
+    req = request(tool_choice=tool_choice, x_nexus={"tool_execution_mode": "disabled"})
+    with pytest.raises(ValueError, match="disabled"):
+        prepare_tools(req, resolve_execution_policy(req, None), None)
+
+
+def test_disabled_mode_allows_none_and_strips_tool_fields():
+    req = request(tool_choice="none", x_nexus={"tool_execution_mode": "disabled"})
+
+    prepared = prepare_tools(req, resolve_execution_policy(req, None), None)
+
+    assert prepared.tools is None
+    assert prepared.tool_choice is None
+    assert prepared.parallel_tool_calls is None
+
+
 def test_disabled_mode_rejects_parallel_tool_intent():
     req = request(parallel_tool_calls=True, x_nexus={"tool_execution_mode": "disabled"})
+    with pytest.raises(ValueError, match="disabled"):
+        prepare_tools(req, resolve_execution_policy(req, None), None)
+
+
+def test_disabled_mode_rejects_parallel_tool_calls_false():
+    req = request(parallel_tool_calls=False, x_nexus={"tool_execution_mode": "disabled"})
     with pytest.raises(ValueError, match="disabled"):
         prepare_tools(req, resolve_execution_policy(req, None), None)
 

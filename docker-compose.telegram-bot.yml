@@ -1,29 +1,57 @@
+x-telegram-bot: &telegram-bot
+  build:
+    context: ./services/telegram-bot
+    dockerfile: Dockerfile
+  env_file:
+    - ./.env
+  networks:
+    - nexus
+  restart: unless-stopped
+
+x-telegram-environment: &telegram-environment
+  GATEWAY_BEARER_TOKEN: ${GATEWAY_BEARER_TOKEN:-}
+  GATEWAY_BASE_URL: ${TELEGRAM_GATEWAY_BASE_URL:-http://gateway:8800}
+  MAX_HISTORY: ${TELEGRAM_MAX_HISTORY:-20}
+  LOG_LEVEL: ${TELEGRAM_LOG_LEVEL:-info}
+  TELEGRAM_MAX_MESSAGE: ${TELEGRAM_MAX_MESSAGE:-3900}
+  TELEGRAM_HEALTHCHECK_TIMEOUT_MS: ${TELEGRAM_HEALTHCHECK_TIMEOUT_MS:-5000}
+  TELEGRAM_ALLOWED_CHATS: ${TELEGRAM_ALLOWED_CHATS:-}
+  TELEGRAM_REQUIRE_MENTION: ${TELEGRAM_REQUIRE_MENTION:-true}
+  TELEGRAM_EXCLUSIVE_BOT_MENTIONS: ${TELEGRAM_EXCLUSIVE_BOT_MENTIONS:-true}
+  TELEGRAM_GATEWAY_EXEC: ${TELEGRAM_GATEWAY_EXEC:-false}
+
 services:
-  # Telegram Bot Service - Chat bridge from Telegram to Gateway APIs
+  # The existing Nexus bot becomes ai2's host identity. TELEGRAM_TOKEN remains
+  # a compatibility fallback until TELEGRAM_AI2_TOKEN is provisioned.
   telegram-bot:
-    build:
-      context: ./services/telegram-bot
-      dockerfile: Dockerfile
-    container_name: nexus-telegram-bot
-    env_file:
-      - ./.env
+    <<: *telegram-bot
+    container_name: nexus-telegram-bot-ai2
     environment:
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
-      - GATEWAY_BEARER_TOKEN=${GATEWAY_BEARER_TOKEN:-}
-      - GATEWAY_BASE_URL=${TELEGRAM_GATEWAY_BASE_URL:-http://gateway:8800}
-      - GATEWAY_MODEL=${TELEGRAM_GATEWAY_MODEL:-fast}
-      - MAX_HISTORY=${TELEGRAM_MAX_HISTORY:-20}
-      - LOG_LEVEL=${TELEGRAM_LOG_LEVEL:-info}
-      - TELEGRAM_MAX_MESSAGE=${TELEGRAM_MAX_MESSAGE:-3900}
-      - TELEGRAM_HEALTHCHECK_TIMEOUT_MS=${TELEGRAM_HEALTHCHECK_TIMEOUT_MS:-5000}
-      - TELEGRAM_ALLOWED_CHATS=${TELEGRAM_ALLOWED_CHATS:-}
-      - TELEGRAM_REQUIRE_MENTION=${TELEGRAM_REQUIRE_MENTION:-true}
-      - TELEGRAM_EXCLUSIVE_BOT_MENTIONS=${TELEGRAM_EXCLUSIVE_BOT_MENTIONS:-true}
-      - TELEGRAM_MENTION_PATTERNS=${TELEGRAM_MENTION_PATTERNS:-}
-      - TELEGRAM_GATEWAY_EXEC=${TELEGRAM_GATEWAY_EXEC:-false}
-    networks:
-      - nexus
-    restart: unless-stopped
+      <<: *telegram-environment
+      TELEGRAM_TOKEN: ${TELEGRAM_AI2_TOKEN:-}
+      TELEGRAM_TOKEN_FALLBACK: ${TELEGRAM_TOKEN:-}
+      GATEWAY_MODEL: ${TELEGRAM_AI2_MODEL:-ai2-chat}
+      TELEGRAM_MENTION_PATTERNS: ${TELEGRAM_AI2_MENTION_PATTERNS:-Nexus,ai2}
+
+  telegram-bot-ada2:
+    <<: *telegram-bot
+    profiles: [host-bots]
+    container_name: nexus-telegram-bot-ada2
+    environment:
+      <<: *telegram-environment
+      TELEGRAM_TOKEN: ${TELEGRAM_ADA2_TOKEN:-}
+      GATEWAY_MODEL: ${TELEGRAM_ADA2_MODEL:-ada2-chat}
+      TELEGRAM_MENTION_PATTERNS: ${TELEGRAM_ADA2_MENTION_PATTERNS:-ada2}
+
+  telegram-bot-stackrot:
+    <<: *telegram-bot
+    profiles: [host-bots]
+    container_name: nexus-telegram-bot-stackrot
+    environment:
+      <<: *telegram-environment
+      TELEGRAM_TOKEN: ${TELEGRAM_STACKROT_TOKEN:-}
+      GATEWAY_MODEL: ${TELEGRAM_STACKROT_MODEL:-stackrot-chat}
+      TELEGRAM_MENTION_PATTERNS: ${TELEGRAM_STACKROT_MENTION_PATTERNS:-stackrot}
 
 networks:
   nexus:

@@ -103,9 +103,10 @@ def test_ai2_uses_boot_persistent_proxies_and_physical_topology_mount() -> None:
 def test_ansible_wrapper_exposes_meltdown_host() -> None:
     wrapper = _read("deploy/scripts/ansible-topology.sh")
 
-    assert "stackrot|ai2|ada2|meltdown" in wrapper
+    assert "stackrot|ai2|ada2|meltdown|migraine" in wrapper
     assert "copyfail" in wrapper
     assert "bootstrap meltdown" in wrapper
+    assert "bootstrap migraine" in wrapper
     assert "bootstrap copyfail" in wrapper
 
 
@@ -147,20 +148,38 @@ def test_copyfail_is_infra_only_topology_host() -> None:
         assert backend.get("host") != "copyfail"
 
 
-def test_migraine_is_lifecycle_only_hermes_client_host() -> None:
+def test_migraine_owns_one_constrained_native_mlx_backend() -> None:
     topology = json.loads(_read("deploy/topology/production.json"))
     lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))
 
-    assert "migraine" not in topology["hosts"]
+    migraine = topology["hosts"]["migraine"]
+    assert migraine["platform"] == "macos"
+    assert migraine["resource_kind"] == "macos"
+    assert migraine["components"] == []
+    assert migraine["native_services"] == ["mlx"]
+    assert migraine["env"]["MLX_PORT"] == "10241"
     assert lifecycle["hosts"]["migraine"]["platform"] == "macos"
     assert lifecycle["hosts"]["migraine"]["resource_kind"] == "macos"
     assert lifecycle["hosts"]["migraine"]["ssh_target"] == "ai@migraine"
     assert lifecycle["core_services"]["hermes_client"]["host"] == "migraine"
     assert lifecycle["core_services"]["hermes_client"]["components"] == []
-    assert "Client-only Hermes" in lifecycle["core_services"]["hermes_client"]["notes"]
+    assert "existing local SOUL.md" in lifecycle["core_services"]["hermes_client"]["notes"]
+    assert lifecycle["backends"]["local_mlx_migraine"]["host"] == "migraine"
+    assert lifecycle["backends"]["local_mlx_migraine"]["compose_managed"] is False
+    assert lifecycle["backends"]["local_mlx_migraine"]["estimated_vram_mb"] == 2600
 
-    for backend in lifecycle["backends"].values():
-        assert backend.get("host") != "migraine"
+
+def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
+    compose = _read("docker-compose.telegram-bot.yml")
+
+    assert "TELEGRAM_AI2_TOKEN" in compose
+    assert "TELEGRAM_ADA2_TOKEN" in compose
+    assert "TELEGRAM_STACKROT_TOKEN" in compose
+    assert "ai2-chat" in compose
+    assert "ada2-chat" in compose
+    assert "stackrot-chat" in compose
+    assert "telegram-bot-migraine" not in compose
+    assert compose.count("profiles: [host-bots]") == 2
 
 
 def test_adada_is_lifecycle_only_inventory_host() -> None:

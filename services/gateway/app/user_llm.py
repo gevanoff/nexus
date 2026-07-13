@@ -299,9 +299,17 @@ def user_backend_name(provider: str) -> str:
     return f"user_llm:{normalize_provider_id(provider)}"
 
 
+def strip_nexus_internal_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return an external-provider payload without Nexus-owned top-level fields."""
+    return {
+        key: value
+        for key, value in payload.items()
+        if not str(key).lower().startswith(("x_nexus", "nexus_", "_nexus"))
+    }
+
+
 def _payload_for_user_chat(req: ChatCompletionRequest, upstream_model: str, *, stream: Optional[bool] = None) -> Dict[str, Any]:
-    payload = req.model_dump(exclude_none=True)
-    payload.pop("x_nexus", None)
+    payload = strip_nexus_internal_fields(req.model_dump(exclude_none=True))
     payload["model"] = upstream_model
     if stream is not None:
         payload["stream"] = bool(stream)

@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import upstreams
 from app.models import ChatCompletionRequest, ChatMessage
+
+
+def test_backend_input_limit_rejects_oversized_request(monkeypatch):
+    backend = SimpleNamespace(payload_policy={"max_input_chars": 8})
+    monkeypatch.setattr(upstreams, "get_registry", lambda: SimpleNamespace(get_backend=lambda _name: backend))
+    req = ChatCompletionRequest(model="small", messages=[ChatMessage(role="user", content="too much input")])
+
+    with pytest.raises(HTTPException) as exc_info:
+        upstreams._enforce_backend_input_limit(req, backend_name="local_mlx_migraine")
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail["error"] == "backend_input_too_large"
 
 
 def test_route_request_for_backend_preserves_local_sampling_params(monkeypatch):

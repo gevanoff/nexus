@@ -4,6 +4,7 @@ import logging
 import os
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -187,7 +188,13 @@ def test_chat_completions_gateway_exec_streams_only_final_answer(monkeypatch, tm
 
 
 def test_chat_completions_disabled_mode_rejects_tool_fields(monkeypatch):
-    client = _build_client(monkeypatch, backend_supports_tools=True)
+    calls = []
+
+    async def handler(req, _backend: str, _model_name: str):
+        calls.append(req)
+        return {"choices": [{"message": {"role": "assistant", "content": "unexpected"}}]}
+
+    client = _build_client(monkeypatch, backend_supports_tools=True, chat_handler=handler)
 
     response = client.post(
         "/v1/chat/completions",
@@ -200,7 +207,70 @@ def test_chat_completions_disabled_mode_rejects_tool_fields(monkeypatch):
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["detail"]["detail"]["error"] == "invalid_tool_execution_policy"
+    assert response.json()["error"]["detail"]["error"] == "tool_execution_disabled"
+    assert not calls
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_chat_completions_default_disabled_rejects_tool_intent_before_upstream(monkeypatch, stream):
+    calls = []
+
+    async def handler(req, _backend: str, _model_name: str):
+        calls.append(req)
+        return {"choices": [{"message": {"role": "assistant", "content": "unexpected"}}]}
+
+    monkeypatch.setattr(S, "NEXUS_TOOL_EXECUTION_DEFAULT", "disabled")
+    client = _build_client(monkeypatch, backend_supports_tools=True, chat_handler=handler)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "default",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tool_choice": "auto",
+            "stream": stream,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"
+    assert response.json()["error"]["param"] == "tool_choice"
+    assert response.json()["error"]["detail"]["error"] == "tool_execution_disabled"
+    assert not calls
+
+
+@pytest.mark.parametrize("explicit_mode", [False, True])
+def test_chat_completions_disabled_allows_normal_chat_without_forwarding_tool_fields(monkeypatch, explicit_mode):
+    calls = []
+
+    async def handler(req, _backend: str, _model_name: str):
+        calls.append(req.model_dump(exclude_none=True))
+        return {
+            "id": "chatcmpl_test",
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        }
+
+    if not explicit_mode:
+        monkeypatch.setattr(S, "NEXUS_TOOL_EXECUTION_DEFAULT", "disabled")
+    client = _build_client(monkeypatch, backend_supports_tools=True, chat_handler=handler)
+
+    payload = {
+        "model": "default",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tool_choice": "none",
+    }
+    if explicit_mode:
+        payload["x_nexus"] = {"tool_execution_mode": "disabled"}
+    response = client.post(
+        "/v1/chat/completions",
+        json=payload,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "ok"
+    assert len(calls) == 1
+    assert {"tools", "tool_choice", "parallel_tool_calls"}.isdisjoint(calls[0])
 
 
 def test_gateway_exec_does_not_bypass_backend_tool_degradation(monkeypatch):
@@ -238,12 +308,18 @@ def test_user_llm_payload_drops_internal_nexus_extension():
         model="user:openai:test",
         messages=[{"role": "user", "content": "hello"}],
         x_nexus={"tool_execution_mode": "gateway_exec"},
+        x_nexus_trace_id="internal-trace",
+        nexus_internal_route="private-route",
+        future_provider_field="preserved",
     )
 
     payload = user_llm._payload_for_user_chat(req, "external-model")
 
     assert payload["model"] == "external-model"
     assert "x_nexus" not in payload
+    assert "x_nexus_trace_id" not in payload
+    assert "nexus_internal_route" not in payload
+    assert payload["future_provider_field"] == "preserved"
 
 
 def test_chat_completions_drops_stream_options_for_local_mlx_stream(monkeypatch):

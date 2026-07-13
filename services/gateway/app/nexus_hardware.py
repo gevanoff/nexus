@@ -14,8 +14,8 @@ from app.config import S
 
 NEXUS_HARDWARE_VERIFIED_AT = "2026-05-26"
 NEXUS_HARDWARE_SNAPSHOT_VERSION = 1
-PRODUCTION_CONTEXT_HOSTS = ("ai2", "stackrot", "ada2", "meltdown", "copyfail")
-KNOWN_NON_PRODUCTION_HOSTS = ("migraine",)
+PRODUCTION_CONTEXT_HOSTS = ("ai2", "stackrot", "ada2", "meltdown", "migraine", "copyfail")
+KNOWN_NON_PRODUCTION_HOSTS: tuple[str, ...] = ()
 
 
 NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
@@ -73,8 +73,8 @@ NEXUS_HOST_HARDWARE: dict[str, dict[str, Any]] = {
         "cpu_cores": "8 CPU cores",
         "memory": "8 GiB unified memory",
         "accelerators": ["Apple Silicon integrated GPU"],
-        "role": "Client-only Hermes Gateway and Telegram bot host that consumes Nexus models through the gateway.",
-        "notes": "Do not choose migraine for Nexus model placement; keep it out of backend scheduling unless an operator explicitly promotes it into topology.",
+        "role": "Hermes Gateway and Telegram bot host with one memory-bounded native MLX chat lane.",
+        "notes": "Only schedule the approved 3B 4-bit MLX model here, with one request at a time and a bounded context; route larger work to other hosts.",
     },
 }
 

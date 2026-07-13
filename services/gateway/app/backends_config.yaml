@@ -66,6 +66,22 @@ backends:
     payload_policy:
       supports_tool_calling: true
 
+  local_mlx_migraine:
+    class: local_mlx_migraine
+    provider: mlx
+    base_url: ${MLX_MIGRAINE_BASE_URL}
+    description: Small MLX chat backend on the 8 GB migraine host
+    supported_capabilities:
+      - chat
+    concurrency_limits:
+      chat: 1
+    health:
+      liveness: /models
+      readiness: /models
+    payload_policy:
+      supports_tool_calling: false
+      max_input_chars: 24000
+
   gpu_fast:
     class: gpu_fast
     base_url: ${SDXL_TURBO_BASE_URL}

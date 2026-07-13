@@ -358,6 +358,31 @@ def _enforce_mlx_glm_input_limit(
     )
 
 
+def _enforce_backend_input_limit(req: ChatCompletionRequest, *, backend_name: str) -> None:
+    config = get_registry().get_backend(backend_name)
+    raw_policy = getattr(config, "payload_policy", None)
+    policy = raw_policy if isinstance(raw_policy, dict) else {}
+    try:
+        limit = int(policy.get("max_input_chars") or 0)
+    except (TypeError, ValueError):
+        limit = 0
+    if limit <= 0:
+        return
+    input_chars = _mlx_glm_input_chars(req)
+    if input_chars <= limit:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": "backend_input_too_large",
+            "backend": backend_name,
+            "input_chars": input_chars,
+            "max_input_chars": limit,
+            "message": "Input exceeds this backend's memory-safe context limit. Start a new chat or choose a larger model host.",
+        },
+    )
+
+
 def _alias_matches_backend(alias: Any, *, backend_name: str) -> bool:
     registry = get_registry()
     alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
@@ -419,6 +444,7 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
     _resolved, provider, _base_url = _resolve_backend_target(backend_name)
     if provider not in {"mlx", "vllm"}:
         return req
+    _enforce_backend_input_limit(req, backend_name=_resolved)
     _enforce_mlx_glm_input_limit(req, backend_name=_resolved, model_name=model_name)
     updates: Dict[str, Any] = {"model": model_name}
     max_tokens = _bounded_max_tokens(

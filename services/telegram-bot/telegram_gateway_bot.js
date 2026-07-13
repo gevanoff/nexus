@@ -2,7 +2,7 @@ const { Bot, InputFile } = require('grammy');
 const axios = require('axios');
 const { createTelegramGroupRouter, createTelegramRoutingMiddleware } = require('./telegram_group_routing');
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_TOKEN_FALLBACK;
 const GATEWAY_PORT = Number.parseInt(process.env.GATEWAY_PORT || '8800', 10);
 const GATEWAY_SCHEME = process.env.GATEWAY_SCHEME || 'https';
 const GATEWAY_HOST = process.env.GATEWAY_HOST || '127.0.0.1';

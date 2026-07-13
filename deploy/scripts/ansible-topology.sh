@@ -25,7 +25,7 @@ Commands:
   site        Run ansible/playbooks/site.yml, optionally limited to one topology host.
 
 Host:
-  stackrot | ai2 | ada2 | meltdown | copyfail | all
+  stackrot | ai2 | ada2 | meltdown | migraine | copyfail | all
   Omit the host (or use all) to target the full topology.
 
 Examples:
@@ -34,6 +34,7 @@ Examples:
   ./deploy/scripts/ansible-topology.sh bootstrap stackrot -- --check
   ./deploy/scripts/ansible-topology.sh deploy ada2
   ./deploy/scripts/ansible-topology.sh bootstrap meltdown
+  ./deploy/scripts/ansible-topology.sh bootstrap migraine
   ./deploy/scripts/ansible-topology.sh bootstrap copyfail
   ./deploy/scripts/ansible-topology.sh site all -- -e nexus_environment=prod
 EOF
@@ -60,7 +61,7 @@ case "$command_name" in
     fi
     ANSIBLE_CONFIG="$ANSIBLE_CONFIG_PATH" ansible-inventory -i "$INVENTORY_PATH" "$@"
     ;;
-  bootstrap|deploy|site)
+  bootstrap | deploy | site)
     if ! ns_have_cmd ansible-playbook; then
       ns_print_error "ansible-playbook is required but not installed."
       exit 1
@@ -73,11 +74,11 @@ case "$command_name" in
     fi
 
     case "${host_limit:-}" in
-      ""|all)
+      "" | all)
         host_limit=""
         ;;
-      stackrot|ai2|ada2|meltdown|copyfail)
-        ;;
+      stackrot | ai2 | ada2 | meltdown | migraine | copyfail) ;;
+
       *)
         ns_print_error "Unknown topology host: ${host_limit}"
         usage >&2
@@ -98,7 +99,7 @@ case "$command_name" in
 
     ANSIBLE_CONFIG="$ANSIBLE_CONFIG_PATH" "${cmd[@]}"
     ;;
-  -h|--help|help)
+  -h | --help | help)
     usage
     ;;
   *)

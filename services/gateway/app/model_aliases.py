@@ -40,6 +40,7 @@ class ModelAlias:
     auto_inject_tools: bool = False
     toolsets: tuple[str, ...] = ()
     max_tool_rounds: Optional[int] = None
+    soul: str = ""
 
 
 @dataclass(frozen=True)
@@ -190,8 +191,10 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             backend = "local_vllm_embeddings"
         elif backend_key == "vllm" or backend_key == "local_vllm":
             backend = "local_vllm"
-        elif backend_key == "mlx" or backend_key.startswith("local_mlx"):
+        elif backend_key == "mlx":
             backend = "local_mlx"
+        elif backend_key.startswith("local_mlx"):
+            backend = backend_key
         if model.startswith("vllm:"):
             model = model[len("vllm:") :]
         elif model.startswith("mlx:"):
@@ -250,6 +253,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         toolsets = tuple(str(item).strip() for item in toolsets_raw if str(item).strip()) if isinstance(toolsets_raw, list) else ()
         rounds_raw = v.get("max_tool_rounds")
         max_tool_rounds = rounds_raw if isinstance(rounds_raw, int) and rounds_raw > 0 else None
+        soul = str(v.get("soul") or "").strip().lower()
 
         return ModelAlias(
             backend=backend,
@@ -276,6 +280,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             auto_inject_tools=auto_inject_tools,
             toolsets=toolsets,
             max_tool_rounds=max_tool_rounds,
+            soul=soul,
         )
 
     return None

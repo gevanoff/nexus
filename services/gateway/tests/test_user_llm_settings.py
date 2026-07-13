@@ -251,6 +251,44 @@ async def test_user_llm_discovers_provider_models(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_user_llm_external_call_strips_nexus_internal_fields(monkeypatch):
+    captured = {}
+
+    class Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+    class Client:
+        async def post(self, url, *, json, headers):
+            captured.update({"url": url, "payload": json, "headers": headers})
+            return Resp()
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        captured["timeout"] = timeout
+        yield Client()
+
+    monkeypatch.setattr(user_llm, "_httpx_client", fake_client)
+    req = ChatCompletionRequest(
+        model="user_llm:openai:gpt-test",
+        messages=[{"role": "user", "content": "hello"}],
+        x_nexus={"tool_execution_mode": "client_exec"},
+        x_nexus_trace_id="trace",
+        nexus_internal_route="route",
+        future_provider_field="preserved",
+    )
+
+    await user_llm.call_user_chat(req, model_id=req.model, settings=_settings())
+
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert {"x_nexus", "x_nexus_trace_id", "nexus_internal_route"}.isdisjoint(captured["payload"])
+    assert captured["payload"]["future_provider_field"] == "preserved"
+
+
+@pytest.mark.asyncio
 async def test_user_llm_discover_models_rejects_unknown_provider():
     with pytest.raises(HTTPException) as exc:
         await user_llm.discover_provider_models(

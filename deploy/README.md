@@ -237,7 +237,7 @@ pre-commit install
 ## Notes
 
 - These manifests assume a shared `nexus` network for multi-host deployments.
-- `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `stackrot`/`ai2`/`ada2`/`meltdown` cluster plus the `copyfail` infrastructure-control host. `migraine` is client-only for Hermes/Telegram and is intentionally not a model-serving topology target.
+- `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `stackrot`/`ai2`/`ada2`/`meltdown` cluster, the constrained native MLX lane on `migraine`, and the `copyfail` infrastructure-control host.
 - etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
 - Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
 - `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, and `vllm-embeddings` when different hosts should own different inference lanes.

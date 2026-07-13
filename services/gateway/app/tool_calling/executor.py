@@ -47,8 +47,26 @@ def _csv(value: str) -> set[str]:
     return {part.strip() for part in str(value or "").split(",") if part.strip()}
 
 
-def _request_has_tool_intent(req: ChatCompletionRequest) -> bool:
-    return bool(req.tools) or req.tool_choice is not None or req.parallel_tool_calls is not None
+def _tool_choice_is_none(tool_choice: Any) -> bool:
+    if isinstance(tool_choice, str):
+        return tool_choice.strip().lower() == "none"
+    if isinstance(tool_choice, dict):
+        return str(tool_choice.get("type") or "").strip().lower() == "none"
+    return False
+
+
+def tool_intent_param(req: ChatCompletionRequest) -> str | None:
+    if req.tools is not None:
+        return "tools"
+    if req.tool_choice is not None and not _tool_choice_is_none(req.tool_choice):
+        return "tool_choice"
+    if req.parallel_tool_calls is not None:
+        return "parallel_tool_calls"
+    return None
+
+
+def request_has_tool_intent(req: ChatCompletionRequest) -> bool:
+    return tool_intent_param(req) is not None
 
 
 def resolve_execution_policy(req: ChatCompletionRequest, alias: ModelAlias | None) -> NexusToolExecutionPolicy:
@@ -91,9 +109,9 @@ def resolve_execution_policy(req: ChatCompletionRequest, alias: ModelAlias | Non
 
 def prepare_tools(req: ChatCompletionRequest, policy: NexusToolExecutionPolicy, alias: ModelAlias | None) -> ChatCompletionRequest:
     if policy.mode == "disabled":
-        if _request_has_tool_intent(req):
-            raise ValueError("tool use is disabled for this request")
-        return req
+        if request_has_tool_intent(req):
+            raise ValueError("tool use is disabled for this request; omit tools and parallel_tool_calls, and set tool_choice to none or omit it")
+        return req.model_copy(update={"tools": None, "tool_choice": None, "parallel_tool_calls": None})
     if policy.mode != "gateway_exec":
         return req
     if alias is not None and alias.tools is False:

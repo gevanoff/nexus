@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "nexus-production",
-  "description": "Canonical multi-host production placement for stackrot, ai2, ada2, meltdown, and copyfail.",
+  "description": "Canonical multi-host production placement for stackrot, ai2, migraine, ada2, meltdown, and copyfail.",
   "defaults": {
     "repo_dir_by_platform": {
       "macos": "/ai-data/var/lib/nexus",
@@ -38,6 +38,7 @@
       "MLX_MODEL_DEFAULT": "mlx-community/GLM-5.2-4bit",
       "MLX_BASE_URL": "http://ai2:10240/v1",
       "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
+      "MLX_MIGRAINE_BASE_URL": "http://migraine:10241/v1",
       "VLLM_BASE_URL": "http://ada2:8003/v1",
       "VLLM_ADVERTISE_BASE_URL": "http://ada2:8003/v1",
       "VLLM_FAST_BASE_URL": "http://stackrot:8001/v1",
@@ -163,6 +164,25 @@
         "TOOLS_ALLOWLIST": "echo,lighton_ocr,skyreels_generate,cluster_resources",
         "DISABLED_BACKEND_CLASSES": "followyourcanvas,heartmula_music,personaplex",
         "DEFAULT_BACKEND": "local_vllm"
+      }
+    },
+    "migraine": {
+      "description": "Mac M2 with 8GB unified memory for Hermes and a memory-bounded native MLX chat model.",
+      "platform": "macos",
+      "resource_kind": "macos",
+      "repo_dir": "/Users/ai/ai/nexus",
+      "remote_shell": "/bin/bash -lc",
+      "ssh_target": "ai@migraine",
+      "components": [],
+      "native_services": [
+        "mlx"
+      ],
+      "env": {
+        "ETCD_URL": "http://ai2:2379",
+        "MLX_MIGRAINE_BASE_URL": "http://migraine:10241/v1",
+        "MLX_PORT": "10241",
+        "MLX_MODEL_PATH": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+        "MLX_MODEL_TYPE": "lm"
       }
     },
     "ada2": {

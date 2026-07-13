@@ -257,6 +257,7 @@ class Settings(BaseSettings):
     MLX_MODEL_STRONG: str = "mlx-community/GLM-5.2-4bit"
     MLX_MODEL_FAST: str = "mlx-community/Phi-4-reasoning-plus-4bit"
     MLX_MODEL_DEFAULT: str = "mlx-community/GLM-5.2-4bit"
+    MLX_MIGRAINE_BASE_URL: str = "http://migraine:10241/v1"
     MLX_FALLBACK_BACKEND: str = "local_mlx"
     MLX_FALLBACK_MODEL: str = "mlx-community/DeepSeek-R1-0528-4bit"
     MLX_HF_CACHE_DIR: str = "/var/lib/gateway/mlx_hf_cache"
@@ -291,6 +292,11 @@ class Settings(BaseSettings):
     #   MODEL_ALIASES_JSON='{"aliases":{"coder":{"backend":"local_mlx","model":"mlx-community/GLM-5.2-4bit"}}}'
     MODEL_ALIASES_JSON: str = ""
     MODEL_ALIASES_PATH: str = "/var/lib/gateway/config/model_aliases.json"
+
+    # Version-controlled, alias-selected agent identities. SOUL files are
+    # trusted operator configuration, never client-selected filesystem paths.
+    NEXUS_SOUL_ROOT: str = "/workspace/nexus/souls"
+    NEXUS_SOUL_MAX_CHARS: int = 12_000
 
     TOOLS_ALLOW_SHELL: bool = False
     TOOLS_ALLOW_FS: bool = False

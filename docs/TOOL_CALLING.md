@@ -20,7 +20,7 @@ Select a mode with `x_nexus.tool_execution_mode`:
 
 - `gateway_exec`: inject approved tools, execute model tool calls, append tool results, and continue until a final answer.
 - `client_exec`: preserve OpenAI tool calls for Continue or another client to execute. This is the conservative server default.
-- `disabled`: reject tool fields.
+- `disabled`: reject `tools`, any `tool_choice` other than `none`, and any `parallel_tool_calls` field before backend routing or dispatch. Requests without tool intent continue normally.
 
 `NEXUS_TOOL_EXECUTION_DEFAULT` sets the server default. Nexus-owned callers should explicitly request `gateway_exec`; external clients should use `client_exec`. Client tools use the `replace`, `merge`, or `client` policy selected by `x_nexus.client_tools` or `NEXUS_CLIENT_TOOL_POLICY`.
 
@@ -31,7 +31,7 @@ With `stream=true`, Gateway buffers internal model/tool rounds and emits only th
 ## Built-In Toolsets
 
 - `core`: `nexus_health`, `nexus_models_list`, `nexus_alias_resolve`, `nexus_tool_diagnostics`
-- `repo`: `nexus_file_list`, `nexus_file_read`, `nexus_file_grep`, `nexus_git_status`, `nexus_git_diff`
+- `repo`: `nexus_file_list`, `nexus_file_read`, `nexus_file_stat`, `nexus_file_grep`, `nexus_git_status`, `nexus_git_diff`, `nexus_git_log`
 - `ops`: `nexus_resources_snapshot`, `nexus_docker_ps`, `nexus_docker_logs`, `nexus_service_status`, `nexus_http_request`
 - `write_ops`: write/restart tools (definitions present but not executable until implementations are added), disabled by default
 - `shell`: shell and Python execution (definitions present but not executable until implementations are added), disabled by default

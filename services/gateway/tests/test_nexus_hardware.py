@@ -108,8 +108,8 @@ def test_lifecycle_payload_updates_runtime_and_cached_snapshot(tmp_path, monkeyp
     assert "copyfail: linux_x86_64; Test Copyfail Host; 2 logical CPUs" in prompt_context
     assert "Do not schedule model-serving backends here" in prompt_context
     assert "migraine: macos_arm64; Apple M2" in prompt_context
-    assert "Client-only Hermes Gateway and Telegram bot host" in prompt_context
-    assert "Do not choose migraine for Nexus model placement" in prompt_context
+    assert "Hermes Gateway and Telegram bot host with one memory-bounded native MLX chat lane" in prompt_context
+    assert "Only schedule the approved 3B 4-bit MLX model here" in prompt_context
     assert "lifecycle probe failed" in prompt_context
 
 
