@@ -289,6 +289,16 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                 entry["last_action_error"] = ""
         backends.append(entry)
 
+    lifecycle_core = (
+        lifecycle_payload.get("core_services")
+        if isinstance(lifecycle_payload.get("core_services"), list)
+        else []
+    )
+    lifecycle_core_by_id = {
+        str(item.get("service_id") or ""): item
+        for item in lifecycle_core
+        if isinstance(item, dict) and item.get("service_id")
+    }
     telegram_bot_specs = (
         (
             "hex",
@@ -298,6 +308,7 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             "TELEGRAM_STACKROT_TOKEN",
             "TELEGRAM_STACKROT_MODEL",
             "stackrot-chat",
+            "telegram_bridge_hex",
         ),
         (
             "tess",
@@ -307,6 +318,7 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             "TELEGRAM_ADA2_TOKEN",
             "TELEGRAM_ADA2_MODEL",
             "ada2-chat",
+            "telegram_bridge_tess",
         ),
         (
             "clarion",
@@ -316,10 +328,14 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             "TELEGRAM_AI2_TOKEN",
             "TELEGRAM_AI2_MODEL",
             "ai2-chat",
+            "telegram_bridge_clarion",
         ),
     )
     telegram_bots: list[Dict[str, Any]] = []
-    for bot_id, bot_name, bot_username, host, token_env, model_env, default_model in telegram_bot_specs:
+    for bot_id, bot_name, bot_username, host, token_env, model_env, default_model, runtime_id in telegram_bot_specs:
+        runtime = lifecycle_core_by_id.get(runtime_id) or {}
+        runtime_known = bool(runtime)
+        runtime_ok = runtime.get("active") is True
         entry: Dict[str, Any] = {
             "service_id": f"telegram_bot_{bot_id}",
             "display_name": bot_name,
@@ -327,6 +343,17 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             "host": host,
             "endpoint": "https://api.telegram.org",
             "gateway_model": (os.getenv(model_env) or default_model).strip(),
+            "runtime": {
+                "service_id": runtime_id,
+                "known": runtime_known,
+                "active": runtime_ok,
+                "status": runtime.get("status") or "unknown",
+                "status_label": runtime.get("status_label") or "Runtime status unavailable",
+                "containers": runtime.get("containers") if isinstance(runtime.get("containers"), list) else [],
+                "missing_components": runtime.get("missing_components") if isinstance(runtime.get("missing_components"), list) else [],
+                "host_error": runtime.get("host_error") or "",
+                "updated_at": runtime.get("updated_at") or 0,
+            },
         }
         token = (
             os.getenv(token_env)
@@ -345,7 +372,7 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                     "status_rank": 1,
                     "updated_at": time.time(),
                     "error": f"{token_env} not configured",
-                    "notes": f"{token_env} not configured",
+                    "notes": f"{token_env} not configured · bridge runtime {entry['runtime']['status_label']}",
                 }
             )
         else:
@@ -368,7 +395,7 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                 gateway_ok, gateway_note = telegram_gateway_dependency(
                     registry, checker, aliases, entry["gateway_model"]
                 )
-                ok = telegram_ok and gateway_ok
+                ok = telegram_ok and gateway_ok and runtime_ok
                 entry.update(
                     {
                         "active": ok,
@@ -387,9 +414,12 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                     entry["notes"] = entry["error"]
                 elif not gateway_ok:
                     entry["error"] = gateway_note
-                    entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
+                    entry["notes"] = f"Bridge runtime {entry['runtime']['status_label']} · Telegram getMe succeeded · {gateway_note}"
+                elif not runtime_ok:
+                    entry["error"] = f"bridge runtime {entry['runtime']['status_label']}"
+                    entry["notes"] = f"Bridge runtime {entry['runtime']['status_label']} · Telegram getMe succeeded · {gateway_note}"
                 else:
-                    entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
+                    entry["notes"] = f"Bridge runtime {entry['runtime']['status_label']} · Telegram getMe succeeded · {gateway_note}"
             except Exception as exc:
                 entry.update(
                     {
@@ -414,7 +444,6 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
     lifecycle_base = lifecycle_manager_base_url()
     lifecycle_hosts = lifecycle_payload.get("hosts") if isinstance(lifecycle_payload.get("hosts"), list) else []
     lifecycle_backends_list = lifecycle_payload.get("backends") if isinstance(lifecycle_payload.get("backends"), list) else []
-    lifecycle_core = lifecycle_payload.get("core_services") if isinstance(lifecycle_payload.get("core_services"), list) else []
     lifecycle_ok = bool(lifecycle_base) and not lifecycle_error
     lifecycle_notes: list[str] = []
     if lifecycle_base:

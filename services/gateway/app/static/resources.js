@@ -409,6 +409,8 @@
     "gateway",
     "etcd",
     "lifecycle_manager",
+  ]);
+  const telegramBridgeRuntimeIds = new Set([
     "telegram_bridge_clarion",
     "telegram_bridge_tess",
     "telegram_bridge_hex",
@@ -730,6 +732,8 @@
       badges.className = "badges";
       badges.appendChild(badge(bot.status_label || bot.status || "unknown", statusBadgeClass(bot)));
       badges.appendChild(badge("Telegram", "blue"));
+      const runtime = bot.runtime && typeof bot.runtime === "object" ? bot.runtime : {};
+      badges.appendChild(badge(runtime.status_label || "Runtime unknown", runtime.active ? "green" : runtime.known ? "red" : "grey"));
       const fresh = freshnessText(bot.updated_at);
       if (fresh) badges.appendChild(badge(fresh.replace("refreshed", "checked"), "blue"));
       left.appendChild(badges);
@@ -739,6 +743,14 @@
         detail.style.marginTop = "6px";
         detail.textContent = bot.notes;
         left.appendChild(detail);
+      }
+      const runtimeContainers = Array.isArray(runtime.containers) ? runtime.containers : [];
+      if (runtimeContainers.length) {
+        const runtimeDetail = document.createElement("div");
+        runtimeDetail.className = "meta";
+        runtimeDetail.style.marginTop = "6px";
+        runtimeDetail.textContent = `Runtime: ${runtimeContainers.map((item) => `${item.name}: ${item.status}`).join(" · ")}`;
+        left.appendChild(runtimeDetail);
       }
       card.appendChild(left);
       telegramBotsEl.appendChild(card);
@@ -987,7 +999,8 @@
     const opts = options || {};
     updatePollInterval(payload);
     renderHosts(payload.hosts || [], payload.generated_at);
-    const serviceSections = splitCoreServicesForResourceUi(payload.control_plane || [], payload.core_services || []);
+    const visibleCoreServices = (payload.core_services || []).filter((service) => !telegramBridgeRuntimeIds.has(serviceIdentity(service)));
+    const serviceSections = splitCoreServicesForResourceUi(payload.control_plane || [], visibleCoreServices);
     if (serviceSections.controlPlaneUsesCoreCards) {
       renderCoreServices(serviceSections.controlPlane, controlPlaneEl, {
         sectionEl: controlPlaneSectionEl,
