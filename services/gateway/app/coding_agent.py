@@ -165,9 +165,9 @@ def _tool_context_char_limit() -> int:
 
 
 def _max_cycles_per_run(value: Optional[int] = None) -> int:
-    default = int(getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80) or 80)
+    default = int(getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 1000) or 1000)
     requested = default if value is None else int(value)
-    return max(4, min(requested, 500))
+    return max(4, min(requested, 1000))
 
 
 def _max_runtime_sec(value: Optional[int] = None) -> int:

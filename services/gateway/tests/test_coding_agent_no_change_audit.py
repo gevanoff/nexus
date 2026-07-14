@@ -240,12 +240,12 @@ def test_tool_manifest_guidance_mentions_linux_shell_and_service_cwd():
 
 
 def test_run_horizon_helpers_bound_values_and_measure_messages(monkeypatch):
-    monkeypatch.setattr(ca.S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 80, raising=False)
     monkeypatch.setattr(ca.S, "CODING_AGENT_MAX_RUNTIME_SEC", 21600, raising=False)
     monkeypatch.setattr(ca.S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12, raising=False)
 
-    assert ca._max_cycles_per_run(None) == 80
-    assert ca._max_cycles_per_run(9999) == 500
+    assert ca._max_cycles_per_run(None) == 1000
+    assert ca._max_cycles_per_run(80) == 80
+    assert ca._max_cycles_per_run(9999) == 1000
     assert ca._max_runtime_sec(1) == 60
     assert ca._context_reset_cycles(2) == 4
     assert ca._messages_char_count([ca.ChatMessage(role="user", content="hello")]) >= 5

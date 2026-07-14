@@ -37,7 +37,7 @@ class CodingCreateAndRunRequest(BaseModel):
     coding_model: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
-    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=1000)
     max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
     context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
@@ -57,7 +57,7 @@ class CodingModelIntegrationCreateRequest(BaseModel):
 class CodingModelIntegrationRunRequest(CodingModelIntegrationCreateRequest):
     auto_commit: bool = False
     commit_message: Optional[str] = None
-    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=1000)
     max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
     context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
@@ -67,7 +67,7 @@ class CodingAgentRunRequest(BaseModel):
     prompt: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
-    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=1000)
     max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
     context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
@@ -79,7 +79,7 @@ class CodingInterventionRequest(BaseModel):
     coding_model: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
-    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=1000)
     max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
     context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
@@ -90,7 +90,7 @@ class CodingGuidanceRequest(BaseModel):
     coding_model: Optional[str] = None
     auto_commit: bool = False
     commit_message: Optional[str] = None
-    max_cycles: Optional[int] = Field(default=None, ge=4, le=500)
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=1000)
     max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=86_400)
     context_reset_cycles: Optional[int] = Field(default=None, ge=4, le=100)
 
