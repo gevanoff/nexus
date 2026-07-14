@@ -16,7 +16,7 @@ def test_resources_ui_hides_duplicate_core_services_section() -> None:
 
     assert 'id="control_plane_section"' in html
     assert 'id="core_services_section" class="resource-subsection" hidden' in html
-    assert "/static/resources.js?v=17" in html
+    assert "/static/resources.js?v=18" in html
     assert "splitCoreServicesForResourceUi" in js
     assert "controlPlaneCoreServiceIds" in js
     assert "hideWhenEmpty: true" in js
@@ -56,6 +56,31 @@ def test_resources_ui_shows_coding_smoke_health() -> None:
     assert "renderCodingSmoke" in js
     assert "metrics-table" in js
     assert "metrics.slice(0, 48)" in js
+
+
+def test_resources_ui_shows_individual_telegram_bots() -> None:
+    static_root = Path(__file__).resolve().parents[1] / "app" / "static"
+    html = (static_root / "resources.html").read_text(encoding="utf-8")
+    js = (static_root / "resources.js").read_text(encoding="utf-8")
+    snapshot_source = Path(resources_snapshot.__file__).read_text(encoding="utf-8")
+
+    assert 'id="telegram_bots_section"' in html
+    assert 'id="telegram_bots"' in html
+    assert "renderTelegramBots" in js
+    assert "bot.bot_username" in js
+    assert "bot.host" in js
+    for expected in (
+        "Hex",
+        "@CrypticHex_bot",
+        "stackrot",
+        "Tess",
+        "@Ms_Tess_bot",
+        "ada2",
+        "Clarion",
+        "@Dr_Clarion_bot",
+        "ai2",
+    ):
+        assert f'"{expected}"' in snapshot_source
 
 
 def test_telegram_gateway_dependency_tracks_selected_backend(monkeypatch) -> None:

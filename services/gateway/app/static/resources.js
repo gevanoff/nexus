@@ -2,6 +2,8 @@
   const hostsEl = document.getElementById("hosts");
   const controlPlaneSectionEl = document.getElementById("control_plane_section");
   const controlPlaneEl = document.getElementById("control_plane");
+  const telegramBotsSectionEl = document.getElementById("telegram_bots_section");
+  const telegramBotsEl = document.getElementById("telegram_bots");
   const coreServicesSectionEl = document.getElementById("core_services_section");
   const coreServicesEl = document.getElementById("core_services");
   const codingSmokeSectionEl = document.getElementById("coding_smoke_section");
@@ -498,6 +500,7 @@
     if (merged.size > 0) base.backends = [...merged.values()];
     if (Array.isArray(lifecyclePayload?.core_services)) base.core_services = lifecyclePayload.core_services;
     if (Array.isArray(registryPayload?.control_plane)) base.control_plane = registryPayload.control_plane;
+    if (Array.isArray(registryPayload?.telegram_bots)) base.telegram_bots = registryPayload.telegram_bots;
     if (registryPayload.alias_config) base.alias_config = registryPayload.alias_config;
     base.settings = {
       ...(registryPayload.settings && typeof registryPayload.settings === "object" ? registryPayload.settings : {}),
@@ -693,6 +696,46 @@
 
       card.appendChild(left);
       controlPlaneEl.appendChild(card);
+    });
+  }
+
+  function renderTelegramBots(bots) {
+    if (!telegramBotsEl) return;
+    telegramBotsEl.innerHTML = "";
+    if (telegramBotsSectionEl) telegramBotsSectionEl.hidden = false;
+    if (!Array.isArray(bots) || !bots.length) {
+      telegramBotsEl.innerHTML = '<div class="hint">No Telegram bots reported.</div>';
+      return;
+    }
+    bots.forEach((bot) => {
+      const card = document.createElement("div");
+      card.className = `core-service-card ${bot.active ? "active" : "problem"}`;
+      if (isStale(bot.updated_at)) card.classList.add("stale");
+      const left = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "backend-name";
+      name.textContent = `${bot.display_name || "Telegram bot"} / ${bot.bot_username || "unknown bot"}`;
+      left.appendChild(name);
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = [bot.host || "unknown host", bot.gateway_model ? `model ${bot.gateway_model}` : ""].filter(Boolean).join(" · ");
+      left.appendChild(meta);
+      const badges = document.createElement("div");
+      badges.className = "badges";
+      badges.appendChild(badge(bot.status_label || bot.status || "unknown", statusBadgeClass(bot)));
+      badges.appendChild(badge("Telegram", "blue"));
+      const fresh = freshnessText(bot.updated_at);
+      if (fresh) badges.appendChild(badge(fresh.replace("refreshed", "checked"), "blue"));
+      left.appendChild(badges);
+      if (bot.notes) {
+        const detail = document.createElement("div");
+        detail.className = bot.active ? "meta" : "meta error";
+        detail.style.marginTop = "6px";
+        detail.textContent = bot.notes;
+        left.appendChild(detail);
+      }
+      card.appendChild(left);
+      telegramBotsEl.appendChild(card);
     });
   }
 
@@ -951,6 +994,7 @@
       sectionEl: coreServicesSectionEl,
       hideWhenEmpty: true,
     });
+    renderTelegramBots(payload.telegram_bots || []);
     renderCodingSmoke(payload.coding_smoke || null);
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];

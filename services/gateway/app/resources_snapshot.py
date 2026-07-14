@@ -72,8 +72,10 @@ def lifecycle_timeout() -> float:
         return 15.0
 
 
-def telegram_gateway_dependency(registry: Any, checker: Any, aliases: Dict[str, Any]) -> tuple[bool, str]:
-    model = (os.getenv("TELEGRAM_GATEWAY_MODEL") or "fast").strip()
+def telegram_gateway_dependency(
+    registry: Any, checker: Any, aliases: Dict[str, Any], model: str = ""
+) -> tuple[bool, str]:
+    model = (model or os.getenv("TELEGRAM_GATEWAY_MODEL") or "fast").strip()
     alias = aliases.get(model.lower())
     backend_name = ""
     if alias is not None:
@@ -287,74 +289,124 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
                 entry["last_action_error"] = ""
         backends.append(entry)
 
-    telegram_entry: Dict[str, Any] = {
-        "service_id": "telegram_bot",
-        "display_name": "Telegram Bot",
-        "host": "api.telegram.org",
-        "endpoint": "https://api.telegram.org",
-    }
-    telegram_token = (os.getenv("TELEGRAM_TOKEN") or "").strip()
-    if not telegram_token:
-        telegram_entry.update(
-            {
-                "healthy": False,
-                "ready": False,
-                "active": False,
-                "status": "unconfigured",
-                "status_label": "unconfigured",
-                "status_color": "yellow",
-                "status_rank": 1,
-                "updated_at": time.time(),
-                "error": "TELEGRAM_TOKEN not configured",
-                "notes": "TELEGRAM_TOKEN not configured",
-            }
-        )
-    else:
-        telegram_api_url = f"https://api.telegram.org/bot{telegram_token}/getMe"
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(telegram_api_url)
-            payload = resp.json() if resp.content else {}
-            telegram_ok = bool(resp.status_code == 200 and isinstance(payload, dict) and payload.get("ok") is True)
-            gateway_ok, gateway_note = telegram_gateway_dependency(registry, checker, aliases)
-            ok = telegram_ok and gateway_ok
-            telegram_entry.update(
+    telegram_bot_specs = (
+        (
+            "hex",
+            "Hex",
+            "@CrypticHex_bot",
+            "stackrot",
+            "TELEGRAM_STACKROT_TOKEN",
+            "TELEGRAM_STACKROT_MODEL",
+            "stackrot-chat",
+        ),
+        (
+            "tess",
+            "Tess",
+            "@Ms_Tess_bot",
+            "ada2",
+            "TELEGRAM_ADA2_TOKEN",
+            "TELEGRAM_ADA2_MODEL",
+            "ada2-chat",
+        ),
+        (
+            "clarion",
+            "Clarion",
+            "@Dr_Clarion_bot",
+            "ai2",
+            "TELEGRAM_AI2_TOKEN",
+            "TELEGRAM_AI2_MODEL",
+            "ai2-chat",
+        ),
+    )
+    telegram_bots: list[Dict[str, Any]] = []
+    for bot_id, bot_name, bot_username, host, token_env, model_env, default_model in telegram_bot_specs:
+        entry: Dict[str, Any] = {
+            "service_id": f"telegram_bot_{bot_id}",
+            "display_name": bot_name,
+            "bot_username": bot_username,
+            "host": host,
+            "endpoint": "https://api.telegram.org",
+            "gateway_model": (os.getenv(model_env) or default_model).strip(),
+        }
+        token = (
+            os.getenv(token_env)
+            or (os.getenv("TELEGRAM_TOKEN") if bot_id == "clarion" else "")
+            or ""
+        ).strip()
+        if not token:
+            entry.update(
                 {
-                    "active": ok,
-                    "healthy": ok,
-                    "ready": ok,
-                    "status": "healthy" if ok else "error",
-                    "status_label": "healthy" if ok else "error",
-                    "status_color": "green" if ok else "red",
-                    "status_rank": 0 if ok else 3,
-                    "last_check": time.time(),
-                    "updated_at": time.time(),
-                }
-            )
-            if not telegram_ok:
-                telegram_entry["error"] = f"telegram getMe failed (status {resp.status_code})"
-                telegram_entry["notes"] = telegram_entry["error"]
-            elif not gateway_ok:
-                telegram_entry["error"] = gateway_note
-                telegram_entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
-            else:
-                telegram_entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
-        except Exception as exc:
-            telegram_entry.update(
-                {
-                    "active": False,
                     "healthy": False,
                     "ready": False,
-                    "status": "error",
-                    "status_label": "error",
-                    "status_color": "red",
-                    "status_rank": 3,
-                    "last_check": time.time(),
+                    "active": False,
+                    "status": "unconfigured",
+                    "status_label": "unconfigured",
+                    "status_color": "yellow",
+                    "status_rank": 1,
                     "updated_at": time.time(),
-                    "error": f"telegram check failed: {type(exc).__name__}: {exc}",
-                    "notes": f"telegram check failed: {type(exc).__name__}: {exc}",
+                    "error": f"{token_env} not configured",
+                    "notes": f"{token_env} not configured",
                 }
             )
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
+                api_payload = resp.json() if resp.content else {}
+                telegram_ok = bool(
+                    resp.status_code == 200
+                    and isinstance(api_payload, dict)
+                    and api_payload.get("ok") is True
+                )
+                actual_username = (
+                    str((api_payload.get("result") or {}).get("username") or "").strip()
+                    if isinstance(api_payload, dict)
+                    else ""
+                )
+                if actual_username:
+                    entry["api_username"] = f"@{actual_username}"
+                gateway_ok, gateway_note = telegram_gateway_dependency(
+                    registry, checker, aliases, entry["gateway_model"]
+                )
+                ok = telegram_ok and gateway_ok
+                entry.update(
+                    {
+                        "active": ok,
+                        "healthy": ok,
+                        "ready": ok,
+                        "status": "healthy" if ok else "error",
+                        "status_label": "healthy" if ok else "error",
+                        "status_color": "green" if ok else "red",
+                        "status_rank": 0 if ok else 3,
+                        "last_check": time.time(),
+                        "updated_at": time.time(),
+                    }
+                )
+                if not telegram_ok:
+                    entry["error"] = f"telegram getMe failed (status {resp.status_code})"
+                    entry["notes"] = entry["error"]
+                elif not gateway_ok:
+                    entry["error"] = gateway_note
+                    entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
+                else:
+                    entry["notes"] = f"Telegram getMe succeeded · {gateway_note}"
+            except Exception as exc:
+                entry.update(
+                    {
+                        "active": False,
+                        "healthy": False,
+                        "ready": False,
+                        "status": "error",
+                        "status_label": "error",
+                        "status_color": "red",
+                        "status_rank": 3,
+                        "last_check": time.time(),
+                        "updated_at": time.time(),
+                        "error": f"telegram check failed: {type(exc).__name__}: {exc}",
+                        "notes": f"telegram check failed: {type(exc).__name__}: {exc}",
+                    }
+                )
+        telegram_bots.append(entry)
 
     now = time.time()
     control_plane: list[Dict[str, Any]] = []
@@ -459,8 +511,6 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             "notes": " · ".join(part for part in checker_notes if part),
         }
     )
-    control_plane.append(telegram_entry)
-
     backends.sort(key=lambda item: item.get("backend_class") or "")
     return {
         "generated_at": time.time(),
@@ -476,6 +526,7 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             "error": alias_state.error,
         },
         "control_plane": control_plane,
+        "telegram_bots": telegram_bots,
         "backends": backends,
     }
 
@@ -513,6 +564,8 @@ def merge_resources_payloads(lifecycle_payload: Dict[str, Any] | None, registry_
         base["core_services"] = lifecycle_payload["core_services"]
     if isinstance(registry_payload.get("control_plane"), list):
         base["control_plane"] = registry_payload["control_plane"]
+    if isinstance(registry_payload.get("telegram_bots"), list):
+        base["telegram_bots"] = registry_payload["telegram_bots"]
     if registry_payload.get("alias_config"):
         base["alias_config"] = registry_payload["alias_config"]
     base["settings"] = {
