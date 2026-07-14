@@ -405,13 +405,19 @@
     target.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
-  const controlPlaneCoreServiceIds = new Set(["gateway", "etcd", "lifecycle_manager", "telegram_bot"]);
+  const controlPlaneCoreServiceIds = new Set([
+    "gateway",
+    "etcd",
+    "lifecycle_manager",
+    "telegram_bridge_clarion",
+    "telegram_bridge_tess",
+    "telegram_bridge_hex",
+  ]);
   const serviceIdAliases = new Map([
     ["etcd_service_discovery", "etcd"],
     ["gateway_health_checks", "gateway"],
     ["gateway_health_check", "gateway"],
     ["lifecycle", "lifecycle_manager"],
-    ["telegram", "telegram_bot"],
   ]);
 
   function serviceIdentity(service) {

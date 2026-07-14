@@ -104,12 +104,26 @@
       "tier": "core",
       "notes": "Tracks host resources and manages backend lifecycle actions."
     },
-    "telegram_bot": {
-      "display_name": "Telegram Bot",
+    "telegram_bridge_clarion": {
+      "display_name": "Clarion Telegram Bridge Runtime",
       "host": "ai2",
       "component": "telegram-bot",
       "tier": "core",
-      "notes": "Telegram bridge into the gateway."
+      "notes": "Process/container health for Clarion; Telegram API and gateway-model readiness are shown in the named bot panel."
+    },
+    "telegram_bridge_tess": {
+      "display_name": "Tess Telegram Bridge Runtime",
+      "host": "ada2",
+      "component": "telegram-bot-ada2",
+      "tier": "core",
+      "notes": "Process/container health for Tess; Telegram API and gateway-model readiness are shown in the named bot panel."
+    },
+    "telegram_bridge_hex": {
+      "display_name": "Hex Telegram Bridge Runtime",
+      "host": "stackrot",
+      "component": "telegram-bot-stackrot",
+      "tier": "core",
+      "notes": "Process/container health for Hex; Telegram API and gateway-model readiness are shown in the named bot panel."
     },
     "deployment_control": {
       "display_name": "Deployment Control",
@@ -182,19 +196,6 @@
       "compose_managed": false,
       "ready_path": "/models",
       "notes": "Llama 3.2 3B 4-bit on the 8GB Apple M2 host; concurrency and input size are intentionally bounded."
-    },
-    "telegram_bot": {
-      "display_name": "Telegram Bot",
-      "host": "ai2",
-      "component": "telegram-bot",
-      "tier": "crucial",
-      "capabilities": ["bridge"],
-      "estimated_vram_mb": 0,
-      "auto_start": true,
-      "auto_stop": false,
-      "compose_file": "docker-compose.telegram-bot.yml",
-      "health_check": "container",
-      "notes": "Core Telegram bridge; readiness is based on the container running because it does not expose an HTTP ready endpoint."
     },
     "local_vllm": {
       "display_name": "vLLM Strong",
