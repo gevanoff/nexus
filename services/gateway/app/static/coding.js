@@ -1485,7 +1485,8 @@
   }
 
   function agentOptionsBody() {
-    const maxCycles = Math.max(4, Math.min(500, Number.parseInt(els.agentMaxCycles && els.agentMaxCycles.value ? els.agentMaxCycles.value : "80", 10) || 80));
+    const _defaultMaxCycles = (state.config && state.config.agent_max_cycles_per_run) || 1000;
+    const maxCycles = Math.max(4, Math.min(5000, Number.parseInt(els.agentMaxCycles && els.agentMaxCycles.value ? els.agentMaxCycles.value : String(_defaultMaxCycles), 10) || _defaultMaxCycles));
     const maxRuntimeMinutes = Math.max(1, Math.min(1440, Number.parseInt(els.agentMaxRuntimeMinutes && els.agentMaxRuntimeMinutes.value ? els.agentMaxRuntimeMinutes.value : "360", 10) || 360));
     const contextResetCycles = Math.max(4, Math.min(100, Number.parseInt(els.agentContextResetCycles && els.agentContextResetCycles.value ? els.agentContextResetCycles.value : "12", 10) || 12));
     storageSet("horizon.maxCycles", maxCycles);
