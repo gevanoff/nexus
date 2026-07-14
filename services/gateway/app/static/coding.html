@@ -417,10 +417,23 @@
               <label id="taskPromptLabel" for="taskPrompt">Task brief</label>
               <textarea id="taskPrompt" placeholder="Describe the coding task"></textarea>
             </div>
-            <label style="display:flex;gap:8px;align-items:center;">
-              <input id="agentAutoCommit" type="checkbox" style="width:auto;" />
-              Commit successful run
-            </label>
+            <div class="subpanel stack">
+              <h3>Completion and publication</h3>
+              <label style="display:flex;gap:8px;align-items:center;">
+                <input id="agentAutoCommit" type="checkbox" style="width:auto;" checked disabled />
+                Always commit successful work to the feature branch
+              </label>
+              <label style="display:flex;gap:8px;align-items:center;">
+                <input id="pushOnSuccess" type="checkbox" style="width:auto;" />
+                Push feature branch on success
+              </label>
+              <label style="display:flex;gap:8px;align-items:center;">
+                <input id="draftPrOnSuccess" type="checkbox" style="width:auto;" />
+                Open a draft pull request on success
+              </label>
+              <input id="missionPrTitle" autocomplete="off" placeholder="Draft PR title (optional)" />
+              <textarea id="missionPrBody" placeholder="Draft PR body (optional)"></textarea>
+            </div>
             <div class="row">
               <button id="createAndRun" type="button" data-ui-role="action">Create and run agent</button>
               <button id="createTask" type="button" data-ui-role="secondary">Create workspace only</button>
@@ -479,15 +492,15 @@
               <div class="run-horizon-grid">
                 <div>
                   <label for="agentMaxCycles">Maximum work cycles</label>
-                  <input id="agentMaxCycles" type="number" min="4" max="500" step="1" />
+                  <input id="agentMaxCycles" type="number" min="4" max="1000" step="1" />
                 </div>
                 <div>
                   <label for="agentMaxRuntimeMinutes">Maximum run time (minutes)</label>
                   <input id="agentMaxRuntimeMinutes" type="number" min="1" max="1440" step="1" />
                 </div>
                 <div>
-                  <label for="agentContextResetCycles">Compact context every N cycles</label>
-                  <input id="agentContextResetCycles" type="number" min="4" max="100" step="1" />
+                  <label for="agentContextResetCycles">Compact every N cycles (0 disables)</label>
+                  <input id="agentContextResetCycles" type="number" min="0" max="100" step="1" />
                 </div>
               </div>
               <div class="hint">When a budget is reached, the run pauses with files, project plan, and checkpoint commits preserved. Start a continuation run to keep working.</div>
@@ -620,7 +633,7 @@
             </div>
 
             <div class="subpanel stack">
-              <h3>Publish</h3>
+              <h3>Manual Recovery / Publish</h3>
               <div>
                 <label for="commitMessage">Commit message</label>
                 <input id="commitMessage" autocomplete="off" placeholder="Describe the change" />

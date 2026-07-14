@@ -1758,7 +1758,7 @@ def tool_coding_task_notify(args: Dict[str, Any]) -> Dict[str, Any]:
                 "actor": actor,
             }
         )
-        task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 120) or 120), 1000)) :]
+        task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 1000) or 1000), 1000)) :]
         task["agent_last_event_at"] = now_ts
         coding_workspace.save_task(task)
     return {

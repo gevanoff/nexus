@@ -25,6 +25,10 @@
     createAndRunModelIntegration: document.getElementById("createAndRunModelIntegration"),
     modelIntegrationMeta: document.getElementById("modelIntegrationMeta"),
     agentAutoCommit: document.getElementById("agentAutoCommit"),
+    pushOnSuccess: document.getElementById("pushOnSuccess"),
+    draftPrOnSuccess: document.getElementById("draftPrOnSuccess"),
+    missionPrTitle: document.getElementById("missionPrTitle"),
+    missionPrBody: document.getElementById("missionPrBody"),
     configMeta: document.getElementById("configMeta"),
     refreshTasks: document.getElementById("refreshTasks"),
     tasks: document.getElementById("tasks"),
@@ -105,6 +109,7 @@
     outputHistory: [],
     diffSummary: null,
     changeSummary: null,
+    missionSnapshot: null,
     lastTreePayload: null,
     taskSearch: "",
     taskFilter: "all",
@@ -1199,12 +1204,26 @@
       if (agent.auto_commit) bits.push("auto-commit");
       const commit = shortCommit(task && (task.last_commit || task.last_checkpoint_commit));
       if (commit) bits.push(`commit ${commit}`);
+      const terminal = task && task.terminal_result && typeof task.terminal_result === "object" ? task.terminal_result : {};
+      if (terminal.finalization_status) bits.push(`finalization ${terminal.finalization_status}`);
+      if (terminal.final_commit) bits.push(`final commit ${shortCommit(terminal.final_commit)}`);
+      if (terminal.pushed_at) bits.push("branch pushed");
+      if (terminal.pr_url) bits.push(`draft PR ${terminal.pr_url}`);
+      const snapshot = state.missionSnapshot && state.missionSnapshot.schema === "nexus_coding_state.v1" ? state.missionSnapshot : {};
+      const progress = snapshot.progress || {};
+      const validation = snapshot.validation || {};
+      const diffReview = snapshot.diff_review || {};
+      if (progress.current_phase) bits.push(`phase ${progress.current_phase}`);
+      if (validation.last_validation_at) bits.push(validation.validation_after_latest_edit ? "validation current" : "validation stale");
+      if (diffReview.last_diff_review_at) bits.push(diffReview.diff_reviewed_after_latest_edit ? "diff reviewed" : "diff review stale");
       els.agentMeta.textContent = bits.join(" | ");
     }
     if (els.agentLog) {
       const lines = Array.isArray(agent.events) ? agent.events.map(eventLine).filter(Boolean) : [];
       if (agent.summary && !lines.some((line) => line.includes(agent.summary))) lines.push(`summary:\n${agent.summary}`);
       if (agent.error && status === "failed") lines.push(`error:\n${agent.error}`);
+      if (terminal.finalization_error) lines.push(`finalization error:\n${terminal.finalization_error}`);
+      if (terminal.pr_url) lines.push(`pull request:\n${terminal.pr_url}`);
       els.agentLog.innerHTML = highlightAgentLog(lines.join("\n\n") || "No agent run yet.");
       els.agentLog.scrollTop = els.agentLog.scrollHeight;
     }
@@ -1396,7 +1415,7 @@
       els.agentMaxRuntimeMinutes.value = storageGet("horizon.maxRuntimeMinutes", defaultMinutes);
     }
     if (els.agentContextResetCycles && !els.agentContextResetCycles.value) {
-      els.agentContextResetCycles.value = storageGet("horizon.contextResetCycles", payload.agent_context_reset_cycles || 12);
+      els.agentContextResetCycles.value = storageGet("horizon.contextResetCycles", payload.agent_context_reset_cycles || 0);
     }
     setSelectOptions(
       els.modelIntegrationRuntime,
@@ -1414,7 +1433,7 @@
       if (payload.preferred_coding_model) bits.push(`model: ${payload.preferred_coding_model}`);
       if (payload.agent_checkpoint_commits) bits.push("checkpoint commits on");
       bits.push(`horizon: ${payload.agent_max_cycles_per_run || 1000} cycles / ${fmtDuration(payload.agent_max_runtime_sec || 21600)}`);
-      bits.push(`context compaction: ${payload.agent_context_reset_cycles || 12} cycles`);
+      bits.push(payload.agent_context_reset_cycles ? `context compaction: ${payload.agent_context_reset_cycles} cycles` : "cycle compaction disabled");
       bits.push(payload.gh_cli_available ? "gh available" : "gh unavailable");
       bits.push(`commands: ${(payload.allowed_commands || []).join(", ")}`);
       els.configMeta.textContent = bits.join(" | ");
@@ -1486,14 +1505,19 @@
 
   function agentOptionsBody() {
     const _defaultMaxCycles = (state.config && state.config.agent_max_cycles_per_run) || 1000;
-    const maxCycles = Math.max(4, Math.min(5000, Number.parseInt(els.agentMaxCycles && els.agentMaxCycles.value ? els.agentMaxCycles.value : String(_defaultMaxCycles), 10) || _defaultMaxCycles));
+    const maxCycles = Math.max(4, Math.min(1000, Number.parseInt(els.agentMaxCycles && els.agentMaxCycles.value ? els.agentMaxCycles.value : String(_defaultMaxCycles), 10) || _defaultMaxCycles));
     const maxRuntimeMinutes = Math.max(1, Math.min(1440, Number.parseInt(els.agentMaxRuntimeMinutes && els.agentMaxRuntimeMinutes.value ? els.agentMaxRuntimeMinutes.value : "360", 10) || 360));
-    const contextResetCycles = Math.max(4, Math.min(100, Number.parseInt(els.agentContextResetCycles && els.agentContextResetCycles.value ? els.agentContextResetCycles.value : "12", 10) || 12));
+    const contextResetCycles = Math.max(0, Math.min(100, Number.parseInt(els.agentContextResetCycles && els.agentContextResetCycles.value ? els.agentContextResetCycles.value : "0", 10) || 0));
     storageSet("horizon.maxCycles", maxCycles);
     storageSet("horizon.maxRuntimeMinutes", maxRuntimeMinutes);
     storageSet("horizon.contextResetCycles", contextResetCycles);
     return {
-      auto_commit: !!(els.agentAutoCommit && els.agentAutoCommit.checked),
+      auto_commit: true,
+      commit_policy: "always_on_success",
+      push_on_success: !!(els.pushOnSuccess && els.pushOnSuccess.checked),
+      draft_pr_on_success: !!(els.draftPrOnSuccess && els.draftPrOnSuccess.checked),
+      pr_title: els.missionPrTitle ? els.missionPrTitle.value.trim() : "",
+      pr_body: els.missionPrBody ? els.missionPrBody.value.trim() : "",
       max_cycles: maxCycles,
       max_runtime_sec: maxRuntimeMinutes * 60,
       context_reset_cycles: contextResetCycles,
@@ -1628,6 +1652,13 @@
     renderSelected();
     await loadDiffSummary({ quiet: true, taskId });
     await loadChanges({ quiet: true, taskId });
+    try {
+      const statePayload = await fetchJson(`/ui/api/coding/tasks/${encodeURIComponent(taskId)}/state`);
+      if (state.selectedId === taskId) state.missionSnapshot = statePayload.state || null;
+    } catch (error) {
+      state.missionSnapshot = null;
+    }
+    renderSelected();
   }
 
   async function loadDiffSummary({ quiet = false, taskId } = {}) {

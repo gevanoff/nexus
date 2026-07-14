@@ -661,7 +661,59 @@ def _read_json(path: Path) -> Dict[str, Any]:
 
 def load_task(task_id: str) -> Dict[str, Any]:
     _ensure_enabled()
-    return _read_json(_task_path(task_id))
+    task = _read_json(_task_path(task_id))
+    mission = normalize_coding_mission(task)
+    if task.get("mission") != mission:
+        task["mission"] = mission
+        save_task(task)
+    return task
+
+
+def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    raw = task.get("mission") if isinstance(task.get("mission"), dict) else {}
+    supplied = overrides if isinstance(overrides, dict) else {}
+    completion = raw.get("completion_policy") if isinstance(raw.get("completion_policy"), dict) else {}
+    completion.update(supplied.get("completion_policy") if isinstance(supplied.get("completion_policy"), dict) else {})
+    publish = raw.get("publish_policy") if isinstance(raw.get("publish_policy"), dict) else {}
+    publish.update(supplied.get("publish_policy") if isinstance(supplied.get("publish_policy"), dict) else {})
+    budget = raw.get("budget_policy") if isinstance(raw.get("budget_policy"), dict) else {}
+    budget.update(supplied.get("budget_policy") if isinstance(supplied.get("budget_policy"), dict) else {})
+    context = raw.get("context_policy") if isinstance(raw.get("context_policy"), dict) else {}
+    context.update(supplied.get("context_policy") if isinstance(supplied.get("context_policy"), dict) else {})
+    prompt = str(supplied.get("goal") or raw.get("goal") or task.get("prompt") or "").strip()
+    return {
+        "schema": "nexus_coding_mission.v1",
+        "goal": prompt,
+        "repo_url": str(task.get("repo_url") or ""),
+        "base_branch": str(task.get("base_branch") or "main"),
+        "branch_name": str(task.get("branch_name") or ""),
+        "completion_policy": {
+            "require_file_changes": bool(completion.get("require_file_changes", True)),
+            "require_validation_after_edit": bool(completion.get("require_validation_after_edit", True)),
+            "require_diff_review_after_edit": bool(completion.get("require_diff_review_after_edit", True)),
+            "require_commit_on_success": bool(completion.get("require_commit_on_success", True)),
+            "commit_policy": str(completion.get("commit_policy") or "always_on_success"),
+        },
+        "publish_policy": {
+            "push": str(publish.get("push") or "never"),
+            "draft_pr": str(publish.get("draft_pr") or "never"),
+            "remote": str(publish.get("remote") or "origin"),
+            "pr_title": str(publish.get("pr_title") or ""),
+            "pr_body": str(publish.get("pr_body") or ""),
+        },
+        "budget_policy": {
+            "max_cycles": int(budget.get("max_cycles") or 1000),
+            "max_runtime_sec": int(budget.get("max_runtime_sec") or 21600),
+            "max_no_progress_cycles": int(budget.get("max_no_progress_cycles") or 8),
+            "max_repeated_state_reads": int(budget.get("max_repeated_state_reads") or 6),
+            "max_repeated_same_file_reads": int(budget.get("max_repeated_same_file_reads") or 4),
+        },
+        "context_policy": {
+            "context_reset_cycles": int(context.get("context_reset_cycles") or 0),
+            "context_reset_chars": int(context.get("context_reset_chars") or 200_000),
+            "state_snapshot_on_reset": bool(context.get("state_snapshot_on_reset", True)),
+        },
+    }
 
 
 def save_task(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -861,7 +913,7 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
             "run_id": task.get("agent_run_id") or "",
         }
         events.append(ev)
-        task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 120) or 120), 1000)) :]
+        task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 1000) or 1000), 1000)) :]
         task["agent_previous_status"] = status
         task["agent_status"] = "interrupted"
         task["agent_summary"] = ev["summary"]
@@ -1265,6 +1317,7 @@ def create_task(
     owner_user_id: Optional[int] = None,
     git_token_value: Optional[str] = None,
     coding_model: Optional[str] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     _ensure_enabled()
     _ensure_dirs()
@@ -1293,6 +1346,7 @@ def create_task(
         "project_plan": normalize_project_plan({"goal": str(prompt or "").strip(), "items": []}),
         "agent_runs": [],
     }
+    task["mission"] = normalize_coding_mission(task, mission_overrides)
     save_task(task)
 
     try:
@@ -1348,6 +1402,7 @@ def create_model_integration_task(
     owner_user_id: Optional[int] = None,
     git_token_value: Optional[str] = None,
     coding_model: Optional[str] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     _ensure_enabled()
     _ensure_dirs()
@@ -1391,6 +1446,7 @@ def create_model_integration_task(
         "project_plan": normalize_project_plan({"goal": str(plan.get("prompt") or "").strip(), "items": []}),
         "agent_runs": [],
     }
+    task["mission"] = normalize_coding_mission(task, mission_overrides)
     save_task(task)
 
     try:
@@ -2437,6 +2493,89 @@ def create_pull_request(
     return result
 
 
+def coding_state_snapshot(task_id: str) -> Dict[str, Any]:
+    """Return durable controller-owned state for model hydration and the UI."""
+    task = load_task(task_id)
+    events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
+    commands = [item for item in (task.get("commands") or []) if isinstance(item, dict)]
+    last_edit_at = 0.0
+    last_edited_files: List[str] = []
+    last_validation_at = 0.0
+    last_validation_command: List[str] = []
+    last_validation_ok: Optional[bool] = None
+    last_diff_review_at = 0.0
+    last_action = ""
+    blockers: List[str] = []
+    for event in events:
+        event_type = str(event.get("type") or "")
+        ts = float(event.get("ts") or 0)
+        if event_type == "tool_finished":
+            name = str(event.get("name") or "")
+            result = event.get("result") if isinstance(event.get("result"), dict) else {}
+            last_action = name
+            if name in {"coding_write_file", "coding_replace_text", "coding_apply_patch"} and bool(result.get("ok", True)):
+                last_edit_at = max(last_edit_at, ts)
+            if name == "coding_git_diff" and bool(result.get("ok", True)):
+                last_diff_review_at = max(last_diff_review_at, ts)
+        if event_type in {"finish_gate", "no_progress_limit", "failed"}:
+            text = str(event.get("summary") or event.get("error") or "").strip()
+            if text:
+                blockers.append(text[:500])
+    for command in commands:
+        label = str(command.get("label") or "")
+        if label in {"agent-command", "command"}:
+            last_validation_at = float(command.get("ts") or last_validation_at)
+            last_validation_command = [str(item) for item in (command.get("argv") or [])]
+            last_validation_ok = bool(command.get("ok"))
+    change_summary = git_change_summary(task_id)
+    files = change_summary.get("files") if isinstance(change_summary.get("files"), list) else []
+    last_edited_files = [str(item.get("path") or "") for item in files if isinstance(item, dict) and item.get("path")]
+    head = git_head(task_id)
+    mission = normalize_coding_mission(task)
+    cycle = int(task.get("agent_cycle") or 0)
+    phase = "editing"
+    if last_validation_at >= last_edit_at and last_validation_at:
+        phase = "reviewing" if last_diff_review_at < last_edit_at else "finalizing"
+    return {
+        "schema": "nexus_coding_state.v1",
+        "generated_at": _now(),
+        "mission": mission,
+        "branch": {
+            "base_branch": task.get("base_branch") or "main",
+            "branch_name": task.get("branch_name") or "",
+            "start_head": task.get("agent_start_head") or "",
+            "current_head": head.get("commit") or "",
+            "last_checkpoint_commit": task.get("last_checkpoint_commit") or "",
+        },
+        "progress": {
+            "cycle": cycle,
+            "current_phase": phase,
+            "last_meaningful_action": last_action,
+            "next_recommended_action": "validate changes" if last_validation_at < last_edit_at else "review diff" if last_diff_review_at < last_edit_at else "finish the mission",
+        },
+        "plan": normalize_project_plan(task.get("project_plan"), fallback_goal=mission["goal"]),
+        "changes": {
+            "changed_files": files,
+            "counts": change_summary.get("counts") or {},
+            "last_edit_at": last_edit_at,
+            "last_edited_files": last_edited_files,
+        },
+        "validation": {
+            "last_validation_command": last_validation_command,
+            "last_validation_ok": last_validation_ok,
+            "last_validation_at": last_validation_at,
+            "validation_after_latest_edit": bool(last_validation_at and last_validation_at >= last_edit_at),
+        },
+        "diff_review": {
+            "last_diff_review_at": last_diff_review_at,
+            "diff_reviewed_after_latest_edit": bool(last_diff_review_at and last_diff_review_at >= last_edit_at),
+        },
+        "blockers": blockers[-8:],
+        "recent_guidance": (task.get("guidance_messages") or [])[-8:],
+        "recent_events": events[-20:],
+    }
+
+
 def list_tree(task_id: str, *, path: Optional[str] = None, limit: int = 250) -> Dict[str, Any]:
     task = load_task(task_id)
     target = _resolve_repo_child(task, path)
@@ -3076,6 +3215,8 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
         "seed_files": task.get("seed_files") if isinstance(task.get("seed_files"), list) else [],
         "guidance_messages": guidance_messages[-80:],
         "project_plan": normalize_project_plan(task.get("project_plan"), fallback_goal=str(task.get("prompt") or "")),
+        "mission": normalize_coding_mission(task),
+        "terminal_result": task.get("terminal_result") if isinstance(task.get("terminal_result"), dict) else {},
         "agent_runs": [item for item in run_history[-30:] if isinstance(item, dict)],
         "last_guidance_at": task.get("last_guidance_at"),
         "coding_model": task.get("coding_model") or "",
@@ -3103,7 +3244,7 @@ def public_task(task: Dict[str, Any], *, include_commands: bool = True) -> Dict[
             "cycle": int(task.get("agent_cycle") or 0),
             "max_cycles": int(task.get("agent_max_cycles") or getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 1000) or 1000),
             "max_runtime_sec": int(task.get("agent_max_runtime_sec") or getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60)),
-            "context_reset_cycles": int(task.get("agent_context_reset_cycles") or getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12),
+            "context_reset_cycles": int(task.get("agent_context_reset_cycles") or 0),
             "last_event_at": task.get("agent_last_event_at"),
             "summary": task.get("agent_summary") or "",
             "error": _redact_text(str(task.get("agent_error") or "")),
@@ -3355,8 +3496,8 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "agent_tool_context_chars": int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000) or 32_000),
         "agent_max_cycles_per_run": int(getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 1000) or 1000),
         "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60)),
-        "agent_context_reset_cycles": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12),
-        "agent_context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 40_000) or 40_000),
+        "agent_context_reset_cycles": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 0) or 0),
+        "agent_context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000) or 200_000),
         "agent_run_history_limit": int(getattr(S, "CODING_AGENT_RUN_HISTORY_LIMIT", 50) or 50),
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),

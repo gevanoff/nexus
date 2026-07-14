@@ -34,7 +34,7 @@ _ACTIVE_AGENT_STATUSES = {"queued", "running", "stopping", "pausing"}
 
 def _max_events() -> int:
     try:
-        return max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 120) or 120), 1000))
+        return max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 1000) or 1000), 1000))
     except Exception:
         return 120
 
@@ -177,16 +177,135 @@ def _max_runtime_sec(value: Optional[int] = None) -> int:
 
 
 def _context_reset_cycles(value: Optional[int] = None) -> int:
-    default = int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 12) or 12)
+    default = int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 0) or 0)
     requested = default if value is None else int(value)
+    if requested <= 0:
+        return 0
     return max(4, min(requested, 100))
 
 
 def _context_reset_chars() -> int:
     try:
-        return max(20_000, min(int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 40_000) or 40_000), 1_000_000))
+        return max(20_000, min(int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000) or 200_000), 1_000_000))
     except Exception:
-        return 40_000
+        return 200_000
+
+
+def _mission_for_task(task: Dict[str, Any]) -> Dict[str, Any]:
+    return cw.normalize_coding_mission(task)
+
+
+def _state_read_signature(name: str, args: Dict[str, Any]) -> str:
+    if name in {"coding_git_diff", "coding_git_status"}:
+        return name
+    if name in {"coding_read_file", "coding_read_file_lines"}:
+        return f"{name}:{args.get('path') or ''}:{args.get('start_line') or ''}:{args.get('end_line') or ''}"
+    return ""
+
+
+def _repeated_state_read_decision(count: int, maximum: int) -> str:
+    if count > maximum:
+        return "pause"
+    if count == maximum:
+        return "guide"
+    return "continue"
+
+
+def finalize_successful_run(
+    task_id: str,
+    *,
+    mission: Optional[Dict[str, Any]] = None,
+    git_token_value: Optional[str] = None,
+    finish_summary: str = "",
+    run_id: str = "",
+) -> Dict[str, Any]:
+    """Deterministically commit and optionally publish a successful coding run."""
+    task = cw.load_task(task_id)
+    contract = cw.normalize_coding_mission(task, mission)
+    publish = contract["publish_policy"]
+    completion = contract["completion_policy"]
+    now = time.time()
+    result: Dict[str, Any] = {
+        "ok": False,
+        "finalization_status": "running",
+        "final_commit": "",
+        "committed_at": None,
+        "pushed_at": None,
+        "push_result": None,
+        "pr_url": "",
+        "pr_number": None,
+        "pr_created_at": None,
+        "finalization_error": "",
+    }
+    try:
+        status = cw.git_status(task_id, git_token_value=git_token_value)
+        diff = cw.git_diff(task_id)
+        changes = cw.git_change_summary(task_id)
+        snapshot = cw.coding_state_snapshot(task_id)
+        before = cw.git_head(task_id)
+        if not status.get("ok") or not diff.get("ok") or not changes.get("ok"):
+            raise RuntimeError("final repository audit failed")
+        change_counts = changes.get("counts") if isinstance(changes.get("counts"), dict) else {}
+        has_uncommitted = int(change_counts.get("total") or 0) > 0
+        base_changes = diff.get("changes") if isinstance(diff.get("changes"), dict) else {}
+        base_counts = base_changes.get("counts") if isinstance(base_changes.get("counts"), dict) else {}
+        if completion.get("require_file_changes", True) and int(base_counts.get("total") or 0) <= 0:
+            raise RuntimeError("successful run has no meaningful delta versus the base branch")
+        if completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
+            raise RuntimeError("successful run lacks validation after the latest edit")
+        if completion.get("require_diff_review_after_edit", True) and not bool((snapshot.get("diff_review") or {}).get("diff_reviewed_after_latest_edit")):
+            raise RuntimeError("successful run lacks diff review after the latest edit")
+        if has_uncommitted:
+            message = str(finish_summary or "Apply Nexus coding agent changes").strip().splitlines()[0][:160]
+            commit = cw.commit_task(task_id, message=message or "Apply Nexus coding agent changes")
+            if not commit.get("ok"):
+                raise RuntimeError(str(commit.get("error") or "git commit failed"))
+            result["final_commit"] = str(commit.get("last_commit") or "")
+            result["committed_at"] = time.time()
+        else:
+            latest = cw.load_task(task_id)
+            after = cw.git_head(task_id)
+            candidate = str(after.get("commit") or latest.get("last_checkpoint_commit") or latest.get("last_commit") or "")
+            start_head = str(latest.get("agent_start_head") or "")
+            checkpoint_for_run = str(latest.get("last_checkpoint_run_id") or "") == str(run_id or "")
+            if completion.get("require_file_changes", True) and not candidate:
+                raise RuntimeError("successful run has no branch commit")
+            if completion.get("require_file_changes", True) and start_head and candidate == start_head and not checkpoint_for_run:
+                raise RuntimeError("successful run produced no commit after run start")
+            result["final_commit"] = candidate
+            result["committed_at"] = float(latest.get("last_checkpoint_at") or latest.get("updated_at") or now)
+        if completion.get("require_commit_on_success", True) and not result["final_commit"]:
+            raise RuntimeError("successful run has no final commit")
+        if publish.get("push") == "on_success" or publish.get("draft_pr") == "on_success":
+            push = cw.push_task(task_id, remote=publish.get("remote") or "origin", git_token_value=git_token_value)
+            result["push_result"] = push
+            if not push.get("ok"):
+                result["finalization_status"] = "failed_publish"
+                raise RuntimeError(str(push.get("stderr") or push.get("error") or "push failed"))
+            result["pushed_at"] = time.time()
+        if publish.get("draft_pr") == "on_success":
+            pr = cw.create_pull_request(
+                task_id,
+                title=str(publish.get("pr_title") or finish_summary or "Nexus coding mission").splitlines()[0][:200],
+                body=str(publish.get("pr_body") or finish_summary or ""),
+                draft=True,
+                git_token_value=git_token_value,
+            )
+            if not pr.get("ok"):
+                result["finalization_status"] = "failed_publish"
+                raise RuntimeError(str(pr.get("error") or "draft PR creation failed"))
+            result["pr_url"] = str(pr.get("url") or pr.get("html_url") or pr.get("stdout") or "").strip()
+            result["pr_number"] = pr.get("number")
+            result["pr_created_at"] = time.time()
+        result["ok"] = True
+        result["finalization_status"] = "completed"
+    except Exception as exc:
+        if result["finalization_status"] == "running":
+            result["finalization_status"] = "failed_finalization"
+        result["finalization_error"] = f"{type(exc).__name__}: {exc}"
+    result["finished_at"] = time.time()
+    cw.mutate_task(task_id, lambda latest: latest.update({"mission": contract, "terminal_result": result, **result}))
+    return result
 
 
 def _run_history_limit() -> int:
@@ -1932,7 +2051,8 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
             "For multi-step work, create and maintain the durable project plan with coding_update_plan. "
             "Use small reads: coding_search_text first, then coding_read_file_lines with narrow ranges. "
             "Use coding_replace_text for small edits and coding_run_command for validation. "
-            "Never push, open pull requests, or modify files outside the workspace. "
+            "Do not push or open pull requests directly. Nexus will commit successful work and optionally push/open a draft PR after your successful coding_finish according to the mission contract. "
+            "Do not modify files outside the workspace. "
             f"{edit_expectation}"
             f"Allowed commands: {allowed or '(none)'}. "
             f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
@@ -1948,7 +2068,8 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
         "For work spanning several milestones, call coding_update_plan early, keep exactly one relevant item in_progress, and update completed or blocked items as evidence changes. "
         "Prefer this loop: inspect relevant files, make focused edits, run targeted checks, inspect git diff, then finish. "
         "Keep assistant responses concise; call tools promptly instead of narrating long plans. "
-        "Do not push, open pull requests, force-push, rewrite git history, or modify files outside the workspace. "
+        "Do not push or open pull requests directly. Nexus will commit successful work and optionally push/open a draft PR after your successful coding_finish according to the mission contract. "
+        "Do not force-push, rewrite git history, or modify files outside the workspace. "
         "The Gateway may create local checkpoint commits during the run so paused or interrupted work can resume from durable git history. "
         "Call coding_tool_manifest if you need to inspect the exact tools and guidance currently available in this workspace. "
         "Prefer coding_read_file_lines for targeted inspection. Avoid reading full large files unless needed; use coding_search_text first, then focused line ranges. "
@@ -1989,6 +2110,11 @@ def _task_context(task: Dict[str, Any]) -> str:
     if guidance:
         base = f"{base}\n\n{guidance}"
     base = f"{base}\n\n{_project_plan_context(task)}"
+    try:
+        snapshot = cw.coding_state_snapshot(str(task.get("id") or ""))
+        base = f"{base}\n\nController state snapshot (authoritative):\n{json.dumps(snapshot, ensure_ascii=False, sort_keys=True)}"
+    except Exception:
+        pass
     previous = _previous_run_context(task)
     if previous:
         return f"{base}\n\n{previous}"
@@ -2037,9 +2163,13 @@ async def start_agent_run(
     max_cycles: Optional[int] = None,
     max_runtime_sec: Optional[int] = None,
     context_reset_cycles: Optional[int] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     cw._ensure_enabled()
     task = await asyncio.to_thread(cw.load_task, task_id)
+    if mission_overrides:
+        mission = cw.normalize_coding_mission(task, mission_overrides)
+        task = await asyncio.to_thread(cw.mutate_task, task_id, lambda latest: latest.update({"mission": mission}))
     status = str(task.get("status") or "")
     if status == "error":
         raise HTTPException(status_code=409, detail="workspace is in error state")
@@ -2267,6 +2397,7 @@ async def _run_agent(
         user_settings = _settings_for_task_owner(task)
         start_head_result = await asyncio.to_thread(cw.git_head, task_id)
         start_head = str(start_head_result.get("commit") or "")
+        await asyncio.to_thread(_mutate_task, task_id, {"agent_start_head": start_head})
         route_reason = ""
         if user_llm.is_user_model_id(model):
             parsed = user_llm.parse_user_model_id(model)
@@ -2337,6 +2468,16 @@ async def _run_agent(
         validation_failed_after_edit = False
         diff_result_after_edit: Optional[Dict[str, Any]] = None
         validation_argv_after_edit: Optional[List[str]] = None
+        repeated_state_reads = 0
+        no_progress_cycles = 0
+        last_state_read = ""
+        active_mission = _mission_for_task(task)
+        progress_policy = active_mission.get("budget_policy") or {}
+        context_policy = active_mission.get("context_policy") or {}
+        max_repeated_state_reads = int(progress_policy.get("max_repeated_state_reads") or 6)
+        max_repeated_same_file_reads = int(progress_policy.get("max_repeated_same_file_reads") or 4)
+        max_no_progress_cycles = int(progress_policy.get("max_no_progress_cycles") or 8)
+        context_reset_chars = int(context_policy.get("context_reset_chars") or _context_reset_chars())
         while True:
             elapsed_sec = time.monotonic() - t0
             if cycle >= max_cycles or elapsed_sec >= max_runtime_sec:
@@ -2382,8 +2523,8 @@ async def _run_agent(
                         },
                     )
             context_chars = _messages_char_count(messages)
-            reset_for_cycles = cycle > 1 and (cycle - 1) % context_reset_cycles == 0
-            reset_for_size = cycle > 1 and context_chars >= _context_reset_chars()
+            reset_for_cycles = context_reset_cycles > 0 and cycle > 1 and (cycle - 1) % context_reset_cycles == 0
+            reset_for_size = cycle > 1 and context_chars >= context_reset_chars
             if reset_for_cycles or reset_for_size:
                 latest_task = await asyncio.to_thread(cw.load_task, task_id)
                 request_text_tool_mode = not _backend_supports_tool_calling(backend)
@@ -2398,9 +2539,9 @@ async def _run_agent(
                                 else _task_context(latest_task)
                             )
                             + "\n\n"
-                            + f"Continue the same coding run at cycle {cycle}. The conversation context was compacted; "
-                            + "the workspace files, git history, durable plan, guidance, and recent event digest above are authoritative. "
-                            + "Inspect current state before making assumptions and continue with a workspace tool call."
+                            + f"Continue the same coding run at cycle {cycle}. Use the controller-provided state snapshot as authoritative. "
+                            + "Only re-open files or re-run diff/status if the snapshot is stale, incomplete, or directly relevant to the next edit. "
+                            + "Continue with the snapshot's next recommended action."
                         ),
                     ),
                 ]
@@ -2613,6 +2754,35 @@ async def _run_agent(
                 except Exception as exc:
                     result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
+                state_read = _state_read_signature(name, args)
+                if state_read and state_read == last_state_read:
+                    repeated_state_reads += 1
+                elif state_read:
+                    repeated_state_reads = 1
+                    last_state_read = state_read
+                else:
+                    repeated_state_reads = 0
+                    last_state_read = ""
+                no_progress_cycles = no_progress_cycles + 1 if state_read else 0
+                repeated_limit = max_repeated_same_file_reads if state_read.startswith("coding_read_file") else max_repeated_state_reads
+                progress_decision = _repeated_state_read_decision(repeated_state_reads, repeated_limit)
+                if progress_decision == "guide":
+                    guidance = "The same repository state read is repeating without progress. Trust the controller snapshot and take the next edit, validation, review, or finish action."
+                    messages.append(ChatMessage(role="user", content=guidance))
+                    await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_guidance", "cycle": cycle, "summary": guidance, "signature": state_read})
+                elif progress_decision == "pause":
+                    summary = f"Paused after {repeated_state_reads} repeated state reads ({state_read}) without a meaningful action."
+                    await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_limit", "cycle": cycle, "summary": summary, "signature": state_read})
+                    raise _CodingAgentPaused(summary)
+                elif no_progress_cycles == max_no_progress_cycles:
+                    guidance = "The run has spent its no-progress budget on state inspection. Take a concrete edit, validation, plan update, or finish action now."
+                    messages.append(ChatMessage(role="user", content=guidance))
+                    await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_guidance", "cycle": cycle, "summary": guidance, "count": no_progress_cycles})
+                elif no_progress_cycles > max_no_progress_cycles:
+                    summary = f"Paused after {no_progress_cycles} state-inspection cycles without an edit, validation, plan update, or finish action."
+                    await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_limit", "cycle": cycle, "summary": summary, "count": no_progress_cycles})
+                    raise _CodingAgentPaused(summary)
+
                 if name == "coding_finish":
                     candidate_success = bool(result.get("success", args.get("success", True)))
                     gate_feedback = _finish_gate_feedback(
@@ -2763,51 +2933,24 @@ async def _run_agent(
         if audit_event is not None:
             await asyncio.to_thread(_append_event, task_id, audit_event)
 
-        if auto_commit and finish_success:
-            msg = str(commit_message or finish_summary or "").strip()
-            if not msg:
-                msg = "Apply Nexus coding agent changes"
-            msg = msg.splitlines()[0][:160]
-            commit_result = await asyncio.to_thread(cw.commit_task, task_id, message=msg)
-            if not commit_result.get("ok") and str(commit_result.get("error") or "") == "no changes to commit":
-                latest_task = await asyncio.to_thread(cw.load_task, task_id)
-                existing_commit = str(latest_task.get("last_commit") or latest_task.get("last_checkpoint_commit") or "")
-                summary = "No uncommitted changes remained after checkpoint commits."
-                if existing_commit:
-                    summary = f"Changes were already saved in checkpoint commit {existing_commit[:12]}."
-                await asyncio.to_thread(
-                    _append_event,
-                    task_id,
-                    {
-                        "type": "commit",
-                        "message": msg,
-                        "skipped": True,
-                        "summary": summary,
-                        "commit": existing_commit,
-                        "result": _event_result(commit_result),
-                    },
-                )
-            else:
-                await asyncio.to_thread(
-                    _append_event,
-                    task_id,
-                    {
-                        "type": "commit",
-                        "message": msg,
-                        "ok": bool(commit_result.get("ok")),
-                        "commit": str(commit_result.get("last_commit") or ""),
-                        "result": _event_result(commit_result),
-                    },
-                )
-                if not commit_result.get("ok"):
-                    finish_success = False
-                    finish_summary = (
-                        f"Agent completed the coding work, but auto-commit failed: "
-                        f"{commit_result.get('error') or 'git commit failed'}"
-                    )
+        if finish_success:
+            finalization = await asyncio.to_thread(
+                finalize_successful_run,
+                task_id,
+                mission=_mission_for_task(await asyncio.to_thread(cw.load_task, task_id)),
+                git_token_value=git_token_value,
+                finish_summary=str(commit_message or finish_summary or "Apply Nexus coding agent changes"),
+                run_id=run_id,
+            )
+            await asyncio.to_thread(_append_event, task_id, {"type": "finalization", "result": _event_result(finalization), **finalization})
+            if not finalization.get("ok"):
+                finish_success = False
+                finish_summary = f"Code work completed but controller finalization failed: {finalization.get('finalization_error') or 'unknown error'}"
 
         finished_at = time.time()
-        final_status = "completed" if finish_success else "failed"
+        latest_after_finalization = await asyncio.to_thread(cw.load_task, task_id)
+        finalization_status = str(latest_after_finalization.get("finalization_status") or "")
+        final_status = "completed" if finish_success else (finalization_status or "failed")
         await asyncio.to_thread(
             _mutate_task,
             task_id,
