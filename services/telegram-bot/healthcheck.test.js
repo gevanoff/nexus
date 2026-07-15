@@ -4,7 +4,18 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-const { checkGatewayCompletion, recentGatewayFailure, validateCompletion } = require('./healthcheck');
+const {
+  checkGatewayCompletion,
+  recentGatewayFailure,
+  requestWithRetry,
+  validateCompletion,
+} = require('./healthcheck');
+
+function axiosError(message, { code = '', status } = {}) {
+  const error = Object.assign(new Error(message), { code, isAxiosError: true });
+  if (status !== undefined) error.response = { status };
+  return error;
+}
 
 test('gateway completion health check sends a real minimal chat request', async () => {
   let request;
@@ -46,4 +57,42 @@ test('recent gateway failure reads a fresh bot request failure marker', () => {
   if (previousPath === undefined) delete process.env.TELEGRAM_GATEWAY_STATE_PATH;
   else process.env.TELEGRAM_GATEWAY_STATE_PATH = previousPath;
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+});
+
+test('health check retries transient DNS failures with backoff', async () => {
+  let calls = 0;
+  const delays = [];
+  const response = { status: 200, data: { ok: true } };
+
+  const result = await requestWithRetry(async () => {
+    calls += 1;
+    if (calls < 3) throw axiosError('temporary DNS failure', { code: 'EAI_AGAIN' });
+    return response;
+  }, {
+    retries: 2,
+    delayMs: 10,
+    sleep: async (delay) => delays.push(delay),
+  });
+
+  assert.equal(result, response);
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [10, 20]);
+});
+
+test('health check does not retry authentication failures', async () => {
+  let calls = 0;
+
+  await assert.rejects(
+    requestWithRetry(async () => {
+      calls += 1;
+      throw axiosError('unauthorized', { status: 401 });
+    }, {
+      retries: 2,
+      delayMs: 0,
+      sleep: async () => {},
+    }),
+    /unauthorized/,
+  );
+
+  assert.equal(calls, 1);
 });

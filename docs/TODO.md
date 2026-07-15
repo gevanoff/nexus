@@ -26,7 +26,7 @@
 ## Honcho And Host Chatbots
 
 - Provision dedicated Honcho database, JWT, and restricted Gateway credentials on `copyfail`, then start the pinned stack in `docker-compose.honcho.yml`.
-- Decide the Honcho workspace/peer/session mapping and retention/deletion policy before Telegram messages are uploaded. Private chats, linked Nexus users, and group chats must not collapse into one memory scope by default.
-- Add Honcho SDK integration to each chatbot only after the identity policy is settled; use workspace-scoped JWTs, not the Honcho admin token.
+- Implement and test the canonical owner, private/group partition, cross-bot sharing, retention, deletion, and export rules in `deploy/honcho/MEMORY_POLICY.md` before Telegram messages are uploaded.
+- Add Honcho SDK integration to each chatbot only after download authorization and deletion-driven re-derivation are enforced; use workspace-scoped JWTs, not the Honcho admin token.
 - Select and benchmark the future `meltdown` language model, including VRAM coexistence with SDXL-Turbo and the embeddings lane.
 - After the `meltdown` model is chosen, add its Gateway alias, SOUL, distinct BotFather token, Compose service, lifecycle status entry, and end-to-end chat health probe. Do not create a placeholder route that can appear ready before a model exists.

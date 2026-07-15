@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,130 @@ from app.backends import backend_hostname, get_registry, get_registry_sync_statu
 from app.config import S
 from app.health_checker import get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
+
+
+_TELEGRAM_PROBE_STATE: Dict[str, Dict[str, Any]] = {}
+
+
+def _telegram_probe_int(name: str, default: int, *, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except Exception:
+        return default
+
+
+def _telegram_probe_float(name: str, default: float, *, minimum: float = 0.0) -> float:
+    try:
+        return max(minimum, float(os.getenv(name, str(default))))
+    except Exception:
+        return default
+
+
+def _telegram_probe_failure(
+    bot_id: str, error: str, *, now: float, hard: bool = False
+) -> Dict[str, Any]:
+    state = _TELEGRAM_PROBE_STATE.setdefault(bot_id, {})
+    failures = int(state.get("consecutive_failures") or 0) + 1
+    state["consecutive_failures"] = failures
+    state["last_error"] = error
+    state["last_failure_at"] = now
+    last_success_at = float(state.get("last_success_at") or 0.0)
+    max_age = _telegram_probe_float("TELEGRAM_STATUS_LAST_GOOD_MAX_AGE_SEC", 300.0)
+    threshold = _telegram_probe_int("TELEGRAM_STATUS_FAILURE_THRESHOLD", 3, minimum=1)
+    last_good_fresh = bool(last_success_at) and (now - last_success_at) <= max_age
+    degraded = not hard and last_good_fresh and failures < threshold
+    return {
+        "ok": False,
+        "available": degraded,
+        "degraded": degraded,
+        "error": error,
+        "api_username": str(state.get("api_username") or ""),
+        "consecutive_failures": failures,
+        "failure_threshold": threshold,
+        "last_success_at": last_success_at,
+    }
+
+
+async def telegram_get_me_probe(
+    client: Any,
+    *,
+    bot_id: str,
+    token: str,
+    sleep: Any = asyncio.sleep,
+) -> Dict[str, Any]:
+    retries = _telegram_probe_int("TELEGRAM_STATUS_PROBE_RETRIES", 2)
+    retry_delay = _telegram_probe_float("TELEGRAM_STATUS_PROBE_RETRY_DELAY_SEC", 0.25)
+    url = f"https://api.telegram.org/bot{token}/getMe"
+    now = time.time()
+    for attempt in range(retries + 1):
+        try:
+            response = await client.get(url)
+        except httpx.RequestError as exc:
+            if attempt < retries:
+                await sleep(retry_delay * (attempt + 1))
+                continue
+            result = _telegram_probe_failure(
+                bot_id,
+                f"{type(exc).__name__}: {exc}",
+                now=now,
+            )
+            result["attempts"] = attempt + 1
+            return result
+
+        retryable_status = response.status_code == 429 or response.status_code >= 500
+        if retryable_status and attempt < retries:
+            await sleep(retry_delay * (attempt + 1))
+            continue
+
+        try:
+            payload = response.json() if response.content else {}
+        except Exception:
+            payload = {}
+        telegram_ok = bool(
+            response.status_code == 200
+            and isinstance(payload, dict)
+            and payload.get("ok") is True
+        )
+        if telegram_ok:
+            actual_username = (
+                str((payload.get("result") or {}).get("username") or "").strip()
+                if isinstance(payload, dict)
+                else ""
+            )
+            state = _TELEGRAM_PROBE_STATE.setdefault(bot_id, {})
+            state.update(
+                {
+                    "api_username": actual_username,
+                    "consecutive_failures": 0,
+                    "last_error": "",
+                    "last_success_at": now,
+                }
+            )
+            return {
+                "ok": True,
+                "available": True,
+                "degraded": False,
+                "error": "",
+                "api_username": actual_username,
+                "attempts": attempt + 1,
+                "consecutive_failures": 0,
+                "failure_threshold": _telegram_probe_int(
+                    "TELEGRAM_STATUS_FAILURE_THRESHOLD", 3, minimum=1
+                ),
+                "last_success_at": now,
+            }
+
+        error = f"telegram getMe failed (status {response.status_code})"
+        result = _telegram_probe_failure(
+            bot_id,
+            error,
+            now=now,
+            hard=not retryable_status,
+        )
+        result["attempts"] = attempt + 1
+        return result
+
+    raise RuntimeError("telegram probe exhausted without a result")
 
 
 def backend_location_details(registry: Any, backend_name: str, *, base_url: str = "") -> Dict[str, str]:
@@ -378,46 +503,70 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
         else:
             try:
                 async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
-                api_payload = resp.json() if resp.content else {}
-                telegram_ok = bool(
-                    resp.status_code == 200
-                    and isinstance(api_payload, dict)
-                    and api_payload.get("ok") is True
-                )
-                actual_username = (
-                    str((api_payload.get("result") or {}).get("username") or "").strip()
-                    if isinstance(api_payload, dict)
-                    else ""
-                )
+                    telegram_probe = await telegram_get_me_probe(
+                        client,
+                        bot_id=bot_id,
+                        token=token,
+                    )
+                telegram_available = telegram_probe["available"] is True
+                telegram_degraded = telegram_probe["degraded"] is True
+                actual_username = str(telegram_probe.get("api_username") or "").strip()
                 if actual_username:
                     entry["api_username"] = f"@{actual_username}"
+                entry["telegram_probe"] = {
+                    "attempts": telegram_probe.get("attempts") or 1,
+                    "consecutive_failures": telegram_probe.get("consecutive_failures") or 0,
+                    "failure_threshold": telegram_probe.get("failure_threshold") or 1,
+                    "last_success_at": telegram_probe.get("last_success_at") or 0,
+                    "degraded": telegram_degraded,
+                }
                 gateway_ok, gateway_note = telegram_gateway_dependency(
                     registry, checker, aliases, entry["gateway_model"]
                 )
-                ok = telegram_ok and gateway_ok and runtime_ok
+                telegram_note = (
+                    "Telegram last known good"
+                    if telegram_degraded
+                    else "Telegram getMe succeeded"
+                )
+                ok = telegram_available and gateway_ok and runtime_ok
+                healthy = ok and not telegram_degraded
                 entry.update(
                     {
                         "active": ok,
-                        "healthy": ok,
+                        "healthy": healthy,
                         "ready": ok,
-                        "status": "healthy" if ok else "error",
-                        "status_label": "healthy" if ok else "error",
-                        "status_color": "green" if ok else "red",
-                        "status_rank": 0 if ok else 3,
+                        "status": "healthy" if healthy else ("degraded" if ok else "error"),
+                        "status_label": "healthy" if healthy else ("degraded" if ok else "error"),
+                        "status_color": "green" if healthy else ("yellow" if ok else "red"),
+                        "status_rank": 0 if healthy else (2 if ok else 3),
                         "last_check": time.time(),
                         "updated_at": time.time(),
                     }
                 )
-                if not telegram_ok:
-                    entry["error"] = f"telegram getMe failed (status {resp.status_code})"
+                if not telegram_available:
+                    entry["error"] = telegram_probe["error"]
                     entry["notes"] = entry["error"]
                 elif not gateway_ok:
                     entry["error"] = gateway_note
-                    entry["notes"] = f"Bridge runtime {entry['runtime']['status_label']} · Telegram getMe succeeded · {gateway_note}"
+                    entry["notes"] = (
+                        f"Bridge runtime {entry['runtime']['status_label']} · "
+                        f"{telegram_note} · {gateway_note}"
+                    )
                 elif not runtime_ok:
                     entry["error"] = f"bridge runtime {entry['runtime']['status_label']}"
-                    entry["notes"] = f"Bridge runtime {entry['runtime']['status_label']} · Telegram getMe succeeded · {gateway_note}"
+                    entry["notes"] = (
+                        f"Bridge runtime {entry['runtime']['status_label']} · "
+                        f"{telegram_note} · {gateway_note}"
+                    )
+                elif telegram_degraded:
+                    failures = telegram_probe.get("consecutive_failures") or 1
+                    threshold = telegram_probe.get("failure_threshold") or 1
+                    entry["warning"] = telegram_probe["error"]
+                    entry["notes"] = (
+                        f"Bridge runtime {entry['runtime']['status_label']} · "
+                        f"Telegram probe transiently failed ({failures}/{threshold}); "
+                        f"using last known good result · {gateway_note}"
+                    )
                 else:
                     entry["notes"] = f"Bridge runtime {entry['runtime']['status_label']} · Telegram getMe succeeded · {gateway_note}"
             except Exception as exc:

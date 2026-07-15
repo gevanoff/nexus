@@ -44,6 +44,18 @@ failure makes the Resources UI report that bot runtime as unhealthy instead of
 leaving it green on cached backend readiness alone. The failure marker expires
 after five minutes by default (`TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS`).
 
+Transient Telegram DNS/connect failures are retried twice with incremental
+backoff before the container health check fails. Tune this with
+`TELEGRAM_HEALTHCHECK_NETWORK_RETRIES` and
+`TELEGRAM_HEALTHCHECK_RETRY_DELAY_MS`. The Gateway Resources probe separately
+retries transient `getMe` failures and keeps a bounded last-known-good result as
+yellow/degraded for up to two failed status polls. Defaults are controlled by
+`TELEGRAM_STATUS_PROBE_RETRIES=2`,
+`TELEGRAM_STATUS_PROBE_RETRY_DELAY_SEC=0.25`,
+`TELEGRAM_STATUS_FAILURE_THRESHOLD=3`, and
+`TELEGRAM_STATUS_LAST_GOOD_MAX_AGE_SEC=300`. Authentication failures are never
+masked by the last-known-good state.
+
 The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use their corresponding `ada2-chat` and `stackrot-chat` aliases.
 
 ## Host bot identities

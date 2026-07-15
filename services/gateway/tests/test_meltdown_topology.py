@@ -152,6 +152,7 @@ def test_honcho_stack_keeps_storage_private_and_inference_remote() -> None:
     compose = _read("docker-compose.honcho.yml")
     config = _read("deploy/honcho/config.nexus.toml")
     docs = _read("deploy/honcho/README.md")
+    memory_policy = _read("deploy/honcho/MEMORY_POLICY.md")
 
     assert "container_name: nexus-honcho" in compose
     assert "container_name: nexus-honcho-deriver" in compose
@@ -164,6 +165,10 @@ def test_honcho_stack_keeps_storage_private_and_inference_remote() -> None:
     assert 'model = "embeddings"' in config
     assert "VECTOR_DIMENSIONS = 384" in config
     assert "v3.0.12" in docs
+    assert "nexus:{nexus_user_id}:telegram:{telegram_user_id}" in memory_policy
+    assert "telegram:private:{chat_id}:bot:{bot_id}" in memory_policy
+    assert "shared long-term conclusions" in memory_policy
+    assert "does not grant download access" in memory_policy
 
 
 def test_migraine_owns_one_constrained_native_mlx_backend() -> None:

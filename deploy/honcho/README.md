@@ -43,6 +43,24 @@ Populate the following without committing the file:
 
 ## Start and verify
 
+Honcho migrations create 1536-dimensional pgvector columns by default. Nexus
+embeddings are 384-dimensional, so configure the empty schema before starting
+the API and deriver for the first time:
+
+```bash
+docker compose --env-file deploy/env/.env.prod.honcho \
+  -f docker-compose.honcho.yml up -d honcho-database honcho-redis
+docker compose --env-file deploy/env/.env.prod.honcho \
+  -f docker-compose.honcho.yml run --rm --no-deps \
+  --entrypoint /app/.venv/bin/alembic honcho upgrade head
+docker compose --env-file deploy/env/.env.prod.honcho \
+  -f docker-compose.honcho.yml run --rm --no-deps \
+  --entrypoint /app/.venv/bin/python honcho \
+  scripts/configure_embeddings.py --yes
+```
+
+The configuration helper refuses to alter populated embedding tables.
+
 ```bash
 docker compose --env-file deploy/env/.env.prod.honcho \
   -f docker-compose.honcho.yml up -d --build
@@ -66,6 +84,10 @@ Honcho workspace/peer mapping. Before wiring the bots, decide:
 - retention/deletion policy and who can export a user's memory.
 
 Until that policy is explicit, do not automatically upload Telegram history.
+
+The selected identity, sharing, export, and recommended retention rules are
+recorded in [`MEMORY_POLICY.md`](MEMORY_POLICY.md). Ingestion remains disabled
+until those rules are enforced in code.
 
 ## Backup
 

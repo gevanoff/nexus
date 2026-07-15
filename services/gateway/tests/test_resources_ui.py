@@ -1,12 +1,43 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
+
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import resources_snapshot
+
+
+class ScriptedTelegramClient:
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls = 0
+
+    async def get(self, _url):
+        self.calls += 1
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def telegram_response(status: int, payload=None) -> httpx.Response:
+    return httpx.Response(
+        status,
+        json=payload if payload is not None else {},
+        request=httpx.Request("GET", "https://api.telegram.org/bot-token/getMe"),
+    )
+
+
+def telegram_dns_error() -> httpx.ConnectError:
+    return httpx.ConnectError(
+        "[Errno -5] No address associated with hostname",
+        request=httpx.Request("GET", "https://api.telegram.org/bot-token/getMe"),
+    )
 
 
 def test_resources_ui_hides_duplicate_core_services_section() -> None:
@@ -122,3 +153,77 @@ def test_telegram_gateway_dependency_tracks_selected_backend(monkeypatch) -> Non
     ready, note = resources_snapshot.telegram_gateway_dependency(Registry(), Checker(True), aliases)
     assert ready is True
     assert "local_vllm_fast is ready" in note
+
+
+def test_telegram_probe_retries_transient_dns_failure(monkeypatch) -> None:
+    resources_snapshot._TELEGRAM_PROBE_STATE.clear()
+    monkeypatch.setenv("TELEGRAM_STATUS_PROBE_RETRIES", "2")
+    monkeypatch.setenv("TELEGRAM_STATUS_PROBE_RETRY_DELAY_SEC", "0")
+    client = ScriptedTelegramClient(
+        [
+            telegram_dns_error(),
+            telegram_dns_error(),
+            telegram_response(200, {"ok": True, "result": {"username": "Ms_Tess_bot"}}),
+        ]
+    )
+
+    result = asyncio.run(
+        resources_snapshot.telegram_get_me_probe(client, bot_id="tess", token="token")
+    )
+
+    assert client.calls == 3
+    assert result["ok"] is True
+    assert result["degraded"] is False
+    assert result["api_username"] == "Ms_Tess_bot"
+
+
+def test_telegram_probe_uses_bounded_last_known_good(monkeypatch) -> None:
+    resources_snapshot._TELEGRAM_PROBE_STATE.clear()
+    monkeypatch.setenv("TELEGRAM_STATUS_PROBE_RETRIES", "0")
+    monkeypatch.setenv("TELEGRAM_STATUS_FAILURE_THRESHOLD", "3")
+    monkeypatch.setenv("TELEGRAM_STATUS_LAST_GOOD_MAX_AGE_SEC", "300")
+
+    good = ScriptedTelegramClient(
+        [telegram_response(200, {"ok": True, "result": {"username": "CrypticHex_bot"}})]
+    )
+    first = asyncio.run(
+        resources_snapshot.telegram_get_me_probe(good, bot_id="hex", token="token")
+    )
+    assert first["ok"] is True
+
+    for expected_failures in (1, 2):
+        failed = ScriptedTelegramClient([telegram_dns_error()])
+        degraded = asyncio.run(
+            resources_snapshot.telegram_get_me_probe(failed, bot_id="hex", token="token")
+        )
+        assert degraded["available"] is True
+        assert degraded["degraded"] is True
+        assert degraded["consecutive_failures"] == expected_failures
+        assert degraded["api_username"] == "CrypticHex_bot"
+
+    failed = ScriptedTelegramClient([telegram_dns_error()])
+    unavailable = asyncio.run(
+        resources_snapshot.telegram_get_me_probe(failed, bot_id="hex", token="token")
+    )
+    assert unavailable["available"] is False
+    assert unavailable["degraded"] is False
+    assert unavailable["consecutive_failures"] == 3
+
+
+def test_telegram_probe_does_not_mask_authentication_error(monkeypatch) -> None:
+    resources_snapshot._TELEGRAM_PROBE_STATE.clear()
+    monkeypatch.setenv("TELEGRAM_STATUS_PROBE_RETRIES", "2")
+    good = ScriptedTelegramClient(
+        [telegram_response(200, {"ok": True, "result": {"username": "Dr_Clarion_bot"}})]
+    )
+    asyncio.run(resources_snapshot.telegram_get_me_probe(good, bot_id="clarion", token="token"))
+
+    unauthorized = ScriptedTelegramClient([telegram_response(401, {"ok": False})])
+    result = asyncio.run(
+        resources_snapshot.telegram_get_me_probe(unauthorized, bot_id="clarion", token="token")
+    )
+
+    assert unauthorized.calls == 1
+    assert result["available"] is False
+    assert result["degraded"] is False
+    assert "status 401" in result["error"]

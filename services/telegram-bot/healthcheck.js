@@ -6,12 +6,46 @@ const GATEWAY_BEARER_TOKEN = String(process.env.GATEWAY_BEARER_TOKEN || '').trim
 const GATEWAY_BASE_URL = String(process.env.GATEWAY_BASE_URL || 'http://gateway:8800').replace(/\/+$/, '');
 const GATEWAY_MODEL = String(process.env.GATEWAY_MODEL || 'fast').trim();
 const TIMEOUT_MS = Number.parseInt(process.env.TELEGRAM_HEALTHCHECK_TIMEOUT_MS || '5000', 10);
+const NETWORK_RETRIES = Number.parseInt(process.env.TELEGRAM_HEALTHCHECK_NETWORK_RETRIES || '2', 10);
+const RETRY_DELAY_MS = Number.parseInt(process.env.TELEGRAM_HEALTHCHECK_RETRY_DELAY_MS || '250', 10);
 const GATEWAY_STATE_PATH = String(process.env.TELEGRAM_GATEWAY_STATE_PATH || '/tmp/nexus-telegram-gateway-state.json').trim();
 const GATEWAY_FAILURE_MAX_AGE_MS = Number.parseInt(process.env.TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS || '300000', 10);
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableRequestError(err) {
+  if (!axios.isAxiosError(err)) return false;
+  if (!err.response) {
+    return ['ENOTFOUND', 'EAI_AGAIN', 'EAI_NODATA', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT'].includes(
+      String(err.code || '').toUpperCase(),
+    );
+  }
+  return err.response.status === 429 || err.response.status >= 500;
+}
+
+async function requestWithRetry(operation, {
+  retries = NETWORK_RETRIES,
+  delayMs = RETRY_DELAY_MS,
+  sleep = wait,
+} = {}) {
+  let error;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await operation();
+    } catch (err) {
+      error = err;
+      if (!isRetryableRequestError(err) || attempt >= retries) break;
+      await sleep(delayMs * (attempt + 1));
+    }
+  }
+  throw error;
 }
 
 function recentGatewayFailure(now = Date.now()) {
@@ -62,9 +96,11 @@ async function main() {
     fail('GATEWAY_BEARER_TOKEN is missing');
   }
 
-  const telegram = await axios.get(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getMe`, {
-    timeout: TIMEOUT_MS,
-  });
+  const telegram = await requestWithRetry(
+    () => axios.get(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getMe`, {
+      timeout: TIMEOUT_MS,
+    }),
+  );
   if (telegram.status !== 200 || telegram.data?.ok !== true) {
     fail(`Telegram getMe failed with status ${telegram.status}`);
   }
@@ -108,4 +144,10 @@ if (require.main === module) {
   });
 }
 
-module.exports = { checkGatewayCompletion, recentGatewayFailure, validateCompletion };
+module.exports = {
+  checkGatewayCompletion,
+  isRetryableRequestError,
+  recentGatewayFailure,
+  requestWithRetry,
+  validateCompletion,
+};
