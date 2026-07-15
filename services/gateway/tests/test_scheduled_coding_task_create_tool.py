@@ -37,6 +37,16 @@ def test_coding_task_create_is_selectable_but_default_off_for_scheduled_tasks():
     assert ar._request_is_heavy(tier=1, tools_allowlist=selected) is False
 
 
+def test_coding_task_create_is_available_through_default_tools_api_policy(monkeypatch):
+    monkeypatch.setattr(tools_bus.S, "CODING_ENABLED", True)
+    monkeypatch.setattr(tools_bus.S, "TOOLS_ALLOWLIST", "")
+
+    assert "coding_task_create" in tools_bus.allowed_tool_names_for_policy(None)
+    assert "coding_task_create" not in tools_bus.allowed_tool_names_for_policy(
+        {"tools_allow_coding_task_create": False}
+    )
+
+
 def test_coder_task_type_is_enabled_and_requires_create_tool():
     task_types = {item["id"]: item for item in ui_routes._task_type_capabilities()}
 

@@ -1945,6 +1945,8 @@ def allowed_tool_names_for_policy(policy: dict | None) -> set[str]:
         allowed.add("models_refresh")
     if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_model_integration", True)):
         allowed.add("coding_model_integration")
+    if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_task_create", True)):
+        allowed.add("coding_task_create")
     if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_coding_supervision", True)):
         allowed.update({"coding_task_monitor", "coding_task_inspect", "coding_task_intervene", "coding_task_notify"})
     if bool(getattr(S, "CODING_ENABLED", True)) and bool(pol.get("tools_allow_agent_api", True)):
