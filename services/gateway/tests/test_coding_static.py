@@ -63,6 +63,19 @@ def test_coding_ui_has_long_horizon_dashboard_controls():
     assert "(state.tasks || []).some(agentIsActive)" in js
 
 
+def test_coding_ui_has_guided_model_integration_preview():
+    root = Path(__file__).resolve().parent.parent.joinpath("app", "static")
+    html = root.joinpath("coding.html").read_text(encoding="utf-8")
+    js = root.joinpath("coding.js").read_text(encoding="utf-8")
+
+    assert 'id="previewModelIntegration"' in html
+    assert 'id="modelIntegrationClassification"' in html
+    assert 'id="modelIntegrationPlacement"' in html
+    assert 'id="modelIntegrationOutputs"' in html
+    assert "/ui/api/coding/model-integrations/preview" in js
+    assert "/static/coding.js?v=14" in html
+
+
 def test_focused_navigation_does_not_reserve_desktop_header_height_on_mobile():
     source = Path(__file__).resolve().parent.parent.joinpath("app", "static", "focused_nav.js").read_text(encoding="utf-8")
 

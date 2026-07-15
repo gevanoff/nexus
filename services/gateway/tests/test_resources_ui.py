@@ -16,7 +16,7 @@ def test_resources_ui_hides_duplicate_core_services_section() -> None:
 
     assert 'id="control_plane_section"' in html
     assert 'id="core_services_section" class="resource-subsection" hidden' in html
-    assert "/static/resources.js?v=20" in html
+    assert "/static/resources.js?v=21" in html
     assert "splitCoreServicesForResourceUi" in js
     assert "controlPlaneCoreServiceIds" in js
     assert "hideWhenEmpty: true" in js
@@ -58,6 +58,17 @@ def test_resources_ui_shows_coding_smoke_health() -> None:
     assert "renderCodingSmoke" in js
     assert "metrics-table" in js
     assert "metrics.slice(0, 48)" in js
+
+
+def test_resources_ui_shows_model_integration_candidates() -> None:
+    static_root = Path(__file__).resolve().parents[1] / "app" / "static"
+    html = (static_root / "resources.html").read_text(encoding="utf-8")
+    js = (static_root / "resources.js").read_text(encoding="utf-8")
+
+    assert 'id="model_integrations_section"' in html
+    assert "/ui/api/model-integrations" in js
+    assert "renderModelIntegrations" in js
+    assert "manual review required" in js
 
 
 def test_resources_ui_shows_individual_telegram_bots() -> None:

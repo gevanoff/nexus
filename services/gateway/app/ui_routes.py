@@ -4856,6 +4856,27 @@ async def ui_model_catalogs(req: Request) -> Dict[str, Any]:
     return {"coding": coding_model_policy.options_payload()}
 
 
+@router.get("/ui/api/model-integrations", include_in_schema=False)
+async def ui_model_integrations(req: Request) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    candidates = [
+        Path(os.environ["NEXUS_REPO_ROOT"]) / "deploy/topology/model_integrations.json" if os.environ.get("NEXUS_REPO_ROOT") else None,
+        Path("/workspace/nexus/deploy/topology/model_integrations.json"),
+        Path(__file__).resolve().parents[3] / "deploy/topology/model_integrations.json",
+    ]
+    for path in candidates:
+        if path is None or not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            continue
+    return {"schema_version": 1, "integrations": []}
+
+
 def _ui_coding_model_preference_for_user(user: Any) -> str:
     if user is None or getattr(user, "id", None) is None:
         return coding_model_policy.TRACK_CODER_MODEL

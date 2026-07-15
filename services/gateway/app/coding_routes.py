@@ -13,6 +13,7 @@ from app import coding_agent as ca
 from app import coding_model_policy
 from app import coding_smoke_status
 from app import coding_workspace as cw
+from app import model_integration_workspace as miw
 from app.tools_bus import tool_web_browse
 from app import user_store
 from app.ui_routes import _require_admin, _require_ui_access, _require_user
@@ -323,6 +324,12 @@ async def ui_coding_create_model_integration(req: Request, body: CodingModelInte
         coding_model=_coding_model_for_user(user, body.coding_model),
     )
     return {"task": task}
+
+
+@router.post("/ui/api/coding/model-integrations/preview", include_in_schema=False)
+async def ui_coding_model_integration_preview(req: Request, body: CodingModelIntegrationCreateRequest) -> Dict[str, Any]:
+    _require_coding_ui(req)
+    return {"integration": await _to_thread(miw.build_integration_plan, model=body.model, preferred_runtime=body.preferred_runtime, route_kind=body.route_kind, service_name=body.service_name, prompt=body.prompt)}
 
 
 @router.post("/ui/api/coding/model-integrations/runs", include_in_schema=False)
@@ -709,6 +716,12 @@ async def v1_coding_model_integrations(req: Request, body: CodingModelIntegratio
         coding_model=_coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder",
     )
     return {"task": task}
+
+
+@router.post("/v1/coding/model-integrations/preview")
+async def v1_coding_model_integration_preview(req: Request, body: CodingModelIntegrationCreateRequest) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return {"integration": await _to_thread(miw.build_integration_plan, model=body.model, preferred_runtime=body.preferred_runtime, route_kind=body.route_kind, service_name=body.service_name, prompt=body.prompt)}
 
 
 @router.post("/v1/coding/model-integrations/runs")

@@ -477,6 +477,19 @@
               <textarea id="modelIntegrationPrompt" placeholder="Optional implementation guidance for the coding agent"></textarea>
             </div>
             <div class="row">
+              <button id="previewModelIntegration" type="button" data-ui-role="secondary">Analyze model</button>
+            </div>
+            <div id="modelIntegrationPreview" class="subpanel stack" hidden>
+              <h3>Classification preview</h3>
+              <div id="modelIntegrationClassification" class="hint"></div>
+              <h3>Placement plan</h3>
+              <div id="modelIntegrationPlacement" class="hint"></div>
+              <h3>Integration outputs</h3>
+              <div id="modelIntegrationOutputs" class="hint"></div>
+              <h3>Finalization</h3>
+              <div class="hint">Successful work is committed by the controller. Push and draft PR behavior use the completion settings below.</div>
+            </div>
+            <div class="row">
               <button id="createAndRunModelIntegration" type="button" data-ui-role="action">Create and run agent</button>
               <button id="createModelIntegration" type="button" data-ui-role="secondary">Create workspace only</button>
             </div>
@@ -689,6 +702,6 @@
     </main>
     <script src="/static/auth_client.js?v=5"></script>
     <script src="/static/focused_nav.js?v=7"></script>
-    <script src="/static/coding.js?v=13"></script>
+    <script src="/static/coding.js?v=14"></script>
   </body>
 </html>

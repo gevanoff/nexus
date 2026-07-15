@@ -21,6 +21,11 @@
     modelIntegrationServiceName: document.getElementById("modelIntegrationServiceName"),
     modelIntegrationBranchName: document.getElementById("modelIntegrationBranchName"),
     modelIntegrationPrompt: document.getElementById("modelIntegrationPrompt"),
+    previewModelIntegration: document.getElementById("previewModelIntegration"),
+    modelIntegrationPreview: document.getElementById("modelIntegrationPreview"),
+    modelIntegrationClassification: document.getElementById("modelIntegrationClassification"),
+    modelIntegrationPlacement: document.getElementById("modelIntegrationPlacement"),
+    modelIntegrationOutputs: document.getElementById("modelIntegrationOutputs"),
     createModelIntegration: document.getElementById("createModelIntegration"),
     createAndRunModelIntegration: document.getElementById("createAndRunModelIntegration"),
     modelIntegrationMeta: document.getElementById("modelIntegrationMeta"),
@@ -1543,6 +1548,32 @@
     };
   }
 
+  async function previewModelIntegration() {
+    const body = modelIntegrationBody();
+    if (!body.model) throw new Error("Model is required");
+    setBusy(true);
+    try {
+      setStatus("Analyzing model metadata and Nexus placement...");
+      const payload = await fetchJson("/ui/api/coding/model-integrations/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const plan = payload.integration || {};
+      const dossier = plan.dossier || {};
+      const classification = dossier.classification || plan.classification || {};
+      const placement = dossier.placement || {};
+      if (els.modelIntegrationClassification) els.modelIntegrationClassification.textContent = `${classification.route_kind || "unknown"} via ${classification.runtime || "unknown"} · ${classification.confidence || "low"} confidence · ${(classification.reasons || []).join(" ")}`;
+      if (els.modelIntegrationPlacement) els.modelIntegrationPlacement.textContent = `${placement.recommended_host || "manual"} / ${placement.recommended_backend_lane || "custom"} · ${placement.deployment_mode || "manual"} · disk ${placement.disk_required_gb == null ? "unknown" : `${placement.disk_required_gb} GB`} · ${placement.resource_reason || "manual review required"}`;
+      const config = dossier.configuration || {};
+      if (els.modelIntegrationOutputs) els.modelIntegrationOutputs.textContent = [`Dossier`, config.compose_file || "host/lane configuration", ...(config.resource_activation_entries || []), ...(config.ui_catalog_entries || []), ...(dossier.validation && dossier.validation.smoke_tests || [])].join(" · ");
+      if (els.modelIntegrationPreview) els.modelIntegrationPreview.hidden = false;
+      setStatus("Model integration analysis ready.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createModelIntegration() {
     const body = modelIntegrationBody();
     if (!body.model) throw new Error("Model is required");
@@ -2255,6 +2286,7 @@
   if (els.modelIntegrationPrompt) {
     els.modelIntegrationPrompt.addEventListener("input", () => storageSet("draft.modelIntegrationPrompt", els.modelIntegrationPrompt.value || ""));
   }
+  if (els.previewModelIntegration) els.previewModelIntegration.addEventListener("click", () => previewModelIntegration().catch((error) => setStatus(String(error.message || error), true)));
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey) {

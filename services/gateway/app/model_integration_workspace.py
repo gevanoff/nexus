@@ -11,7 +11,7 @@ from urllib.parse import quote, urlsplit
 
 
 ROUTE_KIND_CHOICES = {"chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"}
-RUNTIME_CHOICES = {"auto", "mlx", "vllm", "transformers"}
+RUNTIME_CHOICES = {"auto", "mlx", "vllm", "transformers", "diffusers", "custom"}
 _VLLM_SUPPORTED_MODEL_TYPES = {
     "bloom",
     "dbrx",
@@ -888,12 +888,123 @@ def _safe_metadata_subset(metadata: Dict[str, Any]) -> Dict[str, Any]:
         "pipeline_tag": metadata.get("pipeline_tag") or "",
         "private": bool(metadata.get("private")),
         "gated": bool(metadata.get("gated")),
+        "license": metadata.get("license") or (metadata.get("cardData") or {}).get("license", "") if isinstance(metadata.get("cardData"), dict) else metadata.get("license") or "",
         "downloads": metadata.get("downloads"),
         "likes": metadata.get("likes"),
         "tags": [str(item) for item in metadata.get("tags") or [] if str(item).strip()][:40],
         "architectures": list(config.get("architectures") or [])[:10],
         "model_type": config.get("model_type") or "",
         "sample_files": [str(item.get("rfilename") or "") for item in siblings[:20] if isinstance(item, dict)],
+    }
+
+
+def classify_model(
+    model_id: str,
+    metadata: Dict[str, Any],
+    *,
+    route_kind: Optional[str] = None,
+    preferred_runtime: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Classify registry metadata conservatively and retain auditable reasons."""
+    explicit_route = str(route_kind or "").strip().lower()
+    if explicit_route and explicit_route not in ROUTE_KIND_CHOICES:
+        raise ValueError("route_kind must be one of: " + ", ".join(sorted(ROUTE_KIND_CHOICES)))
+    preferred = str(preferred_runtime or "auto").strip().lower() or "auto"
+    if preferred not in RUNTIME_CHOICES:
+        raise ValueError("preferred_runtime must be one of: " + ", ".join(sorted(RUNTIME_CHOICES)))
+
+    config = metadata.get("config") if isinstance(metadata.get("config"), dict) else {}
+    card = metadata.get("cardData") if isinstance(metadata.get("cardData"), dict) else {}
+    tags = [str(item).strip().lower() for item in metadata.get("tags") or [] if str(item).strip()]
+    architectures = [str(item).strip().lower() for item in config.get("architectures") or [] if str(item).strip()]
+    files = [str(item.get("rfilename") or "").lower() for item in metadata.get("siblings") or [] if isinstance(item, dict)]
+    pipeline = str(metadata.get("pipeline_tag") or card.get("pipeline_tag") or "").strip().lower()
+    library = str(metadata.get("library_name") or card.get("library_name") or "").strip().lower()
+    model_type = str(config.get("model_type") or "").strip().lower()
+    text = " ".join([model_id.lower(), pipeline, library, model_type, *tags, *architectures, *files])
+    reasons: list[str] = []
+    risks: list[str] = []
+
+    if explicit_route:
+        selected_route = explicit_route
+        reasons.append(f"Route kind pinned to `{explicit_route}` by the request.")
+    else:
+        route_rules = [
+            ("embeddings", pipeline in {"feature-extraction", "sentence-similarity"} or any(x in text for x in ("embedding", "sentence-transformers", " bge", " e5", " gte")), "embedding or feature-extraction metadata"),
+            ("video", pipeline in {"text-to-video", "image-to-video"} or any(x in text for x in ("text-to-video", "image-to-video", "skyreels")), "video-generation metadata"),
+            ("images", pipeline in {"text-to-image", "image-to-image"} or any(x in text for x in ("diffusers", "stable-diffusion", "sdxl", "flux", "controlnet")), "image-generation or diffusers metadata"),
+            ("music", pipeline == "text-to-music" or any(x in text for x in ("musicgen", "text-to-music", "music-generation")), "music-generation metadata"),
+            ("tts", pipeline in {"text-to-speech", "text-to-audio", "audio-to-audio"} or any(x in text for x in ("text-to-speech", "speech-synthesis", " tts")), "speech-synthesis metadata"),
+            ("ocr", pipeline in {"document-question-answering"} or any(x in text for x in (" ocr", "lightonocr", "document-qa", "donut")), "OCR or document-understanding metadata"),
+            ("chat", pipeline in _TEXT_GENERATION_PIPELINES and (pipeline or any("causallm" in item for item in architectures) or model_type in _VLLM_SUPPORTED_MODEL_TYPES), "causal/text-generation metadata"),
+        ]
+        match = next((item for item in route_rules if item[1]), None)
+        if match:
+            selected_route = match[0]
+            reasons.append(f"Classified as `{selected_route}` from {match[2]}.")
+        else:
+            selected_route = "json"
+            reasons.append("Metadata does not safely match a supported modality; using the custom JSON route.")
+            risks.append("Manual review is required before selecting an inference API.")
+
+    if preferred != "auto":
+        runtime = preferred
+        reasons.append(f"Runtime pinned to `{preferred}` by the request.")
+    elif "mlx" in text:
+        runtime = "mlx"
+        reasons.append("MLX metadata selects the host-native Apple Silicon runtime.")
+    elif selected_route in {"chat", "embeddings"} and not any(marker in text for marker in _VLLM_UNSUPPORTED_MARKERS):
+        runtime = "vllm"
+        reasons.append("The text architecture fits an existing OpenAI-compatible vLLM lane.")
+    elif selected_route in {"images", "video"} and (library == "diffusers" or "diffusers" in text):
+        runtime = "diffusers"
+        reasons.append("Diffusers metadata selects a generated media service shim.")
+    elif selected_route in {"tts", "ocr", "music"}:
+        runtime = "transformers"
+        reasons.append("This modality requires a focused Python service shim unless repository evidence identifies a native runtime.")
+    else:
+        runtime = "custom"
+        reasons.append("No known serving runtime is safe to assume; generating a manual-review custom shim plan.")
+        risks.append("Runtime compatibility is unverified.")
+
+    evidence = len(reasons) + int(bool(pipeline)) + int(bool(architectures)) + int(bool(library))
+    confidence = "high" if explicit_route or (evidence >= 4 and runtime != "custom") else ("medium" if evidence >= 2 and selected_route != "json" else "low")
+    if confidence == "low":
+        risks.append("Classification confidence is low; activation must remain disabled pending manual review.")
+    return {"route_kind": selected_route, "runtime": runtime, "confidence": confidence, "reasons": reasons, "risks": risks}
+
+
+def _artifact_estimate_gb(metadata: Dict[str, Any], parameter_b: Optional[float], quantization: str) -> Optional[float]:
+    sizes = [int(item.get("size") or 0) for item in metadata.get("siblings") or [] if isinstance(item, dict)]
+    if sum(sizes) > 0:
+        return round(sum(sizes) / (1024 ** 3), 2)
+    if parameter_b is None:
+        return None
+    bytes_per_parameter = 0.55 if any(mark in quantization.lower() for mark in ("4bit", "4-bit", "awq", "gptq")) else 2.0
+    return round(parameter_b * bytes_per_parameter, 2)
+
+
+def build_model_integration_dossier(plan: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = plan.get("hf_metadata") if isinstance(plan.get("hf_metadata"), dict) else {}
+    classification = plan.get("classification") if isinstance(plan.get("classification"), dict) else {}
+    target = plan.get("deployment_target") if isinstance(plan.get("deployment_target"), dict) else {}
+    route = str(plan.get("route_kind") or "json")
+    runtime = str(plan.get("runtime") or "custom")
+    strategy = str(plan.get("integration_strategy") or "manual_review")
+    activation_mode = "host_native" if target.get("deployment_mode") == "host_native" else ("lifecycle_manager" if strategy != "manual_review" else "manual")
+    manual_review = classification.get("confidence") == "low" or runtime == "custom"
+    alias = _slugify(str(plan.get("model_id") or "").split("/", 1)[-1], default="hf-model")
+    ui = {"chat_ui": route == "chat", "image_ui": route == "images", "audio_ui": route in {"tts", "music"}, "video_ui": route == "video", "resources_ui": True, "model_catalog": True}
+    return {
+        "schema": "nexus_model_integration.v1",
+        "model": {"source": "huggingface", "input": plan.get("model_input") or "", "model_id": plan.get("model_id") or "", "source_url": plan.get("source_url") or "", "revision": plan.get("revision") or "", "gated": bool(metadata.get("gated")), "private": bool(metadata.get("private")), "license": metadata.get("license") or "", "library_name": metadata.get("library_name") or "", "pipeline_tag": metadata.get("pipeline_tag") or "", "tags": metadata.get("tags") or [], "architectures": metadata.get("architectures") or [], "model_type": metadata.get("model_type") or "", "quantization": plan.get("quantization") or "", "parameter_estimate_b": plan.get("estimated_model_size_b"), "artifact_estimate_gb": plan.get("artifact_estimate_gb"), "sample_files": metadata.get("sample_files") or []},
+        "classification": classification,
+        "placement": {"recommended_host": target.get("host") or "", "recommended_backend_lane": target.get("backend_lane") or "", "deployment_mode": "existing_lane" if strategy == "existing_vllm_model" else (target.get("deployment_mode") or "manual"), "resource_reason": target.get("reason") or "", "gpu_memory_estimate_mb": target.get("estimated_vram_mb") or None, "system_memory_estimate_mb": plan.get("system_memory_estimate_mb"), "disk_required_gb": plan.get("artifact_estimate_gb"), "disk_target": "/ai-data" if target.get("host") else "", "things_to_move_or_disable": plan.get("things_to_move_or_disable") or []},
+        "configuration": {"service_name": plan.get("service_name") or "", "backend_class": plan.get("backend_class") or "", "compose_file": target.get("compose_file") or "", "env_vars": _vllm_lane_env(plan) if strategy == "existing_vllm_model" else {}, "model_aliases": [alias], "backend_config_entries": [plan.get("backend_class")], "lifecycle_entries": [] if strategy == "existing_vllm_model" else [plan.get("backend_class")], "resource_activation_entries": [plan.get("service_name")], "ui_catalog_entries": [alias]},
+        "api_surface": {"nexus_route": plan.get("api_path") or "/v1/run", "openai_compatible": route in {"chat", "embeddings", "images", "tts"}, "request_schema": {}, "response_schema": {}, "shim_template": "generated" if plan.get("containerize") else "", "health_paths": ["/health"], "ready_paths": ["/readyz"]},
+        "activation": {"can_be_activated_from_resources_ui": True, "activation_id": plan.get("service_name") or "", "activation_mode": activation_mode, "requires_weight_download": True, "requires_secret": bool(metadata.get("gated") or metadata.get("private")), "requires_manual_review": manual_review},
+        "ui_integration": ui,
+        "validation": {"static_checks": ["validate generated JSON/YAML", "review git diff"], "smoke_tests": [f"probe {plan.get('api_path') or '/v1/run'} after activation"], "manual_activation_steps": ["Review dossier and resource pressure plan", "Download weights into the documented cache", "Enable the activation candidate in Resources"], "known_blockers": list(classification.get("risks") or []) + list(plan.get("warnings") or [])},
     }
 
 
@@ -915,8 +1026,10 @@ def build_integration_plan(
     except Exception as exc:
         warnings.append(f"metadata fetch failed: {type(exc).__name__}: {exc}")
 
-    selected_route = _route_kind_from_metadata(metadata, explicit=route_kind)
-    runtime, runtime_reason = _runtime_from_metadata(parsed["model_id"], metadata, selected_route, preferred_runtime=preferred_runtime)
+    classification = classify_model(parsed["model_id"], metadata, route_kind=route_kind, preferred_runtime=preferred_runtime)
+    selected_route = str(classification["route_kind"])
+    runtime = str(classification["runtime"])
+    runtime_reason = " ".join(str(item) for item in classification.get("reasons") or [])
     deployment_target = _recommend_deployment_target(runtime, selected_route, parsed["model_id"], metadata)
     existing_vllm_lane = _is_existing_vllm_model_lane(runtime, selected_route)
     normalized_service_name = _slugify(service_name or f"hf-{parsed['model_id'].replace('/', '-')}", default="hf-model-adapter")
@@ -930,10 +1043,10 @@ def build_integration_plan(
     model_tail = parsed["model_id"].split("/", 1)[-1]
     display_name = f"HF {model_tail}"
     containerize = runtime != "mlx" and not existing_vllm_lane
-    shim_required = runtime == "transformers"
+    shim_required = runtime in {"transformers", "diffusers", "custom"}
     execution_mode = "existing_vllm_lane" if existing_vllm_lane else ("command" if shim_required else "upstream")
     upstream_base_url = "http://127.0.0.1:8000" if execution_mode == "upstream" else ""
-    integration_strategy = "existing_vllm_model" if existing_vllm_lane else ("new_backend_service" if containerize else "host_native_runtime")
+    integration_strategy = "existing_vllm_model" if existing_vllm_lane else ("manual_review" if runtime == "custom" else ("new_backend_service" if containerize else "host_native_runtime"))
     if existing_vllm_lane:
         task_prompt = (
             f"Add the HuggingFace model {parsed['model_id']} to Nexus as an additional available model on the existing "
@@ -958,7 +1071,27 @@ def build_integration_plan(
     extra_prompt = str(prompt or "").strip()
     if extra_prompt:
         task_prompt = f"{task_prompt}\n\nAdditional user guidance:\n{extra_prompt}"
-    return {
+    task_prompt += (
+        "\n\nRequired deterministic sequence:\n"
+        "1. Parse the requested model reference.\n2. Inspect registry metadata and relevant config files.\n"
+        "3. Confirm route/runtime classification and confidence.\n4. Confirm size and resource estimates.\n"
+        "5. Confirm host and backend lane placement.\n6. Select existing lane, host-native MLX, service shim, or manual-review strategy.\n"
+        "7. Maintain integration/model-integration-dossier.json as durable memory.\n8. Apply focused repository changes.\n"
+        "9. Add activation documentation and smoke tests.\n10. Register the Resources UI activation candidate.\n"
+        "11. Register the relevant modality catalog entry.\n12. Run static tests.\n13. Review the diff.\n"
+        "14. Call coding_finish only when the repository is coherently integration-ready.\n"
+        "Do not repeatedly re-read unchanged metadata or diffs; use the dossier as durable memory. "
+        "Do not download large weights or start the generated service."
+    )
+    parameter_b = _guess_parameter_billions(parsed["model_id"], metadata)
+    config = metadata.get("config") if isinstance(metadata.get("config"), dict) else {}
+    quant_config = config.get("quantization_config") if isinstance(config.get("quantization_config"), dict) else {}
+    quantization = str(quant_config.get("quant_method") or quant_config.get("bits") or next((tag for tag in metadata.get("tags") or [] if "bit" in str(tag).lower() or str(tag).lower() in {"awq", "gptq", "fp8"}), ""))
+    artifact_gb = _artifact_estimate_gb(metadata, parameter_b, quantization)
+    things_to_move: list[Dict[str, Any]] = []
+    if int(deployment_target.get("estimated_vram_mb") or 0) >= 22000 and (parameter_b or 0) >= 24:
+        things_to_move.append({"service": str(deployment_target.get("backend_lane") or "existing lane"), "host": str(deployment_target.get("host") or ""), "reason": "Estimated model footprint may overlap the resident lane budget.", "action": "manual_review"})
+    plan = {
         "model_input": parsed["input"],
         "model_id": parsed["model_id"],
         "source_url": parsed["source_url"],
@@ -974,7 +1107,11 @@ def build_integration_plan(
         "backend_class": backend_class,
         "target_backend_class": str(deployment_target.get("backend_lane") or backend_class),
         "display_name": display_name,
-        "estimated_model_size_b": _guess_parameter_billions(parsed["model_id"], metadata),
+        "estimated_model_size_b": parameter_b,
+        "artifact_estimate_gb": artifact_gb,
+        "system_memory_estimate_mb": int(artifact_gb * 1536) if artifact_gb is not None else None,
+        "things_to_move_or_disable": things_to_move,
+        "quantization": quantization,
         "api_path": {
             "chat": "/v1/chat/completions",
             "embeddings": "/v1/embeddings",
@@ -986,10 +1123,13 @@ def build_integration_plan(
             "json": "/v1/run",
         }[selected_route],
         "deployment_target": deployment_target,
+        "classification": classification,
         "hf_metadata": _safe_metadata_subset(metadata),
         "warnings": warnings,
         "prompt": task_prompt,
     }
+    plan["dossier"] = build_model_integration_dossier(plan)
+    return plan
 
 
 def _render(template: str, replacements: Dict[str, str]) -> str:
@@ -1105,6 +1245,45 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
     _write(request_path, json.dumps(plan, indent=2, sort_keys=True) + "\n")
     created.append(str(request_path))
 
+    dossier = plan.get("dossier") if isinstance(plan.get("dossier"), dict) else build_model_integration_dossier(plan)
+    dossier_path = repo_root / "integration" / "model-integration-dossier.json"
+    _write(dossier_path, json.dumps(dossier, indent=2, sort_keys=True) + "\n")
+    created.append(str(dossier_path))
+    activation_entry = {
+        "id": dossier["activation"]["activation_id"],
+        "title": plan["display_name"],
+        "model_id": plan["model_id"],
+        "route_kind": plan["route_kind"],
+        "runtime": plan["runtime"],
+        "host": dossier["placement"]["recommended_host"],
+        "backend_class": plan["backend_class"],
+        "service_name": plan["service_name"],
+        "resources": {"gpu_memory_estimate_mb": dossier["placement"]["gpu_memory_estimate_mb"], "system_memory_estimate_mb": dossier["placement"]["system_memory_estimate_mb"], "disk_required_gb": dossier["placement"]["disk_required_gb"]},
+        "activation": {"mode": dossier["activation"]["activation_mode"], "compose_file": dossier["configuration"]["compose_file"], "enabled": False, "requires_download": True, "requires_secret": dossier["activation"]["requires_secret"], "manual_review_required": dossier["activation"]["requires_manual_review"]},
+        "ui": dossier["ui_integration"],
+        "health": {"health_path": "/health", "ready_path": "/readyz", "models_path": "/v1/models"},
+    }
+    activation_path = repo_root / "integration" / "resource-activation-entry.json"
+    catalog_path = repo_root / "integration" / "ui-catalog-entry.json"
+    _write(activation_path, json.dumps(activation_entry, indent=2, sort_keys=True) + "\n")
+    _write(catalog_path, json.dumps({"schema": "nexus_model_catalog_candidate.v1", "model_id": plan["model_id"], "alias": dossier["configuration"]["model_aliases"][0], "route_kind": plan["route_kind"], "backend_class": plan["backend_class"], "enabled": False, "ui": dossier["ui_integration"]}, indent=2, sort_keys=True) + "\n")
+    created.extend([str(activation_path), str(catalog_path)])
+
+    registry_path = repo_root / "deploy" / "topology" / "model_integrations.json"
+    registry: Dict[str, Any] = {"schema_version": 1, "integrations": []}
+    if registry_path.exists():
+        try:
+            loaded = json.loads(registry_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                registry.update(loaded)
+        except Exception:
+            pass
+    entries = [item for item in registry.get("integrations") or [] if isinstance(item, dict) and item.get("id") != activation_entry["id"]]
+    entries.append(activation_entry)
+    registry["integrations"] = entries
+    _write(registry_path, json.dumps(registry, indent=2, sort_keys=True) + "\n")
+    created.append(str(registry_path))
+
     if existing_vllm_lane:
         lane_env = _vllm_lane_env(plan)
         model_id = str(plan["model_id"])
@@ -1209,6 +1388,8 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
             requirements.append("vllm>=0.8,<1.0")
         if plan["runtime"] == "transformers":
             requirements.extend(["transformers>=4.52,<5.0", "huggingface_hub>=0.23,<1.0", "torch>=2.3,<3.0"])
+        if plan["runtime"] == "diffusers":
+            requirements.extend(["diffusers>=0.33,<1.0", "transformers>=4.52,<5.0", "accelerate>=1.6,<2.0", "torch>=2.3,<3.0"])
         _write(service_root / "requirements.txt", "\n".join(requirements) + "\n")
         _write(service_root / ".env.example", _render(ENV_TEMPLATE, replacements))
         _write(service_root / f"docker-compose.{plan['service_name']}.yml", _render(DOCKER_COMPOSE_TEMPLATE, replacements))
@@ -1255,11 +1436,22 @@ def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
         _write(host_root / "README.md", f"# Host-native MLX Integration\n\nUse the target host's MLX serving path for `{plan['model_id']}`.\n")
         _write(host_root / "model.env.example", f"HF_MODEL_ID={plan['model_id']}\nMLX_MODEL_ID={plan['model_id']}\nMLX_BASE_URL=http://127.0.0.1:10240\n")
         _write(host_root / "run-model.sh", f"#!/usr/bin/env bash\nset -eu\nMODEL_ID=\"${{HF_MODEL_ID:-{plan['model_id']}}}\"\necho \"TODO: launch MLX serving for $MODEL_ID with OpenAI-compatible routing\"\n")
+        _write(
+            repo_root / "integration" / "mlx-config-snippet.yaml",
+            "models:\n"
+            f"  - model_path: {plan['model_id']}\n"
+            f"    served_model_name: {plan['model_id']}\n"
+            "    model_type: lm\n"
+            "    on_demand: true\n"
+            "    context_window: 32768\n"
+            "    cache_path: /ai-data/var/lib/mlx/huggingface\n",
+        )
         created.extend(
             [
                 str(host_root / "README.md"),
                 str(host_root / "model.env.example"),
                 str(host_root / "run-model.sh"),
+                str(repo_root / "integration" / "mlx-config-snippet.yaml"),
             ]
         )
     return created

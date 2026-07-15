@@ -8,6 +8,8 @@
   const coreServicesEl = document.getElementById("core_services");
   const codingSmokeSectionEl = document.getElementById("coding_smoke_section");
   const codingSmokeEl = document.getElementById("coding_smoke");
+  const modelIntegrationsSectionEl = document.getElementById("model_integrations_section");
+  const modelIntegrationsEl = document.getElementById("model_integrations");
   const backendsEl = document.getElementById("backends");
   const statusEl = document.getElementById("status");
   const refreshEl = document.getElementById("refresh");
@@ -995,6 +997,26 @@
     }
   }
 
+  function renderModelIntegrations(integrations) {
+    if (!modelIntegrationsEl || !modelIntegrationsSectionEl) return;
+    const items = Array.isArray(integrations) ? integrations : [];
+    modelIntegrationsSectionEl.hidden = !items.length;
+    modelIntegrationsEl.replaceChildren();
+    items.forEach((item) => {
+      const card = document.createElement("div");
+      card.className = "backend-card";
+      const title = document.createElement("strong");
+      title.textContent = item.title || item.model_id || item.id || "Model integration";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const activation = item.activation || {};
+      const resources = item.resources || {};
+      meta.textContent = `${item.route_kind || "custom"} · ${item.runtime || "custom"} · ${item.host || "manual placement"} · ${activation.mode || "manual"} · disk ${resources.disk_required_gb == null ? "unknown" : `${resources.disk_required_gb} GB`} · ${activation.requires_download ? "weights required" : "weights present"} · ${activation.requires_secret ? "secret required" : "no secret"} · ${activation.manual_review_required ? "manual review required" : "reviewed"}`;
+      card.append(title, meta);
+      modelIntegrationsEl.appendChild(card);
+    });
+  }
+
   function renderPayload(payload, options) {
     const opts = options || {};
     updatePollInterval(payload);
@@ -1015,6 +1037,7 @@
     });
     renderTelegramBots(payload.telegram_bots || []);
     renderCodingSmoke(payload.coding_smoke || null);
+    renderModelIntegrations(payload.model_integrations || []);
     renderBackends(payload.backends || []);
     const statusParts = [`Mode: ${payload.mode || "unknown"}`];
     if (opts.cached) statusParts.push("showing cached data");
@@ -1041,8 +1064,9 @@
       const lifecyclePromise = fetchJson(lifecyclePath);
       const registryPromise = fetchJson("/ui/api/backend_status");
       const codingSmokePromise = fetchJson("/ui/api/coding/smoke-status?limit=100");
+      const modelIntegrationsPromise = fetchJson("/ui/api/model-integrations");
 
-      const [lifecycleResult, registryResult, codingSmokeResult] = await Promise.all([lifecyclePromise, registryPromise, codingSmokePromise]);
+      const [lifecycleResult, registryResult, codingSmokeResult, modelIntegrationsResult] = await Promise.all([lifecyclePromise, registryPromise, codingSmokePromise, modelIntegrationsPromise]);
       if (lifecycleResult.redirected || registryResult.redirected || codingSmokeResult.redirected) return;
       let payload = lifecycleResult.data || null;
       if (registryResult.redirected) return;
@@ -1051,6 +1075,7 @@
       }
       payload = mergeBackendStatusPayload(payload, registryResult.data);
       if (codingSmokeResult.data) payload.coding_smoke = codingSmokeResult.data;
+      if (modelIntegrationsResult.data) payload.model_integrations = modelIntegrationsResult.data.integrations || [];
       renderPayload(payload, { registryError: registryResult.error });
       saveCachedPayload(payload);
     } catch (error) {

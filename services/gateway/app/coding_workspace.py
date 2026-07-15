@@ -1478,6 +1478,7 @@ def create_model_integration_task(
         "workspace_path": str(workspace),
         "repo_path": str(repo_path),
         "integration": plan,
+        "model_integration_dossier": plan.get("dossier") if isinstance(plan.get("dossier"), dict) else {},
         "commands": [],
         "project_plan": normalize_project_plan({"goal": str(plan.get("prompt") or "").strip(), "items": []}),
         "agent_runs": [],
@@ -3539,7 +3540,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "git_token_configured": bool(_effective_git_token(git_token_value)),
         "preferred_coding_model": str(preferred_coding_model or "").strip(),
         "gh_cli_available": shutil.which("gh") is not None,
-        "model_integration_runtimes": ["auto", "mlx", "vllm", "transformers"],
+        "model_integration_runtimes": ["auto", "mlx", "vllm", "transformers", "diffusers", "custom"],
         "model_integration_route_kinds": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"],
         "model_integration_host_lanes": miw.integration_host_lanes(),
     }
