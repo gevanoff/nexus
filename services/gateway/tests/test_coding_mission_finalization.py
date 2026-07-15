@@ -119,6 +119,15 @@ def test_coding_ui_horizon_limits_match_api():
     assert any(getattr(item, "le", None) == 1000 for item in field.metadata)
 
 
+def test_coding_ui_terminal_result_is_shared_by_meta_and_log_rendering():
+    js = (Path(__file__).resolve().parents[1] / "app" / "static" / "coding.js").read_text(encoding="utf-8")
+    render_agent = js[js.index("function renderAgent(task)") : js.index("function renderChangeSummary")]
+    declaration = 'const terminal = task && task.terminal_result'
+    assert render_agent.count(declaration) == 1
+    assert render_agent.index(declaration) < render_agent.index("if (els.agentMeta)")
+    assert render_agent.index(declaration) < render_agent.index("if (els.agentLog)")
+
+
 def test_scripted_coding_mission_finishes_with_real_branch_commit(tmp_path, monkeypatch):
     workspace_root = tmp_path / "workspaces"
     tasks_root = tmp_path / "tasks"

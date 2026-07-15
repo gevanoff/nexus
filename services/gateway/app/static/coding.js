@@ -1187,6 +1187,7 @@
   function renderAgent(task) {
     const agent = agentInfo(task);
     const status = String(agent.status || "idle");
+    const terminal = task && task.terminal_result && typeof task.terminal_result === "object" ? task.terminal_result : {};
     if (els.agentStatus) {
       els.agentStatus.className = `badge ${badgeClass(status)}`;
       els.agentStatus.textContent = status;
@@ -1204,7 +1205,6 @@
       if (agent.auto_commit) bits.push("auto-commit");
       const commit = shortCommit(task && (task.last_commit || task.last_checkpoint_commit));
       if (commit) bits.push(`commit ${commit}`);
-      const terminal = task && task.terminal_result && typeof task.terminal_result === "object" ? task.terminal_result : {};
       if (terminal.finalization_status) bits.push(`finalization ${terminal.finalization_status}`);
       if (terminal.final_commit) bits.push(`final commit ${shortCommit(terminal.final_commit)}`);
       if (terminal.pushed_at) bits.push("branch pushed");
