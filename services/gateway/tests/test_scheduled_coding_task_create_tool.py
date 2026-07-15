@@ -244,24 +244,16 @@ def test_coding_task_create_tool_creates_workspace(monkeypatch):
 def test_coding_task_create_tool_can_auto_run_workspace(monkeypatch):
     started: list[dict[str, object]] = []
 
-    def _create_task(**kwargs: object) -> dict[str, object]:
+    async def _create_and_start_agent_run(**kwargs: object) -> dict[str, object]:
+        started.append(dict(kwargs))
         return {
             "id": "code_456",
-            "status": "ready",
-            "coding_model": kwargs.get("coding_model"),
-        }
-
-    async def _start_agent_run(task_id: str, **kwargs: object) -> dict[str, object]:
-        started.append({"task_id": task_id, **kwargs})
-        return {
-            "id": task_id,
             "status": "ready",
             "agent": {"status": "queued"},
             "coding_model": kwargs.get("coding_model"),
         }
 
-    coding_agent = types.SimpleNamespace(start_agent_run=_start_agent_run)
-    monkeypatch.setattr(tools_bus.coding_workspace, "create_task", _create_task)
+    coding_agent = types.SimpleNamespace(create_and_start_agent_run=_create_and_start_agent_run)
     monkeypatch.setitem(sys.modules, "app.coding_agent", coding_agent)
     monkeypatch.setattr(app, "coding_agent", coding_agent, raising=False)
 
@@ -283,12 +275,20 @@ def test_coding_task_create_tool_can_auto_run_workspace(monkeypatch):
     assert result["task"]["agent"]["status"] == "queued"
     assert started == [
         {
-            "task_id": "code_456",
+            "repo_url": None,
+            "base_branch": None,
+            "branch_name": None,
+            "prompt": "Make the focused change and run tests.",
+            "owner": "scheduled-task-tool",
+            "owner_user_id": None,
             "git_token_value": None,
             "coding_model": "coder",
-            "auto_commit": True,
             "commit_message": "Implement scheduled coding workspace creation",
             "actor": "scheduled-task-tool",
+            "max_cycles": 1000,
+            "max_runtime_sec": 21600,
+            "context_reset_cycles": 0,
+            "mission_overrides": tools_bus.coding_workspace.coding_mission_overrides(),
         }
     ]
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import subprocess
+import pytest
 from pathlib import Path
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
@@ -126,6 +127,38 @@ def test_coding_ui_terminal_result_is_shared_by_meta_and_log_rendering():
     assert render_agent.count(declaration) == 1
     assert render_agent.index(declaration) < render_agent.index("if (els.agentMeta)")
     assert render_agent.index(declaration) < render_agent.index("if (els.agentLog)")
+
+
+@pytest.mark.asyncio
+async def test_canonical_create_and_run_service_is_shared_controller_path(monkeypatch):
+    created = []
+    started = []
+
+    def create_task(**kwargs):
+        created.append(kwargs)
+        return {"id": "code_abcdef123456", "status": "ready", "coding_model": "coder"}
+
+    async def start_agent_run(task_id, **kwargs):
+        started.append({"task_id": task_id, **kwargs})
+        return {"id": task_id, "status": "ready", "agent": {"status": "queued"}}
+
+    monkeypatch.setattr(cw, "create_task", create_task)
+    monkeypatch.setattr(ca, "start_agent_run", start_agent_run)
+    mission = cw.coding_mission_overrides(push_on_success=True)
+    result = await ca.create_and_start_agent_run(
+        repo_url="https://github.com/example/repo.git",
+        base_branch="main",
+        branch_name="feature/test",
+        prompt="Implement it",
+        owner="api",
+        coding_model="coder",
+        mission_overrides=mission,
+    )
+
+    assert result["agent"]["status"] == "queued"
+    assert created[0]["mission_overrides"] == mission
+    assert started[0]["mission_overrides"] == mission
+    assert started[0]["auto_commit"] is True
 
 
 def test_scripted_coding_mission_finishes_with_real_branch_commit(tmp_path, monkeypatch):

@@ -1549,28 +1549,48 @@ def tool_coding_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
 
     git_token_value = str(args.get("git_token") or "").strip() or None
     coding_model = str(args.get("coding_model") or "coder").strip() or "coder"
-    task = coding_workspace.create_task(
-        repo_url=str(args.get("repo_url") or "").strip() or None,
-        base_branch=str(args.get("base_branch") or "").strip() or None,
-        branch_name=str(args.get("branch_name") or "").strip() or None,
-        prompt=prompt,
-        owner="scheduled-task-tool",
-        owner_user_id=None,
-        git_token_value=git_token_value,
-        coding_model=coding_model,
+    mission_overrides = coding_workspace.coding_mission_overrides(
+        commit_policy="always_on_success",
+        push_on_success=bool(args.get("push_on_success")),
+        draft_pr_on_success=bool(args.get("draft_pr_on_success")),
+        pr_title=str(args.get("pr_title") or ""),
+        pr_body=str(args.get("pr_body") or ""),
+        max_cycles=int(args.get("max_cycles") or 1000),
+        max_runtime_sec=int(args.get("max_runtime_sec") or 21600),
+        context_reset_cycles=int(args.get("context_reset_cycles") or 0),
     )
-    if bool(args.get("auto_run")) and task.get("status") != "error":
+    if bool(args.get("auto_run")):
         from app import coding_agent
 
         task = _run_coroutine_sync(
-            coding_agent.start_agent_run(
-                str(task.get("id") or ""),
+            coding_agent.create_and_start_agent_run(
+                repo_url=str(args.get("repo_url") or "").strip() or None,
+                base_branch=str(args.get("base_branch") or "").strip() or None,
+                branch_name=str(args.get("branch_name") or "").strip() or None,
+                prompt=prompt,
+                owner="scheduled-task-tool",
+                owner_user_id=None,
                 git_token_value=git_token_value,
-                coding_model=str(args.get("coding_model") or task.get("coding_model") or "coder").strip() or "coder",
-                auto_commit=bool(args.get("auto_commit")),
+                coding_model=coding_model,
                 commit_message=str(args.get("commit_message") or "").strip() or None,
                 actor="scheduled-task-tool",
+                max_cycles=int(args.get("max_cycles") or 1000),
+                max_runtime_sec=int(args.get("max_runtime_sec") or 21600),
+                context_reset_cycles=int(args.get("context_reset_cycles") or 0),
+                mission_overrides=mission_overrides,
             )
+        )
+    else:
+        task = coding_workspace.create_task(
+            repo_url=str(args.get("repo_url") or "").strip() or None,
+            base_branch=str(args.get("base_branch") or "").strip() or None,
+            branch_name=str(args.get("branch_name") or "").strip() or None,
+            prompt=prompt,
+            owner="scheduled-task-tool",
+            owner_user_id=None,
+            git_token_value=git_token_value,
+            coding_model=coding_model,
+            mission_overrides=mission_overrides,
         )
     return {"ok": task.get("status") != "error", "task": task}
 
@@ -2241,12 +2261,19 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "auto_run": {"type": "boolean", "description": "If true, queue the coding agent immediately after workspace creation."},
                 "auto_commit": {
                     "type": "boolean",
-                    "description": "If true, allow the coding agent to auto-commit its changes during the run.",
+                    "description": "Deprecated compatibility field. Successful runs are always committed by the Nexus controller.",
                 },
                 "commit_message": {
                     "type": "string",
                     "description": "Optional commit message used when auto_commit is enabled.",
                 },
+                "push_on_success": {"type": "boolean", "description": "Push the committed feature branch after a successful run."},
+                "draft_pr_on_success": {"type": "boolean", "description": "Push and open a draft pull request after a successful run."},
+                "pr_title": {"type": "string"},
+                "pr_body": {"type": "string"},
+                "max_cycles": {"type": "integer", "minimum": 4, "maximum": 1000},
+                "max_runtime_sec": {"type": "integer", "minimum": 60, "maximum": 86400},
+                "context_reset_cycles": {"type": "integer", "minimum": 0, "maximum": 100},
             },
             "required": ["prompt"],
             "additionalProperties": False,

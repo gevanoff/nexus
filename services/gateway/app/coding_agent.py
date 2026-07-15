@@ -2345,6 +2345,52 @@ async def start_agent_run(
     return cw.public_task(fresh)
 
 
+async def create_and_start_agent_run(
+    *,
+    repo_url: Optional[str],
+    base_branch: Optional[str],
+    branch_name: Optional[str],
+    prompt: Optional[str],
+    owner: str,
+    owner_user_id: Optional[int] = None,
+    git_token_value: Optional[str] = None,
+    coding_model: Optional[str] = None,
+    commit_message: Optional[str] = None,
+    actor: Optional[str] = None,
+    max_cycles: Optional[int] = None,
+    max_runtime_sec: Optional[int] = None,
+    context_reset_cycles: Optional[int] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Canonical create-and-run service used by REST, UI, and model tools."""
+    task = await asyncio.to_thread(
+        cw.create_task,
+        repo_url=repo_url,
+        base_branch=base_branch,
+        branch_name=branch_name,
+        prompt=prompt,
+        owner=owner,
+        owner_user_id=owner_user_id,
+        git_token_value=git_token_value,
+        coding_model=coding_model,
+        mission_overrides=mission_overrides,
+    )
+    if task.get("status") == "error":
+        return task
+    return await start_agent_run(
+        str(task.get("id") or ""),
+        git_token_value=git_token_value,
+        coding_model=coding_model,
+        auto_commit=True,
+        commit_message=commit_message,
+        actor=actor or owner,
+        max_cycles=max_cycles,
+        max_runtime_sec=max_runtime_sec,
+        context_reset_cycles=context_reset_cycles,
+        mission_overrides=mission_overrides,
+    )
+
+
 async def request_pause(task_id: str) -> Dict[str, Any]:
     task = await asyncio.to_thread(cw.load_task, task_id)
     running = _active_runner(task_id)

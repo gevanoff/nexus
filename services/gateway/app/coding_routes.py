@@ -213,29 +213,16 @@ def _run_horizon_kwargs(body: Any) -> Dict[str, Optional[int]]:
 
 
 def _mission_overrides(body: Any) -> Dict[str, Any]:
-    push = bool(getattr(body, "push_on_success", False) or getattr(body, "draft_pr_on_success", False))
-    return {
-        "completion_policy": {
-            "require_commit_on_success": True,
-            "commit_policy": str(getattr(body, "commit_policy", "always_on_success") or "always_on_success"),
-        },
-        "publish_policy": {
-            "push": "on_success" if push else "never",
-            "draft_pr": "on_success" if bool(getattr(body, "draft_pr_on_success", False)) else "never",
-            "remote": "origin",
-            "pr_title": str(getattr(body, "pr_title", "") or ""),
-            "pr_body": str(getattr(body, "pr_body", "") or ""),
-        },
-        "budget_policy": {
-            "max_cycles": int(getattr(body, "max_cycles", None) or getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 1000)),
-            "max_runtime_sec": int(getattr(body, "max_runtime_sec", None) or getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 21600)),
-        },
-        "context_policy": {
-            "context_reset_cycles": int(getattr(body, "context_reset_cycles", None) or 0),
-            "context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000)),
-            "state_snapshot_on_reset": True,
-        },
-    }
+    return cw.coding_mission_overrides(
+        commit_policy=str(getattr(body, "commit_policy", "always_on_success") or "always_on_success"),
+        push_on_success=bool(getattr(body, "push_on_success", False)),
+        draft_pr_on_success=bool(getattr(body, "draft_pr_on_success", False)),
+        pr_title=str(getattr(body, "pr_title", "") or ""),
+        pr_body=str(getattr(body, "pr_body", "") or ""),
+        max_cycles=getattr(body, "max_cycles", None),
+        max_runtime_sec=getattr(body, "max_runtime_sec", None),
+        context_reset_cycles=getattr(body, "context_reset_cycles", None),
+    )
 
 
 def _is_smoke_task(task: Dict[str, Any]) -> bool:
@@ -394,8 +381,7 @@ async def ui_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
     user = _require_coding_ui(req)
     token = _git_token_for_user(user)
     model = _coding_model_for_user(user, body.coding_model)
-    task = await _to_thread(
-        cw.create_task,
+    task = await ca.create_and_start_agent_run(
         repo_url=body.repo_url,
         base_branch=body.base_branch,
         branch_name=body.branch_name,
@@ -404,17 +390,9 @@ async def ui_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
         owner_user_id=_user_id(user),
         git_token_value=token,
         coding_model=model,
-        mission_overrides=_mission_overrides(body),
-    )
-    if task.get("status") == "error":
-        return {"task": task}
-    task = await ca.start_agent_run(
-        str(task.get("id") or ""),
-        git_token_value=token,
-        coding_model=model,
-        auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user),
+        mission_overrides=_mission_overrides(body),
         **_run_horizon_kwargs(body),
     )
     return {"task": task}
@@ -790,8 +768,7 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
     user = _require_coding_api(req)
     token = _git_token_for_user(user) if user is not None else None
     model = _coding_model_for_user(user, body.coding_model) if user is not None else str(body.coding_model or "").strip() or "coder"
-    task = await _to_thread(
-        cw.create_task,
+    task = await ca.create_and_start_agent_run(
         repo_url=body.repo_url,
         base_branch=body.base_branch,
         branch_name=body.branch_name,
@@ -800,17 +777,9 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
         owner_user_id=_user_id(user),
         git_token_value=token,
         coding_model=model,
-        mission_overrides=_mission_overrides(body),
-    )
-    if task.get("status") == "error":
-        return {"task": task}
-    task = await ca.start_agent_run(
-        str(task.get("id") or ""),
-        git_token_value=token,
-        coding_model=model,
-        auto_commit=body.auto_commit,
         commit_message=body.commit_message,
         actor=_actor_from_user(user) if user is not None else "api",
+        mission_overrides=_mission_overrides(body),
         **_run_horizon_kwargs(body),
     )
     return {"task": task}

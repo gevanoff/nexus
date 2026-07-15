@@ -716,6 +716,42 @@ def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str,
     }
 
 
+def coding_mission_overrides(
+    *,
+    commit_policy: str = "always_on_success",
+    push_on_success: bool = False,
+    draft_pr_on_success: bool = False,
+    pr_title: str = "",
+    pr_body: str = "",
+    max_cycles: Optional[int] = None,
+    max_runtime_sec: Optional[int] = None,
+    context_reset_cycles: Optional[int] = None,
+) -> Dict[str, Any]:
+    push = bool(push_on_success or draft_pr_on_success)
+    return {
+        "completion_policy": {
+            "require_commit_on_success": True,
+            "commit_policy": str(commit_policy or "always_on_success"),
+        },
+        "publish_policy": {
+            "push": "on_success" if push else "never",
+            "draft_pr": "on_success" if draft_pr_on_success else "never",
+            "remote": "origin",
+            "pr_title": str(pr_title or ""),
+            "pr_body": str(pr_body or ""),
+        },
+        "budget_policy": {
+            "max_cycles": int(max_cycles or getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 1000)),
+            "max_runtime_sec": int(max_runtime_sec or getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 21600)),
+        },
+        "context_policy": {
+            "context_reset_cycles": int(context_reset_cycles or 0),
+            "context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000)),
+            "state_snapshot_on_reset": True,
+        },
+    }
+
+
 def save_task(task: Dict[str, Any]) -> Dict[str, Any]:
     task["updated_at"] = _now()
     _write_json(_task_path(str(task.get("id") or "")), task)
