@@ -823,8 +823,9 @@ async function queryGateway(history, message) {
         },
         timeout: GATEWAY_SOCKET_TIMEOUT_MS,
       });
+      const answer = extractAssistantText(res.data);
       recordGatewayOutcome(true);
-      return extractAssistantText(res.data);
+      return answer;
     } catch (caught) {
       err = caught;
       if (!isRetryableGatewayConnectError(caught) || attempt >= GATEWAY_CONNECT_RETRY_COUNT) break;
@@ -847,6 +848,9 @@ async function queryGateway(history, message) {
     log('error', 'Gateway request failed', { error: err?.message || String(err) });
   }
   recordGatewayOutcome(false, err);
+  if (err && typeof err === 'object') {
+    err.nexusGatewayRequestFailed = true;
+  }
   throw err;
 }
 
@@ -945,7 +949,9 @@ async function handleIncomingText(ctx, text, source) {
       userId: ctx.from?.id,
       error: err?.message || String(err),
     });
-    await ctx.reply('Error talking to the gateway.');
+    await ctx.reply(err?.nexusGatewayRequestFailed
+      ? 'Error talking to the gateway.'
+      : 'Error processing or sending the reply.');
   }
 }
 
