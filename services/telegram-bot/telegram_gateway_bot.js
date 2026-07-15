@@ -2,6 +2,7 @@ const { Bot, InputFile } = require('grammy');
 const axios = require('axios');
 const fs = require('node:fs');
 const { createTelegramGroupRouter, createTelegramRoutingMiddleware } = require('./telegram_group_routing');
+const { createTelegramMemoryClient, messagesWithMemory } = require('./telegram_memory');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_TOKEN_FALLBACK;
 const GATEWAY_PORT = Number.parseInt(process.env.GATEWAY_PORT || '8800', 10);
@@ -96,6 +97,7 @@ function recordGatewayOutcome(ok, err) {
 
 const bot = new Bot(TELEGRAM_TOKEN);
 const histories = new Map();
+let telegramBotId = '';
 
 const COMMANDS = [
   { command: 'start', description: 'Start the bot and show welcome message' },
@@ -144,6 +146,7 @@ function log(level, message, meta = {}) {
 }
 
 const groupRouter = createTelegramGroupRouter({ log });
+const memoryClient = createTelegramMemoryClient({ log });
 bot.use(createTelegramRoutingMiddleware(groupRouter));
 log('info', 'Telegram routing controls initialized', groupRouter.config);
 
@@ -803,10 +806,10 @@ async function maybeHandleSlashCommand(ctx, text) {
   return false;
 }
 
-async function queryGateway(history, message) {
+async function queryGateway(history, message, memoryContext = '') {
   const payload = {
     model: GATEWAY_MODEL,
-    messages: [...history, { role: 'user', content: message }],
+    messages: messagesWithMemory(history, message, memoryContext),
     stream: false,
   };
   if (TELEGRAM_GATEWAY_EXEC) {
@@ -927,7 +930,8 @@ async function handleIncomingText(ctx, text, source) {
     if (await maybeHandleSlashCommand(ctx, userText)) {
       return;
     }
-    const gatewayAnswer = await queryGateway(history, userText);
+    const memoryContext = await memoryClient.getContext(ctx, telegramBotId, userText);
+    const gatewayAnswer = await queryGateway(history, userText, memoryContext);
     const sanitized = sanitizeAssistantReply(gatewayAnswer);
     const answer = sanitized.content;
     history.push({ role: 'user', content: userText });
@@ -943,6 +947,7 @@ async function handleIncomingText(ctx, text, source) {
       replacedWithFallback: sanitized.meta.replacedWithFallback,
     });
     await replyLongText(ctx, answer);
+    await memoryClient.recordTurn(ctx, telegramBotId, userText, answer);
   } catch (err) {
     log('error', 'Chat handling failed', {
       chatId: ctx.chat?.id,
@@ -973,6 +978,7 @@ bot.catch((err) => {
 
 async function startBot() {
   const me = await bot.api.getMe();
+  telegramBotId = String(me.id || '');
   groupRouter.rememberBotIdentity(me);
   log('info', 'Telegram bot authenticated', {
     botId: me.id,

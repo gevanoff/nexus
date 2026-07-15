@@ -56,6 +56,24 @@ yellow/degraded for up to two failed status polls. Defaults are controlled by
 `TELEGRAM_STATUS_LAST_GOOD_MAX_AGE_SEC=300`. Authentication failures are never
 masked by the last-known-good state.
 
+## Shared Honcho memory
+
+Set `TELEGRAM_MEMORY_ENABLED=true` only after the Gateway's authenticated Honcho
+integration is configured. For each ordinary chat turn, the bot retrieves shared
+long-term context before calling the model and records the completed user/assistant
+turn afterward. Commands are not ingested. Honcho failures are logged and remain
+non-fatal to the Telegram reply.
+
+Private chats resolve through the immutable linked Nexus user and Telegram user
+IDs. Groups remain isolated by numeric group chat ID. Long-term conclusions are
+shared through the fleet observer, while each bot's immediate history remains
+local and is never read by another bot. `TELEGRAM_MEMORY_TIMEOUT_MS` defaults to
+10 seconds.
+
+When memory is enabled, the container health check also requires the Gateway's
+Honcho status endpoint to report enabled. This prevents a bot from appearing
+healthy while its configured memory writes are being discarded.
+
 The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use their corresponding `ada2-chat` and `stackrot-chat` aliases.
 
 ## Host bot identities

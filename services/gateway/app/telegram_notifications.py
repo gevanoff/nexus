@@ -131,6 +131,40 @@ def redeem_link_code(*, code: str, chat_id: Any, username: Any = None, telegram_
     return {"ok": False, "error": "code_expired" if expired_match else "code_invalid"}
 
 
+def resolve_linked_nexus_user(*, telegram_user_id: Any = None, chat_id: Any = None) -> Optional[Dict[str, Any]]:
+    """Resolve a Telegram identity to its linked Nexus user.
+
+    Numeric Telegram user IDs are authoritative. A private-chat ID is only used
+    as a compatibility fallback for links created before ``telegram_user_id``
+    was recorded. Usernames and display names are deliberately ignored.
+    """
+
+    target_user_id = str(telegram_user_id or "").strip()
+    target_chat_id = _coerce_chat_id(chat_id)
+    fallback: Optional[Dict[str, Any]] = None
+    for user in user_store.list_users(S.USER_DB_PATH):
+        if user.disabled:
+            continue
+        try:
+            settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user.id)) or {}
+        except Exception:
+            continue
+        link = _telegram_link_state(settings)
+        linked_user_id = str(link.get("telegram_user_id") or "").strip()
+        linked_chat_id = _coerce_chat_id(link.get("linked_chat_id"))
+        result = {
+            "user_id": int(user.id),
+            "username": str(user.username or ""),
+            "telegram_user_id": linked_user_id,
+            "chat_id": linked_chat_id,
+        }
+        if target_user_id and linked_user_id and secrets.compare_digest(target_user_id, linked_user_id):
+            return result
+        if target_chat_id and linked_chat_id and secrets.compare_digest(target_chat_id, linked_chat_id):
+            fallback = result
+    return fallback
+
+
 def workspace_url(task_id: str) -> str:
     public_base = str(getattr(S, "PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
     task = str(task_id or "").strip()

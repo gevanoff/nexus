@@ -85,9 +85,53 @@ Honcho workspace/peer mapping. Before wiring the bots, decide:
 
 Until that policy is explicit, do not automatically upload Telegram history.
 
-The selected identity, sharing, export, and recommended retention rules are
-recorded in [`MEMORY_POLICY.md`](MEMORY_POLICY.md). Ingestion remains disabled
-until those rules are enforced in code.
+The selected identity, sharing, export, and approved retention rules are
+recorded in [`MEMORY_POLICY.md`](MEMORY_POLICY.md) and enforced by the Gateway's
+Honcho memory registry.
+
+## Enable Gateway and Telegram ingestion
+
+Honcho itself stays authenticated. Generate a workspace-scoped token (an admin
+token is intentionally unnecessary) and add it to the private Gateway `.env` on
+`ai2` without committing or printing it:
+
+```bash
+docker compose --env-file deploy/env/.env.prod.honcho \
+  -f docker-compose.honcho.yml exec honcho \
+  /app/.venv/bin/python scripts/generate_jwt.py \
+  --workspace nexus --print-only
+```
+
+Honcho v3.0.12's helper currently writes `--expires` as an ISO string while its
+JWT decoder requires the standard numeric claim, so an expiring token generated
+by that pinned release is rejected as invalid. Until Honcho fixes the mismatch,
+use the non-expiring workspace token above, store it only in the private
+environment, and rotate it operationally every 90 days.
+
+Configure these private Gateway deployment values:
+
+```dotenv
+HONCHO_MEMORY_ENABLED=true
+HONCHO_BASE_URL=http://<copyfail-private-address>:8000
+HONCHO_API_PREFIX=/v3
+HONCHO_WORKSPACE_ID=nexus
+HONCHO_WORKSPACE_TOKEN=<workspace-scoped-jwt>
+HONCHO_PRIVATE_RAW_RETENTION_DAYS=180
+HONCHO_GROUP_RAW_RETENTION_DAYS=90
+HONCHO_EXPORT_RETENTION_DAYS=7
+HONCHO_AUDIT_RETENTION_DAYS=365
+```
+
+After the Gateway reports `/v1/telegram/memory/status` as enabled, set
+`TELEGRAM_MEMORY_ENABLED=true` in each bot host's private `.env` and rebuild the
+bot. Memory failures are non-fatal to chat replies, but they are logged and do
+not silently claim that a turn was stored.
+
+The Gateway stores its enforcement registry at
+`/var/lib/gateway/data/honcho_memory.sqlite`, writes mode-`0600` exports beneath
+`/var/lib/gateway/data/honcho_exports`, runs retention hourly, and preserves
+long-term conclusions before expiring raw per-turn sessions. Rotate the
+workspace JWT every 90 days while the pinned upstream expiry bug remains.
 
 ## Backup
 

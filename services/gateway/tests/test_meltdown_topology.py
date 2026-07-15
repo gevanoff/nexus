@@ -169,6 +169,9 @@ def test_honcho_stack_keeps_storage_private_and_inference_remote() -> None:
     assert "telegram:private:{chat_id}:bot:{bot_id}" in memory_policy
     assert "shared long-term conclusions" in memory_policy
     assert "does not grant download access" in memory_policy
+    assert "HONCHO_MEMORY_ENABLED=true" in docs
+    assert "--workspace nexus --print-only" in docs
+    assert "--expires 1y" not in docs
 
 
 def test_migraine_owns_one_constrained_native_mlx_backend() -> None:
@@ -202,6 +205,8 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     assert "ai2-chat" in compose
     assert "ada2-chat" in compose
     assert "stackrot-chat" in compose
+    assert "TELEGRAM_MEMORY_ENABLED" in compose
+    assert "TELEGRAM_MEMORY_TIMEOUT_MS" in compose
     assert "telegram-bot-migraine" not in compose
     assert compose.count("profiles: [host-bots]") == 2
     assert "telegram_bot" not in lifecycle["backends"]

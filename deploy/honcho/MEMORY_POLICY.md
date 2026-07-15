@@ -1,7 +1,8 @@
 # Nexus Telegram memory policy
 
-This document defines the intended Honcho ownership and isolation model. It is
-an implementation contract, not evidence that Telegram ingestion is enabled.
+This document defines the Honcho ownership and isolation model enforced by the
+Nexus Gateway integration. Ingestion still requires the explicit
+`HONCHO_MEMORY_ENABLED` and bot `TELEGRAM_MEMORY_ENABLED` deployment gates.
 
 ## Identity resolution
 
@@ -40,6 +41,14 @@ so a future policy can split bot memories without rewriting identity keys.
 No bot may read raw short-term sessions belonging to another bot. Cross-bot
 retrieval is limited to shared derived long-term memory and the current bot's
 own session.
+
+The first implementation stores each completed Telegram turn as a separate
+Honcho session. This makes a single turn independently deletable even though
+Honcho v3 does not expose individual message deletion. Immediate short-term
+history remains bot-local and in memory; it is therefore discarded on bot
+restart and never becomes cross-bot context. Before an expired raw session is
+deleted, session conclusions are copied into the owner's global long-term
+representation and recorded in Nexus's deletion registry.
 
 ## Recommended retention baseline
 
@@ -88,3 +97,8 @@ application-level guarantee.
 Group exports require an explicitly associated Nexus group owner. Without one,
 an administrator may create a server-side operational dump, but no user download
 URL is issued. Export files expire after seven days.
+
+The Gateway exposes owner-authorized list/delete/download routes under
+`/ui/api/user/memory`. Administrators create a user export through
+`/ui/api/admin/memory/exports`; the resulting download route checks the export's
+owner ID and does not treat administrator status as ownership.

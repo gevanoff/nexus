@@ -110,3 +110,26 @@ def test_redeem_link_code_rejects_expired_codes(tmp_path, monkeypatch):
 
     assert result["ok"] is False
     assert result["error"] == "code_expired"
+
+
+def test_resolve_linked_nexus_user_prefers_immutable_telegram_id(tmp_path, monkeypatch):
+    db_path = tmp_path / "users.sqlite"
+    user_store.init_db(str(db_path))
+    user = user_store.create_user_with_admin(str(db_path), username="erin", password="secret", admin=False)
+    settings = user_store.get_settings(str(db_path), user_id=user.id)
+    settings["telegram"]["link"] = {
+        "telegram_user_id": "778899",
+        "linked_chat_id": "112233",
+        "linked_username": "renameable_name",
+    }
+    user_store.set_settings(str(db_path), user_id=user.id, settings=settings)
+    monkeypatch.setattr(telegram_notifications.S, "USER_DB_PATH", str(db_path))
+
+    result = telegram_notifications.resolve_linked_nexus_user(
+        telegram_user_id="778899",
+        chat_id="999999",
+    )
+
+    assert result is not None
+    assert result["user_id"] == user.id
+    assert result["telegram_user_id"] == "778899"

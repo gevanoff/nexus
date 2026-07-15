@@ -10,6 +10,7 @@ const NETWORK_RETRIES = Number.parseInt(process.env.TELEGRAM_HEALTHCHECK_NETWORK
 const RETRY_DELAY_MS = Number.parseInt(process.env.TELEGRAM_HEALTHCHECK_RETRY_DELAY_MS || '250', 10);
 const GATEWAY_STATE_PATH = String(process.env.TELEGRAM_GATEWAY_STATE_PATH || '/tmp/nexus-telegram-gateway-state.json').trim();
 const GATEWAY_FAILURE_MAX_AGE_MS = Number.parseInt(process.env.TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS || '300000', 10);
+const MEMORY_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.TELEGRAM_MEMORY_ENABLED || 'false').trim().toLowerCase());
 
 function fail(message) {
   console.error(message);
@@ -128,6 +129,15 @@ async function main() {
   const backendHealth = status.data?.backend_health?.[backend];
   if (backendHealth?.ready !== true) {
     fail(`Gateway model ${GATEWAY_MODEL} backend ${backend} is not ready`);
+  }
+  if (MEMORY_ENABLED) {
+    const memory = await axios.get(`${GATEWAY_BASE_URL}/v1/telegram/memory/status`, {
+      headers: { Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}` },
+      timeout: TIMEOUT_MS,
+    });
+    if (memory.status < 200 || memory.status >= 300 || memory.data?.enabled !== true) {
+      fail(`Honcho memory is not ready (${memory.data?.reason || memory.status})`);
+    }
   }
   const gatewayFailure = recentGatewayFailure();
   if (gatewayFailure) {

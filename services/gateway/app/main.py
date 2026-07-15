@@ -170,6 +170,13 @@ async def lifespan(_app: FastAPI):
         await start_tool_qualification_scheduler()
     except Exception as e:
         logger.warning("startup: model tool qualification scheduler unavailable (%s: %s)", type(e).__name__, e)
+
+    try:
+        from app.honcho_memory import start_maintenance as start_honcho_memory_maintenance
+
+        await start_honcho_memory_maintenance()
+    except Exception as e:
+        logger.warning("startup: Honcho memory maintenance unavailable (%s: %s)", type(e).__name__, e)
     
     await _startup_check_models()
     yield
@@ -199,6 +206,12 @@ async def lifespan(_app: FastAPI):
         await stop_sentinel_runtime()
     except Exception as e:
         logger.info("shutdown: nexus sentinel stop skipped (%s: %s)", type(e).__name__, e)
+    try:
+        from app.honcho_memory import stop_maintenance as stop_honcho_memory_maintenance
+
+        await stop_honcho_memory_maintenance()
+    except Exception as e:
+        logger.info("shutdown: Honcho memory maintenance stop skipped (%s: %s)", type(e).__name__, e)
     await stop_health_checker()
     await stop_registry_sync()
     observability.stop()
@@ -393,3 +406,5 @@ app.include_router(agent_router)
 app.include_router(coding_router)
 app.include_router(agent_api_router)
 app.include_router(ui_router)
+from app.honcho_memory_routes import router as honcho_memory_router
+app.include_router(honcho_memory_router)
