@@ -37,6 +37,13 @@ Recommended defaults:
 - `TELEGRAM_MAX_MESSAGE=3900`
 - `TELEGRAM_LOG_LEVEL=info`
 
+The container health check verifies Telegram authentication, Gateway auth/model
+mapping, and a minimal real chat completion. The bot also records the outcome of
+each real chat request inside the container, so a recent user-visible Gateway
+failure makes the Resources UI report that bot runtime as unhealthy instead of
+leaving it green on cached backend readiness alone. The failure marker expires
+after five minutes by default (`TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS`).
+
 The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use their corresponding `ada2-chat` and `stackrot-chat` aliases.
 
 ## Host bot identities

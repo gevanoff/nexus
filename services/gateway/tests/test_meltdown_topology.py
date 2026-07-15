@@ -148,6 +148,24 @@ def test_copyfail_is_infra_only_topology_host() -> None:
         assert backend.get("host") != "copyfail"
 
 
+def test_honcho_stack_keeps_storage_private_and_inference_remote() -> None:
+    compose = _read("docker-compose.honcho.yml")
+    config = _read("deploy/honcho/config.nexus.toml")
+    docs = _read("deploy/honcho/README.md")
+
+    assert "container_name: nexus-honcho" in compose
+    assert "container_name: nexus-honcho-deriver" in compose
+    assert "container_name: nexus-honcho-database" in compose
+    assert "container_name: nexus-honcho-redis" in compose
+    assert "POSTGRES_HOST_AUTH_METHOD=trust" not in compose
+    assert "HONCHO_DB_PASSWORD" in compose
+    assert "AUTH_USE_AUTH=true" in _read("deploy/honcho/honcho.env.example")
+    assert 'base_url = "http://ai2:8800/v1"' in config
+    assert 'model = "embeddings"' in config
+    assert "VECTOR_DIMENSIONS = 384" in config
+    assert "v3.0.12" in docs
+
+
 def test_migraine_owns_one_constrained_native_mlx_backend() -> None:
     topology = json.loads(_read("deploy/topology/production.json"))
     lifecycle = json.loads(_read("deploy/topology/backend_lifecycle.json"))

@@ -1,5 +1,6 @@
 const { Bot, InputFile } = require('grammy');
 const axios = require('axios');
+const fs = require('node:fs');
 const { createTelegramGroupRouter, createTelegramRoutingMiddleware } = require('./telegram_group_routing');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_TOKEN_FALLBACK;
@@ -20,6 +21,7 @@ const LOG_PREVIEW_CHARS = Number.parseInt(process.env.LOG_PREVIEW_CHARS || '320'
 const GATEWAY_SOCKET_TIMEOUT_MS = 60000;
 const GATEWAY_CONNECT_RETRY_COUNT = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_COUNT || '2', 10);
 const GATEWAY_CONNECT_RETRY_DELAY_MS = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_DELAY_MS || '750', 10);
+const GATEWAY_STATE_PATH = String(process.env.TELEGRAM_GATEWAY_STATE_PATH || '/tmp/nexus-telegram-gateway-state.json').trim();
 const FALLBACK_CLARIFICATION_REPLY = 'I need a bit more context to answer reliably. Please clarify what you want to know or share the earlier message.';
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
 const THINK_TAG_RE = /<\/?think>/gi;
@@ -73,6 +75,23 @@ function isRetryableGatewayConnectError(err) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function recordGatewayOutcome(ok, err) {
+  const state = {
+    ok: !!ok,
+    checked_at: Date.now(),
+  };
+  if (!ok) {
+    state.error = err?.message || String(err || 'gateway request failed');
+    state.code = err?.code || '';
+    state.status = err?.response?.status || 0;
+  }
+  try {
+    fs.writeFileSync(GATEWAY_STATE_PATH, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 });
+  } catch (stateError) {
+    log('warn', 'Failed to record Gateway outcome', { error: stateError?.message || String(stateError) });
+  }
 }
 
 const bot = new Bot(TELEGRAM_TOKEN);
@@ -804,6 +823,7 @@ async function queryGateway(history, message) {
         },
         timeout: GATEWAY_SOCKET_TIMEOUT_MS,
       });
+      recordGatewayOutcome(true);
       return extractAssistantText(res.data);
     } catch (caught) {
       err = caught;
@@ -826,6 +846,7 @@ async function queryGateway(history, message) {
   } else {
     log('error', 'Gateway request failed', { error: err?.message || String(err) });
   }
+  recordGatewayOutcome(false, err);
   throw err;
 }
 

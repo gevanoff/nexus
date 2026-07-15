@@ -5,7 +5,7 @@
   "main": "telegram_gateway_bot.js",
   "scripts": {
     "start": "node telegram_gateway_bot.js",
-    "test": "node --test telegram_group_routing.test.js"
+    "test": "node --test *.test.js"
   },
   "keywords": [
     "telegram",

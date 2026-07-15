@@ -44,6 +44,49 @@ def test_component_container_match_allows_compose_suffixes() -> None:
     )
 
 
+def test_container_status_requires_healthy_when_health_is_reported() -> None:
+    module = _load_lifecycle_main()
+
+    assert module.LifecycleManager._container_status_ready("Up 2 hours")
+    assert module.LifecycleManager._container_status_ready("Up 2 hours (healthy)")
+    assert not module.LifecycleManager._container_status_ready("Up 2 hours (unhealthy)")
+    assert not module.LifecycleManager._container_status_ready("Up 5 seconds (health: starting)")
+    assert not module.LifecycleManager._container_status_ready("Exited (1) 2 hours ago")
+
+
+def test_core_service_status_reports_unhealthy_container_as_red() -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    manager.hosts = {
+        "ada2": module.HostPolicy(
+            name="ada2",
+            ssh_target="ai@ada2",
+            ssh_connect_target="",
+            ssh_port=22,
+            repo_dir="",
+            env_file="",
+            platform="linux",
+            resource_kind="linux_nvidia",
+            containers={"nexus-telegram-bot-ada2": "Up 3 minutes (unhealthy)"},
+            updated_at=123.0,
+        )
+    }
+    service = module.CoreServicePolicy(
+        service_id="telegram_bridge_tess",
+        display_name="Tess Telegram Bridge Runtime",
+        host="ada2",
+        components=["telegram-bot-ada2"],
+        tier="core",
+        notes="",
+    )
+
+    status = manager._core_service_status(service)
+
+    assert status["active"] is False
+    assert status["status"] == "unhealthy"
+    assert status["status_color"] == "red"
+
+
 def test_ssh_probe_uses_configured_connect_target_and_port(monkeypatch) -> None:
     module = _load_lifecycle_main()
     manager = object.__new__(module.LifecycleManager)

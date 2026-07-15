@@ -1,0 +1,96 @@
+# Nexus defaults for a self-hosted Honcho v3 server. Inference remains on the
+# Nexus Gateway; copyfail only runs the API, deriver, PostgreSQL, and Redis.
+
+[app]
+LOG_LEVEL = "INFO"
+EMBED_MESSAGES = true
+
+[auth]
+USE_AUTH = true
+
+[sentry]
+ENABLED = false
+
+[embedding]
+VECTOR_DIMENSIONS = 384
+
+[embedding.model_config]
+transport = "openai"
+model = "embeddings"
+
+[embedding.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[deriver]
+ENABLED = true
+WORKERS = 1
+POLLING_BACKOFF_ENABLED = true
+
+[deriver.model_config]
+transport = "openai"
+model = "default"
+
+[deriver.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[dialectic.levels.minimal.model_config]
+transport = "openai"
+model = "default"
+
+[dialectic.levels.minimal.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[dialectic.levels.low.model_config]
+transport = "openai"
+model = "default"
+
+[dialectic.levels.low.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[dialectic.levels.medium.model_config]
+transport = "openai"
+model = "default"
+
+[dialectic.levels.medium.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[dialectic.levels.high.model_config]
+transport = "openai"
+model = "default"
+
+[dialectic.levels.high.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[dialectic.levels.max.model_config]
+transport = "openai"
+model = "default"
+
+[dialectic.levels.max.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[summary]
+ENABLED = true
+
+[summary.model_config]
+transport = "openai"
+model = "default"
+
+[summary.model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[dream]
+ENABLED = true
+
+[dream.deduction_model_config]
+transport = "openai"
+model = "default"
+
+[dream.deduction_model_config.overrides]
+base_url = "http://ai2:8800/v1"
+
+[dream.induction_model_config]
+transport = "openai"
+model = "default"
+
+[dream.induction_model_config.overrides]
+base_url = "http://ai2:8800/v1"

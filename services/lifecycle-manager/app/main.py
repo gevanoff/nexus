@@ -796,6 +796,13 @@ class LifecycleManager:
         suffix = name[len(expected_name) + 1 :]
         return not suffix.startswith("registrar")
 
+    @staticmethod
+    def _container_status_ready(status: str) -> bool:
+        normalized = str(status or "").strip().lower()
+        if not normalized.startswith("up"):
+            return False
+        return "unhealthy" not in normalized and "health: starting" not in normalized
+
     def _refresh_active_flags(self) -> None:
         for backend in self.backends.values():
             host = self.hosts.get(backend.host)
@@ -2341,7 +2348,10 @@ class LifecycleManager:
                     if self._component_container_active(name, expected_name)
                 ]
                 containers.extend(matched)
-                active_by_component[component] = any("Up" in item["status"] for item in matched)
+                active_by_component[component] = any(
+                    self._container_status_ready(item["status"])
+                    for item in matched
+                )
 
         missing = [component for component in service.components if not active_by_component.get(component)]
         host_error = host.error if host is not None else f"unknown host {service.host}"
@@ -2361,6 +2371,11 @@ class LifecycleManager:
             label = "Active"
             color = "green"
             rank = 0
+        elif any("unhealthy" in item["status"].lower() for item in containers):
+            status = "unhealthy"
+            label = "Unhealthy"
+            color = "red"
+            rank = 3
         elif containers:
             status = "partial"
             label = "Partial"

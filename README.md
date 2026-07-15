@@ -46,6 +46,7 @@ Compose policy: see [COMPOSE_POLICY.md](COMPOSE_POLICY.md) (one compose file per
 - `ada2` (Ubuntu Linux, 13th Gen Intel Core i7-13700K, about 125 GiB observed system RAM, NVIDIA RTX 6000 Ada 48GB class / 46 GiB reported VRAM): primary heavy CUDA host for `vllm` and high-VRAM image/video workloads.
 - `meltdown` (Ubuntu 22.04.5, Intel Core i7-5930K, about 47 GiB observed system RAM, NVIDIA GeForce RTX 5060 Ti 16GB class / 15.9 GiB reported VRAM): lighter Linux/NVIDIA host for SDXL-Turbo, vLLM embeddings, overflow, and staging.
 - `migraine` (Mac M2, 8GB unified memory): Hermes Gateway / Telegram host plus one tightly bounded native MLX lane for `mlx-community/Llama-3.2-3B-Instruct-4bit`.
+- `copyfail` (Ubuntu 22.04, Intel Celeron J3355, about 7.4 GiB system RAM): infrastructure-only host for deployment control, metrics, and the shared Honcho memory stack. Honcho delegates inference to Gateway; no model weights belong here.
 
 Operational implication:
 - Keep gateway and host-native MLX routing on `ai2`; run containerized TTS on `stackrot` with Qwen3-TTS isolated to its second GPU.
@@ -351,6 +352,12 @@ Nexus includes the following services:
 - The `host-bots` Compose profile adds distinct `ada2` and `stackrot` bots after separate BotFather tokens are configured.
 - `migraine` continues to use its existing Hermes-managed Telegram bot and `~/.hermes/SOUL.md`.
 - Containerized component (no host systemd/launchd required)
+
+### Honcho memory service (`docker-compose.honcho.yml`)
+- Shared, self-hosted long-term memory API intended for Nexus and its chatbot identities
+- Runs API, deriver, pgvector, and Redis on `copyfail`; generation and embeddings route back through Gateway
+- Requires authenticated, workspace-scoped chatbot integrations and an explicit Telegram retention/isolation policy
+- Deployment and backup guidance: [`deploy/honcho/README.md`](deploy/honcho/README.md)
 
 ### Hermes Gateway on `migraine`
 - Host-native Hermes runs outside Nexus Compose on `migraine` and connects to Telegram directly.

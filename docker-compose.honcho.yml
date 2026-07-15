@@ -1,0 +1,88 @@
+name: nexus-honcho
+
+x-honcho: &honcho
+  build:
+    context: ${HONCHO_SOURCE_DIR:-/home/ai/ai/honcho}
+    dockerfile: Dockerfile
+  env_file:
+    - path: ${HONCHO_ENV_FILE:-./deploy/env/.env.prod.honcho}
+      required: true
+  environment:
+    DB_CONNECTION_URI: postgresql+psycopg://honcho:${HONCHO_DB_PASSWORD:?HONCHO_DB_PASSWORD is required}@honcho-database:5432/honcho
+    CACHE_URL: redis://honcho-redis:6379/0?suppress=true
+    CACHE_ENABLED: "true"
+  extra_hosts:
+    - "ai2:${NEXUS_HOST_AI2_IP:?NEXUS_HOST_AI2_IP is required}"
+  volumes:
+    - ./deploy/honcho/config.nexus.toml:/app/config.toml:ro
+  restart: unless-stopped
+
+services:
+  honcho:
+    <<: *honcho
+    container_name: nexus-honcho
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      honcho-database:
+        condition: service_healthy
+      honcho-redis:
+        condition: service_healthy
+    ports:
+      - "${HONCHO_BIND_ADDRESS:-127.0.0.1}:${HONCHO_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  honcho-deriver:
+    <<: *honcho
+    container_name: nexus-honcho-deriver
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      honcho:
+        condition: service_healthy
+      honcho-database:
+        condition: service_healthy
+      honcho-redis:
+        condition: service_healthy
+
+  honcho-database:
+    image: pgvector/pgvector:pg15
+    container_name: nexus-honcho-database
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=100"]
+    environment:
+      POSTGRES_DB: honcho
+      POSTGRES_USER: honcho
+      POSTGRES_PASSWORD: ${HONCHO_DB_PASSWORD:?HONCHO_DB_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ${HONCHO_SOURCE_DIR:-/home/ai/ai/honcho}/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - honcho-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honcho -d honcho"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  honcho-redis:
+    image: redis:8.2
+    container_name: nexus-honcho-redis
+    restart: unless-stopped
+    volumes:
+      - honcho-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  honcho-pgdata:
+  honcho-redis-data:

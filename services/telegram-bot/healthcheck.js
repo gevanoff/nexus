@@ -1,14 +1,57 @@
 const axios = require('axios');
+const fs = require('node:fs');
 
 const TELEGRAM_TOKEN = String(process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_TOKEN_FALLBACK || '').trim();
 const GATEWAY_BEARER_TOKEN = String(process.env.GATEWAY_BEARER_TOKEN || '').trim();
 const GATEWAY_BASE_URL = String(process.env.GATEWAY_BASE_URL || 'http://gateway:8800').replace(/\/+$/, '');
 const GATEWAY_MODEL = String(process.env.GATEWAY_MODEL || 'fast').trim();
 const TIMEOUT_MS = Number.parseInt(process.env.TELEGRAM_HEALTHCHECK_TIMEOUT_MS || '5000', 10);
+const GATEWAY_STATE_PATH = String(process.env.TELEGRAM_GATEWAY_STATE_PATH || '/tmp/nexus-telegram-gateway-state.json').trim();
+const GATEWAY_FAILURE_MAX_AGE_MS = Number.parseInt(process.env.TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS || '300000', 10);
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+function recentGatewayFailure(now = Date.now()) {
+  let state;
+  try {
+    state = JSON.parse(fs.readFileSync(GATEWAY_STATE_PATH, 'utf8'));
+  } catch (err) {
+    if (err?.code === 'ENOENT') return null;
+    throw err;
+  }
+  const checkedAt = Number(state?.checked_at || 0);
+  if (state?.ok !== false || !checkedAt || now - checkedAt > GATEWAY_FAILURE_MAX_AGE_MS) {
+    return null;
+  }
+  return state;
+}
+
+function validateCompletion(response) {
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Gateway completion failed with status ${response.status}`);
+  }
+  if (!Array.isArray(response.data?.choices) || response.data.choices.length === 0) {
+    throw new Error(`Gateway model ${GATEWAY_MODEL} completion returned no choices`);
+  }
+}
+
+async function checkGatewayCompletion(client = axios) {
+  const response = await client.post(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
+    model: GATEWAY_MODEL,
+    messages: [{ role: 'user', content: 'Reply OK' }],
+    max_tokens: 1,
+    stream: false,
+  }, {
+    headers: {
+      Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: TIMEOUT_MS,
+  });
+  validateCompletion(response);
 }
 
 async function main() {
@@ -50,10 +93,19 @@ async function main() {
   if (backendHealth?.ready !== true) {
     fail(`Gateway model ${GATEWAY_MODEL} backend ${backend} is not ready`);
   }
+  const gatewayFailure = recentGatewayFailure();
+  if (gatewayFailure) {
+    fail(`Last Telegram chat request failed: ${gatewayFailure.error || 'gateway request failed'}`);
+  }
+  await checkGatewayCompletion();
 
   console.log('ok');
 }
 
-main().catch((err) => {
-  fail(err?.message || String(err));
-});
+if (require.main === module) {
+  main().catch((err) => {
+    fail(err?.message || String(err));
+  });
+}
+
+module.exports = { checkGatewayCompletion, recentGatewayFailure, validateCompletion };
