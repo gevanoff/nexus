@@ -433,7 +433,7 @@ def create_user(db_path: str, *, username: str, password: str) -> User:
     conn = _db(db_path)
     try:
         cur = conn.execute(
-            "INSERT INTO users(username,password_hash,password_salt,created_ts,updated_ts,disabled,admin) VALUES(?,?,?,?,?,?,0,0)",
+            "INSERT INTO users(username,password_hash,password_salt,created_ts,updated_ts,disabled,admin) VALUES(?,?,?,?,?,0,0)",
             (uname, phash, salt.hex(), now, now),
         )
         user_id = int(cur.lastrowid)

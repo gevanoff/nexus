@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
-from app.auth import require_bearer
+from app.auth import enforce_token_model_allowlist, require_bearer
 from app.agent_api.auth import agent_tool_caller_from_request
 from app.config import S, logger
 from app.backends import (
@@ -1257,6 +1257,8 @@ async def chat_completions(req: Request):
             param=_validation_error_param(exc),
             detail={"request_id": request_id, "errors": exc.errors(include_url=False)},
         )
+
+    enforce_token_model_allowlist(req, cc.model)
 
     # Disabled tool execution is a request boundary, not a backend capability.
     # Enforce it before routing, normalization, admission, or upstream dispatch.

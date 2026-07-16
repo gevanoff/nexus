@@ -27,7 +27,7 @@ The bot will bind that private chat to the signed-in Nexus user account so Gatew
 Set these in `nexus/.env`:
 
 - `TELEGRAM_AI2_TOKEN` (from @BotFather), or the legacy `TELEGRAM_TOKEN`
-- `GATEWAY_BEARER_TOKEN` (same token Gateway expects)
+- `GATEWAY_BEARER_TOKEN` (a Gateway bearer or dedicated API key)
 
 Recommended defaults:
 
@@ -128,6 +128,14 @@ duplicated into the ai2 Gateway environment. When the Gateway lacks a host bot's
 token, the Resources UI trusts the remote container's healthy lifecycle state,
 because the container health check already verifies Telegram authentication and
 Gateway/model readiness.
+
+For a remote identity such as Cinder, prefer a dedicated Gateway API key rather
+than the control-plane bearer. Restrict it to the bot host IP, its model alias,
+and these paths: `/v1/models`, `/v1/gateway/status`,
+`/v1/chat/completions`, `/v1/telegram/memory/*`, and `/v1/telegram/link`.
+The key also needs `service_access: ["telegram_bridge"]` for link and Honcho
+memory calls. Store only the one-time raw key in the bot host's mode-`0600`
+local env overlay; Gateway stores its hash.
 
 `migraine` is intentionally absent from this Compose profile because its existing Hermes gateway already owns that Telegram identity and `~/.hermes/SOUL.md`.
 

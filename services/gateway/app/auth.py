@@ -226,6 +226,42 @@ def token_policy_for_token(token: str) -> dict:
         return {}
 
 
+def _policy_string_set(policy: dict, key: str) -> set[str]:
+    raw = policy.get(key) if isinstance(policy, dict) else None
+    if isinstance(raw, str):
+        values = raw.split(",")
+    elif isinstance(raw, list):
+        values = raw
+    else:
+        values = []
+    return {str(value).strip().lower() for value in values if str(value).strip()}
+
+
+def _path_allowed(path: str, allowed_paths: set[str]) -> bool:
+    requested = str(path or "").strip().lower()
+    for allowed in allowed_paths:
+        if allowed == "*" or requested == allowed:
+            return True
+        if allowed.endswith("*") and requested.startswith(allowed[:-1]):
+            return True
+    return False
+
+
+def enforce_token_model_allowlist(req: Request, model: str) -> None:
+    """Restrict a bearer to explicitly permitted request model names when set."""
+
+    try:
+        policy = getattr(req.state, "token_policy", None)
+    except Exception:
+        policy = None
+    allowed = _policy_string_set(policy if isinstance(policy, dict) else {}, "model_allowlist")
+    if not allowed or "*" in allowed:
+        return
+    requested = str(model or "").strip().lower()
+    if requested not in allowed:
+        raise HTTPException(status_code=403, detail="Bearer token is not permitted for this model")
+
+
 def _valid_static_bearer_tokens(tokens: list[str]) -> set[str]:
     return {
         token
@@ -290,6 +326,15 @@ def require_bearer(req: Request) -> None:
             req.state.api_key = key_meta
     except Exception:
         pass
+
+    # Optional per-token route boundary. Exact paths and trailing-* prefixes are
+    # supported so service keys can be limited to the API surface they need.
+    allowed_paths = _policy_string_set(policy, "path_allowlist")
+    if allowed_paths and not _path_allowed(req.url.path, allowed_paths):
+        raise HTTPException(
+            status_code=403,
+            detail="Bearer token is not permitted for this endpoint",
+        )
 
     # IP allowlist check (global or per-token override).
     raw_allowlist = ""

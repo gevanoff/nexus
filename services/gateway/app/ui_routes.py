@@ -63,7 +63,7 @@ from app import telegram_notifications
 from app import model_benchmark
 from app import model_tool_qualification
 from app import honcho_memory
-from app.auth import configured_static_bearer_tokens, require_bearer
+from app.auth import _policy_string_set, configured_static_bearer_tokens, require_bearer
 from app.agent_api.auth import agent_tool_caller_from_request
 from app.agent_runtime_v1 import tools_for_tier
 from app.resources_snapshot import (
@@ -1108,9 +1108,26 @@ def _require_static_bearer_service(req: Request) -> user_store.User:
     token = _session_token_from_req(req)
     require_bearer(req)
     user = _static_bearer_user(token)
-    if user is None:
-        raise HTTPException(status_code=403, detail="static bearer token required")
-    return user
+    if user is not None:
+        return user
+
+    try:
+        auth_kind = str(getattr(req.state, "auth_kind", "") or "")
+        api_user = getattr(req.state, "user", None)
+        policy = getattr(req.state, "token_policy", None)
+    except Exception:
+        auth_kind = ""
+        api_user = None
+        policy = None
+    service_access = _policy_string_set(
+        policy if isinstance(policy, dict) else {},
+        "service_access",
+    )
+    if auth_kind == "api_key" and api_user is not None and (
+        "telegram_bridge" in service_access or "*" in service_access
+    ):
+        return api_user
+    raise HTTPException(status_code=403, detail="static bearer or scoped service API key required")
 
 
 def _require_admin(req: Request) -> user_store.User:

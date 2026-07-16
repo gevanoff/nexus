@@ -84,6 +84,10 @@ The focused UIs share top navigation and include Back to Chat, Refresh, Resource
 Notes:
 - Raw API key values are only returned once at key creation.
 - API keys can be used as `Authorization: Bearer <api-key>` for gateway API calls.
+- A key policy may include `path_allowlist` (exact paths or trailing-`*`
+  prefixes), `model_allowlist`, `ip_allowlist`, `tools_allowlist`, and
+  `max_request_bytes`. `service_access: ["telegram_bridge"]` additionally
+  permits the authenticated Telegram link and Honcho-memory endpoints.
 - UI browser login/session flow remains supported alongside API keys.
 - The `/ui/login` page also accepts a personal API key and stores it client-side for browser-based UI/API use.
 
