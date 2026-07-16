@@ -35,7 +35,14 @@ Recommended defaults:
 - `TELEGRAM_AI2_MODEL=ai2-chat`
 - `TELEGRAM_MAX_HISTORY=20`
 - `TELEGRAM_MAX_MESSAGE=3900`
+- `TELEGRAM_MAX_TOKENS=512`
+- `TELEGRAM_GATEWAY_TIMEOUT_MS=120000`
 - `TELEGRAM_LOG_LEVEL=info`
+
+Telegram chat completions are bounded by `TELEGRAM_MAX_TOKENS` so slower
+reasoning models do not routinely run into the request deadline. The Gateway
+request timeout is independently configurable through
+`TELEGRAM_GATEWAY_TIMEOUT_MS`.
 
 The container health check verifies Telegram authentication and Gateway
 auth/model mapping. The bot also records the outcome of each real chat request

@@ -17,9 +17,10 @@ const TELEGRAM_GATEWAY_EXEC = ['1', 'true', 'yes', 'on'].includes(String(process
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || '';
 const MAX_HISTORY = Number.parseInt(process.env.MAX_HISTORY || '20', 10);
 const TELEGRAM_MAX_MESSAGE = Number.parseInt(process.env.TELEGRAM_MAX_MESSAGE || '3900', 10);
+const TELEGRAM_MAX_TOKENS = Number.parseInt(process.env.TELEGRAM_MAX_TOKENS || '512', 10);
 const LOG_LEVEL = String(process.env.LOG_LEVEL || 'info').toLowerCase();
 const LOG_PREVIEW_CHARS = Number.parseInt(process.env.LOG_PREVIEW_CHARS || '320', 10);
-const GATEWAY_SOCKET_TIMEOUT_MS = 60000;
+const GATEWAY_SOCKET_TIMEOUT_MS = Number.parseInt(process.env.TELEGRAM_GATEWAY_TIMEOUT_MS || '120000', 10);
 const GATEWAY_CONNECT_RETRY_COUNT = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_COUNT || '2', 10);
 const GATEWAY_CONNECT_RETRY_DELAY_MS = Number.parseInt(process.env.GATEWAY_CONNECT_RETRY_DELAY_MS || '750', 10);
 const GATEWAY_STATE_PATH = String(process.env.TELEGRAM_GATEWAY_STATE_PATH || '/tmp/nexus-telegram-gateway-state.json').trim();
@@ -48,6 +49,10 @@ if (Number.isNaN(MAX_HISTORY) || MAX_HISTORY < 1) {
 
 if (Number.isNaN(TELEGRAM_MAX_MESSAGE) || TELEGRAM_MAX_MESSAGE < 500) {
   throw new Error('TELEGRAM_MAX_MESSAGE must be a positive integer >= 500');
+}
+
+if (Number.isNaN(TELEGRAM_MAX_TOKENS) || TELEGRAM_MAX_TOKENS < 1) {
+  throw new Error('TELEGRAM_MAX_TOKENS must be a positive integer');
 }
 
 if (!GATEWAY_BASE_URL_RAW && (Number.isNaN(GATEWAY_PORT) || GATEWAY_PORT < 1 || GATEWAY_PORT > 65535)) {
@@ -810,6 +815,7 @@ async function queryGateway(history, message, memoryContext = '') {
   const payload = {
     model: GATEWAY_MODEL,
     messages: messagesWithMemory(history, message, memoryContext),
+    max_tokens: TELEGRAM_MAX_TOKENS,
     stream: false,
   };
   if (TELEGRAM_GATEWAY_EXEC) {
