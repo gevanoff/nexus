@@ -83,6 +83,28 @@ def test_private_identity_uses_linked_composite_owner_and_bot_session(tmp_path, 
     assert identity["owner_key"] == f"nexus:{user.id}:telegram:445566"
     assert identity["partition_key"] == "telegram:private:445566"
     assert identity["short_term_key"] == "telegram:private:445566:bot:101"
+    assert identity["retrieval_keys"] == [f"nexus:{user.id}"]
+
+
+def test_ui_identity_isolates_conversation_and_soul_while_linking_long_term_owner(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    user = _linked_user(tmp_path, monkeypatch)
+
+    identity = honcho_memory.resolve_ui_identity(
+        owner_user_id=user.id,
+        conversation_id="conversation-1",
+        soul_name="ada2",
+    )
+
+    assert identity["owner_key"] == f"nexus:{user.id}"
+    assert identity["partition_key"] == f"nexus:ui:{user.id}:conversation:conversation-1"
+    assert identity["short_term_key"].endswith(":soul:ada2")
+    assert identity["bot_id"] == "ui:ada2"
+    assert identity["source_kind"] == "nexus_chat_ui"
+    assert identity["retrieval_keys"] == [
+        f"nexus:{user.id}:telegram:445566",
+        "telegram:445566",
+    ]
 
 
 def test_group_identity_is_partitioned_by_numeric_chat(tmp_path, monkeypatch):
@@ -183,6 +205,65 @@ async def test_ingest_turn_records_enforced_private_retention(tmp_path, monkeypa
     assert sessions[0]["metadata"]["retention_class"] == "private_raw"
     message_call = next(call for call in calls if call[1].endswith("/messages"))
     assert [item["metadata"]["role"] for item in message_call[2]["messages"]] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_ui_context_reads_nexus_and_linked_telegram_representations(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    user = _linked_user(tmp_path, monkeypatch)
+    targets = []
+
+    async def fake_request(method, path, *, body=None):
+        targets.append(body["target"])
+        return {"representation": f"memory-{len(targets)}"}
+
+    monkeypatch.setattr(honcho_memory, "_request", fake_request)
+    result = await honcho_memory.get_ui_context(
+        owner_user_id=user.id,
+        conversation_id="conversation-1",
+        soul_name="ai2",
+        message="What do I prefer?",
+    )
+
+    assert len(targets) == 3
+    assert result["context"] == "memory-1\n\nmemory-2\n\nmemory-3"
+
+
+@pytest.mark.asyncio
+async def test_ingest_ui_turn_records_source_conversation_and_soul(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    user = _linked_user(tmp_path, monkeypatch)
+    calls = []
+
+    async def fake_request(method, path, *, body=None):
+        calls.append((method, path, body))
+        return {"id": "ok"}
+
+    monkeypatch.setattr(honcho_memory, "_request", fake_request)
+    result = await honcho_memory.ingest_ui_turn(
+        owner_user_id=user.id,
+        conversation_id="conversation-1",
+        soul_name="ada2",
+        turn_id="turn-1",
+        user_text="Remember my preference.",
+        assistant_text="I will remember it.",
+    )
+
+    assert result["stored"] is True
+    sessions = honcho_memory.list_sessions_for_user(user.id)
+    assert len(sessions) == 1
+    session = sessions[0]
+    assert session["source_kind"] == "nexus_chat_ui"
+    assert session["source_turn_id"] == "turn-1"
+    assert session["telegram_message_id"] == ""
+    assert session["chat_id"] == "conversation-1"
+    assert session["bot_id"] == "ui:ada2"
+    assert session["metadata"]["soul"] == "ada2"
+    message_call = next(call for call in calls if call[1].endswith("/messages"))
+    assert [item["metadata"]["source_kind"] for item in message_call[2]["messages"]] == [
+        "nexus_chat_ui",
+        "nexus_chat_ui",
+    ]
 
 
 def test_export_download_is_owner_gated_and_mode_0600(tmp_path, monkeypatch):

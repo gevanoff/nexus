@@ -162,6 +162,8 @@ def init() -> None:
                 chat_type TEXT NOT NULL,
                 bot_id TEXT NOT NULL,
                 telegram_message_id TEXT NOT NULL,
+                source_kind TEXT NOT NULL DEFAULT 'telegram',
+                source_turn_id TEXT NOT NULL DEFAULT '',
                 created_ts INTEGER NOT NULL,
                 expires_ts INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'active',
@@ -214,6 +216,11 @@ def init() -> None:
             CREATE INDEX IF NOT EXISTS idx_honcho_audit_created ON memory_audit(created_ts);
             """
         )
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memory_sessions)").fetchall()}
+        if "source_kind" not in columns:
+            conn.execute("ALTER TABLE memory_sessions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'telegram'")
+        if "source_turn_id" not in columns:
+            conn.execute("ALTER TABLE memory_sessions ADD COLUMN source_turn_id TEXT NOT NULL DEFAULT ''")
         conn.commit()
     finally:
         conn.close()
@@ -294,6 +301,9 @@ def resolve_identity(payload: Dict[str, Any]) -> Dict[str, Any]:
     aliases = []
     if chat_type == "private" and nexus_user_id is not None and telegram_user_id:
         aliases.append(f"telegram:{telegram_user_id}")
+    retrieval_keys = []
+    if chat_type == "private" and nexus_user_id is not None:
+        retrieval_keys.append(f"nexus:{nexus_user_id}")
     return {
         "owner_user_id": nexus_user_id if chat_type == "private" else None,
         "participant_user_id": nexus_user_id,
@@ -309,6 +319,59 @@ def resolve_identity(payload: Dict[str, Any]) -> Dict[str, Any]:
         "bot_id": bot_id,
         "linked": linked,
         "aliases": aliases,
+        "retrieval_keys": retrieval_keys,
+        "source_kind": "telegram",
+    }
+
+
+def resolve_ui_identity(*, owner_user_id: int, conversation_id: str, soul_name: str = "") -> Dict[str, Any]:
+    try:
+        nexus_user_id = int(owner_user_id)
+    except Exception as exc:
+        raise ValueError("positive owner_user_id is required") from exc
+    if nexus_user_id < 1:
+        raise ValueError("positive owner_user_id is required")
+
+    chat_id = str(conversation_id or "").strip()
+    if not chat_id or len(chat_id) > 256 or any(ord(char) < 32 for char in chat_id):
+        raise ValueError("valid conversation_id is required")
+
+    soul = str(soul_name or "nexus").strip().lower() or "nexus"
+    if len(soul) > 64 or not all(char.isalnum() or char in {"_", "-"} for char in soul):
+        raise ValueError("valid soul_name is required")
+
+    owner_key = f"nexus:{nexus_user_id}"
+    linked = telegram_notifications.linked_telegram_identity_for_nexus_user(user_id=nexus_user_id)
+    retrieval_keys: list[str] = []
+    if linked:
+        telegram_user_id = _numeric(linked.get("telegram_user_id"), allow_negative=False)
+        if telegram_user_id:
+            retrieval_keys.extend(
+                [
+                    f"nexus:{nexus_user_id}:telegram:{telegram_user_id}",
+                    f"telegram:{telegram_user_id}",
+                ]
+            )
+
+    partition_key = f"nexus:ui:{nexus_user_id}:conversation:{chat_id}"
+    return {
+        "owner_user_id": nexus_user_id,
+        "participant_user_id": nexus_user_id,
+        "owner_key": owner_key,
+        "participant_key": owner_key,
+        "participant_peer_id": _safe_resource("peer", owner_key),
+        "observed_key": owner_key,
+        "observed_peer_id": _safe_resource("peer", owner_key),
+        "partition_key": partition_key,
+        "short_term_key": f"{partition_key}:soul:{soul}",
+        "chat_id": chat_id,
+        "chat_type": "private",
+        "bot_id": f"ui:{soul}",
+        "linked": linked,
+        "aliases": [],
+        "retrieval_keys": retrieval_keys,
+        "source_kind": "nexus_chat_ui",
+        "soul": soul,
     }
 
 
@@ -378,19 +441,23 @@ async def _ensure_peer(peer_id: str, canonical_key: str, kind: str) -> None:
     )
 
 
-def _turn_session_id(identity: Dict[str, Any], telegram_message_id: str) -> str:
-    canonical = f"{identity['short_term_key']}:message:{telegram_message_id}"
-    return _safe_resource("tgturn", canonical)
+def _turn_session_id(identity: Dict[str, Any], source_turn_id: str) -> str:
+    source_kind = str(identity.get("source_kind") or "telegram")
+    if source_kind == "nexus_chat_ui":
+        return _safe_resource("uiturn", f"{identity['short_term_key']}:turn:{source_turn_id}")
+    return _safe_resource("tgturn", f"{identity['short_term_key']}:message:{source_turn_id}")
 
 
-async def get_context(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def _get_context_for_identity(identity: Dict[str, Any], query: str) -> Dict[str, Any]:
     state = status()
-    identity = resolve_identity(payload)
     if not state["enabled"]:
         return {**state, "identity": identity, "context": ""}
     _record_identity_aliases(identity)
-    query = str(payload.get("message") or "").strip()[:12000]
-    target_keys = [identity["observed_key"], *(identity.get("aliases") or [])]
+    target_keys = [
+        identity["observed_key"],
+        *(identity.get("retrieval_keys") or []),
+        *(identity.get("aliases") or []),
+    ]
     contexts: list[str] = []
     for target_key in dict.fromkeys(str(value) for value in target_keys if value):
         try:
@@ -413,24 +480,54 @@ async def get_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {**state, "identity": identity, "context": "\n\n".join(contexts)[:16000]}
 
 
-async def ingest_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
-    state = status()
+async def get_context(payload: Dict[str, Any]) -> Dict[str, Any]:
     identity = resolve_identity(payload)
+    query = str(payload.get("message") or "").strip()[:12000]
+    return await _get_context_for_identity(identity, query)
+
+
+async def get_ui_context(
+    *,
+    owner_user_id: int,
+    conversation_id: str,
+    soul_name: str,
+    message: str,
+) -> Dict[str, Any]:
+    identity = resolve_ui_identity(
+        owner_user_id=owner_user_id,
+        conversation_id=conversation_id,
+        soul_name=soul_name,
+    )
+    return await _get_context_for_identity(identity, str(message or "").strip()[:12000])
+
+
+async def _ingest_resolved_turn(
+    identity: Dict[str, Any],
+    *,
+    source_turn_id: str,
+    user_text: str,
+    assistant_text: str,
+) -> Dict[str, Any]:
+    state = status()
     if not state["enabled"]:
         return {**state, "stored": False, "identity": identity}
     _record_identity_aliases(identity)
-    user_text = str(payload.get("user_text") or "")
-    assistant_text = str(payload.get("assistant_text") or "")
-    telegram_message_id = _numeric(payload.get("telegram_message_id"), allow_negative=False)
-    if not user_text.strip() or not assistant_text.strip() or not telegram_message_id:
-        raise ValueError("user_text, assistant_text, and numeric telegram_message_id are required")
+    user_text = str(user_text or "")
+    assistant_text = str(assistant_text or "")
+    source_turn_id = str(source_turn_id or "").strip()
+    if not user_text.strip() or not assistant_text.strip() or not source_turn_id:
+        raise ValueError("user_text, assistant_text, and source_turn_id are required")
 
     now = int(time.time())
     expires_ts = now + _retention_seconds(identity["chat_type"])
-    session_id = _turn_session_id(identity, telegram_message_id)
+    session_id = _turn_session_id(identity, source_turn_id)
     registry_id = hashlib.sha256(f"{_workspace_id()}:{session_id}".encode("utf-8")).hexdigest()
+    source_kind = str(identity.get("source_kind") or "telegram")
+    telegram_message_id = source_turn_id if source_kind == "telegram" else ""
     metadata = {
         "managed_by": "nexus",
+        "source_kind": source_kind,
+        "source_turn_id": source_turn_id,
         "retention_class": "group_raw" if identity["chat_type"] != "private" else "private_raw",
         "delete_after_ts": expires_ts,
         "owner_user_id": identity["owner_user_id"],
@@ -443,8 +540,11 @@ async def ingest_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
         "chat_id": identity["chat_id"],
         "chat_type": identity["chat_type"],
         "bot_id": identity["bot_id"],
-        "telegram_message_id": telegram_message_id,
     }
+    if telegram_message_id:
+        metadata["telegram_message_id"] = telegram_message_id
+    if identity.get("soul"):
+        metadata["soul"] = str(identity["soul"])
 
     await _ensure_workspace()
     await _ensure_peer(FLEET_OBSERVER_ID, FLEET_OBSERVER_KEY, "fleet_observer")
@@ -486,8 +586,9 @@ async def ingest_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
             """
             INSERT INTO memory_sessions(
                 id,honcho_session_id,owner_user_id,owner_key,participant_key,partition_key,
-                chat_id,chat_type,bot_id,telegram_message_id,created_ts,expires_ts,status,metadata_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                chat_id,chat_type,bot_id,telegram_message_id,source_kind,source_turn_id,
+                created_ts,expires_ts,status,metadata_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET expires_ts=excluded.expires_ts, metadata_json=excluded.metadata_json
             """,
             (
@@ -501,6 +602,8 @@ async def ingest_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
                 identity["chat_type"],
                 identity["bot_id"],
                 telegram_message_id,
+                source_kind,
+                source_turn_id,
                 now,
                 expires_ts,
                 "active",
@@ -511,6 +614,39 @@ async def ingest_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
     finally:
         conn.close()
     return {**state, "stored": True, "id": registry_id, "expires_ts": expires_ts, "identity": identity}
+
+
+async def ingest_turn(payload: Dict[str, Any]) -> Dict[str, Any]:
+    telegram_message_id = _numeric(payload.get("telegram_message_id"), allow_negative=False)
+    if not telegram_message_id:
+        raise ValueError("numeric telegram_message_id is required")
+    return await _ingest_resolved_turn(
+        resolve_identity(payload),
+        source_turn_id=telegram_message_id,
+        user_text=str(payload.get("user_text") or ""),
+        assistant_text=str(payload.get("assistant_text") or ""),
+    )
+
+
+async def ingest_ui_turn(
+    *,
+    owner_user_id: int,
+    conversation_id: str,
+    soul_name: str,
+    turn_id: str,
+    user_text: str,
+    assistant_text: str,
+) -> Dict[str, Any]:
+    return await _ingest_resolved_turn(
+        resolve_ui_identity(
+            owner_user_id=owner_user_id,
+            conversation_id=conversation_id,
+            soul_name=soul_name,
+        ),
+        source_turn_id=str(turn_id or "").strip(),
+        user_text=user_text,
+        assistant_text=assistant_text,
+    )
 
 
 def _row_dict(row: sqlite3.Row) -> Dict[str, Any]:

@@ -165,6 +165,24 @@ def resolve_linked_nexus_user(*, telegram_user_id: Any = None, chat_id: Any = No
     return fallback
 
 
+def linked_telegram_identity_for_nexus_user(*, user_id: int) -> Optional[Dict[str, str]]:
+    """Return immutable linked Telegram IDs for an authenticated Nexus user."""
+
+    try:
+        settings = user_store.get_settings(S.USER_DB_PATH, user_id=int(user_id)) or {}
+    except Exception:
+        return None
+    link = _telegram_link_state(settings)
+    telegram_user_id = str(link.get("telegram_user_id") or "").strip()
+    chat_id = _coerce_chat_id(link.get("linked_chat_id"))
+    if not telegram_user_id and not chat_id:
+        return None
+    return {
+        "telegram_user_id": telegram_user_id,
+        "chat_id": chat_id,
+    }
+
+
 def workspace_url(task_id: str) -> str:
     public_base = str(getattr(S, "PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
     task = str(task_id or "").strip()

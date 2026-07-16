@@ -2,7 +2,8 @@
 
 This document defines the Honcho ownership and isolation model enforced by the
 Nexus Gateway integration. Ingestion still requires the explicit
-`HONCHO_MEMORY_ENABLED` and bot `TELEGRAM_MEMORY_ENABLED` deployment gates.
+`HONCHO_MEMORY_ENABLED` deployment gate; Telegram additionally requires each
+bot's `TELEGRAM_MEMORY_ENABLED` gate.
 
 ## Identity resolution
 
@@ -20,11 +21,22 @@ When a Telegram-only peer is later linked to a Nexus user, record an audited
 alias/migration to the composite owner instead of creating a second person or
 silently copying memory.
 
+Authenticated Nexus Chat UI sessions use `nexus:{nexus_user_id}` as their owner
+key. Context retrieval also checks that user's linked composite and legacy
+Telegram keys, while linked Telegram retrieval checks the Nexus-only key. This
+shares derived long-term conclusions across the UI and Telegram without merging
+their raw short-term sessions. Anonymous UI sessions are not sent to Honcho.
+
 Private-chat memory is partitioned by numeric Telegram chat ID. Its short-term
 session key also includes the bot identity, for example
 `telegram:private:{chat_id}:bot:{bot_id}`. This keeps Tess, Clarion, Hex, and
 future bots from sharing immediate conversation context while still allowing
 derived long-term memory to resolve through the same canonical human owner.
+
+Chat UI raw memory is partitioned by immutable Nexus user ID, server-issued UI
+conversation ID, and the selected model alias's soul identity. Each completed
+UI turn is a separate Honcho session, preserving the same per-turn deletion and
+retention behavior as Telegram.
 
 Group memory is partitioned by numeric group chat ID, never title. Each group
 gets its own peer and long-term namespace. Short-term sessions include both the

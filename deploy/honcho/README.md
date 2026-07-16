@@ -89,7 +89,7 @@ The selected identity, sharing, export, and approved retention rules are
 recorded in [`MEMORY_POLICY.md`](MEMORY_POLICY.md) and enforced by the Gateway's
 Honcho memory registry.
 
-## Enable Gateway and Telegram ingestion
+## Enable Gateway, Chat UI, and Telegram ingestion
 
 Honcho itself stays authenticated. Generate a workspace-scoped token (an admin
 token is intentionally unnecessary) and add it to the private Gateway `.env` on
@@ -121,6 +121,13 @@ HONCHO_GROUP_RAW_RETENTION_DAYS=90
 HONCHO_EXPORT_RETENTION_DAYS=7
 HONCHO_AUDIT_RETENTION_DAYS=365
 ```
+
+When these Gateway settings are enabled, authenticated Nexus Chat UI sessions
+retrieve Honcho context before inference and store each completed turn after the
+assistant response. Anonymous UI sessions are deliberately excluded because
+they have no durable Nexus owner identity. Model aliases that declare a `soul`
+also prepend the corresponding `souls/<name>/SOUL.md`; raw UI memory remains
+partitioned by Nexus user, UI conversation, and soul identity.
 
 After the Gateway reports `/v1/telegram/memory/status` as enabled, set
 `TELEGRAM_MEMORY_ENABLED=true` in each bot host's private `.env` and rebuild the
