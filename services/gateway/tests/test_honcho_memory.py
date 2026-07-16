@@ -5,6 +5,7 @@ import os
 import stat
 import time
 
+import httpx
 import pytest
 
 from app import honcho_memory, telegram_notifications, user_store
@@ -31,6 +32,42 @@ def _linked_user(tmp_path, monkeypatch):
     user_store.set_settings(str(db_path), user_id=user.id, settings=settings)
     monkeypatch.setattr(telegram_notifications.S, "USER_DB_PATH", str(db_path))
     return user
+
+
+@pytest.mark.asyncio
+async def test_health_status_probes_workspace(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    calls = []
+
+    async def fake_request(method, path, *, body=None):
+        calls.append((method, path, body))
+        return {"id": "nexus"}
+
+    monkeypatch.setattr(honcho_memory, "_request", fake_request)
+
+    assert await honcho_memory.health_status() == {
+        "enabled": True,
+        "configured": True,
+        "reason": "",
+    }
+    assert calls == [("POST", "/workspaces", {"id": "nexus", "metadata": {"managed_by": "nexus"}})]
+
+
+@pytest.mark.asyncio
+async def test_health_status_reports_honcho_transport_failure(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+
+    async def fake_request(method, path, *, body=None):
+        request = httpx.Request(method, "http://honcho.test/v3/workspaces")
+        raise httpx.ConnectError("unreachable", request=request)
+
+    monkeypatch.setattr(honcho_memory, "_request", fake_request)
+
+    assert await honcho_memory.health_status() == {
+        "enabled": False,
+        "configured": True,
+        "reason": "honcho_unavailable",
+    }
 
 
 def test_private_identity_uses_linked_composite_owner_and_bot_session(tmp_path, monkeypatch):

@@ -32,7 +32,7 @@ async def _body(req: Request) -> Dict[str, Any]:
 @router.get("/v1/telegram/memory/status", include_in_schema=False)
 async def telegram_memory_status(req: Request) -> Dict[str, Any]:
     _require_static_bearer_service(req)
-    return honcho_memory.status()
+    return await honcho_memory.health_status()
 
 
 @router.post("/v1/telegram/memory/context", include_in_schema=False)

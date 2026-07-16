@@ -49,6 +49,23 @@ def status() -> Dict[str, Any]:
     return {"enabled": active, "configured": configured(), "reason": reason}
 
 
+async def health_status() -> Dict[str, Any]:
+    state = status()
+    if not state["enabled"]:
+        return state
+    try:
+        await _ensure_workspace()
+    except httpx.HTTPStatusError as exc:
+        return {
+            "enabled": False,
+            "configured": True,
+            "reason": f"honcho_http_{exc.response.status_code}",
+        }
+    except (httpx.RequestError, RuntimeError):
+        return {"enabled": False, "configured": True, "reason": "honcho_unavailable"}
+    return state
+
+
 def _base_url() -> str:
     return str(os.getenv("HONCHO_BASE_URL", "")).strip().rstrip("/")
 
