@@ -207,6 +207,8 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     assert "ada2-chat" in compose
     assert "stackrot-chat" in compose
     assert "cinder-chat" in compose
+    assert "TELEGRAM_MELTDOWN_GATEWAY_BASE_URL" in compose
+    assert "http://ai2.embrient.com:8800" in compose
     assert "TELEGRAM_MEMORY_ENABLED" in compose
     assert "TELEGRAM_MEMORY_TIMEOUT_MS" in compose
     assert "telegram-bot-migraine" not in compose

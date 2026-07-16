@@ -70,6 +70,7 @@ services:
     environment:
       <<: *telegram-environment
       TELEGRAM_TOKEN: ${TELEGRAM_MELTDOWN_TOKEN:-}
+      GATEWAY_BASE_URL: ${TELEGRAM_MELTDOWN_GATEWAY_BASE_URL:-http://ai2.embrient.com:8800}
       GATEWAY_MODEL: ${TELEGRAM_MELTDOWN_MODEL:-cinder-chat}
       TELEGRAM_MENTION_PATTERNS: ${TELEGRAM_MELTDOWN_MENTION_PATTERNS:-Cinder,meltdown}
 

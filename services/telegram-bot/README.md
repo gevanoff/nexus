@@ -99,6 +99,11 @@ The default service is the `ai2` bot. Three additional services are available un
 | `telegram-bot-stackrot` | `TELEGRAM_STACKROT_TOKEN` | `stackrot-chat` | `souls/stackrot/SOUL.md` |
 | `telegram-bot-meltdown` | `TELEGRAM_MELTDOWN_TOKEN` | `cinder-chat` | `souls/meltdown/SOUL.md` |
 
+Because Cinder runs on a different Docker host from the Gateway, her service
+defaults `GATEWAY_BASE_URL` to `http://ai2.embrient.com:8800` through
+`TELEGRAM_MELTDOWN_GATEWAY_BASE_URL`. Do not use the Compose-local
+`http://gateway:8800` hostname for the meltdown deployment.
+
 Each service requires a distinct BotFather token. Start an additional bot only after its token is configured:
 
 ```bash
