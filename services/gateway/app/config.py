@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     # - UI_MODELS_CACHE_TTL_SEC caches model lists briefly to avoid repeated upstream calls.
     UI_MODELS_PROBE_TIMEOUT_SEC: float = 4.0
     UI_MODELS_CACHE_TTL_SEC: float = 8.0
+    SSE_HEARTBEAT_INTERVAL_SEC: float = 15.0
     MODEL_BENCHMARK_LOG_PATH: str = "/var/lib/gateway/data/model_benchmarks/results.jsonl"
     MODEL_TOOL_QUALIFICATION_LOG_PATH: str = "/var/lib/gateway/data/model_tool_qualification/results.jsonl"
     MODEL_TOOL_QUALIFICATION_CASE_TIMEOUT_SEC: float = 120.0
@@ -118,8 +119,8 @@ class Settings(BaseSettings):
     UI_CHAT_DIR: str = "/var/lib/gateway/data/ui_chats"
     UI_CHAT_TTL_SEC: int = 60 * 60 * 24 * 7  # 7 days
     UI_CHAT_MAX_BYTES: int = 2_000_000  # hard cap per conversation file
-    UI_CHAT_SUMMARY_TRIGGER_BYTES: int = 250_000  # summarize when history grows beyond this
-    UI_CHAT_SUMMARY_KEEP_LAST_MESSAGES: int = 12  # keep tail messages after summarizing
+    UI_CHAT_SUMMARY_TRIGGER_BYTES: int = 96_000  # compact before history becomes a latency hazard
+    UI_CHAT_SUMMARY_KEEP_LAST_MESSAGES: int = 8  # keep a useful recent tail after summarizing
     # Chat context shaping for the UI chat endpoint.
     # Default is conversational mode: prior messages are folded into system context so
     # the browser chat behaves like a normal ongoing conversation.
@@ -270,7 +271,7 @@ class Settings(BaseSettings):
     # GLM-5.2 is advertised with a 128K-token context. The gateway uses the
     # routing convention of four characters per token for this coarse guard;
     # the MLX tokenizer remains the authoritative token-limit enforcement.
-    MLX_GLM_MAX_INPUT_CHARS: int = 524_288
+    MLX_GLM_MAX_INPUT_CHARS: int = 98_304
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 

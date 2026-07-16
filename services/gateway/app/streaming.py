@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+from contextlib import suppress
 import logging
 from typing import Any, AsyncIterator, Dict
 
@@ -11,6 +12,44 @@ from app.openai_utils import ToolCallValidationState, ThinkTagStreamParser, new_
 
 
 log = logging.getLogger("uvicorn.error")
+
+
+async def with_sse_heartbeat(
+    source: AsyncIterator[bytes],
+    *,
+    interval_sec: float = 15.0,
+    immediate: bool = True,
+) -> AsyncIterator[bytes]:
+    """Keep an SSE response alive without cancelling a slow upstream read."""
+    interval = max(0.1, float(interval_sec or 15.0))
+    iterator = source.__aiter__()
+    pending: asyncio.Future[bytes] | None = None
+    heartbeat = b": nexus-keepalive\n\n"
+    try:
+        if immediate:
+            yield heartbeat
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(iterator.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                yield heartbeat
+                continue
+            try:
+                item = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+            yield item
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            with suppress(asyncio.CancelledError):
+                await pending
+        close = getattr(iterator, "aclose", None)
+        if callable(close):
+            with suppress(Exception):
+                await close()
 
 
 def _append_text_field(target: Dict[str, Any], field: str, text: str) -> None:

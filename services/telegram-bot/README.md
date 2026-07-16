@@ -39,10 +39,11 @@ Recommended defaults:
 - `TELEGRAM_GATEWAY_TIMEOUT_MS=120000`
 - `TELEGRAM_LOG_LEVEL=info`
 
-Telegram chat completions are bounded by `TELEGRAM_MAX_TOKENS` so slower
-reasoning models do not routinely run into the request deadline. The Gateway
-request timeout is independently configurable through
-`TELEGRAM_GATEWAY_TIMEOUT_MS`.
+Telegram chat completions use OpenAI SSE streaming internally, then send the
+assembled answer to Telegram. Gateway keepalives prevent a queued or slow model
+from looking like a dead network connection, while disconnects still cancel the
+upstream stream. `TELEGRAM_MAX_TOKENS` bounds total generation and
+`TELEGRAM_GATEWAY_TIMEOUT_MS` remains the maximum idle socket interval.
 
 The container health check verifies Telegram authentication and Gateway
 auth/model mapping. The bot also records the outcome of each real chat request

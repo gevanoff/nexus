@@ -19,7 +19,7 @@ from app.prompt_canonicalization import (
     get_prefix_observation_cache,
     prompt_prefix_fingerprint,
 )
-from app.streaming import passthrough_sse
+from app.streaming import passthrough_sse, with_sse_heartbeat
 
 
 def _normalize_text_content_parts(content: list[Any]) -> str | None:
@@ -332,9 +332,9 @@ def _enforce_mlx_glm_input_limit(
         return
 
     try:
-        limit = int(getattr(S, "MLX_GLM_MAX_INPUT_CHARS", 524_288) or 0)
+        limit = int(getattr(S, "MLX_GLM_MAX_INPUT_CHARS", 98_304) or 0)
     except Exception:
-        limit = 524_288
+        limit = 98_304
     if limit <= 0:
         return
 
@@ -747,6 +747,9 @@ async def stream_openai_chat(
     ttft_ms: float | None = None
     usage: Dict[str, Any] = {}
     completion_chars = 0
+    # Start the downstream SSE response before DNS/connect/model queueing so
+    # clients do not apply a whole-request timeout while the backend is busy.
+    yield b": nexus-keepalive\n\n"
     async with _httpx_client(timeout=None) as client:
         try:
             async with client.stream(
@@ -756,12 +759,17 @@ async def stream_openai_chat(
                 headers={"accept": "text/event-stream"},
             ) as r:
                 r.raise_for_status()
-                async for chunk in passthrough_sse(
+                normalized_stream = passthrough_sse(
                     r,
                     request_id=request_id,
                     allowed_tool_names=allowed_tool_names,
                     backend_name=backend_name,
                     model_name=str(payload.get("model") or ""),
+                )
+                async for chunk in with_sse_heartbeat(
+                    normalized_stream,
+                    interval_sec=float(getattr(S, "SSE_HEARTBEAT_INTERVAL_SEC", 15.0) or 15.0),
+                    immediate=False,
                 ):
                     event = _sse_event_from_chunk(chunk)
                     if event != "[DONE]":

@@ -5474,6 +5474,11 @@ async def _stream_ui_chat(
         yield sse({"type": "route", "backend": backend, "model": upstream_model, "reason": route.reason})
 
         async for chunk in upstream_gen:
+            if chunk.startswith(b":"):
+                # Preserve upstream SSE comments so browsers and reverse proxies
+                # do not mistake a queued/slow generation for a dead connection.
+                yield chunk if chunk.endswith(b"\n\n") else chunk + b"\n\n"
+                continue
             for line in chunk.splitlines():
                 if not line.startswith(b"data:"):
                     continue
@@ -5749,6 +5754,7 @@ async def _summarize_if_needed(convo: ui_conversations.Conversation) -> ui_conve
     cc_sum = ChatCompletionRequest(
         model=summarizer_model,
         messages=[ChatMessage(role="user", content=summary_prompt)],
+        max_tokens=384,
         stream=False,
     )
 

@@ -33,6 +33,28 @@ class _FakeRegistry:
         return None
 
 
+@pytest.mark.asyncio
+async def test_stream_admission_lease_is_held_until_iterator_closes():
+    class Admission:
+        releases = 0
+
+        def release(self, backend: str, route_kind: str) -> None:
+            assert backend == "local_mlx"
+            assert route_kind == "chat"
+            self.releases += 1
+
+    async def source():
+        yield b"data: first\n\n"
+        await asyncio.Event().wait()
+
+    admission = Admission()
+    leased = openai_routes._stream_with_admission_release(source(), admission, "local_mlx")
+    assert await leased.__anext__() == b"data: first\n\n"
+    assert admission.releases == 0
+    await leased.aclose()
+    assert admission.releases == 1
+
+
 def _build_client(
     monkeypatch,
     *,

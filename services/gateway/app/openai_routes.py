@@ -58,6 +58,19 @@ from app.souls import apply_alias_soul
 router = APIRouter()
 
 
+async def _stream_with_admission_release(
+    source: AsyncIterator[bytes],
+    admission: Any,
+    backend_class: str,
+) -> AsyncIterator[bytes]:
+    """Hold a backend chat slot for the full lifetime of an SSE response."""
+    try:
+        async for chunk in source:
+            yield chunk
+    finally:
+        admission.release(backend_class, "chat")
+
+
 @router.get("/v1/tool-calling/diagnostics")
 async def tool_calling_diagnostics_route(req: Request):
     require_bearer(req)
@@ -1467,7 +1480,8 @@ async def chat_completions(req: Request):
             return out
 
         if cc.stream:
-            gen = stream_backend_chat_as_openai(cc, backend, model_name, request_id=request_id)
+            upstream_gen = stream_backend_chat_as_openai(cc, backend, model_name, request_id=request_id)
+            gen = _stream_with_admission_release(upstream_gen, admission, backend_class)
             out = StreamingResponse(gen, media_type="text/event-stream")
             out.headers["X-Backend-Used"] = backend
             out.headers["X-Model-Used"] = model_name
@@ -1479,6 +1493,9 @@ async def chat_completions(req: Request):
                 backend_class=backend_class,
                 model_name=model_name,
             )
+            # The response iterator now owns the lease. The route-level finally
+            # must not release it while the upstream is still generating.
+            admission = None
             return out
 
         t0 = time.monotonic()
@@ -2188,10 +2205,12 @@ async def responses(req: Request):
                 ).encode("utf-8")
                 yield sse_done()
 
-            out = StreamingResponse(gen(), media_type="text/event-stream")
+            leased_gen = _stream_with_admission_release(gen(), admission, backend_class)
+            out = StreamingResponse(leased_gen, media_type="text/event-stream")
             out.headers["X-Backend-Used"] = backend
             out.headers["X-Model-Used"] = model_name
             out.headers["X-Router-Reason"] = route.reason
+            admission = None
             return out
 
         chat_resp = await _call_backend_chat_with_request_id(cc, backend, model_name, request_id=request_id)
@@ -2213,4 +2232,5 @@ async def responses(req: Request):
         resp.headers["X-Router-Reason"] = route.reason
         return resp
     finally:
-        admission.release(backend_class, "chat")
+        if admission is not None:
+            admission.release(backend_class, "chat")

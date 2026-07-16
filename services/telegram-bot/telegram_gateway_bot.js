@@ -3,6 +3,7 @@ const axios = require('axios');
 const fs = require('node:fs');
 const { createTelegramGroupRouter, createTelegramRoutingMiddleware } = require('./telegram_group_routing');
 const { createTelegramMemoryClient, messagesWithMemory } = require('./telegram_memory');
+const { collectOpenAIChatStream } = require('./openai_stream');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_TOKEN_FALLBACK;
 const GATEWAY_PORT = Number.parseInt(process.env.GATEWAY_PORT || '8800', 10);
@@ -816,7 +817,7 @@ async function queryGateway(history, message, memoryContext = '') {
     model: GATEWAY_MODEL,
     messages: messagesWithMemory(history, message, memoryContext),
     max_tokens: TELEGRAM_MAX_TOKENS,
-    stream: false,
+    stream: true,
   };
   if (TELEGRAM_GATEWAY_EXEC) {
     payload.x_nexus = { tool_execution_mode: 'gateway_exec', toolsets: ['core'], max_tool_rounds: 2 };
@@ -829,15 +830,17 @@ async function queryGateway(history, message, memoryContext = '') {
         headers: {
           Authorization: `Bearer ${GATEWAY_BEARER_TOKEN}`,
           'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
         },
         timeout: GATEWAY_SOCKET_TIMEOUT_MS,
+        responseType: 'stream',
       });
-      const answer = extractAssistantText(res.data);
+      const answer = await collectOpenAIChatStream(res.data);
       recordGatewayOutcome(true);
       return answer;
     } catch (caught) {
       err = caught;
-      if (!isRetryableGatewayConnectError(caught) || attempt >= GATEWAY_CONNECT_RETRY_COUNT) break;
+      if (caught?.nexusStreamStarted || !isRetryableGatewayConnectError(caught) || attempt >= GATEWAY_CONNECT_RETRY_COUNT) break;
       const delayMs = GATEWAY_CONNECT_RETRY_DELAY_MS * (attempt + 1);
       log('warn', 'Retrying gateway connection', { code: caught.code, attempt: attempt + 1, delayMs });
       await sleep(delayMs);
@@ -851,7 +854,7 @@ async function queryGateway(history, message, memoryContext = '') {
       statusText: err.response?.statusText,
       url: err.config?.url,
       timeout: err.config?.timeout,
-      response: err.response?.data,
+      response: err.response?.data && typeof err.response.data?.pipe === 'function' ? '[stream response]' : err.response?.data,
     });
   } else {
     log('error', 'Gateway request failed', { error: err?.message || String(err) });

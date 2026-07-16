@@ -56,7 +56,9 @@ backends:
       - chat
       - embeddings
     concurrency_limits:
-      chat: 2
+      # mlx-openai-server executes two GLM generations and queues two more.
+      # This caps total accepted chat work while still serving a handful of clients.
+      chat: 4
       embeddings: 2
     health:
       # OpenAI-style servers commonly expose /models but not /healthz.

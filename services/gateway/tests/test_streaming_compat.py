@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from app.streaming import passthrough_sse
+from app.streaming import passthrough_sse, with_sse_heartbeat
 
 
 class FakeSseResponse:
@@ -47,6 +47,26 @@ def _payloads(chunks: list[bytes]) -> list[dict]:
 
 def _done_count(chunks: list[bytes]) -> int:
     return sum(chunk.count(b"data: [DONE]\n\n") for chunk in chunks)
+
+
+def test_with_sse_heartbeat_keeps_slow_source_alive_without_cancelling_it():
+    async def collect() -> list[bytes]:
+        async def slow_source():
+            await asyncio.sleep(0.22)
+            yield b"data: payload\n\n"
+
+        return [
+            chunk
+            async for chunk in with_sse_heartbeat(
+                slow_source(),
+                interval_sec=0.1,
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+    assert chunks[0] == b": nexus-keepalive\n\n"
+    assert chunks.count(b": nexus-keepalive\n\n") >= 2
+    assert chunks[-1] == b"data: payload\n\n"
 
 
 def test_passthrough_sse_emits_visible_content_before_stop_chunk():

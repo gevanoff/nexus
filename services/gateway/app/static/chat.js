@@ -3145,7 +3145,12 @@
 
         history.push({ role: "assistant", content: full });
       } catch (e) {
-        addMessage({ role: "system", content: String(e) });
+        const detail = String(e && e.message ? e.message : e || "network error");
+        const note = document.createElement("div");
+        note.className = "stream-error";
+        note.textContent = `The response stream was interrupted (${detail}). Any partial answer above was preserved; retry once the model is available.`;
+        assistant.contentEl.appendChild(note);
+        assistant.metaEl.textContent = "connection interrupted";
       } finally {
         setBusy(false);
         pendingAttachments = [];

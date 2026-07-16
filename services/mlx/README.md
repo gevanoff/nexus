@@ -253,7 +253,8 @@ Recommended `ai2` alias-to-model mapping:
 
 Operational note for `ai2`:
 
-- GLM-5.2 aliases advertise a 131072-token context; DeepSeek R1 remains at 65536. Set `MLX_GLM_MAX_INPUT_CHARS=524288` so the coarse four-characters-per-token gateway guard does not reject a full 128K GLM request before MLX tokenization. GLM-5.2 and DeepSeek R1 declare 1048576 and 163840 positions respectively; their latent-attention KV dimensions leave headroom on the 512GB host when only one Huge model is resident.
+- GLM-5.2 aliases advertise a 131072-token context; DeepSeek R1 remains at 65536. The production interactive guard is intentionally lower: `MLX_GLM_MAX_INPUT_CHARS=98304` (roughly 24K tokens at the coarse four-characters-per-token estimate). Larger requests are model-capable but measured at four to five minutes of prefill/generation and can starve other clients, so compact them or use an offline workload. GLM-5.2 and DeepSeek R1 declare 1048576 and 163840 positions respectively; their latent-attention KV dimensions leave headroom on the 512GB host when only one Huge model is resident.
+- In multi-model YAML, keep GLM at `batch_completion_size: 2`, `batch_prefill_size: 1`, `queue_size: 8`, and `queue_timeout: 900`. The mlx-openai-server defaults (32 decode slots and a 100-request queue) are inappropriate for a resident huge model under mixed interactive and coding traffic.
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
 - Configure exactly one Huge model with `on_demand: false`. Never advertise another Huge model as on-demand; select replacements through Model Admin so ordinary requests cannot initiate a memory transition.
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.
