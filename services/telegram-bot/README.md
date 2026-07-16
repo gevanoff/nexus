@@ -37,12 +37,16 @@ Recommended defaults:
 - `TELEGRAM_MAX_MESSAGE=3900`
 - `TELEGRAM_LOG_LEVEL=info`
 
-The container health check verifies Telegram authentication, Gateway auth/model
-mapping, and a minimal real chat completion. The bot also records the outcome of
-each real chat request inside the container, so a recent user-visible Gateway
-failure makes the Resources UI report that bot runtime as unhealthy instead of
-leaving it green on cached backend readiness alone. The failure marker expires
-after five minutes by default (`TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS`).
+The container health check verifies Telegram authentication and Gateway
+auth/model mapping. The bot also records the outcome of each real chat request
+inside the container, so a recent user-visible Gateway failure makes the
+Resources UI report that bot runtime as unhealthy instead of leaving it green
+on cached backend readiness alone. The failure marker expires after five minutes
+by default (`TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS`). A synthetic one-token
+completion can be enabled with
+`TELEGRAM_HEALTHCHECK_COMPLETION_ENABLED=true`, but it is off by default because
+slow healthy models can exceed a short container-health timeout and frequent
+synthetic inference consumes model capacity.
 
 Transient Telegram DNS/connect failures are retried twice with incremental
 backoff before the container health check fails. Tune this with

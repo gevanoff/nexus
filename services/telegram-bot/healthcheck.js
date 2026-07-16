@@ -12,6 +12,12 @@ const GATEWAY_STATE_PATH = String(process.env.TELEGRAM_GATEWAY_STATE_PATH || '/t
 const GATEWAY_FAILURE_MAX_AGE_MS = Number.parseInt(process.env.TELEGRAM_GATEWAY_FAILURE_MAX_AGE_MS || '300000', 10);
 const MEMORY_ENABLED = ['1', 'true', 'yes', 'on'].includes(String(process.env.TELEGRAM_MEMORY_ENABLED || 'false').trim().toLowerCase());
 
+function completionCheckEnabled(env = process.env) {
+  return ['1', 'true', 'yes', 'on'].includes(
+    String(env.TELEGRAM_HEALTHCHECK_COMPLETION_ENABLED || 'false').trim().toLowerCase(),
+  );
+}
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -143,7 +149,9 @@ async function main() {
   if (gatewayFailure) {
     fail(`Last Telegram chat request failed: ${gatewayFailure.error || 'gateway request failed'}`);
   }
-  await checkGatewayCompletion();
+  if (completionCheckEnabled()) {
+    await checkGatewayCompletion();
+  }
 
   console.log('ok');
 }
@@ -156,6 +164,7 @@ if (require.main === module) {
 
 module.exports = {
   checkGatewayCompletion,
+  completionCheckEnabled,
   isRetryableRequestError,
   recentGatewayFailure,
   requestWithRetry,

@@ -6,10 +6,16 @@ const test = require('node:test');
 
 const {
   checkGatewayCompletion,
+  completionCheckEnabled,
   recentGatewayFailure,
   requestWithRetry,
   validateCompletion,
 } = require('./healthcheck');
+
+test('synthetic completion checks are opt-in', () => {
+  assert.equal(completionCheckEnabled({}), false);
+  assert.equal(completionCheckEnabled({ TELEGRAM_HEALTHCHECK_COMPLETION_ENABLED: 'true' }), true);
+});
 
 function axiosError(message, { code = '', status } = {}) {
   const error = Object.assign(new Error(message), { code, isAxiosError: true });
