@@ -267,10 +267,10 @@ class Settings(BaseSettings):
     MLX_HUGE_MODELS: str = "mlx-community/GLM-5.2-4bit,mlx-community/DeepSeek-R1-0528-4bit"
     MLX_HUGE_LANE_STATE_PATH: str = "/var/lib/gateway/data/mlx_huge_lane.json"
     MLX_HUGE_LANE_SWITCH_TIMEOUT_SEC: float = 3900.0
-    # GLM-5.2 prefill is serialized inside its MLX handler process. Bound the
-    # serialized input so one oversized conversation cannot monopolize it past
-    # mlx-openai-server's 300-second RPC timeout.
-    MLX_GLM_MAX_INPUT_CHARS: int = 60_000
+    # GLM-5.2 is advertised with a 128K-token context. The gateway uses the
+    # routing convention of four characters per token for this coarse guard;
+    # the MLX tokenizer remains the authoritative token-limit enforcement.
+    MLX_GLM_MAX_INPUT_CHARS: int = 524_288
 
     ROUTER_LONG_CONTEXT_CHARS: int = 40_000
 

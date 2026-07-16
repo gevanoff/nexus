@@ -332,9 +332,9 @@ def _enforce_mlx_glm_input_limit(
         return
 
     try:
-        limit = int(getattr(S, "MLX_GLM_MAX_INPUT_CHARS", 60_000) or 0)
+        limit = int(getattr(S, "MLX_GLM_MAX_INPUT_CHARS", 524_288) or 0)
     except Exception:
-        limit = 60_000
+        limit = 524_288
     if limit <= 0:
         return
 

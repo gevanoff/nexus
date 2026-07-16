@@ -218,13 +218,13 @@ Recommended `ai2` alias-to-model mapping:
 		"mlx": {
 			"backend": "local_mlx",
 			"model": "mlx-community/GLM-5.2-4bit",
-			"context_window": 65536,
+			"context_window": 131072,
 			"tools": true
 		},
 		"coder": {
 			"backend": "local_mlx",
 			"model": "mlx-community/GLM-5.2-4bit",
-			"context_window": 65536,
+			"context_window": 131072,
 			"tools": true
 		},
 		"reasoning": {
@@ -244,7 +244,7 @@ Recommended `ai2` alias-to-model mapping:
 		"long": {
 			"backend": "local_mlx",
 			"model": "mlx-community/GLM-5.2-4bit",
-			"context_window": 65536,
+			"context_window": 131072,
 			"tools": true
 		}
 	}
@@ -253,7 +253,7 @@ Recommended `ai2` alias-to-model mapping:
 
 Operational note for `ai2`:
 
-- The Huge MLX aliases advertise 65536-token contexts. GLM-5.2 and DeepSeek R1 declare 1048576 and 163840 positions respectively; their latent-attention KV dimensions require only several GiB for a 64K fp16 cache, leaving headroom on the 512GB host even with one Huge model resident.
+- GLM-5.2 aliases advertise a 131072-token context; DeepSeek R1 remains at 65536. Set `MLX_GLM_MAX_INPUT_CHARS=524288` so the coarse four-characters-per-token gateway guard does not reject a full 128K GLM request before MLX tokenization. GLM-5.2 and DeepSeek R1 declare 1048576 and 163840 positions respectively; their latent-attention KV dimensions leave headroom on the 512GB host when only one Huge model is resident.
 - Legacy `mlx-coder` references are mapped to `local_mlx` in Gateway so stale aliases do not appear as a separate stopped backend class.
 - Configure exactly one Huge model with `on_demand: false`. Never advertise another Huge model as on-demand; select replacements through Model Admin so ordinary requests cannot initiate a memory transition.
 - For text/code use, configure these models with `model_type: lm`; reserve `model_type: multimodal` for MLX-VLM converted repos. Validate with `curl -fsS http://127.0.0.1:10240/v1/models` after restart.

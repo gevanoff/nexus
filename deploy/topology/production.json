@@ -36,6 +36,7 @@
       "MLX_MODEL_STRONG": "mlx-community/GLM-5.2-4bit",
       "MLX_MODEL_FAST": "mlx-community/Phi-4-reasoning-plus-4bit",
       "MLX_MODEL_DEFAULT": "mlx-community/GLM-5.2-4bit",
+      "MLX_GLM_MAX_INPUT_CHARS": "524288",
       "MLX_BASE_URL": "http://ai2:10240/v1",
       "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
       "MLX_MIGRAINE_BASE_URL": "http://migraine:10241/v1",

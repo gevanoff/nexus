@@ -58,7 +58,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         default_strong_model = S.VLLM_MODEL_STRONG
     else:
         default_strong_model = S.MLX_MODEL_STRONG
-    strong_context_window = S.VLLM_MAX_MODEL_LEN if default_provider == "vllm" else 65_536
+    strong_context_window = S.VLLM_MAX_MODEL_LEN if default_provider == "vllm" else 131_072
     strong_tool_parser = "xlam" if default_provider == "vllm" else "glm4_moe"
 
     return {
@@ -118,7 +118,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "long": ModelAlias(
             backend=default_backend,
             upstream_model=default_strong_model,
-            context_window=65_536,
+            context_window=strong_context_window,
             tools=True,
             coding=False,
             supports_tool_choice=("none", "auto", "required", "named"),
@@ -129,7 +129,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "glm-5.2": ModelAlias(
             backend="local_mlx",
             upstream_model="mlx-community/GLM-5.2-4bit",
-            context_window=65_536,
+            context_window=131_072,
             tools=True,
             max_tokens_cap=2048,
             label="GLM-5.2 4-bit",
