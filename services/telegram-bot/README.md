@@ -104,6 +104,17 @@ defaults `GATEWAY_BASE_URL` to `http://ai2.embrient.com:8800` through
 `TELEGRAM_MELTDOWN_GATEWAY_BASE_URL`. Do not use the Compose-local
 `http://gateway:8800` hostname for the meltdown deployment.
 
+On meltdown, use the generated production host env plus the mode-600 local
+overlay that holds Cinder's token and identity settings:
+
+```bash
+docker compose -p nexus --profile host-bots \
+  --env-file deploy/env/.env.prod.meltdown \
+  --env-file deploy/env/.env.prod.meltdown.local \
+  -f docker-compose.telegram-bot.yml \
+  up -d --build telegram-bot-meltdown
+```
+
 Each service requires a distinct BotFather token. Start an additional bot only after its token is configured:
 
 ```bash
