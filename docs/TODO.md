@@ -28,5 +28,5 @@
 - Provision dedicated Honcho database, JWT, and restricted Gateway credentials on `copyfail`, then start the pinned stack in `docker-compose.honcho.yml`.
 - Provision and rotate the workspace-scoped Honcho JWT in the private Gateway environment; never give bots or the Gateway an admin token.
 - Add a Nexus UI panel over the implemented `/ui/api/user/memory` deletion/export routes and an admin export-job control over `/ui/api/admin/memory/exports`.
-- Select and benchmark the future `meltdown` language model, including VRAM coexistence with SDXL-Turbo and the embeddings lane.
-- After the `meltdown` model is chosen, add its Gateway alias, SOUL, distinct BotFather token, Compose service, lifecycle status entry, and end-to-end chat health probe. Do not create a placeholder route that can appear ready before a model exists.
+- Select and benchmark a future local `meltdown` language model, including VRAM coexistence with SDXL-Turbo and the embeddings lane.
+- Cinder currently uses `cinder-chat`, a distinct SOUL/Honcho identity backed honestly by stackrot's shared fast Devstral lane. After a local `meltdown` model is chosen and measured, migrate that alias to the new backend and add an end-to-end local chat health probe; do not advertise local readiness before the model exists.

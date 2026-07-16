@@ -1,5 +1,12 @@
 # Copilot instructions (nexus)
 
+## Mandatory instruction entry point
+- Read and follow the repository-root [`AGENTS.md`](../AGENTS.md) before the
+  first command. It is the canonical source for shell, SSH, safety, testing, and
+  deployment guidance.
+- Enter the `Ubuntu-20.04` WSL distro immediately. Never use PowerShell for
+  Nexus repository, deployment, git, test, or private-host work.
+
 ## Repo role and relationships
 - `nexus/` is the primary operations repo and the current source of truth for compose/deploy/runtime workflows.
 - Treat Nexus as the operational aggregation point for:

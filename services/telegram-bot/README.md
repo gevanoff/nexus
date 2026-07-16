@@ -86,25 +86,32 @@ When memory is enabled, the container health check also requires the Gateway's
 Honcho status endpoint to report enabled. This prevents a bot from appearing
 healthy while its configured memory writes are being discarded.
 
-The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use their corresponding `ada2-chat` and `stackrot-chat` aliases.
+The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use distinct identity aliases. Cinder currently uses the shared fast Devstral lane through `cinder-chat`; this keeps her SOUL and Honcho identity independent of the physical model placement.
 
 ## Host bot identities
 
-The default service is the `ai2` bot. Two additional services are available under the `host-bots` profile:
+The default service is the `ai2` bot. Three additional services are available under the `host-bots` profile:
 
 | Service | Token | Model alias | SOUL.md |
 | --- | --- | --- | --- |
 | `telegram-bot` | `TELEGRAM_AI2_TOKEN` or legacy `TELEGRAM_TOKEN` | `ai2-chat` | `souls/ai2/SOUL.md` |
 | `telegram-bot-ada2` | `TELEGRAM_ADA2_TOKEN` | `ada2-chat` | `souls/ada2/SOUL.md` |
 | `telegram-bot-stackrot` | `TELEGRAM_STACKROT_TOKEN` | `stackrot-chat` | `souls/stackrot/SOUL.md` |
+| `telegram-bot-meltdown` | `TELEGRAM_MELTDOWN_TOKEN` | `cinder-chat` | `souls/meltdown/SOUL.md` |
 
-Each service requires a distinct BotFather token. Start the additional bots only after both tokens are configured:
+Each service requires a distinct BotFather token. Start an additional bot only after its token is configured:
 
 ```bash
 docker compose --profile host-bots --env-file .env \
   -f docker-compose.gateway.yml -f docker-compose.telegram-bot.yml \
-  up -d --build telegram-bot telegram-bot-ada2 telegram-bot-stackrot
+  up -d --build telegram-bot telegram-bot-ada2 telegram-bot-stackrot telegram-bot-meltdown
 ```
+
+Tokens may remain in each bot host's runtime `.env`; they do not need to be
+duplicated into the ai2 Gateway environment. When the Gateway lacks a host bot's
+token, the Resources UI trusts the remote container's healthy lifecycle state,
+because the container health check already verifies Telegram authentication and
+Gateway/model readiness.
 
 `migraine` is intentionally absent from this Compose profile because its existing Hermes gateway already owns that Telegram identity and `~/.hermes/SOUL.md`.
 

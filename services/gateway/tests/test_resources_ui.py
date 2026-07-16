@@ -115,7 +115,11 @@ def test_resources_ui_shows_individual_telegram_bots() -> None:
     assert "bot.host" in js
     assert "bot.runtime" in js
     assert "runtime.containers" in js
+    assert '"token_scope": "host_runtime"' in snapshot_source
     for expected in (
+        "Cinder",
+        "@CinderAshes_bot",
+        "meltdown",
         "Hex",
         "@CrypticHex_bot",
         "stackrot",

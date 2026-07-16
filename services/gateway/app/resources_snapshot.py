@@ -426,6 +426,16 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
     }
     telegram_bot_specs = (
         (
+            "cinder",
+            "Cinder",
+            "@CinderAshes_bot",
+            "meltdown",
+            "TELEGRAM_MELTDOWN_TOKEN",
+            "TELEGRAM_MELTDOWN_MODEL",
+            "cinder-chat",
+            "telegram_bridge_cinder",
+        ),
+        (
             "hex",
             "Hex",
             "@CrypticHex_bot",
@@ -485,7 +495,35 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
             or (os.getenv("TELEGRAM_TOKEN") if bot_id == "clarion" else "")
             or ""
         ).strip()
-        if not token:
+        if not token and runtime_known:
+            gateway_ok, gateway_note = telegram_gateway_dependency(
+                registry, checker, aliases, entry["gateway_model"]
+            )
+            ok = runtime_ok and gateway_ok
+            entry.update(
+                {
+                    "healthy": ok,
+                    "ready": ok,
+                    "active": ok,
+                    "status": "healthy" if ok else "error",
+                    "status_label": "healthy" if ok else "error",
+                    "status_color": "green" if ok else "red",
+                    "status_rank": 0 if ok else 3,
+                    "updated_at": time.time(),
+                    "token_scope": "host_runtime",
+                    "notes": (
+                        "Telegram credential retained on the bot host; healthy bridge runtime "
+                        f"includes Telegram authentication · {gateway_note}"
+                    ),
+                }
+            )
+            if not ok:
+                entry["error"] = (
+                    gateway_note
+                    if not gateway_ok
+                    else f"bridge runtime {entry['runtime']['status_label']}"
+                )
+        elif not token:
             entry.update(
                 {
                     "healthy": False,

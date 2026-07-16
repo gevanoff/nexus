@@ -125,6 +125,13 @@
       "tier": "core",
       "notes": "Process/container health for Hex; Telegram API and gateway-model readiness are shown in the named bot panel."
     },
+    "telegram_bridge_cinder": {
+      "display_name": "Cinder Telegram Bridge Runtime",
+      "host": "meltdown",
+      "component": "telegram-bot-meltdown",
+      "tier": "core",
+      "notes": "Process/container health for Cinder on meltdown; inference currently uses the shared fast Devstral lane through cinder-chat."
+    },
     "deployment_control": {
       "display_name": "Deployment Control",
       "host": "copyfail",

@@ -2,6 +2,54 @@
 
 These instructions apply to work inside this repository. Revalidate live service
 state before acting on operational notes; Nexus hosts and model routes can change.
+`CLAUDE.md` and `.github/copilot-instructions.md` are discovery shims for tools
+that use those conventions; this file remains the canonical guidance source.
+
+## Stop: Enter WSL Before Doing Anything Else
+
+Nexus administration from a Windows Codex session is a **WSL-first workflow**.
+PowerShell quoting has repeatedly corrupted nested SSH commands, pipes, command
+substitutions, Python one-liners, and heredocs. This wastes time and can turn a
+safe command into a different command. Do not spend a first attempt in
+PowerShell and switch only after it fails.
+
+- The first shell action for every Nexus task must enter the Ubuntu distro:
+
+  ```text
+  wsl.exe -d Ubuntu-20.04 -- bash -l
+  ```
+
+  In an agent terminal tool, prefer opening that as a persistent PTY/session and
+  send subsequent commands to the same Linux shell. Then verify and enter the
+  repo:
+
+  ```bash
+  test "$(uname -s)" = Linux
+  cd /mnt/c/Users/paper/Code/nexus
+  git status --short
+  ```
+
+- Once inside WSL, run host commands from that shell with the configured aliases:
+
+  ```bash
+  ssh ai2 'hostname'
+  ssh meltdown 'hostname'
+  ```
+
+- Do not run Nexus commands with PowerShell cmdlets (`Get-Content`,
+  `Select-Object`, PowerShell pipelines, PowerShell variable expansion, or
+  `powershell -Command`). Do not invoke Windows `ssh.exe` for Nexus hosts.
+- Do not wrap a complex remote command inside PowerShell -> `wsl.exe` -> `ssh`.
+  Enter WSL first, then use SSH, a Bash heredoc, or pipe a local WSL file to the
+  remote process. One-shot `wsl.exe ... bash -lc ...` is acceptable only for a
+  simple, already-safe command when a persistent shell is unavailable.
+- The WSL distro owns the working SSH configuration and credentials under
+  `/home/gevanoff/.ssh`. Never compensate for being in the wrong shell by
+  copying those credentials into Windows.
+- The built-in agent `apply_patch` operation is not PowerShell and remains the
+  preferred way to edit tracked files. Inspection, tests, git, deployment, and
+  remote administration still belong in WSL.
+- If `uname -s` does not report `Linux`, stop and enter WSL before continuing.
 
 ## Shell And Repo Work
 
@@ -10,11 +58,13 @@ state before acting on operational notes; Nexus hosts and model routes can chang
   If the user provides newer AGENTS-style instructions in chat, follow the newer
   instructions too and reconcile any conflict explicitly.
 - Never use PowerShell for Nexus repo work, deployment work, or Nexus host
-  operations. In Codex `exec_command` calls, explicitly set `shell: "bash"` and
-  use POSIX shell syntax.
+  operations. Use a persistent `wsl.exe -d Ubuntu-20.04 -- bash -l` session when
+  the terminal tool supports one; otherwise invoke `wsl.exe` explicitly and use
+  POSIX shell syntax.
 - Do all Nexus repo inspection, edits, greps, tests, and git operations from the
   local WSL/Linux checkout.
-- From Windows Codex sessions, use this pattern:
+- For a simple one-shot command from a Windows Codex session, use this fallback
+  pattern (the persistent WSL session above is preferred):
 
   ```bash
   wsl.exe -d Ubuntu-20.04 -- bash -lc 'cd /mnt/c/Users/paper/Code/nexus && <command>'

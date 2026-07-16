@@ -202,17 +202,24 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     assert "TELEGRAM_AI2_TOKEN" in compose
     assert "TELEGRAM_ADA2_TOKEN" in compose
     assert "TELEGRAM_STACKROT_TOKEN" in compose
+    assert "TELEGRAM_MELTDOWN_TOKEN" in compose
     assert "ai2-chat" in compose
     assert "ada2-chat" in compose
     assert "stackrot-chat" in compose
+    assert "cinder-chat" in compose
     assert "TELEGRAM_MEMORY_ENABLED" in compose
     assert "TELEGRAM_MEMORY_TIMEOUT_MS" in compose
     assert "telegram-bot-migraine" not in compose
-    assert compose.count("profiles: [host-bots]") == 2
+    assert compose.count("profiles: [host-bots]") == 3
     assert "telegram_bot" not in lifecycle["backends"]
     assert lifecycle["core_services"]["telegram_bridge_clarion"]["component"] == "telegram-bot"
     assert lifecycle["core_services"]["telegram_bridge_tess"]["component"] == "telegram-bot-ada2"
     assert lifecycle["core_services"]["telegram_bridge_hex"]["component"] == "telegram-bot-stackrot"
+    assert lifecycle["core_services"]["telegram_bridge_cinder"]["component"] == "telegram-bot-meltdown"
+
+    aliases = json.loads(_read("services/gateway/app/model_aliases.json"))["aliases"]
+    assert aliases["cinder-chat"]["backend"] == "local_vllm_fast"
+    assert aliases["cinder-chat"]["soul"] == "meltdown"
 
 
 def test_adada_is_lifecycle_only_inventory_host() -> None:

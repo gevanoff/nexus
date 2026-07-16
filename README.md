@@ -1,5 +1,9 @@
 # Nexus — Extensible AI-orchestration infrastructure 🚀
 
+> **Automation and coding agents:** read [`AGENTS.md`](AGENTS.md) before the
+> first command. From Windows, enter the `Ubuntu-20.04` WSL distro immediately;
+> do not use PowerShell for repository, deployment, or Nexus host operations.
+
 Nexus is a container-based AI orchestration platform that combines API gateway capabilities with modular AI services. It provides a unified interface for chat, image generation, audio processing, coding agents, scheduled agent tasks, backend resources, and other AI capabilities.
 
 ## Overview

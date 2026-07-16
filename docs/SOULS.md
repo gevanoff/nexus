@@ -32,5 +32,6 @@ The current Nexus-owned identities are:
 - `souls/ai2/SOUL.md` through `ai2-chat`
 - `souls/ada2/SOUL.md` through `ada2-chat`
 - `souls/stackrot/SOUL.md` through `stackrot-chat`
+- `souls/meltdown/SOUL.md` through `cinder-chat` (currently backed by the shared fast Devstral lane)
 
 `migraine` is different: its existing Hermes instance owns `~/.hermes/SOUL.md`. Nexus does not duplicate or overwrite it.

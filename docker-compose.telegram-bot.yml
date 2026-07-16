@@ -60,6 +60,19 @@ services:
       GATEWAY_MODEL: ${TELEGRAM_STACKROT_MODEL:-stackrot-chat}
       TELEGRAM_MENTION_PATTERNS: ${TELEGRAM_STACKROT_MENTION_PATTERNS:-stackrot}
 
+  # Cinder runs on meltdown while using the shared fast chat lane. Keeping a
+  # distinct alias gives the bot its own SOUL and Honcho identity without
+  # claiming that meltdown currently hosts a local chat model.
+  telegram-bot-meltdown:
+    <<: *telegram-bot
+    profiles: [host-bots]
+    container_name: nexus-telegram-bot-meltdown
+    environment:
+      <<: *telegram-environment
+      TELEGRAM_TOKEN: ${TELEGRAM_MELTDOWN_TOKEN:-}
+      GATEWAY_MODEL: ${TELEGRAM_MELTDOWN_MODEL:-cinder-chat}
+      TELEGRAM_MENTION_PATTERNS: ${TELEGRAM_MELTDOWN_MENTION_PATTERNS:-Cinder,meltdown}
+
 networks:
   nexus:
     driver: bridge
