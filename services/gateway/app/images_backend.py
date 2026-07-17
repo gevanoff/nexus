@@ -12,6 +12,17 @@ from app.httpx_client import httpx_client as _httpx_client
 from app.image_storage import convert_response_to_urls
 
 
+MAX_IMAGES_PER_REQUEST = 8
+
+
+def clamp_image_count(value: Any) -> int:
+    try:
+        count = int(value or 1)
+    except (TypeError, ValueError):
+        count = 1
+    return max(1, min(count, MAX_IMAGES_PER_REQUEST))
+
+
 def _get_image_backend_base_url(backend_class: str | None) -> str:
     backend_class = (backend_class or "").strip()
     if not backend_class:
@@ -324,8 +335,7 @@ async def generate_openai_images(
     backend_class: str,
     timeout_sec: float | None = None,
 ) -> Dict[str, Any]:
-    n = int(n or 1)
-    n = max(1, min(n, 4))
+    n = clamp_image_count(n)
     width, height = _parse_size(size)
     timeout = float(timeout_sec or getattr(S, "IMAGES_HTTP_TIMEOUT_SEC", 120.0) or 120.0)
     chosen_model, model_reason = _select_images_model(prompt=prompt, requested_model=model)
@@ -437,7 +447,7 @@ async def edit_openai_images(
     return _normalize_openai_image_response(
         out=out,
         response_format=response_format,
-        n=max(1, min(n, 4)),
+        n=clamp_image_count(n),
         backend_label=backend_label,
         backend_class=backend_class,
         base_url=base_url,
@@ -495,8 +505,7 @@ async def generate_images(
     if response_format not in {"url", "b64_json"}:
         raise ValueError(f"response_format must be 'url' or 'b64_json', got: {response_format}")
 
-    n = int(n or 1)
-    n = max(1, min(n, 4))
+    n = clamp_image_count(n)
     width, height = _parse_size(size)
 
     backend: str = (getattr(S, "IMAGES_BACKEND", "mock") or "mock").strip().lower()

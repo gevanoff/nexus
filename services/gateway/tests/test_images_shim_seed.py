@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 IMAGES_APP = Path(__file__).resolve().parents[2] / "images" / "app"
@@ -51,3 +52,24 @@ def test_missing_seed_preserves_random_interval() -> None:
     inputs = graph["nodes"][0]["data"]["inputs"]
     assert inputs["low"]["value"] == 0
     assert inputs["high"]["value"] == 2_147_483_647
+
+
+def test_seeded_batch_uses_distinct_consecutive_seeds(monkeypatch) -> None:
+    seen: list[int | None] = []
+
+    monkeypatch.setattr(
+        shim,
+        "_get_config",
+        lambda: SimpleNamespace(mode="invokeai_queue"),
+    )
+
+    def fake_generate(request, *, cfg):
+        seen.append(request.seed)
+        return "image"
+
+    monkeypatch.setattr(shim, "_invokeai_generate_b64", fake_generate)
+    response = shim.images_generations(
+        shim.ImagesGenerationsRequest(prompt="test", n=4, seed=1200)
+    )
+    assert seen == [1200, 1201, 1202, 1203]
+    assert len(response["data"]) == 4

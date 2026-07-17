@@ -44,6 +44,8 @@ Important:
 - A supplied seed is applied to InvokeAI's random-integer node as the
   single-value interval `[seed, seed + 1)`, because its upper bound is
   exclusive.
+- Multi-image seeded requests use consecutive seeds, so a batch is distinct but
+  remains reproducible.
 
 ## Quick test
 

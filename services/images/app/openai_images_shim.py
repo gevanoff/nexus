@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="InvokeAI OpenAI Images Shim", version="0.1")
 logger = logging.getLogger("uvicorn.error")
-_SHIM_BUILD = "2026-07-17-seed-bounds"
+_SHIM_BUILD = "2026-07-17-seed-batches"
 
 
 def _shim_file_sha256_prefix() -> Optional[str]:
@@ -1639,8 +1639,11 @@ def images_generations(body: ImagesGenerationsRequest) -> Dict[str, Any]:
 
     if cfg.mode == "invokeai_queue":
         outputs: List[Dict[str, str]] = []
-        for _ in range(body.n):
-            b64_json = _invokeai_generate_b64(body, cfg=cfg)
+        for index in range(body.n):
+            request = body
+            if body.seed is not None and index:
+                request = body.model_copy(update={"seed": int(body.seed) + index})
+            b64_json = _invokeai_generate_b64(request, cfg=cfg)
             outputs.append({"b64_json": b64_json})
         return {"created": created, "data": outputs}
 

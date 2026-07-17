@@ -50,15 +50,6 @@
     window.NexusSelectMarquee?.refresh(modelSelectEl);
   }
 
-  function escapeHtml(s) {
-    return String(s)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
   function handle401(resp) {
     if (resp && resp.status === 401) {
       const back = encodeURIComponent(window.location.pathname + window.location.search);
@@ -412,32 +403,118 @@
     const items = payload && payload.data;
     if (!Array.isArray(items) || !items.length) return;
 
-    for (const item of items) {
-      const url = item && typeof item.url === "string" ? item.url.trim() : "";
-      if (!url) continue;
+    const urls = items
+      .map((item) => item && typeof item.url === "string" ? item.url.trim() : "")
+      .filter(Boolean);
+    if (!urls.length) return;
 
-      const div = document.createElement("div");
-      div.className = "thumb";
-      div.innerHTML = `
-        <img src="${escapeHtml(url)}" alt="generated" />
-        <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
-          <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Open</a>
-          <a href="#" data-copy="${escapeHtml(url)}">Copy URL</a>
-        </div>
-      `;
+    const viewer = document.createElement("div");
+    viewer.className = "image-viewer";
 
-      div.addEventListener("click", (event) => {
-        const target = event.target;
-        if (!(target instanceof HTMLAnchorElement)) return;
-        const copy = target.getAttribute("data-copy");
-        if (!copy) return;
-        event.preventDefault();
-        void navigator.clipboard?.writeText(copy);
-        setStatus("Copied URL to clipboard", false);
+    const stage = document.createElement("div");
+    stage.className = "image-stage";
+    const frame = document.createElement("div");
+    frame.className = "image-stage-frame";
+    const stageImage = document.createElement("img");
+    frame.appendChild(stageImage);
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "image-stage-toolbar";
+    const counter = document.createElement("span");
+    counter.className = "hint";
+    counter.setAttribute("aria-live", "polite");
+    const actions = document.createElement("div");
+    actions.className = "image-stage-actions";
+    const previousButton = document.createElement("button");
+    previousButton.type = "button";
+    previousButton.textContent = "Previous";
+    previousButton.setAttribute("aria-label", "Previous image");
+    const nextButton = document.createElement("button");
+    nextButton.type = "button";
+    nextButton.textContent = "Next";
+    nextButton.setAttribute("aria-label", "Next image");
+    const openLink = document.createElement("a");
+    openLink.target = "_blank";
+    openLink.rel = "noopener noreferrer";
+    openLink.textContent = "Open full size";
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.textContent = "Copy URL";
+    copyButton.setAttribute("data-ui-role", "secondary");
+    actions.append(previousButton, nextButton, openLink, copyButton);
+    toolbar.append(counter, actions);
+    stage.append(frame, toolbar);
+
+    const strip = document.createElement("div");
+    strip.className = "thumbnail-strip";
+    strip.setAttribute("role", "listbox");
+    strip.setAttribute("aria-label", "Generated images");
+    const thumbnailButtons = [];
+    let selectedIndex = 0;
+
+    function selectImage(index, { focus = false } = {}) {
+      selectedIndex = Math.max(0, Math.min(index, urls.length - 1));
+      const selectedUrl = urls[selectedIndex];
+      stageImage.src = selectedUrl;
+      stageImage.alt = `Generated image ${selectedIndex + 1} of ${urls.length}`;
+      openLink.href = selectedUrl;
+      counter.textContent = `Image ${selectedIndex + 1} of ${urls.length}`;
+      thumbnailButtons.forEach((button, buttonIndex) => {
+        const selected = buttonIndex === selectedIndex;
+        button.setAttribute("aria-selected", selected ? "true" : "false");
+        button.tabIndex = selected ? 0 : -1;
       });
-
-      galleryEl.appendChild(div);
+      const selectedButton = thumbnailButtons[selectedIndex];
+      selectedButton?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (focus) selectedButton?.focus();
     }
+
+    urls.forEach((url, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "image-thumbnail";
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-label", `Show generated image ${index + 1}`);
+      const image = document.createElement("img");
+      image.src = url;
+      image.alt = "";
+      image.loading = "lazy";
+      button.appendChild(image);
+      button.addEventListener("click", () => selectImage(index));
+      button.addEventListener("keydown", (event) => {
+        let nextIndex = null;
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") nextIndex = selectedIndex + 1;
+        if (event.key === "ArrowLeft" || event.key === "ArrowUp") nextIndex = selectedIndex - 1;
+        if (event.key === "Home") nextIndex = 0;
+        if (event.key === "End") nextIndex = urls.length - 1;
+        if (nextIndex === null) return;
+        event.preventDefault();
+        selectImage((nextIndex + urls.length) % urls.length, { focus: true });
+      });
+      thumbnailButtons.push(button);
+      strip.appendChild(button);
+    });
+
+    copyButton.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(urls[selectedIndex]);
+        setStatus(`Copied image ${selectedIndex + 1} URL to clipboard`, false);
+      } catch (error) {
+        setStatus("Could not copy the image URL", true);
+      }
+    });
+    previousButton.disabled = urls.length < 2;
+    nextButton.disabled = urls.length < 2;
+    previousButton.addEventListener("click", () => {
+      selectImage((selectedIndex - 1 + urls.length) % urls.length);
+    });
+    nextButton.addEventListener("click", () => {
+      selectImage((selectedIndex + 1) % urls.length);
+    });
+
+    viewer.append(stage, strip);
+    galleryEl.appendChild(viewer);
+    selectImage(0);
   }
 
   async function generate() {

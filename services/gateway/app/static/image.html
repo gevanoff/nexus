@@ -69,8 +69,68 @@
       summary { cursor: pointer; color: var(--muted); }
 
       .out { margin-top: 12px; }
-      .gallery { display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-      .thumb { border: 1px solid var(--border); background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(11,16,23,0.95)); border-radius: 12px; padding: 10px; }
+      .gallery { display: block; }
+      .image-viewer { display: grid; gap: 12px; }
+      .image-stage {
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(17,24,33,0.95), rgba(8,12,18,0.98));
+        border-radius: 14px;
+        padding: 12px;
+      }
+      .image-stage-frame {
+        min-height: 320px;
+        max-height: min(72vh, 760px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border-radius: 12px;
+        background:
+          linear-gradient(45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+          linear-gradient(-45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.025) 75%),
+          linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.025) 75%),
+          #080c12;
+        background-size: 24px 24px;
+        background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+      }
+      .image-stage-frame img {
+        width: 100%;
+        height: 100%;
+        max-height: min(72vh, 760px);
+        object-fit: contain;
+        border: 0;
+      }
+      .image-stage-toolbar {
+        margin-top: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .image-stage-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .thumbnail-strip {
+        display: flex;
+        gap: 10px;
+        overflow-x: auto;
+        padding: 3px 2px 8px;
+        scroll-snap-type: x proximity;
+      }
+      .image-thumbnail {
+        flex: 0 0 104px;
+        width: 104px;
+        height: 104px;
+        padding: 4px;
+        border-radius: 12px;
+        scroll-snap-align: start;
+        background: rgba(10, 15, 22, 0.9);
+      }
+      .image-thumbnail[aria-selected="true"] {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(111,184,255,0.24);
+      }
+      .image-thumbnail img { width: 100%; height: 100%; object-fit: cover; border: 0; border-radius: 8px; }
       img { max-width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--border); }
       pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: #c6d2e4; }
 
@@ -243,6 +303,6 @@
     <script src="/static/focused_nav.js?v=7"></script>
     <script src="/static/backend_status_panel.js?v=9"></script>
     <script src="/static/lifecycle_client.js?v=1"></script>
-    <script src="/static/image_catalog_ui.js?v=2"></script>
+    <script src="/static/image_catalog_ui.js?v=3"></script>
   </body>
 </html>
