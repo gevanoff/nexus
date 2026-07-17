@@ -102,6 +102,13 @@ Install or refresh the host-side launchd proxy on ai2 before restarting gateway:
 
 InvokeAI remains useful in production when Nexus needs a managed creative image workspace: model manager, gallery/canvas, and an operator UI behind the OpenAI images shim. Production advertises `INVOKEAI_UI_URL` so the Gateway Image UI can link operators to the InvokeAI interface for model management.
 
+Browser-facing plain-HTTP URLs that use a known short Nexus host alias (for
+example `http://ada2:9090`) are resolved by Gateway before they are returned to
+the UI. This bridges the current gap between container `extra_hosts` and
+operator workstations without changing internal backend routing. Public hostnames
+and HTTPS URLs are left unchanged; real DNS remains the preferred long-term
+browser path.
+
 ComfyUI should not be added as another always-on CUDA service on `ada2` while `vllm-strong` and InvokeAI/images are resident; the RTX 6000 Ada is the primary contention point. Prefer one of these rollout shapes:
 
 - persistent ComfyUI interface on `ai2`, host-native Apple Silicon, for workflow editing and light/local runs

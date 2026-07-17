@@ -39,6 +39,7 @@ from app.backends import (
     llm_backends,
 )
 from app.config import S
+from app.browser_urls import browser_accessible_url
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
 from app.model_availability import fallback_target_for_backend, hf_model_cache_details, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason
@@ -1524,11 +1525,11 @@ def _image_backend_option_profile(backend_class: str) -> Dict[str, Any]:
 def _invokeai_ui_url() -> str:
     explicit = (getattr(S, "INVOKEAI_UI_URL", "") or "").strip()
     if explicit:
-        return explicit.rstrip("/")
+        return browser_accessible_url(explicit.rstrip("/"))
     for attr in ("INVOKEAI_ADVERTISE_BASE_URL", "INVOKEAI_BASE_URL"):
         value = (getattr(S, attr, "") or "").strip()
         if value:
-            return value.rstrip("/")
+            return browser_accessible_url(value.rstrip("/"))
     return ""
 
 

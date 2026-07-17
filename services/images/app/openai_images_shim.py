@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="InvokeAI OpenAI Images Shim", version="0.1")
 logger = logging.getLogger("uvicorn.error")
-_SHIM_BUILD = "2026-01-16i"
+_SHIM_BUILD = "2026-07-17-seed-bounds"
 
 
 def _shim_file_sha256_prefix() -> Optional[str]:
@@ -861,7 +861,10 @@ def _apply_invokeai_workflow_overrides(
         # The default workflow uses a rand_int node to generate a seed.
         if ntype == "rand_int" and label == "Random Seed" and seed is not None:
             _set_input_value(inputs, "low", int(seed))
-            _set_input_value(inputs, "high", int(seed))
+            # numpy.random.randint uses an exclusive upper bound. A one-value
+            # interval preserves the requested deterministic seed without
+            # producing InvokeAI's ``ValueError: low >= high``.
+            _set_input_value(inputs, "high", int(seed) + 1)
             continue
 
         def _normalize_model_value(value: Any) -> Any:

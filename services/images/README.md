@@ -41,6 +41,9 @@ Important:
 - Raw InvokeAI on port `9090` is an upstream runtime for the shim and does not implement `POST /v1/images/generations`.
 - If the UI is hitting `http://<host>:9090/v1/images/generations`, `IMAGES_HTTP_BASE_URL` or the `images` etcd record is wrong.
 - In multi-host deployments, set `IMAGES_SHIM_INVOKEAI_BASE_URL` to the local upstream the shim should call, and keep `INVOKEAI_BASE_URL` / `IMAGES_ADVERTISE_BASE_URL` on the host-routable URLs the gateway should advertise.
+- A supplied seed is applied to InvokeAI's random-integer node as the
+  single-value interval `[seed, seed + 1)`, because its upper bound is
+  exclusive.
 
 ## Quick test
 
