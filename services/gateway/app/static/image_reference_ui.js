@@ -214,6 +214,7 @@
     referenceInput.value = "";
     renderFile("reference");
     clearMask();
+    updateBackendSupport();
   }
 
   function clearMask() {
