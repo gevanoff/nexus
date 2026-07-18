@@ -718,10 +718,8 @@ async def images_edits(
 
     if not str(prompt or "").strip():
         raise HTTPException(status_code=400, detail="prompt must be a non-empty string")
-    if response_format and response_format != "b64_json":
-        raise HTTPException(status_code=400, detail="Only response_format='b64_json' is supported by the InvokeAI shim")
-    if not 1 <= int(n) <= 10:
-        raise HTTPException(status_code=400, detail="n must be between 1 and 10")
+    if not 1 <= int(n) <= 8:
+        raise HTTPException(status_code=400, detail="n must be between 1 and 8")
 
     image_bytes = await image.read()
     if not image_bytes:
