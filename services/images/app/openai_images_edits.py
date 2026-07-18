@@ -354,7 +354,12 @@ def _multipart_body(
                 b"\r\n",
             ]
         )
-    safe_filename = os.path.basename(filename or "reference.png").replace('"', "_")
+    safe_filename = (
+        os.path.basename(filename or "reference.png")
+        .replace("\r", "_")
+        .replace("\n", "_")
+        .replace('"', "_")
+    )
     parts.extend(
         [
             f"--{boundary}\r\n".encode(),
