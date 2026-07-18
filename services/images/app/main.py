@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.openai_images_shim import app
-from app.openai_images_edits import router as images_edits_router
+from app import openai_images_shim
+from app.model_compat import install_model_compat
+
+
+install_model_compat(openai_images_shim)
+app = openai_images_shim.app
+
+from app.openai_images_edits import router as images_edits_router  # noqa: E402
 
 
 app.include_router(images_edits_router)
@@ -33,6 +39,7 @@ def metadata() -> Dict[str, Any]:
         ],
         "notes": (
             "OpenAI Images shim for InvokeAI. Text-to-image and purpose-specific "
-            "reference-image workflows are supported. Default SHIM_MODE=stub."
+            "reference-image workflows are supported. Model selection is validated "
+            "against the configured workflow family. Default SHIM_MODE=stub."
         ),
     }
