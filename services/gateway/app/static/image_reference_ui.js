@@ -370,6 +370,7 @@
     toolbar.className = "image-stage-toolbar";
     const counter = document.createElement("span");
     counter.className = "hint";
+    counter.setAttribute("aria-live", "polite");
     const open = document.createElement("a");
     open.target = "_blank";
     open.rel = "noopener noreferrer";
