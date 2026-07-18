@@ -31,19 +31,20 @@ The shim always returns OpenAI-style `data[].b64_json`; Gateway may convert thos
 
 Configure purpose-specific exported InvokeAI workflows or API graphs:
 
-```bash
+~~~bash
 SHIM_IMG2IMG_GRAPH_TEMPLATE_PATH=/data/workflows/img2img.json
 SHIM_INPAINT_GRAPH_TEMPLATE_PATH=/data/workflows/inpaint.json
 SHIM_COMPOSITION_GRAPH_TEMPLATE_PATH=/data/workflows/composition-ip-adapter.json
 SHIM_STYLE_GRAPH_TEMPLATE_PATH=/data/workflows/style-ip-adapter.json
 SHIM_CONTROLNET_GRAPH_TEMPLATE_PATH=/data/workflows/controlnet.json
+~~~
 
 Fallbacks:
 
-```bash
+~~~bash
 SHIM_EDIT_GRAPH_TEMPLATE_PATH=/var/lib/invokeai/workflows/generic-edit.json
 SHIM_GRAPH_TEMPLATE_PATH=/var/lib/invokeai/workflows/text-to-image.json
-```
+~~~
 
 Purpose-specific paths take precedence. The normal text-to-image template is only a final fallback and will fail validation unless it actually contains compatible reference nodes.
 
