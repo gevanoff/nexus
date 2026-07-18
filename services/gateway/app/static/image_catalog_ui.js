@@ -478,7 +478,9 @@
       const image = document.createElement("img");
       image.src = url;
       image.alt = "";
-      image.loading = "lazy";
+      // Fetch every batch member while its short-lived Gateway URL is valid.
+      // Lazy loading can leave off-screen thumbnails unfetched until expiry.
+      image.loading = "eager";
       button.appendChild(image);
       button.addEventListener("click", () => selectImage(index));
       button.addEventListener("keydown", (event) => {

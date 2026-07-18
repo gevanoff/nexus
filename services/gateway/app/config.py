@@ -87,7 +87,9 @@ class Settings(BaseSettings):
     # The UI image endpoint can store generated images on disk and return short-lived URLs
     # served by the gateway (still gated by UI_IP_ALLOWLIST).
     UI_IMAGE_DIR: str = "/var/lib/gateway/data/ui_images"
-    UI_IMAGE_TTL_SEC: int = 900
+    # Generated-image URLs are used interactively by the browser. Keep them long
+    # enough for a user to review a batch without unfetched thumbnails expiring.
+    UI_IMAGE_TTL_SEC: int = 86_400
     UI_IMAGE_MAX_BYTES: int = 50_000_000
 
     # UI model list endpoint tuning

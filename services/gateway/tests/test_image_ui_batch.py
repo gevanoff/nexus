@@ -21,10 +21,12 @@ def test_image_ui_uses_stage_and_accessible_thumbnail_selector() -> None:
     assert 'max="8"' in html
     assert "image-stage-frame" in html
     assert "thumbnail-strip" in html
-    assert "image_catalog_ui.js?v=3" in html
+    assert "image_catalog_ui.js?v=4" in html
     assert 'strip.setAttribute("role", "listbox")' in script
     assert 'button.setAttribute("role", "option")' in script
     assert 'button.setAttribute("aria-selected"' in script
     assert 'event.key === "ArrowRight"' in script
     assert 'previousButton.setAttribute("aria-label", "Previous image")' in script
     assert "Open full size" in script
+    assert 'image.loading = "eager"' in script
+    assert 'image.loading = "lazy"' not in script
