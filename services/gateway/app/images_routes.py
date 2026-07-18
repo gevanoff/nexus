@@ -70,10 +70,10 @@ def _normalize_edit_count(value: Any) -> int:
     try:
         count = int(1 if value in (None, "") else value)
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="n must be an integer between 1 and 8") from exc
-    if not 1 <= count <= 8:
-        raise HTTPException(status_code=400, detail="n must be between 1 and 8")
-    return count
+        raise HTTPException(status_code=400, detail="n must be an integer >= 1") from exc
+    if count < 1:
+        raise HTTPException(status_code=400, detail="n must be >= 1")
+    return min(count, 8)
 
 
 async def _upload_tuple(
