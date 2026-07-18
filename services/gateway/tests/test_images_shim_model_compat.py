@@ -227,3 +227,46 @@ def test_install_wraps_module_resolver_once(tmp_path: Path) -> None:
         ),
     )
     assert resolved["key"] == "sdxl-base"
+
+
+def test_wrapped_resolver_prefers_selected_template_path(tmp_path: Path) -> None:
+    default_graph_path = _write_graph(tmp_path, "flux_model_loader")
+    selected_graph_path = tmp_path / "edit-workflow.json"
+    selected_graph_path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": "prompt",
+                        "data": {"type": "sdxl_compel_prompt", "inputs": {}},
+                    }
+                ],
+                "edges": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    candidates = [
+        {"key": "flux-main", "name": "FLUX Main", "base": "flux", "type": "main"},
+        {"key": "sdxl-base", "name": "SDXL Base", "base": "sdxl", "type": "main"},
+    ]
+
+    shim = SimpleNamespace()
+    shim._list_invokeai_models = lambda *, cfg: ("fake://models", list(candidates))
+    shim._is_generation_model_candidate = lambda candidate: True
+    shim._candidate_strings = FakeShim._candidate_strings
+    shim._normalize_invokeai_candidate = FakeShim._normalize_invokeai_candidate
+    shim._resolve_model_info = lambda model, *, cfg: None
+    model_compat.install_model_compat(shim)
+
+    resolved = shim._resolve_model_info(
+        None,
+        cfg=SimpleNamespace(
+            graph_template_path=default_graph_path,
+            default_model=None,
+            model_presets_json=None,
+        ),
+        template_path=str(selected_graph_path),
+    )
+
+    assert resolved["key"] == "sdxl-base"

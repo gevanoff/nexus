@@ -589,7 +589,7 @@ def _build_edit_graph(
     steps = spec.steps if spec.steps is not None else shim._as_int((preset or {}).get("steps"))
     cfg_scale = spec.cfg_scale if spec.cfg_scale is not None else shim._as_float((preset or {}).get("cfg_scale"))
     scheduler = (spec.scheduler or "").strip() or str((preset or {}).get("scheduler") or "").strip() or None
-    model_info = shim._resolve_model_info(model_name, cfg=cfg)
+    model_info = shim._resolve_model_info(model_name, cfg=cfg, template_path=template_path)
 
     graph = shim._load_graph_from_template(
         template_path,

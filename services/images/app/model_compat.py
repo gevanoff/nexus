@@ -304,11 +304,16 @@ def install_model_compat(shim_module: Any) -> None:
     if getattr(current, "_nexus_workflow_aware", False):
         return
 
-    def workflow_aware_resolver(model: Optional[str], *, cfg: Any) -> Optional[Dict[str, Any]]:
+    def workflow_aware_resolver(
+        model: Optional[str],
+        *,
+        cfg: Any,
+        template_path: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         return resolve_model_info_for_template(
             model,
             cfg=cfg,
-            template_path=getattr(cfg, "graph_template_path", None),
+            template_path=template_path or getattr(cfg, "graph_template_path", None),
             shim_module=shim_module,
             original_resolver=current,
         )
