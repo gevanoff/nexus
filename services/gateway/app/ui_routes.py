@@ -1669,9 +1669,9 @@ def _ui_image_dir() -> str:
 
 def _ui_image_ttl_sec() -> int:
     try:
-        return int(getattr(S, "UI_IMAGE_TTL_SEC", 900) or 900)
+        return int(getattr(S, "UI_IMAGE_TTL_SEC", 86_400) or 86_400)
     except Exception:
-        return 900
+        return 86_400
 
 
 def _ui_image_max_bytes() -> int:
@@ -4460,7 +4460,10 @@ async def ui_image_file(req: Request, name: str):
         "svg": "image/svg+xml",
     }.get(ext, "application/octet-stream")
 
-    headers = {"cache-control": "private, max-age=60"}
+    # Filenames are unique per generated artifact. Let the browser retain every
+    # member of a batch for the same period that the server retains the files.
+    cache_max_age = ttl_sec if ttl_sec > 0 else 86_400
+    headers = {"cache-control": f"private, max-age={cache_max_age}, immutable"}
     return FileResponse(full, media_type=media_type, headers=headers)
 
 
