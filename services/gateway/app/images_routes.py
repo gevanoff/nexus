@@ -82,7 +82,7 @@ async def _upload_tuple(
     field_name: str,
     default_filename: str,
 ) -> tuple[str, bytes, str]:
-    content_type = str(upload.content_type or "application/octet-stream").strip()
+    content_type = str(upload.content_type or "").strip()
     if content_type and not content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail=f"{field_name} must have an image/* content type")
     raw = await upload.read()
