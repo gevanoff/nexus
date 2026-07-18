@@ -479,6 +479,7 @@
   referenceInput.addEventListener("change", () => {
     state.referenceFile = referenceInput.files?.[0] || null;
     renderFile("reference");
+    updateBackendSupport();
   });
   maskInput.addEventListener("change", () => {
     state.maskFile = maskInput.files?.[0] || null;
