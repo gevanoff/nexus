@@ -183,6 +183,32 @@ def _compatible_candidates(shim_module: Any, cfg: Any, family: str) -> list[Dict
     return output
 
 
+def _configured_default_targets(cfg: Any) -> set[str]:
+    targets: set[str] = set()
+    configured_default = str(getattr(cfg, "default_model", "") or "").strip()
+    if configured_default:
+        targets.add(configured_default.lower())
+
+    raw_presets = str(getattr(cfg, "model_presets_json", "") or "").strip()
+    if not configured_default or not raw_presets:
+        return targets
+    try:
+        presets = json.loads(raw_presets)
+    except Exception:
+        return targets
+    if not isinstance(presets, dict):
+        return targets
+    preset = presets.get(configured_default) or presets.get(configured_default.lower())
+    if isinstance(preset, str) and preset.strip():
+        targets.add(preset.strip().lower())
+    elif isinstance(preset, dict):
+        for key in ("model", "upstream_model"):
+            value = str(preset.get(key) or "").strip()
+            if value:
+                targets.add(value.lower())
+    return targets
+
+
 def resolve_model_info_for_template(
     model: Optional[str],
     *,
@@ -196,6 +222,9 @@ def resolve_model_info_for_template(
         return original_resolver(model, cfg=cfg)
 
     requested = str(model or "").strip()
+    requested_is_configured_default = bool(
+        requested and requested.lower() in _configured_default_targets(cfg)
+    )
     compatible = _compatible_candidates(shim_module, cfg, expected_family)
 
     if compatible:
@@ -215,13 +244,24 @@ def resolve_model_info_for_template(
                 )
                 return selected
 
+            if requested_is_configured_default:
+                selected = _normalized_candidate(shim_module, compatible[0])
+                logger.warning(
+                    "Configured InvokeAI default model %r is incompatible with workflow family=%s; selected=%r",
+                    requested,
+                    expected_family,
+                    selected.get("key") or selected.get("name"),
+                )
+                return selected
+
             resolved = original_resolver(model, cfg=cfg)
             resolved_family = model_family(resolved)
             if resolved_family == expected_family:
                 return resolved
+            normalized_available = [_normalized_candidate(shim_module, item) for item in compatible[:8]]
             available = [
-                str(_normalized_candidate(shim_module, item).get("name") or _normalized_candidate(shim_module, item).get("key") or "")
-                for item in compatible[:8]
+                str(item.get("name") or item.get("key") or "")
+                for item in normalized_available
             ]
             raise HTTPException(
                 status_code=400,
