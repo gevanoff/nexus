@@ -11,11 +11,20 @@ services:
       # OpenAI Images API shim (InvokeAI-compatible)
       - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
       - SHIM_PORT=7860
+      - SHIM_GRAPH_TEMPLATE_PATH=${SHIM_GRAPH_TEMPLATE_PATH:-/app/shim/graph_template.json}
+      # Reference-image workflow templates. Purpose-specific paths take priority.
+      - SHIM_EDIT_GRAPH_TEMPLATE_PATH=${SHIM_EDIT_GRAPH_TEMPLATE_PATH:-}
+      - SHIM_IMG2IMG_GRAPH_TEMPLATE_PATH=${SHIM_IMG2IMG_GRAPH_TEMPLATE_PATH:-}
+      - SHIM_INPAINT_GRAPH_TEMPLATE_PATH=${SHIM_INPAINT_GRAPH_TEMPLATE_PATH:-}
+      - SHIM_COMPOSITION_GRAPH_TEMPLATE_PATH=${SHIM_COMPOSITION_GRAPH_TEMPLATE_PATH:-}
+      - SHIM_STYLE_GRAPH_TEMPLATE_PATH=${SHIM_STYLE_GRAPH_TEMPLATE_PATH:-}
+      - SHIM_CONTROLNET_GRAPH_TEMPLATE_PATH=${SHIM_CONTROLNET_GRAPH_TEMPLATE_PATH:-}
       # Optional: only used when SHIM_MODE=invokeai_queue
       - INVOKEAI_BASE_URL=${INVOKEAI_BASE_URL:-http://invokeai:9090}
     volumes:
       - ${NEXUS_RUNTIME_ROOT:-../.runtime}/images/data:/data
       - ${NEXUS_RUNTIME_ROOT:-../.runtime}/images/models:/data/models
+      - ${NEXUS_RUNTIME_ROOT:-../.runtime}/images/workflows:/data/workflows:ro
     networks:
       - nexus
     restart: unless-stopped
