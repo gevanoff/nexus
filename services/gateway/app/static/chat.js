@@ -307,6 +307,38 @@
         || /^>\s?/.test(line);
     }
 
+    function collectMarkdownList(lines, startIndex, ordered) {
+      const marker = ordered
+        ? /^\s*(\d+)\.\s+(.+)$/
+        : /^\s*[-*]\s+(.+)$/;
+      const items = [];
+      let i = startIndex;
+      let startNumber = 1;
+
+      while (i < lines.length) {
+        const match = lines[i].match(marker);
+        if (!match) break;
+        if (ordered && items.length === 0) {
+          const parsed = Number.parseInt(match[1], 10);
+          if (Number.isFinite(parsed) && parsed > 0) startNumber = parsed;
+        }
+        items.push(ordered ? match[2] : match[1]);
+        i += 1;
+
+        // A blank line between list items makes a valid "loose" Markdown list.
+        // Models commonly emit every ordered marker as `1.`, relying on the
+        // renderer to keep one <ol> and let the browser number its <li> nodes.
+        const blankStart = i;
+        while (i < lines.length && !lines[i].trim()) i += 1;
+        if (i >= lines.length || !marker.test(lines[i])) {
+          i = blankStart;
+          break;
+        }
+      }
+
+      return { items, nextIndex: i, startNumber };
+    }
+
     function renderMarkdownContent(container, markdown) {
       if (!container) return;
       container.textContent = "";
@@ -348,27 +380,30 @@
         }
 
         if (/^\s*[-*]\s+/.test(line)) {
+          const parsed = collectMarkdownList(lines, i, false);
           const list = document.createElement("ul");
           list.className = "md-list";
-          while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+          parsed.items.forEach((text) => {
             const item = document.createElement("li");
-            appendInlineMarkdown(item, lines[i].replace(/^\s*[-*]\s+/, ""));
+            appendInlineMarkdown(item, text);
             list.appendChild(item);
-            i += 1;
-          }
+          });
+          i = parsed.nextIndex;
           container.appendChild(list);
           continue;
         }
 
         if (/^\s*\d+\.\s+/.test(line)) {
+          const parsed = collectMarkdownList(lines, i, true);
           const list = document.createElement("ol");
           list.className = "md-list";
-          while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+          if (parsed.startNumber !== 1) list.start = parsed.startNumber;
+          parsed.items.forEach((text) => {
             const item = document.createElement("li");
-            appendInlineMarkdown(item, lines[i].replace(/^\s*\d+\.\s+/, ""));
+            appendInlineMarkdown(item, text);
             list.appendChild(item);
-            i += 1;
-          }
+          });
+          i = parsed.nextIndex;
           container.appendChild(list);
           continue;
         }
