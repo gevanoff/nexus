@@ -17,7 +17,7 @@ The edit endpoint accepts multipart form data.
 | `strength` | no | Influence from `0.0` to `1.0`; defaults to `0.65` |
 | `mask` | no | Inpainting mask; valid only for `image_to_image` |
 | `size` | no | Output size such as `1024x1024` |
-| `n` | no | Number of outputs, 1–10 |
+| `n` | no | Number of outputs, 1–10 (Gateway currently limits requests to 1–8) |
 | `model` | no | InvokeAI model/preset identifier |
 | `seed` | no | Deterministic seed; batches use consecutive seeds |
 | `negative_prompt` | no | Negative prompt |
