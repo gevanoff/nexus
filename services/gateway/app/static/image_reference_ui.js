@@ -379,6 +379,8 @@
 
     const strip = document.createElement("div");
     strip.className = "thumbnail-strip";
+    strip.setAttribute("role", "listbox");
+    strip.setAttribute("aria-label", "Edited images");
     const buttons = [];
     const select = (index) => {
       const url = urls[index];
