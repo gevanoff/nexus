@@ -394,6 +394,8 @@
       const button = document.createElement("button");
       button.type = "button";
       button.className = "image-thumbnail";
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-label", `Show edited image ${index + 1}`);
       button.setAttribute("aria-selected", "false");
       const thumb = document.createElement("img");
       thumb.src = url;
