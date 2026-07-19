@@ -19,7 +19,8 @@ The gateway-facing image backend remains the `images` shim, which should point t
 
 ## Persistence
 
-- Runtime root: `./.runtime/invokeai`
+- Production runtime root on `ada2`: `/data/invokeai`
+- Shared Hugging Face home on `ada2`: `/data/huggingface`
 - Models, config, and outputs persist there via `/invokeai`
 
 ## Integration
@@ -40,7 +41,7 @@ For the raw InvokeAI runtime, the practical checks to verify are:
 	- `/api/v1/version`
 	- `/api/v1/app`
 - GPU visibility inside the container
-- write access and expected contents under `./.runtime/invokeai`
+- write access and expected contents under `/data/invokeai`
 
 The compose healthcheck and the operational etcd registration use those same endpoint candidates.
 

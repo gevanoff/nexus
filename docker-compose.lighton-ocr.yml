@@ -18,10 +18,10 @@ services:
       - LIGHTON_OCR_DEVICE=${LIGHTON_OCR_DEVICE:-auto}
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN:-}
-      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
+      - HF_HOME=${HF_HOME:-/data/huggingface}
     volumes:
       - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/lighton-ocr:/data
-      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
+      - ${HF_HOME_BIND_SOURCE:-/data/huggingface}:${HF_HOME:-/data/huggingface}
     gpus: all
     networks:
       - nexus

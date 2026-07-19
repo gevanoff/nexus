@@ -10,15 +10,16 @@ The container is Nexus-owned. The upstream HeartMuLa repo is still cloned into t
 - Default port: `9185`
 - Checkpoint path: `/data/ckpt`
 - Recommended traded-in setting: `HEARTMULA_LAZY_LOAD=true`
+- Host persistence on `ada2`: `/data/heartmula`, with shared Hugging Face cache at `/data/huggingface`
 
 ## Performance note
 
-First production bring-up on `ada2` required downloading these upstream checkpoints into `.runtime/heartmula/ckpt`:
+First production bring-up on `ada2` required downloading these upstream checkpoints into `/data/heartmula/ckpt`:
 
 ```bash
-hf download --local-dir .runtime/heartmula/ckpt HeartMuLa/HeartMuLaGen
-hf download --local-dir .runtime/heartmula/ckpt/HeartMuLa-oss-3B HeartMuLa/HeartMuLa-oss-3B-happy-new-year
-hf download --local-dir .runtime/heartmula/ckpt/HeartCodec-oss HeartMuLa/HeartCodec-oss-20260123
+hf download --local-dir /data/heartmula/ckpt HeartMuLa/HeartMuLaGen
+hf download --local-dir /data/heartmula/ckpt/HeartMuLa-oss-3B HeartMuLa/HeartMuLa-oss-3B-happy-new-year
+hf download --local-dir /data/heartmula/ckpt/HeartCodec-oss HeartMuLa/HeartCodec-oss-20260123
 ```
 
 Observed on `ada2`:

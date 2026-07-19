@@ -8,7 +8,8 @@ The container is Nexus-owned. The upstream SkyReels-V2 repo is still cloned into
 
 - Recommended host: `ada2`
 - Default port: `9180`
-- Hugging Face cache is expected to live under the persistent `/data/cache` volume so model downloads survive container recreation.
+- Service state and outputs live under `/data/skyreels-v2` on `ada2`.
+- The shared Hugging Face cache lives under `/data/huggingface`; service-local XDG and Torch caches remain under the container's `/data/cache` volume.
 
 ## Verification
 

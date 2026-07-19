@@ -16,7 +16,7 @@ services:
       - FYC_DEFAULT_CONFIG=${FYC_DEFAULT_CONFIG:-infer-configs/prompt-panda-nexus.yaml}
       - PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/followyourcanvas:/data
+      - ${FOLLOWYOURCANVAS_DATA_BIND_SOURCE:-${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/followyourcanvas}:/data
     gpus: all
     networks:
       - nexus

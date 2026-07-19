@@ -262,6 +262,8 @@ def render_env_file(template_path: Path, output_path: Path, env_values: dict[str
             output_lines.append(line)
             continue
         key = match.group(2)
+        if key in known_keys:
+            continue
         known_keys.add(key)
         if key in DEPRECATED_ENV_KEYS:
             continue

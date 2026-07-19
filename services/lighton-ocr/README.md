@@ -10,6 +10,7 @@ This port preserves both proxy mode and subprocess mode from `ai-infra`, but the
 - Possible host: `stackrot` if VRAM is sufficient
 - Default port: `9155`
 - The container is ready at idle without holding persistent VRAM; model load occurs inside the request subprocess.
+- Production state remains in the Nexus runtime tree at `/data/nexus-runtime/lighton-ocr` on `ada2`; the shared Hugging Face cache is the separate `/data/huggingface` backend cache.
 
 ## Gateway integration
 

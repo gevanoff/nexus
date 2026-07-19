@@ -6,7 +6,7 @@ services:
     ports:
       - "${VLLM_PORT:-8000}:8000"
     environment:
-      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
+      - HF_HOME=${HF_HOME:-/data/huggingface}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - NVIDIA_VISIBLE_DEVICES=${VLLM_CUDA_VISIBLE_DEVICES:-all}
@@ -36,7 +36,7 @@ services:
     entrypoint: ["/bin/sh", "/usr/local/bin/nexus-run-vllm-openai"]
     volumes:
       - ./deploy/scripts/run-vllm-openai.sh:/usr/local/bin/nexus-run-vllm-openai:ro
-      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
+      - ${HF_HOME_BIND_SOURCE:-/data/huggingface}:${HF_HOME:-/data/huggingface}
     networks:
       - nexus
     restart: unless-stopped

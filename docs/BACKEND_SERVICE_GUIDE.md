@@ -61,7 +61,7 @@ Operationally, 128 GB system RAM makes the current 8 GB vLLM CPU offload setting
 
 The Nexus PersonaPlex service is only a shim on `9160`. It does not start the upstream live UI/server on `8998`.
 
-The upstream repo can build its own CUDA UI container from `.runtime/personaplex/app/docker-compose.yaml`, but it needs access to the gated `nvidia/personaplex-7b-v1` Hugging Face repo. The initial bring-up failed because the active token did not have accepted model access and no cached artifacts existed. After the correct token/access were installed and the nginx/live-UI path was fixed, PersonaPlex was confirmed working through the gateway/nginx path.
+The upstream repo can build its own CUDA UI container from `/data/personaplex/app/docker-compose.yaml` on `ada2`, but it needs access to the gated `nvidia/personaplex-7b-v1` Hugging Face repo. The initial bring-up failed because the active token did not have accepted model access and no cached artifacts existed. After the correct token/access were installed and the nginx/live-UI path was fixed, PersonaPlex was confirmed working through the gateway/nginx path.
 
 Do not call a fresh PersonaPlex deployment functional until:
 
@@ -73,7 +73,7 @@ Do not call a fresh PersonaPlex deployment functional until:
 
 ### HeartMula
 
-HeartMula required three checkpoint downloads into `.runtime/heartmula/ckpt`:
+HeartMula required three checkpoint downloads into `/data/heartmula/ckpt` on `ada2`:
 
 - `HeartMuLa/HeartMuLaGen`
 - `HeartMuLa/HeartMuLa-oss-3B-happy-new-year`

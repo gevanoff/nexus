@@ -17,7 +17,7 @@ services:
       - PERSONAPLEX_DEVICE=${PERSONAPLEX_DEVICE:-cuda}
       - PERSONAPLEX_UPSTREAM_BASE_URL=${PERSONAPLEX_UPSTREAM_BASE_URL:-}
     volumes:
-      - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/personaplex:/data
+      - ${PERSONAPLEX_DATA_BIND_SOURCE:-${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/personaplex}:/data
     gpus: all
     networks:
       - nexus

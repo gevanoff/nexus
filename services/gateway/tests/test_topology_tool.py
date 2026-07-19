@@ -37,3 +37,23 @@ def test_render_env_file_drops_deprecated_huge_model_inventory(tmp_path):
     assert "KEEP=topology" in rendered
     assert "MLX_HUGE_MODELS" not in rendered
     assert "MLX_HUGE_LANE_DEFAULT_MODEL" not in rendered
+
+
+def test_render_env_file_deduplicates_template_keys(tmp_path):
+    topology_tool = _load_topology_tool()
+    template = tmp_path / ".env.example"
+    output = tmp_path / ".env"
+    template.write_text(
+        "HF_HOME=/first\nKEEP=template\nHF_HOME=/second\n",
+        encoding="utf-8",
+    )
+
+    topology_tool.render_env_file(
+        template,
+        output,
+        {"HF_HOME": "/data/huggingface"},
+    )
+
+    rendered = output.read_text(encoding="utf-8")
+    assert rendered.count("HF_HOME=") == 1
+    assert "HF_HOME=/data/huggingface" in rendered

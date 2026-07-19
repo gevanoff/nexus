@@ -2,7 +2,7 @@
 
 ## Backend Lifecycle And Service Standardization
 
-- Make PersonaPlex upstream UI/runtime a first-class compose/lifecycle component instead of a manual `.runtime/personaplex/app/docker-compose.yaml` launch.
+- Make PersonaPlex upstream UI/runtime a first-class compose/lifecycle component instead of a manual `/data/personaplex/app/docker-compose.yaml` launch on `ada2`.
 - Add required-secret checks to lifecycle-manager status, especially for gated Hugging Face repos.
 - Add model artifact manifest support so lifecycle status can show missing checkpoint files before a user starts a backend.
 - Bake heavy upstream dependencies into service images where practical; avoid startup `pip install` for HeartMula-style runtimes.

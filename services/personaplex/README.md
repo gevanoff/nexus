@@ -8,6 +8,7 @@ This port keeps the upstream proxy mode and optional startup bootstrap of the up
 
 - Recommended host: `ada2`
 - Default port: `9160`
+- Host persistence on `ada2`: `/data/personaplex`
 
 ## Host placement decision
 
@@ -52,7 +53,7 @@ Trading in the Nexus PersonaPlex component starts the shim on `9160`, but that s
 The upstream repo has its own CUDA Dockerfile and `docker-compose.yaml`. On `ada2`, after the shim has cloned the upstream repo, the live UI can be started from:
 
 ```bash
-cd .runtime/personaplex/app
+cd /data/personaplex/app
 docker compose -p personaplex-upstream -f docker-compose.yaml up -d --build
 ```
 
