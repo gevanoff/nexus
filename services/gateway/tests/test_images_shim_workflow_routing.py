@@ -9,9 +9,9 @@ import pytest
 from fastapi import HTTPException
 
 
-IMAGES_APP = Path(__file__).resolve().parents[2] / "images" / "app"
-sys.path.insert(0, str(IMAGES_APP))
-import workflow_routing  # noqa: E402
+IMAGES_SERVICE = Path(__file__).resolve().parents[2] / "images"
+sys.path.insert(0, str(IMAGES_SERVICE))
+from app import workflow_routing  # noqa: E402
 
 
 def _write_graph(tmp_path: Path, name: str, node_type: str) -> str:
