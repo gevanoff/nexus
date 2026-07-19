@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from app import openai_images_shim
+from app import workflow_routing
 from app.model_compat import install_model_compat
-from app.workflow_routing import install_workflow_routing
+from app.workflow_validation import install_workflow_output_validation
 
 
 install_model_compat(openai_images_shim)
-install_workflow_routing(openai_images_shim)
+install_workflow_output_validation(workflow_routing, openai_images_shim)
+workflow_routing.install_workflow_routing(openai_images_shim)
 app = openai_images_shim.app
 
 from app.openai_images_edits import router as images_edits_router  # noqa: E402
