@@ -11,10 +11,11 @@ services:
       - CONTAINER_UID=${CONTAINER_UID:-1000}
       - CONTAINER_GID=${CONTAINER_GID:-1000}
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
-      - HF_HOME=${HF_HOME:-/var/lib/huggingface}
+      - HF_TOKEN=${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN:-}}
+      - HF_HOME=${HF_HOME:-/data/huggingface}
     volumes:
       - ${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/invokeai:/invokeai
-      - ${HF_HOME_BIND_SOURCE:-/var/lib/huggingface}:${HF_HOME:-/var/lib/huggingface}
+      - ${HF_HOME_BIND_SOURCE:-/data/huggingface}:${HF_HOME:-/data/huggingface}
     gpus: all
     networks:
       - nexus
