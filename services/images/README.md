@@ -137,6 +137,7 @@ Nexus persists image state on the host and bind-mounts workflow exports into the
 images:
   environment:
     - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
+    - SHIM_PORT=7860
     - SHIM_GRAPH_TEMPLATE_PATH=${SHIM_GRAPH_TEMPLATE_PATH:-/app/shim/graph_template.json}
     - SHIM_GENERATION_WORKFLOWS_JSON=${SHIM_GENERATION_WORKFLOWS_JSON:-}
     - SHIM_GENERATION_MODEL_TYPES=${SHIM_GENERATION_MODEL_TYPES:-main}
