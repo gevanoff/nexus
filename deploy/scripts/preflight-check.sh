@@ -30,7 +30,7 @@ TOPOLOGY_FILE=""
 
 is_valid_component() {
   case "$1" in
-    gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -69,6 +69,7 @@ add_component_selection() {
         append_component_unique etcd
         ;;
       all)
+        append_component_unique deployment-control
         append_component_unique gateway
         append_component_unique vllm
         append_component_unique mlx
@@ -273,7 +274,7 @@ else
   fail "Gateway source missing (expected services/gateway/app with requirements.freeze.txt)"
 fi
 
-for service in images tts; do
+for service in deployment-control images tts; do
   if [[ -f "services/$service/Dockerfile" ]]; then
     ok "Optional service buildable: $service"
   else
@@ -517,6 +518,10 @@ check_port_optional() {
 }
 
 # Port checks default to the broad stack when no components are specified.
+if component_selected deployment-control; then
+  check_port_required DEPLOY_CONTROL_PORT 9220 "Deployment Control API"
+fi
+
 if component_selected gateway; then
   check_port_required GATEWAY_PORT 8800 "Gateway API"
   check_port_required OBSERVABILITY_PORT 8801 "Gateway observability"

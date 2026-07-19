@@ -49,7 +49,7 @@ Options:
                    Topology JSON file (default: deploy/topology/production.json when --topology-host is set)
 
 Components:
-  gateway, vllm, vllm-strong, vllm-fast, vllm-embeddings, etcd, images, invokeai, sdxl-turbo,
+  deployment-control, gateway, vllm, vllm-strong, vllm-fast, vllm-embeddings, etcd, images, invokeai, sdxl-turbo,
   lighton-ocr, personaplex, followyourcanvas, skyreels-v2, heartmula, lifecycle-manager,
   mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
 
@@ -67,7 +67,7 @@ EOF
 
 is_valid_component() {
   case "$1" in
-    gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -107,6 +107,7 @@ add_component_selection() {
         append_component_unique etcd
         ;;
       all)
+        append_component_unique deployment-control
         append_component_unique gateway
         append_component_unique vllm
         append_component_unique mlx
@@ -137,6 +138,7 @@ add_component_selection() {
 
 component_base_compose_file() {
   case "$1" in
+    deployment-control) echo "docker-compose.deployment-control.yml" ;;
     gateway) echo "docker-compose.gateway.yml" ;;
     vllm) echo "docker-compose.vllm.yml" ;;
     vllm-strong) echo "docker-compose.vllm-strong.yml" ;;
@@ -286,7 +288,7 @@ if [[ "$COMPONENTS_SET" != "true" ]]; then
 fi
 
 compose_files=()
-ordered_components=(gateway vllm vllm-strong vllm-fast vllm-embeddings mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas skyreels-v2 heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
+ordered_components=(deployment-control gateway vllm vllm-strong vllm-fast vllm-embeddings mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas skyreels-v2 heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
 for component in "${ordered_components[@]}"; do
   include_component="false"
   for selected in "${SELECTED_COMPONENTS[@]}"; do

@@ -40,6 +40,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/deploy.sh [--component NAME|--components LIST] <prod> <branch>`: deploy selected components on a host
 - `./deploy/scripts/ops-stack.sh --topology-host <host> [prod main]`: guarded convenience wrapper around `deploy.sh` with production defaults
 - `./deploy/scripts/remote-deploy.sh [--component NAME|--components LIST] [--topology-host NAME] [--repo-dir PATH] <prod> <branch> [user@host]`: deploy selected components over SSH
+- `./deploy/scripts/request-deploy.sh --host HOST --component NAME [--reason TEXT]`: preferred production entry point; submit and follow a serialized deployment through Deployment Control on `copyfail`
 - `./deploy/scripts/ansible-topology.sh <inventory|bootstrap|deploy|site> [host|all] [-- extra ansible args]`: short wrapper around the topology-backed Ansible control layer
 - `./deploy/scripts/topology-ssh.sh [--print-target] <stackrot|ai2|ada2|meltdown|copyfail> [command...]`: resolve a tracked host profile to SSH and optionally run a remote command
 - `./deploy/scripts/render-topology-env.sh --topology-host <host>`: materialize a host env file from the tracked topology manifest
@@ -59,7 +60,7 @@ Script entrypoints (all invoked from repo root):
 Example: deploy only the images component to a GPU host:
 
 ```bash
-./deploy/scripts/deploy.sh --components images prod main
+./deploy/scripts/request-deploy.sh --host ada2 --component images --reason "deploy image service"
 ```
 
 Example: deploy an NVIDIA image stack on Linux:

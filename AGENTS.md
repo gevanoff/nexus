@@ -111,6 +111,25 @@ PowerShell and switch only after it fails.
   live deployment. If any credential, host, or deployment prerequisite is
   missing, report the exact blocker and the next concrete command or action.
 
+## Centralized Production Deployments
+
+- Submit production deployments through Deployment Control on `copyfail`; do
+  not run `deploy.sh` directly on a target host during normal operations.
+- From the WSL checkout, use the component-scoped agent entry point:
+
+  ```bash
+  ./deploy/scripts/request-deploy.sh --host ada2 --component images --reason "deploy merged image fix"
+  ```
+
+- The wrapper connects to `copyfail`, where the API token, SOPS age identity,
+  generated secret overlays, audit state, and dedicated deployment SSH identity
+  are retained. Target hosts do not need `sops` or an age private key.
+- Always name one or more components. Full-host deployments and
+  `--remove-orphans` behavior are intentionally unavailable through the API.
+- Direct target-host deployment is a break-glass fallback only when Deployment
+  Control is unavailable. State the reason, keep the deploy component-scoped,
+  and restore the controller before considering the task complete.
+
 ## OpenAI-Compatible Gateway And Continue
 
 - Nexus supports Continue.dev as an OpenAI-compatible provider.

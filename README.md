@@ -125,9 +125,13 @@ For a tracked production host, deploy its declared topology instead of manually
 assembling Compose files:
 
 ```bash
-./deploy/scripts/deploy.sh --topology-host ai2 prod main
-./deploy/scripts/remote-deploy.sh --topology-host stackrot prod main
+./deploy/scripts/request-deploy.sh --host ai2 --component gateway --reason "deploy merged gateway changes"
+./deploy/scripts/request-deploy.sh --host stackrot --component vllm-fast --reason "deploy fast lane update"
 ```
+
+Production agents use the authenticated Deployment Control API on `copyfail`.
+Direct `deploy.sh` and `remote-deploy.sh` invocations are break-glass tools for
+controller bootstrap or recovery.
 
 Use focused restart helpers only when topology and configuration are already
 correct. See [deploy/SCRIPTS.md](deploy/SCRIPTS.md).
@@ -190,6 +194,7 @@ These scripts are the current supported setup/install and deployment entrypoints
 - `deploy/scripts/restart-colima.sh`: restart/verify the Colima LaunchDaemon on macOS
 - `deploy/scripts/deploy.sh <prod> <branch>`: host-local deployment
 - `deploy/scripts/remote-deploy.sh <prod> <branch> <user@host>`: remote deployment wrapper
+- `deploy/scripts/request-deploy.sh --host <host> --component <name>`: submit and follow a centralized deployment through `copyfail`
 - `deploy/scripts/ops-stack.sh --topology-host <host> [prod main]`: guarded convenience wrapper around the topology-aware `deploy.sh`
 - `deploy/scripts/restart-gateway.sh`: restart/rebuild only Gateway so code/config updates are picked up quickly
 - `deploy/scripts/redeploy-tts-shims.sh`: redeploy containerized `pocket_tts` + `luxtts` + `qwen3-tts` without touching Gateway

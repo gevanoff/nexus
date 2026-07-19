@@ -137,12 +137,12 @@ def test_copyfail_is_infra_only_topology_host() -> None:
     assert copyfail["platform"] == "linux"
     assert copyfail["resource_kind"] == "linux_infra"
     assert copyfail["ssh_target"] == "ai@copyfail"
-    assert copyfail["components"] == []
+    assert copyfail["components"] == ["deployment-control"]
     assert "deployment_control" in copyfail["roles"]
     assert lifecycle["hosts"]["copyfail"]["resource_kind"] == "linux_infra"
     assert lifecycle["hosts"]["copyfail"]["env_file"] == "deploy/env/.env.prod.copyfail"
     assert lifecycle["core_services"]["deployment_control"]["host"] == "copyfail"
-    assert lifecycle["core_services"]["deployment_control"]["components"] == []
+    assert lifecycle["core_services"]["deployment_control"]["component"] == "deployment-control"
 
     for backend in lifecycle["backends"].values():
         assert backend.get("host") != "copyfail"

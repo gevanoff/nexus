@@ -257,14 +257,25 @@
       "platform": "linux",
       "resource_kind": "linux_infra",
       "ssh_target": "ai@copyfail",
-      "components": [],
+      "components": [
+        "deployment-control"
+      ],
       "roles": [
         "deployment_control",
         "metrics_collection",
         "it_infrastructure"
       ],
       "env": {
-        "ETCD_URL": "http://ai2:2379"
+        "ETCD_URL": "http://ai2:2379",
+        "NEXUS_RUNTIME_ROOT": "/data/nexus-runtime",
+        "DEPLOY_CONTROL_HOST": "copyfail",
+        "DEPLOY_CONTROL_BIND_ADDRESS": "127.0.0.1",
+        "DEPLOY_CONTROL_PORT": "9220",
+        "DEPLOY_CONTROL_STATE_BIND_SOURCE": "/data/nexus-runtime/deployment-control",
+        "DEPLOY_CONTROL_SSH_KEY_FILE": "/home/ai/.ssh/nexus-deployment-control",
+        "DEPLOY_CONTROL_SSH_KNOWN_HOSTS_FILE": "/home/ai/.ssh/known_hosts",
+        "DEPLOY_CONTROL_SOPS_AGE_KEY_FILE": "/home/ai/.config/sops/age/keys.txt",
+        "DEPLOY_CONTROL_TOKEN_FILE": "/data/nexus-runtime/deployment-control/token"
       }
     }
   }

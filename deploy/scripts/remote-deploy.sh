@@ -196,6 +196,20 @@ if [[ ! "$host" =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$ ]]; then
 fi
 
 ssh_opts=("-o" "StrictHostKeyChecking=accept-new")
+if [[ -n "${NEXUS_DEPLOY_SSH_IDENTITY_FILE:-}" ]]; then
+  if [[ ! -f "$NEXUS_DEPLOY_SSH_IDENTITY_FILE" ]]; then
+    ns_print_error "Deployment SSH identity is unavailable: $NEXUS_DEPLOY_SSH_IDENTITY_FILE"
+    exit 1
+  fi
+  ssh_opts+=("-i" "$NEXUS_DEPLOY_SSH_IDENTITY_FILE" "-o" "IdentitiesOnly=yes")
+fi
+if [[ -n "${NEXUS_DEPLOY_SSH_KNOWN_HOSTS_FILE:-}" ]]; then
+  if [[ ! -f "$NEXUS_DEPLOY_SSH_KNOWN_HOSTS_FILE" ]]; then
+    ns_print_error "Deployment known-hosts file is unavailable: $NEXUS_DEPLOY_SSH_KNOWN_HOSTS_FILE"
+    exit 1
+  fi
+  ssh_opts+=("-o" "UserKnownHostsFile=$NEXUS_DEPLOY_SSH_KNOWN_HOSTS_FILE")
+fi
 if [[ "$NS_AUTO_YES" == "true" ]]; then
   ssh_opts+=("-o" "BatchMode=yes")
 else

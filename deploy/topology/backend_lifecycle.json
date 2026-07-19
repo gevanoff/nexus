@@ -135,9 +135,9 @@
     "deployment_control": {
       "display_name": "Deployment Control",
       "host": "copyfail",
-      "components": [],
+      "component": "deployment-control",
       "tier": "core",
-      "notes": "Infrastructure-only host intended for metrics collection, deployment orchestration, and general IT operations. It is intentionally excluded from model backend placement."
+      "notes": "Authenticated deployment and SOPS control plane on copyfail. Agents submit component-scoped deployments here instead of running deploy.sh on target hosts."
     },
     "hermes_client": {
       "display_name": "Hermes Client",
