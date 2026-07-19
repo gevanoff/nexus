@@ -120,6 +120,9 @@ def test_runtime_root_resolution_is_shared_and_honors_explicit_env_files():
     common = _read("deploy/scripts/_common.sh")
 
     assert "ns_runtime_root_from_env()" in common
+    assert 'ns_runtime_root_from_env "$ROOT_DIR" "$env_file"' in _read(
+        "deploy/scripts/deploy.sh"
+    )
     for path in (
         "deploy/scripts/backup-gateway-db.sh",
         "deploy/scripts/backup-etcd.sh",

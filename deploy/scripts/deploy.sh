@@ -470,7 +470,7 @@ ns_ensure_project_env_bind_source "$ROOT_DIR" "$env_file" "$bind_env_sync_mode"
 export GATEWAY_ENV_FILE
 GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ROOT_DIR/.env")"
 ns_print_ok "Gateway env bind source: ${GATEWAY_ENV_FILE}"
-host_runtime_root="$(ns_runtime_root "$ROOT_DIR")"
+host_runtime_root="$(ns_runtime_root_from_env "$ROOT_DIR" "$env_file")"
 export NEXUS_RUNTIME_ROOT
 NEXUS_RUNTIME_ROOT="$(ns_resolve_docker_bind_path "$host_runtime_root")"
 ns_print_ok "Runtime bind root: ${NEXUS_RUNTIME_ROOT}"
