@@ -1,17 +1,35 @@
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 
-IMAGES_SERVICE = Path(__file__).resolve().parents[2] / "images"
-sys.path.insert(0, str(IMAGES_SERVICE))
-from app import workflow_routing  # noqa: E402
+IMAGES_APP = Path(__file__).resolve().parents[2] / "images" / "app"
+
+
+def _load_images_modules(*names: str):
+    saved = {key: value for key, value in sys.modules.items() if key == "app" or key.startswith("app.")}
+    for key in list(saved):
+        sys.modules.pop(key, None)
+    package = ModuleType("app")
+    package.__path__ = [str(IMAGES_APP)]
+    sys.modules["app"] = package
+    try:
+        loaded = [importlib.import_module(f"app.{name}") for name in names]
+    finally:
+        for key in [key for key in list(sys.modules) if key == "app" or key.startswith("app.")]:
+            sys.modules.pop(key, None)
+        sys.modules.update(saved)
+    return loaded
+
+
+workflow_routing, = _load_images_modules("workflow_routing")
 
 
 def _write_graph(tmp_path: Path, name: str, node_type: str) -> str:
