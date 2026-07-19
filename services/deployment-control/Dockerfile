@@ -12,6 +12,9 @@ RUN apt-get update \
         curl \
         git \
         openssh-client \
+    && groupadd --gid 1000 nexus \
+    && useradd --uid 1000 --gid 1000 --home-dir /var/lib/deployment-control/home \
+        --no-create-home --shell /bin/bash nexus \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=sops /usr/local/bin/sops /usr/local/bin/sops
