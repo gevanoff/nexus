@@ -161,8 +161,7 @@ def test_resolver_rejects_non_main_model_with_descriptive_name(
     detail = str(exc_info.value.detail)
     assert "Cinematic LoRA (id lora-id)" in detail
     assert "type lora" in detail
-    assert "type is 'main'" in detail
-
+    assert "type is one of: main" in detail
 
 def test_resolver_explains_stale_uuid_and_lists_current_main_models(
     tmp_path: Path,
