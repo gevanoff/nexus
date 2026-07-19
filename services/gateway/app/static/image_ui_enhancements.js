@@ -166,8 +166,16 @@
 
   function enhanceViewer(viewer) {
     if (!(viewer instanceof HTMLElement) || viewer.dataset.namedDownloadReady === "true") return;
-    const actions = viewer.querySelector(".image-stage-actions");
-    if (!actions) return;
+    const toolbar = viewer.querySelector(".image-stage-toolbar");
+    if (!toolbar) return;
+    let actions = viewer.querySelector(".image-stage-actions");
+    if (!actions) {
+      actions = document.createElement("div");
+      actions.className = "image-stage-actions";
+      const openLink = toolbar.querySelector("a");
+      if (openLink) actions.appendChild(openLink);
+      toolbar.appendChild(actions);
+    }
     viewer.dataset.namedDownloadReady = "true";
     const button = document.createElement("button");
     button.type = "button";
