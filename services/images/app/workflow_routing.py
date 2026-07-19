@@ -204,6 +204,7 @@ def resolve_requested_model(shim_module: Any, req: Any, cfg: Any) -> Optional[Di
             detail=(
                 "InvokeAI has no selectable base generation models. The Image UI only lists "
                 f"model type(s): {allowed}. Import a base generation model with one of these types in InvokeAI, then refresh the catalog."
+            ),
         )
 
     if requested:
