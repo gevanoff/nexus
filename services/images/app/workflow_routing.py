@@ -190,6 +190,20 @@ def _list_candidates(shim_module: Any, cfg: Any) -> tuple[list[Dict[str, Any]], 
     return all_candidates, generation_candidates
 
 
+def _workflow_compatible_fallback(
+    shim_module: Any,
+    cfg: Any,
+    candidates: list[Dict[str, Any]],
+) -> Dict[str, Any]:
+    specs = configured_workflows(cfg)
+    for candidate in candidates:
+        normalized = _normalize_candidate(shim_module, candidate)
+        family = _normalize_family(model_compat.model_family(normalized))
+        if family and family in specs:
+            return normalized
+    return _normalize_candidate(shim_module, candidates[0])
+
+
 def resolve_requested_model(shim_module: Any, req: Any, cfg: Any) -> Optional[Dict[str, Any]]:
     explicit = str(getattr(req, "model", "") or "").strip()
     configured_default = str(getattr(cfg, "default_model", "") or "").strip()
@@ -251,7 +265,7 @@ def resolve_requested_model(shim_module: Any, req: Any, cfg: Any) -> Optional[Di
             ", ".join(sorted(_allowed_model_types())),
         )
 
-    return _normalize_candidate(shim_module, generation_candidates[0])
+    return _workflow_compatible_fallback(shim_module, cfg, generation_candidates)
 
 
 def select_workflow(model_info: Optional[Dict[str, Any]], cfg: Any) -> WorkflowSpec:

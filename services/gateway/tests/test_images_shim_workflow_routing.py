@@ -123,6 +123,31 @@ def test_select_workflow_matches_model_family(
     assert spec.output_node_id is None
 
 
+def test_default_model_prefers_family_with_configured_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdxl = _write_graph(tmp_path, "sdxl.json", "sdxl_model_loader")
+    monkeypatch.delenv("SHIM_GENERATION_WORKFLOWS_JSON", raising=False)
+    FakeShim.candidates = [
+        {"key": "flux-id", "name": "FLUX.1 Dev", "base": "flux", "type": "main"},
+        {
+            "key": "juggernaut-id",
+            "name": "Juggernaut XL v9",
+            "base": "sdxl",
+            "type": "main",
+        },
+    ]
+
+    resolved = workflow_routing.resolve_requested_model(
+        FakeShim,
+        SimpleNamespace(model=None),
+        _cfg(sdxl),
+    )
+
+    assert resolved["key"] == "juggernaut-id"
+
+
 def test_missing_family_workflow_error_names_model_id_and_available_family(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
