@@ -205,7 +205,7 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     assert "TELEGRAM_STACKROT_TOKEN" in compose
     assert "TELEGRAM_MELTDOWN_TOKEN" in compose
     assert "ai2-chat" in compose
-    assert "ada2-chat" in compose
+    assert "tess-chat" in compose
     assert "stackrot-chat" in compose
     assert "cinder-chat" in compose
     assert "TELEGRAM_ADA2_GATEWAY_BASE_URL" in compose
@@ -233,6 +233,8 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     aliases = json.loads(_read("services/gateway/app/model_aliases.json"))["aliases"]
     assert aliases["cinder-chat"]["backend"] == "local_vllm_fast"
     assert aliases["cinder-chat"]["soul"] == "meltdown"
+    assert aliases["tess-chat"]["backend"] == "local_vllm_fast"
+    assert aliases["tess-chat"]["soul"] == "ada2"
 
 
 def test_adada_is_lifecycle_only_inventory_host() -> None:

@@ -95,7 +95,7 @@ The default service is the `ai2` bot. Three additional services are available un
 | Service | Token | Model alias | SOUL.md |
 | --- | --- | --- | --- |
 | `telegram-bot` | `TELEGRAM_AI2_TOKEN` or legacy `TELEGRAM_TOKEN` | `ai2-chat` | `souls/ai2/SOUL.md` |
-| `telegram-bot-ada2` | `TELEGRAM_ADA2_TOKEN` | `ada2-chat` | `souls/ada2/SOUL.md` |
+| `telegram-bot-ada2` | `TELEGRAM_ADA2_TOKEN` | `tess-chat` | `souls/ada2/SOUL.md` |
 | `telegram-bot-stackrot` | `TELEGRAM_STACKROT_TOKEN` | `stackrot-chat` | `souls/stackrot/SOUL.md` |
 | `telegram-bot-meltdown` | `TELEGRAM_MELTDOWN_TOKEN` | `cinder-chat` | `souls/meltdown/SOUL.md` |
 
@@ -106,6 +106,9 @@ defaults `GATEWAY_BASE_URL` to `http://ai2.embrient.com:8800` through
 
 Tess likewise runs outside the Gateway's Compose project on `ada2` and uses
 `TELEGRAM_ADA2_GATEWAY_BASE_URL`, which defaults to the same ai2 Gateway URL.
+Her `tess-chat` identity retains `souls/ada2/SOUL.md` while using the shared fast
+Devstral lane, so she remains available when ada2's heavy vLLM lane is traded
+out for the InvokeAI image backend.
 Run remote host bots in dedicated Compose projects so a normal topology deploy
 of the host cannot remove them as orphans.
 

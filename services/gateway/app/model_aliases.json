@@ -87,6 +87,15 @@
       "max_tokens_cap": 1024,
       "soul": "ada2"
     },
+    "tess-chat": {
+      "backend": "local_vllm_fast",
+      "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
+      "label": "Tess - Devstral Small (shared fast lane)",
+      "context_window": 8192,
+      "tools": false,
+      "max_tokens_cap": 768,
+      "soul": "ada2"
+    },
     "stackrot-chat": {
       "backend": "local_vllm_fast",
       "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
