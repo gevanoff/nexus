@@ -246,8 +246,9 @@ def resolve_requested_model(shim_module: Any, req: Any, cfg: Any) -> Optional[Di
             )
 
         logger.warning(
-            "Configured InvokeAI default model %r could not be resolved; using first installed type='main' model",
+            "Configured InvokeAI default model %r could not be resolved; using first installed model of type(s): %s",
             requested,
+            ", ".join(sorted(_allowed_model_types())),
         )
 
     return _normalize_candidate(shim_module, generation_candidates[0])
