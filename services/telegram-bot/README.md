@@ -104,11 +104,27 @@ defaults `GATEWAY_BASE_URL` to `http://ai2.embrient.com:8800` through
 `TELEGRAM_MELTDOWN_GATEWAY_BASE_URL`. Do not use the Compose-local
 `http://gateway:8800` hostname for the meltdown deployment.
 
+Tess likewise runs outside the Gateway's Compose project on `ada2` and uses
+`TELEGRAM_ADA2_GATEWAY_BASE_URL`, which defaults to the same ai2 Gateway URL.
+Run remote host bots in dedicated Compose projects so a normal topology deploy
+of the host cannot remove them as orphans.
+
+On ada2, use the generated production host env plus the mode-600 local overlay
+that holds Tess's token:
+
+```bash
+docker compose -p nexus-tess --profile host-bots \
+  --env-file deploy/env/.env.prod.ada2 \
+  --env-file deploy/env/.env.prod.ada2.local \
+  -f docker-compose.telegram-bot.yml \
+  up -d --build telegram-bot-ada2
+```
+
 On meltdown, use the generated production host env plus the mode-600 local
 overlay that holds Cinder's token and identity settings:
 
 ```bash
-docker compose -p nexus --profile host-bots \
+docker compose -p nexus-cinder --profile host-bots \
   --env-file deploy/env/.env.prod.meltdown \
   --env-file deploy/env/.env.prod.meltdown.local \
   -f docker-compose.telegram-bot.yml \

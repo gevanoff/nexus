@@ -211,6 +211,7 @@
         "HEARTMULA_DATA_BIND_SOURCE": "/data/heartmula",
         "FOLLOWYOURCANVAS_DATA_BIND_SOURCE": "/data/followyourcanvas",
         "PERSONAPLEX_DATA_BIND_SOURCE": "/data/personaplex",
+        "TELEGRAM_ADA2_GATEWAY_BASE_URL": "http://ai2.embrient.com:8800",
         "HF_HOME": "/data/huggingface",
         "HF_HOME_BIND_SOURCE": "/data/huggingface",
         "HF_HUB_CACHE": "/data/huggingface/hub",

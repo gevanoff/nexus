@@ -207,6 +207,7 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     assert "ada2-chat" in compose
     assert "stackrot-chat" in compose
     assert "cinder-chat" in compose
+    assert "TELEGRAM_ADA2_GATEWAY_BASE_URL" in compose
     assert "TELEGRAM_MELTDOWN_GATEWAY_BASE_URL" in compose
     assert "http://ai2.embrient.com:8800" in compose
     assert "TELEGRAM_MEMORY_ENABLED" in compose
@@ -218,6 +219,12 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     assert lifecycle["core_services"]["telegram_bridge_tess"]["component"] == "telegram-bot-ada2"
     assert lifecycle["core_services"]["telegram_bridge_hex"]["component"] == "telegram-bot-stackrot"
     assert lifecycle["core_services"]["telegram_bridge_cinder"]["component"] == "telegram-bot-meltdown"
+
+    topology = json.loads(_read("deploy/topology/production.json"))
+    assert (
+        topology["hosts"]["ada2"]["env"]["TELEGRAM_ADA2_GATEWAY_BASE_URL"]
+        == "http://ai2.embrient.com:8800"
+    )
 
     aliases = json.loads(_read("services/gateway/app/model_aliases.json"))["aliases"]
     assert aliases["cinder-chat"]["backend"] == "local_vllm_fast"

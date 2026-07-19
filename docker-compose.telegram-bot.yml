@@ -47,6 +47,7 @@ services:
     environment:
       <<: *telegram-environment
       TELEGRAM_TOKEN: ${TELEGRAM_ADA2_TOKEN:-}
+      GATEWAY_BASE_URL: ${TELEGRAM_ADA2_GATEWAY_BASE_URL:-http://ai2.embrient.com:8800}
       GATEWAY_MODEL: ${TELEGRAM_ADA2_MODEL:-ada2-chat}
       TELEGRAM_MENTION_PATTERNS: ${TELEGRAM_ADA2_MENTION_PATTERNS:-ada2}
 
