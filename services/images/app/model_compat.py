@@ -39,6 +39,15 @@ _GRAPH_FAMILY_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "sd3_denoise",
         ),
     ),
+    (
+        "sd",
+        (
+            # InvokeAI uses the generic main_model_loader for Stable Diffusion
+            # 1.x and 2.x graphs. More specific SDXL/Flux/SD3 markers are
+            # checked first, so mixed or migrated graphs retain precedence.
+            "main_model_loader",
+        ),
+    ),
 )
 
 
