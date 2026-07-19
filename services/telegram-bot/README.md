@@ -116,7 +116,7 @@ that holds Tess's token:
 docker compose -p nexus-tess --profile host-bots \
   --env-file deploy/env/.env.prod.ada2 \
   --env-file deploy/env/.env.prod.ada2.local \
-  -f docker-compose.telegram-bot.yml \
+  -f docker-compose.telegram-bot-host.yml \
   up -d --build telegram-bot-ada2
 ```
 
@@ -127,7 +127,7 @@ overlay that holds Cinder's token and identity settings:
 docker compose -p nexus-cinder --profile host-bots \
   --env-file deploy/env/.env.prod.meltdown \
   --env-file deploy/env/.env.prod.meltdown.local \
-  -f docker-compose.telegram-bot.yml \
+  -f docker-compose.telegram-bot-host.yml \
   up -d --build telegram-bot-meltdown
 ```
 
