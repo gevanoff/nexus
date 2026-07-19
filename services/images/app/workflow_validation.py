@@ -18,8 +18,18 @@ def install_workflow_output_validation(routing_module: Any, shim_module: Any) ->
         if spec.output_node_id:
             return spec
 
+        path = Path(spec.path)
+        cache = getattr(validated_select_workflow, "_nexus_output_node_cache", {})
         try:
-            graph = json.loads(Path(spec.path).read_text(encoding="utf-8"))
+            mtime = path.stat().st_mtime_ns
+        except Exception:
+            mtime = -1
+        cached = cache.get(spec.path)
+        if cached and cached[0] == mtime:
+            return replace(spec, output_node_id=cached[1])
+
+        try:
+            graph = json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
             raise HTTPException(
                 status_code=503,
@@ -39,6 +49,9 @@ def install_workflow_output_validation(routing_module: Any, shim_module: Any) ->
                     "SHIM_GENERATION_WORKFLOWS_JSON entry or export a workflow with a recognizable final image node."
                 ),
             )
+
+        cache[spec.path] = (mtime, output_node_id)
+        setattr(validated_select_workflow, "_nexus_output_node_cache", cache)
         return replace(spec, output_node_id=output_node_id)
 
     setattr(validated_select_workflow, "_nexus_output_validated", True)
