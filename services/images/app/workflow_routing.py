@@ -88,7 +88,12 @@ def configured_workflows(cfg: Any) -> Dict[str, WorkflowSpec]:
                 specs[spec.family] = spec
 
     default_path = str(getattr(cfg, "graph_template_path", "") or "").strip()
-    default_family = model_compat.detect_graph_model_family(default_path)
+    cache_key = getattr(configured_workflows, "_nexus_default_family_path", None)
+    default_family = getattr(configured_workflows, "_nexus_default_family", None)
+    if default_path and cache_key != default_path:
+        default_family = model_compat.detect_graph_model_family(default_path)
+        setattr(configured_workflows, "_nexus_default_family_path", default_path)
+        setattr(configured_workflows, "_nexus_default_family", default_family)
     if default_path and default_family and default_family not in specs:
         specs[default_family] = WorkflowSpec(
             family=default_family,
