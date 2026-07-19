@@ -228,8 +228,8 @@ def resolve_requested_model(shim_module: Any, req: Any, cfg: Any) -> Optional[Di
                     detail=(
                         f"Selected InvokeAI model {_model_label(candidate)} has type "
                         f"{_candidate_type(candidate) or 'unknown'}, not a base generation model. "
-                        "Choose a model whose InvokeAI type is 'main'. LoRA, VAE, ControlNet, IP-Adapter, "
-                        "embedding, and similar auxiliary models must be selected through workflow-specific controls."
+                        f"Choose a model whose InvokeAI type is one of: {', '.join(sorted(_allowed_model_types()))}. "
+                        "LoRA, VAE, ControlNet, IP-Adapter, embedding, and similar auxiliary models must be selected through workflow-specific controls."
                     ),
                 )
 
