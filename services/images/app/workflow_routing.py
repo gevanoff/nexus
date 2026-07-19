@@ -238,7 +238,7 @@ def resolve_requested_model(shim_module: Any, req: Any, cfg: Any) -> Optional[Di
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Selected InvokeAI model identifier {explicit!r} is not an installed type='main' model. "
+                    f"Selected InvokeAI model identifier {explicit!r} is not an installed base generation model (allowed type(s): {', '.join(sorted(_allowed_model_types()))}). "
                     "It may be stale because the model was removed or re-imported with a new UUID. "
                     f"Refresh Backends and select a current model. Installed base models: {available or 'none'}."
                 ),
