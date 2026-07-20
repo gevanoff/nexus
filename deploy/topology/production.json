@@ -252,6 +252,7 @@
         "LTX_CUDA_VISIBLE_DEVICES": "0",
         "LTX_QUANTIZATION": "fp8-cast",
         "IMAGES_SHIM_MODE": "invokeai_queue",
+        "SHIM_GENERATION_WORKFLOWS_JSON": "{\"sd\":\"/app/shim/graph_template_sd.json\"}",
         "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
         "SDXL_TURBO_MAX_GUIDANCE_SCALE": "0.0",
         "VLLM_SERVICE_NAME": "vllm",

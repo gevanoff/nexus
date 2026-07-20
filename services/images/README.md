@@ -60,8 +60,8 @@ Supported family keys currently include:
 Example:
 
 ```env
-SHIM_GRAPH_TEMPLATE_PATH=/data/workflows/sdxl-text-to-image.json
-SHIM_GENERATION_WORKFLOWS_JSON={"sdxl":"/data/workflows/sdxl-text-to-image.json","flux":{"path":"/data/workflows/flux-text-to-image.json"},"sd3":{"path":"/data/workflows/sd3-text-to-image.json"},"sd":"/data/workflows/sd15-text-to-image.json"}
+SHIM_GRAPH_TEMPLATE_PATH=/app/shim/graph_template.json
+SHIM_GENERATION_WORKFLOWS_JSON={"sd":"/app/shim/graph_template_sd.json"}
 ```
 
 A map value can be either a path string or an object:
@@ -76,6 +76,20 @@ A map value can be either a path string or an object:
 ```
 
 `output_node_id` is optional when the shim can identify the final image-output node in the exported workflow.
+
+The shim image includes InvokeAI 6.11.1's default text-to-image exports for
+SD1.5/2, FLUX, and SD3.5. The legacy `SHIM_GRAPH_TEMPLATE_PATH` supplies SDXL,
+and the production topology enables the complete SD1.5/2 export at
+`/app/shim/graph_template_sd.json`.
+
+InvokeAI's bundled FLUX and SD3.5 exports intentionally leave required T5,
+CLIP, and VAE inputs unselected. Their copies in the shim image are useful
+starting points, but do not add those families to
+`SHIM_GENERATION_WORKFLOWS_JSON` as-is. Open the workflow in InvokeAI, select
+installed auxiliary models, export the completed workflow into
+`${NEXUS_RUNTIME_ROOT}/images/workflows`, and map that exported path. This keeps
+InvokeAI's model data under `/data/invokeai` distinct from Nexus runtime-owned
+workflow configuration under `/data/nexus-runtime/images/workflows`.
 
 The workflows directory is mounted read-only inside the container:
 

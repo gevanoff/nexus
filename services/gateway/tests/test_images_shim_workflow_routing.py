@@ -230,3 +230,28 @@ def test_generic_flux_loader_receives_selected_model() -> None:
     value = graph["nodes"][0]["data"]["inputs"]["model"]["value"]
     assert value["key"] == "flux-id"
     assert value["name"] == "FLUX Main"
+
+
+def test_generic_loader_adds_value_missing_from_builtin_workflow_export() -> None:
+    graph = {
+        "nodes": [
+            {
+                "id": "loader",
+                "data": {
+                    "type": "main_model_loader",
+                    "inputs": {"model": {"name": "model", "label": ""}},
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+    workflow_routing._inject_generic_model_loaders(
+        graph,
+        {"key": "sd-id", "name": "Dreamshaper 8", "base": "sd-1", "type": "main"},
+        "id",
+    )
+
+    model_field = graph["nodes"][0]["data"]["inputs"]["model"]
+    assert model_field["name"] == "model"
+    assert model_field["value"]["key"] == "sd-id"

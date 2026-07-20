@@ -769,14 +769,15 @@ def _detect_output_node_id(graph: dict) -> Optional[str]:
 
     # Workflow export format: nodes is a list of objects with node['id'] and node['data'].
     if isinstance(nodes, list):
-        # Prefer the final latents->image node when present.
+        # Prefer the final decoder node when present. InvokeAI uses family-
+        # specific decoder types for FLUX and SD3 workflows.
         for node in nodes:
             if not isinstance(node, dict):
                 continue
             data = node.get("data")
             if not isinstance(data, dict):
                 continue
-            if data.get("type") == "l2i" and data.get("isIntermediate") is False:
+            if data.get("type") in ("l2i", "flux_vae_decode", "sd3_l2i") and data.get("isIntermediate") is False:
                 node_id = node.get("id")
                 return str(node_id) if isinstance(node_id, str) and node_id else None
 
@@ -820,6 +821,19 @@ def _apply_invokeai_workflow_overrides(
         if isinstance(obj, dict) and "value" in obj:
             obj["value"] = value
 
+    # SD3's default export does not label its positive and negative text
+    # encoders. Their edges do, so retain that role while overriding prompts.
+    conditioning_roles: Dict[str, str] = {}
+    edges = graph.get("edges")
+    if isinstance(edges, list):
+        for edge in edges:
+            if not isinstance(edge, dict):
+                continue
+            role = str(edge.get("targetHandle") or "").strip()
+            source = str(edge.get("source") or "").strip()
+            if source and role in ("positive_conditioning", "negative_conditioning"):
+                conditioning_roles[source] = role
+
     for node in nodes:
         if not isinstance(node, dict):
             continue
@@ -828,6 +842,7 @@ def _apply_invokeai_workflow_overrides(
             continue
 
         ntype = data.get("type")
+        node_id = str(node.get("id") or "").strip()
         label = (data.get("label") or "").strip()
         inputs = data.get("inputs")
 
@@ -839,6 +854,27 @@ def _apply_invokeai_workflow_overrides(
                     val_obj["value"] = prompt
                 else:
                     val_obj["value"] = negative_prompt or ""
+            continue
+
+        # SD1/2 workflows place prompts directly on Compel nodes.
+        if ntype == "compel" and label in ("Positive Compel Prompt", "Negative Compel Prompt"):
+            value = prompt if label == "Positive Compel Prompt" else negative_prompt or ""
+            _set_input_value(inputs, "prompt", value)
+            continue
+
+        # FLUX has a single positive text encoder.
+        if ntype == "flux_text_encoder":
+            _set_input_value(inputs, "prompt", prompt)
+            continue
+
+        # SD3 has separate, unlabeled encoders whose destination edge identifies
+        # whether they provide positive or negative conditioning.
+        if ntype == "sd3_text_encoder":
+            role = conditioning_roles.get(node_id)
+            if role == "positive_conditioning":
+                _set_input_value(inputs, "prompt", prompt)
+            elif role == "negative_conditioning":
+                _set_input_value(inputs, "prompt", negative_prompt or "")
             continue
 
         # Keep SDXL compel nodes consistent with the requested output size.
@@ -859,7 +895,7 @@ def _apply_invokeai_workflow_overrides(
             continue
 
         # The default workflow uses a rand_int node to generate a seed.
-        if ntype == "rand_int" and label == "Random Seed" and seed is not None:
+        if ntype == "rand_int" and seed is not None:
             _set_input_value(inputs, "low", int(seed))
             # numpy.random.randint uses an exclusive upper bound. A one-value
             # interval preserves the requested deterministic seed without
@@ -940,6 +976,28 @@ def _apply_invokeai_workflow_overrides(
                 _set_input_value(inputs, "cfg_scale", float(cfg_scale))
             if scheduler:
                 _set_input_value(inputs, "scheduler", str(scheduler))
+            continue
+
+        if ntype == "flux_denoise":
+            _set_input_value(inputs, "width", int(width))
+            _set_input_value(inputs, "height", int(height))
+            if seed is not None:
+                _set_input_value(inputs, "seed", int(seed))
+            if steps is not None:
+                _set_input_value(inputs, "num_steps", int(steps))
+            if cfg_scale is not None:
+                _set_input_value(inputs, "guidance", float(cfg_scale))
+            continue
+
+        if ntype == "sd3_denoise":
+            _set_input_value(inputs, "width", int(width))
+            _set_input_value(inputs, "height", int(height))
+            if seed is not None:
+                _set_input_value(inputs, "seed", int(seed))
+            if steps is not None:
+                _set_input_value(inputs, "steps", int(steps))
+            if cfg_scale is not None:
+                _set_input_value(inputs, "cfg_scale", float(cfg_scale))
             continue
 
 

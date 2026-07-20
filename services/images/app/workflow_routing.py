@@ -339,10 +339,14 @@ def _set_workflow_input(inputs: Any, field: str, value: Any) -> bool:
     if not isinstance(inputs, dict) or field not in inputs:
         return False
     current = inputs.get(field)
-    if isinstance(current, dict) and "value" in current:
+    if isinstance(current, dict):
+        # InvokeAI's built-in exports omit ``value`` for unconfigured required
+        # model fields but retain UI metadata such as ``name`` and ``label``.
+        # Add the value alongside that metadata so export-to-API conversion does
+        # not discard the selected model.
         current["value"] = value
     else:
-        inputs[field] = value
+        inputs[field] = {"value": value}
     return True
 
 
