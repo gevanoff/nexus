@@ -215,6 +215,12 @@ def _repeated_state_read_decision(count: int, maximum: int) -> str:
     return "continue"
 
 
+def _cancelled_run_status(task: Dict[str, Any]) -> str:
+    if bool(task.get("agent_pause_requested") or task.get("agent_stop_requested")):
+        return "paused"
+    return "interrupted"
+
+
 def finalize_successful_run(
     task_id: str,
     *,
@@ -2296,6 +2302,7 @@ async def start_agent_run(
                 "agent_previous_error": previous_error,
                 "agent_stop_requested": False,
                 "agent_pause_requested": False,
+                "agent_auto_resume_pending": False,
                 "agent_auto_commit": bool(auto_commit),
                 "agent_run_prompt": effective_prompt,
             },
@@ -2350,6 +2357,7 @@ async def start_agent_run(
             "agent_previous_error": previous_error,
             "agent_stop_requested": False,
             "agent_pause_requested": False,
+            "agent_auto_resume_pending": False,
             "agent_auto_commit": bool(auto_commit),
             "agent_run_prompt": effective_prompt,
         },
@@ -3080,34 +3088,44 @@ async def _run_agent(
         )
     except asyncio.CancelledError:
         finished_at = time.time()
-        paused_summary = "Coding run was paused. Start another run on this workspace to resume from the latest files and checkpoint."
+        latest_cancelled_task = await asyncio.to_thread(cw.load_task, task_id)
+        cancelled_status = _cancelled_run_status(latest_cancelled_task)
+        user_requested = cancelled_status == "paused"
+        cancelled_summary = (
+            "Coding run was paused by request. Start another run on this workspace to resume from the latest files and checkpoint."
+            if user_requested
+            else "Gateway stopped while this coding run was active. Nexus will automatically resume it from durable workspace state."
+        )
         await asyncio.to_thread(
             _mutate_task,
             task_id,
             {
-                "agent_status": "paused",
+                "agent_status": cancelled_status,
                 "agent_error": "",
-                "agent_summary": paused_summary,
+                "agent_summary": cancelled_summary,
                 "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
+                "agent_auto_resume_pending": not user_requested,
+                "agent_stop_requested": False,
+                "agent_pause_requested": False,
             },
         )
         await asyncio.to_thread(
             _append_event,
             task_id,
-            {"type": "paused", "summary": paused_summary},
+            {"type": "paused" if user_requested else "interrupted", "summary": cancelled_summary},
         )
         await asyncio.to_thread(
             _update_run_record,
             task_id,
             run_id,
             {
-                "status": "paused",
+                "status": cancelled_status,
                 "finished_at": finished_at,
                 "cycle": cycle,
                 "backend": backend,
                 "upstream_model": upstream_model,
-                "summary": paused_summary,
+                "summary": cancelled_summary,
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
             },
         )

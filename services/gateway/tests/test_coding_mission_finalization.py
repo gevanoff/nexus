@@ -110,6 +110,12 @@ def test_coding_progress_budget_detects_repeated_diff_loop():
     assert ca._repeated_state_read_decision(7, 6) == "continue"
 
 
+def test_coding_cancellation_distinguishes_user_pause_from_gateway_restart():
+    assert ca._cancelled_run_status({"agent_pause_requested": True}) == "paused"
+    assert ca._cancelled_run_status({"agent_stop_requested": True}) == "paused"
+    assert ca._cancelled_run_status({}) == "interrupted"
+
+
 def test_coding_context_limits_leave_headroom_for_local_model(monkeypatch):
     monkeypatch.setattr(ca.S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000, raising=False)
     monkeypatch.setattr(ca.S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000, raising=False)

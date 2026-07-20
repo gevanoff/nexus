@@ -933,6 +933,9 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
         except Exception:
             continue
         status = str(task.get("agent_status") or "").strip().lower()
+        if status == "interrupted" and bool(task.get("agent_auto_resume_pending")):
+            recovered.append(str(task.get("id") or path.stem))
+            continue
         if status not in {"queued", "running", "stopping", "pausing"}:
             continue
         events = task.get("agent_events")
@@ -952,6 +955,7 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
         task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 1000) or 1000), 1000)) :]
         task["agent_previous_status"] = status
         task["agent_status"] = "interrupted"
+        task["agent_auto_resume_pending"] = True
         task["agent_summary"] = ev["summary"]
         task["agent_error"] = ev["summary"]
         task["agent_finished_at"] = _now()
