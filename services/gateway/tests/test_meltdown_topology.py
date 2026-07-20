@@ -33,7 +33,10 @@ def test_remote_deploy_updates_target_before_using_target_scripts() -> None:
     script = _read("deploy/scripts/remote-deploy.sh")
 
     fetch = script.index('git fetch origin "$2"')
-    preflight = script.index('./deploy/scripts/preflight-check.sh --mode deploy', fetch)
+    preflight_command = (
+        './deploy/scripts/preflight-check.sh --mode deploy --env-file "$env_file" "${@:5}"'
+    )
+    preflight = script.index(preflight_command, fetch)
     deploy = script.index('./deploy/scripts/deploy.sh "${@:5}" "$1" "$2"', preflight)
     assert fetch < preflight < deploy
 

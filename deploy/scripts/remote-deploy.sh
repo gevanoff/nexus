@@ -288,7 +288,7 @@ fi
 if [[ -f "$candidate" ]]; then
   env_file="$candidate"
 fi
-./deploy/scripts/preflight-check.sh --mode deploy --env-file "$env_file" || true
+./deploy/scripts/preflight-check.sh --mode deploy --env-file "$env_file" "${@:5}" || true
 ./deploy/scripts/deploy.sh "${@:5}" "$1" "$2"
 EOS
 )
