@@ -29,13 +29,13 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             base_ref="origin/${{ github.base_ref }}"
             git fetch origin "${{ github.base_ref }}"
-            diff_output="$(git diff --name-only "$base_ref"...HEAD)"
+            diff_output="$(git diff --name-only --diff-filter=ACMR "$base_ref"...HEAD)"
           else
             before_sha="${{ github.event.before }}"
             if [[ -z "$before_sha" || "$before_sha" == "0000000000000000000000000000000000000000" ]]; then
               diff_output="$(git ls-files)"
             else
-              diff_output="$(git diff --name-only "$before_sha" HEAD)"
+              diff_output="$(git diff --name-only --diff-filter=ACMR "$before_sha" HEAD)"
             fi
           fi
 
