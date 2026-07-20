@@ -17,9 +17,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 
-ENGINE = (os.environ.get("NEXUS_MEDIA_ENGINE") or "video").strip().lower()
-SERVICE_NAME = (os.environ.get("NEXUS_MEDIA_SERVICE_NAME") or f"{ENGINE}-video").strip()
-MODEL_ID = (os.environ.get("NEXUS_MEDIA_MODEL_ID") or ENGINE).strip()
+SUPPORTED_ENGINES = {"ltx", "hunyuan"}
+ENGINE = (os.environ.get("NEXUS_MEDIA_ENGINE") or "").strip().lower()
+SERVICE_NAME = (os.environ.get("NEXUS_MEDIA_SERVICE_NAME") or f"{ENGINE or 'unknown'}-video").strip()
+MODEL_ID = (os.environ.get("NEXUS_MEDIA_MODEL_ID") or ENGINE or "unknown").strip()
 JOB_PREFIX = re.sub(r"[^a-z0-9]+", "_", ENGINE).strip("_") or "video"
 _SAFE_JOB_RE = re.compile(rf"^{re.escape(JOB_PREFIX)}_[A-Fa-f0-9]{{32}}$")
 
@@ -80,6 +81,13 @@ def _output_url(request: Request, job_id: str, name: str) -> str:
 
 def _required_path_errors() -> list[str]:
     errors: list[str] = []
+    if ENGINE not in SUPPORTED_ENGINES:
+        configured = ENGINE or "<unset>"
+        errors.append(
+            f"NEXUS_MEDIA_ENGINE must be one of {', '.join(sorted(SUPPORTED_ENGINES))}; got {configured}"
+        )
+        return errors
+
     runner = _runner_script()
     runner_python = _runner_python()
     upstream = _upstream_dir()
@@ -96,10 +104,8 @@ def _required_path_errors() -> list[str]:
             "LTX_SPATIAL_UPSAMPLER_PATH": _env("LTX_SPATIAL_UPSAMPLER_PATH"),
             "LTX_GEMMA_ROOT": _env("LTX_GEMMA_ROOT"),
         }
-    elif ENGINE == "hunyuan":
-        required = {"HUNYUAN_MODEL_PATH": _env("HUNYUAN_MODEL_PATH")}
     else:
-        required = {}
+        required = {"HUNYUAN_MODEL_PATH": _env("HUNYUAN_MODEL_PATH")}
 
     for key, raw_path in required.items():
         if not raw_path:
@@ -138,7 +144,7 @@ def readyz() -> JSONResponse:
 def models() -> dict[str, Any]:
     return {
         "object": "list",
-        "data": [{"id": MODEL_ID, "object": "model", "owned_by": ENGINE}],
+        "data": [{"id": MODEL_ID, "object": "model", "owned_by": ENGINE or "unknown"}],
     }
 
 
