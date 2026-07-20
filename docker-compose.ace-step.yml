@@ -1,0 +1,72 @@
+services:
+  ace-step:
+    build:
+      context: ./services/media-generation
+      dockerfile: Dockerfile
+    container_name: nexus-ace-step
+    ports:
+      - "${ACE_STEP_PORT:-9195}:9195"
+    environment:
+      - NEXUS_MEDIA_ENGINE=ace_step
+      - MEDIA_PORT=9195
+      - MEDIA_DATA_DIR=/data
+      - MEDIA_UPSTREAM_DIR=/data/app
+      - MEDIA_OUTPUT_ROOT=/data/outputs
+      - MEDIA_PUBLIC_BASE_URL=${ACE_STEP_ADVERTISE_BASE_URL:-}
+      - MEDIA_GENERATION_TIMEOUT_SEC=${ACE_STEP_TIMEOUT_SEC:-1800}
+      - MEDIA_UPDATE_ON_START=${ACE_STEP_UPDATE_ON_START:-false}
+      - ACE_STEP_REPO_URL=${ACE_STEP_REPO_URL:-https://github.com/ace-step/ACE-Step-1.5.git}
+      - ACE_STEP_REPO_REF=${ACE_STEP_REPO_REF:-}
+      - ACE_STEP_DIT_MODEL=${ACE_STEP_DIT_MODEL:-acestep-v15-xl-sft}
+      - ACE_STEP_LM_MODEL=${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-4B}
+      - ACESTEP_CONFIG_PATH=${ACESTEP_CONFIG_PATH:-${ACE_STEP_DIT_MODEL:-acestep-v15-xl-sft}}
+      - ACESTEP_LM_MODEL_PATH=${ACESTEP_LM_MODEL_PATH:-${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-4B}}
+      - ACESTEP_LM_BACKEND=${ACESTEP_LM_BACKEND:-vllm}
+      - ACESTEP_API_HOST=127.0.0.1
+      - ACESTEP_API_PORT=8001
+      - ACE_STEP_POLL_INTERVAL_SEC=${ACE_STEP_POLL_INTERVAL_SEC:-2}
+      - HF_HOME=${ACE_STEP_HF_HOME:-${HF_HOME:-/data/huggingface}}
+      - HUGGINGFACE_HUB_CACHE=${ACE_STEP_HF_HOME:-${HF_HOME:-/data/huggingface}}/hub
+      - TRANSFORMERS_CACHE=${ACE_STEP_HF_HOME:-${HF_HOME:-/data/huggingface}}/transformers
+      - XDG_CACHE_HOME=/data/cache
+      - NVIDIA_VISIBLE_DEVICES=${ACE_STEP_CUDA_VISIBLE_DEVICES:-1}
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    volumes:
+      - ${ACE_STEP_DATA_BIND_SOURCE:-${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/ace-step}:/data
+      - ${HF_HOME_BIND_SOURCE:-/data/huggingface}:${ACE_STEP_HF_HOME:-${HF_HOME:-/data/huggingface}}
+    gpus: all
+    networks:
+      - nexus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9195/readyz"]
+      interval: 30s
+      timeout: 15s
+      start_period: 600s
+      retries: 5
+
+  ace-step-registrar:
+    build:
+      context: ./services/service-registrar
+      dockerfile: Dockerfile
+    environment:
+      - NEXUS_SERVICE_NAME=ace-step
+      - NEXUS_SERVICE_BASE_URL=${ACE_STEP_ADVERTISE_BASE_URL:-${ACE_STEP_BASE_URL:-http://ace-step:9195}}
+      - NEXUS_SERVICE_HEALTH_URL=http://ace-step:9195/readyz
+      - NEXUS_SERVICE_BACKEND_CLASS=ace_step_music
+      - ETCD_URL=${ETCD_URL:-http://etcd:2379}
+      - NEXUS_REGISTRATION_INTERVAL_SEC=${NEXUS_REGISTRATION_INTERVAL_SEC:-30}
+      - NEXUS_REGISTRATION_TIMEOUT_SEC=${NEXUS_REGISTRATION_TIMEOUT_SEC:-5}
+    depends_on:
+      - ace-step
+    networks:
+      - nexus
+    restart: unless-stopped
+
+networks:
+  nexus:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
