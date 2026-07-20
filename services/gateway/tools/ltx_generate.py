@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import math
 import os
 import sys
 from typing import Any
@@ -20,6 +21,19 @@ def _error(detail: Any, *, http_status: int | None = None) -> int:
     return 1
 
 
+def _timeout_seconds(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive number; got {raw!r}") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number; got {raw!r}")
+    return value
+
+
 def main() -> int:
     try:
         payload: dict[str, Any] = json.load(sys.stdin)
@@ -27,7 +41,11 @@ def main() -> int:
         return _error(f"invalid tool input: {type(exc).__name__}: {exc}")
 
     base_url = (os.environ.get("LTX_VIDEO_BASE_URL") or "http://127.0.0.1:9180").rstrip("/")
-    timeout = float(os.environ.get("LTX_VIDEO_TIMEOUT_SEC") or 3600)
+    try:
+        timeout = _timeout_seconds("LTX_VIDEO_TIMEOUT_SEC", 3600.0)
+    except ValueError as exc:
+        return _error(str(exc))
+
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.post(f"{base_url}/v1/videos/generations", json=payload)
