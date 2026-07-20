@@ -116,6 +116,8 @@ def _download_input(value: str, temp_dir: Path, suffix: str = ".png") -> str:
         "=http,https",
         "--proto-redir",
         "=",
+        "--noproxy",
+        "*",
         "--resolve",
         _curl_resolve_value(hostname, port, resolved_ip),
         "--output",
