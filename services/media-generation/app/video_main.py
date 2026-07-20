@@ -160,11 +160,10 @@ async def generate_video(payload: dict[str, Any], request: Request) -> dict[str,
     job_id = f"{JOB_PREFIX}_{uuid.uuid4().hex}"
     output_dir = _output_root() / job_id
     output_dir.mkdir(parents=True, exist_ok=True)
+    result_path = output_dir / "result.json"
 
     with tempfile.TemporaryDirectory(prefix=f"{JOB_PREFIX}-") as tmpdir:
-        tmp = Path(tmpdir)
-        request_path = tmp / "request.json"
-        result_path = tmp / "result.json"
+        request_path = Path(tmpdir) / "request.json"
         request_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
         env = os.environ.copy()
