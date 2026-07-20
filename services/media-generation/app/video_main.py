@@ -156,7 +156,7 @@ def get_output(job_id: str, name: str) -> FileResponse:
     path = (root / job_id / name).resolve()
     if root not in path.parents or not path.is_file():
         raise HTTPException(status_code=404, detail="output not found")
-    return FileResponse(str(path), media_type="video/mp4")
+    return FileResponse(str(path))
 
 
 @app.post("/v1/videos/generations")
