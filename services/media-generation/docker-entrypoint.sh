@@ -24,6 +24,19 @@ clone_or_update() {
   fi
 }
 
+uv_sync_runtime() {
+  local sync_args=("$@")
+  if [[ -f uv.lock ]]; then
+    if uv sync --frozen "${sync_args[@]}"; then
+      return 0
+    fi
+    echo "Frozen uv sync failed; retrying without --frozen for runtime-cloned upstream" >&2
+  else
+    echo "No uv.lock found; running non-frozen uv sync for runtime-cloned upstream" >&2
+  fi
+  uv sync "${sync_args[@]}"
+}
+
 wait_for_http() {
   local url="$1"
   local attempts="${2:-120}"
@@ -45,7 +58,7 @@ case "${ENGINE}" in
       "${LTX_REPO_REF:-}"
     cd "${UPSTREAM_DIR}"
     read -r -a ltx_uv_sync_args <<< "${LTX_UV_SYNC_ARGS:---extra xformers}"
-    uv sync --frozen "${ltx_uv_sync_args[@]}"
+    uv_sync_runtime "${ltx_uv_sync_args[@]}"
     export MEDIA_RUNNER_PYTHON="${UPSTREAM_DIR}/.venv/bin/python"
     export MEDIA_UPSTREAM_DIR="${UPSTREAM_DIR}"
     cd /app
@@ -79,7 +92,7 @@ case "${ENGINE}" in
       "${ACE_STEP_REPO_REF:-}"
     cd "${UPSTREAM_DIR}"
     read -r -a ace_step_uv_sync_args <<< "${ACE_STEP_UV_SYNC_ARGS:-}"
-    uv sync --frozen "${ace_step_uv_sync_args[@]}"
+    uv_sync_runtime "${ace_step_uv_sync_args[@]}"
 
     export ACESTEP_API_HOST="${ACESTEP_API_HOST:-127.0.0.1}"
     export ACESTEP_API_PORT="${ACESTEP_API_PORT:-8001}"
