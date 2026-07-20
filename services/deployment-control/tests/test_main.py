@@ -75,20 +75,28 @@ def test_deployment_command_is_argument_safe(monkeypatch, tmp_path: Path) -> Non
     ]
 
 
-def test_validate_request_enforces_topology_placement(monkeypatch, tmp_path: Path) -> None:
+def test_validate_request_enforces_required_and_optional_topology_placement(
+    monkeypatch, tmp_path: Path
+) -> None:
     topology = tmp_path / "deploy" / "topology" / "production.json"
     topology.parent.mkdir(parents=True)
     topology.write_text(
-        '{"hosts":{"ada2":{"components":["images","invokeai"]}}}',
+        '{"hosts":{"ada2":{"components":["images","invokeai"],'
+        '"optional_components":["ltx-video"]}}}',
         encoding="utf-8",
     )
     monkeypatch.setenv("DEPLOY_CONTROL_REPO_ROOT", str(tmp_path))
     monkeypatch.setenv("DEPLOY_CONTROL_ALLOWED_HOSTS", "ada2")
-    monkeypatch.setenv("DEPLOY_CONTROL_ALLOWED_COMPONENTS", "gateway,images")
+    monkeypatch.setenv(
+        "DEPLOY_CONTROL_ALLOWED_COMPONENTS", "gateway,images,ltx-video"
+    )
     monkeypatch.setenv("DEPLOY_CONTROL_ALLOWED_BRANCHES", "main")
     monkeypatch.setenv("DEPLOY_CONTROL_ENFORCE_TOPOLOGY", "true")
 
     main._validate_request(main.DeploymentRequest(host="ada2", components=["images"]))
+    main._validate_request(
+        main.DeploymentRequest(host="ada2", components=["ltx-video"])
+    )
     with pytest.raises(HTTPException) as exc_info:
         main._validate_request(
             main.DeploymentRequest(host="ada2", components=["gateway"])
