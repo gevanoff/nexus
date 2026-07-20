@@ -119,7 +119,9 @@
         "vllm-fast",
         "tts",
         "luxtts",
-        "qwen3-tts",
+        "qwen3-tts"
+      ],
+      "optional_components": [
         "hunyuan-video",
         "ace-step"
       ],
@@ -228,8 +230,10 @@
         "images",
         "invokeai",
         "lighton-ocr",
-        "ltx-video",
         "vllm-strong"
+      ],
+      "optional_components": [
+        "ltx-video"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
