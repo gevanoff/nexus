@@ -50,7 +50,7 @@ Options:
 
 Components:
   deployment-control, gateway, vllm, vllm-strong, vllm-fast, vllm-embeddings, vllm-meltdown, etcd, images, invokeai, sdxl-turbo,
-  lighton-ocr, personaplex, followyourcanvas, skyreels-v2, heartmula, lifecycle-manager,
+  lighton-ocr, personaplex, followyourcanvas, ltx-video, hunyuan-video, ace-step, heartmula, lifecycle-manager,
   mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
 
 Special component groups:
@@ -67,7 +67,7 @@ EOF
 
 is_valid_component() {
   case "$1" in
-    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -118,7 +118,9 @@ add_component_selection() {
         append_component_unique lighton-ocr
         append_component_unique personaplex
         append_component_unique followyourcanvas
-        append_component_unique skyreels-v2
+        append_component_unique ltx-video
+        append_component_unique hunyuan-video
+        append_component_unique ace-step
         append_component_unique heartmula
         append_component_unique lifecycle-manager
         append_component_unique mediamtx
@@ -152,7 +154,9 @@ component_base_compose_file() {
     lighton-ocr) echo "docker-compose.lighton-ocr.yml" ;;
     personaplex) echo "docker-compose.personaplex.yml" ;;
     followyourcanvas) echo "docker-compose.followyourcanvas.yml" ;;
-    skyreels-v2) echo "docker-compose.skyreels-v2.yml" ;;
+    ltx-video) echo "docker-compose.ltx-video.yml" ;;
+    hunyuan-video) echo "docker-compose.hunyuan-video.yml" ;;
+    ace-step) echo "docker-compose.ace-step.yml" ;;
     heartmula) echo "docker-compose.heartmula.yml" ;;
     lifecycle-manager) echo "docker-compose.lifecycle-manager.yml" ;;
     mediamtx) echo "docker-compose.mediamtx.yml" ;;
@@ -289,7 +293,7 @@ if [[ "$COMPONENTS_SET" != "true" ]]; then
 fi
 
 compose_files=()
-ordered_components=(deployment-control gateway vllm vllm-strong vllm-fast vllm-embeddings vllm-meltdown mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas skyreels-v2 heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
+ordered_components=(deployment-control gateway vllm vllm-strong vllm-fast vllm-embeddings vllm-meltdown mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas ltx-video hunyuan-video ace-step heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
 for component in "${ordered_components[@]}"; do
   include_component="false"
   for selected in "${SELECTED_COMPONENTS[@]}"; do

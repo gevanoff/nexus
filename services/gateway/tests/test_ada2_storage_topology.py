@@ -17,7 +17,7 @@ def test_ada2_separates_nexus_runtime_and_backend_owned_data() -> None:
 
     assert env["NEXUS_RUNTIME_ROOT"] == "/data/nexus-runtime"
     assert env["INVOKEAI_DATA_BIND_SOURCE"] == "/data/invokeai"
-    assert env["SKYREELS_DATA_BIND_SOURCE"] == "/data/skyreels-v2"
+    assert env["LTX_DATA_BIND_SOURCE"] == "/data/ltx-video"
     assert env["HEARTMULA_DATA_BIND_SOURCE"] == "/data/heartmula"
     assert env["FOLLOWYOURCANVAS_DATA_BIND_SOURCE"] == "/data/followyourcanvas"
     assert env["PERSONAPLEX_DATA_BIND_SOURCE"] == "/data/personaplex"
@@ -32,7 +32,7 @@ def test_ada2_backend_compose_defaults_do_not_bind_var_lib_huggingface() -> None
     compose_files = (
         "docker-compose.invokeai.yml",
         "docker-compose.lighton-ocr.yml",
-        "docker-compose.skyreels-v2.yml",
+        "docker-compose.ltx-video.yml",
         "docker-compose.vllm-strong.yml",
         "docker-compose.heartmula.yml",
     )
@@ -46,7 +46,7 @@ def test_ada2_backend_compose_defaults_do_not_bind_var_lib_huggingface() -> None
 def test_migrated_backends_have_independent_bind_sources() -> None:
     compose_bind_sources = {
         "docker-compose.invokeai.yml": "INVOKEAI_DATA_BIND_SOURCE",
-        "docker-compose.skyreels-v2.yml": "SKYREELS_DATA_BIND_SOURCE",
+        "docker-compose.ltx-video.yml": "LTX_DATA_BIND_SOURCE",
         "docker-compose.heartmula.yml": "HEARTMULA_DATA_BIND_SOURCE",
         "docker-compose.followyourcanvas.yml": "FOLLOWYOURCANVAS_DATA_BIND_SOURCE",
         "docker-compose.personaplex.yml": "PERSONAPLEX_DATA_BIND_SOURCE",

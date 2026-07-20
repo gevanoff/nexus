@@ -31,7 +31,6 @@ async def music_generations(req: Request):
 
     backend_class = (getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "heartmula_music"
 
-    # Backend health/readiness + capability.
     check_backend_ready(backend_class, route_kind="music")
     await check_capability(backend_class, "music")
 

@@ -70,8 +70,14 @@
       "LIGHTON_OCR_ADVERTISE_BASE_URL": "http://ada2:9155",
       "PERSONAPLEX_BASE_URL": "http://ada2:9160",
       "PERSONAPLEX_ADVERTISE_BASE_URL": "http://ada2:9160",
-      "SKYREELS_V2_BASE_URL": "http://ada2:9180",
-      "SKYREELS_V2_ADVERTISE_BASE_URL": "http://ada2:9180",
+      "LTX_VIDEO_BASE_URL": "http://ada2:9180",
+      "LTX_VIDEO_ADVERTISE_BASE_URL": "http://ada2:9180",
+      "HUNYUAN_VIDEO_BASE_URL": "http://stackrot:9185",
+      "HUNYUAN_VIDEO_ADVERTISE_BASE_URL": "http://stackrot:9185",
+      "ACE_STEP_BASE_URL": "http://stackrot:9195",
+      "ACE_STEP_ADVERTISE_BASE_URL": "http://stackrot:9195",
+      "VIDEO_BACKEND_CLASS": "ltx_video",
+      "MUSIC_BACKEND_CLASS": "ace_step_music",
       "POCKET_TTS_BASE_URL": "http://stackrot:9940",
       "POCKET_TTS_ADVERTISE_BASE_URL": "http://stackrot:9940",
       "LUXTTS_BASE_URL": "http://stackrot:9170",
@@ -104,7 +110,7 @@
   },
   "hosts": {
     "stackrot": {
-      "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, TTS, and secondary vLLM/CUDA capacity.",
+      "description": "Dual-GPU Linux/NVIDIA node (2x RTX 3090 24GB) for media ingress, TTS, music/video generation, and secondary vLLM capacity.",
       "platform": "linux",
       "resource_kind": "linux_nvidia",
       "ssh_target": "ai@stackrot",
@@ -115,8 +121,19 @@
         "luxtts",
         "qwen3-tts"
       ],
+      "optional_components": [
+        "hunyuan-video",
+        "ace-step"
+      ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
+        "NEXUS_RUNTIME_ROOT": "/data/nexus-runtime",
+        "HF_HOME": "/data/huggingface",
+        "HF_HOME_BIND_SOURCE": "/data/huggingface",
+        "HUNYUAN_VIDEO_DATA_BIND_SOURCE": "/data/hunyuan-video",
+        "ACE_STEP_DATA_BIND_SOURCE": "/data/ace-step",
+        "HUNYUAN_VIDEO_CUDA_VISIBLE_DEVICES": "1",
+        "ACE_STEP_CUDA_VISIBLE_DEVICES": "1",
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "VLLM_FAST_SERVICE_NAME": "vllm-fast",
         "VLLM_FAST_BACKEND_CLASS": "local_vllm_fast",
@@ -165,13 +182,17 @@
         "LIGHTON_OCR_ADVERTISE_BASE_URL": "http://host.docker.internal:18155",
         "PERSONAPLEX_BASE_URL": "http://host.docker.internal:18160",
         "PERSONAPLEX_ADVERTISE_BASE_URL": "http://host.docker.internal:18160",
-        "SKYREELS_V2_BASE_URL": "http://host.docker.internal:18180",
-        "SKYREELS_V2_ADVERTISE_BASE_URL": "http://host.docker.internal:18180",
-        "BACKEND_ENV_BASE_URL_OVERRIDES": "local_vllm,local_vllm_fast,local_vllm_embeddings,local_vllm_meltdown,gpu_heavy,gpu_fast,lighton_ocr,personaplex,skyreels_v2",
+        "LTX_VIDEO_BASE_URL": "http://host.docker.internal:18180",
+        "LTX_VIDEO_ADVERTISE_BASE_URL": "http://host.docker.internal:18180",
+        "HUNYUAN_VIDEO_BASE_URL": "http://host.docker.internal:18185",
+        "HUNYUAN_VIDEO_ADVERTISE_BASE_URL": "http://host.docker.internal:18185",
+        "ACE_STEP_BASE_URL": "http://host.docker.internal:18195",
+        "ACE_STEP_ADVERTISE_BASE_URL": "http://host.docker.internal:18195",
+        "BACKEND_ENV_BASE_URL_OVERRIDES": "local_vllm,local_vllm_fast,local_vllm_embeddings,local_vllm_meltdown,gpu_heavy,gpu_fast,lighton_ocr,personaplex,ltx_video,hunyuan_video,ace_step_music",
         "MLX_FALLBACK_BACKEND": "local_vllm_fast",
         "MLX_FALLBACK_MODEL": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
         "UI_IP_ALLOWLIST": "127.0.0.1,172.28.0.1,10.10.22.0/24",
-        "TOOLS_ALLOWLIST": "echo,lighton_ocr,skyreels_generate,cluster_resources",
+        "TOOLS_ALLOWLIST": "echo,lighton_ocr,ltx_generate,hunyuan_video_generate,ace_step_generate,cluster_resources",
         "DISABLED_BACKEND_CLASSES": "followyourcanvas,heartmula_music,personaplex",
         "DEFAULT_BACKEND": "local_vllm"
       }
@@ -201,7 +222,7 @@
       }
     },
     "ada2": {
-      "description": "Linux/NVIDIA node with 128GB system RAM and an RTX 6000 Ada 48GB for primary heavy vLLM plus image and video generation services.",
+      "description": "Linux/NVIDIA node with 126GB system RAM and an RTX 6000 Ada reporting 45GB VRAM for primary image and high-quality video generation.",
       "platform": "linux",
       "resource_kind": "linux_nvidia",
       "ssh_target": "ai@ada2",
@@ -209,14 +230,16 @@
         "images",
         "invokeai",
         "lighton-ocr",
-        "skyreels-v2",
         "vllm-strong"
+      ],
+      "optional_components": [
+        "ltx-video"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
         "NEXUS_RUNTIME_ROOT": "/data/nexus-runtime",
         "INVOKEAI_DATA_BIND_SOURCE": "/data/invokeai",
-        "SKYREELS_DATA_BIND_SOURCE": "/data/skyreels-v2",
+        "LTX_DATA_BIND_SOURCE": "/data/ltx-video",
         "HEARTMULA_DATA_BIND_SOURCE": "/data/heartmula",
         "FOLLOWYOURCANVAS_DATA_BIND_SOURCE": "/data/followyourcanvas",
         "PERSONAPLEX_DATA_BIND_SOURCE": "/data/personaplex",
@@ -226,6 +249,8 @@
         "HF_HUB_CACHE": "/data/huggingface/hub",
         "HUGGINGFACE_HUB_CACHE": "/data/huggingface/hub",
         "TRANSFORMERS_CACHE": "/data/huggingface/transformers",
+        "LTX_CUDA_VISIBLE_DEVICES": "0",
+        "LTX_QUANTIZATION": "fp8-cast",
         "IMAGES_SHIM_MODE": "invokeai_queue",
         "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
         "SDXL_TURBO_MAX_GUIDANCE_SCALE": "0.0",

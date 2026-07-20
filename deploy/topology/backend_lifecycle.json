@@ -294,18 +294,48 @@
       "compose_file": "docker-compose.lighton-ocr.yml",
       "ready_path": "/readyz"
     },
-    "skyreels_v2": {
-      "display_name": "SkyReels V2",
+    "ltx_video": {
+      "display_name": "LTX-2.3 22B Distilled",
       "host": "ada2",
-      "component": "skyreels-v2",
+      "component": "ltx-video",
       "tier": "optional",
       "capabilities": ["video"],
-      "estimated_vram_mb": 18000,
-      "peak_observed_vram_mb": 41000,
-      "auto_start": true,
+      "estimated_vram_mb": 36000,
+      "peak_observed_vram_mb": 43000,
+      "auto_start": false,
       "auto_stop": true,
-      "compose_file": "docker-compose.skyreels-v2.yml",
-      "ready_path": "/readyz"
+      "requires_confirmation": true,
+      "compose_file": "docker-compose.ltx-video.yml",
+      "ready_path": "/readyz",
+      "notes": "FP8-cast LTX-2.3 on the RTX 6000 Ada. Treat as an exclusive or near-exclusive media window: the host probe showed 37GB free with image services resident, while the model needs roughly 32GB before generation headroom."
+    },
+    "hunyuan_video": {
+      "display_name": "HunyuanVideo-1.5",
+      "host": "stackrot",
+      "component": "hunyuan-video",
+      "tier": "optional",
+      "capabilities": ["video"],
+      "estimated_vram_mb": 21000,
+      "auto_start": false,
+      "auto_stop": true,
+      "requires_confirmation": true,
+      "compose_file": "docker-compose.hunyuan-video.yml",
+      "ready_path": "/readyz",
+      "notes": "Pinned to physical RTX 3090 GPU 1 with model/group offloading. Mutually exclusive with ACE-Step XL and normally requires stopping Qwen3-TTS on that GPU."
+    },
+    "ace_step_music": {
+      "display_name": "ACE-Step 1.5 XL SFT",
+      "host": "stackrot",
+      "component": "ace-step",
+      "tier": "optional",
+      "capabilities": ["music"],
+      "estimated_vram_mb": 23000,
+      "auto_start": false,
+      "auto_stop": true,
+      "requires_confirmation": true,
+      "compose_file": "docker-compose.ace-step.yml",
+      "ready_path": "/readyz",
+      "notes": "XL SFT plus the 4B LM on physical RTX 3090 GPU 1. Mutually exclusive with HunyuanVideo and normally requires stopping Qwen3-TTS on that GPU."
     },
     "personaplex": {
       "display_name": "PersonaPlex",

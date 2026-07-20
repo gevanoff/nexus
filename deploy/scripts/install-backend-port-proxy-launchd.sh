@@ -51,7 +51,9 @@ Default forwards:
   sdxl-turbo=127.0.0.1:18050=meltdown:9050
   lighton-ocr=127.0.0.1:18155=ada2:9155
   personaplex=127.0.0.1:18160=ada2:9160
-  skyreels-v2=127.0.0.1:18180=ada2:9180
+  ltx-video=127.0.0.1:18180=ada2:9180
+  hunyuan-video=127.0.0.1:18185=stackrot:9185
+  ace-step=127.0.0.1:18195=stackrot:9195
   ssh-stackrot=127.0.0.1:19022=stackrot:22
   ssh-ada2=127.0.0.1:19023=ada2:22
   ssh-meltdown=127.0.0.1:19024=meltdown:22
@@ -147,7 +149,9 @@ if [[ "$USE_DEFAULT_FORWARDS" == "true" ]]; then
     "sdxl-turbo=127.0.0.1:18050=meltdown:9050"
     "lighton-ocr=127.0.0.1:18155=ada2:9155"
     "personaplex=127.0.0.1:18160=ada2:9160"
-    "skyreels-v2=127.0.0.1:18180=ada2:9180"
+    "ltx-video=127.0.0.1:18180=ada2:9180"
+    "hunyuan-video=127.0.0.1:18185=stackrot:9185"
+    "ace-step=127.0.0.1:18195=stackrot:9195"
     "ssh-stackrot=127.0.0.1:19022=stackrot:22"
     "ssh-ada2=127.0.0.1:19023=ada2:22"
     "ssh-meltdown=127.0.0.1:19024=meltdown:22"

@@ -29,13 +29,13 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             base_ref="origin/${{ github.base_ref }}"
             git fetch origin "${{ github.base_ref }}"
-            diff_output="$(git diff --name-only "$base_ref"...HEAD)"
+            diff_output="$(git diff --name-only --diff-filter=ACMR "$base_ref"...HEAD)"
           else
             before_sha="${{ github.event.before }}"
             if [[ -z "$before_sha" || "$before_sha" == "0000000000000000000000000000000000000000" ]]; then
               diff_output="$(git ls-files)"
             else
-              diff_output="$(git diff --name-only "$before_sha" HEAD)"
+              diff_output="$(git diff --name-only --diff-filter=ACMR "$before_sha" HEAD)"
             fi
           fi
 
@@ -47,9 +47,30 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run shell syntax and ShellCheck
+        id: shell-lint
         if: steps.changed-shell.outputs.files != ''
+        continue-on-error: true
         shell: bash
         run: |
           chmod +x ./deploy/scripts/lint-shell.sh
           mapfile -t files < <(printf '%s\n' '${{ steps.changed-shell.outputs.files }}' | sed '/^$/d')
-          ./deploy/scripts/lint-shell.sh --skip-format "${files[@]}"
+          ./deploy/scripts/lint-shell.sh --skip-format "${files[@]}" >shell-hygiene.log 2>&1
+
+      - name: Upload Shell Hygiene diagnostics
+        if: always() && steps.changed-shell.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-hygiene-${{ github.run_id }}
+          path: |
+            shell-hygiene.log
+            deploy/scripts/deploy.sh
+            deploy/scripts/preflight-check.sh
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Fail on Shell Hygiene errors
+        if: steps.shell-lint.outcome == 'failure'
+        shell: bash
+        run: |
+          cat shell-hygiene.log
+          exit 1

@@ -47,10 +47,11 @@ def allowed_components() -> set[str]:
     return _csv_env(
         "DEPLOY_CONTROL_ALLOWED_COMPONENTS",
         (
-            "deployment-control,etcd,followyourcanvas,gateway,heartmula,images,"
-            "invokeai,lifecycle-manager,lighton-ocr,luxtts,mediamtx,mlx,nginx,"
-            "personaplex,qwen3-tts,sdxl-turbo,skyreels-v2,telegram-bot,tts,"
-            "vllm,vllm-embeddings,vllm-fast,vllm-meltdown,vllm-strong"
+            "ace-step,deployment-control,etcd,followyourcanvas,gateway,heartmula,"
+            "hunyuan-video,images,invokeai,lifecycle-manager,lighton-ocr,ltx-video,"
+            "luxtts,mediamtx,mlx,nginx,personaplex,qwen3-tts,sdxl-turbo,"
+            "telegram-bot,tts,vllm,vllm-embeddings,vllm-fast,vllm-meltdown,"
+            "vllm-strong"
         ),
     )
 
@@ -66,11 +67,19 @@ def topology_components(host: str) -> set[str]:
         hosts = payload.get("hosts") if isinstance(payload, dict) else None
         host_config = hosts.get(host) if isinstance(hosts, dict) else None
         components = host_config.get("components") if isinstance(host_config, dict) else None
+        optional_components = (
+            host_config.get("optional_components") if isinstance(host_config, dict) else None
+        )
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"could not read deployment topology: {path}") from exc
     if not isinstance(components, list):
         raise RuntimeError(f"deployment topology has no component list for host: {host}")
-    return {str(item).strip() for item in components if str(item).strip()}
+    if optional_components is not None and not isinstance(optional_components, list):
+        raise RuntimeError(
+            f"deployment topology optional_components is not a list for host: {host}"
+        )
+    assigned = [*components, *(optional_components or [])]
+    return {str(item).strip() for item in assigned if str(item).strip()}
 
 
 def _read_required_file(env_name: str, default: str) -> str:

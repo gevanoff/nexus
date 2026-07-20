@@ -43,6 +43,83 @@
       }
     },
     {
+      "name": "ltx_generate",
+      "version": "1",
+      "description": "Generate high-quality video with LTX-2.3 on ada2.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" },
+          "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "resolution": { "type": "string" },
+          "fps": { "type": "integer", "minimum": 1, "maximum": 30 },
+          "seed": { "type": "integer" }
+        },
+        "required": ["prompt"],
+        "additionalProperties": true
+      },
+      "exec": {
+        "type": "subprocess",
+        "argv": ["/usr/bin/python3", "/var/lib/gateway/tools/ltx_generate.py"],
+        "timeout_sec": 3600,
+        "cwd": "/var/lib/gateway/tools"
+      }
+    },
+    {
+      "name": "hunyuan_video_generate",
+      "version": "1",
+      "description": "Generate text-to-video or image-to-video with HunyuanVideo-1.5 on stackrot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" },
+          "image": { "type": "string" },
+          "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "resolution": { "type": "string", "enum": ["480p", "720p"] },
+          "aspect_ratio": { "type": "string" },
+          "seed": { "type": "integer" }
+        },
+        "required": ["prompt"],
+        "additionalProperties": true
+      },
+      "exec": {
+        "type": "subprocess",
+        "argv": ["/usr/bin/python3", "/var/lib/gateway/tools/hunyuan_video_generate.py"],
+        "timeout_sec": 3600,
+        "cwd": "/var/lib/gateway/tools"
+      }
+    },
+    {
+      "name": "ace_step_generate",
+      "version": "1",
+      "description": "Generate music with ACE-Step 1.5 XL SFT and the 4B language model on stackrot.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" },
+          "style": { "type": "string" },
+          "lyrics": { "type": "string" },
+          "audio_duration": { "type": "integer", "minimum": 10, "maximum": 600 },
+          "bpm": { "type": "integer" },
+          "keyscale": { "type": "string" },
+          "timesignature": { "type": "string" },
+          "seed": { "type": "integer" }
+        },
+        "anyOf": [
+          { "required": ["prompt"] },
+          { "required": ["style"] },
+          { "required": ["lyrics"] }
+        ],
+        "additionalProperties": true
+      },
+      "exec": {
+        "type": "subprocess",
+        "argv": ["/usr/bin/python3", "/var/lib/gateway/tools/ace_step_generate.py"],
+        "timeout_sec": 1800,
+        "cwd": "/var/lib/gateway/tools"
+      }
+    },
+    {
       "name": "heartmula_generate",
       "version": "1",
       "description": "Generate music via the HeartMula backend (POST /v1/music/generations).",
@@ -61,12 +138,11 @@
       },
       "exec": {
         "type": "subprocess",
-        "argv": ["python", "c:\\Users\\paper\\Code\\ai-infra\\services\\heartmula\\tools\\heartmula_generate.py"],
+        "argv": ["/usr/bin/python3", "/var/lib/gateway/tools/heartmula_generate.py"],
         "timeout_sec": 120,
-        "cwd": "c:\\Users\\paper\\Code\\gateway"
+        "cwd": "/var/lib/gateway/tools"
       }
-    }
-    ,
+    },
     {
       "name": "lighton_ocr",
       "version": "1",

@@ -72,13 +72,9 @@ backends:
       - chat
       - embeddings
     concurrency_limits:
-      # mlx-openai-server executes two GLM generations and queues two more.
-      # This caps total accepted chat work while still serving a handful of clients.
       chat: 4
       embeddings: 2
     health:
-      # OpenAI-style servers commonly expose /models but not /healthz.
-      # Use /models as a lightweight liveness/readiness signal.
       liveness: /models
       readiness: /models
     payload_policy:
@@ -128,7 +124,6 @@ backends:
       liveness: /healthz
       readiness: /readyz
     payload_policy:
-      # Images default to URL, only allow base64 when explicitly requested
       images_format: url
       images_allow_base64: true
       images_max_bytes: 50000000
@@ -143,6 +138,19 @@ backends:
       music: 1
     health:
       liveness: /health
+      readiness: /readyz
+    payload_policy: {}
+
+  ace_step_music:
+    class: ace_step_music
+    base_url: ${ACE_STEP_BASE_URL}
+    description: ACE-Step 1.5 XL SFT music generator
+    supported_capabilities:
+      - music
+    concurrency_limits:
+      music: 1
+    health:
+      liveness: /healthz
       readiness: /readyz
     payload_policy: {}
 
@@ -172,10 +180,23 @@ backends:
       readiness: /health
     payload_policy: {}
 
-  skyreels_v2:
-    class: skyreels_v2
-    base_url: ${SKYREELS_V2_BASE_URL}
-    description: SkyReels-V2 video shim
+  ltx_video:
+    class: ltx_video
+    base_url: ${LTX_VIDEO_BASE_URL}
+    description: LTX-2.3 22B distilled video generator
+    supported_capabilities:
+      - video
+    concurrency_limits:
+      video: 1
+    health:
+      liveness: /healthz
+      readiness: /readyz
+    payload_policy: {}
+
+  hunyuan_video:
+    class: hunyuan_video
+    base_url: ${HUNYUAN_VIDEO_BASE_URL}
+    description: HunyuanVideo-1.5 video generator
     supported_capabilities:
       - video
     concurrency_limits:
@@ -245,3 +266,4 @@ legacy_mapping:
   mlx: local_mlx
   mlx-coder: local_mlx
   mlx_coder: local_mlx
+  skyreels_v2: ltx_video
