@@ -44,6 +44,46 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _coerce_int(
+    value: Any,
+    *,
+    field: str,
+    default: int,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    if value is None or value == "":
+        result = default
+    elif isinstance(value, bool):
+        raise HTTPException(status_code=400, detail=f"{field} must be an integer")
+    else:
+        try:
+            result = int(value)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"{field} must be an integer") from exc
+    if minimum is not None and result < minimum:
+        raise HTTPException(status_code=400, detail=f"{field} must be at least {minimum}")
+    if maximum is not None and result > maximum:
+        raise HTTPException(status_code=400, detail=f"{field} must be at most {maximum}")
+    return result
+
+
+def _coerce_bool(value: Any, *, field: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise HTTPException(status_code=400, detail=f"{field} must be a boolean")
+
+
 def _upstream_base() -> str:
     return _env("ACE_STEP_UPSTREAM_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
 
@@ -116,15 +156,36 @@ def _release_payload(payload: dict[str, Any]) -> dict[str, Any]:
     lyrics = str(payload.get("lyrics") or "").strip()
     if not prompt and not lyrics:
         raise HTTPException(status_code=400, detail="prompt/style or lyrics is required")
-    duration = max(10, min(600, int(payload.get("audio_duration") or payload.get("duration") or 30)))
+
+    duration = _coerce_int(
+        payload.get("audio_duration", payload.get("duration")),
+        field="audio_duration",
+        default=30,
+        minimum=10,
+        maximum=600,
+    )
+    batch_size = _coerce_int(
+        payload.get("batch_size"),
+        field="batch_size",
+        default=1,
+        minimum=1,
+        maximum=4,
+    )
+    thinking = _coerce_bool(payload.get("thinking"), field="thinking", default=True)
+    use_random_seed = _coerce_bool(
+        payload.get("use_random_seed"),
+        field="use_random_seed",
+        default=payload.get("seed") is None,
+    )
+
     request_payload: dict[str, Any] = {
         "prompt": prompt,
         "lyrics": lyrics,
         "audio_duration": duration,
         "model": str(payload.get("model") or MODEL_ID),
-        "thinking": bool(payload.get("thinking", True)),
-        "use_random_seed": bool(payload.get("use_random_seed", payload.get("seed") is None)),
-        "batch_size": max(1, min(4, int(payload.get("batch_size") or 1))),
+        "thinking": thinking,
+        "use_random_seed": use_random_seed,
+        "batch_size": batch_size,
         "audio_format": str(payload.get("audio_format") or "wav"),
     }
     passthrough = {
