@@ -47,9 +47,27 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Run shell syntax and ShellCheck
+        id: shell-lint
         if: steps.changed-shell.outputs.files != ''
+        continue-on-error: true
         shell: bash
         run: |
           chmod +x ./deploy/scripts/lint-shell.sh
           mapfile -t files < <(printf '%s\n' '${{ steps.changed-shell.outputs.files }}' | sed '/^$/d')
-          ./deploy/scripts/lint-shell.sh --skip-format "${files[@]}"
+          ./deploy/scripts/lint-shell.sh --skip-format "${files[@]}" >shell-hygiene.log 2>&1
+
+      - name: Upload Shell Hygiene diagnostics
+        if: always() && steps.changed-shell.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-hygiene-${{ github.run_id }}
+          path: shell-hygiene.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Fail on Shell Hygiene errors
+        if: steps.shell-lint.outcome == 'failure'
+        shell: bash
+        run: |
+          cat shell-hygiene.log
+          exit 1
