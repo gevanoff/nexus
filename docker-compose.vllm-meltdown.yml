@@ -26,6 +26,7 @@ services:
       - NEXUS_VLLM_ENFORCE_EAGER=${VLLM_MELTDOWN_ENFORCE_EAGER:-true}
       - NEXUS_VLLM_ENABLE_AUTO_TOOL_CHOICE=false
       - NEXUS_VLLM_EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE=true
+      - VLLM_USE_FLASHINFER_SAMPLER=${VLLM_MELTDOWN_USE_FLASHINFER_SAMPLER:-0}
     entrypoint: ["/bin/sh", "/usr/local/bin/nexus-run-vllm-openai"]
     volumes:
       - ./deploy/scripts/run-vllm-openai.sh:/usr/local/bin/nexus-run-vllm-openai:ro

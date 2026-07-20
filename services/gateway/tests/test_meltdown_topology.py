@@ -53,6 +53,7 @@ def test_meltdown_owns_lightweight_gpu_backends() -> None:
     assert topology["hosts"]["meltdown"]["env"]["SDXL_TURBO_CUDA_VISIBLE_DEVICES"] == "0"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES"] == "0"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_MELTDOWN_CUDA_VISIBLE_DEVICES"] == "0"
+    assert topology["hosts"]["meltdown"]["env"]["VLLM_MELTDOWN_USE_FLASHINFER_SAMPLER"] == "0"
     assert lifecycle["backends"]["gpu_fast"]["host"] == "meltdown"
     assert lifecycle["backends"]["local_vllm_embeddings"]["host"] == "meltdown"
     cinder_backend = lifecycle["backends"]["local_vllm_meltdown"]
@@ -60,7 +61,9 @@ def test_meltdown_owns_lightweight_gpu_backends() -> None:
     assert cinder_backend["component"] == "vllm-meltdown"
     assert cinder_backend["compose_file"] == "docker-compose.vllm-meltdown.yml"
     assert "Qwen2.5 7B" in cinder_backend["notes"]
-    assert "nexus-vllm-meltdown" in _read("docker-compose.vllm-meltdown.yml")
+    compose = _read("docker-compose.vllm-meltdown.yml")
+    assert "nexus-vllm-meltdown" in compose
+    assert "VLLM_USE_FLASHINFER_SAMPLER" in compose
 
 
 def test_stackrot_owns_tts_stack_on_second_gpu() -> None:
