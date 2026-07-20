@@ -12,14 +12,18 @@ def _json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_media_models_are_placed_on_the_requested_hosts():
+def test_media_models_are_placed_on_the_requested_hosts_without_default_startup():
     topology = _json(PRODUCTION)
     hosts = topology["hosts"]
 
-    assert "ltx-video" in hosts["ada2"]["components"]
-    assert "hunyuan-video" in hosts["stackrot"]["components"]
-    assert "ace-step" in hosts["stackrot"]["components"]
-    assert "skyreels-v2" not in hosts["ada2"]["components"]
+    assert "ltx-video" in hosts["ada2"]["optional_components"]
+    assert "ltx-video" not in hosts["ada2"]["components"]
+    assert "hunyuan-video" in hosts["stackrot"]["optional_components"]
+    assert "ace-step" in hosts["stackrot"]["optional_components"]
+    assert "hunyuan-video" not in hosts["stackrot"]["components"]
+    assert "ace-step" not in hosts["stackrot"]["components"]
+    assert "skyreels-v2" not in hosts["ada2"].get("components", [])
+    assert "skyreels-v2" not in hosts["ada2"].get("optional_components", [])
 
     defaults = topology["defaults"]["env"]
     assert defaults["VIDEO_BACKEND_CLASS"] == "ltx_video"
