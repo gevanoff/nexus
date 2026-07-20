@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -52,8 +53,15 @@ def _runner_script() -> Path:
     return Path(__file__).with_name("run_video.py")
 
 
-def _runner_python() -> Path:
-    return Path(_env("MEDIA_RUNNER_PYTHON", sys.executable))
+def _runner_python() -> str:
+    return _env("MEDIA_RUNNER_PYTHON", sys.executable)
+
+
+def _runner_python_available(command: str) -> bool:
+    candidate = Path(command)
+    if candidate.is_absolute() or candidate.parent != Path("."):
+        return candidate.is_file() and os.access(candidate, os.X_OK)
+    return shutil.which(command) is not None
 
 
 def _upstream_dir() -> Path:
@@ -77,8 +85,8 @@ def _required_path_errors() -> list[str]:
     upstream = _upstream_dir()
     if not runner.exists():
         errors.append(f"runner missing: {runner}")
-    if not runner_python.exists():
-        errors.append(f"runner Python missing: {runner_python}")
+    if not _runner_python_available(runner_python):
+        errors.append(f"runner Python is not executable or PATH-resolvable: {runner_python}")
     if not upstream.exists():
         errors.append(f"upstream checkout missing: {upstream}")
 
@@ -176,7 +184,7 @@ async def generate_video(payload: dict[str, Any], request: Request) -> dict[str,
             }
         )
         proc = await asyncio.create_subprocess_exec(
-            str(_runner_python()),
+            _runner_python(),
             str(_runner_script()),
             cwd=str(_upstream_dir()),
             env=env,
