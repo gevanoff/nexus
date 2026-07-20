@@ -36,7 +36,7 @@ if [[ -z "$BASE_URL" ]]; then
   BASE_URL="$(ns_env_get "$ENV_FILE" ACE_STEP_BASE_URL "http://127.0.0.1:9195")"
 fi
 
-payload="$($PYTHON - "$PROMPT" "$DURATION" <<'PY'
+payload="$("$PYTHON" - "$PROMPT" "$DURATION" <<'PY'
 import json, sys
 print(json.dumps({
     "prompt": sys.argv[1],
