@@ -29,7 +29,7 @@ async def music_generations(req: Request):
     if not has_input:
         raise HTTPException(status_code=400, detail="must provide prompt, lyrics, style, or input")
 
-    backend_class = (getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "ace_step_music"
+    backend_class = (getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "heartmula_music"
 
     check_backend_ready(backend_class, route_kind="music")
     await check_capability(backend_class, "music")
