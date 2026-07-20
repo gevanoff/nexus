@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -86,6 +86,29 @@ def _coerce_bool(value: Any, *, field: str, default: bool) -> bool:
 
 def _upstream_base() -> str:
     return _env("ACE_STEP_UPSTREAM_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
+
+
+def _same_origin(url: str, base_url: str) -> bool:
+    target = urlsplit(url)
+    base = urlsplit(base_url)
+    if target.username or target.password or not target.hostname or not base.hostname:
+        return False
+
+    def effective_port(scheme: str, port: int | None) -> int | None:
+        if port is not None:
+            return port
+        if scheme == "https":
+            return 443
+        if scheme == "http":
+            return 80
+        return None
+
+    return (
+        target.scheme.lower() == base.scheme.lower()
+        and target.hostname.lower() == base.hostname.lower()
+        and effective_port(target.scheme.lower(), target.port)
+        == effective_port(base.scheme.lower(), base.port)
+    )
 
 
 def _output_root() -> Path:
@@ -235,14 +258,26 @@ async def _query_task(client: httpx.AsyncClient, task_id: str) -> Any:
 
 
 async def _persist_audio(client: httpx.AsyncClient, reference: str, destination: Path) -> None:
+    upstream_base = _upstream_base()
     if reference.startswith(("http://", "https://")):
+        if not _same_origin(reference, upstream_base):
+            raise HTTPException(
+                status_code=502,
+                detail={"error": "ACE-Step returned an audio URL outside its configured origin"},
+            )
         response = await client.get(reference)
     else:
-        response = await client.get(f"{_upstream_base()}/v1/audio", params={"path": reference})
+        response = await client.get(f"{upstream_base}/v1/audio", params={"path": reference})
     if response.status_code >= 400:
         raise HTTPException(
             status_code=502,
             detail={"error": "ACE-Step audio fetch failed", "body": response.text[-2000:]},
+        )
+    max_bytes = max(1, _int_env("MEDIA_MAX_AUDIO_BYTES", 536_870_912))
+    if len(response.content) > max_bytes:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": f"ACE-Step audio artifact exceeds {max_bytes} bytes"},
         )
     destination.write_bytes(response.content)
 
