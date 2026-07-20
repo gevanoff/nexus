@@ -70,7 +70,7 @@ if [[ -z "$BACKEND_URL" ]]; then
   BACKEND_URL="$(ns_env_get "$ENV_FILE" "$env_key" "$default_url")"
 fi
 
-payload="$($PYTHON - "$PROMPT" "$DURATION" "$RESOLUTION" "$FPS" <<'PY'
+payload="$("$PYTHON" - "$PROMPT" "$DURATION" "$RESOLUTION" "$FPS" <<'PY'
 import json, sys
 prompt, duration, resolution, fps = sys.argv[1:5]
 print(json.dumps({
