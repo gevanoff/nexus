@@ -97,6 +97,7 @@
         "type": "object",
         "properties": {
           "prompt": { "type": "string" },
+          "style": { "type": "string" },
           "lyrics": { "type": "string" },
           "audio_duration": { "type": "integer", "minimum": 10, "maximum": 600 },
           "bpm": { "type": "integer" },
@@ -104,7 +105,11 @@
           "timesignature": { "type": "string" },
           "seed": { "type": "integer" }
         },
-        "required": [],
+        "anyOf": [
+          { "required": ["prompt"] },
+          { "required": ["style"] },
+          { "required": ["lyrics"] }
+        ],
         "additionalProperties": true
       },
       "exec": {
@@ -133,9 +138,9 @@
       },
       "exec": {
         "type": "subprocess",
-        "argv": ["python", "c:\\Users\\paper\\Code\\ai-infra\\services\\heartmula\\tools\\heartmula_generate.py"],
+        "argv": ["/usr/bin/python3", "/var/lib/gateway/tools/heartmula_generate.py"],
         "timeout_sec": 120,
-        "cwd": "c:\\Users\\paper\\Code\\gateway"
+        "cwd": "/var/lib/gateway/tools"
       }
     },
     {
