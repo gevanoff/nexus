@@ -216,6 +216,10 @@ Remote host deploy:
 3. Run `./deploy/scripts/remote-deploy.sh <prod> <branch> <ai@host>` from your local machine
 4. For tracked cluster hosts, prefer `./deploy/scripts/remote-deploy.sh --topology-host <stackrot|ai2|ada2|meltdown|copyfail> <prod> <branch>` so SSH target and repo path come from `deploy/topology/production.json`
 
+The remote wrapper fast-forwards the target checkout before it invokes that
+checkout's preflight and deploy scripts. This lets Deployment Control roll out a
+new component name without requiring a separate manual pull on every target.
+
 ## Windows development note
 
 Nexus is deployed/operated from macOS/Linux hosts. If you develop on Windows, run all `deploy/scripts/*.sh` scripts from within WSL (Ubuntu) rather than PowerShell.

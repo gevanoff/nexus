@@ -89,7 +89,7 @@ parse_args() {
         REMOTE_REPO_DIR="${2:-}"
         shift 2
         ;;
-      -h|--help)
+      -h | --help)
         usage
         exit 0
         ;;
@@ -245,7 +245,8 @@ if [[ -x "$ROOT_DIR/deploy/scripts/materialize-sops-env.sh" ]]; then
   sync_remote_generated_overlay "$(ns_sops_generated_specific_overlay "$controller_env_file")" "$(ns_sops_generated_specific_overlay "$remote_env_file")"
 fi
 
-remote_cmd=$(cat <<'EOS'
+remote_cmd=$(
+  cat <<'EOS'
 set -euo pipefail
 repo_dir="$3"
 desired_user="ai"
@@ -273,6 +274,11 @@ if [[ ! -w "$repo_dir" ]]; then
 fi
 
 cd "$repo_dir"
+echo "=== Updating remote checkout ==="
+git fetch origin "$2"
+git checkout "$2"
+git pull --ff-only origin "$2"
+
 env_file="${repo_dir}/.env"
 topology_host="${4:-}"
 candidate="${repo_dir}/deploy/env/.env.$1"
