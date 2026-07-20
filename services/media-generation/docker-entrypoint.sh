@@ -100,9 +100,20 @@ case "${ENGINE}" in
     export ACESTEP_LM_MODEL_PATH="${ACESTEP_LM_MODEL_PATH:-${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-4B}}"
     export ACESTEP_LM_BACKEND="${ACESTEP_LM_BACKEND:-vllm}"
 
+    upstream_pid=""
+    shim_pid=""
+    cleanup_ace_step() {
+      local pid
+      for pid in "${shim_pid:-}" "${upstream_pid:-}"; do
+        if [[ -n "$pid" ]]; then
+          kill "$pid" 2>/dev/null || true
+        fi
+      done
+    }
+
     uv run acestep-api &
     upstream_pid=$!
-    trap 'kill "${upstream_pid}" 2>/dev/null || true' EXIT INT TERM
+    trap cleanup_ace_step EXIT INT TERM
     if ! wait_for_http "http://${ACESTEP_API_HOST}:${ACESTEP_API_PORT}/health" \
       "${ACE_STEP_STARTUP_ATTEMPTS:-180}" \
       "${ACE_STEP_STARTUP_DELAY_SEC:-2}"; then
@@ -117,8 +128,9 @@ case "${ENGINE}" in
     shim_pid=$!
     wait -n "${upstream_pid}" "${shim_pid}"
     status=$?
-    kill "${upstream_pid}" "${shim_pid}" 2>/dev/null || true
+    cleanup_ace_step
     wait "${upstream_pid}" "${shim_pid}" 2>/dev/null || true
+    trap - EXIT INT TERM
     exit "${status}"
     ;;
 
