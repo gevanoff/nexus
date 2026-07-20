@@ -265,21 +265,47 @@ async def _persist_audio(client: httpx.AsyncClient, reference: str, destination:
                 status_code=502,
                 detail={"error": "ACE-Step returned an audio URL outside its configured origin"},
             )
-        response = await client.get(reference)
+        request_url = reference
+        request_params = None
     else:
-        response = await client.get(f"{upstream_base}/v1/audio", params={"path": reference})
-    if response.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "ACE-Step audio fetch failed", "body": response.text[-2000:]},
-        )
+        request_url = f"{upstream_base}/v1/audio"
+        request_params = {"path": reference}
+
     max_bytes = max(1, _int_env("MEDIA_MAX_AUDIO_BYTES", 536_870_912))
-    if len(response.content) > max_bytes:
-        raise HTTPException(
-            status_code=502,
-            detail={"error": f"ACE-Step audio artifact exceeds {max_bytes} bytes"},
-        )
-    destination.write_bytes(response.content)
+    destination.unlink(missing_ok=True)
+    try:
+        async with client.stream("GET", request_url, params=request_params) as response:
+            if response.status_code >= 400:
+                error_body = (await response.aread())[-2000:].decode(errors="replace")
+                raise HTTPException(
+                    status_code=502,
+                    detail={"error": "ACE-Step audio fetch failed", "body": error_body},
+                )
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    declared_bytes = int(content_length)
+                except ValueError:
+                    declared_bytes = 0
+                if declared_bytes > max_bytes:
+                    raise HTTPException(
+                        status_code=502,
+                        detail={"error": f"ACE-Step audio artifact exceeds {max_bytes} bytes"},
+                    )
+
+            total_bytes = 0
+            with destination.open("wb") as output:
+                async for chunk in response.aiter_bytes():
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        raise HTTPException(
+                            status_code=502,
+                            detail={"error": f"ACE-Step audio artifact exceeds {max_bytes} bytes"},
+                        )
+                    output.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 @app.get("/healthz")
