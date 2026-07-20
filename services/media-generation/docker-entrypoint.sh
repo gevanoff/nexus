@@ -44,7 +44,8 @@ case "${ENGINE}" in
       "${LTX_REPO_URL:-https://github.com/Lightricks/LTX-2.git}" \
       "${LTX_REPO_REF:-}"
     cd "${UPSTREAM_DIR}"
-    uv sync --frozen ${LTX_UV_SYNC_ARGS:---extra xformers}
+    read -r -a ltx_uv_sync_args <<< "${LTX_UV_SYNC_ARGS:---extra xformers}"
+    uv sync --frozen "${ltx_uv_sync_args[@]}"
     export MEDIA_RUNNER_PYTHON="${UPSTREAM_DIR}/.venv/bin/python"
     export MEDIA_UPSTREAM_DIR="${UPSTREAM_DIR}"
     exec uvicorn app.video_main:app \
@@ -75,7 +76,8 @@ case "${ENGINE}" in
       "${ACE_STEP_REPO_URL:-https://github.com/ace-step/ACE-Step-1.5.git}" \
       "${ACE_STEP_REPO_REF:-}"
     cd "${UPSTREAM_DIR}"
-    uv sync --frozen ${ACE_STEP_UV_SYNC_ARGS:-}
+    read -r -a ace_step_uv_sync_args <<< "${ACE_STEP_UV_SYNC_ARGS:-}"
+    uv sync --frozen "${ace_step_uv_sync_args[@]}"
 
     export ACESTEP_API_HOST="${ACESTEP_API_HOST:-127.0.0.1}"
     export ACESTEP_API_PORT="${ACESTEP_API_PORT:-8001}"
