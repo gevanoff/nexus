@@ -23,18 +23,16 @@ def _load_module(path: Path):
     return module
 
 
-def test_remote_video_input_pins_the_validated_address(
+def _public_resolution(*args, **kwargs):
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+
+def test_remote_video_input_pins_the_validated_address_and_disables_proxies(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = _load_module(MEDIA_APP / "run_video.py")
-    monkeypatch.setattr(
-        module.socket,
-        "getaddrinfo",
-        lambda *args, **kwargs: [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
-        ],
-    )
+    monkeypatch.setattr(module.socket, "getaddrinfo", _public_resolution)
     captured: dict[str, object] = {}
 
     def fake_run(command, **kwargs):
@@ -51,6 +49,8 @@ def test_remote_video_input_pins_the_validated_address(
     assert Path(output).read_bytes() == b"image"
     assert "--resolve" in command
     assert "example.com:443:93.184.216.34" in command
+    assert "--noproxy" in command
+    assert command[command.index("--noproxy") + 1] == "*"
     assert "--location" not in command
 
 
@@ -71,6 +71,42 @@ def test_remote_video_input_rejects_any_non_public_resolution(
         module._resolve_public_http_url("https://example.com/input.png")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost/input.png",
+        "http://localhost.localdomain/input.png",
+        "http://anything.localhost/input.png",
+    ],
+)
+def test_remote_video_input_rejects_localhost_names(url: str) -> None:
+    module = _load_module(MEDIA_APP / "run_video.py")
+
+    with pytest.raises(ValueError, match="localhost"):
+        module._resolve_public_http_url(url)
+
+
+def test_remote_video_input_removes_oversized_partial_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module(MEDIA_APP / "run_video.py")
+    monkeypatch.setattr(module.socket, "getaddrinfo", _public_resolution)
+    monkeypatch.setenv("MEDIA_MAX_INPUT_BYTES", "4")
+
+    def fake_run(command, **kwargs):
+        output_index = command.index("--output") + 1
+        Path(command[output_index]).write_bytes(b"12345")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(ValueError, match="exceeds 4 bytes"):
+        module._download_input("https://example.com/input.png", tmp_path)
+
+    assert not (tmp_path / "input.png").exists()
+
+
 def test_video_service_is_not_ready_without_a_supported_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -82,6 +118,24 @@ def test_video_service_is_not_ready_without_a_supported_engine(
 
     assert any("NEXUS_MEDIA_ENGINE must be one of" in error for error in errors)
     assert response.status_code == 503
+
+
+def test_video_output_content_type_is_inferred_from_filename(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("NEXUS_MEDIA_ENGINE", "ltx")
+    module = _load_module(MEDIA_APP / "video_main.py")
+    monkeypatch.setattr(module, "_output_root", lambda: tmp_path)
+
+    job_id = f"ltx_{'a' * 32}"
+    output_dir = tmp_path / job_id
+    output_dir.mkdir()
+    (output_dir / "result.json").write_text("{}", encoding="utf-8")
+
+    response = module.get_output(job_id, "result.json")
+
+    assert response.media_type == "application/json"
 
 
 @pytest.mark.parametrize(
