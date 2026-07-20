@@ -8,12 +8,6 @@ from app.config import S
 from app.health_checker import check_backend_ready
 from app.music_backend import generate_music
 
-# ui_routes is imported before music_routes by app.main. Extend its compatibility
-# set here to keep the video UI backend-driven without retaining SkyReels code.
-from app import ui_routes as _ui_routes
-
-_ui_routes._VIDEO_UI_COMPATIBLE_BACKENDS.update({"ltx_video", "hunyuan_video"})
-
 
 router = APIRouter()
 
