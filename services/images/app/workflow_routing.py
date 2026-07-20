@@ -37,6 +37,8 @@ def _normalize_family(value: Any) -> str:
         "sd-xl": "sdxl",
         "stable-diffusion-3": "sd3",
         "sd-3": "sd3",
+        "flux-2": "flux2",
+        "zimage": "z-image",
     }
     return aliases.get(raw, raw)
 
@@ -381,6 +383,128 @@ def _inject_generic_model_loaders(graph: Dict[str, Any], model_info: Optional[Di
                 node["model"] = value
 
 
+def _candidate_value(candidate: Dict[str, Any], mode: str) -> Any:
+    return _model_value(candidate, mode)
+
+
+def _select_auxiliary_candidate(
+    candidates: list[Dict[str, Any]],
+    *,
+    model_type: str,
+    base: Optional[str] = None,
+    variant: Optional[str] = None,
+    prefer_quantized: bool = False,
+) -> Optional[Dict[str, Any]]:
+    matches = [
+        item
+        for item in candidates
+        if _candidate_type(item) == model_type
+        and (base is None or _normalize_family(item.get("base")) == _normalize_family(base))
+        and (variant is None or str(item.get("variant") or "").strip().lower() == variant.lower())
+    ]
+    if not matches:
+        return None
+    if prefer_quantized:
+        matches.sort(
+            key=lambda item: (
+                "quant" not in str(item.get("format") or "").lower()
+                and "int8" not in str(item.get("name") or "").lower(),
+                str(item.get("name") or "").lower(),
+            )
+        )
+    return matches[0]
+
+
+def _set_loader_input(graph: Dict[str, Any], node_type: str, field: str, value: Any) -> None:
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        return
+    for node in nodes:
+        data = node.get("data") if isinstance(node, dict) else None
+        if not isinstance(data, dict) or str(data.get("type") or "").strip().lower() != node_type:
+            continue
+        _set_workflow_input(data.get("inputs"), field, value)
+
+
+def _inject_family_auxiliary_models(
+    shim_module: Any,
+    graph: Dict[str, Any],
+    model_info: Optional[Dict[str, Any]],
+    cfg: Any,
+    mode: str,
+) -> None:
+    if not isinstance(model_info, dict):
+        return
+    family = _normalize_family(model_compat.model_family(model_info))
+    if family not in {"flux", "flux2", "z-image"}:
+        return
+
+    model_format = str(model_info.get("format") or "").strip().lower()
+    if family == "flux2" and model_format == "diffusers":
+        # The FLUX.2 loader extracts its VAE and Qwen3 encoder directly from a
+        # Diffusers main model.
+        return
+    if family == "z-image" and model_format == "diffusers":
+        # Unlike the FLUX.2 loader, Z-Image requires the self-contained
+        # Diffusers model to be named explicitly as its component source.
+        _set_loader_input(
+            graph,
+            "z_image_model_loader",
+            "qwen3_source_model",
+            _candidate_value(model_info, mode),
+        )
+        return
+
+    try:
+        _source, raw_candidates = shim_module._list_invokeai_models(cfg=cfg)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not resolve InvokeAI auxiliary models for {family}: {type(exc).__name__}: {exc}",
+        ) from exc
+    candidates = [item for item in (raw_candidates or []) if isinstance(item, dict)]
+
+    if family == "flux":
+        auxiliary = {
+            "t5_encoder_model": _select_auxiliary_candidate(
+                candidates, model_type="t5_encoder", prefer_quantized=True
+            ),
+            "clip_embed_model": _select_auxiliary_candidate(candidates, model_type="clip_embed"),
+            "vae_model": _select_auxiliary_candidate(candidates, model_type="vae", base="flux"),
+        }
+        for field, candidate in auxiliary.items():
+            if candidate is None:
+                raise HTTPException(status_code=400, detail=f"FLUX workflow requires installed auxiliary model: {field}.")
+            _set_loader_input(graph, "flux_model_loader", field, _candidate_value(candidate, mode))
+        return
+
+    if family == "flux2":
+        variant = "qwen3_4b" if str(model_info.get("variant") or "").lower() == "klein_4b" else "qwen3_8b"
+        vae = _select_auxiliary_candidate(candidates, model_type="vae", base="flux2")
+        encoder = _select_auxiliary_candidate(candidates, model_type="qwen3_encoder", variant=variant)
+        if vae is None or encoder is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantized FLUX.2 {variant} workflow requires a matching Qwen3 encoder and FLUX.2 VAE.",
+            )
+        _set_loader_input(graph, "flux2_klein_model_loader", "vae_model", _candidate_value(vae, mode))
+        _set_loader_input(
+            graph, "flux2_klein_model_loader", "qwen3_encoder_model", _candidate_value(encoder, mode)
+        )
+        return
+
+    if family == "z-image":
+        vae = _select_auxiliary_candidate(candidates, model_type="vae", base="flux")
+        encoder = _select_auxiliary_candidate(candidates, model_type="qwen3_encoder", variant="qwen3_4b")
+        if vae is None or encoder is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Quantized Z-Image workflow requires an installed FLUX VAE and Qwen3 4B encoder.",
+            )
+        _set_loader_input(graph, "z_image_model_loader", "vae_model", _candidate_value(vae, mode))
+        _set_loader_input(graph, "z_image_model_loader", "qwen3_encoder_model", _candidate_value(encoder, mode))
+
+
 def _replace_models_route(shim_module: Any) -> None:
     app = shim_module.app
     original_list_models = shim_module.list_models
@@ -476,10 +600,18 @@ def install_workflow_routing(shim_module: Any) -> None:
 
     def workflow_aware_overrides(graph: Dict[str, Any], **kwargs: Any) -> None:
         original_overrides(graph, **kwargs)
+        mode = str(kwargs.get("model_input_mode") or "id").strip().lower()
         _inject_generic_model_loaders(
             graph,
             kwargs.get("model_info"),
-            str(kwargs.get("model_input_mode") or "id").strip().lower(),
+            mode,
+        )
+        _inject_family_auxiliary_models(
+            shim_module,
+            graph,
+            kwargs.get("model_info"),
+            kwargs.get("cfg"),
+            mode,
         )
 
     def workflow_aware_generate(req: Any, *, cfg: Any) -> str:

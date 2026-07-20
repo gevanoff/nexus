@@ -65,6 +65,28 @@ def test_detects_sdxl_workflow(tmp_path: Path) -> None:
     assert model_compat.detect_graph_model_family(graph_path) == "sdxl"
 
 
+@pytest.mark.parametrize(
+    ("node_type", "expected"),
+    [
+        ("flux2_klein_model_loader", "flux2"),
+        ("z_image_model_loader", "z-image"),
+    ],
+)
+def test_detects_new_workflow_families(tmp_path: Path, node_type: str, expected: str) -> None:
+    assert model_compat.detect_graph_model_family(_write_graph(tmp_path, node_type)) == expected
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ({"base": "flux2", "name": "FLUX.2 Klein"}, "flux2"),
+        ({"base": "z-image", "name": "Z-Image Turbo"}, "z-image"),
+    ],
+)
+def test_detects_new_model_families_without_prefix_collisions(model: dict, expected: str) -> None:
+    assert model_compat.model_family(model) == expected
+
+
 def test_backend_default_selects_compatible_sdxl_model(tmp_path: Path) -> None:
     graph_path = _write_graph(tmp_path, "sdxl_compel_prompt")
     FakeShim.candidates = [

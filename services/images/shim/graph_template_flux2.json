@@ -1,0 +1,70 @@
+{
+  "name": "Nexus FLUX.2 Klein Text to Image",
+  "nodes": [
+    {
+      "id": "flux2-model-loader",
+      "data": {
+        "type": "flux2_klein_model_loader",
+        "version": "1.0.0",
+        "label": "FLUX.2 Klein Model Loader",
+        "inputs": {
+          "model": {"name": "model", "label": "Transformer"},
+          "vae_model": {"name": "vae_model", "label": "VAE"},
+          "qwen3_encoder_model": {"name": "qwen3_encoder_model", "label": "Qwen3 Encoder"},
+          "qwen3_source_model": {"name": "qwen3_source_model", "label": "Qwen3 Source"},
+          "max_seq_len": {"name": "max_seq_len", "label": "Max Seq Len", "value": 512}
+        }
+      }
+    },
+    {
+      "id": "flux2-positive-prompt",
+      "data": {
+        "type": "flux2_klein_text_encoder",
+        "version": "1.1.1",
+        "label": "Positive Prompt",
+        "inputs": {
+          "prompt": {"name": "prompt", "label": "Prompt", "value": ""},
+          "max_seq_len": {"name": "max_seq_len", "label": "Max Seq Len", "value": 512}
+        }
+      }
+    },
+    {
+      "id": "flux2-denoise",
+      "data": {
+        "type": "flux2_denoise",
+        "version": "1.4.0",
+        "label": "FLUX.2 Denoise",
+        "inputs": {
+          "denoising_start": {"name": "denoising_start", "label": "Denoising Start", "value": 0.0},
+          "denoising_end": {"name": "denoising_end", "label": "Denoising End", "value": 1.0},
+          "add_noise": {"name": "add_noise", "label": "Add Noise", "value": true},
+          "cfg_scale": {"name": "cfg_scale", "label": "CFG Scale", "value": 1.0},
+          "width": {"name": "width", "label": "Width", "value": 1024},
+          "height": {"name": "height", "label": "Height", "value": 1024},
+          "num_steps": {"name": "num_steps", "label": "Steps", "value": 4},
+          "scheduler": {"name": "scheduler", "label": "Scheduler", "value": "euler"},
+          "seed": {"name": "seed", "label": "Seed", "value": 0}
+        }
+      }
+    },
+    {
+      "id": "flux2-output",
+      "data": {
+        "type": "flux2_vae_decode",
+        "version": "1.0.0",
+        "label": "FLUX.2 Image",
+        "isIntermediate": false,
+        "inputs": {}
+      }
+    }
+  ],
+  "edges": [
+    {"source": "flux2-model-loader", "sourceHandle": "qwen3_encoder", "target": "flux2-positive-prompt", "targetHandle": "qwen3_encoder"},
+    {"source": "flux2-model-loader", "sourceHandle": "max_seq_len", "target": "flux2-positive-prompt", "targetHandle": "max_seq_len"},
+    {"source": "flux2-model-loader", "sourceHandle": "transformer", "target": "flux2-denoise", "targetHandle": "transformer"},
+    {"source": "flux2-model-loader", "sourceHandle": "vae", "target": "flux2-denoise", "targetHandle": "vae"},
+    {"source": "flux2-positive-prompt", "sourceHandle": "conditioning", "target": "flux2-denoise", "targetHandle": "positive_text_conditioning"},
+    {"source": "flux2-model-loader", "sourceHandle": "vae", "target": "flux2-output", "targetHandle": "vae"},
+    {"source": "flux2-denoise", "sourceHandle": "latents", "target": "flux2-output", "targetHandle": "latents"}
+  ]
+}

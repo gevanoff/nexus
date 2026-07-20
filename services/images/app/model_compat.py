@@ -14,6 +14,24 @@ logger = logging.getLogger("uvicorn.error")
 
 _GRAPH_FAMILY_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
+        "flux2",
+        (
+            "flux2_klein_model_loader",
+            "flux2_klein_text_encoder",
+            "flux2_denoise",
+            "flux2_vae_decode",
+        ),
+    ),
+    (
+        "z-image",
+        (
+            "z_image_model_loader",
+            "z_image_text_encoder",
+            "z_image_denoise",
+            "z_image_l2i",
+        ),
+    ),
+    (
         "sdxl",
         (
             "sdxl_model_loader",
@@ -108,6 +126,10 @@ def _family_from_text(value: Any) -> Optional[str]:
         return "sdxl"
     if re.search(r"(^|-)xl($|-)", normalized):
         return "sdxl"
+    if "flux2" in normalized or "flux-2" in normalized:
+        return "flux2"
+    if "z-image" in normalized or "zimage" in normalized:
+        return "z-image"
     if "flux" in normalized:
         return "flux"
     if re.search(r"(^|-)sd-?3($|-)", normalized) or "stable-diffusion-3" in normalized:

@@ -252,7 +252,7 @@
         "LTX_CUDA_VISIBLE_DEVICES": "0",
         "LTX_QUANTIZATION": "fp8-cast",
         "IMAGES_SHIM_MODE": "invokeai_queue",
-        "SHIM_GENERATION_WORKFLOWS_JSON": "{\"sd\":\"/app/shim/graph_template_sd.json\"}",
+        "SHIM_GENERATION_WORKFLOWS_JSON": "{\"sd\":\"/app/shim/graph_template_sd.json\",\"flux\":\"/app/shim/graph_template_flux.json\",\"sd3\":\"/app/shim/graph_template_sd3.json\",\"flux2\":\"/app/shim/graph_template_flux2.json\",\"z-image\":\"/app/shim/graph_template_z_image.json\"}",
         "SDXL_TURBO_ENABLE_MODEL_CPU_OFFLOAD": "true",
         "SDXL_TURBO_MAX_GUIDANCE_SCALE": "0.0",
         "VLLM_SERVICE_NAME": "vllm",

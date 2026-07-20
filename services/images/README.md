@@ -54,6 +54,8 @@ Supported family keys currently include:
 
 - `sdxl`
 - `flux`
+- `flux2` for FLUX.2 Klein
+- `z-image`
 - `sd3`
 - `sd` for Stable Diffusion 1.x/2.x
 
@@ -61,7 +63,7 @@ Example:
 
 ```env
 SHIM_GRAPH_TEMPLATE_PATH=/app/shim/graph_template.json
-SHIM_GENERATION_WORKFLOWS_JSON={"sd":"/app/shim/graph_template_sd.json"}
+SHIM_GENERATION_WORKFLOWS_JSON={"sd":"/app/shim/graph_template_sd.json","flux":"/app/shim/graph_template_flux.json","sd3":"/app/shim/graph_template_sd3.json","flux2":"/app/shim/graph_template_flux2.json","z-image":"/app/shim/graph_template_z_image.json"}
 ```
 
 A map value can be either a path string or an object:
@@ -77,19 +79,17 @@ A map value can be either a path string or an object:
 
 `output_node_id` is optional when the shim can identify the final image-output node in the exported workflow.
 
-The shim image includes InvokeAI 6.11.1's default text-to-image exports for
-SD1.5/2, FLUX, and SD3.5. The legacy `SHIM_GRAPH_TEMPLATE_PATH` supplies SDXL,
-and the production topology enables the complete SD1.5/2 export at
-`/app/shim/graph_template_sd.json`.
+The shim image includes text-to-image workflows for SD1.5/2, SDXL, SD3.5,
+FLUX.1, FLUX.2 Klein, and Z-Image. Model UUIDs are deliberately absent from the
+bundled workflows. At request time the shim inserts the selected main model and
+resolves required auxiliary models from InvokeAI's catalog. This supports both
+self-contained Diffusers models and quantized models that use separately
+installed T5, CLIP, Qwen3, or VAE components.
 
-InvokeAI's bundled FLUX and SD3.5 exports intentionally leave required T5,
-CLIP, and VAE inputs unselected. Their copies in the shim image are useful
-starting points, but do not add those families to
-`SHIM_GENERATION_WORKFLOWS_JSON` as-is. Open the workflow in InvokeAI, select
-installed auxiliary models, export the completed workflow into
-`${NEXUS_RUNTIME_ROOT}/images/workflows`, and map that exported path. This keeps
-InvokeAI's model data under `/data/invokeai` distinct from Nexus runtime-owned
-workflow configuration under `/data/nexus-runtime/images/workflows`.
+Custom exports can still be placed in `${NEXUS_RUNTIME_ROOT}/images/workflows`
+and mapped by family. This keeps InvokeAI model data under `/data/invokeai`
+distinct from Nexus runtime-owned workflow configuration under
+`/data/nexus-runtime/images/workflows`.
 
 The workflows directory is mounted read-only inside the container:
 

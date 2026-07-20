@@ -40,6 +40,7 @@ def _apply(graph: dict) -> None:
         seed=1234,
         steps=17,
         cfg_scale=4.5,
+        scheduler="heun",
     )
 
 
@@ -84,3 +85,31 @@ def test_sd3_workflow_routes_positive_and_negative_prompts_by_edge_role() -> Non
     assert _input(graph, "sd3_denoise", "steps") == 17
     assert _input(graph, "sd3_denoise", "cfg_scale") == 4.5
     assert shim._detect_output_node_id(graph) == "9eb72af0-dd9e-4ec5-ad87-d65e3c01f48b"
+
+
+def test_flux2_workflow_accepts_prompt_size_seed_and_quality_overrides() -> None:
+    graph = _load("graph_template_flux2.json")
+    _apply(graph)
+
+    assert _input(graph, "flux2_klein_text_encoder", "prompt") == "requested positive prompt"
+    assert _input(graph, "flux2_denoise", "width") == 640
+    assert _input(graph, "flux2_denoise", "height") == 768
+    assert _input(graph, "flux2_denoise", "seed") == 1234
+    assert _input(graph, "flux2_denoise", "num_steps") == 17
+    assert _input(graph, "flux2_denoise", "cfg_scale") == 4.5
+    assert _input(graph, "flux2_denoise", "scheduler") == "heun"
+    assert shim._detect_output_node_id(graph) == "flux2-output"
+
+
+def test_z_image_workflow_accepts_prompt_size_seed_and_quality_overrides() -> None:
+    graph = _load("graph_template_z_image.json")
+    _apply(graph)
+
+    assert _input(graph, "z_image_text_encoder", "prompt") == "requested positive prompt"
+    assert _input(graph, "z_image_denoise", "width") == 640
+    assert _input(graph, "z_image_denoise", "height") == 768
+    assert _input(graph, "z_image_denoise", "seed") == 1234
+    assert _input(graph, "z_image_denoise", "steps") == 17
+    assert _input(graph, "z_image_denoise", "guidance_scale") == 4.5
+    assert _input(graph, "z_image_denoise", "scheduler") == "heun"
+    assert shim._detect_output_node_id(graph) == "z-image-output"

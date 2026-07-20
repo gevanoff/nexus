@@ -1,0 +1,67 @@
+{
+  "name": "Nexus Z-Image Text to Image",
+  "nodes": [
+    {
+      "id": "z-image-model-loader",
+      "data": {
+        "type": "z_image_model_loader",
+        "version": "3.0.0",
+        "label": "Z-Image Model Loader",
+        "inputs": {
+          "model": {"name": "model", "label": "Transformer"},
+          "vae_model": {"name": "vae_model", "label": "VAE"},
+          "qwen3_encoder_model": {"name": "qwen3_encoder_model", "label": "Qwen3 Encoder"},
+          "qwen3_source_model": {"name": "qwen3_source_model", "label": "Qwen3 Source"}
+        }
+      }
+    },
+    {
+      "id": "z-image-positive-prompt",
+      "data": {
+        "type": "z_image_text_encoder",
+        "version": "1.1.0",
+        "label": "Positive Prompt",
+        "inputs": {
+          "prompt": {"name": "prompt", "label": "Prompt", "value": ""}
+        }
+      }
+    },
+    {
+      "id": "z-image-denoise",
+      "data": {
+        "type": "z_image_denoise",
+        "version": "1.4.0",
+        "label": "Z-Image Denoise",
+        "inputs": {
+          "denoising_start": {"name": "denoising_start", "label": "Denoising Start", "value": 0.0},
+          "denoising_end": {"name": "denoising_end", "label": "Denoising End", "value": 1.0},
+          "add_noise": {"name": "add_noise", "label": "Add Noise", "value": true},
+          "guidance_scale": {"name": "guidance_scale", "label": "Guidance Scale", "value": 1.0},
+          "width": {"name": "width", "label": "Width", "value": 1024},
+          "height": {"name": "height", "label": "Height", "value": 1024},
+          "steps": {"name": "steps", "label": "Steps", "value": 8},
+          "scheduler": {"name": "scheduler", "label": "Scheduler", "value": "euler"},
+          "seed": {"name": "seed", "label": "Seed", "value": 0}
+        }
+      }
+    },
+    {
+      "id": "z-image-output",
+      "data": {
+        "type": "z_image_l2i",
+        "version": "1.1.0",
+        "label": "Z-Image Output",
+        "isIntermediate": false,
+        "inputs": {}
+      }
+    }
+  ],
+  "edges": [
+    {"source": "z-image-model-loader", "sourceHandle": "qwen3_encoder", "target": "z-image-positive-prompt", "targetHandle": "qwen3_encoder"},
+    {"source": "z-image-model-loader", "sourceHandle": "transformer", "target": "z-image-denoise", "targetHandle": "transformer"},
+    {"source": "z-image-model-loader", "sourceHandle": "vae", "target": "z-image-denoise", "targetHandle": "vae"},
+    {"source": "z-image-positive-prompt", "sourceHandle": "conditioning", "target": "z-image-denoise", "targetHandle": "positive_conditioning"},
+    {"source": "z-image-model-loader", "sourceHandle": "vae", "target": "z-image-output", "targetHandle": "vae"},
+    {"source": "z-image-denoise", "sourceHandle": "latents", "target": "z-image-output", "targetHandle": "latents"}
+  ]
+}

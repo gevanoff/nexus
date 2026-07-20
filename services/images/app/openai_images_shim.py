@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="InvokeAI OpenAI Images Shim", version="0.1")
 logger = logging.getLogger("uvicorn.error")
-_SHIM_BUILD = "2026-07-17-seed-batches"
+_SHIM_BUILD = "2026-07-20-workflow-families"
 
 
 def _shim_file_sha256_prefix() -> Optional[str]:
@@ -567,6 +567,8 @@ def _normalize_invokeai_candidate(match: dict) -> dict:
         ("base_model", "base"),
         ("type", "type"),
         ("model_type", "type"),
+        ("format", "format"),
+        ("variant", "variant"),
     ):
         v = match.get(src)
         if dst not in normalized and isinstance(v, str) and v.strip():
@@ -777,7 +779,13 @@ def _detect_output_node_id(graph: dict) -> Optional[str]:
             data = node.get("data")
             if not isinstance(data, dict):
                 continue
-            if data.get("type") in ("l2i", "flux_vae_decode", "sd3_l2i") and data.get("isIntermediate") is False:
+            if data.get("type") in (
+                "l2i",
+                "flux_vae_decode",
+                "flux2_vae_decode",
+                "sd3_l2i",
+                "z_image_l2i",
+            ) and data.get("isIntermediate") is False:
                 node_id = node.get("id")
                 return str(node_id) if isinstance(node_id, str) and node_id else None
 
@@ -864,6 +872,10 @@ def _apply_invokeai_workflow_overrides(
 
         # FLUX has a single positive text encoder.
         if ntype == "flux_text_encoder":
+            _set_input_value(inputs, "prompt", prompt)
+            continue
+
+        if ntype in ("flux2_klein_text_encoder", "z_image_text_encoder"):
             _set_input_value(inputs, "prompt", prompt)
             continue
 
@@ -998,6 +1010,32 @@ def _apply_invokeai_workflow_overrides(
                 _set_input_value(inputs, "steps", int(steps))
             if cfg_scale is not None:
                 _set_input_value(inputs, "cfg_scale", float(cfg_scale))
+            continue
+
+        if ntype == "flux2_denoise":
+            _set_input_value(inputs, "width", int(width))
+            _set_input_value(inputs, "height", int(height))
+            if seed is not None:
+                _set_input_value(inputs, "seed", int(seed))
+            if steps is not None:
+                _set_input_value(inputs, "num_steps", int(steps))
+            if cfg_scale is not None:
+                _set_input_value(inputs, "cfg_scale", float(cfg_scale))
+            if scheduler:
+                _set_input_value(inputs, "scheduler", str(scheduler))
+            continue
+
+        if ntype == "z_image_denoise":
+            _set_input_value(inputs, "width", int(width))
+            _set_input_value(inputs, "height", int(height))
+            if seed is not None:
+                _set_input_value(inputs, "seed", int(seed))
+            if steps is not None:
+                _set_input_value(inputs, "steps", int(steps))
+            if cfg_scale is not None:
+                _set_input_value(inputs, "guidance_scale", float(cfg_scale))
+            if scheduler:
+                _set_input_value(inputs, "scheduler", str(scheduler))
             continue
 
 

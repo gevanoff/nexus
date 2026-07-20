@@ -255,3 +255,117 @@ def test_generic_loader_adds_value_missing_from_builtin_workflow_export() -> Non
     model_field = graph["nodes"][0]["data"]["inputs"]["model"]
     assert model_field["name"] == "model"
     assert model_field["value"]["key"] == "sd-id"
+
+
+def _loader_graph(node_type: str, fields: tuple[str, ...]) -> dict:
+    return {
+        "nodes": [
+            {
+                "id": "loader",
+                "data": {
+                    "type": node_type,
+                    "inputs": {field: {"name": field} for field in fields},
+                },
+            }
+        ],
+        "edges": [],
+    }
+
+
+def _loader_value(graph: dict, field: str):
+    return graph["nodes"][0]["data"]["inputs"][field]["value"]
+
+
+def test_flux_auxiliary_models_are_resolved_from_catalog() -> None:
+    graph = _loader_graph(
+        "flux_model_loader",
+        ("model", "t5_encoder_model", "clip_embed_model", "vae_model"),
+    )
+    FakeShim.candidates = [
+        {"key": "t5-full", "name": "T5 Full", "type": "t5_encoder"},
+        {
+            "key": "t5-int8",
+            "name": "T5 int8",
+            "type": "t5_encoder",
+            "format": "bnb_quantized_int8b",
+        },
+        {"key": "clip", "name": "CLIP-L", "type": "clip_embed"},
+        {"key": "vae", "name": "FLUX VAE", "base": "flux", "type": "vae"},
+    ]
+
+    workflow_routing._inject_family_auxiliary_models(
+        FakeShim,
+        graph,
+        {"key": "flux-main", "name": "FLUX.1 Dev", "base": "flux", "type": "main"},
+        _cfg("unused"),
+        "id",
+    )
+
+    assert _loader_value(graph, "t5_encoder_model")["key"] == "t5-int8"
+    assert _loader_value(graph, "clip_embed_model")["key"] == "clip"
+    assert _loader_value(graph, "vae_model")["key"] == "vae"
+
+
+def test_quantized_flux2_resolves_matching_qwen3_and_vae() -> None:
+    graph = _loader_graph(
+        "flux2_klein_model_loader",
+        ("model", "vae_model", "qwen3_encoder_model", "qwen3_source_model"),
+    )
+    FakeShim.candidates = [
+        {"key": "flux2-vae", "name": "FLUX.2 VAE", "base": "flux2", "type": "vae"},
+        {
+            "key": "qwen4",
+            "name": "Qwen3 4B",
+            "type": "qwen3_encoder",
+            "variant": "qwen3_4b",
+        },
+        {
+            "key": "qwen8",
+            "name": "Qwen3 8B",
+            "type": "qwen3_encoder",
+            "variant": "qwen3_8b",
+        },
+    ]
+
+    workflow_routing._inject_family_auxiliary_models(
+        FakeShim,
+        graph,
+        {
+            "key": "flux2-main",
+            "name": "FLUX.2 Klein 4B GGUF",
+            "base": "flux2",
+            "type": "main",
+            "format": "gguf_quantized",
+            "variant": "klein_4b",
+        },
+        _cfg("unused"),
+        "id",
+    )
+
+    assert _loader_value(graph, "vae_model")["key"] == "flux2-vae"
+    assert _loader_value(graph, "qwen3_encoder_model")["key"] == "qwen4"
+
+
+def test_diffusers_z_image_uses_selected_model_as_component_source() -> None:
+    graph = _loader_graph(
+        "z_image_model_loader",
+        ("model", "vae_model", "qwen3_encoder_model", "qwen3_source_model"),
+    )
+    model = {
+        "key": "z-image-main",
+        "name": "Z-Image Turbo",
+        "base": "z-image",
+        "type": "main",
+        "format": "diffusers",
+    }
+    FakeShim.candidates = []
+
+    workflow_routing._inject_family_auxiliary_models(
+        FakeShim,
+        graph,
+        model,
+        _cfg("unused"),
+        "id",
+    )
+
+    assert _loader_value(graph, "qwen3_source_model")["key"] == "z-image-main"
