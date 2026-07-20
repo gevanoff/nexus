@@ -339,6 +339,38 @@ def test_choose_model_preserves_default_alias():
     assert ca._choose_model(task, "local_vllm:custom") == "local_vllm:custom"
 
 
+@pytest.mark.asyncio
+async def test_gateway_recovery_resumes_interrupted_run_with_persisted_horizon(monkeypatch):
+    task = {
+        "id": "code_resume",
+        "agent_status": "interrupted",
+        "coding_model": "coder",
+        "agent_auto_commit": True,
+        "agent_max_cycles": 1000,
+        "agent_max_runtime_sec": 21_600,
+        "agent_context_reset_cycles": 0,
+    }
+    started = []
+
+    monkeypatch.setattr(ca.S, "CODING_AGENT_AUTO_RESUME_INTERRUPTED", True, raising=False)
+    monkeypatch.setattr(ca.cw, "load_task", lambda _task_id: dict(task))
+    monkeypatch.setattr(ca, "_git_token_for_task_owner", lambda _task: "configured-token")
+
+    async def _start(task_id, **kwargs):
+        started.append((task_id, kwargs))
+        return {}
+
+    monkeypatch.setattr(ca, "start_agent_run", _start)
+    result = await ca.resume_interrupted_agent_runs(["code_resume"])
+
+    assert result == {"ok": True, "resumed": 1, "tasks": ["code_resume"], "failures": {}}
+    assert started[0][0] == "code_resume"
+    assert started[0][1]["git_token_value"] == "configured-token"
+    assert started[0][1]["actor"] == "gateway-recovery"
+    assert started[0][1]["max_cycles"] == 1000
+    assert started[0][1]["max_runtime_sec"] == 21_600
+
+
 def test_validation_command_classifier_recognizes_common_checks():
     assert ca._is_validation_command(["pytest", "services/gateway/tests/test_app.py"]) is True
     assert ca._is_validation_command(["ruff", "check", "services/gateway/app"]) is True

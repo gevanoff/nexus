@@ -116,10 +116,12 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         logger.warning("startup: failed to init user db (%s: %s)", type(e).__name__, e)
 
+    interrupted_task_ids: list[str] = []
     try:
         from app import coding_workspace as coding_workspace_store
 
         recovered = coding_workspace_store.recover_interrupted_agent_runs()
+        interrupted_task_ids = [str(item) for item in (recovered.get("tasks") or []) if str(item)]
         if recovered.get("recovered"):
             logger.warning("startup: marked interrupted coding runs recovered=%s tasks=%s", recovered.get("recovered"), recovered.get("tasks"))
     except Exception as e:
@@ -127,6 +129,20 @@ async def lifespan(_app: FastAPI):
     
     # Start background health checking
     await start_health_checker()
+
+    if interrupted_task_ids:
+        try:
+            from app import coding_agent as coding_agent_controller
+
+            resumed = await coding_agent_controller.resume_interrupted_agent_runs(interrupted_task_ids)
+            logger.warning(
+                "startup: resumed interrupted coding runs resumed=%s tasks=%s failures=%s",
+                resumed.get("resumed"),
+                resumed.get("tasks"),
+                resumed.get("failures"),
+            )
+        except Exception as e:
+            logger.warning("startup: interrupted coding run resume failed (%s: %s)", type(e).__name__, e)
 
     try:
         from app.nexus_hardware import hardware_snapshot_summary, refresh_hardware_snapshot_from_lifecycle

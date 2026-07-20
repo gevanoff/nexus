@@ -1092,6 +1092,8 @@
 
   function renderWorkspaceChat(task) {
     if (!els.workspaceChat) return;
+    if (hasActiveSelection(els.workspaceChat)) return;
+    const scroll = captureScrollPosition(els.workspaceChat);
     const messages = workspaceConversationItems(task);
     els.workspaceChat.innerHTML = "";
     if (els.workspaceChatMeta) {
@@ -1107,6 +1109,7 @@
       empty.className = "hint";
       empty.textContent = task ? "No workspace messages yet." : "Select a workspace to chat with its coding agent.";
       els.workspaceChat.appendChild(empty);
+      restoreScrollPosition(els.workspaceChat, scroll);
       return;
     }
     for (const item of messages.slice(-40)) {
@@ -1127,7 +1130,26 @@
       wrap.appendChild(body);
       els.workspaceChat.appendChild(wrap);
     }
-    els.workspaceChat.scrollTop = els.workspaceChat.scrollHeight;
+    restoreScrollPosition(els.workspaceChat, scroll);
+  }
+
+  function captureScrollPosition(element) {
+    const distanceFromBottom = Math.max(0, element.scrollHeight - element.clientHeight - element.scrollTop);
+    return { top: element.scrollTop, followTail: distanceFromBottom <= 32 };
+  }
+
+  function hasActiveSelection(element) {
+    const selection = window.getSelection ? window.getSelection() : null;
+    if (!selection || selection.isCollapsed) return false;
+    return element.contains(selection.anchorNode) || element.contains(selection.focusNode);
+  }
+
+  function restoreScrollPosition(element, previous) {
+    if (!previous || previous.followTail) {
+      element.scrollTop = element.scrollHeight;
+      return;
+    }
+    element.scrollTop = Math.min(previous.top, Math.max(0, element.scrollHeight - element.clientHeight));
   }
 
   function eventLine(event) {
@@ -1224,13 +1246,18 @@
       els.agentMeta.textContent = bits.join(" | ");
     }
     if (els.agentLog) {
+      if (hasActiveSelection(els.agentLog)) {
+        updatePolling();
+        return;
+      }
+      const scroll = captureScrollPosition(els.agentLog);
       const lines = Array.isArray(agent.events) ? agent.events.map(eventLine).filter(Boolean) : [];
       if (agent.summary && !lines.some((line) => line.includes(agent.summary))) lines.push(`summary:\n${agent.summary}`);
       if (agent.error && status === "failed") lines.push(`error:\n${agent.error}`);
       if (terminal.finalization_error) lines.push(`finalization error:\n${terminal.finalization_error}`);
       if (terminal.pr_url) lines.push(`pull request:\n${terminal.pr_url}`);
       els.agentLog.innerHTML = highlightAgentLog(lines.join("\n\n") || "No agent run yet.");
-      els.agentLog.scrollTop = els.agentLog.scrollHeight;
+      restoreScrollPosition(els.agentLog, scroll);
     }
     updatePolling();
   }

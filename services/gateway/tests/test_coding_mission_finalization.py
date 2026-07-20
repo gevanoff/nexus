@@ -107,7 +107,31 @@ def test_coding_context_reset_cycles_zero_disables_interval_reset():
 def test_coding_progress_budget_detects_repeated_diff_loop():
     assert ca._state_read_signature("coding_git_diff", {}) == "coding_git_diff"
     assert ca._repeated_state_read_decision(6, 6) == "guide"
-    assert ca._repeated_state_read_decision(7, 6) == "pause"
+    assert ca._repeated_state_read_decision(7, 6) == "continue"
+
+
+def test_coding_context_limits_leave_headroom_for_local_model(monkeypatch):
+    monkeypatch.setattr(ca.S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000, raising=False)
+    monkeypatch.setattr(ca.S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000, raising=False)
+
+    assert ca._context_reset_chars() == 64_000
+    assert ca._context_reset_chars(200_000) == 64_000
+    assert ca._tool_context_char_limit() == 12_000
+
+
+def test_continuation_context_resumes_without_restarting_orientation():
+    context = ca._task_context(
+        _task(
+            agent_previous_run_id="coderun_previous",
+            agent_previous_status="interrupted",
+            agent_previous_summary="Implementation is in progress.",
+            agent_events=[],
+        )
+    )
+
+    assert "Resume at the next unresolved action" in context
+    assert "Do not start over" in context
+    assert "Start by inspecting the repository" not in context
 
 
 def test_coding_ui_horizon_limits_match_api():

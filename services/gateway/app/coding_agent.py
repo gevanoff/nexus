@@ -159,9 +159,9 @@ def _max_completion_tokens_for_route(model: str, backend: str) -> int:
 
 def _tool_context_char_limit() -> int:
     try:
-        return max(2_000, min(int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 32_000) or 32_000), 100_000))
+        return max(2_000, min(int(getattr(S, "CODING_AGENT_TOOL_CONTEXT_CHARS", 12_000) or 12_000), 12_000))
     except Exception:
-        return 32_000
+        return 12_000
 
 
 def _max_cycles_per_run(value: Optional[int] = None) -> int:
@@ -184,11 +184,15 @@ def _context_reset_cycles(value: Optional[int] = None) -> int:
     return max(4, min(requested, 100))
 
 
-def _context_reset_chars() -> int:
+def _context_reset_chars(value: Optional[int] = None) -> int:
     try:
-        return max(20_000, min(int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000) or 200_000), 1_000_000))
+        configured = int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 64_000) or 64_000) if value is None else int(value)
+        # The local GLM route rejects requests near 98k input characters. Keep
+        # enough headroom for the system prompt and the next model response even
+        # when an older persisted mission still contains the former 200k value.
+        return max(20_000, min(configured, 64_000))
     except Exception:
-        return 200_000
+        return 64_000
 
 
 def _mission_for_task(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -204,8 +208,8 @@ def _state_read_signature(name: str, args: Dict[str, Any]) -> str:
 
 
 def _repeated_state_read_decision(count: int, maximum: int) -> str:
-    if count > maximum:
-        return "pause"
+    # Inspection limits are coaching thresholds, not independent run budgets.
+    # The explicit cycle and wall-clock budgets are the only normal horizons.
     if count == maximum:
         return "guide"
     return "continue"
@@ -1044,7 +1048,11 @@ def _previous_run_context(task: Dict[str, Any]) -> str:
     if event_lines:
         bits.append("- Recent prior events:")
         bits.extend(event_lines)
-    bits.append("Continue from the current workspace files and git diff. Do not repeat completed work unless needed.")
+    bits.append(
+        "Resume from the authoritative controller snapshot, durable project plan, current workspace files, "
+        "git diff, and checkpoint history. Do not restart repository orientation or repeat completed inspection; "
+        "inspect only the state needed for the next unresolved action."
+    )
     return "\n".join(bits)
 
 
@@ -2097,6 +2105,13 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
 def _task_context(task: Dict[str, Any]) -> str:
     original = str(task.get("prompt") or "").strip()
     current = _effective_run_prompt(task)
+    is_continuation = bool(str(task.get("agent_previous_run_id") or "").strip())
+    opening = (
+        "Resume at the next unresolved action from the durable state below. Do not start over or repeat completed "
+        "repository inspection."
+        if is_continuation
+        else "Start by inspecting the repository, then proceed without waiting for more user input."
+    )
     base = (
         f"Original user request:\n{original}\n\n"
         f"Current run request:\n{current or original}\n\n"
@@ -2104,7 +2119,7 @@ def _task_context(task: Dict[str, Any]) -> str:
         f"Branch: {task.get('branch_name')} from {task.get('base_branch')}\n"
         "Execution environment: Linux workspace shell with POSIX paths and Linux-style environment variables.\n"
         "Command cwd defaults to the repo root; switch to a service directory such as services/gateway when that service owns the package/import root for tests or linters.\n"
-        "Start by inspecting the repository, then proceed without waiting for more user input."
+        f"{opening}"
     )
     guidance = _guidance_context(task)
     if guidance:
@@ -2149,6 +2164,43 @@ def _settings_for_task_owner(task: Dict[str, Any]) -> Dict[str, Any]:
         return settings if isinstance(settings, dict) else {}
     except Exception:
         return {}
+
+
+def _git_token_for_task_owner(task: Dict[str, Any]) -> str:
+    settings = _settings_for_task_owner(task)
+    coding = settings.get("coding") if isinstance(settings.get("coding"), dict) else {}
+    return str(coding.get("git_token") or "").strip()
+
+
+async def resume_interrupted_agent_runs(task_ids: Sequence[str]) -> Dict[str, Any]:
+    """Resume runs interrupted by a Gateway restart in the new event loop."""
+
+    if not bool(getattr(S, "CODING_AGENT_AUTO_RESUME_INTERRUPTED", True)):
+        return {"ok": True, "resumed": 0, "tasks": [], "failures": {}}
+    resumed: List[str] = []
+    failures: Dict[str, str] = {}
+    for raw_task_id in task_ids:
+        task_id = str(raw_task_id or "").strip()
+        if not task_id:
+            continue
+        try:
+            task = await asyncio.to_thread(cw.load_task, task_id)
+            if str(task.get("agent_status") or "").strip().lower() != "interrupted":
+                continue
+            await start_agent_run(
+                task_id,
+                git_token_value=_git_token_for_task_owner(task),
+                coding_model=str(task.get("coding_model") or task.get("agent_model") or "coder"),
+                auto_commit=bool(task.get("agent_auto_commit")),
+                actor="gateway-recovery",
+                max_cycles=int(task.get("agent_max_cycles") or _max_cycles_per_run()),
+                max_runtime_sec=int(task.get("agent_max_runtime_sec") or _max_runtime_sec()),
+                context_reset_cycles=int(task.get("agent_context_reset_cycles") or 0),
+            )
+            resumed.append(task_id)
+        except Exception as exc:
+            failures[task_id] = f"{type(exc).__name__}: {exc}"
+    return {"ok": not failures, "resumed": len(resumed), "tasks": resumed, "failures": failures}
 
 
 async def start_agent_run(
@@ -2523,7 +2575,7 @@ async def _run_agent(
         max_repeated_state_reads = int(progress_policy.get("max_repeated_state_reads") or 6)
         max_repeated_same_file_reads = int(progress_policy.get("max_repeated_same_file_reads") or 4)
         max_no_progress_cycles = int(progress_policy.get("max_no_progress_cycles") or 8)
-        context_reset_chars = int(context_policy.get("context_reset_chars") or _context_reset_chars())
+        context_reset_chars = _context_reset_chars(context_policy.get("context_reset_chars"))
         while True:
             elapsed_sec = time.monotonic() - t0
             if cycle >= max_cycles or elapsed_sec >= max_runtime_sec:
@@ -2816,18 +2868,10 @@ async def _run_agent(
                     guidance = "The same repository state read is repeating without progress. Trust the controller snapshot and take the next edit, validation, review, or finish action."
                     messages.append(ChatMessage(role="user", content=guidance))
                     await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_guidance", "cycle": cycle, "summary": guidance, "signature": state_read})
-                elif progress_decision == "pause":
-                    summary = f"Paused after {repeated_state_reads} repeated state reads ({state_read}) without a meaningful action."
-                    await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_limit", "cycle": cycle, "summary": summary, "signature": state_read})
-                    raise _CodingAgentPaused(summary)
                 elif no_progress_cycles == max_no_progress_cycles:
-                    guidance = "The run has spent its no-progress budget on state inspection. Take a concrete edit, validation, plan update, or finish action now."
+                    guidance = "The run has repeatedly inspected state without a meaningful action. Take a concrete edit, validation, plan update, or finish action now."
                     messages.append(ChatMessage(role="user", content=guidance))
                     await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_guidance", "cycle": cycle, "summary": guidance, "count": no_progress_cycles})
-                elif no_progress_cycles > max_no_progress_cycles:
-                    summary = f"Paused after {no_progress_cycles} state-inspection cycles without an edit, validation, plan update, or finish action."
-                    await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_limit", "cycle": cycle, "summary": summary, "count": no_progress_cycles})
-                    raise _CodingAgentPaused(summary)
 
                 if name == "coding_finish":
                     candidate_success = bool(result.get("success", args.get("success", True)))

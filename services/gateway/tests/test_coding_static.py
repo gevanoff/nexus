@@ -63,6 +63,20 @@ def test_coding_ui_has_long_horizon_dashboard_controls():
     assert "(state.tasks || []).some(agentIsActive)" in js
 
 
+def test_coding_ui_preserves_manual_log_scroll_during_polling():
+    root = Path(__file__).resolve().parent.parent.joinpath("app", "static")
+    html = root.joinpath("coding.html").read_text(encoding="utf-8")
+    js = root.joinpath("coding.js").read_text(encoding="utf-8")
+
+    assert "captureScrollPosition" in js
+    assert "restoreScrollPosition(els.workspaceChat, scroll)" in js
+    assert "restoreScrollPosition(els.agentLog, scroll)" in js
+    assert "distanceFromBottom <= 32" in js
+    assert "hasActiveSelection(els.agentLog)" in js
+    assert "hasActiveSelection(els.workspaceChat)" in js
+    assert "/static/coding.js?v=15" in html
+
+
 def test_coding_ui_has_guided_model_integration_preview():
     root = Path(__file__).resolve().parent.parent.joinpath("app", "static")
     html = root.joinpath("coding.html").read_text(encoding="utf-8")
@@ -73,7 +87,7 @@ def test_coding_ui_has_guided_model_integration_preview():
     assert 'id="modelIntegrationPlacement"' in html
     assert 'id="modelIntegrationOutputs"' in html
     assert "/ui/api/coding/model-integrations/preview" in js
-    assert "/static/coding.js?v=14" in html
+    assert "/static/coding.js?v=15" in html
 
 
 def test_focused_navigation_does_not_reserve_desktop_header_height_on_mobile():

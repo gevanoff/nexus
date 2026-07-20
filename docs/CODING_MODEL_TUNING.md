@@ -220,8 +220,10 @@ Gateway caps and policies:
 
 ```text
 CODING_AGENT_MAX_TOKENS=8192
-CODING_AGENT_TOOL_CONTEXT_CHARS=32000
+CODING_AGENT_TOOL_CONTEXT_CHARS=12000
 CODING_AGENT_MAX_TOOL_RESULT_CHARS=100000
+CODING_AGENT_CONTEXT_RESET_CHARS=64000
+CODING_AGENT_AUTO_RESUME_INTERRUPTED=true
 CODING_COMMAND_TIMEOUT_SEC=180 for repo evals; 120 is fine for small tasks
 tool policy: keep destructive git commands blocked; require validation and coding_git_diff after edits
 fallback: do not silently fall back from coding_repo to a non-tool-capable vLLM backend for autonomous work

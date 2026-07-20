@@ -710,7 +710,7 @@ def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str,
         },
         "context_policy": {
             "context_reset_cycles": int(context.get("context_reset_cycles") or 0),
-            "context_reset_chars": int(context.get("context_reset_chars") or 200_000),
+            "context_reset_chars": int(context.get("context_reset_chars") or 64_000),
             "state_snapshot_on_reset": bool(context.get("state_snapshot_on_reset", True)),
         },
     }
@@ -746,7 +746,7 @@ def coding_mission_overrides(
         },
         "context_policy": {
             "context_reset_cycles": int(context_reset_cycles or 0),
-            "context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000)),
+            "context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 64_000)),
             "state_snapshot_on_reset": True,
         },
     }
@@ -942,8 +942,8 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
             "ts": _now(),
             "type": "interrupted",
             "summary": (
-                "Gateway restarted while this coding run was active. "
-                "Start another run on the same workspace to continue from the latest checkpoint commit and current git state."
+                "Gateway restarted while this coding run was active. Nexus will automatically resume it from the "
+                "durable controller snapshot, latest checkpoint commit, and current git state."
             ),
             "previous_status": status,
             "run_id": task.get("agent_run_id") or "",
@@ -2588,7 +2588,15 @@ def coding_state_snapshot(task_id: str) -> Dict[str, Any]:
             "cycle": cycle,
             "current_phase": phase,
             "last_meaningful_action": last_action,
-            "next_recommended_action": "validate changes" if last_validation_at < last_edit_at else "review diff" if last_diff_review_at < last_edit_at else "finish the mission",
+            "next_recommended_action": (
+                "continue the current project-plan milestone"
+                if not files
+                else "validate changes"
+                if last_validation_at < last_edit_at
+                else "review diff"
+                if last_diff_review_at < last_edit_at
+                else "finish the mission"
+            ),
         },
         "plan": normalize_project_plan(task.get("project_plan"), fallback_goal=mission["goal"]),
         "changes": {
@@ -3534,7 +3542,7 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "agent_max_cycles_per_run": int(getattr(S, "CODING_AGENT_MAX_CYCLES_PER_RUN", 1000) or 1000),
         "agent_max_runtime_sec": int(getattr(S, "CODING_AGENT_MAX_RUNTIME_SEC", 6 * 60 * 60) or (6 * 60 * 60)),
         "agent_context_reset_cycles": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CYCLES", 0) or 0),
-        "agent_context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 200_000) or 200_000),
+        "agent_context_reset_chars": int(getattr(S, "CODING_AGENT_CONTEXT_RESET_CHARS", 64_000) or 64_000),
         "agent_run_history_limit": int(getattr(S, "CODING_AGENT_RUN_HISTORY_LIMIT", 50) or 50),
         "agent_checkpoint_commits": bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True)),
         "git_token_configured": bool(_effective_git_token(git_token_value)),
