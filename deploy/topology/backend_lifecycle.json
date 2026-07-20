@@ -254,7 +254,7 @@
       "auto_stop": false,
       "compose_file": "docker-compose.vllm-meltdown.yml",
       "ready_path": "/models",
-      "notes": "Dedicated Qwen2.5 7B Instruct AWQ lane for Cinder. The 8K context, eager execution, and 0.58 GPU-memory allocation preserve headroom for embeddings and CPU-offloaded SDXL-Turbo on the 16GB GPU."
+      "notes": "Dedicated unquantized Qwen2.5 3B Instruct lane for Cinder. The 8K context, eager execution, and 0.58 GPU-memory allocation preserve headroom for embeddings and CPU-offloaded SDXL-Turbo on the 16GB GPU while avoiding the AWQ/Marlin path that stalled on this Blackwell card."
     },
     "gpu_fast": {
       "display_name": "SDXL-Turbo",

@@ -60,7 +60,7 @@ def test_meltdown_owns_lightweight_gpu_backends() -> None:
     assert cinder_backend["host"] == "meltdown"
     assert cinder_backend["component"] == "vllm-meltdown"
     assert cinder_backend["compose_file"] == "docker-compose.vllm-meltdown.yml"
-    assert "Qwen2.5 7B" in cinder_backend["notes"]
+    assert "Qwen2.5 3B" in cinder_backend["notes"]
     compose = _read("docker-compose.vllm-meltdown.yml")
     assert "nexus-vllm-meltdown" in compose
     assert "VLLM_USE_FLASHINFER_SAMPLER" in compose
@@ -259,7 +259,7 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
 
     aliases = json.loads(_read("services/gateway/app/model_aliases.json"))["aliases"]
     assert aliases["cinder-chat"]["backend"] == "local_vllm_meltdown"
-    assert aliases["cinder-chat"]["model"] == "Qwen/Qwen2.5-7B-Instruct-AWQ"
+    assert aliases["cinder-chat"]["model"] == "Qwen/Qwen2.5-3B-Instruct"
     assert aliases["cinder-chat"]["soul"] == "meltdown"
     assert aliases["tess-chat"]["backend"] == "local_vllm_fast"
     assert aliases["tess-chat"]["soul"] == "ada2"

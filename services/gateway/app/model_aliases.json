@@ -107,8 +107,8 @@
     },
     "cinder-chat": {
       "backend": "local_vllm_meltdown",
-      "model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
-      "label": "Cinder - Qwen2.5 7B AWQ (Meltdown local)",
+      "model": "Qwen/Qwen2.5-3B-Instruct",
+      "label": "Cinder - Qwen2.5 3B (Meltdown local)",
       "context_window": 8192,
       "tools": false,
       "max_tokens_cap": 768,

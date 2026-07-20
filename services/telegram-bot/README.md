@@ -86,7 +86,7 @@ When memory is enabled, the container health check also requires the Gateway's
 Honcho status endpoint to report enabled. This prevents a bot from appearing
 healthy while its configured memory writes are being discarded.
 
-The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use distinct identity aliases. Cinder uses the dedicated Meltdown-local Qwen2.5 7B AWQ lane through `cinder-chat`; Gateway still applies her SOUL and Honcho identity before forwarding inference to that host-local backend.
+The default Telegram service uses the `ai2-chat` host alias. The optional host-bot services use distinct identity aliases. Cinder uses the dedicated Meltdown-local Qwen2.5 3B lane through `cinder-chat`; Gateway still applies her SOUL and Honcho identity before forwarding inference to that host-local backend.
 
 ## Host bot identities
 
