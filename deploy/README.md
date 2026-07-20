@@ -241,7 +241,7 @@ pre-commit install
 - `deploy/topology/production.json` is the desired-state source of truth for host placement in the current `stackrot`/`ai2`/`ada2`/`meltdown` cluster, the constrained native MLX lane on `migraine`, and the `copyfail` infrastructure-control host.
 - etcd is the live runtime registry, not the deployment plan. Service registrars should publish healthy endpoints into etcd after the topology has been deployed.
 - Keep `DEFAULT_BACKEND` and `EMBEDDINGS_BACKEND` aligned with the intended host role; on `ai2`, prefer `local_mlx`.
-- `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, and `vllm-embeddings` when different hosts should own different inference lanes.
+- `vllm` remains the monolithic three-lane profile; use `vllm-strong`, `vllm-fast`, `vllm-embeddings`, and the dedicated `vllm-meltdown` Cinder lane when different hosts should own different inference services.
 - Persistence uses host bind mounts under `${NEXUS_RUNTIME_ROOT}/` (including gateway RO config at `${NEXUS_RUNTIME_ROOT}/gateway/config`). For deployed hosts, set `NEXUS_RUNTIME_ROOT` explicitly in the selected host env file.
 - The UI is intentionally separated from the gateway for production deployments; keep it as a standalone container when it is implemented.
 - For branch-based deploys, see `./deploy/scripts/deploy.sh` and `./deploy/scripts/remote-deploy.sh` (invoked from repo root).

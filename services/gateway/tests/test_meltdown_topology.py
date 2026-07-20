@@ -20,7 +20,11 @@ def test_meltdown_is_tracked_as_linux_nvidia_topology_host() -> None:
     assert meltdown["platform"] == "linux"
     assert meltdown["resource_kind"] == "linux_nvidia"
     assert meltdown["ssh_target"] == "ai@meltdown"
-    assert meltdown["components"] == ["sdxl-turbo", "vllm-embeddings"]
+    assert meltdown["components"] == [
+        "sdxl-turbo",
+        "vllm-embeddings",
+        "vllm-meltdown",
+    ]
     assert lifecycle["hosts"]["meltdown"]["resource_kind"] == "linux_nvidia"
     assert lifecycle["hosts"]["meltdown"]["env_file"] == "deploy/env/.env.prod.meltdown"
 
@@ -33,10 +37,18 @@ def test_meltdown_owns_lightweight_gpu_backends() -> None:
     assert "vllm-embeddings" not in topology["hosts"]["stackrot"]["components"]
     assert topology["defaults"]["env"]["SDXL_TURBO_BASE_URL"] == "http://meltdown:9050"
     assert topology["defaults"]["env"]["VLLM_EMBEDDINGS_BASE_URL"] == "http://meltdown:8002/v1"
+    assert topology["defaults"]["env"]["VLLM_MELTDOWN_BASE_URL"] == "http://meltdown:8004/v1"
     assert topology["hosts"]["meltdown"]["env"]["SDXL_TURBO_CUDA_VISIBLE_DEVICES"] == "0"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES"] == "0"
+    assert topology["hosts"]["meltdown"]["env"]["VLLM_MELTDOWN_CUDA_VISIBLE_DEVICES"] == "0"
     assert lifecycle["backends"]["gpu_fast"]["host"] == "meltdown"
     assert lifecycle["backends"]["local_vllm_embeddings"]["host"] == "meltdown"
+    cinder_backend = lifecycle["backends"]["local_vllm_meltdown"]
+    assert cinder_backend["host"] == "meltdown"
+    assert cinder_backend["component"] == "vllm-meltdown"
+    assert cinder_backend["compose_file"] == "docker-compose.vllm-meltdown.yml"
+    assert "Qwen2.5 7B" in cinder_backend["notes"]
+    assert "nexus-vllm-meltdown" in _read("docker-compose.vllm-meltdown.yml")
 
 
 def test_stackrot_owns_tts_stack_on_second_gpu() -> None:
@@ -231,7 +243,8 @@ def test_host_telegram_bots_use_distinct_tokens_models_and_identities() -> None:
     )
 
     aliases = json.loads(_read("services/gateway/app/model_aliases.json"))["aliases"]
-    assert aliases["cinder-chat"]["backend"] == "local_vllm_fast"
+    assert aliases["cinder-chat"]["backend"] == "local_vllm_meltdown"
+    assert aliases["cinder-chat"]["model"] == "Qwen/Qwen2.5-7B-Instruct-AWQ"
     assert aliases["cinder-chat"]["soul"] == "meltdown"
     assert aliases["tess-chat"]["backend"] == "local_vllm_fast"
     assert aliases["tess-chat"]["soul"] == "ada2"

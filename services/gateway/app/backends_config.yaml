@@ -47,6 +47,22 @@ backends:
     payload_policy:
       supports_tool_calling: false
 
+  local_vllm_meltdown:
+    class: local_vllm_meltdown
+    provider: vllm
+    base_url: ${VLLM_MELTDOWN_BASE_URL}
+    description: Dedicated Meltdown vLLM chat backend for Cinder
+    supported_capabilities:
+      - chat
+    concurrency_limits:
+      chat: 2
+    health:
+      liveness: /models
+      readiness: /models
+    payload_policy:
+      supports_tool_calling: false
+      max_input_chars: 24000
+
   local_mlx:
     class: local_mlx
     provider: mlx
@@ -224,6 +240,8 @@ legacy_mapping:
   vllm: local_vllm
   vllm_fast: local_vllm_fast
   vllm_embeddings: local_vllm_embeddings
+  vllm-meltdown: local_vllm_meltdown
+  vllm_meltdown: local_vllm_meltdown
   mlx: local_mlx
   mlx-coder: local_mlx
   mlx_coder: local_mlx

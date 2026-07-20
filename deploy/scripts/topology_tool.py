@@ -20,7 +20,13 @@ DEPRECATED_ENV_KEYS = {
 
 FAMILY_SPECS: dict[str, dict[str, list[str]]] = {
     "vllm": {
-        "components": ["vllm", "vllm-strong", "vllm-fast", "vllm-embeddings"],
+        "components": [
+            "vllm",
+            "vllm-strong",
+            "vllm-fast",
+            "vllm-embeddings",
+            "vllm-meltdown",
+        ],
         "default_env_keys": [
             "VLLM_BASE_URL",
             "VLLM_ADVERTISE_BASE_URL",
@@ -28,6 +34,8 @@ FAMILY_SPECS: dict[str, dict[str, list[str]]] = {
             "VLLM_FAST_ADVERTISE_BASE_URL",
             "VLLM_EMBEDDINGS_BASE_URL",
             "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL",
+            "VLLM_MELTDOWN_BASE_URL",
+            "VLLM_MELTDOWN_ADVERTISE_BASE_URL",
         ],
         "host_env_keys": [],
     },

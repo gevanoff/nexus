@@ -109,11 +109,13 @@ def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
     assert env["VLLM_MAX_MODEL_LEN"] == "65536"
     assert topology["hosts"]["ada2"]["env"]["VLLM_MAX_MODEL_LEN"] == "65536"
     assert topology["hosts"]["meltdown"]["env"]["VLLM_EMBEDDINGS_BACKEND_CLASS"] == "local_vllm_embeddings"
+    assert topology["hosts"]["meltdown"]["env"]["VLLM_MELTDOWN_BACKEND_CLASS"] == "local_vllm_meltdown"
     ai2_overrides = set(topology["hosts"]["ai2"]["env"]["BACKEND_ENV_BASE_URL_OVERRIDES"].split(","))
     assert {
         "local_vllm",
         "local_vllm_fast",
         "local_vllm_embeddings",
+        "local_vllm_meltdown",
         "gpu_heavy",
         "gpu_fast",
         "lighton_ocr",

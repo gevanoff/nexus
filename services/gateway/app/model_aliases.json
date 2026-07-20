@@ -106,9 +106,9 @@
       "soul": "stackrot"
     },
     "cinder-chat": {
-      "backend": "local_vllm_fast",
-      "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
-      "label": "Cinder - Devstral Small (shared fast lane)",
+      "backend": "local_vllm_meltdown",
+      "model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+      "label": "Cinder - Qwen2.5 7B AWQ (Meltdown local)",
       "context_window": 8192,
       "tools": false,
       "max_tokens_cap": 768,

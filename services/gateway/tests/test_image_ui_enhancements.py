@@ -21,7 +21,9 @@ def test_image_ui_has_optional_set_download_naming() -> None:
     script = (STATIC / "image_ui_enhancements.js").read_text(encoding="utf-8")
 
     assert 'id="nameScheme"' in html
-    assert "Cinder01.png, Cinder02.png" in html
+    assert 'placeholder="example01"' in html
+    assert "example01.png, example02.png" in html
+    assert 'raw || "example01"' in script
     assert "parseNamingScheme" in script
     assert "data-named-image-download" in script
     assert "anchor.download = filename" in script

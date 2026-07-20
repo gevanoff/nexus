@@ -13,7 +13,7 @@ services:
       - DEPLOY_CONTROL_STATE_DIR=/var/lib/deployment-control
       - DEPLOY_CONTROL_TOKEN_FILE=/run/secrets/deploy-control-token
       - DEPLOY_CONTROL_ALLOWED_HOSTS=${DEPLOY_CONTROL_ALLOWED_HOSTS:-ai2,ada2,meltdown,migraine,stackrot}
-      - DEPLOY_CONTROL_ALLOWED_COMPONENTS=${DEPLOY_CONTROL_ALLOWED_COMPONENTS:-deployment-control,etcd,followyourcanvas,gateway,heartmula,images,invokeai,lifecycle-manager,lighton-ocr,luxtts,mediamtx,mlx,nginx,personaplex,qwen3-tts,sdxl-turbo,skyreels-v2,telegram-bot,tts,vllm,vllm-embeddings,vllm-fast,vllm-strong}
+      - DEPLOY_CONTROL_ALLOWED_COMPONENTS=${DEPLOY_CONTROL_ALLOWED_COMPONENTS:-deployment-control,etcd,followyourcanvas,gateway,heartmula,images,invokeai,lifecycle-manager,lighton-ocr,luxtts,mediamtx,mlx,nginx,personaplex,qwen3-tts,sdxl-turbo,skyreels-v2,telegram-bot,tts,vllm,vllm-embeddings,vllm-fast,vllm-meltdown,vllm-strong}
       - DEPLOY_CONTROL_ALLOWED_BRANCHES=${DEPLOY_CONTROL_ALLOWED_BRANCHES:-main}
       - DEPLOY_CONTROL_ENFORCE_TOPOLOGY=${DEPLOY_CONTROL_ENFORCE_TOPOLOGY:-true}
       - DEPLOY_CONTROL_SYNC_REPO=${DEPLOY_CONTROL_SYNC_REPO:-true}

@@ -50,7 +50,7 @@ def allowed_components() -> set[str]:
             "deployment-control,etcd,followyourcanvas,gateway,heartmula,images,"
             "invokeai,lifecycle-manager,lighton-ocr,luxtts,mediamtx,mlx,nginx,"
             "personaplex,qwen3-tts,sdxl-turbo,skyreels-v2,telegram-bot,tts,"
-            "vllm,vllm-embeddings,vllm-fast,vllm-strong"
+            "vllm,vllm-embeddings,vllm-fast,vllm-meltdown,vllm-strong"
         ),
     )
 

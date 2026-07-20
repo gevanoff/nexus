@@ -130,7 +130,7 @@
       "host": "meltdown",
       "component": "telegram-bot-meltdown",
       "tier": "core",
-      "notes": "Process/container health for Cinder on meltdown; inference currently uses the shared fast Devstral lane through cinder-chat."
+      "notes": "Process/container health for Cinder on meltdown; cinder-chat routes through Gateway to the dedicated Meltdown-local vLLM backend."
     },
     "deployment_control": {
       "display_name": "Deployment Control",
@@ -236,12 +236,25 @@
       "component": "vllm-embeddings",
       "tier": "crucial",
       "capabilities": ["embeddings"],
-      "estimated_vram_mb": 12000,
+      "estimated_vram_mb": 1000,
       "auto_start": true,
       "auto_stop": false,
       "compose_file": "docker-compose.vllm-embeddings.yml",
       "ready_path": "/models",
-      "notes": "Assigned to meltdown's 16GB RTX 5060 Ti as the lightweight vLLM embeddings lane. Keep chat lanes on stackrot/ada2 unless measurements prove they fit."
+      "notes": "Assigned to meltdown's 16GB RTX 5060 Ti as the lightweight vLLM embeddings lane; observed idle allocation is below 1GB."
+    },
+    "local_vllm_meltdown": {
+      "display_name": "vLLM Cinder",
+      "host": "meltdown",
+      "component": "vllm-meltdown",
+      "tier": "high",
+      "capabilities": ["chat"],
+      "estimated_vram_mb": 9500,
+      "auto_start": true,
+      "auto_stop": false,
+      "compose_file": "docker-compose.vllm-meltdown.yml",
+      "ready_path": "/models",
+      "notes": "Dedicated Qwen2.5 7B Instruct AWQ lane for Cinder. The 8K context, eager execution, and 0.58 GPU-memory allocation preserve headroom for embeddings and CPU-offloaded SDXL-Turbo on the 16GB GPU."
     },
     "gpu_fast": {
       "display_name": "SDXL-Turbo",

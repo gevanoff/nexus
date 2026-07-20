@@ -103,7 +103,7 @@
 
   function parseNamingScheme(rawValue, index) {
     const raw = String(rawValue || "").trim();
-    const fallback = raw || "image01";
+    const fallback = raw || "example01";
     const match = fallback.match(/^(.*?)(\d+)$/);
     let stem;
     if (match) {

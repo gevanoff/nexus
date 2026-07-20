@@ -15,6 +15,8 @@
       "VLLM_FAST_SERVED_MODEL_NAME": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
       "VLLM_MODEL_DEFAULT": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
       "VLLM_MODEL_EMBEDDINGS": "BAAI/bge-small-en-v1.5",
+      "VLLM_MODEL_MELTDOWN": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+      "VLLM_MELTDOWN_SERVED_MODEL_NAME": "Qwen/Qwen2.5-7B-Instruct-AWQ",
       "VLLM_NATIVE_TOOLS_ENABLED": "true",
       "VLLM_FAST_NATIVE_TOOLS_ENABLED": "false",
       "VLLM_ENABLE_AUTO_TOOL_CHOICE": "true",
@@ -31,6 +33,9 @@
       "VLLM_FAST_MAX_MODEL_LEN": "8192",
       "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.70",
       "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "512",
+      "VLLM_MELTDOWN_GPU_MEMORY_UTILIZATION": "0.58",
+      "VLLM_MELTDOWN_MAX_MODEL_LEN": "8192",
+      "VLLM_MELTDOWN_ENFORCE_EAGER": "true",
       "MLX_MODEL_PATH": "mlx-community/GLM-5.2-4bit",
       "MLX_MODEL_TYPE": "lm",
       "MLX_MODEL_STRONG": "mlx-community/GLM-5.2-4bit",
@@ -46,6 +51,8 @@
       "VLLM_FAST_ADVERTISE_BASE_URL": "http://stackrot:8001/v1",
       "VLLM_EMBEDDINGS_BASE_URL": "http://meltdown:8002/v1",
       "VLLM_EMBEDDINGS_ADVERTISE_BASE_URL": "http://meltdown:8002/v1",
+      "VLLM_MELTDOWN_BASE_URL": "http://meltdown:8004/v1",
+      "VLLM_MELTDOWN_ADVERTISE_BASE_URL": "http://meltdown:8004/v1",
       "VLLM_PORT": "8003",
       "IMAGES_BACKEND": "http_openai_images",
       "IMAGES_BACKEND_CLASS": "gpu_heavy",
@@ -158,7 +165,7 @@
         "PERSONAPLEX_ADVERTISE_BASE_URL": "http://host.docker.internal:18160",
         "SKYREELS_V2_BASE_URL": "http://host.docker.internal:18180",
         "SKYREELS_V2_ADVERTISE_BASE_URL": "http://host.docker.internal:18180",
-        "BACKEND_ENV_BASE_URL_OVERRIDES": "local_vllm,local_vllm_fast,local_vllm_embeddings,gpu_heavy,gpu_fast,lighton_ocr,personaplex,skyreels_v2",
+        "BACKEND_ENV_BASE_URL_OVERRIDES": "local_vllm,local_vllm_fast,local_vllm_embeddings,local_vllm_meltdown,gpu_heavy,gpu_fast,lighton_ocr,personaplex,skyreels_v2",
         "MLX_FALLBACK_BACKEND": "local_vllm_fast",
         "MLX_FALLBACK_MODEL": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
         "UI_IP_ALLOWLIST": "127.0.0.1,172.28.0.1,10.10.22.0/24",
@@ -235,7 +242,8 @@
       "ssh_target": "ai@meltdown",
       "components": [
         "sdxl-turbo",
-        "vllm-embeddings"
+        "vllm-embeddings",
+        "vllm-meltdown"
       ],
       "env": {
         "ETCD_URL": "http://ai2:2379",
@@ -249,7 +257,14 @@
         "VLLM_EMBEDDINGS_BACKEND_CLASS": "local_vllm_embeddings",
         "VLLM_EMBEDDINGS_GPU_MEMORY_UTILIZATION": "0.70",
         "VLLM_EMBEDDINGS_MAX_MODEL_LEN": "512",
-        "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "0"
+        "VLLM_EMBEDDINGS_CUDA_VISIBLE_DEVICES": "0",
+        "VLLM_MELTDOWN_SERVICE_NAME": "vllm-meltdown",
+        "VLLM_MELTDOWN_BACKEND_CLASS": "local_vllm_meltdown",
+        "VLLM_MELTDOWN_CUDA_VISIBLE_DEVICES": "0",
+        "VLLM_MELTDOWN_CONFIG_FORMAT": "hf",
+        "VLLM_MELTDOWN_GPU_MEMORY_UTILIZATION": "0.58",
+        "VLLM_MELTDOWN_MAX_MODEL_LEN": "8192",
+        "VLLM_MELTDOWN_ENFORCE_EAGER": "true"
       }
     },
     "copyfail": {

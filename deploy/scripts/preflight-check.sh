@@ -30,7 +30,7 @@ TOPOLOGY_FILE=""
 
 is_valid_component() {
   case "$1" in
-    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -543,6 +543,10 @@ fi
 
 if component_selected vllm-embeddings; then
   check_port_required VLLM_EMBEDDINGS_PORT 8002 "vLLM embeddings"
+fi
+
+if component_selected vllm-meltdown; then
+  check_port_required VLLM_MELTDOWN_PORT 8004 "vLLM Meltdown chat"
 fi
 
 if component_selected etcd; then
