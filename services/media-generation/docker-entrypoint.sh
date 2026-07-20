@@ -48,6 +48,7 @@ case "${ENGINE}" in
     uv sync --frozen "${ltx_uv_sync_args[@]}"
     export MEDIA_RUNNER_PYTHON="${UPSTREAM_DIR}/.venv/bin/python"
     export MEDIA_UPSTREAM_DIR="${UPSTREAM_DIR}"
+    cd /app
     exec uvicorn app.video_main:app \
       --host 0.0.0.0 \
       --port "${MEDIA_PORT:-9180}"
@@ -66,6 +67,7 @@ case "${ENGINE}" in
     fi
     export MEDIA_RUNNER_PYTHON="${UPSTREAM_DIR}/.venv/bin/python"
     export MEDIA_UPSTREAM_DIR="${UPSTREAM_DIR}"
+    cd /app
     exec uvicorn app.video_main:app \
       --host 0.0.0.0 \
       --port "${MEDIA_PORT:-9185}"
@@ -95,6 +97,7 @@ case "${ENGINE}" in
       exit 1
     fi
     export ACE_STEP_UPSTREAM_BASE_URL="http://${ACESTEP_API_HOST}:${ACESTEP_API_PORT}"
+    cd /app
     uvicorn app.music_main:app \
       --host 0.0.0.0 \
       --port "${MEDIA_PORT:-9195}" &
