@@ -61,7 +61,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: shell-hygiene-${{ github.run_id }}
-          path: shell-hygiene.log
+          path: |
+            shell-hygiene.log
+            deploy/scripts/deploy.sh
+            deploy/scripts/preflight-check.sh
           if-no-files-found: ignore
           retention-days: 7
 
