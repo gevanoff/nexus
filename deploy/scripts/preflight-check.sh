@@ -30,7 +30,7 @@ TOPOLOGY_FILE=""
 
 is_valid_component() {
   case "$1" in
-    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|skyreels-v2|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -80,8 +80,9 @@ add_component_selection() {
         append_component_unique lighton-ocr
         append_component_unique personaplex
         append_component_unique followyourcanvas
-        append_component_unique skyreels-v2
-        append_component_unique heartmula
+        append_component_unique ltx-video
+        append_component_unique hunyuan-video
+        append_component_unique ace-step
         append_component_unique lifecycle-manager
         append_component_unique mediamtx
         append_component_unique tts
@@ -274,7 +275,7 @@ else
   fail "Gateway source missing (expected services/gateway/app with requirements.freeze.txt)"
 fi
 
-for service in deployment-control images tts; do
+for service in deployment-control images tts media-generation; do
   if [[ -f "services/$service/Dockerfile" ]]; then
     ok "Optional service buildable: $service"
   else
@@ -355,7 +356,6 @@ if [[ "$mode" == "deploy" ]]; then
     if [[ -f "$env_file_arg" ]]; then
       check_env_file_perms "$env_file_arg" "$env_file_arg"
     else
-      # Not an error: deploy.sh will create it (chmod 600) if missing.
       warn "Env file path provided but not present yet: $env_file_arg (deploy will create it)"
     fi
   else
@@ -363,7 +363,6 @@ if [[ "$mode" == "deploy" ]]; then
       warn "Multiple env files found; preflight can't know which deploy.sh will use."
       warn "Re-run with: ./deploy/scripts/preflight-check.sh --mode deploy --env-file <path>"
     elif [[ ${#existing_envs[@]} -eq 1 ]]; then
-      # If there's exactly one env file in play, be strict about it.
       check_env_file_perms "${existing_envs[0]}" "${existing_envs[0]}"
     fi
   fi
@@ -581,8 +580,16 @@ if component_selected followyourcanvas; then
   check_port_required FYC_PORT 9165 "FollowYourCanvas"
 fi
 
-if component_selected skyreels-v2; then
-  check_port_required SKYREELS_PORT 9180 "SkyReels V2"
+if component_selected ltx-video; then
+  check_port_required LTX_VIDEO_PORT 9180 "LTX-2.3 video"
+fi
+
+if component_selected hunyuan-video; then
+  check_port_required HUNYUAN_VIDEO_PORT 9185 "HunyuanVideo-1.5"
+fi
+
+if component_selected ace-step; then
+  check_port_required ACE_STEP_PORT 9195 "ACE-Step 1.5"
 fi
 
 if component_selected heartmula; then
@@ -607,6 +614,14 @@ fi
 
 if component_selected qwen3-tts; then
   check_port_required QWEN3_TTS_PORT 9175 "Qwen3 TTS"
+fi
+
+if component_selected telegram-bot; then
+  check_port_optional TELEGRAM_METRICS_PORT 9300 "Telegram bot metrics"
+fi
+
+if component_selected lifecycle-manager; then
+  check_port_required LIFECYCLE_MANAGER_PORT 9190 "Lifecycle Manager"
 fi
 
 if component_selected nginx; then
