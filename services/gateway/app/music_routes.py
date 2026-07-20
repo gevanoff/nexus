@@ -8,6 +8,12 @@ from app.config import S
 from app.health_checker import check_backend_ready
 from app.music_backend import generate_music
 
+# ui_routes is imported before music_routes by app.main. Extend its compatibility
+# set here to keep the video UI backend-driven without retaining SkyReels code.
+from app import ui_routes as _ui_routes
+
+_ui_routes._VIDEO_UI_COMPATIBLE_BACKENDS.update({"ltx_video", "hunyuan_video"})
+
 
 router = APIRouter()
 
@@ -29,9 +35,8 @@ async def music_generations(req: Request):
     if not has_input:
         raise HTTPException(status_code=400, detail="must provide prompt, lyrics, style, or input")
 
-    backend_class = (getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "heartmula_music"
+    backend_class = (getattr(S, "MUSIC_BACKEND_CLASS", "") or "").strip() or "ace_step_music"
 
-    # Backend health/readiness + capability.
     check_backend_ready(backend_class, route_kind="music")
     await check_capability(backend_class, "music")
 
