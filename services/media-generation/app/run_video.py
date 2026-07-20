@@ -8,8 +8,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -45,7 +43,14 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _validate_public_http_url(value: str) -> None:
+def _resolve_public_http_url(value: str) -> tuple[str, int, str]:
+    """Resolve a remote input once and return a public address pinned for curl.
+
+    The caller must connect using the returned address rather than resolving the
+    hostname again. This closes the DNS-rebinding window between validation and
+    download while preserving the original hostname for HTTP Host and TLS SNI.
+    """
+
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("image URL must use http or https and include a hostname")
@@ -64,16 +69,23 @@ def _validate_public_http_url(value: str) -> None:
     if not addresses:
         raise ValueError(f"image URL hostname returned no addresses: {hostname}")
 
+    public_addresses: list[str] = []
     for address in addresses:
         ip_text = address[4][0]
         ip = ipaddress.ip_address(ip_text)
         if not ip.is_global:
             raise ValueError(f"image URL resolved to a non-public address: {ip}")
+        normalized = str(ip)
+        if normalized not in public_addresses:
+            public_addresses.append(normalized)
+
+    return hostname, port, public_addresses[0]
 
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-        raise urllib.error.HTTPError(req.full_url, code, "redirects are not allowed", headers, fp)
+def _curl_resolve_value(hostname: str, port: int, ip_text: str) -> str:
+    ip = ipaddress.ip_address(ip_text)
+    address = f"[{ip}]" if ip.version == 6 else str(ip)
+    return f"{hostname}:{port}:{address}"
 
 
 def _download_input(value: str, temp_dir: Path, suffix: str = ".png") -> str:
@@ -84,24 +96,46 @@ def _download_input(value: str, temp_dir: Path, suffix: str = ".png") -> str:
             raise ValueError(f"local image input must be a file under {root}")
         return str(source)
 
-    _validate_public_http_url(value)
+    hostname, port, resolved_ip = _resolve_public_http_url(value)
     destination = temp_dir / f"input{suffix}"
     max_bytes = max(1, _as_int(_env("MEDIA_MAX_INPUT_BYTES"), 25_000_000))
-    request = urllib.request.Request(value, headers={"User-Agent": "NexusMedia/1.0"})
-    opener = urllib.request.build_opener(_NoRedirectHandler())
-    with opener.open(request, timeout=120) as response:
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                if int(content_length) > max_bytes:
-                    raise ValueError(f"image input exceeds {max_bytes} bytes")
-            except ValueError as exc:
-                if "exceeds" in str(exc):
-                    raise
-        payload = response.read(max_bytes + 1)
-    if len(payload) > max_bytes:
+    destination.unlink(missing_ok=True)
+
+    command = [
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "30",
+        "--max-time",
+        "120",
+        "--max-filesize",
+        str(max_bytes),
+        "--proto",
+        "=http,https",
+        "--proto-redir",
+        "=",
+        "--resolve",
+        _curl_resolve_value(hostname, port, resolved_ip),
+        "--output",
+        str(destination),
+        value,
+    ]
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError("curl is required to download remote image inputs safely") from exc
+
+    if proc.returncode != 0:
+        destination.unlink(missing_ok=True)
+        detail = (proc.stderr or proc.stdout or f"curl exited {proc.returncode}").strip()
+        raise ValueError(f"image input download failed: {detail[-1000:]}")
+    if not destination.is_file():
+        raise ValueError("image input download produced no file")
+    if destination.stat().st_size > max_bytes:
+        destination.unlink(missing_ok=True)
         raise ValueError(f"image input exceeds {max_bytes} bytes")
-    destination.write_bytes(payload)
     return str(destination)
 
 
