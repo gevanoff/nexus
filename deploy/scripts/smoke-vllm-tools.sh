@@ -71,6 +71,10 @@ def request_body(case):
         )
     elif case == "roundtrip":
         body["tool_choice"] = "auto"
+        body["messages"][-1]["content"] = (
+            "Use the get_weather tool for Boston. After receiving its result, "
+            "reply with exactly TOOL_ROUNDTRIP_OK."
+        )
     else:
         print(f"Unknown SMOKE_CASES entry: {case}", file=sys.stderr)
         raise SystemExit(64)
@@ -131,7 +135,13 @@ def run_roundtrip(first_payload):
     assistant = response_message(first_payload)
     messages = [
         {"role": "system", "content": "Use tool results, then follow the user's exact response instruction."},
-        {"role": "user", "content": "Use the get_weather tool for Boston."},
+        {
+            "role": "user",
+            "content": (
+                "Use the get_weather tool for Boston. After receiving its result, "
+                "reply with exactly TOOL_ROUNDTRIP_OK."
+            ),
+        },
         {
             "role": "assistant",
             "content": assistant.get("content") or "",
@@ -147,7 +157,6 @@ def run_roundtrip(first_payload):
                 "content": json.dumps({"weather": "TOOL_ROUNDTRIP_OK", "city": "Boston"}),
             }
         )
-    messages.append({"role": "user", "content": "Reply with exactly TOOL_ROUNDTRIP_OK."})
     followup = {
         "model": model,
         "messages": messages,

@@ -86,7 +86,7 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     env = topology["defaults"]["env"]
 
     assert env["VLLM_TOOL_PROFILE"] == "xlam_mistral_parallel"
-    assert env["VLLM_FAST_TOOL_PROFILE"] == "mistral_parallel"
+    assert env["VLLM_FAST_TOOL_PROFILE"] == "mistral_serial"
     assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "true"
     assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "true"
     assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "true"
@@ -94,7 +94,7 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     assert env["VLLM_TOOL_CALL_PARSER"] == "xlam"
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == "mistral"
     assert env["VLLM_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
-    assert env["VLLM_FAST_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
+    assert env["VLLM_FAST_CHAT_TEMPLATE"] == ""
     assert env["MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS"].split(",")[-1] == "fast"
     assert env["TELEGRAM_REQUIRE_MENTION"] == "true"
     assert env["TELEGRAM_MENTION_PATTERNS"] == "Nexus"

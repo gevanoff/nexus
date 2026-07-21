@@ -7,9 +7,9 @@
       "tools": true,
       "tool_mode": "client_exec",
       "supports_tool_choice": ["none", "auto", "required", "named"],
-      "supports_parallel_tool_calls": true,
+      "supports_parallel_tool_calls": false,
       "preferred_tool_call_parser": "mistral",
-      "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja",
+      "preferred_chat_template": "",
       "max_tokens_cap": 768
     },
     "default": {

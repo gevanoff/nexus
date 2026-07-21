@@ -67,8 +67,8 @@ Reusable vLLM profiles live in `deploy/config/vllm-tool-profiles.json`. They kee
 
 ```bash
 ./deploy/scripts/vllm-tool-profile.py list
-./deploy/scripts/vllm-tool-profile.py render-env --profile mistral_parallel --prefix VLLM_FAST
-./deploy/scripts/vllm-tool-profile.py alias-json --profile mistral_parallel \
+./deploy/scripts/vllm-tool-profile.py render-env --profile mistral_serial --prefix VLLM_FAST
+./deploy/scripts/vllm-tool-profile.py alias-json --profile mistral_serial \
   --backend local_vllm_fast --model org/model --context-window 8192
 ```
 
@@ -77,7 +77,7 @@ Adding a model is therefore a qualification workflow, not an automatic model-nam
 1. Confirm the model's documented tool syntax and the parser shipped by the pinned vLLM version.
 2. Select or add a profile containing the parser, template, and Gateway capability metadata.
 3. Start the vLLM lane while its Gateway alias remains tool-disabled.
-4. Run `smoke-vllm-tools.sh` with its default auto, required, named, none, parallel, and round-trip cases for at least ten repeats.
+4. Run `smoke-vllm-tools.sh` for the profile's declared cases for at least ten repeats. Probe unsupported cases too, but do not advertise them merely because the parser supports them in principle.
 5. Enable the alias and Gateway native-tools flag, then pass Gateway streaming and round-trip qualification.
 
 Preflight validates every configured `VLLM*_TOOL_PROFILE` against the rendered env file so a parser flag cannot silently drift from Gateway's advertised capability.
@@ -89,7 +89,7 @@ tool_call_parser: glm4_moe
 reasoning_parser: glm4_moe
 ```
 
-Do not mark an alias tool-capable until its parser passes named, required, auto, parallel, continuation, and streaming probes. Alias diagnostics are available at `GET /v1/tool-calling/diagnostics`.
+Do not mark an alias tool-capable until its parser passes named, required, auto, continuation, and streaming probes. Advertise parallel calls only when the exact checkpoint/parser/template combination also passes parallel qualification. Alias diagnostics are available at `GET /v1/tool-calling/diagnostics`.
 
 ## Verification
 

@@ -24,14 +24,14 @@
         "preferred_chat_template": ""
       }
     },
-    "mistral_parallel": {
-      "description": "Mistral-family [TOOL_CALLS] syntax parsed by vLLM's mistral parser with the parallel-capable Mistral template.",
+    "mistral_serial": {
+      "description": "Mistral-family [TOOL_CALLS] syntax parsed by vLLM's mistral parser; parallel calls are not advertised.",
       "vllm_env": {
         "NATIVE_TOOLS_ENABLED": "true",
         "ENABLE_AUTO_TOOL_CHOICE": "true",
         "TOOL_CALL_PARSER": "mistral",
         "TOOL_PARSER_PLUGIN": "",
-        "CHAT_TEMPLATE": "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja",
+        "CHAT_TEMPLATE": "",
         "CHAT_TEMPLATE_CONTENT_FORMAT": "",
         "EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE": "true"
       },
@@ -44,9 +44,9 @@
           "required",
           "named"
         ],
-        "supports_parallel_tool_calls": true,
+        "supports_parallel_tool_calls": false,
         "preferred_tool_call_parser": "mistral",
-        "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja"
+        "preferred_chat_template": ""
       },
       "qualification": {
         "direct_cases": [
@@ -54,7 +54,6 @@
           "required",
           "named",
           "none",
-          "parallel",
           "roundtrip"
         ],
         "minimum_repeats": 10,

@@ -82,9 +82,9 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             tools=True,
             max_tokens_cap=768,
             supports_tool_choice=("none", "auto", "required", "named"),
-            supports_parallel_tool_calls=True,
+            supports_parallel_tool_calls=False,
             preferred_tool_call_parser="mistral",
-            preferred_chat_template="tool_chat_template_mistral_parallel.jinja",
+            preferred_chat_template="",
         ),
         "coder": ModelAlias(
             backend=default_backend,

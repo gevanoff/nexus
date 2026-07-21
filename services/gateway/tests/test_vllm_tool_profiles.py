@@ -29,9 +29,9 @@ def test_production_vllm_tool_profiles_match_lane_env():
 def test_profile_validation_detects_gateway_and_parser_drift():
     profile_tool = _load_profile_tool()
     catalog = profile_tool.load_catalog(REPO_ROOT / "deploy" / "config" / "vllm-tool-profiles.json")
-    profile = profile_tool.get_profile(catalog, "mistral_parallel")
+    profile = profile_tool.get_profile(catalog, "mistral_serial")
     env = {
-        "VLLM_FAST_TOOL_PROFILE": "mistral_parallel",
+        "VLLM_FAST_TOOL_PROFILE": "mistral_serial",
         **profile_tool.rendered_profile_env(profile, "VLLM_FAST"),
     }
 
@@ -47,7 +47,7 @@ def test_mistral_profile_renders_gateway_alias_contract():
     catalog = json.loads(
         (REPO_ROOT / "deploy" / "config" / "vllm-tool-profiles.json").read_text(encoding="utf-8")
     )
-    profile_alias = catalog["profiles"]["mistral_parallel"]["gateway_alias"]
+    profile_alias = catalog["profiles"]["mistral_serial"]["gateway_alias"]
     aliases = json.loads(
         (REPO_ROOT / "services" / "gateway" / "app" / "model_aliases.json").read_text(encoding="utf-8")
     )["aliases"]
