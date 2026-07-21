@@ -80,18 +80,22 @@ def test_env_base_url_override_keeps_static_proxy_url_for_etcd_record(monkeypatc
     assert registry.service_records["vllm-fast"].hostname == "stackrot"
 
 
-def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
+def test_production_topology_configures_validated_vllm_tool_profiles():
     repo_root = Path(__file__).resolve().parents[3]
     topology = json.loads((repo_root / "deploy" / "topology" / "production.json").read_text(encoding="utf-8"))
     env = topology["defaults"]["env"]
 
+    assert env["VLLM_TOOL_PROFILE"] == "xlam_mistral_parallel"
+    assert env["VLLM_FAST_TOOL_PROFILE"] == "mistral_parallel"
     assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "true"
-    assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "false"
+    assert env["VLLM_FAST_NATIVE_TOOLS_ENABLED"] == "true"
     assert env["VLLM_ENABLE_AUTO_TOOL_CHOICE"] == "true"
-    assert env["VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE"] == "false"
+    assert env["VLLM_FAST_ENABLE_AUTO_TOOL_CHOICE"] == "true"
     assert env["VLLM_TOOL_CALL_PARSER"] == "xlam"
-    assert env["VLLM_FAST_TOOL_CALL_PARSER"] == ""
+    assert env["VLLM_FAST_TOOL_CALL_PARSER"] == "mistral"
     assert env["VLLM_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
+    assert env["VLLM_FAST_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
+    assert env["MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS"].split(",")[-1] == "fast"
     assert env["TELEGRAM_REQUIRE_MENTION"] == "true"
     assert env["TELEGRAM_MENTION_PATTERNS"] == "Nexus"
     assert env["NEXUS_TOOL_EXECUTION_DEFAULT"] == "client_exec"
@@ -120,5 +124,5 @@ def test_production_topology_enables_only_validated_vllm_auto_tool_lane():
         "gpu_fast",
         "lighton_ocr",
         "personaplex",
-        "skyreels_v2",
+        "ltx_video",
     } <= ai2_overrides

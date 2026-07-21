@@ -79,8 +79,12 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             backend="local_vllm_fast",
             upstream_model=S.VLLM_MODEL_FAST,
             context_window=S.VLLM_FAST_MAX_MODEL_LEN,
-            tools=False,
+            tools=True,
             max_tokens_cap=768,
+            supports_tool_choice=("none", "auto", "required", "named"),
+            supports_parallel_tool_calls=True,
+            preferred_tool_call_parser="mistral",
+            preferred_chat_template="tool_chat_template_mistral_parallel.jinja",
         ),
         "coder": ModelAlias(
             backend=default_backend,

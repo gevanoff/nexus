@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "description": "Reusable vLLM serving and Gateway capability profiles. Select profiles explicitly per lane; never infer compatibility from a model name alone.",
+  "profiles": {
+    "disabled": {
+      "description": "Tool calling is not exposed for this lane.",
+      "vllm_env": {
+        "NATIVE_TOOLS_ENABLED": "false",
+        "ENABLE_AUTO_TOOL_CHOICE": "false",
+        "TOOL_CALL_PARSER": "",
+        "TOOL_PARSER_PLUGIN": "",
+        "CHAT_TEMPLATE": "",
+        "CHAT_TEMPLATE_CONTENT_FORMAT": "",
+        "EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE": "true"
+      },
+      "gateway_alias": {
+        "tools": false,
+        "tool_mode": "client_exec",
+        "supports_tool_choice": [
+          "none"
+        ],
+        "supports_parallel_tool_calls": false,
+        "preferred_tool_call_parser": "",
+        "preferred_chat_template": ""
+      }
+    },
+    "mistral_parallel": {
+      "description": "Mistral-family [TOOL_CALLS] syntax parsed by vLLM's mistral parser with the parallel-capable Mistral template.",
+      "vllm_env": {
+        "NATIVE_TOOLS_ENABLED": "true",
+        "ENABLE_AUTO_TOOL_CHOICE": "true",
+        "TOOL_CALL_PARSER": "mistral",
+        "TOOL_PARSER_PLUGIN": "",
+        "CHAT_TEMPLATE": "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja",
+        "CHAT_TEMPLATE_CONTENT_FORMAT": "",
+        "EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE": "true"
+      },
+      "gateway_alias": {
+        "tools": true,
+        "tool_mode": "client_exec",
+        "supports_tool_choice": [
+          "none",
+          "auto",
+          "required",
+          "named"
+        ],
+        "supports_parallel_tool_calls": true,
+        "preferred_tool_call_parser": "mistral",
+        "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja"
+      },
+      "qualification": {
+        "direct_cases": [
+          "auto",
+          "required",
+          "named",
+          "none",
+          "parallel",
+          "roundtrip"
+        ],
+        "minimum_repeats": 10,
+        "gateway_stream": true,
+        "gateway_roundtrip": true
+      }
+    },
+    "xlam_mistral_parallel": {
+      "description": "xLAM-style calls served with vLLM's xlam parser and the parallel-capable Mistral template.",
+      "vllm_env": {
+        "NATIVE_TOOLS_ENABLED": "true",
+        "ENABLE_AUTO_TOOL_CHOICE": "true",
+        "TOOL_CALL_PARSER": "xlam",
+        "TOOL_PARSER_PLUGIN": "",
+        "CHAT_TEMPLATE": "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja",
+        "CHAT_TEMPLATE_CONTENT_FORMAT": "",
+        "EXCLUDE_TOOLS_WHEN_TOOL_CHOICE_NONE": "true"
+      },
+      "gateway_alias": {
+        "tools": true,
+        "tool_mode": "client_exec",
+        "supports_tool_choice": [
+          "none",
+          "auto",
+          "required",
+          "named"
+        ],
+        "supports_parallel_tool_calls": true,
+        "preferred_tool_call_parser": "xlam",
+        "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja"
+      },
+      "qualification": {
+        "direct_cases": [
+          "auto",
+          "required",
+          "named",
+          "none",
+          "parallel",
+          "roundtrip"
+        ],
+        "minimum_repeats": 10,
+        "gateway_stream": true,
+        "gateway_roundtrip": true
+      }
+    }
+  }
+}

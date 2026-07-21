@@ -399,6 +399,22 @@ else
   env_file_for_ports=""
 fi
 
+if [[ -n "${env_file_for_ports:-}" ]] && (
+  component_selected gateway || component_selected vllm || component_selected vllm-strong || component_selected vllm-fast
+); then
+  profile_python="$(ns_pick_python || true)"
+  profile_checker="$ROOT_DIR/deploy/scripts/vllm-tool-profile.py"
+  if [[ -n "${profile_python:-}" && -f "$profile_checker" ]]; then
+    if profile_result="$($profile_python "$profile_checker" check-env --env-file "$env_file_for_ports" 2>&1)"; then
+      ok "$profile_result"
+    else
+      fail "vLLM tool profile mismatch: $profile_result"
+    fi
+  else
+    warn "Unable to validate vLLM tool profiles (Python or profile checker missing)"
+  fi
+fi
+
 check_compose_extra_host_env() {
   local key value
   local missing=()

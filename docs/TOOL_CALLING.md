@@ -63,6 +63,25 @@ NEXUS_TOOL_FS_ROOTS=/workspace/nexus,/var/lib/gateway/app,/var/lib/gateway/confi
 
 vLLM automatic tool choice requires `--enable-auto-tool-choice`, a validated `--tool-call-parser`, and any model-specific `--chat-template`. Nexus renders these from `VLLM_ENABLE_AUTO_TOOL_CHOICE`, `VLLM_TOOL_CALL_PARSER`, and `VLLM_CHAT_TEMPLATE`. Required and named choices may use vLLM guided decoding even when automatic parsing is disabled.
 
+Reusable vLLM profiles live in `deploy/config/vllm-tool-profiles.json`. They keep the server flags and Gateway alias contract together without pretending every model uses the same tool syntax. Profiles are selected per lane with `VLLM_TOOL_PROFILE`, `VLLM_FAST_TOOL_PROFILE`, or the equivalent lane prefix. The helper renders settings and an alias template:
+
+```bash
+./deploy/scripts/vllm-tool-profile.py list
+./deploy/scripts/vllm-tool-profile.py render-env --profile mistral_parallel --prefix VLLM_FAST
+./deploy/scripts/vllm-tool-profile.py alias-json --profile mistral_parallel \
+  --backend local_vllm_fast --model org/model --context-window 8192
+```
+
+Adding a model is therefore a qualification workflow, not an automatic model-name match:
+
+1. Confirm the model's documented tool syntax and the parser shipped by the pinned vLLM version.
+2. Select or add a profile containing the parser, template, and Gateway capability metadata.
+3. Start the vLLM lane while its Gateway alias remains tool-disabled.
+4. Run `smoke-vllm-tools.sh` with its default auto, required, named, none, parallel, and round-trip cases for at least ten repeats.
+5. Enable the alias and Gateway native-tools flag, then pass Gateway streaming and round-trip qualification.
+
+Preflight validates every configured `VLLM*_TOOL_PROFILE` against the rendered env file so a parser flag cannot silently drift from Gateway's advertised capability.
+
 Native MLX capability is model-specific. Configure the served model parser, for example:
 
 ```yaml

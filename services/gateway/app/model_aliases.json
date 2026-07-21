@@ -4,7 +4,12 @@
       "backend": "local_vllm_fast",
       "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
       "context_window": 8192,
-      "tools": false,
+      "tools": true,
+      "tool_mode": "client_exec",
+      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_parallel_tool_calls": true,
+      "preferred_tool_call_parser": "mistral",
+      "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja",
       "max_tokens_cap": 768
     },
     "default": {

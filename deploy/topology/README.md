@@ -70,9 +70,9 @@ Compatibility note:
 vLLM automatic tool parsing is enabled only for production chat lanes whose model, chat template, and parser combinations have been validated end to end:
 
 - strong lane (`ada2`): auto tool parsing is enabled with vLLM's `xlam` parser and `/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja`. This lane backs tools-capable aliases such as `fast-reasoning`.
-- fast lane (`stackrot`): auto tool parsing is disabled. vLLM 0.10.2 runs this Devstral lane with the matching tokenizer in `mistral` tokenizer mode, but the lane is not validated for native automatic structured tool-call parsing.
+- fast lane (`stackrot`): Devstral uses the `mistral_parallel` profile: vLLM's `mistral` parser, `mistral` tokenizer mode, and `/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja`.
 
-The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated automatic tool parsing and must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` requests with `tool_choice=auto` may be passed to a backend that is not actually returning structured tool calls. Required and named tool choices are still allowed through vLLM because they use guided decoding instead of the automatic parser.
+The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated automatic tool parsing and must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` requests with `tool_choice=auto` may be passed to a backend that is not actually returning structured tool calls. `deploy/config/vllm-tool-profiles.json` records both sides of that contract, and preflight rejects drift for any lane with a `VLLM*_TOOL_PROFILE` selector.
 
 The production vLLM chat lanes use safetensors rather than GGUF artifacts: `cyankiwi/Devstral-Small-2507-AWQ-4bit` on `stackrot`, `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`, and `Qwen/Qwen2.5-3B-Instruct` on `meltdown`. The Meltdown lane is intentionally tool-free and dedicated to Cinder through the `cinder-chat` alias.
 
@@ -85,6 +85,18 @@ BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smo
 REPEATS=10 BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh
 SMOKE_CASES=required,named,none BASE_URL=http://127.0.0.1:8000/v1 MODEL=<served-model-name> ./deploy/scripts/smoke-vllm-tools.sh
 ```
+
+For a new vLLM model, select a syntax-family profile explicitly, render the lane settings, and copy the matching Gateway alias fragment:
+
+```bash
+./deploy/scripts/vllm-tool-profile.py list
+./deploy/scripts/vllm-tool-profile.py render-env --profile mistral_parallel --prefix VLLM_FAST
+./deploy/scripts/vllm-tool-profile.py alias-json --profile mistral_parallel \
+  --backend local_vllm_fast --model org/model --context-window 8192
+./deploy/scripts/vllm-tool-profile.py check-env --env-file .env
+```
+
+A profile is reusable; qualification is model/checkpoint-specific. Parser availability, the emitted syntax, quantization, chat template, and vLLM version can all change results. Keep the alias disabled until the default direct suite passes ten times and Gateway's streaming and round-trip qualification also pass.
 
 ## ai2 Colima Backend Proxies
 

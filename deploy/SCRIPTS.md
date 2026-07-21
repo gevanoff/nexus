@@ -53,6 +53,7 @@ These commands do not change topology and should not replace a deployment.
 | `diagnose-telegram-bot.sh` | Checks Telegram configuration, container state, logs, and Gateway connectivity |
 | `smoke-test-gateway.sh` | Exercises public Gateway health/models/embeddings/responses contracts |
 | `smoke-vllm-tools.sh` | Exercises vLLM tool calling through the configured route |
+| `vllm-tool-profile.py` | Lists/renders reusable vLLM tool profiles and rejects serving/Gateway env drift |
 | `smoke-test-tts.sh` | Exercises TTS routing |
 | `smoke-test-video.sh` | Exercises SkyReels directly or through the Gateway UI path |
 | `check-essential-containers.sh` | Waits for required control-plane containers and prints failure evidence |
