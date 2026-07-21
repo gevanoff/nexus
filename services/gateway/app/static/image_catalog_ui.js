@@ -534,6 +534,11 @@
     generateEl.disabled = true;
     setStatus("Generating...", false);
 
+    const progressId = globalThis.crypto?.randomUUID
+      ? globalThis.crypto.randomUUID()
+      : `image-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    body.progress_id = progressId;
+
     let stop = null;
     let progressWrap = null;
 
@@ -552,17 +557,50 @@
       progressWrap.appendChild(text);
       statusEl.appendChild(progressWrap);
 
-      let pct = 0;
-      const intervalId = setInterval(() => {
-        const step = Math.max(1, Math.floor((100 - pct) / 20));
-        pct = Math.min(95, pct + step);
-        inner.style.width = `${pct}%`;
-        text.textContent = `${pct}%`;
-      }, 300);
-      stop = () => {
-        clearInterval(intervalId);
-        inner.style.width = "100%";
-        text.textContent = "100%";
+      let pollTimer = null;
+      let polling = true;
+      const renderProgress = (progress) => {
+        const rawPercentage = Number(progress && progress.percentage);
+        const hasPercentage = Number.isFinite(rawPercentage);
+        const pct = hasPercentage
+          ? Math.max(0, Math.min(100, Math.round(rawPercentage * 100)))
+          : null;
+        inner.style.width = pct === null ? "0%" : `${pct}%`;
+
+        const parts = [];
+        const currentImage = Number(progress && progress.current_image);
+        const totalImages = Number(progress && progress.total_images);
+        if (Number.isFinite(currentImage) && Number.isFinite(totalImages)) {
+          parts.push(`Image ${currentImage} of ${totalImages}`);
+        }
+        const message = String((progress && progress.message) || "").trim();
+        if (message) parts.push(message);
+        if (pct !== null) parts.push(`${pct}%`);
+        text.textContent = parts.join(" • ") || "Waiting for InvokeAI...";
+      };
+      const pollProgress = async () => {
+        if (!polling) return;
+        const backendClass = String(body.backend_class || body.backend || "gpu_heavy");
+        try {
+          const response = await fetch(
+            `/ui/api/image/progress/${encodeURIComponent(progressId)}?backend_class=${encodeURIComponent(backendClass)}`,
+            { credentials: "same-origin", cache: "no-store" },
+          );
+          if (response.ok) renderProgress(await response.json());
+        } catch (error) {
+          // Generation remains authoritative; a transient progress failure is non-fatal.
+        } finally {
+          if (polling) pollTimer = setTimeout(pollProgress, 500);
+        }
+      };
+      void pollProgress();
+      stop = (completed) => {
+        polling = false;
+        if (pollTimer !== null) clearTimeout(pollTimer);
+        if (completed) {
+          inner.style.width = "100%";
+          text.textContent = "Generation complete • 100%";
+        }
         setTimeout(() => {
           try {
             progressWrap.remove();
@@ -589,12 +627,12 @@
       debugEl.textContent = JSON.stringify({ request: body, response: payload }, null, 2);
 
       if (!resp.ok) {
-        if (stop) stop();
+        if (stop) stop(false);
         setStatus(`HTTP ${resp.status}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`, true);
         return;
       }
 
-      if (stop) stop();
+      if (stop) stop(true);
 
       const gateway = payload && payload._gateway;
       const bits = [];
@@ -609,6 +647,7 @@
       setStatus("Done", false);
       renderImages(payload);
     } catch (error) {
+      if (stop) stop(false);
       setStatus(String(error), true);
     } finally {
       generateEl.disabled = false;

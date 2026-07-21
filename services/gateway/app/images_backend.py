@@ -190,6 +190,7 @@ def _filter_image_options_for_upstream(opts: Dict[str, Any] | None) -> Dict[str,
         "quality",
         "background",
         "output_format",
+        "progress_id",
     }
 
     out: Dict[str, Any] = {}
@@ -337,7 +338,7 @@ async def generate_openai_images(
 ) -> Dict[str, Any]:
     n = clamp_image_count(n)
     width, height = _parse_size(size)
-    timeout = float(timeout_sec or getattr(S, "IMAGES_HTTP_TIMEOUT_SEC", 120.0) or 120.0)
+    timeout = float(timeout_sec or getattr(S, "IMAGES_HTTP_TIMEOUT_SEC", 1200.0) or 1200.0)
     chosen_model, model_reason = _select_images_model(prompt=prompt, requested_model=model)
 
     payload: Dict[str, Any] = {
@@ -415,7 +416,7 @@ async def edit_openai_images(
     backend_class: str,
     timeout_sec: float | None = None,
 ) -> Dict[str, Any]:
-    timeout = float(timeout_sec or getattr(S, "IMAGES_HTTP_TIMEOUT_SEC", 120.0) or 120.0)
+    timeout = float(timeout_sec or getattr(S, "IMAGES_HTTP_TIMEOUT_SEC", 1200.0) or 1200.0)
     data: Dict[str, Any] = {"prompt": prompt, "response_format": "b64_json"}
     if isinstance(form_fields, dict):
         for k, v in form_fields.items():
@@ -531,6 +532,7 @@ async def generate_images(
             "scheduler",
             "style",
             "quality",
+            "progress_id",
         }
 
         out: Dict[str, Any] = {}
@@ -620,7 +622,7 @@ async def generate_images(
         if not base:
             raise RuntimeError("IMAGES_HTTP_BASE_URL is required for http_a1111")
 
-        timeout = float(getattr(S, "IMAGES_HTTP_TIMEOUT_SEC", 120.0) or 120.0)
+        timeout = float(getattr(S, "IMAGES_HTTP_TIMEOUT_SEC", 1200.0) or 1200.0)
         payload = {
             "prompt": prompt,
             "width": width,

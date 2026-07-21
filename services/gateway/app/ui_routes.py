@@ -51,7 +51,11 @@ from app.router_cfg import router_cfg
 from app.upstreams import call_backend_chat, stream_backend_chat_as_openai
 from app.tool_calling.executor import prepare_tools, resolve_execution_policy, run_gateway_tool_loop
 from app.tool_calling.streaming import stream_final_chat_response
-from app.images_backend import generate_images, resolve_images_backend_class
+from app.images_backend import (
+    _effective_images_http_base_url,
+    generate_images,
+    resolve_images_backend_class,
+)
 from app.ocr_backend import extract_ocr_text, scan_ocr
 from app.tts_backend import generate_tts, _effective_tts_base_url
 from app import coding_model_policy
@@ -6391,6 +6395,7 @@ async def ui_image(req: Request) -> Dict[str, Any]:
         "scheduler",
         "style",
         "quality",
+        "progress_id",
     ]:
         if k in body:
             options[k] = body.get(k)
@@ -6456,6 +6461,51 @@ async def ui_image(req: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"image backend error: {type(e).__name__}: {e}")
+
+
+@router.get("/ui/api/image/progress/{progress_id}", include_in_schema=False)
+async def ui_image_progress(req: Request, progress_id: str) -> Dict[str, Any]:
+    _require_ui_access(req)
+    _require_user(req)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", progress_id):
+        raise HTTPException(status_code=400, detail="invalid progress id")
+
+    requested_backend_class = str(req.query_params.get("backend_class") or "").strip()
+    backend_class = requested_backend_class or "gpu_heavy"
+    base_url = _effective_images_http_base_url(backend_class).rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=503, detail="image backend unavailable")
+    if base_url.endswith("/v1"):
+        progress_url = f"{base_url}/images/progress/{quote(progress_id)}"
+    else:
+        progress_url = f"{base_url}/v1/images/progress/{quote(progress_id)}"
+
+    try:
+        async with _httpx_client(timeout=5.0) as client:
+            response = await client.get(progress_url)
+        if response.status_code == 404:
+            return {
+                "progress_id": progress_id,
+                "status": "preparing",
+                "percentage": None,
+                "message": "Waiting for backend",
+            }
+        if response.status_code >= 400:
+            raise HTTPException(
+                status_code=502,
+                detail=f"progress backend HTTP {response.status_code}",
+            )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=502, detail="invalid progress response")
+        return payload
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"progress backend error: {type(exc).__name__}: {exc}",
+        ) from exc
 
 
 @router.post("/ui/api/scan", include_in_schema=False)

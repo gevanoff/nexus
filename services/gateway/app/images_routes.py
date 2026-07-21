@@ -248,6 +248,7 @@ async def images_generations(req: Request):
             "scheduler",
             "style",
             "quality",
+            "progress_id",
         ]:
             if key in body:
                 options[key] = body.get(key)

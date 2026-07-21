@@ -21,7 +21,7 @@ def test_image_ui_uses_stage_and_accessible_thumbnail_selector() -> None:
     assert 'max="8"' in html
     assert "image-stage-frame" in html
     assert "thumbnail-strip" in html
-    assert "image_catalog_ui.js?v=4" in html
+    assert "image_catalog_ui.js?v=5" in html
     assert 'strip.setAttribute("role", "listbox")' in script
     assert 'button.setAttribute("role", "option")' in script
     assert 'button.setAttribute("aria-selected"' in script
@@ -30,3 +30,13 @@ def test_image_ui_uses_stage_and_accessible_thumbnail_selector() -> None:
     assert "Open full size" in script
     assert 'image.loading = "eager"' in script
     assert 'image.loading = "lazy"' not in script
+
+
+def test_image_ui_polls_real_invokeai_progress() -> None:
+    script = (STATIC / "image_catalog_ui.js").read_text(encoding="utf-8")
+
+    assert "body.progress_id = progressId" in script
+    assert "/ui/api/image/progress/" in script
+    assert "progress.percentage" in script
+    assert "setTimeout(pollProgress, 500)" in script
+    assert "Math.floor((100 - pct) / 20)" not in script

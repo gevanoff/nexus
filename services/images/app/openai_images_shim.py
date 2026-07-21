@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -42,7 +43,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="InvokeAI OpenAI Images Shim", version="0.1")
 logger = logging.getLogger("uvicorn.error")
-_SHIM_BUILD = "2026-07-20-workflow-families"
+_SHIM_BUILD = "2026-07-20-conditioning-timeouts"
 
 
 def _shim_file_sha256_prefix() -> Optional[str]:
@@ -66,6 +67,12 @@ class ImagesGenerationsRequest(BaseModel):
     steps: Optional[int] = None
     cfg_scale: Optional[float] = None
     scheduler: Optional[str] = None
+    progress_id: Optional[str] = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
 
 
 def _parse_model_presets(raw: Optional[str]) -> Dict[str, Dict[str, Any]]:
@@ -145,6 +152,209 @@ class ShimConfig:
     enable_debug_endpoints: bool
 
 
+_PROGRESS_LOCK = threading.Lock()
+_PROGRESS_BY_ID: Dict[str, Dict[str, Any]] = {}
+_PROGRESS_ID_BY_ITEM: Dict[str, str] = {}
+_PROGRESS_TTL_S = 3600.0
+_PROGRESS_SOCKET_THREAD: Optional[threading.Thread] = None
+
+
+def _prune_progress_locked(now: float) -> None:
+    stale_ids = [
+        progress_id
+        for progress_id, state in _PROGRESS_BY_ID.items()
+        if now - float(state.get("updated_at") or now) > _PROGRESS_TTL_S
+    ]
+    for progress_id in stale_ids:
+        _PROGRESS_BY_ID.pop(progress_id, None)
+    for item_id, progress_id in list(_PROGRESS_ID_BY_ITEM.items()):
+        if progress_id not in _PROGRESS_BY_ID:
+            _PROGRESS_ID_BY_ITEM.pop(item_id, None)
+
+
+def _progress_start(progress_id: str, total_images: int) -> None:
+    now = time.time()
+    with _PROGRESS_LOCK:
+        _prune_progress_locked(now)
+        _PROGRESS_BY_ID[progress_id] = {
+            "progress_id": progress_id,
+            "status": "preparing",
+            "percentage": 0.0,
+            "message": "Preparing workflow",
+            "completed_images": 0,
+            "current_image": 1,
+            "total_images": max(1, int(total_images)),
+            "item_id": None,
+            "updated_at": now,
+        }
+
+
+def _progress_bind_item(
+    progress_id: Optional[str], item_id: str, image_index: int, total_images: int
+) -> None:
+    if not progress_id:
+        return
+    now = time.time()
+    with _PROGRESS_LOCK:
+        state = _PROGRESS_BY_ID.get(progress_id)
+        if state is None:
+            return
+        _PROGRESS_ID_BY_ITEM[str(item_id)] = progress_id
+        state.update(
+            {
+                "status": "queued",
+                "message": f"Queued image {image_index + 1} of {total_images}",
+                "completed_images": image_index,
+                "current_image": image_index + 1,
+                "total_images": total_images,
+                "item_id": str(item_id),
+                "invocation": None,
+                "percentage": image_index / max(1, total_images),
+                "updated_at": now,
+            }
+        )
+
+
+def _progress_queue_status(
+    progress_id: Optional[str], status: Any, image_index: int, total_images: int
+) -> None:
+    if not progress_id:
+        return
+    normalized = str(status or "queued").strip().lower()
+    with _PROGRESS_LOCK:
+        state = _PROGRESS_BY_ID.get(progress_id)
+        if state is None:
+            return
+        if normalized in {"in_progress", "running"}:
+            state["status"] = "rendering"
+            if not state.get("invocation"):
+                state["message"] = f"Rendering image {image_index + 1} of {total_images}"
+        elif normalized:
+            state["status"] = normalized
+        state["updated_at"] = time.time()
+
+
+def _progress_image_done(
+    progress_id: Optional[str], image_index: int, total_images: int
+) -> None:
+    if not progress_id:
+        return
+    completed = image_index + 1
+    with _PROGRESS_LOCK:
+        state = _PROGRESS_BY_ID.get(progress_id)
+        if state is None:
+            return
+        state.update(
+            {
+                "status": "rendering" if completed < total_images else "completed",
+                "message": (
+                    f"Completed image {completed} of {total_images}"
+                    if completed < total_images
+                    else "Generation complete"
+                ),
+                "completed_images": completed,
+                "current_image": min(completed + 1, total_images),
+                "percentage": completed / max(1, total_images),
+                "updated_at": time.time(),
+            }
+        )
+
+
+def _progress_fail(progress_id: Optional[str], message: str) -> None:
+    if not progress_id:
+        return
+    with _PROGRESS_LOCK:
+        state = _PROGRESS_BY_ID.get(progress_id)
+        if state is None:
+            return
+        state.update({"status": "failed", "message": message, "updated_at": time.time()})
+
+
+def _progress_update_from_event(data: Any) -> None:
+    if not isinstance(data, dict):
+        return
+    item_id = str(data.get("item_id") or "").strip()
+    if not item_id:
+        return
+    with _PROGRESS_LOCK:
+        progress_id = _PROGRESS_ID_BY_ITEM.get(item_id)
+        state = _PROGRESS_BY_ID.get(progress_id or "")
+        if state is None:
+            return
+        total = max(1, int(state.get("total_images") or 1))
+        completed = max(0, int(state.get("completed_images") or 0))
+        raw_percentage = data.get("percentage")
+        if isinstance(raw_percentage, (int, float)):
+            invocation_percentage = min(1.0, max(0.0, float(raw_percentage)))
+            state["percentage"] = min(1.0, (completed + invocation_percentage) / total)
+        message = str(data.get("message") or "").strip()
+        invocation = data.get("invocation")
+        invocation_type = (
+            str(invocation.get("type") or "").strip()
+            if isinstance(invocation, dict)
+            else ""
+        )
+        state["status"] = "rendering"
+        state["message"] = message or invocation_type or "Rendering"
+        state["invocation"] = invocation_type or None
+        state["updated_at"] = time.time()
+
+
+def _progress_snapshot(progress_id: str) -> Optional[Dict[str, Any]]:
+    now = time.time()
+    with _PROGRESS_LOCK:
+        _prune_progress_locked(now)
+        state = _PROGRESS_BY_ID.get(progress_id)
+        return dict(state) if state is not None else None
+
+
+def _run_progress_socket(cfg: ShimConfig) -> None:
+    import socketio
+
+    while True:
+        client = socketio.Client(reconnection=True, logger=False, engineio_logger=False)
+
+        @client.event
+        def connect() -> None:
+            client.emit("subscribe_queue", {"queue_id": cfg.queue_id})
+            logger.info("Subscribed to InvokeAI progress events for queue %s", cfg.queue_id)
+
+        @client.on("invocation_progress")
+        def invocation_progress(data: Any) -> None:
+            _progress_update_from_event(data)
+
+        try:
+            client.connect(
+                cfg.invokeai_base_url,
+                socketio_path="ws/socket.io",
+                wait_timeout=10,
+            )
+            client.wait()
+        except Exception as exc:
+            logger.warning("InvokeAI progress event connection failed: %s", exc)
+        finally:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+        time.sleep(5)
+
+
+def _ensure_progress_socket(cfg: ShimConfig) -> None:
+    global _PROGRESS_SOCKET_THREAD
+    if cfg.mode != "invokeai_queue":
+        return
+    if _PROGRESS_SOCKET_THREAD is not None and _PROGRESS_SOCKET_THREAD.is_alive():
+        return
+    _PROGRESS_SOCKET_THREAD = threading.Thread(
+        target=_run_progress_socket,
+        args=(cfg,),
+        name="invokeai-progress-events",
+        daemon=True,
+    )
+    _PROGRESS_SOCKET_THREAD.start()
+
+
 def _get_config() -> ShimConfig:
     return ShimConfig(
         mode=os.getenv("SHIM_MODE", "stub").strip().lower(),
@@ -152,7 +362,7 @@ def _get_config() -> ShimConfig:
         queue_id=os.getenv("INVOKEAI_QUEUE_ID", "default"),
         shim_port=int(os.getenv("SHIM_PORT", "9091")),
         poll_interval_s=float(os.getenv("SHIM_POLL_INTERVAL_S", "0.25")),
-        timeout_s=float(os.getenv("SHIM_TIMEOUT_S", "300")),
+        timeout_s=float(os.getenv("SHIM_TIMEOUT_S", "900")),
         graph_template_path=os.getenv("SHIM_GRAPH_TEMPLATE_PATH"),
         output_node_id=os.getenv("SHIM_OUTPUT_NODE_ID"),
         default_model=os.getenv("INVOKEAI_DEFAULT_MODEL"),
@@ -311,6 +521,7 @@ def _discover_queue_enqueue_endpoints(base_url: str, queue_id: str) -> List[Tupl
 @app.on_event("startup")
 def _log_startup() -> None:
     cfg = _get_config()
+    _ensure_progress_socket(cfg)
     logger.info(
         "Shim startup build=%s mode=%s graph=%s output_node=%s debug_graph=%s save_last_image=%s model_mode=%s graph_inputs=%s",
         _SHIM_BUILD,
@@ -839,7 +1050,12 @@ def _apply_invokeai_workflow_overrides(
                 continue
             role = str(edge.get("targetHandle") or "").strip()
             source = str(edge.get("source") or "").strip()
-            if source and role in ("positive_conditioning", "negative_conditioning"):
+            if source and role in (
+                "positive_conditioning",
+                "negative_conditioning",
+                "positive_text_conditioning",
+                "negative_text_conditioning",
+            ):
                 conditioning_roles[source] = role
 
     for node in nodes:
@@ -875,7 +1091,15 @@ def _apply_invokeai_workflow_overrides(
             _set_input_value(inputs, "prompt", prompt)
             continue
 
-        if ntype in ("flux2_klein_text_encoder", "z_image_text_encoder"):
+        if ntype == "flux2_klein_text_encoder":
+            role = conditioning_roles.get(node_id)
+            if role == "negative_text_conditioning":
+                _set_input_value(inputs, "prompt", negative_prompt or "")
+            else:
+                _set_input_value(inputs, "prompt", prompt)
+            continue
+
+        if ntype == "z_image_text_encoder":
             _set_input_value(inputs, "prompt", prompt)
             continue
 
@@ -1253,7 +1477,14 @@ def _extract_image_name_from_queue_item(queue_item: dict, output_node_id: str) -
     return image_name
 
 
-def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) -> str:
+def _invokeai_generate_b64(
+    req: ImagesGenerationsRequest,
+    *,
+    cfg: ShimConfig,
+    progress_id: Optional[str] = None,
+    image_index: int = 0,
+    total_images: int = 1,
+) -> str:
     if not cfg.graph_template_path:
         raise HTTPException(status_code=500, detail="SHIM_GRAPH_TEMPLATE_PATH is required for invokeai_queue mode")
 
@@ -1439,6 +1670,7 @@ def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) ->
         logger.info("Enqueued InvokeAI batch via %s %s", used_enqueue[0], used_enqueue[1])
 
     item_id = _extract_item_id(enqueue_result)
+    _progress_bind_item(progress_id, item_id, image_index, total_images)
 
     # Poll queue item until completion
     get_item_urls = (
@@ -1470,6 +1702,7 @@ def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) ->
 
         status = queue_item.get("status")
         last_status = status
+        _progress_queue_status(progress_id, status, image_index, total_images)
 
         if status == "completed":
             image_name = _extract_image_name_from_queue_item(queue_item, output_node_id)
@@ -1496,6 +1729,7 @@ def _invokeai_generate_b64(req: ImagesGenerationsRequest, *, cfg: ShimConfig) ->
 
             if cfg.save_last_image_path:
                 _best_effort_write_last_image(image_bytes, cfg.save_last_image_path)
+            _progress_image_done(progress_id, image_index, total_images)
             return base64.b64encode(image_bytes).decode("ascii")
 
         if status == "failed":
@@ -1734,13 +1968,41 @@ def images_generations(body: ImagesGenerationsRequest) -> Dict[str, Any]:
         return {"created": created, "data": data}
 
     if cfg.mode == "invokeai_queue":
+        progress_id = body.progress_id
+        if progress_id:
+            _progress_start(progress_id, body.n)
         outputs: List[Dict[str, str]] = []
-        for index in range(body.n):
-            request = body
-            if body.seed is not None and index:
-                request = body.model_copy(update={"seed": int(body.seed) + index})
-            b64_json = _invokeai_generate_b64(request, cfg=cfg)
-            outputs.append({"b64_json": b64_json})
+        try:
+            for index in range(body.n):
+                request = body
+                if body.seed is not None and index:
+                    request = body.model_copy(update={"seed": int(body.seed) + index})
+                progress_kwargs: Dict[str, Any] = {}
+                if progress_id:
+                    progress_kwargs = {
+                        "progress_id": progress_id,
+                        "image_index": index,
+                        "total_images": body.n,
+                    }
+                b64_json = _invokeai_generate_b64(
+                    request,
+                    cfg=cfg,
+                    **progress_kwargs,
+                )
+                outputs.append({"b64_json": b64_json})
+        except Exception as exc:
+            _progress_fail(progress_id, str(getattr(exc, "detail", exc)))
+            raise
         return {"created": created, "data": outputs}
 
     raise HTTPException(status_code=500, detail=f"Unknown SHIM_MODE '{cfg.mode}'")
+
+
+@app.get("/v1/images/progress/{progress_id}")
+def images_progress(progress_id: str) -> Dict[str, Any]:
+    if not progress_id or len(progress_id) > 128:
+        raise HTTPException(status_code=400, detail="invalid progress id")
+    state = _progress_snapshot(progress_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="progress not found")
+    return state

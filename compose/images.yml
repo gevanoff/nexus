@@ -12,6 +12,7 @@ services:
       - SHIM_MODE=${IMAGES_SHIM_MODE:-stub}
       - SHIM_PORT=7860
       - SHIM_GRAPH_TEMPLATE_PATH=${SHIM_GRAPH_TEMPLATE_PATH:-/app/shim/graph_template.json}
+      - SHIM_TIMEOUT_S=${SHIM_TIMEOUT_S:-900}
       # Reference-image workflow templates. Purpose-specific paths take priority.
       - SHIM_EDIT_GRAPH_TEMPLATE_PATH=${SHIM_EDIT_GRAPH_TEMPLATE_PATH:-}
       - SHIM_IMG2IMG_GRAPH_TEMPLATE_PATH=${SHIM_IMG2IMG_GRAPH_TEMPLATE_PATH:-}

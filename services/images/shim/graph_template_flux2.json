@@ -29,6 +29,26 @@
       }
     },
     {
+      "id": "flux2-negative-prompt",
+      "data": {
+        "type": "flux2_klein_text_encoder",
+        "version": "1.1.1",
+        "label": "Negative Prompt",
+        "inputs": {
+          "prompt": {
+            "name": "prompt",
+            "label": "Prompt",
+            "value": ""
+          },
+          "max_seq_len": {
+            "name": "max_seq_len",
+            "label": "Max Seq Len",
+            "value": 512
+          }
+        }
+      }
+    },
+    {
       "id": "flux2-denoise",
       "data": {
         "type": "flux2_denoise",
@@ -61,9 +81,12 @@
   "edges": [
     {"source": "flux2-model-loader", "sourceHandle": "qwen3_encoder", "target": "flux2-positive-prompt", "targetHandle": "qwen3_encoder"},
     {"source": "flux2-model-loader", "sourceHandle": "max_seq_len", "target": "flux2-positive-prompt", "targetHandle": "max_seq_len"},
+    {"source": "flux2-model-loader", "sourceHandle": "qwen3_encoder", "target": "flux2-negative-prompt", "targetHandle": "qwen3_encoder"},
+    {"source": "flux2-model-loader", "sourceHandle": "max_seq_len", "target": "flux2-negative-prompt", "targetHandle": "max_seq_len"},
     {"source": "flux2-model-loader", "sourceHandle": "transformer", "target": "flux2-denoise", "targetHandle": "transformer"},
     {"source": "flux2-model-loader", "sourceHandle": "vae", "target": "flux2-denoise", "targetHandle": "vae"},
     {"source": "flux2-positive-prompt", "sourceHandle": "conditioning", "target": "flux2-denoise", "targetHandle": "positive_text_conditioning"},
+    {"source": "flux2-negative-prompt", "sourceHandle": "conditioning", "target": "flux2-denoise", "targetHandle": "negative_text_conditioning"},
     {"source": "flux2-model-loader", "sourceHandle": "vae", "target": "flux2-output", "targetHandle": "vae"},
     {"source": "flux2-denoise", "sourceHandle": "latents", "target": "flux2-output", "targetHandle": "latents"}
   ]

@@ -144,7 +144,9 @@ class Settings(BaseSettings):
     IMAGES_BACKEND: Literal["mock", "http_a1111", "http_openai_images", "local_mlx", "mlx"] = "mock"
     IMAGES_BACKEND_CLASS: str = "gpu_heavy"  # Backend class for routing/admission control
     IMAGES_HTTP_BASE_URL: str = "http://images:7860"
-    IMAGES_HTTP_TIMEOUT_SEC: float = 120.0
+    # InvokeAI executes multi-image batches serially. Keep this above the image
+    # shim's queue deadline so completed batches are not abandoned mid-run.
+    IMAGES_HTTP_TIMEOUT_SEC: float = 1200.0
     SDXL_TURBO_BASE_URL: str = ""
     INVOKEAI_BASE_URL: str = ""
     INVOKEAI_ADVERTISE_BASE_URL: str = ""

@@ -614,7 +614,7 @@ def install_workflow_routing(shim_module: Any) -> None:
             mode,
         )
 
-    def workflow_aware_generate(req: Any, *, cfg: Any) -> str:
+    def workflow_aware_generate(req: Any, *, cfg: Any, **kwargs: Any) -> str:
         model_info = resolve_requested_model(shim_module, req, cfg)
         spec = select_workflow(model_info, cfg)
         selected_id = str(model_info.get("key") or model_info.get("id") or model_info.get("name") or "").strip() if isinstance(model_info, dict) else ""
@@ -630,7 +630,7 @@ def install_workflow_routing(shim_module: Any) -> None:
             spec.path,
             _model_label(model_info),
         )
-        return original_generate(routed_req, cfg=routed_cfg)
+        return original_generate(routed_req, cfg=routed_cfg, **kwargs)
 
     shim_module._apply_invokeai_workflow_overrides = workflow_aware_overrides
     shim_module._invokeai_generate_b64 = workflow_aware_generate

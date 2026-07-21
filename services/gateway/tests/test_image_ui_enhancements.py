@@ -52,3 +52,17 @@ def test_image_ui_enhancement_javascript_parses() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_image_catalog_javascript_parses() -> None:
+    node = shutil.which("node")
+    if not node:
+        return
+    script_path = STATIC / "image_catalog_ui.js"
+    result = subprocess.run(
+        [node, "--check", str(script_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

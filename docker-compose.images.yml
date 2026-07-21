@@ -21,6 +21,8 @@ services:
       - SHIM_GENERATION_WORKFLOWS_JSON=${SHIM_GENERATION_WORKFLOWS_JSON:-}
       # InvokeAI base-generation models normally have type=main. Override only for a verified InvokeAI version/model type.
       - SHIM_GENERATION_MODEL_TYPES=${SHIM_GENERATION_MODEL_TYPES:-main}
+      # InvokeAI runs batch items serially; allow long SD3/FLUX batches to finish.
+      - SHIM_TIMEOUT_S=${SHIM_TIMEOUT_S:-900}
       # Reference-image workflow templates. Purpose-specific paths take priority.
       - SHIM_EDIT_GRAPH_TEMPLATE_PATH=${SHIM_EDIT_GRAPH_TEMPLATE_PATH:-}
       - SHIM_IMG2IMG_GRAPH_TEMPLATE_PATH=${SHIM_IMG2IMG_GRAPH_TEMPLATE_PATH:-}

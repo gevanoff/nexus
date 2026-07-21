@@ -45,6 +45,16 @@ Key environment variables:
   - Keep the default unless a verified InvokeAI version uses another type for complete generation models.
 - `IMAGES_SHIM_INVOKEAI_BASE_URL=http://invokeai:9090`
 - `IMAGES_HTTP_BASE_URL=http://images:7860` for local compose or `http://<host>:7860` for multi-host gateway routing
+- `SHIM_TIMEOUT_S=900` bounds the InvokeAI queue wait for a complete serial batch.
+- `IMAGES_HTTP_TIMEOUT_SEC=1200` is the Gateway deadline and must remain larger
+  than `SHIM_TIMEOUT_S`.
+
+The Image UI assigns each request a progress id and polls the shim through the
+Gateway. The shim subscribes to InvokeAI's `invocation_progress` Socket.IO
+events, combines per-invocation progress with completed items in a batch, and
+exposes the result at `GET /v1/images/progress/{progress_id}`. If the event
+connection is unavailable, progress remains tied to actual queue state and
+completed images; it does not synthesize a percentage.
 
 ### Family-specific workflow routing
 
