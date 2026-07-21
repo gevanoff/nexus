@@ -28,6 +28,20 @@ def test_ada2_separates_nexus_runtime_and_backend_owned_data() -> None:
     assert env["TRANSFORMERS_CACHE"] == "/data/huggingface/transformers"
 
 
+def test_ada2_data_layout_does_not_leak_to_stackrot() -> None:
+    topology = json.loads(
+        (REPO_ROOT / "deploy" / "topology" / "production.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    env = topology["hosts"]["stackrot"]["env"]
+
+    assert env["NEXUS_RUNTIME_ROOT"] == "./.runtime"
+    assert env["HF_HOME"] == "/var/lib/huggingface"
+    assert env["HF_HOME_BIND_SOURCE"] == "/var/lib/huggingface"
+    assert all(not value.startswith("/data") for value in env.values())
+
+
 def test_ada2_backend_compose_defaults_do_not_bind_var_lib_huggingface() -> None:
     compose_files = (
         "docker-compose.invokeai.yml",
