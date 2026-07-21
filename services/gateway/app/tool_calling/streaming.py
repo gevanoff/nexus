@@ -16,5 +16,32 @@ async def stream_final_chat_response(response: dict[str, Any]) -> AsyncIterator[
     content = (message or {}).get("content")
     if isinstance(content, str) and content:
         yield sse({**base, "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}]})
+    tool_calls = (message or {}).get("tool_calls")
+    if isinstance(tool_calls, list):
+        for index, tool_call in enumerate(tool_calls):
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+            delta_call = {
+                "index": index,
+                "id": tool_call.get("id") or new_id("call"),
+                "type": tool_call.get("type") or "function",
+                "function": {
+                    "name": function.get("name") or "",
+                    "arguments": function.get("arguments") or "",
+                },
+            }
+            yield sse(
+                {
+                    **base,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"tool_calls": [delta_call]},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
     yield sse({**base, "choices": [{"index": 0, "delta": {}, "finish_reason": choice.get("finish_reason") or "stop"}]})
     yield sse_done()

@@ -700,6 +700,78 @@ def test_chat_completions_forwards_native_tools_without_server_tool_loop(monkeyp
     assert response.json()["choices"][0]["message"]["tool_calls"][0]["id"] == "call_1"
 
 
+def test_chat_completions_buffers_profiled_tool_stream_and_emits_tool_call_sse(monkeypatch):
+    captured = {}
+
+    async def _chat_handler(req, backend: str, model_name: str):
+        captured["req"] = req
+        captured["backend"] = backend
+        captured["model_name"] = model_name
+        return {
+            "id": "chatcmpl_buffered",
+            "object": "chat.completion",
+            "model": model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_buffered",
+                                "type": "function",
+                                "function": {"name": "demo", "arguments": '{"value":"ok"}'},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }
+
+    def _unexpected_native_stream(*_args, **_kwargs):
+        raise AssertionError("profiled tool stream must use the non-stream upstream parser")
+
+    client = _build_client(
+        monkeypatch,
+        backend_supports_tools=True,
+        chat_handler=_chat_handler,
+        stream_handler=_unexpected_native_stream,
+    )
+    monkeypatch.setattr(
+        openai_routes,
+        "get_aliases",
+        lambda: {
+            "fast": ModelAlias(
+                backend="local_vllm_fast",
+                upstream_model="upstream-model",
+                tools=True,
+                buffer_tool_call_stream=True,
+            )
+        },
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "fast",
+            "messages": [{"role": "user", "content": "use demo"}],
+            "tools": [{"type": "function", "function": {"name": "demo", "parameters": {}}}],
+            "tool_choice": "auto",
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["req"].stream is False
+    assert response.headers["x-nexus-tool-stream"] == "buffered"
+    assert '"finish_reason":"tool_calls"' in response.text
+    assert '"tool_calls"' in response.text
+    assert '"name":"demo"' in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
+
+
 def test_chat_completions_degrades_auto_tools_when_latest_qualification_failed(monkeypatch):
     captured = {}
 

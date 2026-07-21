@@ -1036,6 +1036,15 @@ def _normalize_stream_options_for_backend(
     )
 
 
+def _should_buffer_tool_call_stream(cc: ChatCompletionRequest, alias_config: Any) -> bool:
+    return bool(
+        cc.stream
+        and cc.tools
+        and alias_config is not None
+        and getattr(alias_config, "buffer_tool_call_stream", False)
+    )
+
+
 def _route_chat_request(
     cc: ChatCompletionRequest,
     *,
@@ -1479,6 +1488,41 @@ async def chat_completions(req: Request):
             out.headers["X-Nexus-Tool-Execution"] = "gateway_exec"
             out.headers["X-Nexus-Tools-Executed"] = ",".join(loop_result.tools_executed)
             out.headers["X-Nexus-Tool-Rounds"] = str(loop_result.rounds)
+            return out
+
+        if _should_buffer_tool_call_stream(cc, alias_config):
+            logger.info(
+                "chat.completions buffering tool stream alias=%s backend=%s reason=profile_requires_nonstream_parser",
+                alias_name or "-",
+                backend_class,
+            )
+            buffered_cc = cc.model_copy(update={"stream": False, "stream_options": None})
+            t0 = time.monotonic()
+            resp = await _call_backend_chat_with_request_id(
+                buffered_cc,
+                backend,
+                model_name,
+                request_id=request_id,
+            )
+            try:
+                inst = getattr(req.state, "instrument", None)
+                if isinstance(inst, dict):
+                    inst["upstream_ms"] = round((time.monotonic() - t0) * 1000.0, 1)
+                    inst["tool_stream_buffered"] = True
+            except Exception:
+                pass
+            out = StreamingResponse(stream_final_chat_response(resp), media_type="text/event-stream")
+            out.headers["X-Backend-Used"] = backend
+            out.headers["X-Model-Used"] = model_name
+            out.headers["X-Router-Reason"] = route.reason
+            out.headers["X-Nexus-Tool-Stream"] = "buffered"
+            _log_openai_response_diagnostics(
+                request_id=request_id,
+                status_code=200,
+                stream=True,
+                backend_class=backend_class,
+                model_name=model_name,
+            )
             return out
 
         if cc.stream:

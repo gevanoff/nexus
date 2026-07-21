@@ -70,7 +70,7 @@ Compatibility note:
 vLLM automatic tool parsing is enabled only for production chat lanes whose model, chat template, and parser combinations have been validated end to end:
 
 - strong lane (`ada2`): auto tool parsing is enabled with vLLM's `xlam` parser and `/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja`. This lane backs tools-capable aliases such as `fast-reasoning`.
-- fast lane (`stackrot`): Devstral uses the `mistral_serial` profile with vLLM's `mistral` parser and `mistral` tokenizer mode. The Mistral tokenizer supplies its own chat template, so vLLM ignores `--chat-template`; parallel calls are not advertised because live qualification returned an empty structured call array.
+- fast lane (`stackrot`): Devstral uses the `mistral_serial` profile with vLLM's `mistral` parser and `mistral` tokenizer mode. The Mistral tokenizer supplies its own chat template, so vLLM ignores `--chat-template`; parallel calls are not advertised because live qualification returned an empty structured call array. vLLM 0.10.2 also emits only argument text for this pair's native stream, so the alias buffers tool-bearing upstream requests and re-emits their structured result as OpenAI SSE.
 
 The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated automatic tool parsing and must match the corresponding vLLM process flags. Otherwise `/v1/chat/completions` requests with `tool_choice=auto` may be passed to a backend that is not actually returning structured tool calls. `deploy/config/vllm-tool-profiles.json` records both sides of that contract, and preflight rejects drift for any lane with a `VLLM*_TOOL_PROFILE` selector.
 

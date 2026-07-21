@@ -82,6 +82,8 @@ Adding a model is therefore a qualification workflow, not an automatic model-nam
 
 Preflight validates every configured `VLLM*_TOOL_PROFILE` against the rendered env file so a parser flag cannot silently drift from Gateway's advertised capability.
 
+Some vLLM parser/model combinations return correct structured calls only for non-stream requests. Set `buffer_tool_call_stream=true` in that model's Gateway alias/profile after confirming this behavior. Gateway then performs only tool-bearing upstream requests non-streaming and re-emits the structured response as valid Chat Completions SSE; ordinary requests without tools remain natively streamed. This is a compatibility mode with time-to-first-token latency, not a text parser.
+
 Native MLX capability is model-specific. Configure the served model parser, for example:
 
 ```yaml

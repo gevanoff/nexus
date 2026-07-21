@@ -33,6 +33,7 @@ class ModelAlias:
     tool_mode_explicit: bool = False
     supports_tool_choice: tuple[str, ...] = ()
     supports_parallel_tool_calls: bool = False
+    buffer_tool_call_stream: bool = False
     preferred_tool_call_parser: str = ""
     preferred_chat_template: str = ""
     reasoning_parser: str = ""
@@ -83,6 +84,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             max_tokens_cap=768,
             supports_tool_choice=("none", "auto", "required", "named"),
             supports_parallel_tool_calls=False,
+            buffer_tool_call_stream=True,
             preferred_tool_call_parser="mistral",
             preferred_chat_template="",
         ),
@@ -248,6 +250,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         choices_raw = v.get("supports_tool_choice")
         supports_tool_choice = tuple(str(item).strip() for item in choices_raw if str(item).strip()) if isinstance(choices_raw, list) else ()
         supports_parallel_tool_calls = v.get("supports_parallel_tool_calls") is True
+        buffer_tool_call_stream = v.get("buffer_tool_call_stream") is True
         preferred_tool_call_parser = str(v.get("preferred_tool_call_parser") or v.get("tool_call_parser") or "").strip()
         preferred_chat_template = str(v.get("preferred_chat_template") or v.get("chat_template") or "").strip()
         reasoning_parser = str(v.get("reasoning_parser") or "").strip()
@@ -277,6 +280,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             tool_mode_explicit=tool_mode_explicit,
             supports_tool_choice=supports_tool_choice,
             supports_parallel_tool_calls=supports_parallel_tool_calls,
+            buffer_tool_call_stream=buffer_tool_call_stream,
             preferred_tool_call_parser=preferred_tool_call_parser,
             preferred_chat_template=preferred_chat_template,
             reasoning_parser=reasoning_parser,

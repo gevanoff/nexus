@@ -8,6 +8,7 @@
       "tool_mode": "client_exec",
       "supports_tool_choice": ["none", "auto", "required", "named"],
       "supports_parallel_tool_calls": false,
+      "buffer_tool_call_stream": true,
       "preferred_tool_call_parser": "mistral",
       "preferred_chat_template": "",
       "max_tokens_cap": 768

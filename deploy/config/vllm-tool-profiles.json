@@ -45,6 +45,7 @@
           "named"
         ],
         "supports_parallel_tool_calls": false,
+        "buffer_tool_call_stream": true,
         "preferred_tool_call_parser": "mistral",
         "preferred_chat_template": ""
       },

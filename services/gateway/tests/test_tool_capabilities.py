@@ -13,6 +13,7 @@ def test_alias_capability_diagnostics_include_provider_parser_and_policy():
         tools=True,
         supports_tool_choice=("none", "auto", "required", "named"),
         supports_parallel_tool_calls=True,
+        buffer_tool_call_stream=True,
         preferred_tool_call_parser="xlam",
         preferred_chat_template="tool-use.jinja",
         toolsets=("core", "repo"),
@@ -21,4 +22,5 @@ def test_alias_capability_diagnostics_include_provider_parser_and_policy():
     assert result["tools_enabled"] is True
     assert result["tool_call_parser"] == "xlam"
     assert result["parallel_tool_calls"] is True
+    assert result["buffered_tool_stream"] is True
     assert result["toolsets"] == ["core", "repo"]

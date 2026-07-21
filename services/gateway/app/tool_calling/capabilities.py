@@ -19,6 +19,7 @@ def capability_for_alias(name: str, alias: ModelAlias) -> dict[str, Any]:
         "tool_execution_mode_explicit": alias.tool_mode_explicit,
         "tool_choice_modes": supports,
         "parallel_tool_calls": alias.supports_parallel_tool_calls,
+        "buffered_tool_stream": alias.buffer_tool_call_stream,
         "tool_call_parser": alias.preferred_tool_call_parser or None,
         "chat_template": alias.preferred_chat_template or None,
         "reasoning_parser": alias.reasoning_parser or None,
