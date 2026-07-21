@@ -2,7 +2,7 @@
 
 ## Objective
 
-Add a Nexus-focused workflow that turns one factual video brief into editable, platform-specific publishing metadata and, in later phases, publishes the video through supported platform APIs.
+Add a Nexus-focused workflow that turns one factual video brief into editable, platform-specific publishing metadata and publishes reviewed video through supported platform APIs.
 
 The studio should reduce repetitive entry without flattening every destination into the same post. A user enters authoritative facts once, selects a brand profile, asks a Nexus language model for drafts, reviews the result, and keeps control over every field.
 
@@ -10,12 +10,12 @@ The studio should reduce repetitive entry without flattening every destination i
 
 1. **Canonical facts, derived presentation.** The video brief is the source of truth. Titles, captions, descriptions, tags, links, and cover text are derived per platform.
 2. **Generic rules with brand overlays.** Platform guidance is shared and brand-neutral. A selected brand may add vocabulary, voice, required facts, prohibited claims, calls to action, links, hashtags, and platform-specific guidance. Brand instructions must never leak into another brand.
-3. **Human review before distribution.** Generated text is a draft. Phase 1 exposes the prompt and all generated fields for editing rather than treating model output as publication authority.
+3. **Human review before distribution.** Generated text is a draft. Every publication requires explicit user review and consent.
 4. **Explicit contracts.** Each platform owns a documented field schema and validation rules. Unsupported data is surfaced rather than silently discarded.
-5. **Isolated adapters and partial failure.** Future publishing integrations are separate adapters. A failure on one platform must not duplicate or invalidate successful publications elsewhere.
-6. **User-scoped state.** Brand profiles and workspace state belong to the authenticated Nexus user.
+5. **Isolated adapters and partial failure.** Publishing integrations are separate adapters. A failure on one platform must not duplicate or invalidate successful publications elsewhere.
+6. **User-scoped state.** Brand profiles, credentials, media, and publication records belong to the authenticated Nexus user.
 
-## Phase 1: Drafting studio — started in this change
+## Phase 1: Drafting studio — implemented
 
 ### Included
 
@@ -40,7 +40,7 @@ The studio should reduce repetitive entry without flattening every destination i
 - Editable output, copy controls, and JSON export.
 - Local-browser fallback when Nexus user authentication is disabled or unavailable.
 
-### Deliberately excluded
+### Deliberately excluded from Phase 1
 
 - OAuth account connections.
 - Video or thumbnail upload.
@@ -58,32 +58,36 @@ The studio should reduce repetitive entry without flattening every destination i
 - Every generated field remains editable and can be exported as JSON.
 - Invalid or non-JSON model output produces a visible error rather than being treated as a valid draft.
 
-## Phase 2: YouTube publishing
+## Phase 2: YouTube publishing — implementation added
 
 - Google OAuth connection and channel selection.
 - Encrypted token storage and refresh handling.
 - Resumable video uploads.
-- Mapping for title, description, tags, category, playlist, audience, privacy, scheduling, and other supported fields.
+- Mapping for title, description, tags, category, audience, privacy, and scheduling fields currently exposed by the UI.
 - Processing-status polling and remote video ID persistence.
-- Thumbnail handling according to YouTube and Shorts API limitations.
-- Idempotency, audit logging, retries, and compliance/audit readiness.
+- Idempotency and structured provider diagnostics.
+- Deployment still requires Google application configuration, consent-screen setup, scopes, and any required verification.
 
-## Phase 3: Facebook and Instagram publishing
+## Phase 3: Facebook and Instagram publishing — implementation added
 
-- Meta OAuth and discovery of manageable Facebook Pages and associated Instagram Professional accounts.
-- Secure media staging through temporary HTTPS URLs or object storage.
-- Facebook Reel creation, upload, processing checks, and publication.
+- Meta OAuth and discovery of manageable Facebook Pages and associated Instagram professional accounts.
+- Secure temporary media delivery through signed HTTPS URLs for Instagram ingestion.
+- Facebook Reel creation, upload, finish, and processing checks.
 - Instagram media-container creation, processing checks, and publication.
-- Platform-specific field validation, account capability checks, and API-version pinning.
-- Remote publication IDs, retry safety, and account revocation handling.
+- Platform-specific field validation, account capability checks, and explicit API-version configuration.
+- Remote publication IDs, retry-safe local records, and account revocation handling.
+- Deployment still requires a configured Meta application, permissions, provider review, and a public HTTPS origin for Instagram media retrieval.
 
-## Phase 4: TikTok publishing
+## Phase 4: TikTok publishing — implementation added
 
 - TikTok OAuth and `video.publish` authorization.
-- Creator-capability queries before presenting privacy, duet, stitch, comments, and duration controls.
-- Direct file upload or verified-domain media transfer.
-- Explicit user consent immediately before publication.
-- Processing-status polling, remote post IDs, retry safety, and API audit requirements.
+- Creator-capability queries before presenting privacy, Duet, Stitch, comments, and duration controls.
+- Direct file upload with provider-compliant chunk planning.
+- Explicit publication consent and Music Usage Confirmation.
+- Processing-status polling, remote publish IDs, and retry-safe local records.
+- Deployment still requires TikTok application configuration, approved scopes, and the applicable review or audit.
+
+Provider setup and the exact current implementation boundary are documented in `docs/SOCIAL_PUBLISHING_PROVIDER_SETUP.md`.
 
 ## Phase 5: Publication orchestration and scheduling
 
@@ -116,13 +120,13 @@ The authoritative, reusable factual package for one video. Empty fields remain u
 
 One editable rendering for a destination and variant. It stores the generated fields and can later record human edits separately.
 
-### `ConnectedAccount` — future
+### `ConnectedAccount`
 
-Provider, external account ID, granted scopes, encrypted credentials, expiration, revocation, and capability state.
+Provider, external account ID, granted scopes, encrypted credentials, expiration, revocation, account type, and provider metadata. Records are user-scoped.
 
-### `PublicationJob` — future
+### `PublicationJob` — foundational records implemented
 
-A parent job with platform child jobs, idempotency keys, status, attempts, remote IDs, and diagnostic summaries.
+The Phase 2–4 implementation persists provider-specific publication attempts, idempotency keys, status, remote IDs, encrypted session data, consent time, responses, and structured errors. Phase 5 will add parent/child orchestration, scheduling, durable workers, and automated retry policy.
 
 ## Prompt architecture
 
@@ -138,10 +142,10 @@ The generic layer must not contain organization-specific terminology. Brand-spec
 
 ## Security and operational requirements
 
-- Never expose future OAuth refresh tokens to browser JavaScript.
-- Encrypt provider credentials at rest and redact them from logs.
-- Validate media type, dimensions, duration, and size before external upload.
-- Pin provider API versions and retain capability/error diagnostics.
+- Never expose OAuth access tokens, refresh tokens, provider upload URLs, or signed media URLs to browser JavaScript.
+- Encrypt provider credentials and upload-session secrets at rest and redact them from logs.
+- Validate media type, duration, and size before external upload.
+- Pin provider API versions where applicable and retain capability/error diagnostics.
 - Treat publication as a user-confirmed action.
 - Preserve remote IDs and idempotency state before retrying uncertain operations.
-- Keep analytics, prompts, and learned guidance scoped to the owning user and brand.
+- Keep analytics, prompts, credentials, and learned guidance scoped to the owning user and brand.
