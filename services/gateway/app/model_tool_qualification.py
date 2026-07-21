@@ -242,14 +242,14 @@ def _client_shape_messages(case: ToolQualificationCase) -> list[ChatMessage] | N
                 content="",
                 toolCalls=[
                     {
-                        "id": "call_continue_1",
+                        "id": "Cont1nue1",
                         "function": {"name": TOOL_NAME, "arguments": {"city": "Paris"}},
                     }
                 ],
             ),
             ChatMessage(
                 role="tool",
-                toolCallId="call_continue_1",
+                toolCallId="Cont1nue1",
                 content=json.dumps({"city": "Paris", "forecast": f"{TOOL_RESULT_MARKER} clear"}, separators=(",", ":")),
             ),
         ]
@@ -268,14 +268,14 @@ def _client_shape_messages(case: ToolQualificationCase) -> list[ChatMessage] | N
                 content="",
                 tool_calls=[
                     {
-                        "id": "call_hermes_1",
+                        "id": "Hermes001",
                         "function": {"name": TOOL_NAME, "arguments": {"city": "Paris"}},
                     }
                 ],
             ),
             ChatMessage(
                 role="tool",
-                tool_call_id="call_hermes_1",
+                tool_call_id="Hermes001",
                 content={"city": "Paris", "forecast": f"{TOOL_RESULT_MARKER} clear"},
             ),
         ]
@@ -636,8 +636,21 @@ async def _call_case_backend(
     backend: str,
     model_name: str,
     timeout_sec: float,
+    buffer_tool_stream: bool = False,
 ) -> Dict[str, Any]:
     if cc.stream:
+        if buffer_tool_stream:
+            from app.tool_calling.streaming import stream_final_chat_response
+
+            nonstream = cc.model_copy(update={"stream": False, "stream_options": None})
+            response = await asyncio.wait_for(
+                call_backend_chat(nonstream, backend, model_name),
+                timeout=timeout_sec,
+            )
+            return await asyncio.wait_for(
+                _collect_stream_response(stream_final_chat_response(response)),
+                timeout=timeout_sec,
+            )
         upstream_gen = stream_backend_chat_as_openai(cc, backend, model_name)
         return await asyncio.wait_for(_collect_stream_response(upstream_gen), timeout=timeout_sec)
     return await asyncio.wait_for(call_backend_chat(cc, backend, model_name), timeout=timeout_sec)
@@ -724,11 +737,24 @@ async def _run_prepared_request(
             }
             return result, {}
 
+        buffer_tool_stream = False
+        if normalized_cc.stream and alias_name:
+            from app import openai_routes as openai_compat
+
+            alias_config = openai_compat.get_aliases().get(alias_name)
+            buffer_tool_stream = bool(
+                alias_config is not None
+                and getattr(alias_config, "buffer_tool_call_stream", False)
+                and normalized_cc.tools
+            )
+        base["buffered_tool_stream"] = buffer_tool_stream
+
         response = await _call_case_backend(
             normalized_cc,
             backend=backend,
             model_name=upstream_model,
             timeout_sec=_case_timeout_sec(),
+            buffer_tool_stream=buffer_tool_stream,
         )
         if response.get("stream_error"):
             result = {
