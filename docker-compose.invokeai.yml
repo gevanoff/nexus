@@ -4,6 +4,8 @@ services:
     container_name: nexus-invokeai
     ports:
       - "${INVOKEAI_PORT:-9090}:9090"
+    env_file:
+      - ./.env
     environment:
       - INVOKEAI_ROOT=/invokeai
       - INVOKEAI_HOST=0.0.0.0
