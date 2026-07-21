@@ -225,7 +225,18 @@ def _client_shape_messages(case: ToolQualificationCase) -> list[ChatMessage] | N
     if case.client_shape == "continue_tool_history":
         return [
             ChatMessage(role="system", content="You are validating Continue-style OpenAI-compatible tool history."),
-            ChatMessage(role="user", content=[{"type": "text", "text": "What is the weather in Paris? Use the available tool."}]),
+            ChatMessage(
+                role="user",
+                content=[
+                    {
+                        "type": "text",
+                        "text": (
+                            "What is the weather in Paris? Use the available tool. "
+                            f"After receiving the result, reply with exactly {TOOL_RESULT_MARKER}."
+                        ),
+                    }
+                ],
+            ),
             ChatMessage(
                 role="assistant",
                 content="",
@@ -241,12 +252,17 @@ def _client_shape_messages(case: ToolQualificationCase) -> list[ChatMessage] | N
                 toolCallId="call_continue_1",
                 content=json.dumps({"city": "Paris", "forecast": f"{TOOL_RESULT_MARKER} clear"}, separators=(",", ":")),
             ),
-            ChatMessage(role="user", content=f"Reply with exactly {TOOL_RESULT_MARKER}."),
         ]
     if case.client_shape == "hermes_tool_history":
         return [
             ChatMessage(role="system", content="You are validating Hermes-style OpenAI-compatible tool history."),
-            ChatMessage(role="user", content="Use a tool to check Paris weather."),
+            ChatMessage(
+                role="user",
+                content=(
+                    "Use a tool to check Paris weather. "
+                    f"After receiving the result, reply with exactly {TOOL_RESULT_MARKER}."
+                ),
+            ),
             ChatMessage(
                 role="assistant",
                 content="",
@@ -262,7 +278,6 @@ def _client_shape_messages(case: ToolQualificationCase) -> list[ChatMessage] | N
                 tool_call_id="call_hermes_1",
                 content={"city": "Paris", "forecast": f"{TOOL_RESULT_MARKER} clear"},
             ),
-            ChatMessage(role="user", content=f"Reply with exactly {TOOL_RESULT_MARKER}."),
         ]
     return None
 
@@ -1283,13 +1298,24 @@ async def auto_qualification_candidates(models: Optional[list[str]] = None) -> l
             include_stream=include_stream,
             include_roundtrip=include_roundtrip,
         )
-        if status.get("missing") or status.get("mismatch") or status.get("stale") or status.get("failed") or missing_categories:
+        result = status.get("result") if isinstance(status.get("result"), dict) else None
+        suite_failed = result is not None and result.get("ok") is not True
+        if (
+            status.get("missing")
+            or status.get("mismatch")
+            or status.get("stale")
+            or status.get("failed")
+            or suite_failed
+            or missing_categories
+        ):
             if missing_categories and not status.get("missing"):
                 logger.info(
                     "tool qualification auto-run: model=%s missing suite categories=%s",
                     model,
                     ",".join(missing_categories),
                 )
+            elif suite_failed:
+                logger.info("tool qualification auto-run: model=%s latest full suite failed", model)
             candidates.append(model)
     return clean_model_list(candidates)
 

@@ -248,6 +248,14 @@ def test_qualification_cases_include_client_transcript_shapes():
     assert any(case.name == "continue_tool_history_nonstream" and case.client_shape == "continue_tool_history" for case in cases)
     assert any(case.name == "hermes_tool_history_nonstream" and case.client_shape == "hermes_tool_history" for case in cases)
 
+    for case in cases:
+        if case.client_shape not in {"continue_tool_history", "hermes_tool_history"}:
+            continue
+        messages = qual._client_shape_messages(case)
+        assert messages is not None
+        assert [message.role for message in messages][-2:] == ["assistant", "tool"]
+        assert qual.TOOL_RESULT_MARKER in str(messages[1].content)
+
 
 def test_evaluate_tool_response_rejects_bare_raw_tool_text():
     case = qual.ToolQualificationCase(
@@ -490,6 +498,34 @@ async def test_auto_qualification_candidates_include_incomplete_suite(monkeypatc
                 "backend": "local_vllm",
                 "resolved_model": "upstream-model",
                 "by_category": {"auto": {"passed": 1, "total": 1}},
+            }
+        },
+    )
+
+    candidates = await qual.auto_qualification_candidates(["fast"])
+
+    assert candidates == ["fast"]
+
+
+@pytest.mark.asyncio
+async def test_auto_qualification_candidates_include_failed_non_auto_case(monkeypatch):
+    _setup_runner(monkeypatch, backend="local_vllm", native_tools=True)
+    complete_categories = {
+        category: {"passed": 1, "total": 1}
+        for category in qual._expected_categories(include_stream=True, include_roundtrip=True)
+    }
+    complete_categories["auto"] = {"passed": 2, "total": 2}
+    complete_categories["stream"] = {"passed": 0, "total": 1}
+    monkeypatch.setattr(
+        qual,
+        "latest_by_model",
+        lambda **_kwargs: {
+            "local_vllm:upstream-model": {
+                "ok": False,
+                "completed_at": qual.now_unix(),
+                "backend": "local_vllm",
+                "resolved_model": "upstream-model",
+                "by_category": complete_categories,
             }
         },
     )
