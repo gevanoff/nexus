@@ -7,6 +7,7 @@ from app.backends import check_capability, get_admission_controller
 from app.config import S
 from app.health_checker import check_backend_ready
 from app.music_backend import generate_music
+from app.social_routes import router as social_router
 
 
 router = APIRouter()
@@ -44,3 +45,7 @@ async def music_generations(req: Request):
         raise HTTPException(status_code=502, detail=f"music backend error: {type(e).__name__}: {e}")
     finally:
         admission.release(backend_class, "music")
+
+
+# Compose the social drafting UI/API through the media router already imported by app.main.
+router.include_router(social_router)
