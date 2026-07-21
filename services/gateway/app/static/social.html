@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="icon" href="/static/ai-infra.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+    <meta name="theme-color" content="#0b0d10" />
+    <title>Nexus Social Studio</title>
+    <style>
+      :root { color-scheme: dark; --bg:#0a0d12; --panel:#111821; --border:rgba(231,237,246,.12); --text:#e7edf6; --muted:#a9b4c3; --accent:#6fb8ff; --danger:#ffb4b4; }
+      * { box-sizing: border-box; }
+      body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:radial-gradient(1200px 600px at 20% -10%,rgba(111,184,255,.16),transparent 60%),radial-gradient(900px 500px at 80% 0%,rgba(139,227,201,.12),transparent 55%),linear-gradient(180deg,#0a0d12 0%,#0c1016 100%); color:var(--text); }
+      main { max-width:1320px; margin:0 auto; padding:16px; }
+      header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+      h1 { margin:0; font-size:18px; font-weight:680; } h2 { margin:0 0 10px; font-size:14px; } h3 { margin:0; font-size:13px; }
+      .hint { font-size:12px; color:var(--muted); } .error { color:var(--danger); } a { color:#9ac2ff; text-decoration:none; } a:hover { text-decoration:underline; }
+      .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; } .grow { flex:1 1 260px; }
+      .grid { display:grid; grid-template-columns:minmax(300px,.9fr) minmax(380px,1.1fr); gap:12px; }
+      .card { border:1px solid var(--border); background:linear-gradient(180deg,rgba(17,24,33,.95),rgba(11,16,23,.95)); border-radius:12px; padding:14px; box-shadow:0 12px 30px rgba(6,10,16,.35); }
+      .stack { display:flex; flex-direction:column; gap:10px; } label { display:flex; flex-direction:column; gap:6px; } label>span { font-size:12px; color:var(--muted); }
+      select,input,textarea,button { font:inherit; } select,input,textarea { width:100%; padding:9px 10px; border-radius:9px; border:1px solid var(--border); background:linear-gradient(180deg,rgba(20,26,34,.95),rgba(14,19,27,.95)); color:var(--text); }
+      select option { background:#0f151f; color:var(--text); } textarea { min-height:76px; resize:vertical; } textarea.tall { min-height:150px; }
+      button { padding:9px 12px; border-radius:9px; border:1px solid var(--border); background:linear-gradient(180deg,rgba(22,28,38,.95),rgba(15,20,28,.95)); color:var(--text); cursor:pointer; }
+      button:hover { border-color:rgba(111,184,255,.45); } button.primary { border-color:rgba(111,184,255,.48); background:rgba(111,184,255,.13); } button.danger { border-color:rgba(255,180,180,.3); } button:disabled { opacity:.55; cursor:default; }
+      details>summary { cursor:pointer; color:#cfe1f8; } .platforms { display:grid; grid-template-columns:repeat(4,minmax(125px,1fr)); gap:8px; }
+      .platform-check { display:flex; flex-direction:row; align-items:center; gap:8px; padding:9px; border:1px solid var(--border); border-radius:9px; } .platform-check input { width:auto; }
+      .status { min-height:18px; margin-top:8px; } .tabs { display:flex; flex-wrap:wrap; gap:7px; margin:12px 0 10px; } .tabs button.active { border-color:rgba(111,184,255,.6); background:rgba(111,184,255,.14); }
+      .result-card { border:1px solid var(--border); border-radius:10px; padding:12px; background:rgba(10,15,22,.64); } .result-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; }
+      .variant { border:1px solid rgba(231,237,246,.09); border-radius:9px; padding:10px; } .variant-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:9px; }
+      .warnings { margin:8px 0 0; padding-left:18px; color:#ffd39a; font-size:12px; } .prompt-view { white-space:pre-wrap; word-break:break-word; max-height:420px; overflow:auto; font-size:12px; color:#c6d2e4; }
+      dialog { width:min(960px,calc(100vw - 32px)); max-height:88vh; border:1px solid var(--border); border-radius:12px; background:#101721; color:var(--text); padding:14px; } dialog::backdrop { background:rgba(0,0,0,.7); }
+      .dialog-head { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; } .pill { display:inline-flex; gap:8px; align-items:center; padding:6px 10px; border:1px solid var(--border); border-radius:999px; }
+      @media(max-width:900px){.grid{grid-template-columns:1fr}.platforms{grid-template-columns:repeat(2,1fr)}} @media(max-width:520px){.platforms{grid-template-columns:1fr}}
+    </style>
+    <link rel="stylesheet" href="/static/ui_roles.css?v=2" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div><h1>Nexus Social Studio</h1><div class="hint">Create brand-aware drafts for YouTube Shorts, Facebook Reels, Instagram Reels, and TikTok. Phase 1 does not publish.</div></div>
+        <div class="row"><a class="pill" href="/ui" data-ui-role="nav">Back to Chat</a></div>
+      </header>
+
+      <div class="grid">
+        <section class="card stack">
+          <div class="row" style="justify-content:space-between"><h2>Brand profile</h2><span id="persistence" class="hint"></span></div>
+          <div class="row">
+            <label class="grow"><span>Brand</span><select id="brandSelect"></select></label>
+            <button id="newBrand" type="button">New</button><button id="duplicateBrand" type="button">Duplicate</button><button id="deleteBrand" type="button" class="danger">Delete</button>
+          </div>
+          <label><span>Name</span><input id="brandName" /></label>
+          <label><span>Description / purpose</span><textarea id="brandDescription"></textarea></label>
+          <label><span>Primary audience</span><textarea id="brandAudience"></textarea></label>
+          <label><span>Voice and tone</span><textarea id="brandVoice"></textarea></label>
+          <label><span>Required terminology — one item per line</span><textarea id="brandTerminology"></textarea></label>
+          <label><span>Required facts or standing context — one item per line</span><textarea id="brandFacts"></textarea></label>
+          <label><span>Claims or formulations to avoid — one item per line</span><textarea id="brandAvoid"></textarea></label>
+          <label><span>Default calls to action — one item per line</span><textarea id="brandCtas"></textarea></label>
+          <label><span>Default links — one per line</span><textarea id="brandLinks"></textarea></label>
+          <label><span>Default hashtags — one per line</span><textarea id="brandHashtags"></textarea></label>
+          <details><summary>Platform-specific brand guidance</summary><div class="stack" style="margin-top:10px">
+            <label><span>YouTube</span><textarea id="guideYoutube"></textarea></label><label><span>Facebook</span><textarea id="guideFacebook"></textarea></label><label><span>Instagram</span><textarea id="guideInstagram"></textarea></label><label><span>TikTok</span><textarea id="guideTiktok"></textarea></label>
+          </div></details>
+          <label><span>Additional brand prompt guidance</span><textarea id="brandPrompt"></textarea></label>
+        </section>
+
+        <section class="card stack">
+          <h2>Video brief</h2>
+          <div class="row"><label class="grow"><span>Asset name or filename</span><input id="assetName" placeholder="clip-014.mp4" /></label><label class="grow"><span>Language</span><input id="language" value="English" /></label></div>
+          <label><span>Subject</span><input id="subject" placeholder="What is shown or explained?" /></label>
+          <label><span>Concise content summary</span><textarea id="contentSummary"></textarea></label>
+          <label><span>Transcript, narration, or detailed notes</span><textarea id="transcriptNotes" class="tall"></textarea></label>
+          <label><span>Key points — one per line</span><textarea id="keyPoints"></textarea></label>
+          <div class="row"><label class="grow"><span>People and organizations — one per line</span><textarea id="peopleOrganizations"></textarea></label><label class="grow"><span>Dates and locations — one per line</span><textarea id="datesLocations"></textarea></label></div>
+          <div class="row"><label class="grow"><span>Content goal</span><input id="contentGoal" placeholder="Educate, announce, document, invite…" /></label><label class="grow"><span>Audience override</span><input id="audienceOverride" placeholder="Optional for this clip" /></label></div>
+          <div class="row"><label class="grow"><span>Call to action</span><input id="callToAction" /></label><label class="grow"><span>Destination URL</span><input id="destinationUrl" type="url" /></label></div>
+          <label><span>Factual constraints — one per line</span><textarea id="factualConstraints"></textarea></label><label><span>Extra notes</span><textarea id="extraNotes"></textarea></label>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top:12px">
+        <div class="row" style="justify-content:space-between;align-items:flex-end">
+          <div class="grow"><h2>Generation</h2><div class="platforms">
+            <label class="platform-check"><input id="platformYoutube" type="checkbox" checked /><span>YouTube</span></label><label class="platform-check"><input id="platformFacebook" type="checkbox" checked /><span>Facebook</span></label><label class="platform-check"><input id="platformInstagram" type="checkbox" checked /><span>Instagram</span></label><label class="platform-check"><input id="platformTiktok" type="checkbox" checked /><span>TikTok</span></label>
+          </div></div>
+          <div class="row"><label style="min-width:240px"><span>Nexus model</span><select id="model"><option value="default">default</option></select></label><label style="width:100px"><span>Variants</span><input id="variants" type="number" min="1" max="3" value="1" /></label></div>
+        </div>
+        <label style="margin-top:10px"><span>Instruction for this generation</span><textarea id="customInstruction" placeholder="Optional emphasis or formatting request that applies only to this video."></textarea></label>
+        <div class="row" style="margin-top:10px"><button id="saveWorkspace" type="button">Save workspace</button><button id="previewPrompt" type="button">Preview LM prompt</button><button id="generate" type="button" class="primary">Generate drafts</button><button id="exportJson" type="button" disabled>Export JSON</button></div>
+        <div id="status" class="hint status"></div>
+      </section>
+
+      <section id="resultsSection" class="card" style="margin-top:12px" hidden><div class="row" style="justify-content:space-between"><h2>Platform drafts</h2><span id="routing" class="hint"></span></div><div id="resultTabs" class="tabs"></div><div id="results"></div></section>
+    </main>
+
+    <dialog id="promptDialog"><div class="dialog-head"><h2>LM prompt</h2><div class="row"><button id="copyPrompt" type="button">Copy</button><button id="closePrompt" type="button">Close</button></div></div><h3>System</h3><pre id="systemPrompt" class="prompt-view"></pre><h3 style="margin-top:12px">User</h3><pre id="userPrompt" class="prompt-view"></pre></dialog>
+
+    <script src="/static/focused_nav.js?v=7"></script>
+    <script src="/static/social.js?v=1"></script>
+  </body>
+</html>
