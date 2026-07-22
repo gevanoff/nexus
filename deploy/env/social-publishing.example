@@ -1,10 +1,15 @@
-# Social Publishing Studio — provider configuration example
-# Copy the relevant values into the deployment environment file used by Gateway,
-# normally deploy/env/.env.prod.ai2, deploy/env/.env.prod, or ./.env.
-# Do not commit real credentials.
+# Social Publishing Studio — optional direct-provider configuration
+# Assisted publishing through the Drafting Studio and native platform uploaders
+# is always available and requires none of the settings below.
+# Copy these values only when enabling direct provider API publishing. Normally
+# use deploy/env/.env.prod.ai2, deploy/env/.env.prod, or ./.env. Do not commit
+# real credentials.
 
-# Common settings
-SOCIAL_PUBLISHING_ENABLED=false
+# Direct provider API publishing is opt-in.
+SOCIAL_DIRECT_PUBLISHING_ENABLED=false
+# SOCIAL_PUBLISHING_ENABLED remains a deprecated compatibility alias. Do not set
+# both; SOCIAL_DIRECT_PUBLISHING_ENABLED takes precedence.
+
 # Generate once with:
 # python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 SOCIAL_TOKEN_ENCRYPTION_KEY=
@@ -14,30 +19,31 @@ SOCIAL_MEDIA_MAX_BYTES=1073741824
 SOCIAL_MEDIA_TTL_SEC=604800
 SOCIAL_PROVIDER_HTTP_TIMEOUT_SEC=120
 SOCIAL_OAUTH_STATE_TTL_SEC=900
-# Cloudflare Tunnel exposes this origin without opening inbound host ports.
+# Required only for direct Instagram publishing. Cloudflare Tunnel can expose
+# this origin without opening inbound host ports.
 SOCIAL_PUBLIC_BASE_URL=https://nexus.shadowrepository.org
 
 # The full multipart HTTP request is slightly larger than the media asset.
 # docker-compose.gateway.yml defaults to this value as well.
 MAX_REQUEST_BYTES=1100000000
 
-# Social publishing state intentionally shares USER_DB_PATH because its tables
+# Direct publishing state intentionally shares USER_DB_PATH because its tables
 # reference users(id). SOCIAL_PUBLISH_DB_PATH is not supported.
 
-# Google / YouTube
+# Google / YouTube direct publishing
 SOCIAL_GOOGLE_CLIENT_ID=
 SOCIAL_GOOGLE_CLIENT_SECRET=
 SOCIAL_GOOGLE_REDIRECT_URI=https://nexus.shadowrepository.org/ui/social/oauth/youtube/callback
 SOCIAL_GOOGLE_SCOPES=openid,email,profile,https://www.googleapis.com/auth/youtube.readonly,https://www.googleapis.com/auth/youtube.upload
 
-# Meta / Facebook + Instagram
+# Meta / Facebook + Instagram direct publishing
 SOCIAL_META_APP_ID=
 SOCIAL_META_APP_SECRET=
 SOCIAL_META_REDIRECT_URI=https://nexus.shadowrepository.org/ui/social/oauth/meta/callback
 SOCIAL_META_API_VERSION=
 SOCIAL_META_SCOPES=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish
 
-# TikTok
+# TikTok direct publishing
 SOCIAL_TIKTOK_CLIENT_KEY=
 SOCIAL_TIKTOK_CLIENT_SECRET=
 SOCIAL_TIKTOK_REDIRECT_URI=https://nexus.shadowrepository.org/ui/social/oauth/tiktok/callback
