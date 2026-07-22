@@ -29,7 +29,10 @@ for route in base.router.routes:
 async def social_publish_config(req: Request):
     """Describe always-on assisted publishing and opt-in direct publishing."""
 
-    base._require_authenticated_user(req)
+    # This response contains deployment capability metadata only. Requiring an
+    # authenticated user here would make the always-available assisted page
+    # depend on user auth even when every direct provider feature is disabled.
+    base._require_ui_access(req)
     settings = base._settings()
     return {
         "assisted_publishing_available": True,
