@@ -79,15 +79,17 @@ export NEXUS_RUNTIME_ROOT
 NEXUS_RUNTIME_ROOT="$(ns_resolve_docker_bind_path "$host_runtime_root")"
 
 # cloudflared supports token files for remotely managed tunnels. Materialize the
-# token under the protected runtime root so it is not exposed through the
-# container environment or process arguments.
+# token under a mode-0700 runtime directory so it is not exposed through the
+# container environment or process arguments. The file itself is read-only but
+# world-readable because the official image runs as an unrelated non-root UID;
+# the protected parent directory prevents other host users from traversing to it.
 token_dir="$host_runtime_root/cloudflared"
 token_path="$token_dir/tunnel-token"
 token_tmp="$token_dir/.tunnel-token.$$"
 mkdir -p "$token_dir"
 chmod 700 "$token_dir"
 printf '%s' "$tunnel_token" > "$token_tmp"
-chmod 600 "$token_tmp"
+chmod 444 "$token_tmp"
 mv -f "$token_tmp" "$token_path"
 unset tunnel_token token_tmp
 
