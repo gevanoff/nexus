@@ -4,7 +4,8 @@
 # Never commit the real tunnel token.
 
 # Create a remotely managed tunnel in Cloudflare Zero Trust and copy only the
-# eyJ... token from the Docker connector command.
+# eyJ... token from the Docker connector command. The deployment script writes
+# it to a mode-0600 runtime token file; it is not passed to the container env.
 CLOUDFLARED_TUNNEL_TOKEN=
 
 # Pinned multi-architecture image. Override deliberately when upgrading.
@@ -12,6 +13,12 @@ CLOUDFLARED_IMAGE_TAG=2026.7.2
 
 # auto prefers QUIC and falls back to HTTP/2 when required by the network.
 CLOUDFLARED_PROTOCOL=auto
+
+# Dedicated internal origin network. Change all three together if this subnet
+# conflicts with an existing Docker, LAN, VPN, or overlay network.
+CLOUDFLARED_ORIGIN_SUBNET=172.29.0.0/29
+CLOUDFLARED_GATEWAY_IP=172.29.0.2
+CLOUDFLARED_CONNECTOR_IP=172.29.0.3
 
 # Public application origin used by social publishing and provider callbacks.
 SOCIAL_PUBLIC_BASE_URL=https://nexus.shadowrepository.org
