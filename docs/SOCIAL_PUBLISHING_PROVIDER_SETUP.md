@@ -41,12 +41,19 @@ Set:
 SOCIAL_PUBLISHING_ENABLED=true
 SOCIAL_TOKEN_ENCRYPTION_KEY=<generated Fernet key>
 SOCIAL_MEDIA_DIR=/var/lib/gateway/data/social_media
-SOCIAL_MEDIA_MAX_BYTES=4000000000
+SOCIAL_MEDIA_MAX_BYTES=1073741824
 SOCIAL_MEDIA_TTL_SEC=604800
 SOCIAL_PROVIDER_HTTP_TIMEOUT_SEC=120
+MAX_REQUEST_BYTES=1100000000
 ```
 
 `SOCIAL_TOKEN_ENCRYPTION_KEY` must remain stable. Rotating it without a credential migration makes stored tokens unreadable and requires users to reconnect accounts.
+
+Social publishing state is always stored in `USER_DB_PATH`. The social tables have foreign keys to `users(id)`, so `SOCIAL_PUBLISH_DB_PATH` is intentionally unsupported. The gateway data volume already persists both user and social state.
+
+The default deployment supports a video asset up to 1 GiB. `MAX_REQUEST_BYTES` is slightly larger to allow for multipart framing. `docker-compose.gateway.yml` passes the setting through from the deployment environment, and the bundled Nginx proxy permits 1100 MiB while streaming `/ui/api/social/media` without request buffering.
+
+A complete environment template is available at `deploy/env/social-publishing.example`.
 
 For Instagram media-container publishing, configure a public HTTPS origin that routes to the gateway without redirecting the signed media path:
 
@@ -158,7 +165,23 @@ The UI deliberately provides no default privacy selection and leaves interaction
 
 Uploads follow TikTok's current chunk restrictions: a whole-file upload up to 64 MiB, otherwise sequential chunks no larger than 64 MiB, with the remainder merged into the final chunk.
 
+TikTok status handling distinguishes a completed public post from an inbox handoff:
+
+- `PUBLISH_COMPLETE` becomes `PUBLISHED`.
+- `SEND_TO_USER_INBOX` becomes `AWAITING_USER_ACTION` and remains refreshable because the creator still has to finish the post in TikTok.
+- failure states become `FAILED_PERMANENT`; other states remain `PROCESSING`.
+
 Unaudited TikTok clients are subject to TikTok's visibility and usage restrictions. Production use requires the relevant TikTok review/audit and must comply with its permitted product-use model.
+
+## Activation sequence
+
+1. Keep `USER_AUTH_ENABLED=true` and sign in with a Nexus user.
+2. Generate and persist `SOCIAL_TOKEN_ENCRYPTION_KEY`.
+3. Copy the common settings and selected provider credentials into the deployment environment file.
+4. Rebuild Gateway so the `cryptography` dependency is installed.
+5. Recreate Nginx when using the bundled TLS proxy so its upload limit and streaming route are active.
+6. Open `/ui/social` for drafting or `/ui/social/publish` for account connection and publishing.
+7. Start with a small private/unlisted test video before enabling public publication.
 
 ## Security and failure behavior
 
