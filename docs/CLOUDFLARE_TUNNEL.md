@@ -7,8 +7,9 @@ This deployment exposes Nexus at `https://nexus.shadowrepository.org` without as
 - `cloudflared` makes outbound-only connections to Cloudflare.
 - The connector publishes no host ports.
 - Gateway and `cloudflared` share a dedicated internal Docker network.
-- Gateway has the fixed origin address `172.29.0.2`; `cloudflared` has `172.29.0.3`.
-- The compose overlay appends only `172.29.0.3` to `UI_IP_ALLOWLIST`.
+- Gateway defaults to `172.29.0.2`; `cloudflared` defaults to `172.29.0.3`. The subnet and addresses are configurable together.
+- The compose overlay appends only the connector address to `UI_IP_ALLOWLIST`.
+- The tunnel token is mounted from a runtime token file rather than exposed through container environment variables or process arguments.
 - Cloudflare Access protects the UI and OAuth callbacks.
 - Only `/social-media/*` bypasses Access; those URLs are already short-lived and HMAC-signed by Nexus.
 - Nexus user authentication remains enabled behind Cloudflare Access.
@@ -30,6 +31,8 @@ CLOUDFLARED_TUNNEL_TOKEN=<tunnel-token>
 CLOUDFLARED_IMAGE_TAG=2026.7.2
 CLOUDFLARED_PROTOCOL=auto
 ```
+
+The deployment script copies the token into `${NEXUS_RUNTIME_ROOT}/cloudflared/tunnel-token`, inside a mode-`0700` directory, and mounts only that file read-only into the connector. The token is removed from the script environment before Compose starts the containers.
 
 The token authorizes a connector to run this one tunnel. Rotate it in Cloudflare if it is disclosed.
 
@@ -82,6 +85,16 @@ SOCIAL_TIKTOK_REDIRECT_URI=https://nexus.shadowrepository.org/ui/social/oauth/ti
 
 Register those exact callback URLs in the corresponding Google, Meta, and TikTok developer applications.
 
+The dedicated network defaults are:
+
+```dotenv
+CLOUDFLARED_ORIGIN_SUBNET=172.29.0.0/29
+CLOUDFLARED_GATEWAY_IP=172.29.0.2
+CLOUDFLARED_CONNECTOR_IP=172.29.0.3
+```
+
+Change all three together before deployment if the default subnet overlaps an existing Docker, LAN, VPN, or overlay network.
+
 ## 5. Deploy
 
 The ai2 topology deployment environment is normally `deploy/env/.env.prod.ai2`. Deploy with:
@@ -94,12 +107,13 @@ bash deploy/scripts/deploy-cloudflared.sh \
 The script:
 
 1. verifies that the tunnel token exists;
-2. validates the combined Gateway, etcd, and cloudflared Compose configuration;
-3. pulls the pinned cloudflared image;
-4. ensures etcd is running;
-5. recreates Gateway so it joins the tunnel network and receives the connector allowlist entry;
-6. starts `nexus-cloudflared`; and
-7. waits for Gateway health.
+2. writes the protected runtime token file;
+3. validates the combined Gateway, etcd, and cloudflared Compose configuration;
+4. pulls the pinned cloudflared image;
+5. ensures etcd is running;
+6. recreates Gateway so it joins the tunnel network and receives the connector allowlist entry;
+7. starts `nexus-cloudflared`; and
+8. waits for Gateway health.
 
 Normal Gateway restarts do not need to recreate cloudflared. Re-run this deployment script when changing the tunnel network, token, cloudflared version, or Gateway tunnel attachment.
 
