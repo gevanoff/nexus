@@ -1,0 +1,43 @@
+# Social Publishing Studio — provider configuration example
+# Copy the relevant values into the deployment environment file used by Gateway,
+# normally deploy/env/.env.prod or ./.env. Do not commit real credentials.
+
+# Common settings
+SOCIAL_PUBLISHING_ENABLED=false
+# Generate once with:
+# python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+SOCIAL_TOKEN_ENCRYPTION_KEY=
+SOCIAL_MEDIA_DIR=/var/lib/gateway/data/social_media
+# Default deployment cap: 1 GiB video asset.
+SOCIAL_MEDIA_MAX_BYTES=1073741824
+SOCIAL_MEDIA_TTL_SEC=604800
+SOCIAL_PROVIDER_HTTP_TIMEOUT_SEC=120
+SOCIAL_OAUTH_STATE_TTL_SEC=900
+# Must be a publicly reachable HTTPS origin for Instagram media retrieval.
+SOCIAL_PUBLIC_BASE_URL=
+
+# The full multipart HTTP request is slightly larger than the media asset.
+# docker-compose.gateway.yml defaults to this value as well.
+MAX_REQUEST_BYTES=1100000000
+
+# Social publishing state intentionally shares USER_DB_PATH because its tables
+# reference users(id). SOCIAL_PUBLISH_DB_PATH is not supported.
+
+# Google / YouTube
+SOCIAL_GOOGLE_CLIENT_ID=
+SOCIAL_GOOGLE_CLIENT_SECRET=
+SOCIAL_GOOGLE_REDIRECT_URI=https://nexus.example.com/ui/social/oauth/youtube/callback
+SOCIAL_GOOGLE_SCOPES=openid,email,profile,https://www.googleapis.com/auth/youtube.readonly,https://www.googleapis.com/auth/youtube.upload
+
+# Meta / Facebook + Instagram
+SOCIAL_META_APP_ID=
+SOCIAL_META_APP_SECRET=
+SOCIAL_META_REDIRECT_URI=https://nexus.example.com/ui/social/oauth/meta/callback
+SOCIAL_META_API_VERSION=
+SOCIAL_META_SCOPES=pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish
+
+# TikTok
+SOCIAL_TIKTOK_CLIENT_KEY=
+SOCIAL_TIKTOK_CLIENT_SECRET=
+SOCIAL_TIKTOK_REDIRECT_URI=https://nexus.example.com/ui/social/oauth/tiktok/callback
+SOCIAL_TIKTOK_SCOPES=user.info.basic,video.publish
