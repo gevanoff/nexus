@@ -5,7 +5,9 @@
 
   const els = {
     persistence: $("persistence"), brandSelect: $("brandSelect"), newBrand: $("newBrand"),
-    duplicateBrand: $("duplicateBrand"), deleteBrand: $("deleteBrand"), saveWorkspace: $("saveWorkspace"),
+    duplicateBrand: $("duplicateBrand"), deleteBrand: $("deleteBrand"), saveBrand: $("saveBrand"),
+    brandStatus: $("brandStatus"), newBrief: $("newBrief"), saveBrief: $("saveBrief"), briefStatus: $("briefStatus"),
+    saveWorkspace: $("saveWorkspace"),
     previewPrompt: $("previewPrompt"), generate: $("generate"), exportJson: $("exportJson"), status: $("status"),
     model: $("model"), variants: $("variants"), customInstruction: $("customInstruction"),
     resultsSection: $("resultsSection"), resultTabs: $("resultTabs"), results: $("results"), routing: $("routing"),
@@ -32,6 +34,11 @@
   function setStatus(text, isError = false) {
     els.status.textContent = text || "";
     els.status.className = `hint status${isError ? " error" : ""}`;
+  }
+  function setSectionStatus(element, text, isError = false) {
+    if (!element) return;
+    element.textContent = text || "";
+    element.className = `hint${isError ? " error" : ""}`;
   }
   function splitLines(value) {
     return String(value || "").split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
@@ -148,12 +155,32 @@
     const name = copyCurrent ? `${source.name || "Brand"} copy` : "New brand";
     const brand = { ...source, id: uniqueBrandId(name), name };
     state.workspace.brands.push(brand); state.workspace.active_brand_id = brand.id; renderBrandSelect(); saveLocal();
+    setSectionStatus(els.brandStatus, copyCurrent ? "Duplicated profile — edit it, then save." : "New profile — edit it, then save.");
   }
   function deleteBrand() {
     if ((state.workspace?.brands || []).length <= 1) { setStatus("At least one brand profile is required.", true); return; }
     const id = state.workspace.active_brand_id;
     state.workspace.brands = state.workspace.brands.filter((brand) => brand.id !== id);
     state.workspace.active_brand_id = state.workspace.brands[0].id; renderBrandSelect(); saveLocal();
+    setSectionStatus(els.brandStatus, "Profile deleted — save to confirm the change.");
+  }
+  function briefHasContent(brief) {
+    return Object.entries(brief || {}).some(([field, value]) => {
+      if (field === "language" && (!value || value === "English")) return false;
+      return Array.isArray(value) ? value.length > 0 : !!String(value || "").trim();
+    });
+  }
+  function newBrief() {
+    const current = readBriefFromForm();
+    if (briefHasContent(current) && !window.confirm("Start a new video brief? Unsaved brief changes will be cleared.")) return;
+    syncFormIntoWorkspace();
+    state.workspace.working_brief = { language: "English" };
+    state.result = null;
+    writeBriefToForm(state.workspace.working_brief);
+    renderResults();
+    saveLocal();
+    setSectionStatus(els.briefStatus, "New brief — add its details, then save.");
+    setStatus("New video brief started.");
   }
 
   function selectedPlatforms() {
@@ -167,12 +194,15 @@
       custom_instruction: els.customInstruction.value.trim(),
     };
   }
-  async function saveWorkspace(showStatus = true) {
+  async function saveWorkspace(showStatus = true, successMessage = "All changes saved.") {
     syncFormIntoWorkspace();
     const payload = await fetchJson("/ui/api/social/state", { method: "PUT", body: JSON.stringify({ state: state.workspace }) });
     state.workspace = payload.state; state.persistent = !!payload.persistent;
     els.persistence.textContent = state.persistent ? "Saved to your Nexus user profile" : "Saved in this browser";
-    renderBrandSelect(); saveLocal(); if (showStatus) setStatus("Workspace saved.");
+    renderBrandSelect(); saveLocal();
+    setSectionStatus(els.brandStatus, "Saved.");
+    setSectionStatus(els.briefStatus, "Saved.");
+    if (showStatus) setStatus(successMessage);
   }
 
   function modelLabel(item) {
@@ -301,14 +331,26 @@
       state.workspace = local.workspace; state.result = local.result || null; els.persistence.textContent = "Offline browser copy";
     }
     renderBrandSelect(); writeBriefToForm(state.workspace.working_brief || {}); renderResults();
+    setSectionStatus(els.brandStatus, "Ready to edit.");
+    setSectionStatus(els.briefStatus, "Ready to edit.");
   }
 
   els.brandSelect.addEventListener("change", () => { syncFormIntoWorkspace(); state.workspace.active_brand_id = els.brandSelect.value; writeBrandToForm(activeBrand()); saveLocal(); });
   els.newBrand.addEventListener("click", () => addBrand(false)); els.duplicateBrand.addEventListener("click", () => addBrand(true)); els.deleteBrand.addEventListener("click", deleteBrand);
+  els.saveBrand.addEventListener("click", () => saveWorkspace(true, "Brand profile saved.").catch((error) => { setSectionStatus(els.brandStatus, error.message, true); setStatus(error.message, true); }));
+  els.newBrief.addEventListener("click", newBrief);
+  els.saveBrief.addEventListener("click", () => saveWorkspace(true, "Video brief saved.").catch((error) => { setSectionStatus(els.briefStatus, error.message, true); setStatus(error.message, true); }));
   els.saveWorkspace.addEventListener("click", () => saveWorkspace(true).catch((error) => setStatus(error.message, true)));
   els.previewPrompt.addEventListener("click", previewPrompt); els.generate.addEventListener("click", generate); els.exportJson.addEventListener("click", exportJson);
   els.closePrompt.addEventListener("click", () => els.promptDialog.close());
   els.copyPrompt.addEventListener("click", async () => { await copyText(`SYSTEM\n${els.systemPrompt.textContent}\n\nUSER\n${els.userPrompt.textContent}`); els.copyPrompt.textContent = "Copied"; setTimeout(() => { els.copyPrompt.textContent = "Copy"; }, 1000); });
+
+  for (const id of [...Object.values(brandFieldIds), "guideYoutube", "guideFacebook", "guideInstagram", "guideTiktok"]) {
+    $(id)?.addEventListener("input", () => setSectionStatus(els.brandStatus, "Unsaved changes."));
+  }
+  for (const id of Object.values(briefFieldIds)) {
+    $(id)?.addEventListener("input", () => setSectionStatus(els.briefStatus, "Unsaved changes."));
+  }
 
   Promise.all([loadWorkspace(), loadModels()]).catch((error) => setStatus(error.message, true));
 })();

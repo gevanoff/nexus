@@ -44,10 +44,13 @@
 
       <div class="grid">
         <section class="card stack">
-          <div class="row" style="justify-content:space-between"><h2>Brand profile</h2><span id="persistence" class="hint"></span></div>
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <div><h2>Brand profile</h2><div class="hint">Choose a profile or create one, edit its fields directly, then save it.</div></div>
+            <span id="persistence" class="hint"></span>
+          </div>
           <div class="row">
             <label class="grow"><span>Brand</span><select id="brandSelect"></select></label>
-            <button id="newBrand" type="button">New</button><button id="duplicateBrand" type="button">Duplicate</button><button id="deleteBrand" type="button" class="danger">Delete</button>
+            <button id="newBrand" type="button">New profile</button><button id="duplicateBrand" type="button">Duplicate</button><button id="deleteBrand" type="button" class="danger">Delete</button>
           </div>
           <label><span>Name</span><input id="brandName" /></label>
           <label><span>Description / purpose</span><textarea id="brandDescription"></textarea></label>
@@ -63,10 +66,14 @@
             <label><span>YouTube</span><textarea id="guideYoutube"></textarea></label><label><span>Facebook</span><textarea id="guideFacebook"></textarea></label><label><span>Instagram</span><textarea id="guideInstagram"></textarea></label><label><span>TikTok</span><textarea id="guideTiktok"></textarea></label>
           </div></details>
           <label><span>Additional brand prompt guidance</span><textarea id="brandPrompt"></textarea></label>
+          <div class="row"><button id="saveBrand" type="button" class="primary">Save brand profile</button><span id="brandStatus" class="hint" role="status"></span></div>
         </section>
 
         <section class="card stack">
-          <h2>Video brief</h2>
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <div><h2>Video brief</h2><div class="hint">Enter or edit the facts for this video, save the brief, then generate platform drafts below.</div></div>
+            <button id="newBrief" type="button">New brief</button>
+          </div>
           <div class="row"><label class="grow"><span>Asset name or filename</span><input id="assetName" placeholder="clip-014.mp4" /></label><label class="grow"><span>Language</span><input id="language" value="English" /></label></div>
           <label><span>Subject</span><input id="subject" placeholder="What is shown or explained?" /></label>
           <label><span>Concise content summary</span><textarea id="contentSummary"></textarea></label>
@@ -76,6 +83,7 @@
           <div class="row"><label class="grow"><span>Content goal</span><input id="contentGoal" placeholder="Educate, announce, document, invite…" /></label><label class="grow"><span>Audience override</span><input id="audienceOverride" placeholder="Optional for this clip" /></label></div>
           <div class="row"><label class="grow"><span>Call to action</span><input id="callToAction" /></label><label class="grow"><span>Destination URL</span><input id="destinationUrl" type="url" /></label></div>
           <label><span>Factual constraints — one per line</span><textarea id="factualConstraints"></textarea></label><label><span>Extra notes</span><textarea id="extraNotes"></textarea></label>
+          <div class="row"><button id="saveBrief" type="button" class="primary">Save video brief</button><span id="briefStatus" class="hint" role="status"></span></div>
         </section>
       </div>
 
@@ -87,7 +95,7 @@
           <div class="row"><label style="min-width:240px"><span>Nexus model</span><select id="model"><option value="default">default</option></select></label><label style="width:100px"><span>Variants</span><input id="variants" type="number" min="1" max="3" value="1" /></label></div>
         </div>
         <label style="margin-top:10px"><span>Instruction for this generation</span><textarea id="customInstruction" placeholder="Optional emphasis or formatting request that applies only to this video."></textarea></label>
-        <div class="row" style="margin-top:10px"><button id="saveWorkspace" type="button">Save workspace</button><button id="previewPrompt" type="button">Preview LM prompt</button><button id="generate" type="button" class="primary">Generate drafts</button><button id="exportJson" type="button" disabled>Export JSON</button></div>
+        <div class="row" style="margin-top:10px"><button id="saveWorkspace" type="button">Save all changes</button><button id="previewPrompt" type="button">Preview LM prompt</button><button id="generate" type="button" class="primary">Generate platform drafts</button><button id="exportJson" type="button" disabled>Export JSON</button></div>
         <div id="status" class="hint status"></div>
       </section>
 
@@ -96,7 +104,7 @@
 
     <dialog id="promptDialog"><div class="dialog-head"><h2>LM prompt</h2><div class="row"><button id="copyPrompt" type="button">Copy</button><button id="closePrompt" type="button">Close</button></div></div><h3>System</h3><pre id="systemPrompt" class="prompt-view"></pre><h3 style="margin-top:12px">User</h3><pre id="userPrompt" class="prompt-view"></pre></dialog>
 
-    <script src="/static/focused_nav.js?v=7"></script>
-    <script src="/static/social.js?v=1"></script>
+    <script src="/static/focused_nav.js?v=8"></script>
+    <script src="/static/social.js?v=2"></script>
   </body>
 </html>

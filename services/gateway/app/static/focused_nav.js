@@ -5,6 +5,7 @@
     ["Image UI", "/ui/image"],
     ["Music UI", "/ui/music"],
     ["Video UI", "/ui/video"],
+    ["Social Studio", "/ui/social"],
     ["PersonaPlex UI", "/ui/personaplex"],
     ["Text-to-speech", "/ui/tts"],
     ["Voice Clone", "/ui/voice-clone"],
