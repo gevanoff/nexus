@@ -27,6 +27,7 @@ The focused UI at `/ui/social` provides:
 
 - per-user brand profiles;
 - a canonical video brief;
+- field-level LM drafting for supported brand and brief fields using the current form as context;
 - platform selection for YouTube, Facebook, Instagram, and TikTok;
 - Nexus model selection and prompt preview;
 - structured, platform-specific draft generation;
@@ -36,6 +37,8 @@ The focused UI at `/ui/social` provides:
 
 The Drafting Studio has a local-browser fallback when Nexus user authentication is
 unavailable.
+Field-level LM suggestions are inserted as unsaved values so the user can review or
+edit them before saving the profile or brief.
 
 ### Native uploader handoff
 

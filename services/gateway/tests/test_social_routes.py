@@ -2,7 +2,18 @@ from __future__ import annotations
 
 import json
 
-from app.social_routes import SocialPromptRequest, build_social_prompt, normalize_state, parse_social_drafts
+import pytest
+from fastapi import HTTPException
+
+from app.social_routes import (
+    SocialFieldRequest,
+    SocialPromptRequest,
+    build_social_field_prompt,
+    build_social_prompt,
+    normalize_state,
+    parse_social_drafts,
+    parse_social_field_value,
+)
 
 
 def _request(**overrides):
@@ -133,3 +144,53 @@ def test_parsed_output_is_json_serializable():
     )
     parsed = parse_social_drafts(raw, platforms=["instagram"], variants=1)
     json.dumps(parsed)
+
+
+def test_field_prompt_uses_current_brand_and_brief_context():
+    request = SocialFieldRequest.model_validate(
+        {
+            "model": "default",
+            "section": "brief",
+            "field": "key_points",
+            "brand": {"name": "Northwind Workshop", "audience": "Home mechanics"},
+            "brief": {
+                "subject": "Replacing a worn belt",
+                "content_summary": "The presenter shows the safe replacement sequence.",
+                "transcript_notes": "Disconnect power before opening the housing.",
+            },
+        }
+    )
+
+    prompt = build_social_field_prompt(request)
+
+    assert prompt["output"] == "list"
+    assert '"target_field": "key_points"' in prompt["user_prompt"]
+    assert "Northwind Workshop" in prompt["user_prompt"]
+    assert "Disconnect power" in prompt["user_prompt"]
+    assert "Complete only the requested target field" in prompt["user_prompt"]
+
+
+def test_field_prompt_rejects_fields_outside_supported_ranges():
+    request = SocialFieldRequest.model_validate(
+        {"section": "brief", "field": "transcript_notes", "brand": {}, "brief": {}}
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        build_social_field_prompt(request)
+
+    assert exc.value.status_code == 400
+
+
+def test_parse_social_field_value_normalizes_list_output():
+    parsed = parse_social_field_value(
+        '```json\n{"value":["Stable starting position","Disconnect power","Stable starting position"]}\n```',
+        output="list",
+    )
+
+    assert parsed == ["Stable starting position", "Disconnect power"]
+
+
+def test_parse_social_field_value_accepts_string_output():
+    parsed = parse_social_field_value('{"value":"Clear, practical, and direct."}', output="string")
+
+    assert parsed == "Clear, practical, and direct."

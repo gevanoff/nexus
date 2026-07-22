@@ -27,6 +27,30 @@
     content_goal: "contentGoal", audience_override: "audienceOverride", call_to_action: "callToAction",
     destination_url: "destinationUrl", language: "language", factual_constraints: "factualConstraints", extra_notes: "extraNotes",
   };
+  const lmFieldTargets = [
+    { section: "brand", field: "audience", id: "brandAudience", label: "Primary audience", output: "string" },
+    { section: "brand", field: "voice", id: "brandVoice", label: "Voice and tone", output: "string" },
+    { section: "brand", field: "terminology", id: "brandTerminology", label: "Required terminology", output: "list" },
+    { section: "brand", field: "required_facts", id: "brandFacts", label: "Required facts or standing context", output: "list" },
+    { section: "brand", field: "prohibited_claims", id: "brandAvoid", label: "Claims or formulations to avoid", output: "list" },
+    { section: "brand", field: "calls_to_action", id: "brandCtas", label: "Default calls to action", output: "list" },
+    { section: "brand", field: "default_links", id: "brandLinks", label: "Default links", output: "list" },
+    { section: "brand", field: "default_hashtags", id: "brandHashtags", label: "Default hashtags", output: "list" },
+    { section: "brand", field: "platform_guidance.youtube", id: "guideYoutube", label: "YouTube brand guidance", output: "string" },
+    { section: "brand", field: "platform_guidance.facebook", id: "guideFacebook", label: "Facebook brand guidance", output: "string" },
+    { section: "brand", field: "platform_guidance.instagram", id: "guideInstagram", label: "Instagram brand guidance", output: "string" },
+    { section: "brand", field: "platform_guidance.tiktok", id: "guideTiktok", label: "TikTok brand guidance", output: "string" },
+    { section: "brand", field: "prompt_addendum", id: "brandPrompt", label: "Additional brand prompt guidance", output: "string" },
+    { section: "brief", field: "key_points", id: "keyPoints", label: "Key points", output: "list" },
+    { section: "brief", field: "people_organizations", id: "peopleOrganizations", label: "People and organizations", output: "list" },
+    { section: "brief", field: "dates_locations", id: "datesLocations", label: "Dates and locations", output: "list" },
+    { section: "brief", field: "content_goal", id: "contentGoal", label: "Content goal", output: "string" },
+    { section: "brief", field: "audience_override", id: "audienceOverride", label: "Audience override", output: "string" },
+    { section: "brief", field: "call_to_action", id: "callToAction", label: "Call to action", output: "string" },
+    { section: "brief", field: "destination_url", id: "destinationUrl", label: "Destination URL", output: "string" },
+    { section: "brief", field: "factual_constraints", id: "factualConstraints", label: "Factual constraints", output: "list" },
+    { section: "brief", field: "extra_notes", id: "extraNotes", label: "Extra notes", output: "string" },
+  ];
   const listBrandFields = new Set(["terminology", "required_facts", "prohibited_claims", "calls_to_action", "default_links", "default_hashtags"]);
   const listBriefFields = new Set(["key_points", "people_organizations", "dates_locations", "factual_constraints"]);
   const state = { workspace: null, persistent: false, contracts: {}, result: null, activeResultPlatform: "" };
@@ -40,6 +64,7 @@
     element.textContent = text || "";
     element.className = `hint${isError ? " error" : ""}`;
   }
+  function sectionStatus(section) { return section === "brand" ? els.brandStatus : els.briefStatus; }
   function splitLines(value) {
     return String(value || "").split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
   }
@@ -193,6 +218,68 @@
       platforms: selectedPlatforms(), variants: Number(els.variants.value || 1),
       custom_instruction: els.customInstruction.value.trim(),
     };
+  }
+  async function fillFieldWithLm(spec, button) {
+    if (!state.workspace) {
+      setStatus("The Social Studio workspace is still loading.", true);
+      return;
+    }
+    syncFormIntoWorkspace();
+    const control = $(spec.id);
+    const targetStatus = sectionStatus(spec.section);
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = "…";
+    setSectionStatus(targetStatus, `Generating ${spec.label}…`);
+    setStatus(`Generating ${spec.label} with ${els.model.value || "default"}…`);
+    try {
+      const payload = await fetchJson("/ui/api/social/field/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          model: els.model.value || "default",
+          section: spec.section,
+          field: spec.field,
+          brand: activeBrand() || {},
+          brief: state.workspace.working_brief || {},
+        }),
+      });
+      control.value = spec.output === "list" ? joinLines(payload.value) : String(payload.value || "");
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+      setSectionStatus(targetStatus, `${spec.label} generated — review, then save.`);
+      setStatus(`${spec.label} generated with ${payload.routing?.model || els.model.value || "the selected model"}.`);
+      control.focus();
+    } catch (error) {
+      setSectionStatus(targetStatus, error.message, true);
+      setStatus(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = originalText;
+    }
+  }
+  function installLmFillButtons() {
+    for (const spec of lmFieldTargets) {
+      const control = $(spec.id);
+      const label = control?.closest("label");
+      const caption = label ? Array.from(label.children).find((child) => child.tagName === "SPAN") : null;
+      if (!control || !label || !caption) continue;
+      const heading = document.createElement("div");
+      heading.className = "field-heading";
+      caption.replaceWith(heading);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "lm-fill-button";
+      button.textContent = "✦";
+      button.title = `Fill ${spec.label} with the selected Nexus model using current form context`;
+      button.setAttribute("aria-label", button.title);
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        fillFieldWithLm(spec, button);
+      });
+      heading.append(caption, button);
+    }
   }
   async function saveWorkspace(showStatus = true, successMessage = "All changes saved.") {
     syncFormIntoWorkspace();
@@ -352,5 +439,6 @@
     $(id)?.addEventListener("input", () => setSectionStatus(els.briefStatus, "Unsaved changes."));
   }
 
+  installLmFillButtons();
   Promise.all([loadWorkspace(), loadModels()]).catch((error) => setStatus(error.message, true));
 })();

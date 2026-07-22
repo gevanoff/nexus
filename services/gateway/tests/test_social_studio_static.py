@@ -33,4 +33,19 @@ def test_social_studio_has_explicit_profile_and_brief_actions():
     assert 'els.newBrief.addEventListener("click", newBrief)' in js
     assert 'els.saveBrief.addEventListener("click"' in js
     assert "Unsaved changes." in js
-    assert '/static/social.js?v=2' in html
+    assert '/static/social.js?v=3' in html
+
+
+def test_social_studio_has_contextual_lm_field_actions():
+    html = STATIC.joinpath("social.html").read_text(encoding="utf-8")
+    js = STATIC.joinpath("social.js").read_text(encoding="utf-8")
+
+    assert "button.lm-fill-button" in html
+    assert "Use ✦ beside supported fields" in html
+    assert "installLmFillButtons" in js
+    assert 'fetchJson("/ui/api/social/field/generate"' in js
+    assert '{ section: "brand", field: "audience", id: "brandAudience"' in js
+    assert '{ section: "brief", field: "key_points", id: "keyPoints"' in js
+    assert 'field: "description", id: "brandDescription"' not in js
+    assert 'field: "transcript_notes", id: "transcriptNotes"' not in js
+    assert "generated — review, then save" in js
