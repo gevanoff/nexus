@@ -61,3 +61,13 @@ def test_shadowrepository_hostname_is_consistent():
     assert "nexus.shadowrepository.org/ui/social/oauth/youtube/callback" in documentation
     assert "nexus.shadowrepository.org/ui/social/oauth/meta/callback" in documentation
     assert "nexus.shadowrepository.org/ui/social/oauth/tiktok/callback" in documentation
+
+
+def test_cloudflare_is_documented_as_optional_for_assisted_publishing():
+    tunnel_env = (ROOT / "deploy/env/cloudflared.example").read_text(encoding="utf-8")
+    documentation = (ROOT / "docs/CLOUDFLARE_TUNNEL.md").read_text(encoding="utf-8")
+
+    assert "Assisted social publishing does not require" in tunnel_env
+    assert "Cloudflare Tunnel is optional" in documentation
+    assert "It is **not** required for assisted social publishing" in documentation
+    assert "When direct Instagram publishing is not enabled, omit this Bypass application" in documentation
