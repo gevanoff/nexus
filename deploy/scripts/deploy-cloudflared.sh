@@ -56,7 +56,8 @@ if [[ -z "$ENV_FILE" || ! -f "$ENV_FILE" ]]; then
   ns_die "No deployment env file found. Pass --env-file PATH."
 fi
 
-if [[ -z "$(ns_env_get "$ENV_FILE" CLOUDFLARED_TUNNEL_TOKEN "")" ]]; then
+tunnel_token="$(ns_env_get "$ENV_FILE" CLOUDFLARED_TUNNEL_TOKEN "")"
+if [[ -z "$tunnel_token" ]]; then
   ns_die "CLOUDFLARED_TUNNEL_TOKEN is missing from $ENV_FILE"
 fi
 
@@ -76,6 +77,19 @@ GATEWAY_ENV_FILE="$(ns_resolve_docker_env_file "$ROOT_DIR/.env")"
 host_runtime_root="$(ns_runtime_root_from_env "$ROOT_DIR" "$ENV_FILE")"
 export NEXUS_RUNTIME_ROOT
 NEXUS_RUNTIME_ROOT="$(ns_resolve_docker_bind_path "$host_runtime_root")"
+
+# cloudflared supports token files for remotely managed tunnels. Materialize the
+# token under the protected runtime root so it is not exposed through the
+# container environment or process arguments.
+token_dir="$host_runtime_root/cloudflared"
+token_path="$token_dir/tunnel-token"
+token_tmp="$token_dir/.tunnel-token.$$"
+mkdir -p "$token_dir"
+chmod 700 "$token_dir"
+printf '%s' "$tunnel_token" > "$token_tmp"
+chmod 600 "$token_tmp"
+mv -f "$token_tmp" "$token_path"
+unset tunnel_token token_tmp
 
 compose_args=(
   --env-file "$ENV_FILE"
