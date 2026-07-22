@@ -8,7 +8,7 @@ from app.config import S
 from app.health_checker import check_backend_ready
 from app.music_backend import generate_music
 from app.social_routes import router as social_router
-from app.social_publish_routes import router as social_publish_router
+from app.social_publish_route_fixes import router as social_publish_router
 
 
 router = APIRouter()
@@ -48,6 +48,7 @@ async def music_generations(req: Request):
         admission.release(backend_class, "music")
 
 
-# Compose the social drafting and publishing APIs through the media router already imported by app.main.
+# Compose the social drafting and reviewed publishing APIs through the media
+# router already imported by app.main.
 router.include_router(social_router)
 router.include_router(social_publish_router)

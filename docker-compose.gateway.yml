@@ -49,8 +49,9 @@ services:
       - EMBEDDINGS_BACKEND=${EMBEDDINGS_BACKEND:-local_mlx}
       - ROUTER_ENABLE_POLICY=true
 
-      # Request limits
-      - MAX_REQUEST_BYTES=104857600
+      # Request limits. Keep this above SOCIAL_MEDIA_MAX_BYTES to allow for
+      # multipart framing; the default supports video assets up to 1 GiB.
+      - MAX_REQUEST_BYTES=${MAX_REQUEST_BYTES:-1100000000}
 
       # Data persistence paths (inside container)
       - MEMORY_DB_PATH=/var/lib/gateway/data/memory.sqlite
