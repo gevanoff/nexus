@@ -17,6 +17,18 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in TRUE_VALUES
 
 
+def _direct_publishing_enabled() -> bool:
+    """Return the opt-in state for provider API publishing.
+
+    Assisted publishing is always available and needs no feature flag. The old
+    SOCIAL_PUBLISHING_ENABLED name remains a compatibility fallback so existing
+    deployments do not silently change behavior during the rename.
+    """
+    if os.getenv("SOCIAL_DIRECT_PUBLISHING_ENABLED") is not None:
+        return _env_bool("SOCIAL_DIRECT_PUBLISHING_ENABLED", False)
+    return _env_bool("SOCIAL_PUBLISHING_ENABLED", False)
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
@@ -34,6 +46,8 @@ def _csv(name: str, default: str) -> List[str]:
 
 @dataclass(frozen=True)
 class SocialPublishSettings:
+    # This field is retained for constructor compatibility. It now means direct
+    # provider API publishing only; assisted publishing is unconditionally on.
     enabled: bool
     db_path: str
     media_dir: str
@@ -60,6 +74,10 @@ class SocialPublishSettings:
     tiktok_redirect_uri: str
     tiktok_scopes: List[str]
 
+    @property
+    def direct_publishing_enabled(self) -> bool:
+        return self.enabled
+
     @classmethod
     def from_env(cls) -> "SocialPublishSettings":
         # Social publishing tables reference users(id), so they must live in the
@@ -68,7 +86,7 @@ class SocialPublishSettings:
         # insert. SOCIAL_PUBLISH_DB_PATH is therefore intentionally unsupported.
         db_path = str(S.USER_DB_PATH).strip()
         return cls(
-            enabled=_env_bool("SOCIAL_PUBLISHING_ENABLED", False),
+            enabled=_direct_publishing_enabled(),
             db_path=db_path,
             media_dir=(os.getenv("SOCIAL_MEDIA_DIR") or "/var/lib/gateway/data/social_media").strip(),
             media_max_bytes=_env_int("SOCIAL_MEDIA_MAX_BYTES", 4_000_000_000),
@@ -101,8 +119,8 @@ class SocialPublishSettings:
     def provider_missing(self, provider: str) -> List[str]:
         provider = (provider or "").strip().lower()
         common: List[str] = []
-        if not self.enabled:
-            common.append("SOCIAL_PUBLISHING_ENABLED=true")
+        if not self.direct_publishing_enabled:
+            common.append("SOCIAL_DIRECT_PUBLISHING_ENABLED=true")
         if not self.token_encryption_key:
             common.append("SOCIAL_TOKEN_ENCRYPTION_KEY")
         if provider == "youtube":

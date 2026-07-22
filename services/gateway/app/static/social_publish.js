@@ -1,6 +1,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const els = {
+    directPublishing: $("directPublishing"), directModeStatus: $("directModeStatus"),
     providers: $("providers"), configStatus: $("configStatus"), accounts: $("accounts"), media: $("media"),
     accountSelect: $("accountSelect"), mediaSelect: $("mediaSelect"), accountCapabilities: $("accountCapabilities"),
     uploadForm: $("uploadForm"), videoFile: $("videoFile"), publish: $("publish"), publishStatus: $("publishStatus"),
@@ -39,10 +40,21 @@
   function currentAccount() { return state.accounts.find((item) => item.id === els.accountSelect.value) || null; }
   function currentMedia() { return state.media.find((item) => item.id === els.mediaSelect.value) || null; }
   function lines(value) { return String(value || "").split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean); }
+  function directPublishingEnabled() {
+    return Boolean(state.config?.direct_publishing_enabled ?? state.config?.enabled);
+  }
 
   async function loadConfig() {
     state.config = await fetchJson("/ui/api/social/publishing/config");
-    renderProviders();
+    const directEnabled = directPublishingEnabled();
+    els.directPublishing.classList.toggle("hidden", !directEnabled);
+    status(
+      els.directModeStatus,
+      directEnabled
+        ? "Direct API publishing is enabled for this Nexus deployment. Assisted publishing remains available regardless of provider readiness."
+        : "Direct API publishing is not enabled. Use the assisted workflow above; no provider application or review is required."
+    );
+    if (directEnabled) renderProviders();
   }
   function renderProviders() {
     els.providers.innerHTML = "";
@@ -63,7 +75,7 @@
       const button = document.createElement("button"); button.type = "button"; button.textContent = `Connect ${label}`; button.disabled = !readiness.ready;
       button.addEventListener("click", () => connectProvider(key)); card.appendChild(button); els.providers.appendChild(card);
     }
-    status(els.configStatus, state.config.enabled ? "Publishing is enabled. Provider actions still require their own app approval and scopes." : "Publishing is disabled until SOCIAL_PUBLISHING_ENABLED=true.", !state.config.enabled);
+    status(els.configStatus, "Direct publishing is enabled. Each provider still requires its own configured application, approved scopes, and account authorization.");
   }
   async function connectProvider(provider) {
     status(els.configStatus, `Opening ${provider} authorization…`);
@@ -185,9 +197,12 @@
   $("refreshAccounts").addEventListener("click", loadAccounts); $("refreshMedia").addEventListener("click", loadMedia); $("refreshPublications").addEventListener("click", loadPublications);
   els.uploadForm.addEventListener("submit", uploadMedia); els.accountSelect.addEventListener("change", accountChanged); els.publish.addEventListener("click", publish);
 
-  Promise.all([loadConfig(), loadAccounts(), loadMedia(), loadPublications()]).then(() => {
+  async function initialize() {
+    await loadConfig();
+    if (directPublishingEnabled()) await Promise.all([loadAccounts(), loadMedia(), loadPublications()]);
     const params = new URLSearchParams(window.location.search);
     if (params.get("oauth_error")) status(els.configStatus, params.get("oauth_error"), true);
     else if (params.get("oauth_connected")) status(els.configStatus, `Connected ${params.get("oauth_connected")} ${params.get("oauth_provider")} account record(s).`);
-  }).catch((error) => status(els.configStatus, error.message, true));
+  }
+  initialize().catch((error) => status(els.directModeStatus, error.message, true));
 })();

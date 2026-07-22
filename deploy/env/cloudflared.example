@@ -1,0 +1,31 @@
+# Cloudflare Tunnel for nexus.shadowrepository.org
+# This is optional infrastructure. Assisted social publishing does not require a
+# public Nexus URL, tunnel, provider credentials, or platform review.
+# Copy these values into the ai2 Gateway deployment environment only when Nexus
+# should be reachable through Cloudflare Access or direct Instagram publishing
+# needs a public signed-media origin. Normally use deploy/env/.env.prod.ai2 or
+# its protected .local/SOPS overlay. Never commit the real tunnel token.
+
+# Create a remotely managed tunnel in Cloudflare Zero Trust and copy only the
+# eyJ... token from the Docker connector command. The deployment script writes
+# it to a protected runtime token file; it is not passed to the container env.
+CLOUDFLARED_TUNNEL_TOKEN=
+
+# Pinned multi-architecture image. Override deliberately when upgrading.
+CLOUDFLARED_IMAGE_TAG=2026.7.2
+
+# auto prefers QUIC and falls back to HTTP/2 when required by the network.
+CLOUDFLARED_PROTOCOL=auto
+
+# Dedicated internal origin network. Change all three together if this subnet
+# conflicts with an existing Docker, LAN, VPN, or overlay network.
+CLOUDFLARED_ORIGIN_SUBNET=172.29.0.0/29
+CLOUDFLARED_GATEWAY_IP=172.29.0.2
+CLOUDFLARED_CONNECTOR_IP=172.29.0.3
+
+# Optional direct-publishing URLs. The public base URL is required by direct
+# Instagram publishing; callbacks are needed only for configured OAuth providers.
+SOCIAL_PUBLIC_BASE_URL=https://nexus.shadowrepository.org
+SOCIAL_GOOGLE_REDIRECT_URI=https://nexus.shadowrepository.org/ui/social/oauth/youtube/callback
+SOCIAL_META_REDIRECT_URI=https://nexus.shadowrepository.org/ui/social/oauth/meta/callback
+SOCIAL_TIKTOK_REDIRECT_URI=https://nexus.shadowrepository.org/ui/social/oauth/tiktok/callback
