@@ -13,6 +13,7 @@
       .hint{font-size:12px;color:var(--muted)} .error{color:var(--danger)} .good{color:var(--good)} a{color:#9ac2ff;text-decoration:none}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.card{border:1px solid var(--border);background:linear-gradient(180deg,rgba(17,24,33,.96),rgba(11,16,23,.96));border-radius:12px;padding:14px}.stack{display:flex;flex-direction:column;gap:10px}.grow{flex:1 1 260px}
       label{display:flex;flex-direction:column;gap:6px} label>span{font-size:12px;color:var(--muted)} input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:#101720;color:var(--text)} textarea{min-height:80px;resize:vertical} button,.nav{padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:#121a24;color:var(--text);cursor:pointer} button.primary{border-color:rgba(111,184,255,.5);background:rgba(111,184,255,.13)} button.danger{border-color:rgba(255,180,180,.3)} button:disabled{opacity:.5;cursor:default}
       .provider{border:1px solid var(--border);border-radius:10px;padding:11px}.provider-head,.item-head{display:flex;justify-content:space-between;gap:10px;align-items:center}.badge{display:inline-flex;padding:4px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px}.list{display:flex;flex-direction:column;gap:8px}.item{border:1px solid rgba(231,237,246,.09);border-radius:9px;padding:10px}.check{display:flex;flex-direction:row;align-items:center;gap:8px}.check input{width:auto}.status{min-height:20px;margin-top:8px}.publication-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.hidden{display:none!important} pre{white-space:pre-wrap;word-break:break-word;font-size:11px;color:#c6d2e4;max-height:230px;overflow:auto}
+      .workflow{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}.step{border:1px solid rgba(231,237,246,.09);border-radius:9px;padding:10px}.step strong{display:block;margin-bottom:4px}.native-links{display:flex;gap:8px;flex-wrap:wrap}.native-links a{padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:#121a24;color:var(--text)}
       @media(max-width:600px){main{padding:10px}}
     </style>
     <link rel="stylesheet" href="/static/ui_roles.css?v=2" />
@@ -20,56 +21,78 @@
   <body>
     <main>
       <header>
-        <div><h1>Nexus Social Publishing</h1><div class="hint">Phases 2–4: connect provider accounts, upload a video, explicitly review settings, and initiate publication.</div></div>
+        <div><h1>Nexus Social Publishing</h1><div class="hint">Prepare platform-specific copy in Nexus, then publish through each platform's native uploader. Direct API publishing is an optional deployment feature.</div></div>
         <div class="row"><a class="nav" href="/ui/social">Drafting Studio</a><a class="nav" href="/ui">Chat</a></div>
       </header>
 
-      <section class="card">
-        <h2>Provider configuration</h2>
-        <div id="providers" class="grid"></div>
-        <div id="configStatus" class="hint status"></div>
+      <section class="card stack">
+        <div class="provider-head"><h2>Assisted publishing</h2><span class="badge good">Always available</span></div>
+        <div class="hint">This workflow requires no provider credentials, OAuth applications, public callback URL, or platform review.</div>
+        <div class="workflow">
+          <div class="step"><strong>1. Prepare</strong><div class="hint">Generate and edit titles, captions, descriptions, tags, and cover text in the Drafting Studio.</div></div>
+          <div class="step"><strong>2. Export</strong><div class="hint">Use the studio's copy controls or JSON export and keep the finished video file locally.</div></div>
+          <div class="step"><strong>3. Upload</strong><div class="hint">Open the destination's native uploader, select the video, and paste the reviewed metadata.</div></div>
+          <div class="step"><strong>4. Confirm</strong><div class="hint">Choose privacy and scheduling in the platform, then publish when ready.</div></div>
+        </div>
+        <div class="row"><a class="nav primary" href="/ui/social">Open Drafting Studio</a></div>
+        <div class="native-links" aria-label="Native social platform uploaders">
+          <a href="https://studio.youtube.com/" target="_blank" rel="noopener noreferrer">Open YouTube Studio</a>
+          <a href="https://business.facebook.com/" target="_blank" rel="noopener noreferrer">Open Meta Business Suite</a>
+          <a href="https://www.instagram.com/" target="_blank" rel="noopener noreferrer">Open Instagram</a>
+          <a href="https://www.tiktok.com/upload" target="_blank" rel="noopener noreferrer">Open TikTok Upload</a>
+        </div>
+        <div id="directModeStatus" class="hint status">Checking optional direct-publishing configuration…</div>
       </section>
 
-      <div class="grid" style="margin-top:12px">
-        <section class="card stack">
-          <div class="provider-head"><h2>Connected accounts</h2><button id="refreshAccounts" type="button">Refresh</button></div>
-          <div id="accounts" class="list"></div>
+      <div id="directPublishing" class="hidden">
+        <section class="card" style="margin-top:12px">
+          <div class="provider-head"><h2>Optional direct API publishing</h2><span class="badge">Deployment controlled</span></div>
+          <div class="hint" style="margin-bottom:10px">These controls require provider applications, OAuth credentials, approved scopes, and any platform review applicable to the deployment.</div>
+          <div id="providers" class="grid"></div>
+          <div id="configStatus" class="hint status"></div>
         </section>
-        <section class="card stack">
-          <div class="provider-head"><h2>Video assets</h2><button id="refreshMedia" type="button">Refresh</button></div>
-          <form id="uploadForm" class="stack"><label><span>Upload MP4, MOV, or WebM</span><input id="videoFile" type="file" accept="video/mp4,video/quicktime,video/webm" required /></label><button type="submit">Upload video</button></form>
-          <div id="media" class="list"></div>
+
+        <div class="grid" style="margin-top:12px">
+          <section class="card stack">
+            <div class="provider-head"><h2>Connected accounts</h2><button id="refreshAccounts" type="button">Refresh</button></div>
+            <div id="accounts" class="list"></div>
+          </section>
+          <section class="card stack">
+            <div class="provider-head"><h2>Video assets</h2><button id="refreshMedia" type="button">Refresh</button></div>
+            <form id="uploadForm" class="stack"><label><span>Upload MP4, MOV, or WebM</span><input id="videoFile" type="file" accept="video/mp4,video/quicktime,video/webm" required /></label><button type="submit">Upload video</button></form>
+            <div id="media" class="list"></div>
+          </section>
+        </div>
+
+        <section class="card stack" style="margin-top:12px">
+          <h2>Publish one video through a provider API</h2>
+          <div class="row"><label class="grow"><span>Account</span><select id="accountSelect"><option value="">Select account</option></select></label><label class="grow"><span>Video</span><select id="mediaSelect"><option value="">Select video</option></select></label></div>
+          <div id="accountCapabilities" class="hint"></div>
+          <div class="publication-meta">
+            <label><span>Title / caption</span><textarea id="title"></textarea></label>
+            <label id="descriptionField"><span>Description</span><textarea id="description"></textarea></label>
+            <label id="tagsField"><span>Tags — comma or line separated</span><textarea id="tags"></textarea></label>
+            <label id="privacyField"><span>Privacy</span><select id="privacy"><option value="">Select explicitly</option></select></label>
+            <label id="categoryField"><span>YouTube category ID</span><input id="categoryId" value="22" /></label>
+            <label id="publishAtField"><span>Publish at — ISO 8601, optional</span><input id="publishAt" /></label>
+            <label id="coverField"><span>Cover frame offset, milliseconds</span><input id="coverTimestamp" type="number" min="0" value="0" /></label>
+          </div>
+          <div id="youtubeOptions" class="row hidden"><label class="check"><input id="madeForKids" type="checkbox" /><span>Made for kids</span></label></div>
+          <div id="instagramOptions" class="row hidden"><label class="check"><input id="shareToFeed" type="checkbox" checked /><span>Share Reel to feed</span></label></div>
+          <div id="tiktokOptions" class="stack hidden">
+            <div class="row"><label class="check"><input id="allowComment" type="checkbox" /><span>Allow comments</span></label><label class="check"><input id="allowDuet" type="checkbox" /><span>Allow Duet</span></label><label class="check"><input id="allowStitch" type="checkbox" /><span>Allow Stitch</span></label></div>
+            <div class="row"><label class="check"><input id="brandOrganic" type="checkbox" /><span>Promotes own business</span></label><label class="check"><input id="brandContent" type="checkbox" /><span>Paid partnership</span></label><label class="check"><input id="isAigc" type="checkbox" /><span>AI-generated content</span></label></div>
+            <label class="check"><input id="musicConsent" type="checkbox" /><span>By posting, I agree to TikTok’s Music Usage Confirmation</span></label>
+          </div>
+          <label class="check"><input id="publishConsent" type="checkbox" /><span>I reviewed the destination account, video, metadata, privacy, and platform disclosures and authorize this publication.</span></label>
+          <div class="row"><button id="publish" type="button" class="primary">Start direct publication</button></div>
+          <div id="publishStatus" class="hint status"></div>
         </section>
+
+        <section class="card" style="margin-top:12px"><div class="provider-head"><h2>Direct publication status</h2><button id="refreshPublications" type="button">Refresh</button></div><div id="publications" class="list" style="margin-top:10px"></div></section>
       </div>
-
-      <section class="card stack" style="margin-top:12px">
-        <h2>Publish one video</h2>
-        <div class="row"><label class="grow"><span>Account</span><select id="accountSelect"><option value="">Select account</option></select></label><label class="grow"><span>Video</span><select id="mediaSelect"><option value="">Select video</option></select></label></div>
-        <div id="accountCapabilities" class="hint"></div>
-        <div class="publication-meta">
-          <label><span>Title / caption</span><textarea id="title"></textarea></label>
-          <label id="descriptionField"><span>Description</span><textarea id="description"></textarea></label>
-          <label id="tagsField"><span>Tags — comma or line separated</span><textarea id="tags"></textarea></label>
-          <label id="privacyField"><span>Privacy</span><select id="privacy"><option value="">Select explicitly</option></select></label>
-          <label id="categoryField"><span>YouTube category ID</span><input id="categoryId" value="22" /></label>
-          <label id="publishAtField"><span>Publish at — ISO 8601, optional</span><input id="publishAt" /></label>
-          <label id="coverField"><span>Cover frame offset, milliseconds</span><input id="coverTimestamp" type="number" min="0" value="0" /></label>
-        </div>
-        <div id="youtubeOptions" class="row hidden"><label class="check"><input id="madeForKids" type="checkbox" /><span>Made for kids</span></label></div>
-        <div id="instagramOptions" class="row hidden"><label class="check"><input id="shareToFeed" type="checkbox" checked /><span>Share Reel to feed</span></label></div>
-        <div id="tiktokOptions" class="stack hidden">
-          <div class="row"><label class="check"><input id="allowComment" type="checkbox" /><span>Allow comments</span></label><label class="check"><input id="allowDuet" type="checkbox" /><span>Allow Duet</span></label><label class="check"><input id="allowStitch" type="checkbox" /><span>Allow Stitch</span></label></div>
-          <div class="row"><label class="check"><input id="brandOrganic" type="checkbox" /><span>Promotes own business</span></label><label class="check"><input id="brandContent" type="checkbox" /><span>Paid partnership</span></label><label class="check"><input id="isAigc" type="checkbox" /><span>AI-generated content</span></label></div>
-          <label class="check"><input id="musicConsent" type="checkbox" /><span>By posting, I agree to TikTok’s Music Usage Confirmation</span></label>
-        </div>
-        <label class="check"><input id="publishConsent" type="checkbox" /><span>I reviewed the destination account, video, metadata, privacy, and platform disclosures and authorize this publication.</span></label>
-        <div class="row"><button id="publish" type="button" class="primary">Start publication</button></div>
-        <div id="publishStatus" class="hint status"></div>
-      </section>
-
-      <section class="card" style="margin-top:12px"><div class="provider-head"><h2>Publication status</h2><button id="refreshPublications" type="button">Refresh</button></div><div id="publications" class="list" style="margin-top:10px"></div></section>
     </main>
     <script src="/static/focused_nav.js?v=7"></script>
-    <script src="/static/social_publish.js?v=1"></script>
+    <script src="/static/social_publish.js?v=2"></script>
   </body>
 </html>
