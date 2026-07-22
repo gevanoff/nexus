@@ -62,9 +62,14 @@ class SocialPublishSettings:
 
     @classmethod
     def from_env(cls) -> "SocialPublishSettings":
+        # Social publishing tables reference users(id), so they must live in the
+        # same SQLite database initialized by user_store. A separate path would
+        # have no users table and would fail on the first OAuth/account/media
+        # insert. SOCIAL_PUBLISH_DB_PATH is therefore intentionally unsupported.
+        db_path = str(S.USER_DB_PATH).strip()
         return cls(
             enabled=_env_bool("SOCIAL_PUBLISHING_ENABLED", False),
-            db_path=(os.getenv("SOCIAL_PUBLISH_DB_PATH") or S.USER_DB_PATH).strip(),
+            db_path=db_path,
             media_dir=(os.getenv("SOCIAL_MEDIA_DIR") or "/var/lib/gateway/data/social_media").strip(),
             media_max_bytes=_env_int("SOCIAL_MEDIA_MAX_BYTES", 4_000_000_000),
             media_ttl_sec=_env_int("SOCIAL_MEDIA_TTL_SEC", 60 * 60 * 24 * 7),
