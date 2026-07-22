@@ -10,15 +10,37 @@ from app import social_publish_routes as base
 router = APIRouter()
 
 # Reuse the provider publishing router from Phases 2–4, replacing only the
-# publication-advance endpoint reviewed after PR #43 merged. Keeping this
-# composition isolated avoids duplicating every OAuth, media, and publication
-# route while making the corrected endpoint the only mounted handler for the
-# path.
+# endpoints corrected after PR #43 merged. Keeping this composition isolated
+# avoids duplicating every OAuth, media, and publication route while making the
+# corrected handlers the only mounted handlers for their paths.
+_REPLACED_ROUTES = {
+    ("/ui/api/social/publishing/config", "GET"),
+    ("/ui/api/social/publications/advance", "POST"),
+}
 for route in base.router.routes:
+    path = getattr(route, "path", "")
     methods = set(getattr(route, "methods", set()) or set())
-    if getattr(route, "path", "") == "/ui/api/social/publications/advance" and "POST" in methods:
+    if any(path == replaced_path and method in methods for replaced_path, method in _REPLACED_ROUTES):
         continue
     router.routes.append(route)
+
+
+@router.get("/ui/api/social/publishing/config")
+async def social_publish_config(req: Request):
+    """Describe always-on assisted publishing and opt-in direct publishing."""
+
+    base._require_authenticated_user(req)
+    settings = base._settings()
+    return {
+        "assisted_publishing_available": True,
+        "direct_publishing_enabled": settings.direct_publishing_enabled,
+        # Compatibility for older clients. This field has always represented the
+        # provider API feature, not the drafting/assisted workflow.
+        "enabled": settings.direct_publishing_enabled,
+        "readiness": settings.readiness(),
+        "media_max_bytes": settings.media_max_bytes,
+        "media_ttl_sec": settings.media_ttl_sec,
+    }
 
 
 def tiktok_publication_status(provider_state: Any) -> str:
