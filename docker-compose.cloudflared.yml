@@ -1,0 +1,56 @@
+services:
+  # Attach Gateway to a dedicated tunnel-origin network. Requests arriving from
+  # cloudflared have the fixed source address appended to the existing UI
+  # allowlist, while the normal Nexus network remains unchanged.
+  gateway:
+    environment:
+      - UI_IP_ALLOWLIST=${UI_IP_ALLOWLIST:-127.0.0.1},172.29.0.3
+    networks:
+      nexus: {}
+      cloudflare_tunnel:
+        ipv4_address: 172.29.0.2
+        aliases:
+          - nexus-gateway-tunnel
+
+  cloudflared:
+    image: cloudflare/cloudflared:${CLOUDFLARED_IMAGE_TAG:-2026.7.2}
+    container_name: nexus-cloudflared
+    command:
+      - tunnel
+      - --no-autoupdate
+      - --protocol
+      - ${CLOUDFLARED_PROTOCOL:-auto}
+      - --metrics
+      - 0.0.0.0:2000
+      - run
+    environment:
+      # cloudflared supports TUNNEL_TOKEN for remotely managed tunnels. Keep the
+      # deployment-facing variable name explicit and never commit its value.
+      TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN:?CLOUDFLARED_TUNNEL_TOKEN must be set in the deployment env file}
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    stop_grace_period: 30s
+    networks:
+      # The normal Nexus network supplies outbound Internet connectivity.
+      nexus: {}
+      # Origin traffic uses the fixed-address, internal-only network below.
+      cloudflare_tunnel:
+        ipv4_address: 172.29.0.3
+
+networks:
+  cloudflare_tunnel:
+    name: nexus-cloudflare-tunnel
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.29.0.0/29
