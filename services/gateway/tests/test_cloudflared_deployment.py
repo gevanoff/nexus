@@ -38,7 +38,8 @@ def test_cloudflared_deploy_script_is_valid_bash_and_materializes_secret():
 
     assert "CLOUDFLARED_TUNNEL_TOKEN is missing" in text
     assert 'token_path="$token_dir/tunnel-token"' in text
-    assert 'chmod 600 "$token_tmp"' in text
+    assert 'chmod 700 "$token_dir"' in text
+    assert 'chmod 444 "$token_tmp"' in text
     assert "unset tunnel_token token_tmp" in text
     assert "docker-compose.gateway.yml" in text
     assert "docker-compose.etcd.yml" in text
