@@ -7,12 +7,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_cloudflared_compose_is_token_scoped_and_not_host_exposed():
+def test_cloudflared_compose_uses_token_file_and_is_not_host_exposed():
     text = (ROOT / "docker-compose.cloudflared.yml").read_text(encoding="utf-8")
 
     assert "cloudflare/cloudflared:${CLOUDFLARED_IMAGE_TAG:-2026.7.2}" in text
-    assert "TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN:?" in text
-    assert "--token" not in text
+    assert "--token-file" in text
+    assert "/run/secrets/cloudflared_tunnel_token" in text
+    assert "TUNNEL_TOKEN:" not in text
     assert "ports:" not in text
     assert "read_only: true" in text
     assert "no-new-privileges:true" in text
@@ -23,19 +24,22 @@ def test_tunnel_origin_network_has_fixed_connector_identity():
     text = (ROOT / "docker-compose.cloudflared.yml").read_text(encoding="utf-8")
 
     assert "nexus-gateway-tunnel" in text
-    assert "ipv4_address: 172.29.0.2" in text
-    assert "ipv4_address: 172.29.0.3" in text
-    assert "UI_IP_ALLOWLIST=${UI_IP_ALLOWLIST:-127.0.0.1},172.29.0.3" in text
+    assert "CLOUDFLARED_GATEWAY_IP:-172.29.0.2" in text
+    assert "CLOUDFLARED_CONNECTOR_IP:-172.29.0.3" in text
+    assert "UI_IP_ALLOWLIST=${UI_IP_ALLOWLIST:-127.0.0.1},${CLOUDFLARED_CONNECTOR_IP:-172.29.0.3}" in text
     assert "internal: true" in text
-    assert "subnet: 172.29.0.0/29" in text
+    assert "CLOUDFLARED_ORIGIN_SUBNET:-172.29.0.0/29" in text
 
 
-def test_cloudflared_deploy_script_is_valid_bash_and_requires_token():
+def test_cloudflared_deploy_script_is_valid_bash_and_materializes_secret():
     script = ROOT / "deploy/scripts/deploy-cloudflared.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)
     text = script.read_text(encoding="utf-8")
 
     assert "CLOUDFLARED_TUNNEL_TOKEN is missing" in text
+    assert 'token_path="$token_dir/tunnel-token"' in text
+    assert 'chmod 600 "$token_tmp"' in text
+    assert "unset tunnel_token token_tmp" in text
     assert "docker-compose.gateway.yml" in text
     assert "docker-compose.etcd.yml" in text
     assert "docker-compose.cloudflared.yml" in text
