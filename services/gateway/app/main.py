@@ -102,7 +102,7 @@ async def lifespan(_app: FastAPI):
     # Initialize backend registry and admission control
     from app.backends import init_backends, start_registry_sync, stop_registry_sync
     from app.health_checker import init_health_checker, start_health_checker, stop_health_checker
-    
+
     init_backends()
     await start_registry_sync()
     init_health_checker(
@@ -116,6 +116,13 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         logger.warning("startup: failed to init user db (%s: %s)", type(e).__name__, e)
 
+    try:
+        from app.coding_runtime_guardrails import install_coding_runtime_guardrails
+
+        install_coding_runtime_guardrails()
+    except Exception as e:
+        logger.warning("startup: coding runtime guardrails unavailable (%s: %s)", type(e).__name__, e)
+
     interrupted_task_ids: list[str] = []
     try:
         from app import coding_workspace as coding_workspace_store
@@ -126,7 +133,7 @@ async def lifespan(_app: FastAPI):
             logger.warning("startup: marked interrupted coding runs recovered=%s tasks=%s", recovered.get("recovered"), recovered.get("tasks"))
     except Exception as e:
         logger.info("startup: coding workspace recovery skipped (%s: %s)", type(e).__name__, e)
-    
+
     # Start background health checking
     await start_health_checker()
 
@@ -193,10 +200,10 @@ async def lifespan(_app: FastAPI):
         await start_honcho_memory_maintenance()
     except Exception as e:
         logger.warning("startup: Honcho memory maintenance unavailable (%s: %s)", type(e).__name__, e)
-    
+
     await _startup_check_models()
     yield
-    
+
     # Stop health checker on shutdown
     try:
         from app.agent_tasks import stop_scheduler as stop_agent_task_scheduler
