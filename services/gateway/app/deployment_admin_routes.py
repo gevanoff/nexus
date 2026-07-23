@@ -95,7 +95,21 @@ def _enrich_capabilities(capabilities: Any) -> Any:
         **capabilities,
         "topology_components": _topology_components(),
         "topology_file": str(_topology_file()),
+        "component_dependencies": {"ai2": {"gateway": ["cloudflared"]}},
     }
+
+
+def _expand_component_dependencies(body: AdminDeploymentRequest) -> AdminDeploymentRequest:
+    components = list(body.components)
+    assigned = _topology_components().get(body.host, [])
+    if (
+        body.host == "ai2"
+        and "gateway" in components
+        and "cloudflared" in assigned
+        and "cloudflared" not in components
+    ):
+        components.append("cloudflared")
+    return body.model_copy(update={"components": components})
 
 
 def _validate_topology_request(body: AdminDeploymentRequest) -> None:
@@ -238,8 +252,9 @@ async def deployment_admin_create(
     body: AdminDeploymentRequest,
 ) -> JSONResponse:
     admin = _admin(req)
-    _validate_topology_request(body)
-    payload = body.model_dump()
+    expanded = _expand_component_dependencies(body)
+    _validate_topology_request(expanded)
+    payload = expanded.model_dump()
     payload["requested_by"] = _admin_actor(admin)
     result = await _controller_call("POST", "/v1/deployments", payload=payload)
     return JSONResponse(status_code=202, content=result)
