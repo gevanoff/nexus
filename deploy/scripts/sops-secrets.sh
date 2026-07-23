@@ -259,7 +259,7 @@ case "$cmd" in
       chmod 600 "$secret_file" 2>/dev/null || true
       ns_print_ok "Initialized empty encrypted dotenv at ${secret_file}"
     fi
-    sops "$secret_file"
+    sops --input-type dotenv --output-type dotenv "$secret_file"
     ;;
 
   decrypt)
