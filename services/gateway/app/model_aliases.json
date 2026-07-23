@@ -3,7 +3,7 @@
     "fast": {
       "backend": "local_vllm_fast",
       "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
-      "context_window": 8192,
+      "context_window": 65536,
       "tools": true,
       "tool_mode": "client_exec",
       "supports_tool_choice": ["none", "auto", "required", "named"],
@@ -97,7 +97,7 @@
       "backend": "local_vllm_fast",
       "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
       "label": "Tess - Devstral Small (shared fast lane)",
-      "context_window": 8192,
+      "context_window": 65536,
       "tools": false,
       "max_tokens_cap": 768,
       "soul": "ada2"
@@ -106,7 +106,7 @@
       "backend": "local_vllm_fast",
       "model": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
       "label": "stackrot - Devstral Small",
-      "context_window": 8192,
+      "context_window": 65536,
       "tools": false,
       "max_tokens_cap": 768,
       "soul": "stackrot"

@@ -376,31 +376,33 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["default"]["backend"] == "local_vllm"
     assert aliases["default"]["model"] == strong_model
     assert aliases["default"]["context_window"] == 65536
-    assert aliases["default"]["max_tokens_cap"] == 1024
+    assert aliases["default"]["max_tokens_cap"] == 4096
     assert aliases["coder"]["backend"] == "local_mlx"
     assert aliases["coder"]["model"] == mlx_model
     assert aliases["coder"]["context_window"] == 131072
     assert aliases["mlx"]["context_window"] == 131072
     assert aliases["fast"]["backend"] == "local_vllm_fast"
     assert aliases["fast"]["model"] == fast_model
-    assert aliases["fast"]["context_window"] == 8192
+    assert aliases["fast"]["context_window"] == 65536
     assert aliases["fast"]["tools"] is True
     assert aliases["fast"]["supports_tool_choice"] == ["none", "auto", "required", "named"]
     assert aliases["fast"]["supports_parallel_tool_calls"] is False
     assert aliases["fast"]["buffer_tool_call_stream"] is True
     assert aliases["fast"]["preferred_tool_call_parser"] == "mistral"
-    assert aliases["fast"]["max_tokens_cap"] == 768
+    assert aliases["fast"]["max_tokens_cap"] == 2048
+    assert aliases["tess-chat"]["context_window"] == 65536
+    assert aliases["stackrot-chat"]["context_window"] == 65536
     assert aliases["fast-reasoning"]["backend"] == "local_vllm"
     assert aliases["fast-reasoning"]["model"] == strong_model
     assert aliases["fast-reasoning"]["context_window"] == 65536
-    assert aliases["fast-reasoning"]["max_tokens_cap"] == 768
+    assert aliases["fast-reasoning"]["max_tokens_cap"] == 2048
     assert aliases["long"]["context_window"] == 131072
     assert aliases["long"]["tools"] is True
     assert aliases["ai2-chat"]["context_window"] == 131072
     assert aliases["reasoning"]["backend"] == "local_vllm"
     assert aliases["reasoning"]["model"] == strong_model
     assert aliases["reasoning"]["context_window"] == 65536
-    assert aliases["reasoning"]["max_tokens_cap"] == 1024
+    assert aliases["reasoning"]["max_tokens_cap"] == 4096
     assert aliases["glm-5.2"]["huge_candidate"] is True
     assert aliases["glm-5.2"]["huge_default"] is True
     assert aliases["glm-5.2"]["context_window"] == 131072

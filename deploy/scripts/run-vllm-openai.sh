@@ -74,6 +74,18 @@ if [ -n "${NEXUS_VLLM_KV_CACHE_DTYPE:-}" ]; then
     set -- "$@" --kv-cache-dtype "$NEXUS_VLLM_KV_CACHE_DTYPE"
 fi
 
+if truthy "${NEXUS_VLLM_CALCULATE_KV_SCALES:-false}"; then
+    set -- "$@" --calculate-kv-scales
+fi
+
+if [ -n "${NEXUS_VLLM_MAX_NUM_SEQS:-}" ]; then
+    set -- "$@" --max-num-seqs "$NEXUS_VLLM_MAX_NUM_SEQS"
+fi
+
+if [ -n "${NEXUS_VLLM_MAX_NUM_BATCHED_TOKENS:-}" ]; then
+    set -- "$@" --max-num-batched-tokens "$NEXUS_VLLM_MAX_NUM_BATCHED_TOKENS"
+fi
+
 if truthy "${NEXUS_VLLM_ENFORCE_EAGER:-false}"; then
     set -- "$@" --enforce-eager
 fi

@@ -371,8 +371,8 @@ Nexus includes the following services:
 ### Hermes Gateway on `migraine`
 - Host-native Hermes runs outside Nexus Compose on `migraine` and connects to Telegram directly.
 - Configure Hermes to consume the Nexus OpenAI-compatible gateway (`/v1`) with `fast` for chat responsiveness; keep `long` for explicit long-context jobs.
-- Keep Hermes Telegram toolsets disabled or very small for chat-style turns; the current fast vLLM lanes have tight context windows, and tool schemas can push otherwise short Telegram requests over the model limit.
-- Hermes requires at least 64000 tokens. When it uses `fast-reasoning`, set `model.context_length` to 65536 to match the strong lane and give the model enough one-call output headroom to finish a concise response instead of triggering Hermes continuation retries.
+- Keep Hermes Telegram toolsets focused; tool schemas consume part of the model context even for otherwise short Telegram requests.
+- Hermes requires at least 64000 tokens. The `fast` Devstral and `fast-reasoning` aliases are served with 65536-token windows, so set `model.context_length` to 65536 and keep the runtime, alias metadata, and Hermes client setting synchronized.
 - Enable Hermes native streaming, but use a conservative Telegram edit interval (about four seconds) to avoid Bot API flood-control delays. Use an idle/daily session reset so stale group history does not grow without bound.
 - The only Nexus model placement on `migraine` is the memory-bounded `migraine-chat` MLX alias; do not add larger or concurrent model lanes.
 
