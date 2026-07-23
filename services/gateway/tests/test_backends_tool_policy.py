@@ -106,7 +106,7 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_TOKENIZER"] == "cyankiwi/Devstral-Small-2507-AWQ-4bit"
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_TOKENIZER_MODE"] == "mistral"
     assert env["VLLM_FAST_MAX_MODEL_LEN"] == "65536"
-    assert env["VLLM_FAST_KV_CACHE_DTYPE"] == "fp8"
+    assert env["VLLM_FAST_KV_CACHE_DTYPE"] == "fp8_e5m2"
     assert env["VLLM_FAST_CALCULATE_KV_SCALES"] == "true"
     assert env["VLLM_FAST_MAX_NUM_SEQS"] == "1"
     assert env["VLLM_FAST_MAX_NUM_BATCHED_TOKENS"] == "8192"
