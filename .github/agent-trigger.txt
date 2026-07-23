@@ -1,1 +1,1 @@
-Trigger the one-shot coding guardrails validation workflow.
+Trigger the corrected one-shot coding guardrails validation workflow.
