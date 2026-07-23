@@ -38,6 +38,16 @@ def request_json(
         raise RuntimeError(f"deployment-control HTTP {exc.code}: {detail}") from exc
 
 
+def expand_component_dependencies(host: str, components: list[str]) -> list[str]:
+    expanded = list(dict.fromkeys(str(item).strip() for item in components if str(item).strip()))
+    # Gateway on ai2 is attached to the dedicated Cloudflare origin network by
+    # docker-compose.cloudflared.yml. Recreate both together so a routine Gateway
+    # deployment cannot detach the origin network and strand the public tunnel.
+    if host == "ai2" and "gateway" in expanded and "cloudflared" not in expanded:
+        expanded.append("cloudflared")
+    return expanded
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Submit a centralized Nexus deployment")
     parser.add_argument("--host", required=True)
@@ -66,7 +76,7 @@ def main() -> int:
     args = parse_args()
     components = list(args.component)
     components.extend(item.strip() for item in args.components.split(",") if item.strip())
-    components = list(dict.fromkeys(components))
+    components = expand_component_dependencies(args.host, components)
     if not components:
         raise SystemExit("at least one --component or --components value is required")
     token = Path(args.token_file).read_text(encoding="utf-8").strip()
