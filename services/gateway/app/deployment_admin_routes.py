@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,7 @@ from app.ui_routes import _require_admin, _require_ui_access
 
 router = APIRouter()
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_DEFAULT_TOPOLOGY_FILE = Path("/workspace/nexus/deploy/topology/production.json")
 
 
 class AdminDeploymentRequest(BaseModel):
@@ -50,6 +53,67 @@ def _admin_actor(admin: Any) -> str:
     email = str(getattr(admin, "email", "") or "").strip()
     identifier = username or email or str(getattr(admin, "id", "unknown"))
     return f"nexus-admin:{identifier}"[:100]
+
+
+def _topology_file() -> Path:
+    configured = str(os.getenv("NEXUS_DEPLOYMENT_TOPOLOGY_FILE") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    if _DEFAULT_TOPOLOGY_FILE.is_file():
+        return _DEFAULT_TOPOLOGY_FILE
+    return Path(__file__).resolve().parents[3] / "deploy" / "topology" / "production.json"
+
+
+def _topology_components() -> dict[str, list[str]]:
+    path = _topology_file()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    hosts = payload.get("hosts") if isinstance(payload, dict) else None
+    if not isinstance(hosts, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for host, raw in hosts.items():
+        if not isinstance(raw, dict):
+            continue
+        components = raw.get("components") if isinstance(raw.get("components"), list) else []
+        optional = raw.get("optional_components") if isinstance(raw.get("optional_components"), list) else []
+        assigned: list[str] = []
+        for item in [*components, *optional]:
+            value = str(item or "").strip()
+            if value and value not in assigned:
+                assigned.append(value)
+        result[str(host)] = assigned
+    return result
+
+
+def _enrich_capabilities(capabilities: Any) -> Any:
+    if not isinstance(capabilities, dict):
+        return capabilities
+    return {
+        **capabilities,
+        "topology_components": _topology_components(),
+        "topology_file": str(_topology_file()),
+    }
+
+
+def _validate_topology_request(body: AdminDeploymentRequest) -> None:
+    mapping = _topology_components()
+    if not mapping:
+        return
+    assigned = mapping.get(body.host)
+    if assigned is None:
+        raise HTTPException(status_code=400, detail=f"host is not present in deployment topology: {body.host}")
+    misplaced = [component for component in body.components if component not in assigned]
+    if misplaced:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"component is not assigned to {body.host} in production topology: "
+                f"{', '.join(misplaced)}"
+            ),
+        )
 
 
 def _translate_error(exc: deployment_control.DeploymentControlError) -> HTTPException:
@@ -126,7 +190,9 @@ async def deployment_admin_status(req: Request, limit: int = 20) -> dict[str, An
         errors.append(str(exc))
 
     try:
-        capabilities = await deployment_control.request_json("GET", "/v1/capabilities")
+        capabilities = _enrich_capabilities(
+            await deployment_control.request_json("GET", "/v1/capabilities")
+        )
     except deployment_control.DeploymentControlError as exc:
         errors.append(str(exc))
 
@@ -172,6 +238,7 @@ async def deployment_admin_create(
     body: AdminDeploymentRequest,
 ) -> JSONResponse:
     admin = _admin(req)
+    _validate_topology_request(body)
     payload = body.model_dump()
     payload["requested_by"] = _admin_actor(admin)
     result = await _controller_call("POST", "/v1/deployments", payload=payload)
