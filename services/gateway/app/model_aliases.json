@@ -11,7 +11,7 @@
       "buffer_tool_call_stream": true,
       "preferred_tool_call_parser": "mistral",
       "preferred_chat_template": "",
-      "max_tokens_cap": 768
+      "max_tokens_cap": 2048
     },
     "default": {
       "backend": "local_vllm",
@@ -23,7 +23,7 @@
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "xlam",
       "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja",
-      "max_tokens_cap": 1024
+      "max_tokens_cap": 4096
     },
     "mlx": {
       "backend": "local_mlx",
@@ -73,7 +73,7 @@
       "supports_tool_choice": ["none", "auto", "required", "named"],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "xlam",
-      "max_tokens_cap": 768
+      "max_tokens_cap": 2048
     },
     "ai2-chat": {
       "backend": "local_mlx",
@@ -137,7 +137,7 @@
       "supports_tool_choice": ["none", "auto", "required", "named"],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "xlam",
-      "max_tokens_cap": 1024
+      "max_tokens_cap": 4096
     },
     "glm-5.2": {
       "backend": "local_mlx",
