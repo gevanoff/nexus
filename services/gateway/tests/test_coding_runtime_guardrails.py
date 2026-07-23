@@ -79,3 +79,88 @@ def test_repeated_validation_without_an_edit_is_not_new_progress():
     before = {"project_plan": {"revision": 1}, "agent_no_progress_last_validation_signature": signature}
     after = {"project_plan": {"revision": 1}}
     assert guards._substantive_tool_result("coding_run_command", args, {"ok": True}, before=before, after=after, ca=ca) is False
+
+
+def test_no_progress_outcome_requests_pause_at_configured_limit():
+    task = {
+        "agent_no_progress_cycles": 1,
+        "agent_no_progress_updated_at": 10,
+        "last_guidance_at": 5,
+        "project_plan": {"revision": 0},
+        "mission": {"budget_policy": {"max_no_progress_cycles": 2}},
+    }
+    events = []
+
+    class FakeWorkspace:
+        @staticmethod
+        def load_task(_task_id):
+            return task
+
+        @staticmethod
+        def normalize_coding_mission(value):
+            return value["mission"]
+
+        @staticmethod
+        def mutate_task(_task_id, mutator):
+            mutator(task)
+            return task
+
+    fake_agent = SimpleNamespace(
+        _is_validation_command=lambda argv: False,
+        _append_event=lambda task_id, event: events.append(event),
+    )
+    guards._record_tool_outcome(
+        "code_test",
+        "coding_search_text",
+        {"query": "agent_status"},
+        {"ok": True},
+        before=dict(task),
+        cw=FakeWorkspace,
+        ca=fake_agent,
+    )
+    assert task["agent_no_progress_cycles"] == 2
+    assert task["agent_pause_requested"] is True
+    assert "without substantive progress" in task["agent_pause_reason"]
+    assert events[-1]["type"] == "no_progress_limit"
+
+
+def test_new_guidance_resets_persisted_no_progress_streak():
+    task = {
+        "agent_no_progress_cycles": 7,
+        "agent_no_progress_updated_at": 10,
+        "last_guidance_at": 20,
+        "project_plan": {"revision": 0},
+        "mission": {"budget_policy": {"max_no_progress_cycles": 8}},
+    }
+    events = []
+
+    class FakeWorkspace:
+        @staticmethod
+        def load_task(_task_id):
+            return task
+
+        @staticmethod
+        def normalize_coding_mission(value):
+            return value["mission"]
+
+        @staticmethod
+        def mutate_task(_task_id, mutator):
+            mutator(task)
+            return task
+
+    fake_agent = SimpleNamespace(
+        _is_validation_command=lambda argv: False,
+        _append_event=lambda task_id, event: events.append(event),
+    )
+    guards._record_tool_outcome(
+        "code_test",
+        "coding_read_file_lines",
+        {"path": "x.py"},
+        {"ok": True},
+        before=dict(task),
+        cw=FakeWorkspace,
+        ca=fake_agent,
+    )
+    assert task["agent_no_progress_cycles"] == 1
+    assert not task.get("agent_pause_requested")
+    assert events[-1]["type"] == "no_progress_cycle"
