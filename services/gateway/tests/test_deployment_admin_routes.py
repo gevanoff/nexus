@@ -60,6 +60,47 @@ def test_topology_components_include_optional_components(
     }
 
 
+def test_gateway_deployment_expands_cloudflared_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    topology = tmp_path / "production.json"
+    topology.write_text(
+        json.dumps(
+            {"hosts": {"ai2": {"components": ["gateway", "cloudflared"]}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEXUS_DEPLOYMENT_TOPOLOGY_FILE", str(topology))
+    body = deployment_admin_routes.AdminDeploymentRequest(
+        host="ai2",
+        components=["gateway"],
+    )
+    expanded = deployment_admin_routes._expand_component_dependencies(body)
+    assert expanded.components == ["gateway", "cloudflared"]
+
+
+def test_gateway_dependency_is_not_added_on_other_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    topology = tmp_path / "production.json"
+    topology.write_text(
+        json.dumps(
+            {
+                "hosts": {
+                    "ai2": {"components": ["gateway", "cloudflared"]},
+                    "dev": {"components": ["gateway"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEXUS_DEPLOYMENT_TOPOLOGY_FILE", str(topology))
+    body = deployment_admin_routes.AdminDeploymentRequest(host="dev", components=["gateway"])
+    assert deployment_admin_routes._expand_component_dependencies(body).components == ["gateway"]
+
+
 def test_topology_request_rejects_misplaced_component(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
