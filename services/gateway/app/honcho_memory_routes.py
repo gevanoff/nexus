@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 
 from app import honcho_memory, user_store
 from app.config import S
+from app.deployment_admin_routes import router as deployment_admin_router
 from app.ui_routes import (
     _require_admin,
     _require_static_bearer_service,
@@ -17,6 +18,7 @@ from app.ui_routes import (
 
 
 router = APIRouter()
+router.include_router(deployment_admin_router)
 
 
 async def _body(req: Request) -> Dict[str, Any]:
