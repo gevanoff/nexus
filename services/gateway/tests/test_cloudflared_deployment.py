@@ -48,6 +48,20 @@ def test_cloudflared_deploy_script_is_valid_bash_and_materializes_secret():
     assert "--force-recreate gateway cloudflared" in text
 
 
+def test_cloudflared_deploy_canonicalizes_relative_env_file():
+    text = (ROOT / "deploy/scripts/deploy-cloudflared.sh").read_text(encoding="utf-8")
+
+    assert 'ENV_FILE="$(cd "$(dirname "$ENV_FILE")" && pwd -P)/$(basename "$ENV_FILE")"' in text
+    assert "source and destination are identical" in text
+
+
+def test_cloudflared_completion_message_keeps_media_bypass_optional():
+    text = (ROOT / "deploy/scripts/deploy-cloudflared.sh").read_text(encoding="utf-8")
+
+    assert "only if direct Instagram publishing is enabled" in text
+    assert "Assisted publishing does not require that public-media exception" in text
+
+
 def test_shadowrepository_hostname_is_consistent():
     expected = "https://nexus.shadowrepository.org"
     social_env = (ROOT / "deploy/env/social-publishing.example").read_text(encoding="utf-8")

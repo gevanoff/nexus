@@ -56,6 +56,12 @@ if [[ -z "$ENV_FILE" || ! -f "$ENV_FILE" ]]; then
   ns_die "No deployment env file found. Pass --env-file PATH."
 fi
 
+# Canonicalize relative and symlinked env-file arguments before comparing them
+# with the project .env bind source. Without this, `--env-file .env` can be
+# mistaken for a different file and `cp` aborts under strict mode because the
+# source and destination are identical.
+ENV_FILE="$(cd "$(dirname "$ENV_FILE")" && pwd -P)/$(basename "$ENV_FILE")"
+
 tunnel_token="$(ns_env_get "$ENV_FILE" CLOUDFLARED_TUNNEL_TOKEN "")"
 if [[ -z "$tunnel_token" ]]; then
   ns_die "CLOUDFLARED_TUNNEL_TOKEN is missing from $ENV_FILE"
@@ -150,6 +156,7 @@ nexus.shadowrepository.org to use this origin service:
 
   http://nexus-gateway-tunnel:8800
 
-Then protect the hostname with Cloudflare Access and create a more-specific
-Bypass application only for /social-media/*.
+Protect the hostname with Cloudflare Access. Create a more-specific Bypass
+application for /social-media/* only if direct Instagram publishing is enabled.
+Assisted publishing does not require that public-media exception.
 EOF
