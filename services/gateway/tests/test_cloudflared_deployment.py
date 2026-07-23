@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -31,35 +32,46 @@ def test_tunnel_origin_network_has_fixed_connector_identity():
     assert "CLOUDFLARED_ORIGIN_SUBNET:-172.29.0.0/29" in text
 
 
-def test_cloudflared_deploy_script_is_valid_bash_and_materializes_secret():
-    script = ROOT / "deploy/scripts/deploy-cloudflared.sh"
+def test_canonical_deploy_engine_owns_cloudflared_orchestration():
+    script = ROOT / "deploy/scripts/deploy.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)
     text = script.read_text(encoding="utf-8")
 
-    assert "CLOUDFLARED_TUNNEL_TOKEN is missing" in text
+    assert "deployment-control|gateway|cloudflared|vllm" in text
+    assert 'cloudflared) echo "docker-compose.gateway.yml"' in text
+    assert 'cloudflared) echo "docker-compose.cloudflared.yml"' in text
+    assert 'prepare_cloudflared_runtime "$env_file" "$host_runtime_root"' in text
+    assert "CLOUDFLARED_TUNNEL_TOKEN is required when cloudflared is selected" in text
     assert 'token_path="$token_dir/tunnel-token"' in text
     assert 'chmod 700 "$token_dir"' in text
     assert 'chmod 444 "$token_tmp"' in text
     assert "unset tunnel_token token_tmp" in text
-    assert "docker-compose.gateway.yml" in text
-    assert "docker-compose.etcd.yml" in text
-    assert "docker-compose.cloudflared.yml" in text
-    assert "pull cloudflared" in text
-    assert "--force-recreate gateway cloudflared" in text
 
 
-def test_cloudflared_deploy_canonicalizes_relative_env_file():
-    text = (ROOT / "deploy/scripts/deploy-cloudflared.sh").read_text(encoding="utf-8")
+def test_cloudflared_compatibility_script_delegates_to_deploy_engine():
+    script = ROOT / "deploy/scripts/deploy-cloudflared.sh"
+    subprocess.run(["bash", "-n", str(script)], check=True)
+    text = script.read_text(encoding="utf-8")
 
-    assert 'ENV_FILE="$(cd "$(dirname "$ENV_FILE")" && pwd -P)/$(basename "$ENV_FILE")"' in text
-    assert "source and destination are identical" in text
+    assert "Compatibility wrapper for the canonical deployment engine" in text
+    assert "request-deploy.sh" in text
+    assert "--components cloudflared" in text
+    assert 'exec "$ROOT_DIR/deploy/scripts/deploy.sh"' in text
+    assert "docker compose" not in text.lower()
+    assert "token_path=" not in text
 
 
-def test_cloudflared_completion_message_keeps_media_bypass_optional():
-    text = (ROOT / "deploy/scripts/deploy-cloudflared.sh").read_text(encoding="utf-8")
+def test_cloudflared_is_assigned_to_ai2_and_controller_allowlist():
+    topology = json.loads((ROOT / "deploy/topology/production.json").read_text(encoding="utf-8"))
+    ai2 = topology["hosts"]["ai2"]
+    copyfail = topology["hosts"]["copyfail"]
+    controller_compose = (ROOT / "docker-compose.deployment-control.yml").read_text(encoding="utf-8")
 
-    assert "only if direct Instagram publishing is enabled" in text
-    assert "Assisted publishing does not require that public-media exception" in text
+    assert "cloudflared" in ai2["components"]
+    assert ai2["env"]["DEPLOY_CONTROL_BASE_URL"] == "http://copyfail:9220"
+    assert ai2["env"]["CLOUDFLARED_CONNECTOR_IP"] == "172.29.0.3"
+    assert copyfail["env"]["DEPLOY_CONTROL_BIND_ADDRESS"] == "0.0.0.0"
+    assert "ace-step,cloudflared,deployment-control" in controller_compose
 
 
 def test_shadowrepository_hostname_is_consistent():

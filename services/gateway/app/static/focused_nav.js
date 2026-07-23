@@ -310,6 +310,12 @@
     modelAdmin.hidden = true;
     menu.appendChild(modelAdmin);
 
+    const deploymentAdmin = document.createElement("a");
+    deploymentAdmin.href = "/ui/admin/deployments";
+    deploymentAdmin.textContent = "Deployment Admin";
+    deploymentAdmin.hidden = true;
+    menu.appendChild(deploymentAdmin);
+
     const admin = document.createElement("a");
     admin.href = "/ui/admin/users";
     admin.textContent = "Admin UI";
@@ -346,7 +352,7 @@
       appsBtn.setAttribute("aria-expanded", "false");
       menu.setAttribute("aria-hidden", "true");
     });
-    void exposeAdminLink(modelAdmin, admin);
+    void exposeAdminLink(modelAdmin, deploymentAdmin, admin);
   }
 
   if (document.readyState === "loading") {

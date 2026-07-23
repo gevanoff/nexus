@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Nexus Deployment Admin</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a0d12;
+        --panel: #111821;
+        --panel-strong: #151e2a;
+        --border: rgba(231, 237, 246, 0.13);
+        --text: #e7edf6;
+        --muted: #9eabbc;
+        --accent: #6fb8ff;
+        --success: #77dfb2;
+        --warning: #f5c56b;
+        --danger: #ff8b8b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(1000px 520px at 20% -10%, rgba(111, 184, 255, 0.15), transparent 60%),
+          linear-gradient(180deg, #0a0d12, #0c1118);
+      }
+      main { max-width: 1240px; margin: 0 auto; padding: 18px; }
+      header { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; margin-bottom: 14px; }
+      h1, h2, h3 { margin-top: 0; }
+      h1 { margin-bottom: 4px; font-size: 20px; }
+      h2 { font-size: 16px; margin-bottom: 12px; }
+      h3 { font-size: 14px; margin-bottom: 8px; }
+      p { line-height: 1.5; }
+      .hint, .muted { color: var(--muted); font-size: 12px; }
+      .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+      .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
+      .span-4 { grid-column: span 4; }
+      .span-5 { grid-column: span 5; }
+      .span-7 { grid-column: span 7; }
+      .span-8 { grid-column: span 8; }
+      .span-12 { grid-column: span 12; }
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+        background: linear-gradient(180deg, rgba(18, 26, 37, 0.97), rgba(11, 16, 24, 0.97));
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26);
+      }
+      .status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+      .status-card { padding: 12px; border-radius: 11px; border: 1px solid var(--border); background: rgba(255, 255, 255, 0.025); }
+      .status-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+      .status-card .value { margin-top: 5px; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+      .dot { display: inline-block; width: 9px; height: 9px; border-radius: 999px; margin-right: 7px; background: #687587; }
+      .dot.ok { background: var(--success); }
+      .dot.warn { background: var(--warning); }
+      .dot.bad { background: var(--danger); }
+      label { display: block; margin-bottom: 5px; font-size: 12px; color: var(--muted); }
+      select, input, textarea, button { font: inherit; }
+      select, input, textarea {
+        width: 100%;
+        padding: 10px;
+        color: var(--text);
+        background: #0e151f;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+      }
+      textarea { min-height: 84px; resize: vertical; }
+      button, .pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 9px 12px;
+        border-radius: 9px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, #1a2635, #111924);
+        color: var(--text);
+        cursor: pointer;
+        text-decoration: none;
+      }
+      button:hover, .pill:hover { border-color: rgba(111, 184, 255, 0.55); }
+      button.primary { background: linear-gradient(180deg, #2469a8, #174a78); border-color: rgba(111, 184, 255, 0.7); }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+      .field-grid .full { grid-column: 1 / -1; }
+      .component-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; max-height: 260px; overflow: auto; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: #0d131c; }
+      .component-option { display: flex; align-items: center; gap: 8px; padding: 7px; border-radius: 7px; color: var(--text); font-size: 12px; }
+      .component-option:hover { background: rgba(111, 184, 255, 0.07); }
+      .component-option input { width: auto; }
+      .banner { margin-bottom: 14px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; background: rgba(111, 184, 255, 0.07); }
+      .banner.error { background: rgba(255, 80, 80, 0.08); border-color: rgba(255, 139, 139, 0.35); color: #ffd1d1; }
+      .banner.success { background: rgba(76, 196, 142, 0.08); border-color: rgba(119, 223, 178, 0.35); color: #c7ffe5; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { padding: 9px 8px; text-align: left; border-bottom: 1px solid rgba(231, 237, 246, 0.09); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      tbody tr { cursor: pointer; }
+      tbody tr:hover { background: rgba(111, 184, 255, 0.05); }
+      .job-status { display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border); text-transform: capitalize; }
+      .job-status.succeeded { color: var(--success); }
+      .job-status.failed { color: var(--danger); }
+      .job-status.running, .job-status.queued { color: var(--warning); }
+      pre { max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 12px; border-radius: 9px; border: 1px solid var(--border); background: #080c12; color: #d8e2ef; font-size: 11px; line-height: 1.45; }
+      .empty { padding: 22px 8px; text-align: center; color: var(--muted); }
+      @media (max-width: 900px) {
+        .span-4, .span-5, .span-7, .span-8 { grid-column: span 12; }
+        .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 560px) {
+        main { padding: 12px; }
+        .status-grid, .field-grid, .component-list { grid-template-columns: 1fr; }
+        header { flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>Deployment Administration</h1>
+          <div class="hint">Centralized, topology-enforced production deployments through Deployment Control on copyfail.</div>
+        </div>
+        <div class="row">
+          <a class="pill" href="/ui">Back to Chat</a>
+          <button id="refreshButton" type="button">Refresh</button>
+          <a class="pill" href="/ui/resources">Resources</a>
+        </div>
+      </header>
+
+      <div id="banner" class="banner" hidden></div>
+
+      <section class="panel" style="margin-bottom: 14px">
+        <h2>Controller status</h2>
+        <div class="status-grid">
+          <div class="status-card"><div class="label">Gateway configuration</div><div id="configuredValue" class="value"><span class="dot"></span>Checking</div></div>
+          <div class="status-card"><div class="label">Controller</div><div id="controllerValue" class="value"><span class="dot"></span>Checking</div></div>
+          <div class="status-card"><div class="label">Active work</div><div id="activeValue" class="value">—</div></div>
+          <div class="status-card"><div class="label">Endpoint</div><div id="endpointValue" class="value">—</div></div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel span-5">
+          <h2>Start deployment</h2>
+          <form id="deploymentForm">
+            <div class="field-grid">
+              <div>
+                <label for="hostSelect">Target host</label>
+                <select id="hostSelect" required><option value="">Loading hosts…</option></select>
+              </div>
+              <div>
+                <label for="branchSelect">Branch</label>
+                <select id="branchSelect" required><option value="main">main</option></select>
+              </div>
+              <div class="full">
+                <label>Components assigned to target</label>
+                <div id="componentList" class="component-list"><div class="muted">Select a host.</div></div>
+              </div>
+              <div class="full">
+                <label for="reasonInput">Reason</label>
+                <textarea id="reasonInput" maxlength="500" placeholder="Describe the merged change or operational reason."></textarea>
+              </div>
+            </div>
+            <div class="row" style="margin-top: 12px">
+              <button id="submitButton" class="primary" type="submit">Queue deployment</button>
+              <span id="formHint" class="hint"></span>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel span-7">
+          <div class="row" style="justify-content: space-between">
+            <h2 style="margin-bottom: 0">Recent deployments</h2>
+            <label class="row" style="margin: 0"><input id="autoRefresh" type="checkbox" checked style="width:auto" /> Auto-refresh</label>
+          </div>
+          <div style="overflow-x: auto; margin-top: 10px">
+            <table>
+              <thead><tr><th>Status</th><th>Host</th><th>Components</th><th>Requested</th><th>Started by</th></tr></thead>
+              <tbody id="jobsBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel span-12">
+          <div class="row" style="justify-content: space-between">
+            <div>
+              <h2 id="detailTitle" style="margin-bottom: 3px">Deployment details</h2>
+              <div id="detailSummary" class="hint">Select a deployment to inspect status and logs.</div>
+            </div>
+            <button id="detailRefresh" type="button" disabled>Refresh selected</button>
+          </div>
+          <pre id="detailLog">No deployment selected.</pre>
+        </section>
+      </div>
+    </main>
+    <script src="/static/focused_nav.js" defer></script>
+    <script src="/static/admin_deployments.js" defer></script>
+  </body>
+</html>

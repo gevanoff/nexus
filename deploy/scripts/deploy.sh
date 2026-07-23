@@ -49,9 +49,9 @@ Options:
                    Topology JSON file (default: deploy/topology/production.json when --topology-host is set)
 
 Components:
-  deployment-control, gateway, vllm, vllm-strong, vllm-fast, vllm-embeddings, vllm-meltdown, etcd, images, invokeai, sdxl-turbo,
-  lighton-ocr, personaplex, followyourcanvas, ltx-video, hunyuan-video, ace-step, heartmula, lifecycle-manager,
-  mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
+  deployment-control, gateway, cloudflared, vllm, vllm-strong, vllm-fast, vllm-embeddings, vllm-meltdown, etcd,
+  images, invokeai, sdxl-turbo, lighton-ocr, personaplex, followyourcanvas, ltx-video, hunyuan-video, ace-step,
+  heartmula, lifecycle-manager, mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
 
 Special component groups:
   core             gateway + vllm + etcd
@@ -67,7 +67,7 @@ EOF
 
 is_valid_component() {
   case "$1" in
-    deployment-control|gateway|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|cloudflared|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -109,6 +109,7 @@ add_component_selection() {
       all)
         append_component_unique deployment-control
         append_component_unique gateway
+        append_component_unique cloudflared
         append_component_unique vllm
         append_component_unique mlx
         append_component_unique etcd
@@ -142,6 +143,7 @@ component_base_compose_file() {
   case "$1" in
     deployment-control) echo "docker-compose.deployment-control.yml" ;;
     gateway) echo "docker-compose.gateway.yml" ;;
+    cloudflared) echo "docker-compose.gateway.yml" ;;
     vllm) echo "docker-compose.vllm.yml" ;;
     vllm-strong) echo "docker-compose.vllm-strong.yml" ;;
     vllm-fast) echo "docker-compose.vllm-fast.yml" ;;
@@ -172,6 +174,7 @@ component_base_compose_file() {
 
 component_extra_compose_file() {
   case "$1" in
+    cloudflared) echo "docker-compose.cloudflared.yml" ;;
     *) echo "" ;;
   esac
 }
@@ -293,7 +296,18 @@ if [[ "$COMPONENTS_SET" != "true" ]]; then
 fi
 
 compose_files=()
-ordered_components=(deployment-control gateway vllm vllm-strong vllm-fast vllm-embeddings vllm-meltdown mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas ltx-video hunyuan-video ace-step heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
+append_compose_file_unique() {
+  local candidate="$1"
+  local existing
+  for existing in "${compose_files[@]:-}"; do
+    if [[ "$existing" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  compose_files+=("$candidate")
+}
+
+ordered_components=(deployment-control gateway cloudflared vllm vllm-strong vllm-fast vllm-embeddings vllm-meltdown mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas ltx-video hunyuan-video ace-step heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
 for component in "${ordered_components[@]}"; do
   include_component="false"
   for selected in "${SELECTED_COMPONENTS[@]}"; do
@@ -305,7 +319,7 @@ for component in "${ordered_components[@]}"; do
   if [[ "$include_component" == "true" ]]; then
     while IFS= read -r compose_file; do
       [[ -n "$compose_file" ]] || continue
-      compose_files+=("$compose_file")
+      append_compose_file_unique "$compose_file"
     done < <(compose_files_for_component "$component")
   fi
 done
@@ -324,6 +338,29 @@ component_selected() {
     fi
   done
   return 1
+}
+
+prepare_cloudflared_runtime() {
+  local env_file="$1"
+  local host_runtime_root="$2"
+  local tunnel_token token_dir token_path token_tmp
+
+  tunnel_token="$(ns_env_get "$env_file" CLOUDFLARED_TUNNEL_TOKEN "")"
+  if [[ -z "$tunnel_token" ]]; then
+    ns_print_error "CLOUDFLARED_TUNNEL_TOKEN is required when cloudflared is selected."
+    exit 1
+  fi
+
+  token_dir="$host_runtime_root/cloudflared"
+  token_path="$token_dir/tunnel-token"
+  token_tmp="$token_dir/.tunnel-token.$$"
+  mkdir -p "$token_dir"
+  chmod 700 "$token_dir"
+  printf '%s' "$tunnel_token" > "$token_tmp"
+  chmod 444 "$token_tmp"
+  mv -f "$token_tmp" "$token_path"
+  unset tunnel_token token_tmp
+  ns_print_ok "Cloudflare Tunnel token materialized under the protected runtime directory."
 }
 
 topology_essential_components() {
@@ -445,7 +482,7 @@ ns_apply_env_overlay_file "$env_file" "$(ns_sops_generated_common_overlay "$env_
 ns_apply_env_overlay_file "$env_file" "$(ns_sops_generated_specific_overlay "$env_file")"
 ns_apply_env_overlay_file "$env_file" "${env_file}.local"
 
-if component_selected gateway || component_selected lifecycle-manager || component_selected nginx; then
+if component_selected gateway || component_selected cloudflared || component_selected lifecycle-manager || component_selected nginx; then
   missing_extra_host_keys=()
   invalid_extra_host_keys=()
   while IFS= read -r key; do
@@ -482,6 +519,10 @@ export NEXUS_RUNTIME_ROOT
 NEXUS_RUNTIME_ROOT="$(ns_resolve_docker_bind_path "$host_runtime_root")"
 ns_print_ok "Runtime bind root: ${NEXUS_RUNTIME_ROOT}"
 
+if component_selected cloudflared; then
+  prepare_cloudflared_runtime "$env_file" "$host_runtime_root"
+fi
+
 ns_print_header "Preparing runtime directories"
 ns_ensure_runtime_dirs "$ROOT_DIR"
 gateway_config_sync_mode="preserve"
@@ -504,8 +545,24 @@ if [[ -x "$ROOT_DIR/deploy/scripts/preflight-check.sh" ]]; then
   if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
     preflight_args+=(--topology-host "$TOPOLOGY_HOST" --topology-file "$topology_file")
   fi
-  if [[ ${#SELECTED_COMPONENTS[@]} -gt 0 ]]; then
-    preflight_args+=(--components "$(IFS=,; echo "${SELECTED_COMPONENTS[*]}")")
+  preflight_components=()
+  for component in "${SELECTED_COMPONENTS[@]:-}"; do
+    if [[ "$component" == "cloudflared" ]]; then
+      component="gateway"
+    fi
+    duplicate="false"
+    for existing in "${preflight_components[@]:-}"; do
+      if [[ "$existing" == "$component" ]]; then
+        duplicate="true"
+        break
+      fi
+    done
+    if [[ "$duplicate" != "true" ]]; then
+      preflight_components+=("$component")
+    fi
+  done
+  if [[ ${#preflight_components[@]} -gt 0 ]]; then
+    preflight_args+=(--components "$(IFS=,; echo "${preflight_components[*]}")")
   fi
   "$ROOT_DIR/deploy/scripts/preflight-check.sh" "${preflight_args[@]}"
 else

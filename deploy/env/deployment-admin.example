@@ -1,0 +1,13 @@
+# Gateway-side Deployment Control client configuration.
+# Provision the token through SOPS/local overlays. Never expose it to browser JS.
+DEPLOY_CONTROL_BASE_URL=http://copyfail:9220
+DEPLOY_CONTROL_GATEWAY_TOKEN=
+# Optional alternative to the environment token. The path is inside the Gateway container.
+DEPLOY_CONTROL_GATEWAY_TOKEN_FILE=
+DEPLOY_CONTROL_TIMEOUT_SEC=20
+NEXUS_DEPLOYMENT_TOPOLOGY_FILE=/workspace/nexus/deploy/topology/production.json
+
+# Deployment Control listener configuration on copyfail.
+# Bind to the private Nexus network only, or enforce a host firewall rule allowing ai2.
+DEPLOY_CONTROL_BIND_ADDRESS=0.0.0.0
+DEPLOY_CONTROL_PORT=9220

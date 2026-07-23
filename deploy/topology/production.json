@@ -168,6 +168,7 @@
       "ssh_target": "ai@ai2",
       "components": [
         "gateway",
+        "cloudflared",
         "etcd",
         "lifecycle-manager",
         "telegram-bot"
@@ -178,6 +179,14 @@
       "env": {
         "ETCD_URL": "http://etcd:2379",
         "NEXUS_TOPOLOGY_HOST_DIR": "/Volumes/ai_data/var/lib/nexus/deploy/topology",
+        "DEPLOY_CONTROL_BASE_URL": "http://copyfail:9220",
+        "DEPLOY_CONTROL_TIMEOUT_SEC": "20",
+        "NEXUS_DEPLOYMENT_TOPOLOGY_FILE": "/workspace/nexus/deploy/topology/production.json",
+        "CLOUDFLARED_IMAGE_TAG": "2026.7.2",
+        "CLOUDFLARED_PROTOCOL": "auto",
+        "CLOUDFLARED_ORIGIN_SUBNET": "172.29.0.0/29",
+        "CLOUDFLARED_GATEWAY_IP": "172.29.0.2",
+        "CLOUDFLARED_CONNECTOR_IP": "172.29.0.3",
         "MLX_BASE_URL": "http://ai2:10240/v1",
         "MLX_ADVERTISE_BASE_URL": "http://ai2:10240/v1",
         "VLLM_BASE_URL": "http://host.docker.internal:18003/v1",
@@ -324,7 +333,7 @@
         "ETCD_URL": "http://ai2:2379",
         "NEXUS_RUNTIME_ROOT": "/data/nexus-runtime",
         "DEPLOY_CONTROL_HOST": "copyfail",
-        "DEPLOY_CONTROL_BIND_ADDRESS": "127.0.0.1",
+        "DEPLOY_CONTROL_BIND_ADDRESS": "0.0.0.0",
         "DEPLOY_CONTROL_PORT": "9220",
         "DEPLOY_CONTROL_STATE_BIND_SOURCE": "/data/nexus-runtime/deployment-control",
         "DEPLOY_CONTROL_SSH_KEY_FILE": "/home/ai/.ssh/nexus-deployment-control",
