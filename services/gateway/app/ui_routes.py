@@ -426,13 +426,6 @@ def _lighton_ocr_base_url() -> str:
     )
 
 
-def _skyreels_base_url() -> str:
-    return (
-        _backend_base_url("skyreels_v2")
-        or (getattr(S, "SKYREELS_V2_BASE_URL", "") or getattr(S, "SKYREELS_BASE_URL", "") or os.environ.get("SKYREELS_V2_BASE_URL") or os.environ.get("SKYREELS_BASE_URL") or "").strip().rstrip("/")
-    )
-
-
 def _followyourcanvas_base_url() -> str:
     return (
         _backend_base_url("followyourcanvas")
@@ -440,7 +433,7 @@ def _followyourcanvas_base_url() -> str:
     )
 
 
-_VIDEO_UI_COMPATIBLE_BACKENDS = {"skyreels_v2"}
+_VIDEO_UI_COMPATIBLE_BACKENDS = {"ltx_video"}
 
 
 def _personaplex_base_url() -> str:
@@ -1388,9 +1381,9 @@ def _video_backend_request_settings(backend_class: str) -> Tuple[str, str, float
         path = (getattr(S, "FYC_GENERATE_PATH", "") or "/v1/videos/generations").strip()
         timeout = getattr(S, "FYC_TIMEOUT_SEC", 1800.0) or 1800.0
     else:
-        base = _backend_base_url(backend_class) or _skyreels_base_url()
-        path = (getattr(S, "SKYREELS_GENERATE_PATH", "") or "/v1/videos/generations").strip()
-        timeout = getattr(S, "SKYREELS_TIMEOUT_SEC", 3600.0) or 3600.0
+        base = _backend_base_url(backend_class)
+        path = (getattr(S, "VIDEO_GENERATE_PATH", "") or "/v1/videos/generations").strip()
+        timeout = getattr(S, "VIDEO_TIMEOUT_SEC", 3600.0) or 3600.0
     if not path.startswith("/"):
         path = "/" + path
     try:
@@ -1409,9 +1402,25 @@ def _is_safe_video_artifact_name(name: str) -> bool:
     return Path(value).name == value
 
 
+def _is_safe_video_job_id(backend_class: str, job_id: str) -> bool:
+    prefixes = {
+        "ltx_video": "ltx",
+        "hunyuan_video": "hunyuan",
+    }
+    prefix = prefixes.get(str(backend_class or "").strip().lower())
+    if not prefix:
+        return False
+    return bool(
+        re.fullmatch(
+            rf"{re.escape(prefix)}_[A-Fa-f0-9]{{32}}",
+            str(job_id or "").strip(),
+        )
+    )
+
+
 def _apply_video_artifact_proxy_urls(data: Dict[str, Any], backend_class: str) -> Dict[str, Any]:
     job_id = str(data.get("job_id") or "").strip()
-    if not re.fullmatch(r"skyreels_[A-Fa-f0-9]{32}", job_id):
+    if not _is_safe_video_job_id(backend_class, job_id):
         return data
 
     videos = [str(item) for item in (data.get("videos") or []) if isinstance(item, str)]
@@ -3275,7 +3284,7 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
     requested_backend_class = str(body.get("backend_class") or body.get("backend") or "").strip()
     backend_class = _resolve_ui_backend_class(
         requested_backend_class=requested_backend_class,
-        default_backend_class=(getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "skyreels_v2",
+        default_backend_class=(getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "ltx_video",
         route_kind="video",
     )
     check_backend_ready(backend_class, route_kind="video")
@@ -3286,7 +3295,7 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
     if not base:
         raise HTTPException(status_code=404, detail=f"{backend_class} base URL not configured")
 
-    payload = _normalize_skyreels_payload(body)
+    payload = _normalize_video_payload(body)
     payload.pop("backend_class", None)
     payload.pop("backend", None)
     logger.info(
@@ -3313,8 +3322,9 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
                 resp = await client.post(f"{base}{path}", json=payload, headers=headers)
             except httpx.RequestError as exc:
                 logger.warning(
-                    "SkyReels request error request_id=%s base=%s path=%s error=%s",
+                    "Video backend request error request_id=%s backend_class=%s base=%s path=%s error=%s",
                     request_id,
+                    backend_class,
                     base,
                     path,
                     exc,
@@ -3336,8 +3346,9 @@ async def ui_api_video(req: Request) -> Dict[str, Any]:
 
             if resp.status_code >= 400:
                 logger.warning(
-                    "SkyReels upstream error request_id=%s status=%s body=%s",
+                    "Video backend upstream error request_id=%s backend_class=%s status=%s body=%s",
                     request_id,
+                    backend_class,
                     resp.status_code,
                     data,
                 )
@@ -3370,13 +3381,13 @@ async def ui_api_video_artifact(req: Request, backend_class: str, job_id: str, n
 
     resolved_backend_class = _resolve_ui_backend_class(
         requested_backend_class=backend_class,
-        default_backend_class=(getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "skyreels_v2",
+        default_backend_class=(getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "ltx_video",
         route_kind="video",
     )
     check_backend_ready(resolved_backend_class, route_kind="video")
     await check_capability(resolved_backend_class, "video")
 
-    if not re.fullmatch(r"skyreels_[A-Fa-f0-9]{32}", str(job_id or "").strip()):
+    if not _is_safe_video_job_id(resolved_backend_class, job_id):
         raise HTTPException(status_code=404, detail="video artifact not found")
     if not _is_safe_video_artifact_name(name):
         raise HTTPException(status_code=404, detail="video artifact not found")
@@ -3403,7 +3414,7 @@ async def ui_api_video_artifact(req: Request, backend_class: str, job_id: str, n
     return StreamingResponse(iter([resp.content]), media_type=content_type, headers={"Cache-Control": "no-store"})
 
 
-def _normalize_skyreels_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_video_payload(body: Dict[str, Any]) -> Dict[str, Any]:
     ui_keys = {"prompt", "duration", "resolution", "backend_class", "backend"}
     payload: Dict[str, Any]
     if set(body.keys()).issubset(ui_keys):
@@ -3414,17 +3425,13 @@ def _normalize_skyreels_payload(body: Dict[str, Any]) -> Dict[str, Any]:
         duration = body.get("duration")
         if duration is not None:
             try:
-                duration_seconds = max(1, int(duration))
-                payload["duration_seconds"] = duration_seconds
-                payload["fps"] = 8
-                payload["num_frames"] = min(max(17, duration_seconds * 8), 49)
-                payload["base_num_frames"] = payload["num_frames"]
+                payload["duration_seconds"] = max(1, int(duration))
             except Exception:
                 pass
-        payload["resolution"] = "540P"
-        payload["mode"] = "df"
-        payload["model_id"] = "Skywork/SkyReels-V2-DF-1.3B-540P"
-        payload["offload"] = True
+        resolution = str(body.get("resolution") or "").strip().lower()
+        if resolution:
+            payload["resolution"] = resolution
+        payload.pop("duration", None)
         return payload
 
     payload = dict(body)
@@ -3518,7 +3525,7 @@ async def ui_api_video_backends(req: Request) -> Dict[str, Any]:
     _require_user(req)
     return _ui_backend_choices(
         "video",
-        (getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "skyreels_v2",
+        (getattr(S, "VIDEO_BACKEND_CLASS", "") or "").strip() or "ltx_video",
         allowed_backend_classes=_VIDEO_UI_COMPATIBLE_BACKENDS,
     )
 

@@ -157,8 +157,12 @@ _SERVICE_NAME_TO_BACKEND_CLASS: Dict[str, str] = {
     "lighton_ocr": "lighton_ocr",
     "personaplex": "personaplex",
     "followyourcanvas": "followyourcanvas",
-    "skyreels-v2": "skyreels_v2",
-    "skyreels_v2": "skyreels_v2",
+    "ltx-video": "ltx_video",
+    "ltx_video": "ltx_video",
+    "hunyuan-video": "hunyuan_video",
+    "hunyuan_video": "hunyuan_video",
+    "ace-step": "ace_step_music",
+    "ace_step_music": "ace_step_music",
 }
 
 _BACKEND_CLASS_TO_SERVICE_NAME: Dict[str, str] = {
@@ -176,7 +180,9 @@ _BACKEND_CLASS_TO_SERVICE_NAME: Dict[str, str] = {
     "lighton_ocr": "lighton-ocr",
     "personaplex": "personaplex",
     "followyourcanvas": "followyourcanvas",
-    "skyreels_v2": "skyreels-v2",
+    "ltx_video": "ltx-video",
+    "hunyuan_video": "hunyuan-video",
+    "ace_step_music": "ace-step",
 }
 
 
@@ -554,7 +560,7 @@ def _capability_availability(route_kind: RouteKind) -> Dict[str, Any]:
         entry: Dict[str, Any] = {
             "backend_class": backend_class,
             "base_url": config.base_url,
-            "host": _backend_host(config.base_url),
+            "host": hostname or _backend_host(config.base_url),
             "description": config.description,
         }
         if hostname:

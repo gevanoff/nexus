@@ -196,12 +196,10 @@ class Settings(BaseSettings):
     VOICE_LIBRARY_DIR: str = "/var/lib/gateway/data/voice_library"
     VOICE_LIBRARY_MAX_BYTES: int = 50_000_000
 
-    # Optional: SkyReels-V2 video generation shim
-    SKYREELS_V2_BASE_URL: str = ""
-    SKYREELS_BASE_URL: str = ""
-    SKYREELS_TIMEOUT_SEC: float = 3600.0
-    SKYREELS_GENERATE_PATH: str = "/v1/videos/generations"
-    VIDEO_BACKEND_CLASS: str = "skyreels_v2"
+    # Video generation gateway adapter
+    VIDEO_BACKEND_CLASS: str = "ltx_video"
+    VIDEO_TIMEOUT_SEC: float = 3600.0
+    VIDEO_GENERATE_PATH: str = "/v1/videos/generations"
 
     # Optional: FollowYourCanvas video generation shim
     FOLLOWYOURCANVAS_BASE_URL: str = ""

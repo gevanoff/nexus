@@ -22,8 +22,6 @@ def test_media_models_are_placed_on_the_requested_hosts_without_default_startup(
     assert "ace-step" in hosts["stackrot"]["optional_components"]
     assert "hunyuan-video" not in hosts["stackrot"]["components"]
     assert "ace-step" not in hosts["stackrot"]["components"]
-    assert "skyreels-v2" not in hosts["ada2"].get("components", [])
-    assert "skyreels-v2" not in hosts["ada2"].get("optional_components", [])
 
     defaults = topology["defaults"]["env"]
     assert defaults["VIDEO_BACKEND_CLASS"] == "ltx_video"
@@ -54,9 +52,6 @@ def test_media_models_have_assisted_lifecycle_policies():
         assert backend["auto_stop"] is True
         assert backend["requires_confirmation"] is True
 
-    assert "skyreels_v2" not in backends
-
-
 def test_gateway_registry_exposes_new_media_capabilities():
     config = BACKENDS.read_text(encoding="utf-8")
     assert "  ltx_video:" in config
@@ -65,7 +60,6 @@ def test_gateway_registry_exposes_new_media_capabilities():
     assert "${LTX_VIDEO_BASE_URL}" in config
     assert "${HUNYUAN_VIDEO_BASE_URL}" in config
     assert "${ACE_STEP_BASE_URL}" in config
-    assert "skyreels_v2: ltx_video" in config
 
 
 def test_compose_services_pin_stackrot_media_to_physical_gpu_one():
@@ -79,12 +73,6 @@ def test_compose_services_pin_stackrot_media_to_physical_gpu_one():
     assert "NEXUS_SERVICE_BACKEND_CLASS=hunyuan_video" in hunyuan
     assert "NEXUS_SERVICE_BACKEND_CLASS=ace_step_music" in ace
     assert "NEXUS_SERVICE_BACKEND_CLASS=ltx_video" in ltx
-
-
-def test_skyreels_runtime_was_removed():
-    assert not (REPO_ROOT / "docker-compose.skyreels-v2.yml").exists()
-    assert not (REPO_ROOT / "services" / "skyreels-v2").exists()
-    assert not (REPO_ROOT / "services" / "gateway" / "tools" / "skyreels_generate.py").exists()
 
 
 def test_deploy_scripts_recognize_media_components():

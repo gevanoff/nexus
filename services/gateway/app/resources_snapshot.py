@@ -772,7 +772,18 @@ def merge_resources_payloads(lifecycle_payload: Dict[str, Any] | None, registry_
             "provider": backend.get("provider") or existing.get("provider"),
             "base_url": backend.get("base_url") or existing.get("base_url"),
             "health": backend.get("health") or existing.get("health"),
-            "hostname": existing.get("hostname") or backend.get("hostname"),
+            "host": (
+                existing.get("host")
+                or existing.get("hostname")
+                or backend.get("hostname")
+                or backend.get("host")
+            ),
+            "hostname": (
+                existing.get("hostname")
+                or existing.get("host")
+                or backend.get("hostname")
+                or backend.get("host")
+            ),
         }
     if merged:
         base["backends"] = list(merged.values())

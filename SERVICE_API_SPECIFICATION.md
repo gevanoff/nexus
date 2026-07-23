@@ -428,5 +428,5 @@ See the `services/` directory for reference implementations:
 - `services/tts/`, `services/luxtts/`, `services/qwen3-tts/`: Text-to-speech shims
 - `services/heartmula/`: Music generation shim
 - `services/lighton-ocr/`: OCR shim
-- `services/skyreels-v2/`, `services/followyourcanvas/`: Video generation shims
+- `services/media-generation/`, `services/followyourcanvas/`: Video generation shims
 - `services/template/`: Scaffolder and skeleton for new services

@@ -22,7 +22,7 @@ In Nexus, examples include:
 - `local_mlx` (chat/models and, depending on MLX config, image/edit/transcription models)
 - `heartmula` (music generation through gateway UI/API)
 - `lighton-ocr` (OCR/scan)
-- `skyreels-v2` and `followyourcanvas` (video generation)
+- `ltx-video`, `hunyuan-video`, and `followyourcanvas` (video generation)
 - `personaplex` (chat and live UI proxying)
 
 ## Descriptor Contract

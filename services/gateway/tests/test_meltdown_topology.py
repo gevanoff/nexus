@@ -99,8 +99,10 @@ def test_meltdown_container_alias_is_available_to_control_plane_compose() -> Non
         text = _read(compose_file)
         assert "meltdown:${NEXUS_HOST_MELTDOWN_IP}" in text
         assert "meltdown.embrient.com:${NEXUS_HOST_MELTDOWN_IP}" in text
-        assert "copyfail:${NEXUS_HOST_COPYFAIL_IP}" not in text
-        assert "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}" not in text
+
+    gateway = _read("docker-compose.gateway.yml")
+    assert "copyfail:${NEXUS_HOST_COPYFAIL_IP}" in gateway
+    assert "copyfail.embrient.com:${NEXUS_HOST_COPYFAIL_IP}" in gateway
 
     env_example = _read(".env.example")
     assert "\nNEXUS_HOST_MELTDOWN_IP=\n" in env_example
@@ -123,7 +125,7 @@ def test_ai2_uses_boot_persistent_proxies_and_physical_topology_mount() -> None:
         "images=127.0.0.1:17860=ada2:7860",
         "sdxl-turbo=127.0.0.1:18050=meltdown:9050",
         "lighton-ocr=127.0.0.1:18155=ada2:9155",
-        "skyreels-v2=127.0.0.1:18180=ada2:9180",
+        "ltx-video=127.0.0.1:18180=ada2:9180",
         "ssh-copyfail=127.0.0.1:19025=copyfail:22",
     ):
         assert forward in installer

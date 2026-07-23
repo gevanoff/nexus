@@ -135,13 +135,3 @@ VIDEO_SMOKE_BACKEND_CLASS=hunyuan_video \
 ```
 
 A service reports `503` from `/readyz` when the upstream checkout or required model paths are absent. That is intentional: registration must not advertise a model that cannot generate.
-
-## SkyReels migration
-
-The SkyReels-v2 runtime, compose file, gateway tool, and readiness tests are removed. The backend resolver retains only a temporary legacy alias:
-
-```text
-skyreels_v2 -> ltx_video
-```
-
-This lets older callers select the replacement backend while preventing the removed service from being scheduled.

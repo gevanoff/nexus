@@ -55,7 +55,7 @@ These commands do not change topology and should not replace a deployment.
 | `smoke-vllm-tools.sh` | Exercises vLLM tool calling through the configured route |
 | `vllm-tool-profile.py` | Lists/renders reusable vLLM tool profiles and rejects serving/Gateway env drift |
 | `smoke-test-tts.sh` | Exercises TTS routing |
-| `smoke-test-video.sh` | Exercises SkyReels directly or through the Gateway UI path |
+| `smoke-test-video.sh` | Exercises LTX or HunyuanVideo directly through the generation shim |
 | `check-essential-containers.sh` | Waits for required control-plane containers and prints failure evidence |
 | `check-etcd-health.sh` | Checks etcd endpoint/member health |
 

@@ -86,12 +86,12 @@ Each service is:
 - **Status**: 🚧 Nexus-owned shim with built-in runner and optional upstream bootstrap
 - **Documentation**: [followyourcanvas/README.md](followyourcanvas/README.md)
 
-#### SkyReels V2 (`skyreels-v2/`)
-- **Purpose**: Video generation shim
-- **Port**: 9180
-- **Capabilities**: `POST /v1/videos/generations`
-- **Status**: 🚧 Nexus-owned shim with built-in runner and optional upstream bootstrap
-- **Documentation**: [skyreels-v2/README.md](skyreels-v2/README.md)
+#### Media generation (`media-generation/`)
+- **Purpose**: LTX-2.3, HunyuanVideo, and ACE-Step generation shims
+- **Ports**: 9180 (LTX), 9185 (HunyuanVideo), 9195 (ACE-Step)
+- **Capabilities**: `POST /v1/videos/generations`, `POST /v1/music/generations`
+- **Status**: 🚧 Nexus-owned shims with lifecycle-managed upstream runtimes
+- **Documentation**: [media-generation/README.md](media-generation/README.md)
 
 #### HeartMula (`heartmula/`)
 - **Purpose**: Music generation shim
@@ -527,7 +527,7 @@ See these services for reference:
 - **Template skeleton**: `template/skeleton/app/nexus_model_service.py`
 - **Full gateway**: `gateway/app/main.py`
 - **Service wrapper/install support**: `ollama/`, `mlx/`
-- **Backend shims**: `images/`, `sdxl-turbo/`, `tts/`, `luxtts/`, `qwen3-tts/`, `heartmula/`, `lighton-ocr/`, `skyreels-v2/`, `followyourcanvas/`, `personaplex/`
+- **Backend shims**: `images/`, `sdxl-turbo/`, `tts/`, `luxtts/`, `qwen3-tts/`, `heartmula/`, `lighton-ocr/`, `media-generation/`, `followyourcanvas/`, `personaplex/`
 
 ## Resources
 

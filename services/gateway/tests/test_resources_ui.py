@@ -47,7 +47,7 @@ def test_resources_ui_hides_duplicate_core_services_section() -> None:
 
     assert 'id="control_plane_section"' in html
     assert 'id="core_services_section" class="resource-subsection" hidden' in html
-    assert "/static/resources.js?v=21" in html
+    assert "/static/resources.js?v=22" in html
     assert "splitCoreServicesForResourceUi" in js
     assert "controlPlaneCoreServiceIds" in js
     assert "hideWhenEmpty: true" in js
@@ -76,6 +76,42 @@ def test_resources_ui_can_copy_individual_host_information() -> None:
     assert "copyHostInfo(host, generatedAt)" in js
     assert 'copyButton.textContent = "Copy"' in js
     assert "navigator.clipboard.writeText" in js
+
+
+def test_resources_merge_preserves_lifecycle_backend_host() -> None:
+    lifecycle = {
+        "backends": [
+            {
+                "backend_class": "local_vllm_fast",
+                "host": "stackrot",
+                "hostname": "stackrot",
+            }
+        ]
+    }
+    registry = {
+        "backends": [
+            {
+                "backend_class": "local_vllm_fast",
+                "host": "host.docker.internal",
+                "hostname": "host.docker.internal",
+                "base_url": "http://host.docker.internal:18001/v1",
+            }
+        ]
+    }
+
+    merged = resources_snapshot.merge_resources_payloads(lifecycle, registry)
+
+    backend = merged["backends"][0]
+    assert backend["host"] == "stackrot"
+    assert backend["hostname"] == "stackrot"
+    assert backend["base_url"] == "http://host.docker.internal:18001/v1"
+
+    static_root = Path(__file__).resolve().parents[1] / "app" / "static"
+    js = (static_root / "resources.js").read_text(encoding="utf-8")
+    assert (
+        "host: existing.host || existing.hostname || backend.hostname || backend.host"
+        in js
+    )
 
 
 def test_resources_ui_shows_coding_smoke_health() -> None:

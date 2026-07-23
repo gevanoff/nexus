@@ -21,7 +21,7 @@ def test_model_metadata_route_classification():
         ("feature-extraction", "transformers", ["bge"], "embeddings"),
         ("text-to-image", "diffusers", ["sdxl"], "images"),
         ("text-to-speech", "transformers", ["speech-synthesis"], "tts"),
-        ("text-to-video", "diffusers", ["skyreels"], "video"),
+        ("text-to-video", "diffusers", ["ltx-video"], "video"),
         ("document-question-answering", "transformers", ["ocr"], "ocr"),
     ]
     for pipeline, library, tags, expected in cases:

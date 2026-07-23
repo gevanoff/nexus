@@ -33,9 +33,9 @@ Choose the host from the backend's acceleration path:
 - MLX or Apple Silicon paths belong host-native on `ai2`.
 - CPU-only services belong on `ai2` unless they need proximity to GPU artifacts or media volumes.
 
-Do not put a new persistent CUDA model on `ada2` without accounting for `vllm-strong`, InvokeAI/images, SkyReels, LightOnOCR, HeartMula, and PersonaPlex contention.
+Do not put a new persistent CUDA model on `ada2` without accounting for `vllm-strong`, InvokeAI/images, LTX-2.3, LightOnOCR, HeartMula, and PersonaPlex contention.
 
-`ada2` now has 128 GB system RAM plus an RTX 6000 Ada 48 GB. Treat the extra host RAM as CPU-offload, model-load, compile-cache, and artifact-processing headroom. It does not change the primary scheduling constraint for CUDA backends: VRAM is still the limiting resource, especially when SkyReels, HeartMula, PersonaPlex, or InvokeAI move from idle to generation.
+`ada2` now has 128 GB system RAM plus an RTX 6000 Ada 48 GB. Treat the extra host RAM as CPU-offload, model-load, compile-cache, and artifact-processing headroom. It does not change the primary scheduling constraint for CUDA backends: VRAM is still the limiting resource, especially when LTX-2.3, HeartMula, PersonaPlex, or InvokeAI move from idle to generation.
 
 ## What To Verify Before Marking Ready
 
@@ -91,9 +91,9 @@ The wrapper now falls back to `soundfile` for the TorchCodec save failure. A 4 s
 
 LightOnOCR was already active and ready. A real OCR request against a generated text image returned `HELLO NEXUS OCR` through the native CUDA path. Its idle container does not hold persistent VRAM because the model loads inside the request subprocess.
 
-### SkyReels
+### LTX-2.3
 
-Earlier SkyReels UI failures came from the gateway normalizer treating UI payloads with `backend_class` as advanced payloads and routing to the larger default model. UI payloads now select the smaller DF 1.3B 540P path and persisted artifacts are served through stable output URLs.
+The video UI uses the generic Gateway video adapter for authentication, lifecycle readiness, admission control, request normalization, and stable artifact URLs. LTX-specific model selection and generation settings stay in the media backend rather than being injected by the Gateway.
 
 ## Common Failure Modes
 

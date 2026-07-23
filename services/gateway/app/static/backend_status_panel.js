@@ -160,7 +160,8 @@
     gpu_heavy: 'InvokeAI',
     lighton_ocr: 'LightOnOCR',
     personaplex: 'PersonaPlex',
-    skyreels_v2: 'SkyReels-V2',
+    ltx_video: 'LTX-2.3',
+    hunyuan_video: 'HunyuanVideo-1.5',
   };
 
   function canonicalBackendClass(value) {

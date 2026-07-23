@@ -55,7 +55,7 @@ Script entrypoints (all invoked from repo root):
 - `./deploy/scripts/restore-gateway-db.sh --snapshot PATH [--env-file PATH] [--force]`: restore a compressed `users.sqlite` backup into the canonical runtime path while preserving the current DB beside it
 - `./deploy/scripts/register-service.sh [--backend-class CLASS] <name> <base-url> <etcd-url>`: register backend in etcd
 - `./deploy/scripts/list-services.sh <etcd-url>`: inspect registered services
-- `./deploy/scripts/smoke-test-video.sh`: run a SkyReels video smoke test (direct backend by default, or the gateway UI path when UI credentials are provided)
+- `./deploy/scripts/smoke-test-video.sh`: run an LTX or HunyuanVideo generation smoke test
 
 Example: deploy only the images component to a GPU host:
 

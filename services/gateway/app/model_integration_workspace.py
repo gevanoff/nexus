@@ -141,11 +141,11 @@ _FALLBACK_BACKENDS = {
         "compose_file": "docker-compose.lighton-ocr.yml",
         "ready_path": "/readyz",
     },
-    "skyreels_v2": {
-        "display_name": "SkyReels V2",
+    "ltx_video": {
+        "display_name": "LTX-2.3 22B Distilled",
         "host": "ada2",
-        "estimated_vram_mb": 18000,
-        "compose_file": "docker-compose.skyreels-v2.yml",
+        "estimated_vram_mb": 36000,
+        "compose_file": "docker-compose.ltx-video.yml",
         "ready_path": "/readyz",
     },
 }
@@ -707,7 +707,7 @@ def _recommend_deployment_target(runtime: str, route_kind: str, model_id: str, m
         )
     if route_kind == "video":
         return _deployment_target_from_backend(
-            "skyreels_v2",
+            "ltx_video",
             reason="Video generation belongs on ada2 because the tracked video lane already absorbs the highest CUDA and VRAM pressure in the cluster.",
         )
     if route_kind == "music":
@@ -931,7 +931,7 @@ def classify_model(
     else:
         route_rules = [
             ("embeddings", pipeline in {"feature-extraction", "sentence-similarity"} or any(x in text for x in ("embedding", "sentence-transformers", " bge", " e5", " gte")), "embedding or feature-extraction metadata"),
-            ("video", pipeline in {"text-to-video", "image-to-video"} or any(x in text for x in ("text-to-video", "image-to-video", "skyreels")), "video-generation metadata"),
+            ("video", pipeline in {"text-to-video", "image-to-video"} or any(x in text for x in ("text-to-video", "image-to-video", "ltx-video")), "video-generation metadata"),
             ("images", pipeline in {"text-to-image", "image-to-image"} or any(x in text for x in ("diffusers", "stable-diffusion", "sdxl", "flux", "controlnet")), "image-generation or diffusers metadata"),
             ("music", pipeline == "text-to-music" or any(x in text for x in ("musicgen", "text-to-music", "music-generation")), "music-generation metadata"),
             ("tts", pipeline in {"text-to-speech", "text-to-audio", "audio-to-audio"} or any(x in text for x in ("text-to-speech", "speech-synthesis", " tts")), "speech-synthesis metadata"),

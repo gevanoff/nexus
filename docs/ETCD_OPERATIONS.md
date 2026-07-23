@@ -33,10 +33,10 @@ Service registration value shape:
 
 ```json
 {
-  "name": "skyreels-v2",
-  "base_url": "http://stackrot:9180",
-  "metadata_url": "http://stackrot:9180/v1/metadata",
-  "backend_class": "skyreels_v2"
+  "name": "ltx-video",
+  "base_url": "http://ada2:9180",
+  "metadata_url": "http://ada2:9180/v1/metadata",
+  "backend_class": "ltx_video"
 }
 ```
 
@@ -257,7 +257,7 @@ Auto-registration tuning:
 Register a service manually:
 
 ```bash
-./deploy/scripts/register-service.sh skyreels-v2 http://stackrot:9180 http://stackrot:2379
+./deploy/scripts/register-service.sh ltx-video http://ada2:9180 http://ada2:2379
 ```
 
 List registered services:
