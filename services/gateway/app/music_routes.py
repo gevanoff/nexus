@@ -7,7 +7,7 @@ from app.backends import check_capability, get_admission_controller
 from app.config import S
 from app.health_checker import check_backend_ready
 from app.music_backend import generate_music
-from app.social_routes import router as social_router
+from app.social_route_fixes import router as social_router
 from app.social_publish_route_fixes import router as social_publish_router
 
 
