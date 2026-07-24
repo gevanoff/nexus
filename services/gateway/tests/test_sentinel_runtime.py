@@ -446,6 +446,99 @@ async def test_sentinel_does_not_auto_resume_repeated_no_tool_call_failures(monk
 
 
 @pytest.mark.asyncio
+async def test_sentinel_prunes_only_unused_images_for_allowlisted_disk_pressure(
+    monkeypatch,
+    tmp_path,
+):
+    _sentinel_events(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        sentinel_runtime.S,
+        "NEXUS_SENTINEL_DOCKER_IMAGE_PRUNE_ENABLED",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sentinel_runtime.S,
+        "NEXUS_SENTINEL_DOCKER_IMAGE_PRUNE_HOSTS",
+        "stackrot,ada2",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sentinel_runtime.S,
+        "NEXUS_SENTINEL_DOCKER_IMAGE_PRUNE_COOLDOWN_SEC",
+        86_400,
+        raising=False,
+    )
+
+    async def _resource_payload():
+        return {
+            "backends": [],
+            "hosts": [
+                {
+                    "name": "stackrot",
+                    "memory": {"total_mb": 1000, "available_mb": 800},
+                    "gpus": [],
+                    "filesystems": [
+                        {
+                            "mount": "/",
+                            "filesystem": "/dev/nvme0n1p2",
+                            "total_mb": 100_000,
+                            "used_mb": 95_000,
+                            "available_mb": 5_000,
+                            "used_pct": 95,
+                        }
+                    ],
+                }
+            ],
+        }
+
+    calls = []
+
+    async def _call_lifecycle(method, path, *, json_body=None, timeout=None):
+        calls.append((method, path, json_body, timeout))
+        return {
+            "ok": True,
+            "decision": "unused_images_pruned",
+            "host": "stackrot",
+            "reclaimed": "12.5GB",
+        }
+
+    monkeypatch.setattr(sentinel_runtime, "_build_resource_payload", _resource_payload)
+    monkeypatch.setattr(sentinel_runtime, "call_lifecycle_manager", _call_lifecycle)
+    monkeypatch.setattr(
+        sentinel_runtime,
+        "get_admission_controller",
+        lambda: types.SimpleNamespace(get_stats=lambda: {}),
+    )
+
+    state = {}
+    with sentinel_runtime._connect() as conn:
+        first = await sentinel_runtime._monitor_resources(
+            state,
+            conn,
+            now=1_700_000_000,
+        )
+        second = await sentinel_runtime._monitor_resources(
+            state,
+            conn,
+            now=1_700_000_100,
+        )
+
+    assert first["docker_image_prunes"] == 1
+    assert second["docker_image_prunes"] == 0
+    assert calls == [
+        (
+            "POST",
+            "/v1/lifecycle/hosts/docker/image-prune",
+            {"host": "stackrot", "confirmed": True},
+            620.0,
+        )
+    ]
+    events = sentinel_runtime.list_events(limit=10, category="resources")
+    assert any(item["event_type"] == "docker_image_prune" for item in events)
+
+
+@pytest.mark.asyncio
 async def test_sentinel_analyzes_pending_archived_workspace_and_records_purge(monkeypatch, tmp_path):
     _sentinel_events(tmp_path, monkeypatch)
     monkeypatch.setattr(sentinel_runtime, "_now", lambda: 1_700_000_000)

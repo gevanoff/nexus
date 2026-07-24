@@ -108,6 +108,7 @@ class HostPolicy:
     os: Dict[str, Any] = field(default_factory=dict)
     cpu: Dict[str, Any] = field(default_factory=dict)
     memory: Dict[str, Any] = field(default_factory=dict)
+    filesystems: List[Dict[str, Any]] = field(default_factory=list)
     gpus: List[Dict[str, Any]] = field(default_factory=list)
     network_interfaces: List[Dict[str, Any]] = field(default_factory=list)
     containers: Dict[str, str] = field(default_factory=dict)
@@ -206,6 +207,11 @@ class ActionRequest(BaseModel):
     action: str
     confirmed: bool = False
     allow_disruptive: bool = False
+
+
+class HostDockerImagePruneRequest(BaseModel):
+    host: str
+    confirmed: bool = False
 
 
 class MlxPrefetchRequest(BaseModel):
@@ -918,6 +924,50 @@ class LifecycleManager:
         await self.refresh()
         return plan
 
+    async def prune_unused_docker_images(
+        self,
+        req: HostDockerImagePruneRequest,
+    ) -> Dict[str, Any]:
+        host_name = req.host.strip()
+        host = self.hosts.get(host_name)
+        if host is None:
+            raise HTTPException(status_code=404, detail=f"unknown host {host_name}")
+        if not req.confirmed:
+            return {
+                "ok": False,
+                "decision": "requires_confirmation",
+                "message": "Pruning unused Docker images requires confirmation.",
+                "host": host_name,
+            }
+
+        command = (
+            "docker_bin=\"$(command -v docker 2>/dev/null || true)\"; "
+            "if [ -z \"$docker_bin\" ]; then "
+            "PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH\"; "
+            "docker_bin=\"$(command -v docker 2>/dev/null || true)\"; "
+            "fi; "
+            "if [ -z \"$docker_bin\" ]; then echo 'docker executable not found' >&2; exit 127; fi; "
+            "if [ \"$(uname -s 2>/dev/null || true)\" = Darwin ]; then "
+            "colima_context=\"${DOCKER_CONTEXT:-colima}\"; "
+            "if \"$docker_bin\" --context \"$colima_context\" info >/dev/null 2>&1; then "
+            "exec \"$docker_bin\" --context \"$colima_context\" image prune -a -f; "
+            "fi; "
+            "fi; "
+            "exec \"$docker_bin\" image prune -a -f"
+        )
+        output = await self._ssh(host, command, timeout=600)
+        reclaimed = ""
+        for line in output.splitlines():
+            if line.strip().lower().startswith("total reclaimed space:"):
+                reclaimed = line.split(":", 1)[1].strip()
+        await self.refresh()
+        return {
+            "ok": True,
+            "decision": "unused_images_pruned",
+            "host": host_name,
+            "reclaimed": reclaimed,
+        }
+
     async def prefetch_mlx_model(self, req: MlxPrefetchRequest) -> Dict[str, Any]:
         backend = self._backend_or_404(req.backend_class)
         if backend.backend_class != "local_mlx":
@@ -1398,6 +1448,7 @@ class LifecycleManager:
             "resource_kind": host.resource_kind,
             "error": host.error,
             "memory": host.memory,
+            "filesystems": host.filesystems,
             "gpus": gpus,
             "network_interfaces": host.network_interfaces[:8],
             "vram": {"total_mb": total, "used_mb": used, "free_mb": free},
@@ -2011,6 +2062,20 @@ class LifecycleManager:
             "fi; true"
         )
 
+    @staticmethod
+    def _filesystem_probe_command() -> str:
+        return (
+            "for mount_path in / /data; do "
+            "[ -d \"$mount_path\" ] || continue; "
+            "df -Pk \"$mount_path\" 2>/dev/null | "
+            "awk -v requested=\"$mount_path\" 'NR==2 {"
+            "gsub(/%/, \"\", $5); "
+            "printf \"mount=%s\\tfilesystem=%s\\ttotal_kb=%s\\tused_kb=%s\\tavailable_kb=%s\\tused_pct=%s\\n\", "
+            "requested, $1, $2, $3, $4, $5"
+            "}'; "
+            "done; "
+        )
+
     @classmethod
     def _linux_probe_command(cls) -> str:
         return (
@@ -2039,6 +2104,8 @@ class LifecycleManager:
             "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu "
             "--format=csv,noheader,nounits 2>/dev/null || true; "
             "printf '__MEM__\\n'; free -m 2>/dev/null | awk '/^Mem:/ {print $2\" \"$3\" \"$7}'; "
+            "printf '__FILESYSTEMS__\\n'; "
+            f"{cls._filesystem_probe_command()}"
             "printf '__NET__\\n'; "
             "if [ -d /sys/class/net ]; then "
             "for net_path in /sys/class/net/*; do "
@@ -2100,6 +2167,8 @@ class LifecycleManager:
             "total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo 0); total_mb=$((total_bytes / 1024 / 1024)); "
             "printf '%s %s %s\\n' \"$total_mb\" 0 0; "
             "fi; "
+            "printf '__FILESYSTEMS__\\n'; "
+            f"{cls._filesystem_probe_command()}"
             "printf '__NET__\\n'; "
             "if command -v networksetup >/dev/null 2>&1 && command -v ifconfig >/dev/null 2>&1; then "
             "networksetup -listallhardwareports 2>/dev/null | awk -F': ' '/^Hardware Port:/ {port=$2} /^Device:/ {device=$2} /^Ethernet Address:/ {mac=$2; if (device != \"\") print port \"\\t\" device \"\\t\" mac; port=\"\"; device=\"\"; mac=\"\"}' | "
@@ -2145,6 +2214,7 @@ class LifecycleManager:
             bits = mem_lines[0].split()
             if len(bits) >= 3:
                 host.memory = {"total_mb": int(bits[0]), "used_mb": int(bits[1]), "available_mb": int(bits[2])}
+        host.filesystems = self._parse_filesystems(sections.get("FILESYSTEMS", []))
         host.network_interfaces = self._parse_network_interfaces(sections.get("NET", []))
         host.containers = self._parse_containers("\n".join(sections.get("DOCKER", [])))
 
@@ -2157,6 +2227,7 @@ class LifecycleManager:
             bits = mem_lines[0].split()
             if len(bits) >= 3:
                 host.memory = {"total_mb": int(bits[0]), "used_mb": int(bits[1]), "available_mb": int(bits[2])}
+        host.filesystems = self._parse_filesystems(sections.get("FILESYSTEMS", []))
         host.network_interfaces = self._parse_network_interfaces(sections.get("NET", []))
         host.gpus = []
         host.containers = self._parse_containers("\n".join(sections.get("DOCKER", [])))
@@ -2194,6 +2265,36 @@ class LifecycleManager:
                     pass
             values[key] = value
         return values
+
+    @classmethod
+    def _parse_filesystems(cls, lines: List[str]) -> List[Dict[str, Any]]:
+        filesystems: List[Dict[str, Any]] = []
+        for line in lines:
+            values: Dict[str, str] = {}
+            for part in line.split("\t"):
+                key, sep, value = part.partition("=")
+                if sep:
+                    values[key.strip()] = value.strip()
+            mount = values.get("mount", "")
+            if not mount:
+                continue
+            total_kb = cls._int_or_none(values.get("total_kb"))
+            used_kb = cls._int_or_none(values.get("used_kb"))
+            available_kb = cls._int_or_none(values.get("available_kb"))
+            used_pct = cls._int_or_none(values.get("used_pct"))
+            if total_kb is None or total_kb <= 0:
+                continue
+            filesystems.append(
+                {
+                    "mount": mount,
+                    "filesystem": values.get("filesystem", ""),
+                    "total_mb": total_kb // 1024,
+                    "used_mb": (used_kb or 0) // 1024,
+                    "available_mb": (available_kb or 0) // 1024,
+                    "used_pct": used_pct or 0,
+                }
+            )
+        return filesystems
 
     @classmethod
     def _parse_network_interfaces(cls, lines: List[str]) -> List[Dict[str, Any]]:
@@ -2494,6 +2595,7 @@ class LifecycleManager:
                     "os": host.os,
                     "cpu": host.cpu,
                     "memory": host.memory,
+                    "filesystems": host.filesystems,
                     "gpus": host.gpus,
                     "network_interfaces": host.network_interfaces,
                     "containers": host.containers,
@@ -2552,6 +2654,13 @@ async def lifecycle_ensure_capacity(req: EnsureCapacityRequest) -> Dict[str, Any
 @app.post("/v1/lifecycle/action")
 async def lifecycle_action(req: ActionRequest) -> Dict[str, Any]:
     return await manager.action(req)
+
+
+@app.post("/v1/lifecycle/hosts/docker/image-prune")
+async def lifecycle_host_docker_image_prune(
+    req: HostDockerImagePruneRequest,
+) -> Dict[str, Any]:
+    return await manager.prune_unused_docker_images(req)
 
 
 @app.post("/v1/lifecycle/mlx/prefetch")

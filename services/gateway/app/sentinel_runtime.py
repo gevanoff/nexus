@@ -87,6 +87,39 @@ def _resource_pressure_pct() -> float:
         return 0.9
 
 
+def _docker_image_prune_enabled() -> bool:
+    return bool(getattr(S, "NEXUS_SENTINEL_DOCKER_IMAGE_PRUNE_ENABLED", True))
+
+
+def _docker_image_prune_hosts() -> set[str]:
+    raw = str(
+        getattr(
+            S,
+            "NEXUS_SENTINEL_DOCKER_IMAGE_PRUNE_HOSTS",
+            "stackrot,ada2",
+        )
+        or ""
+    )
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def _docker_image_prune_cooldown_sec() -> int:
+    try:
+        return max(
+            3600,
+            int(
+                getattr(
+                    S,
+                    "NEXUS_SENTINEL_DOCKER_IMAGE_PRUNE_COOLDOWN_SEC",
+                    86_400,
+                )
+                or 86_400
+            ),
+        )
+    except Exception:
+        return 86_400
+
+
 def _backend_issue_min_polls() -> int:
     try:
         return max(1, int(getattr(S, "NEXUS_SENTINEL_BACKEND_ISSUE_MIN_POLLS", 3) or 3))
@@ -1145,7 +1178,12 @@ async def _build_resource_payload() -> Dict[str, Any]:
 
 
 async def _monitor_resources(state: Dict[str, Any], conn: sqlite3.Connection, *, now: int) -> Dict[str, Any]:
-    summary = {"backend_issues": 0, "resource_pressure": 0, "queue_pressure": 0}
+    summary = {
+        "backend_issues": 0,
+        "resource_pressure": 0,
+        "queue_pressure": 0,
+        "docker_image_prunes": 0,
+    }
     previous_backend = state.get("backend_issues") if isinstance(state.get("backend_issues"), dict) else {}
     current_backend: Dict[str, Any] = {}
     previous_resource = state.get("resource_issues") if isinstance(state.get("resource_issues"), dict) else {}
@@ -1264,6 +1302,7 @@ async def _monitor_resources(state: Dict[str, Any], conn: sqlite3.Connection, *,
         if not host_name:
             continue
         issues: List[str] = []
+        disk_pressure: List[Dict[str, Any]] = []
         memory = host.get("memory") if isinstance(host.get("memory"), dict) else {}
         total_mb = float(memory.get("total_mb") or 0)
         available_mb = float(memory.get("available_mb") or 0)
@@ -1279,10 +1318,36 @@ async def _monitor_resources(state: Dict[str, Any], conn: sqlite3.Connection, *,
             gpu_pct = (gpu_used / gpu_total) if gpu_total > 0 else 0.0
             if gpu_total > 0 and gpu_pct >= threshold:
                 issues.append(f"gpu_{gpu.get('index')}_{int(round(gpu_pct * 100))}pct")
+        filesystems = host.get("filesystems") if isinstance(host.get("filesystems"), list) else []
+        for filesystem in filesystems:
+            if not isinstance(filesystem, dict):
+                continue
+            fs_total_mb = float(filesystem.get("total_mb") or 0)
+            fs_used_mb = float(filesystem.get("used_mb") or 0)
+            used_pct_value = float(filesystem.get("used_pct") or 0)
+            disk_pct = (
+                used_pct_value / 100.0
+                if used_pct_value > 0
+                else ((fs_used_mb / fs_total_mb) if fs_total_mb > 0 else 0.0)
+            )
+            if fs_total_mb <= 0 or disk_pct < threshold:
+                continue
+            mount = str(filesystem.get("mount") or "unknown")
+            mount_label = "root" if mount == "/" else mount.strip("/").replace("/", "_") or "root"
+            issues.append(f"disk_{mount_label}_{int(round(disk_pct * 100))}pct")
+            disk_pressure.append(filesystem)
         if not issues:
             continue
         fingerprint = _fingerprint(issues)
-        current_resource[host_name] = {"fingerprint": fingerprint}
+        previous_host_issue = (
+            previous_resource.get(host_name)
+            if isinstance(previous_resource.get(host_name), dict)
+            else {}
+        )
+        current_resource[host_name] = {
+            "fingerprint": fingerprint,
+            "last_prune_at": int(previous_host_issue.get("last_prune_at") or 0),
+        }
         if previous_resource.get(host_name, {}).get("fingerprint") != fingerprint:
             _record_event(
                 conn,
@@ -1297,12 +1362,69 @@ async def _monitor_resources(state: Dict[str, Any], conn: sqlite3.Connection, *,
                 reasoning=(
                     f"Host: {host_name}\n"
                     f"RAM used: {int(round(used_pct * 100)) if total_mb > 0 else 0}%\n"
-                    f"GPU pressure flags: {', '.join(issues) or 'none'}"
+                    f"Pressure flags: {', '.join(issues) or 'none'}"
                 ),
                 dedupe_key=f"host:{host_name}:pressure",
                 fingerprint=fingerprint,
                 details={"host": host},
             )
+        last_prune_at = int(previous_host_issue.get("last_prune_at") or 0)
+        prune_due = (now - last_prune_at) >= _docker_image_prune_cooldown_sec()
+        if (
+            disk_pressure
+            and _docker_image_prune_enabled()
+            and host_name in _docker_image_prune_hosts()
+            and prune_due
+        ):
+            current_resource[host_name]["last_prune_at"] = now
+            try:
+                prune_result = await call_lifecycle_manager(
+                    "POST",
+                    "/v1/lifecycle/hosts/docker/image-prune",
+                    json_body={"host": host_name, "confirmed": True},
+                    timeout=620.0,
+                )
+                _record_event(
+                    conn,
+                    ts=now,
+                    level="info",
+                    category="resources",
+                    event_type="docker_image_prune",
+                    subject_type="host",
+                    subject_id=host_name,
+                    title=f"Unused Docker images pruned on {host_name}",
+                    summary=f"Reclaimed {prune_result.get('reclaimed') or 'an unreported amount'}.",
+                    reasoning=(
+                        "Sentinel detected filesystem pressure at or above the configured "
+                        "threshold and removed only Docker images unused by every container."
+                    ),
+                    dedupe_key=f"host:{host_name}:docker_image_prune",
+                    fingerprint=_fingerprint(prune_result),
+                    details={
+                        "filesystems": disk_pressure,
+                        "result": prune_result,
+                    },
+                )
+                summary["docker_image_prunes"] += 1
+            except Exception as exc:
+                _record_event(
+                    conn,
+                    ts=now,
+                    level="error",
+                    category="resources",
+                    event_type="docker_image_prune_failed",
+                    subject_type="host",
+                    subject_id=host_name,
+                    title=f"Docker image cleanup failed on {host_name}",
+                    summary=status_exception_text(exc),
+                    reasoning=(
+                        "Sentinel detected filesystem pressure, but the bounded unused-image "
+                        "cleanup action did not complete."
+                    ),
+                    dedupe_key=f"host:{host_name}:docker_image_prune_failed",
+                    fingerprint=_fingerprint(status_exception_text(exc)),
+                    details={"filesystems": disk_pressure},
+                )
         summary["resource_pressure"] += 1
 
     for host_name, previous in previous_resource.items():

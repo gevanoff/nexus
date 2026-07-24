@@ -33,6 +33,93 @@ def test_docker_probe_uses_canonical_colima_context() -> None:
     assert "/ai-data/var/lib/colima" not in command
 
 
+def test_filesystem_probe_is_parsed_into_host_status() -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    host = module.HostPolicy(
+        name="stackrot",
+        ssh_target="ai@stackrot",
+        ssh_connect_target="",
+        ssh_port=22,
+        repo_dir="",
+        env_file="",
+        platform="linux",
+        resource_kind="linux_nvidia",
+    )
+
+    manager._parse_linux_probe(
+        host,
+        "\n".join(
+            [
+                "__OS__",
+                "name=Linux",
+                "__MEM__",
+                "1000 500 500",
+                "__FILESYSTEMS__",
+                "mount=/\tfilesystem=/dev/nvme0n1p2\ttotal_kb=102400\tused_kb=92160\tavailable_kb=10240\tused_pct=90",
+                "__DOCKER__",
+            ]
+        ),
+    )
+
+    assert host.filesystems == [
+        {
+            "mount": "/",
+            "filesystem": "/dev/nvme0n1p2",
+            "total_mb": 100,
+            "used_mb": 90,
+            "available_mb": 10,
+            "used_pct": 90,
+        }
+    ]
+
+
+def test_unused_docker_image_prune_is_bounded_and_requires_confirmation() -> None:
+    module = _load_lifecycle_main()
+    manager = object.__new__(module.LifecycleManager)
+    host = module.HostPolicy(
+        name="stackrot",
+        ssh_target="ai@stackrot",
+        ssh_connect_target="",
+        ssh_port=22,
+        repo_dir="",
+        env_file="",
+        platform="linux",
+        resource_kind="linux_nvidia",
+    )
+    manager.hosts = {"stackrot": host}
+    calls = []
+
+    async def fake_ssh(target, command, *, timeout=30):
+        calls.append((target, command, timeout))
+        return "Total reclaimed space: 12.5GB\n"
+
+    async def fake_refresh():
+        return {}
+
+    manager._ssh = fake_ssh
+    manager.refresh = fake_refresh
+
+    unconfirmed = asyncio.run(
+        manager.prune_unused_docker_images(
+            module.HostDockerImagePruneRequest(host="stackrot")
+        )
+    )
+    assert unconfirmed["decision"] == "requires_confirmation"
+    assert calls == []
+
+    result = asyncio.run(
+        manager.prune_unused_docker_images(
+            module.HostDockerImagePruneRequest(host="stackrot", confirmed=True)
+        )
+    )
+    assert result["reclaimed"] == "12.5GB"
+    assert len(calls) == 1
+    assert "image prune -a -f" in calls[0][1]
+    assert "volume" not in calls[0][1]
+    assert calls[0][2] == 600
+
+
 def test_component_container_match_allows_compose_suffixes() -> None:
     module = _load_lifecycle_main()
 
