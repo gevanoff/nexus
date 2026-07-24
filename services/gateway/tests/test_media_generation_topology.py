@@ -66,10 +66,17 @@ def test_compose_services_pin_stackrot_media_to_physical_gpu_one():
     hunyuan = (REPO_ROOT / "docker-compose.hunyuan-video.yml").read_text(encoding="utf-8")
     ace = (REPO_ROOT / "docker-compose.ace-step.yml").read_text(encoding="utf-8")
     ltx = (REPO_ROOT / "docker-compose.ltx-video.yml").read_text(encoding="utf-8")
+    vllm_fast = (REPO_ROOT / "docker-compose.vllm-fast.yml").read_text(encoding="utf-8")
 
     assert "HUNYUAN_VIDEO_CUDA_VISIBLE_DEVICES:-1" in hunyuan
     assert "ACE_STEP_CUDA_VISIBLE_DEVICES:-1" in ace
     assert "LTX_CUDA_VISIBLE_DEVICES:-0" in ltx
+    assert 'device_ids: ["${HUNYUAN_VIDEO_CUDA_VISIBLE_DEVICES:-1}"]' in hunyuan
+    assert 'device_ids: ["${ACE_STEP_CUDA_VISIBLE_DEVICES:-1}"]' in ace
+    assert 'device_ids: ["${VLLM_FAST_CUDA_VISIBLE_DEVICES:-0}"]' in vllm_fast
+    assert "gpus: all" not in hunyuan
+    assert "gpus: all" not in ace
+    assert "gpus: all" not in vllm_fast
     assert "NEXUS_SERVICE_BACKEND_CLASS=hunyuan_video" in hunyuan
     assert "NEXUS_SERVICE_BACKEND_CLASS=ace_step_music" in ace
     assert "NEXUS_SERVICE_BACKEND_CLASS=ltx_video" in ltx

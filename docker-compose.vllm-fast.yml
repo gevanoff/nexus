@@ -2,15 +2,20 @@ services:
   vllm-fast:
     image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.10.2}
     container_name: nexus-vllm-fast
-    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${VLLM_FAST_CUDA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
     ports:
       - "${VLLM_FAST_PORT:-8001}:8000"
     environment:
       - HF_HOME=${HF_HOME:-/var/lib/huggingface}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - CUDA_DEVICE_ORDER=PCI_BUS_ID
-      - NVIDIA_VISIBLE_DEVICES=${VLLM_FAST_CUDA_VISIBLE_DEVICES:-all}
-      - CUDA_VISIBLE_DEVICES=${VLLM_FAST_CUDA_VISIBLE_DEVICES:-all}
+      - CUDA_VISIBLE_DEVICES=0
       - NEXUS_VLLM_MODEL=${VLLM_MODEL_FAST:-cyankiwi/Devstral-Small-2507-AWQ-4bit}
       - NEXUS_VLLM_SERVED_MODEL_NAME=${VLLM_FAST_SERVED_MODEL_NAME:-${VLLM_MODEL_FAST:-cyankiwi/Devstral-Small-2507-AWQ-4bit}}
       - NEXUS_VLLM_TOKENIZER=${VLLM_FAST_TOKENIZER:-${VLLM_MODEL_FAST:-cyankiwi/Devstral-Small-2507-AWQ-4bit}}

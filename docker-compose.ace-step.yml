@@ -29,13 +29,18 @@ services:
       - HUGGINGFACE_HUB_CACHE=${ACE_STEP_HF_HOME:-${HF_HOME:-/data/huggingface}}/hub
       - TRANSFORMERS_CACHE=${ACE_STEP_HF_HOME:-${HF_HOME:-/data/huggingface}}/transformers
       - XDG_CACHE_HOME=/data/cache
-      - NVIDIA_VISIBLE_DEVICES=${ACE_STEP_CUDA_VISIBLE_DEVICES:-1}
       - CUDA_VISIBLE_DEVICES=0
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
       - ${ACE_STEP_DATA_BIND_SOURCE:-${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/ace-step}:/data
       - ${HF_HOME_BIND_SOURCE:-/data/huggingface}:${ACE_STEP_HF_HOME:-${HF_HOME:-/data/huggingface}}
-    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${ACE_STEP_CUDA_VISIBLE_DEVICES:-1}"]
+              capabilities: [gpu]
     networks:
       - nexus
     restart: unless-stopped
