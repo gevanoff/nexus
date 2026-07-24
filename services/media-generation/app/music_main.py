@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -133,6 +133,14 @@ def _walk(value: Any) -> Iterable[Any]:
     elif isinstance(value, list):
         for item in value:
             yield from _walk(item)
+    elif isinstance(value, str):
+        serialized = value.strip()
+        if serialized.startswith(("{", "[")):
+            try:
+                nested = json.loads(serialized)
+            except json.JSONDecodeError:
+                return
+            yield from _walk(nested)
 
 
 def _first_task_id(payload: Any) -> str:
@@ -149,14 +157,32 @@ def _first_task_id(payload: Any) -> str:
 def _first_audio_reference(payload: Any) -> str:
     extensions = (".wav", ".flac", ".mp3", ".ogg", ".m4a", ".aac")
     preferred_keys = ("audio_path", "output_path", "file_path", "path", "audio_url", "url")
+
+    def audio_reference(value: Any) -> str:
+        if not isinstance(value, str):
+            return ""
+        candidate = value.strip()
+        if not candidate:
+            return ""
+        parsed = urlsplit(candidate)
+        if parsed.path.lower().endswith(extensions):
+            return candidate
+        if parsed.path.rstrip("/").lower() == "/v1/audio":
+            artifact_path = (parse_qs(parsed.query).get("path") or [""])[0].strip()
+            if artifact_path.lower().endswith(extensions):
+                return artifact_path
+        return ""
+
     for item in _walk(payload):
         if isinstance(item, dict):
             for key in preferred_keys:
-                value = item.get(key)
-                if isinstance(value, str) and value.lower().split("?", 1)[0].endswith(extensions):
-                    return value
-        elif isinstance(item, str) and item.lower().split("?", 1)[0].endswith(extensions):
-            return item
+                reference = audio_reference(item.get(key))
+                if reference:
+                    return reference
+        elif isinstance(item, str):
+            reference = audio_reference(item)
+            if reference:
+                return reference
     return ""
 
 
