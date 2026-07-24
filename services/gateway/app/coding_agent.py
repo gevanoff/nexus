@@ -12,6 +12,14 @@ from fastapi import HTTPException
 from app.backends import backend_hostname, get_admission_controller, get_registry, llm_backends
 from app import coding_model_policy
 from app import coding_workspace as cw
+from app.coding_runtime_guardrails import (
+    ProgressDecision,
+    ProgressObservation,
+    ProgressState,
+    evaluate_cycle_progress,
+    progress_state_from_dict,
+    progress_state_to_dict,
+)
 from app import user_llm, user_store
 from app.config import S, logger
 from app.health_checker import get_health_checker
@@ -25,7 +33,16 @@ from app.upstreams import call_backend_chat
 
 
 class _CodingAgentPaused(Exception):
-    pass
+    def __init__(
+        self,
+        summary: str,
+        *,
+        reason_code: str = "manual_or_unspecified_pause",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(summary)
+        self.reason_code = reason_code
+        self.details = dict(details or {})
 
 
 _RUNNING: Dict[str, asyncio.Task[Any]] = {}
@@ -66,6 +83,7 @@ def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None
             "agent_pause_requested": False,
             "agent_summary": summary,
             "agent_error": "",
+            "agent_stop_reason_code": "gateway_restart",
             "agent_finished_at": finished_at,
             "agent_last_event_at": now_unix(),
         })
@@ -75,6 +93,7 @@ def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None
         task_id,
         {
             "type": "stale_agent_recovered",
+            "stop_reason_code": "gateway_restart",
             "previous_status": previous_status,
             "summary": summary,
         },
@@ -89,6 +108,7 @@ def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None
                 "finished_at": finished_at,
                 "cycle": int(task.get("agent_cycle") or 0),
                 "summary": summary,
+                "stop_reason_code": "gateway_restart",
             },
         )
     return cw.load_task(task_id)
@@ -313,6 +333,11 @@ def finalize_successful_run(
         if result["finalization_status"] == "running":
             result["finalization_status"] = "failed_finalization"
         result["finalization_error"] = f"{type(exc).__name__}: {exc}"
+    result["stop_reason_code"] = (
+        "run_completed"
+        if result["finalization_status"] == "completed"
+        else str(result["finalization_status"] or "failed_finalization")
+    )
     result["finished_at"] = time.time()
     cw.mutate_task(task_id, lambda latest: latest.update({"mission": contract, "terminal_result": result, **result}))
     return result
@@ -1802,6 +1827,98 @@ def _mutate_task(task_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
     return _task_transaction(task_id, lambda task: task.update(fields))
 
 
+def _progress_observation(
+    task_id: str,
+    *,
+    cycle: int,
+    validation_revision: int,
+    diff_review_revision: int,
+    finish_state: str,
+    workspace_fingerprint: Optional[str] = None,
+) -> ProgressObservation:
+    task = cw.load_task(task_id)
+    plan = task.get("project_plan") if isinstance(task.get("project_plan"), dict) else {}
+    return ProgressObservation(
+        cycle=cycle,
+        workspace_fingerprint=workspace_fingerprint or cw.workspace_progress_fingerprint(task_id),
+        plan_revision=int(plan.get("revision") or 0),
+        validation_revision=max(0, int(validation_revision)),
+        diff_review_revision=max(0, int(diff_review_revision)),
+        finish_state=str(finish_state or "running"),
+        guidance_revision=float(task.get("last_guidance_at") or 0),
+    )
+
+
+def _initialize_cycle_progress(
+    task_id: str,
+    run_id: str,
+    observation: ProgressObservation,
+) -> ProgressState:
+    result: Dict[str, ProgressState] = {}
+
+    def apply(task: Dict[str, Any]) -> None:
+        existing = progress_state_from_dict(task.get("agent_progress_state"))
+        if existing.observation is not None:
+            result["state"] = existing
+            return
+        state = ProgressState(observation=observation, stagnant_cycles=0)
+        task["agent_progress_state"] = progress_state_to_dict(state)
+        task.setdefault(
+            "agent_last_successful_validation_fingerprint",
+            observation.workspace_fingerprint,
+        )
+        task.setdefault(
+            "agent_last_diff_review_fingerprint",
+            observation.workspace_fingerprint,
+        )
+        runs = task.get("agent_runs") if isinstance(task.get("agent_runs"), list) else []
+        for run in reversed(runs):
+            if isinstance(run, dict) and str(run.get("run_id") or "") == run_id:
+                run["cycle"] = observation.cycle
+                run["stagnant_cycles"] = 0
+                break
+        result["state"] = state
+
+    _task_transaction(task_id, apply)
+    return result["state"]
+
+
+def _record_cycle_progress(
+    task_id: str,
+    run_id: str,
+    observation: ProgressObservation,
+    *,
+    max_stagnant_cycles: int,
+    validated_fingerprint: str = "",
+    reviewed_fingerprint: str = "",
+) -> ProgressDecision:
+    result: Dict[str, ProgressDecision] = {}
+
+    def apply(task: Dict[str, Any]) -> None:
+        previous = progress_state_from_dict(task.get("agent_progress_state"))
+        decision = evaluate_cycle_progress(
+            previous,
+            observation,
+            max_stagnant_cycles=max_stagnant_cycles,
+        )
+        task["agent_progress_state"] = progress_state_to_dict(decision.state)
+        task["agent_cycle"] = observation.cycle
+        if validated_fingerprint:
+            task["agent_last_successful_validation_fingerprint"] = validated_fingerprint
+        if reviewed_fingerprint:
+            task["agent_last_diff_review_fingerprint"] = reviewed_fingerprint
+        runs = task.get("agent_runs") if isinstance(task.get("agent_runs"), list) else []
+        for run in reversed(runs):
+            if isinstance(run, dict) and str(run.get("run_id") or "") == run_id:
+                run["cycle"] = observation.cycle
+                run["stagnant_cycles"] = decision.state.stagnant_cycles
+                break
+        result["decision"] = decision
+
+    _task_transaction(task_id, apply)
+    return result["decision"]
+
+
 def _append_event(task_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
 
@@ -2271,6 +2388,7 @@ async def start_agent_run(
         "continuation": bool(previous_run_id or previous_events),
         "summary": "",
         "error": "",
+        "stop_reason_code": "",
     }
     idle_only_policy = _idle_only_huge_model_policy(model)
     if idle_only_policy:
@@ -2296,6 +2414,7 @@ async def start_agent_run(
                 "agent_last_event_at": now_unix(),
                 "agent_summary": summary,
                 "agent_error": "",
+                "agent_stop_reason_code": "idle_waiting",
                 "agent_previous_run_id": previous_run_id,
                 "agent_previous_status": previous_status,
                 "agent_previous_summary": previous_summary,
@@ -2320,6 +2439,7 @@ async def start_agent_run(
                 "active_huge_model": idle_only_policy.get("active_huge_model") or "",
                 "recommended_model": idle_only_policy.get("recommended_model") or "coder",
                 "summary": summary,
+                "stop_reason_code": "idle_waiting",
                 "actor": actor or "",
             },
         )
@@ -2327,7 +2447,12 @@ async def start_agent_run(
             _update_run_record,
             task_id,
             run_id,
-            {"status": "idle_waiting", "finished_at": now, "summary": summary},
+            {
+                "status": "idle_waiting",
+                "finished_at": now,
+                "summary": summary,
+                "stop_reason_code": "idle_waiting",
+            },
         )
         fresh = await asyncio.to_thread(cw.load_task, task_id)
         return cw.public_task(fresh)
@@ -2351,6 +2476,7 @@ async def start_agent_run(
             "agent_last_event_at": now_unix(),
             "agent_summary": "",
             "agent_error": "",
+            "agent_stop_reason_code": "",
             "agent_previous_run_id": previous_run_id,
             "agent_previous_status": previous_status,
             "agent_previous_summary": previous_summary,
@@ -2575,7 +2701,6 @@ async def _run_agent(
         diff_result_after_edit: Optional[Dict[str, Any]] = None
         validation_argv_after_edit: Optional[List[str]] = None
         repeated_state_reads = 0
-        no_progress_cycles = 0
         last_state_read = ""
         active_mission = _mission_for_task(task)
         progress_policy = active_mission.get("budget_policy") or {}
@@ -2584,6 +2709,24 @@ async def _run_agent(
         max_repeated_same_file_reads = int(progress_policy.get("max_repeated_same_file_reads") or 4)
         max_no_progress_cycles = int(progress_policy.get("max_no_progress_cycles") or 8)
         context_reset_chars = _context_reset_chars(context_policy.get("context_reset_chars"))
+        persisted_progress = progress_state_from_dict(task.get("agent_progress_state"))
+        prior_observation = persisted_progress.observation
+        validation_revision = prior_observation.validation_revision if prior_observation is not None else 0
+        diff_review_revision = prior_observation.diff_review_revision if prior_observation is not None else 0
+        baseline = await asyncio.to_thread(
+            _progress_observation,
+            task_id,
+            cycle=0,
+            validation_revision=validation_revision,
+            diff_review_revision=diff_review_revision,
+            finish_state="running",
+        )
+        await asyncio.to_thread(
+            _initialize_cycle_progress,
+            task_id,
+            run_id,
+            baseline,
+        )
         while True:
             elapsed_sec = time.monotonic() - t0
             if cycle >= max_cycles or elapsed_sec >= max_runtime_sec:
@@ -2603,10 +2746,15 @@ async def _run_agent(
                         "max_cycles": max_cycles,
                         "max_runtime_sec": max_runtime_sec,
                         "reason": reason.replace(" ", "_"),
+                        "reason_code": "cycle_budget" if cycle >= max_cycles else "wall_clock_budget",
                         "summary": budget_summary,
                     },
                 )
-                raise _CodingAgentPaused(budget_summary)
+                raise _CodingAgentPaused(
+                    budget_summary,
+                    reason_code="cycle_budget" if cycle >= max_cycles else "wall_clock_budget",
+                    details={"cycle": cycle, "elapsed_runtime_sec": int(elapsed_sec)},
+                )
             cycle += 1
             _raise_if_paused(task_id)
             new_guidance, seen_guidance_count = await asyncio.to_thread(_new_guidance_since, task_id, seen_guidance_count)
@@ -2842,6 +2990,8 @@ async def _run_agent(
             no_tool_cycles = 0
 
             stop_after_tools = False
+            cycle_validation_succeeded = False
+            cycle_diff_reviewed = False
             for tc in tool_calls:
                 _raise_if_paused(task_id)
                 fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
@@ -2869,17 +3019,12 @@ async def _run_agent(
                 else:
                     repeated_state_reads = 0
                     last_state_read = ""
-                no_progress_cycles = no_progress_cycles + 1 if state_read else 0
                 repeated_limit = max_repeated_same_file_reads if state_read.startswith("coding_read_file") else max_repeated_state_reads
                 progress_decision = _repeated_state_read_decision(repeated_state_reads, repeated_limit)
                 if progress_decision == "guide":
                     guidance = "The same repository state read is repeating without progress. Trust the controller snapshot and take the next edit, validation, review, or finish action."
                     messages.append(ChatMessage(role="user", content=guidance))
                     await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_guidance", "cycle": cycle, "summary": guidance, "signature": state_read})
-                elif no_progress_cycles == max_no_progress_cycles:
-                    guidance = "The run has repeatedly inspected state without a meaningful action. Take a concrete edit, validation, plan update, or finish action now."
-                    messages.append(ChatMessage(role="user", content=guidance))
-                    await asyncio.to_thread(_append_event, task_id, {"type": "no_progress_guidance", "cycle": cycle, "summary": guidance, "count": no_progress_cycles})
 
                 if name == "coding_finish":
                     candidate_success = bool(result.get("success", args.get("success", True)))
@@ -2932,6 +3077,8 @@ async def _run_agent(
                     )
                 elif _tool_result_modified_workspace(name, args, result):
                     workspace_modified = True
+                    cycle_validation_succeeded = False
+                    cycle_diff_reviewed = False
                     diff_reviewed_after_edit = False
                     validation_run_after_edit = False
                     validation_ok_after_edit = None
@@ -2941,6 +3088,7 @@ async def _run_agent(
                 elif name == "coding_git_diff" and bool(result.get("ok")):
                     diff_reviewed_after_edit = True
                     diff_result_after_edit = result
+                    cycle_diff_reviewed = True
                 elif name == "coding_run_command" and _is_validation_command(args.get("argv")):
                     validation_argv_after_edit = [str(item) for item in (args.get("argv") or []) if str(item)]
                     if _validation_command_failed_due_to_missing_tool(result):
@@ -2949,6 +3097,8 @@ async def _run_agent(
                     else:
                         validation_run_after_edit = True
                         validation_ok_after_edit = bool(result.get("ok"))
+                        if validation_ok_after_edit:
+                            cycle_validation_succeeded = True
                         if not validation_ok_after_edit:
                             validation_failed_after_edit = True
 
@@ -2991,6 +3141,76 @@ async def _run_agent(
                             "result": _event_result(checkpoint),
                         },
                     )
+
+            current_fingerprint = await asyncio.to_thread(
+                cw.workspace_progress_fingerprint,
+                task_id,
+            )
+            task_after_cycle = await asyncio.to_thread(cw.load_task, task_id)
+            validated_fingerprint = ""
+            reviewed_fingerprint = ""
+            if (
+                cycle_validation_succeeded
+                and current_fingerprint
+                != str(task_after_cycle.get("agent_last_successful_validation_fingerprint") or "")
+            ):
+                validation_revision += 1
+                validated_fingerprint = current_fingerprint
+            if (
+                cycle_diff_reviewed
+                and current_fingerprint
+                != str(task_after_cycle.get("agent_last_diff_review_fingerprint") or "")
+            ):
+                diff_review_revision += 1
+                reviewed_fingerprint = current_fingerprint
+            observation = await asyncio.to_thread(
+                _progress_observation,
+                task_id,
+                cycle=cycle,
+                validation_revision=validation_revision,
+                diff_review_revision=diff_review_revision,
+                finish_state="finished" if finish_called else "running",
+                workspace_fingerprint=current_fingerprint,
+            )
+            decision = await asyncio.to_thread(
+                _record_cycle_progress,
+                task_id,
+                run_id,
+                observation,
+                max_stagnant_cycles=max_no_progress_cycles,
+                validated_fingerprint=validated_fingerprint,
+                reviewed_fingerprint=reviewed_fingerprint,
+            )
+            await asyncio.to_thread(
+                _append_event,
+                task_id,
+                {
+                    "type": "cycle_progress",
+                    "cycle": cycle,
+                    "progressed": decision.progressed,
+                    "stagnant_cycles": decision.state.stagnant_cycles,
+                },
+            )
+            if decision.pause:
+                await asyncio.to_thread(
+                    _append_event,
+                    task_id,
+                    {
+                        "type": "no_progress_limit",
+                        "cycle": cycle,
+                        "reason_code": decision.reason_code,
+                        "summary": decision.summary,
+                        "stagnant_cycles": decision.state.stagnant_cycles,
+                    },
+                )
+                raise _CodingAgentPaused(
+                    decision.summary,
+                    reason_code=decision.reason_code,
+                    details={
+                        "cycle": cycle,
+                        "stagnant_cycles": decision.state.stagnant_cycles,
+                    },
+                )
 
             if stop_after_tools:
                 break
@@ -3049,6 +3269,13 @@ async def _run_agent(
         latest_after_finalization = await asyncio.to_thread(cw.load_task, task_id)
         finalization_status = str(latest_after_finalization.get("finalization_status") or "")
         final_status = "completed" if finish_success else (finalization_status or "failed")
+        final_stop_reason_code = (
+            "run_completed"
+            if finish_success
+            else finalization_status
+            if finalization_status in {"failed_finalization", "failed_publish"}
+            else "agent_failed"
+        )
         await asyncio.to_thread(
             _mutate_task,
             task_id,
@@ -3056,6 +3283,7 @@ async def _run_agent(
                 "agent_status": final_status,
                 "agent_summary": finish_summary,
                 "agent_error": "" if finish_success else finish_summary,
+                "agent_stop_reason_code": final_stop_reason_code,
                 "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
             },
@@ -3072,6 +3300,7 @@ async def _run_agent(
                 "upstream_model": upstream_model,
                 "summary": finish_summary,
                 "error": "" if finish_success else finish_summary,
+                "stop_reason_code": final_stop_reason_code,
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
                 "commit": str(latest_task.get("last_commit") or ""),
             },
@@ -3082,6 +3311,7 @@ async def _run_agent(
             {
                 "type": "completed" if finish_success else "failed",
                 "ok": finish_success,
+                "stop_reason_code": final_stop_reason_code,
                 "summary": finish_summary,
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
             },
@@ -3091,6 +3321,7 @@ async def _run_agent(
         latest_cancelled_task = await asyncio.to_thread(cw.load_task, task_id)
         cancelled_status = _cancelled_run_status(latest_cancelled_task)
         user_requested = cancelled_status == "paused"
+        cancelled_reason_code = "manual_or_unspecified_pause" if user_requested else "gateway_stopped"
         cancelled_summary = (
             "Coding run was paused by request. Start another run on this workspace to resume from the latest files and checkpoint."
             if user_requested
@@ -3103,6 +3334,7 @@ async def _run_agent(
                 "agent_status": cancelled_status,
                 "agent_error": "",
                 "agent_summary": cancelled_summary,
+                "agent_stop_reason_code": cancelled_reason_code,
                 "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
                 "agent_auto_resume_pending": not user_requested,
@@ -3113,7 +3345,11 @@ async def _run_agent(
         await asyncio.to_thread(
             _append_event,
             task_id,
-            {"type": "paused" if user_requested else "interrupted", "summary": cancelled_summary},
+            {
+                "type": "paused" if user_requested else "interrupted",
+                "summary": cancelled_summary,
+                "stop_reason_code": cancelled_reason_code,
+            },
         )
         await asyncio.to_thread(
             _update_run_record,
@@ -3126,6 +3362,7 @@ async def _run_agent(
                 "backend": backend,
                 "upstream_model": upstream_model,
                 "summary": cancelled_summary,
+                "stop_reason_code": cancelled_reason_code,
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
             },
         )
@@ -3139,11 +3376,21 @@ async def _run_agent(
                 "agent_status": "paused",
                 "agent_error": "",
                 "agent_summary": str(exc),
+                "agent_stop_reason_code": exc.reason_code,
                 "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
             },
         )
-        await asyncio.to_thread(_append_event, task_id, {"type": "paused", "summary": str(exc)})
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "paused",
+                "summary": str(exc),
+                "stop_reason_code": exc.reason_code,
+                "details": exc.details,
+            },
+        )
         await asyncio.to_thread(
             _update_run_record,
             task_id,
@@ -3155,6 +3402,7 @@ async def _run_agent(
                 "backend": backend,
                 "upstream_model": upstream_model,
                 "summary": str(exc),
+                "stop_reason_code": exc.reason_code,
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
             },
         )
@@ -3169,6 +3417,7 @@ async def _run_agent(
                 "agent_status": "failed",
                 "agent_error": str(error),
                 "agent_summary": "",
+                "agent_stop_reason_code": "agent_failed",
                 "agent_finished_at": finished_at,
                 "agent_last_event_at": now_unix(),
             },
@@ -3178,6 +3427,7 @@ async def _run_agent(
             task_id,
             {
                 "type": "failed",
+                "stop_reason_code": "agent_failed",
                 "error": _clip_text(str(error), 4000),
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
             },
@@ -3193,6 +3443,7 @@ async def _run_agent(
                 "backend": backend,
                 "upstream_model": upstream_model,
                 "error": _clip_text(str(error), 4_000),
+                "stop_reason_code": "agent_failed",
                 "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
             },
         )

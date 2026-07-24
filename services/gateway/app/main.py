@@ -116,13 +116,6 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         logger.warning("startup: failed to init user db (%s: %s)", type(e).__name__, e)
 
-    try:
-        from app.coding_runtime_guardrails import install_coding_runtime_guardrails
-
-        install_coding_runtime_guardrails()
-    except Exception as e:
-        logger.warning("startup: coding runtime guardrails unavailable (%s: %s)", type(e).__name__, e)
-
     interrupted_task_ids: list[str] = []
     try:
         from app import coding_workspace as coding_workspace_store

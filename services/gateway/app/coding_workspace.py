@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,11 @@ from fastapi import HTTPException
 from app.config import S, logger
 from app import coding_model_policy
 from app import model_integration_workspace as miw
+from app.coding_runtime_guardrails import (
+    archive_stop_diagnostics,
+    archive_stop_finding,
+    redacted_archive_run,
+)
 
 
 SCHEMA = "nexus_coding_task.v1"
@@ -481,7 +487,8 @@ def _archive_heuristic_findings(task: Dict[str, Any], manifest: Dict[str, Any], 
     commands = task.get("commands") if isinstance(task.get("commands"), list) else []
     files = diff_snapshot.get("files") if isinstance(diff_snapshot.get("files"), list) else []
     added_paths = {str(item.get("path") or "") for item in files if isinstance(item, dict) and str(item.get("status") or "").upper() == "A"}
-    findings: List[Dict[str, Any]] = []
+    diagnostics = archive_stop_diagnostics(task, manifest, redact=_redact_text)
+    findings: List[Dict[str, Any]] = [archive_stop_finding(diagnostics)]
 
     placeholder_lines = [line.strip() for line in added_lines if any(marker in line.lower() for marker in ("add logic to", "placeholder", "todo", "stub", "no tests yet"))]
     if placeholder_lines:
@@ -950,6 +957,7 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
             ),
             "previous_status": status,
             "run_id": task.get("agent_run_id") or "",
+            "stop_reason_code": "gateway_restart",
         }
         events.append(ev)
         task["agent_events"] = events[-max(20, min(int(getattr(S, "CODING_AGENT_MAX_EVENTS", 1000) or 1000), 1000)) :]
@@ -958,6 +966,7 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
         task["agent_auto_resume_pending"] = True
         task["agent_summary"] = ev["summary"]
         task["agent_error"] = ev["summary"]
+        task["agent_stop_reason_code"] = "gateway_restart"
         task["agent_finished_at"] = _now()
         task["agent_last_event_at"] = ev["ts"]
         runs = task.get("agent_runs")
@@ -972,6 +981,7 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
                             "cycle": int(task.get("agent_cycle") or 0),
                             "summary": ev["summary"],
                             "error": ev["summary"],
+                            "stop_reason_code": "gateway_restart",
                         }
                     )
                     break
@@ -995,6 +1005,21 @@ def _redact_text(value: str, *, extra_tokens: Optional[Sequence[str]] = None) ->
     for token in tokens:
         if token:
             out = out.replace(token, "***")
+    out = re.sub(
+        r"(?i)(\bauthorization\s*:\s*bearer\s+)[^\s,;]+",
+        r"\1***",
+        out,
+    )
+    out = re.sub(
+        r"(?i)(\b(?:access_token|api_key|password|secret|token)\s*[=:]\s*)[^\s,;]+",
+        r"\1***",
+        out,
+    )
+    out = re.sub(
+        r"\b(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+|hf_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{12,})\b",
+        "***",
+        out,
+    )
     return out
 
 
@@ -1823,6 +1848,27 @@ def git_head(task_id: str) -> Dict[str, Any]:
     repo = _repo_path(task)
     result = _run_process(["git", "rev-parse", "HEAD"], cwd=repo)
     return {"ok": bool(result.get("ok")), "commit": str(result.get("stdout") or "").strip(), "raw": result}
+
+
+def workspace_progress_fingerprint(task_id: str) -> str:
+    """Hash controller-owned repository state without mutating task history."""
+    task = load_task(task_id)
+    repo = _repo_path(task)
+    head = _run_process(["git", "rev-parse", "HEAD"], cwd=repo)
+    status = _run_process(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=repo,
+    )
+    diff = _run_process(["git", "diff", "--binary", "HEAD", "--"], cwd=repo)
+    digest = hashlib.sha256()
+    for result in (head, status, diff):
+        digest.update(str(result.get("returncode")).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(result.get("stdout") or "").encode("utf-8", errors="replace"))
+        digest.update(b"\0")
+        digest.update(str(bool(result.get("stdout_truncated"))).encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def git_change_summary(task_id: str) -> Dict[str, Any]:
@@ -3096,6 +3142,7 @@ def inspect_archived_task(archive_id: str, *, max_diff_chars: int = 12000) -> Di
     raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     manifest = _normalize_archive_manifest(raw_manifest if isinstance(raw_manifest, dict) else {}, manifest_path=manifest_path, task=task)
     diff_snapshot = _archive_diff_snapshot(task, manifest, max_diff_chars=max_diff_chars)
+    stop_diagnostics = archive_stop_diagnostics(task, manifest, redact=_redact_text)
     return {
         "ok": True,
         "archive": archive,
@@ -3111,6 +3158,8 @@ def inspect_archived_task(archive_id: str, *, max_diff_chars: int = 12000) -> Di
             "commands": task.get("commands")[-12:] if isinstance(task.get("commands"), list) else [],
             "agent_events": task.get("agent_events")[-20:] if isinstance(task.get("agent_events"), list) else [],
         },
+        "terminal_run": redacted_archive_run(task, manifest, redact=_redact_text),
+        "stop_diagnostics": stop_diagnostics,
         "diff": diff_snapshot,
         "heuristics": _archive_heuristic_findings(task, manifest, diff_snapshot),
     }
