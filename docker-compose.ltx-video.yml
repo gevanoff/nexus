@@ -19,10 +19,10 @@ services:
       - MEDIA_UPDATE_ON_START=${LTX_VIDEO_UPDATE_ON_START:-false}
       - LTX_REPO_URL=${LTX_REPO_URL:-https://github.com/Lightricks/LTX-2.git}
       - LTX_REPO_REF=${LTX_REPO_REF:-}
-      - LTX_UV_SYNC_ARGS=${LTX_UV_SYNC_ARGS:---extra xformers}
+      - LTX_UV_SYNC_ARGS=${LTX_UV_SYNC_ARGS:-}
       - LTX_DISTILLED_CHECKPOINT_PATH=${LTX_DISTILLED_CHECKPOINT_PATH:-/data/models/ltx-2.3-22b-distilled-1.1.safetensors}
       - LTX_SPATIAL_UPSAMPLER_PATH=${LTX_SPATIAL_UPSAMPLER_PATH:-/data/models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors}
-      - LTX_GEMMA_ROOT=${LTX_GEMMA_ROOT:-/data/models/gemma-3-12b-it}
+      - LTX_GEMMA_ROOT=${LTX_GEMMA_ROOT:-/data/models/gemma-3-12b-it-qat-q4_0-unquantized}
       - LTX_QUANTIZATION=${LTX_QUANTIZATION:-fp8-cast}
       - HF_HOME=${LTX_HF_HOME:-${HF_HOME:-/data/huggingface}}
       - HUGGINGFACE_HUB_CACHE=${LTX_HF_HOME:-${HF_HOME:-/data/huggingface}}/hub

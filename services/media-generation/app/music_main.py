@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 SERVICE_NAME = "ace-step"
 MODEL_ID = (os.environ.get("ACE_STEP_DIT_MODEL") or "acestep-v15-xl-sft").strip()
-LM_MODEL_ID = (os.environ.get("ACE_STEP_LM_MODEL") or "acestep-5Hz-lm-4B").strip()
+LM_MODEL_ID = (os.environ.get("ACE_STEP_LM_MODEL") or "acestep-5Hz-lm-1.7B").strip()
 _SAFE_JOB_RE = re.compile(r"^acestep_[A-Fa-f0-9]{32}$")
 app = FastAPI(title="ACE-Step 1.5 Shim", version="0.1")
 

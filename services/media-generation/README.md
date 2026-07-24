@@ -64,7 +64,7 @@ Provision these paths under `/data/ltx-video/models`, or override the correspond
 ```text
 LTX_DISTILLED_CHECKPOINT_PATH=/data/models/ltx-2.3-22b-distilled-1.1.safetensors
 LTX_SPATIAL_UPSAMPLER_PATH=/data/models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
-LTX_GEMMA_ROOT=/data/models/gemma-3-12b-it
+LTX_GEMMA_ROOT=/data/models/gemma-3-12b-it-qat-q4_0-unquantized
 ```
 
 The mounted container path `/data/models` corresponds to host path `/data/ltx-video/models`.
@@ -89,7 +89,7 @@ ACE-Step uses the upstream model identifiers by default and downloads them into 
 
 ```text
 ACE_STEP_DIT_MODEL=acestep-v15-xl-sft
-ACE_STEP_LM_MODEL=acestep-5Hz-lm-4B
+ACE_STEP_LM_MODEL=acestep-5Hz-lm-1.7B
 ACESTEP_LM_BACKEND=vllm
 ```
 

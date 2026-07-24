@@ -57,7 +57,7 @@ case "${ENGINE}" in
       "${LTX_REPO_URL:-https://github.com/Lightricks/LTX-2.git}" \
       "${LTX_REPO_REF:-}"
     cd "${UPSTREAM_DIR}"
-    read -r -a ltx_uv_sync_args <<< "${LTX_UV_SYNC_ARGS:---extra xformers}"
+    read -r -a ltx_uv_sync_args <<< "${LTX_UV_SYNC_ARGS:-}"
     uv_sync_runtime "${ltx_uv_sync_args[@]}"
     export MEDIA_RUNNER_PYTHON="${UPSTREAM_DIR}/.venv/bin/python"
     export MEDIA_UPSTREAM_DIR="${UPSTREAM_DIR}"
@@ -97,7 +97,7 @@ case "${ENGINE}" in
     export ACESTEP_API_HOST="${ACESTEP_API_HOST:-127.0.0.1}"
     export ACESTEP_API_PORT="${ACESTEP_API_PORT:-8001}"
     export ACESTEP_CONFIG_PATH="${ACESTEP_CONFIG_PATH:-${ACE_STEP_DIT_MODEL:-acestep-v15-xl-sft}}"
-    export ACESTEP_LM_MODEL_PATH="${ACESTEP_LM_MODEL_PATH:-${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-4B}}"
+    export ACESTEP_LM_MODEL_PATH="${ACESTEP_LM_MODEL_PATH:-${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-1.7B}}"
     export ACESTEP_LM_BACKEND="${ACESTEP_LM_BACKEND:-vllm}"
 
     upstream_pid=""

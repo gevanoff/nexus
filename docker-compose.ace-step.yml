@@ -18,9 +18,9 @@ services:
       - ACE_STEP_REPO_URL=${ACE_STEP_REPO_URL:-https://github.com/ace-step/ACE-Step-1.5.git}
       - ACE_STEP_REPO_REF=${ACE_STEP_REPO_REF:-}
       - ACE_STEP_DIT_MODEL=${ACE_STEP_DIT_MODEL:-acestep-v15-xl-sft}
-      - ACE_STEP_LM_MODEL=${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-4B}
+      - ACE_STEP_LM_MODEL=${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-1.7B}
       - ACESTEP_CONFIG_PATH=${ACESTEP_CONFIG_PATH:-${ACE_STEP_DIT_MODEL:-acestep-v15-xl-sft}}
-      - ACESTEP_LM_MODEL_PATH=${ACESTEP_LM_MODEL_PATH:-${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-4B}}
+      - ACESTEP_LM_MODEL_PATH=${ACESTEP_LM_MODEL_PATH:-${ACE_STEP_LM_MODEL:-acestep-5Hz-lm-1.7B}}
       - ACESTEP_LM_BACKEND=${ACESTEP_LM_BACKEND:-vllm}
       - ACESTEP_API_HOST=127.0.0.1
       - ACESTEP_API_PORT=8001

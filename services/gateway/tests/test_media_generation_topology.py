@@ -73,6 +73,10 @@ def test_compose_services_pin_stackrot_media_to_physical_gpu_one():
     assert "NEXUS_SERVICE_BACKEND_CLASS=hunyuan_video" in hunyuan
     assert "NEXUS_SERVICE_BACKEND_CLASS=ace_step_music" in ace
     assert "NEXUS_SERVICE_BACKEND_CLASS=ltx_video" in ltx
+    assert "ACE_STEP_LM_MODEL:-acestep-5Hz-lm-1.7B" in ace
+    assert "acestep-5Hz-lm-4B" not in ace
+    assert "extra xformers" not in ltx
+    assert "gemma-3-12b-it-qat-q4_0-unquantized" in ltx
 
 
 def test_deploy_scripts_recognize_media_components():
