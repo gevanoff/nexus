@@ -504,8 +504,8 @@
         provider: backend.provider || existing.provider,
         base_url: backend.base_url || existing.base_url,
         health: backend.health || existing.health,
-        host: existing.host || existing.hostname || backend.hostname || backend.host,
-        hostname: existing.hostname || existing.host || backend.hostname || backend.host,
+        host: backend.deployment_host || existing.deployment_host || existing.host || existing.hostname || backend.hostname || backend.host,
+        hostname: backend.deployment_host || existing.deployment_host || existing.hostname || existing.host || backend.hostname || backend.host,
       });
     });
     if (merged.size > 0) base.backends = [...merged.values()];
