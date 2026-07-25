@@ -5,7 +5,7 @@ on:
     paths:
       - "services/gateway/app/resources_snapshot.py"
       - "services/gateway/app/static/admin_deployments.*"
-      - "services/gateway/app/static/resources.js"
+      - "services/gateway/app/static/resources.*"
       - "services/gateway/app/static/video.*"
       - "services/gateway/tests/test_deployment_admin_and_video_profiles.py"
       - "services/gateway/tests/test_deployment_admin_routes.py"
@@ -18,7 +18,7 @@ on:
     paths:
       - "services/gateway/app/resources_snapshot.py"
       - "services/gateway/app/static/admin_deployments.*"
-      - "services/gateway/app/static/resources.js"
+      - "services/gateway/app/static/resources.*"
       - "services/gateway/app/static/video.*"
       - "services/gateway/tests/test_deployment_admin_and_video_profiles.py"
       - "services/gateway/tests/test_deployment_admin_routes.py"
@@ -38,35 +38,67 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - name: Prefer authoritative deployment host in browser merge
+      - name: Apply reviewed Resources client contract
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("services/gateway/app/static/resources.js")
-          text = path.read_text(encoding="utf-8")
-          old = '''        host: existing.host || existing.hostname || backend.hostname || backend.host,
+          js_path = Path("services/gateway/app/static/resources.js")
+          js = js_path.read_text(encoding="utf-8")
+          old_merge = '''        host: existing.host || existing.hostname || backend.hostname || backend.host,
                   hostname: existing.hostname || existing.host || backend.hostname || backend.host,'''
-          new = '''        host: backend.deployment_host || existing.deployment_host || existing.host || existing.hostname || backend.hostname || backend.host,
+          new_merge = '''        host: backend.deployment_host || existing.deployment_host || existing.host || existing.hostname || backend.hostname || backend.host,
                   hostname: backend.deployment_host || existing.deployment_host || existing.hostname || existing.host || backend.hostname || backend.host,'''
-          if old in text:
-              text = text.replace(old, new, 1)
-              path.write_text(text, encoding="utf-8")
-          elif new not in text:
+          if old_merge in js:
+              js = js.replace(old_merge, new_merge, 1)
+              js_path.write_text(js, encoding="utf-8")
+          elif new_merge not in js:
               raise SystemExit("Resources merge block does not match reviewed old or new form")
+
+          html_path = Path("services/gateway/app/static/resources.html")
+          html = html_path.read_text(encoding="utf-8")
+          if "/static/resources.js?v=22" in html:
+              html = html.replace("/static/resources.js?v=22", "/static/resources.js?v=23", 1)
+              html_path.write_text(html, encoding="utf-8")
+          elif "/static/resources.js?v=23" not in html:
+              raise SystemExit("Resources script cache version does not match reviewed old or new form")
+
+          test_path = Path("services/gateway/tests/test_resources_ui.py")
+          tests = test_path.read_text(encoding="utf-8")
+          tests = tests.replace('assert "/static/resources.js?v=22" in html', 'assert "/static/resources.js?v=23" in html', 1)
+          old_assertion = '''    assert (
+                  "host: existing.host || existing.hostname || backend.hostname || backend.host"
+                  in js
+              )'''
+          new_assertion = '''    assert (
+                  "host: backend.deployment_host || existing.deployment_host || existing.host || "
+                  "existing.hostname || backend.hostname || backend.host"
+                  in js
+              )'''
+          if old_assertion in tests:
+              tests = tests.replace(old_assertion, new_assertion, 1)
+              test_path.write_text(tests, encoding="utf-8")
+          elif new_assertion not in tests:
+              raise SystemExit("Resources client assertion does not match reviewed old or new form")
           PY
           node --check services/gateway/app/static/resources.js
 
       - name: Commit correction when needed
         run: |
-          if git diff --quiet -- services/gateway/app/static/resources.js; then
-            echo "Resources client is already corrected."
+          if git diff --quiet -- \
+            services/gateway/app/static/resources.js \
+            services/gateway/app/static/resources.html \
+            services/gateway/tests/test_resources_ui.py; then
+            echo "Resources client contract is already corrected."
             exit 0
           fi
           git config user.name "nexus-pr-review-bot"
           git config user.email "nexus-pr-review-bot@users.noreply.github.com"
-          git add services/gateway/app/static/resources.js
-          git commit -m "Prefer deployment host in Resources client merge"
+          git add \
+            services/gateway/app/static/resources.js \
+            services/gateway/app/static/resources.html \
+            services/gateway/tests/test_resources_ui.py
+          git commit -m "Keep Resources host metadata authoritative"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
 
   focused-tests:
