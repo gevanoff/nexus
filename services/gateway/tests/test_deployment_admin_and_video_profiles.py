@@ -109,6 +109,11 @@ def test_resources_use_topology_host_while_preserving_endpoint_host(
         "get_service_record_for_backend",
         lambda _backend_name, registry=None: record,
     )
+    monkeypatch.setattr(
+        resources_snapshot,
+        "backend_hostname",
+        lambda _backend_name, registry=None, fallback_base_url="": "host.docker.internal",
+    )
 
     class Registry:
         @staticmethod
