@@ -1,4 +1,4 @@
-name: Export PR 51 Resources Client
+name: Patch PR 51 Resources Client
 
 on:
   push:
@@ -8,15 +8,38 @@ on:
       - ".github/workflows/export-pr51-resources.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/upload-artifact@v4
         with:
-          name: pr51-resources-client
-          path: services/gateway/app/static/resources.js
-          retention-days: 1
+          ref: agent/fix-resource-hosts-deployment-admin-ltx
+
+      - name: Prefer authoritative deployment host in browser merge
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("services/gateway/app/static/resources.js")
+          text = path.read_text(encoding="utf-8")
+          old = '''        host: existing.host || existing.hostname || backend.hostname || backend.host,
+                  hostname: existing.hostname || existing.host || backend.hostname || backend.host,'''
+          new = '''        host: backend.deployment_host || existing.deployment_host || existing.host || existing.hostname || backend.hostname || backend.host,
+                  hostname: backend.deployment_host || existing.deployment_host || existing.hostname || existing.host || backend.hostname || backend.host,'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected exactly one stale merge block, found {count}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+          node --check services/gateway/app/static/resources.js
+
+      - name: Commit correction
+        run: |
+          git config user.name "nexus-pr-review-bot"
+          git config user.email "nexus-pr-review-bot@users.noreply.github.com"
+          git add services/gateway/app/static/resources.js
+          git commit -m "Prefer deployment host in Resources client merge"
+          git push origin HEAD:agent/fix-resource-hosts-deployment-admin-ltx
