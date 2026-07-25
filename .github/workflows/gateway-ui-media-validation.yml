@@ -42,8 +42,8 @@ jobs:
 
       - name: Install focused test dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r services/gateway/app/requirements.freeze.txt pytest
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -r services/gateway/app/requirements.freeze.txt pytest
 
       - name: Compile changed Python modules
         run: |
@@ -62,8 +62,23 @@ jobs:
         env:
           PYTHONPATH: services/gateway
           GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
         run: |
-          pytest -q \
+          set +e
+          pytest -q --tb=short \
             services/gateway/tests/test_deployment_admin_and_video_profiles.py \
             services/gateway/tests/test_deployment_admin_routes.py \
-            services/gateway/tests/test_resources_ui.py
+            services/gateway/tests/test_resources_ui.py \
+            > /tmp/focused-pytest.log 2>&1
+          status=$?
+          cat /tmp/focused-pytest.log
+          exit "$status"
+
+      - name: Upload focused pytest diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-pytest-log
+          path: /tmp/focused-pytest.log
+          if-no-files-found: warn
+          retention-days: 3
