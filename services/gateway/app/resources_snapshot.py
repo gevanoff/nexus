@@ -178,9 +178,13 @@ def _topology_component_hosts() -> Dict[str, str]:
     hosts = payload.get("hosts") if isinstance(payload, dict) else None
     if not isinstance(hosts, dict):
         return {}
-    result: Dict[str, str] = {}
+
+    placements: Dict[str, set[str]] = {}
     for host_name, raw_host in hosts.items():
         if not isinstance(raw_host, dict):
+            continue
+        normalized_host = str(host_name).strip()
+        if not normalized_host:
             continue
         for field in ("components", "optional_components", "native_services"):
             values = raw_host.get(field)
@@ -188,14 +192,28 @@ def _topology_component_hosts() -> Dict[str, str]:
                 continue
             for item in values:
                 component = str(item or "").strip()
-                if component and component not in result:
-                    result[component] = str(host_name)
-    return result
+                if component:
+                    placements.setdefault(component, set()).add(normalized_host)
+
+    # A physical host label must be unambiguous. If a topology component is
+    # intentionally present on more than one host, retain registry/lifecycle
+    # placement rather than displaying whichever host happened to appear first.
+    return {
+        component: next(iter(host_names))
+        for component, host_names in placements.items()
+        if len(host_names) == 1
+    }
 
 
-def deployment_host_for_backend(registry: Any, backend_name: str, record: Any = None) -> str:
+def deployment_host_for_backend(
+    registry: Any,
+    backend_name: str,
+    record: Any = None,
+    *,
+    component_hosts: Optional[Dict[str, str]] = None,
+) -> str:
     resolved = str(registry.resolve_backend_class(backend_name) or backend_name).strip()
-    component_hosts = _topology_component_hosts()
+    placements = component_hosts if component_hosts is not None else _topology_component_hosts()
     candidates = [
         str(getattr(record, "name", "") or "").strip(),
         _BACKEND_TO_TOPOLOGY_COMPONENT.get(resolved, ""),
@@ -204,17 +222,28 @@ def deployment_host_for_backend(registry: Any, backend_name: str, record: Any = 
         str(backend_name or "").strip().replace("_", "-"),
     ]
     for component in candidates:
-        host = component_hosts.get(component)
+        host = placements.get(component)
         if host:
             return host
     return ""
 
 
-def backend_location_details(registry: Any, backend_name: str, *, base_url: str = "") -> Dict[str, str]:
+def backend_location_details(
+    registry: Any,
+    backend_name: str,
+    *,
+    base_url: str = "",
+    component_hosts: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
     record = get_service_record_for_backend(backend_name, registry=registry)
     effective_base_url = ((record.base_url if record is not None else "") or base_url).strip()
     endpoint_host = service_host_from_url(effective_base_url)
-    deployment_host = deployment_host_for_backend(registry, backend_name, record)
+    deployment_host = deployment_host_for_backend(
+        registry,
+        backend_name,
+        record,
+        component_hosts=component_hosts,
+    )
     reported_host = backend_hostname(backend_name, registry=registry, fallback_base_url=effective_base_url)
     host = deployment_host or reported_host
     details: Dict[str, str] = {}
@@ -243,8 +272,6 @@ def status_exception_text(exc: Exception) -> str:
             if message:
                 return message
             try:
-                import json
-
                 return json.dumps(detail, ensure_ascii=False, sort_keys=True)
             except Exception:
                 return str(detail)
@@ -330,6 +357,7 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
     checker = get_health_checker()
     aliases = get_aliases()
     alias_state = get_aliases_state()
+    component_hosts = _topology_component_hosts()
     alias_map: Dict[str, List[Dict[str, str]]] = {}
     for alias_name, target_backend in registry.legacy_mapping.items():
         if not isinstance(alias_name, str) or not isinstance(target_backend, str):
@@ -384,7 +412,12 @@ async def build_registry_backend_status_payload() -> Dict[str, Any]:
         alias_entries = alias_map.get(backend_class)
         if alias_entries:
             entry["aliases"] = sorted(alias_entries, key=lambda item: item.get("name") or "")
-        location = backend_location_details(registry, backend_class, base_url=config.base_url)
+        location = backend_location_details(
+            registry,
+            backend_class,
+            base_url=config.base_url,
+            component_hosts=component_hosts,
+        )
         for key in ("host", "hostname", "deployment_host", "endpoint_host"):
             if location.get(key):
                 entry[key] = location[key]
@@ -840,6 +873,14 @@ def merge_resources_payloads(lifecycle_payload: Dict[str, Any] | None, registry_
         if not key:
             continue
         existing = merged.get(key, {})
+        authoritative_host = (
+            backend.get("deployment_host")
+            or existing.get("deployment_host")
+            or existing.get("host")
+            or existing.get("hostname")
+            or backend.get("hostname")
+            or backend.get("host")
+        )
         merged[key] = {
             **existing,
             **backend,
@@ -849,20 +890,8 @@ def merge_resources_payloads(lifecycle_payload: Dict[str, Any] | None, registry_
             "provider": backend.get("provider") or existing.get("provider"),
             "base_url": backend.get("base_url") or existing.get("base_url"),
             "health": backend.get("health") or existing.get("health"),
-            "host": (
-                existing.get("host")
-                or existing.get("hostname")
-                or backend.get("deployment_host")
-                or backend.get("hostname")
-                or backend.get("host")
-            ),
-            "hostname": (
-                existing.get("hostname")
-                or existing.get("host")
-                or backend.get("deployment_host")
-                or backend.get("hostname")
-                or backend.get("host")
-            ),
+            "host": authoritative_host,
+            "hostname": authoritative_host,
         }
     if merged:
         base["backends"] = list(merged.values())
