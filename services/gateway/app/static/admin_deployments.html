@@ -102,11 +102,21 @@
       .job-status.succeeded { color: var(--success); }
       .job-status.failed { color: var(--danger); }
       .job-status.running, .job-status.queued { color: var(--warning); }
+      .jobs-by-host { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+      .host-job-panel { min-width: 0; border: 1px solid var(--border); border-radius: 11px; background: rgba(255, 255, 255, 0.02); overflow: hidden; }
+      .host-job-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 10px; background: rgba(111, 184, 255, 0.055); border-bottom: 1px solid var(--border); }
+      .host-job-header strong { font-size: 13px; }
+      .host-job-scroll { max-height: 250px; overflow: auto; }
+      .host-job-scroll table { min-width: 500px; }
+      .host-job-count { color: var(--muted); font-size: 11px; }
       pre { max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 12px; border-radius: 9px; border: 1px solid var(--border); background: #080c12; color: #d8e2ef; font-size: 11px; line-height: 1.45; }
       .empty { padding: 22px 8px; text-align: center; color: var(--muted); }
       @media (max-width: 900px) {
         .span-4, .span-5, .span-7, .span-8 { grid-column: span 12; }
         .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 700px) {
+        .jobs-by-host { grid-template-columns: 1fr; }
       }
       @media (max-width: 560px) {
         main { padding: 12px; }
@@ -175,12 +185,7 @@
             <h2 style="margin-bottom: 0">Recent deployments</h2>
             <label class="row" style="margin: 0"><input id="autoRefresh" type="checkbox" checked style="width:auto" /> Auto-refresh</label>
           </div>
-          <div style="overflow-x: auto; margin-top: 10px">
-            <table>
-              <thead><tr><th>Status</th><th>Host</th><th>Components</th><th>Requested</th><th>Started by</th></tr></thead>
-              <tbody id="jobsBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
-            </table>
-          </div>
+          <div id="jobsByHost" class="jobs-by-host"><div class="empty">Loading…</div></div>
         </section>
 
         <section class="panel span-12">
@@ -196,6 +201,6 @@
       </div>
     </main>
     <script src="/static/focused_nav.js" defer></script>
-    <script src="/static/admin_deployments.js" defer></script>
+    <script src="/static/admin_deployments.js?v=2" defer></script>
   </body>
 </html>
