@@ -47,13 +47,18 @@ jobs:
           python -m pip install --quiet --upgrade pip
           python -m pip install --quiet -r services/gateway/app/requirements.freeze.txt pytest
 
-      - name: Compile changed Python modules
+      - name: Compile and import changed Python modules
         run: |
           python -m py_compile \
             services/gateway/app/resources_snapshot.py \
             services/media-generation/app/video_main.py \
             services/media-generation/app/video_options.py \
             services/media-generation/app/run_video.py
+          PYTHONPATH=services/media-generation \
+            NEXUS_MEDIA_ENGINE=ltx \
+            python -c "from app.video_main import app; assert app is not None"
+          PYTHONPATH=services/media-generation/app \
+            python -c "import run_video; assert callable(run_video.main)"
 
       - name: Check browser script syntax
         run: |
