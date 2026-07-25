@@ -98,6 +98,7 @@
       th { color: var(--muted); font-weight: 600; }
       tbody tr { cursor: pointer; }
       tbody tr:hover { background: rgba(111, 184, 255, 0.05); }
+      tbody tr.selected { background: rgba(111, 184, 255, 0.12); box-shadow: inset 3px 0 0 var(--accent); }
       .job-status { display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border); text-transform: capitalize; }
       .job-status.succeeded { color: var(--success); }
       .job-status.failed { color: var(--danger); }
@@ -201,6 +202,6 @@
       </div>
     </main>
     <script src="/static/focused_nav.js" defer></script>
-    <script src="/static/admin_deployments.js?v=2" defer></script>
+    <script src="/static/admin_deployments.js?v=3" defer></script>
   </body>
 </html>
