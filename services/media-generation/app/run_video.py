@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from video_options import ltx_dimensions
+
 
 def _env(name: str, default: str = "") -> str:
     value = os.environ.get(name)
@@ -148,14 +150,7 @@ def _snap_ltx_frames(frames: int) -> int:
 
 
 def _ltx_dimensions(payload: dict[str, Any]) -> tuple[int, int]:
-    width = _as_int(payload.get("width"), 0)
-    height = _as_int(payload.get("height"), 0)
-    if width > 0 and height > 0:
-        return width - width % 32, height - height % 32
-    resolution = str(payload.get("resolution") or "720p").strip().lower()
-    if resolution in {"480p", "480", "540p", "540"}:
-        return 704, 416
-    return 768, 512
+    return ltx_dimensions(payload)
 
 
 def _build_ltx(payload: dict[str, Any], output_file: Path) -> list[str]:
