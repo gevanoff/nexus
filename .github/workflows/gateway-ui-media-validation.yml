@@ -5,6 +5,7 @@ on:
     paths:
       - "services/gateway/app/resources_snapshot.py"
       - "services/gateway/app/static/admin_deployments.*"
+      - "services/gateway/app/static/resources.js"
       - "services/gateway/app/static/video.*"
       - "services/gateway/tests/test_deployment_admin_and_video_profiles.py"
       - "services/gateway/tests/test_deployment_admin_routes.py"
@@ -17,6 +18,7 @@ on:
     paths:
       - "services/gateway/app/resources_snapshot.py"
       - "services/gateway/app/static/admin_deployments.*"
+      - "services/gateway/app/static/resources.js"
       - "services/gateway/app/static/video.*"
       - "services/gateway/tests/test_deployment_admin_and_video_profiles.py"
       - "services/gateway/tests/test_deployment_admin_routes.py"
@@ -56,6 +58,7 @@ jobs:
       - name: Check browser script syntax
         run: |
           node --check services/gateway/app/static/admin_deployments.js
+          node --check services/gateway/app/static/resources.js
           node --check services/gateway/app/static/video.js
 
       - name: Run focused Gateway tests
@@ -82,3 +85,11 @@ jobs:
           path: /tmp/focused-pytest.log
           if-no-files-found: warn
           retention-days: 3
+
+      - name: Temporarily export Resources client
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr51-resources-client
+          path: services/gateway/app/static/resources.js
+          retention-days: 1
