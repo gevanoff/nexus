@@ -88,27 +88,31 @@ def _validate_ltx_custom_dimensions(width: int, height: int) -> tuple[int, int]:
 def ltx_dimensions(payload: dict[str, Any]) -> tuple[int, int]:
     resolution_was_supplied = payload.get("resolution") not in (None, "")
     resolution = normalize_resolution(payload.get("resolution"), "540p")
+    explicit_dimensions = _explicit_dimensions(payload)
 
-    # A symbolic profile is authoritative. The Gateway may add conventional
-    # dimensions such as 1280x720 while normalizing an advanced request; those
-    # dimensions are not valid for the LTX two-stage pipeline and must not
-    # override the backend-specific profile.
-    preset = LTX_RESOLUTION_PRESETS.get(resolution)
-    if preset is not None:
-        return preset
-
-    dimensions = _explicit_dimensions(payload)
-    if dimensions is None:
-        dimensions = _resolution_dimensions(resolution)
-    if dimensions is not None:
-        return _validate_ltx_custom_dimensions(*dimensions)
-
+    # An explicitly selected symbolic profile is authoritative. The Gateway may
+    # attach conventional dimensions such as 1280x720 while normalizing an
+    # advanced request; those generic dimensions must not override the
+    # backend-specific LTX profile.
     if resolution_was_supplied:
+        preset = LTX_RESOLUTION_PRESETS.get(resolution)
+        if preset is not None:
+            return preset
+
+        resolution_dimensions = _resolution_dimensions(resolution)
+        if resolution_dimensions is not None:
+            return _validate_ltx_custom_dimensions(*resolution_dimensions)
+
         supported = ", ".join(LTX_RESOLUTION_PRESETS)
         raise ValueError(
             f"unsupported LTX resolution {resolution!r}; choose one of: {supported}, "
             "or provide a WIDTHxHEIGHT value divisible by 64"
         )
+
+    # Without a symbolic profile, explicit width/height are a genuine custom
+    # request and must be validated rather than silently replaced by the default.
+    if explicit_dimensions is not None:
+        return _validate_ltx_custom_dimensions(*explicit_dimensions)
     return LTX_RESOLUTION_PRESETS["540p"]
 
 
