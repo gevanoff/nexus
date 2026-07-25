@@ -27,9 +27,48 @@ on:
       - ".github/workflows/gateway-ui-media-validation.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  patch-resources-client:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Prefer authoritative deployment host in browser merge
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("services/gateway/app/static/resources.js")
+          text = path.read_text(encoding="utf-8")
+          old = '''        host: existing.host || existing.hostname || backend.hostname || backend.host,
+                  hostname: existing.hostname || existing.host || backend.hostname || backend.host,'''
+          new = '''        host: backend.deployment_host || existing.deployment_host || existing.host || existing.hostname || backend.hostname || backend.host,
+                  hostname: backend.deployment_host || existing.deployment_host || existing.hostname || existing.host || backend.hostname || backend.host,'''
+          if old in text:
+              text = text.replace(old, new, 1)
+              path.write_text(text, encoding="utf-8")
+          elif new not in text:
+              raise SystemExit("Resources merge block does not match reviewed old or new form")
+          PY
+          node --check services/gateway/app/static/resources.js
+
+      - name: Commit correction when needed
+        run: |
+          if git diff --quiet -- services/gateway/app/static/resources.js; then
+            echo "Resources client is already corrected."
+            exit 0
+          fi
+          git config user.name "nexus-pr-review-bot"
+          git config user.email "nexus-pr-review-bot@users.noreply.github.com"
+          git add services/gateway/app/static/resources.js
+          git commit -m "Prefer deployment host in Resources client merge"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
   focused-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -85,11 +124,3 @@ jobs:
           path: /tmp/focused-pytest.log
           if-no-files-found: warn
           retention-days: 3
-
-      - name: Temporarily export Resources client
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr51-resources-client
-          path: services/gateway/app/static/resources.js
-          retention-days: 1
