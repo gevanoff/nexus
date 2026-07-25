@@ -4,9 +4,12 @@ from typing import Any
 
 
 LTX_RESOLUTION_PRESETS: dict[str, tuple[int, int]] = {
+    # Keep the existing request names for compatibility, but expose the actual
+    # model-safe dimensions in the UI. Two-stage LTX requires both axes to be
+    # divisible by 64.
     "480p": (704, 384),
-    "540p": (768, 448),
-    "720p": (768, 512),
+    "540p": (768, 512),
+    "720p": (1280, 704),
 }
 
 HUNYUAN_RESOLUTION_PRESETS: tuple[str, ...] = ("480p", "720p")
