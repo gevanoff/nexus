@@ -11,6 +11,24 @@
   const metaEl = $("meta");
   const previewEl = $("preview");
 
+  const RESOLUTION_PROFILES = {
+    ltx_video: {
+      default: "540p",
+      options: [
+        { value: "480p", label: "480p (704×384)" },
+        { value: "540p", label: "540p (768×448)" },
+        { value: "720p", label: "720p (768×512)" },
+      ],
+    },
+    hunyuan_video: {
+      default: "720p",
+      options: [
+        { value: "480p", label: "480p" },
+        { value: "720p", label: "720p" },
+      ],
+    },
+  };
+
   function handle401(resp) {
     if (resp && resp.status === 401) {
       const back = encodeURIComponent(window.location.pathname + window.location.search);
@@ -32,6 +50,31 @@
   function setPreview(html) {
     if (!previewEl) return;
     previewEl.innerHTML = html || "";
+  }
+
+  function resolutionProfile(backendClass) {
+    return RESOLUTION_PROFILES[String(backendClass || "").trim()] || {
+      default: "720p",
+      options: [
+        { value: "480p", label: "480p" },
+        { value: "720p", label: "720p" },
+      ],
+    };
+  }
+
+  function renderResolutionOptions() {
+    if (!resolutionEl) return;
+    const previous = String(resolutionEl.value || "").trim();
+    const profile = resolutionProfile(backendEl?.value);
+    resolutionEl.innerHTML = "";
+    for (const item of profile.options) {
+      const option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      resolutionEl.appendChild(option);
+    }
+    const supported = profile.options.some((item) => item.value === previous);
+    resolutionEl.value = supported ? previous : profile.default;
   }
 
   function buildRequestPreview() {
@@ -77,6 +120,7 @@
       } else if (backendEl.options.length > 0) {
         backendEl.selectedIndex = 0;
       }
+      renderResolutionOptions();
       if (backendHintEl) {
         backendHintEl.textContent = list.length
           ? `${list.length} compatible video backend${list.length === 1 ? "" : "s"} available.`
@@ -159,6 +203,8 @@
     }
   }
 
+  backendEl?.addEventListener("change", renderResolutionOptions);
   generateEl.addEventListener("click", handleGenerate);
+  renderResolutionOptions();
   void loadBackends();
 })();
