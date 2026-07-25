@@ -29,7 +29,8 @@ def _load_video_options():
 def test_ltx_presets_are_two_stage_safe_and_include_720p() -> None:
     options = _load_video_options()
 
-    assert "720p" in options.LTX_RESOLUTION_PRESETS
+    assert options.LTX_RESOLUTION_PRESETS["540p"] == (768, 512)
+    assert options.LTX_RESOLUTION_PRESETS["720p"] == (1280, 704)
     for width, height in options.LTX_RESOLUTION_PRESETS.values():
         assert width % 64 == 0
         assert height % 64 == 0
@@ -48,8 +49,8 @@ def test_ltx_rejects_invalid_custom_dimensions_before_generation() -> None:
         "ltx",
         {"prompt": "test", "resolution": "720p"},
     )
-    assert normalized["width"] == 768
-    assert normalized["height"] == 512
+    assert normalized["width"] == 1280
+    assert normalized["height"] == 704
 
 
 def test_video_ui_exposes_backend_specific_resolution_profiles() -> None:
@@ -61,7 +62,8 @@ def test_video_ui_exposes_backend_specific_resolution_profiles() -> None:
     assert "RESOLUTION_PROFILES" in js
     assert 'ltx_video: {' in js
     assert 'hunyuan_video: {' in js
-    assert 'label: "720p (768×512)"' in js
+    assert 'label: "Standard (768×512)"' in js
+    assert 'label: "720p-class (1280×704)"' in js
     assert 'backendEl?.addEventListener("change", renderResolutionOptions)' in js
 
 
