@@ -100,15 +100,15 @@
 
           <label>
             <span>Duration (sec)</span>
-            <input id="duration" type="number" min="1" max="30" step="1" value="6" />
-            <span class="hint">Range: 1-30</span>
+            <input id="duration" type="number" min="1" max="10" step="1" value="6" />
+            <span id="durationHint" class="hint">Range: 1-10</span>
           </label>
 
           <label>
             <span>Resolution</span>
             <select id="resolution">
-              <option value="540p" selected>540p</option>
-              <option value="720p">720p</option>
+              <option value="540p" selected>Standard (768×512)</option>
+              <option value="720p">720p-class (1280×704, high memory)</option>
             </select>
             <span class="hint">Options are constrained by the selected backend.</span>
           </label>
@@ -147,6 +147,6 @@
     <script src="/static/focused_nav.js?v=8"></script>
     <script src="/static/backend_status_panel.js?v=9"></script>
     <script src="/static/lifecycle_client.js?v=1"></script>
-    <script src="/static/video.js?v=2"></script>
+    <script src="/static/video.js?v=3"></script>
   </body>
 </html>
