@@ -16,6 +16,8 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
+from video_options import HUNYUAN_RESOLUTION_PRESETS, LTX_RESOLUTION_PRESETS, validate_video_payload
+
 
 SUPPORTED_ENGINES = {"ltx", "hunyuan"}
 ENGINE = (os.environ.get("NEXUS_MEDIA_ENGINE") or "").strip().lower()
@@ -148,6 +150,25 @@ def models() -> dict[str, Any]:
     }
 
 
+@app.get("/v1/capabilities")
+def capabilities() -> dict[str, Any]:
+    if ENGINE == "ltx":
+        resolutions = [
+            {"id": name, "width": width, "height": height}
+            for name, (width, height) in LTX_RESOLUTION_PRESETS.items()
+        ]
+    elif ENGINE == "hunyuan":
+        resolutions = [{"id": name} for name in HUNYUAN_RESOLUTION_PRESETS]
+    else:
+        resolutions = []
+    return {
+        "service": SERVICE_NAME,
+        "engine": ENGINE,
+        "model": MODEL_ID,
+        "resolutions": resolutions,
+    }
+
+
 @app.get("/outputs/{job_id}/{name}")
 def get_output(job_id: str, name: str) -> FileResponse:
     if not _SAFE_JOB_RE.fullmatch(job_id) or not _safe_name(name):
@@ -170,6 +191,18 @@ async def generate_video(payload: dict[str, Any], request: Request) -> dict[str,
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
+
+    try:
+        payload = validate_video_payload(ENGINE, payload)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_video_request",
+                "engine": ENGINE,
+                "message": str(exc),
+            },
+        ) from exc
 
     job_id = f"{JOB_PREFIX}_{uuid.uuid4().hex}"
     output_dir = _output_root() / job_id
