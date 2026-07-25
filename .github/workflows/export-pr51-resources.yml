@@ -1,0 +1,22 @@
+name: Export PR 51 Resources Client
+
+on:
+  push:
+    branches:
+      - agent/fix-resource-hosts-deployment-admin-ltx
+    paths:
+      - ".github/workflows/export-pr51-resources.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr51-resources-client
+          path: services/gateway/app/static/resources.js
+          retention-days: 1
