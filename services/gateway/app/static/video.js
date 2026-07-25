@@ -5,23 +5,28 @@
   const backendEl = $("backend");
   const backendHintEl = $("backendHint");
   const durationEl = $("duration");
+  const durationHintEl = $("durationHint");
   const resolutionEl = $("resolution");
   const generateEl = $("generate");
   const statusEl = $("status");
   const metaEl = $("meta");
   const previewEl = $("preview");
 
+  // Keep this table synchronized with media-generation/app/video_options.py.
+  // A focused contract test compares the identifiers and exact dimensions.
   const RESOLUTION_PROFILES = {
     ltx_video: {
       default: "540p",
+      maxDurationSeconds: 10,
       options: [
-        { value: "480p", label: "Low (704×384)" },
-        { value: "540p", label: "Standard (768×512)" },
-        { value: "720p", label: "720p-class (1280×704)" },
+        { value: "480p", label: "Low (704×384)", width: 704, height: 384 },
+        { value: "540p", label: "Standard (768×512)", width: 768, height: 512 },
+        { value: "720p", label: "720p-class (1280×704, high memory)", width: 1280, height: 704 },
       ],
     },
     hunyuan_video: {
       default: "720p",
+      maxDurationSeconds: 10,
       options: [
         { value: "480p", label: "480p" },
         { value: "720p", label: "720p" },
@@ -55,6 +60,7 @@
   function resolutionProfile(backendClass) {
     return RESOLUTION_PROFILES[String(backendClass || "").trim()] || {
       default: "720p",
+      maxDurationSeconds: 10,
       options: [
         { value: "480p", label: "480p" },
         { value: "720p", label: "720p" },
@@ -75,15 +81,28 @@
     }
     const supported = profile.options.some((item) => item.value === previous);
     resolutionEl.value = supported ? previous : profile.default;
+
+    const maxDuration = Number(profile.maxDurationSeconds || 10);
+    if (durationEl) {
+      durationEl.max = String(maxDuration);
+      const current = parseInt(String(durationEl.value || "6"), 10) || 6;
+      if (current > maxDuration) durationEl.value = String(maxDuration);
+    }
+    if (durationHintEl) durationHintEl.textContent = `Range: 1-${maxDuration}`;
   }
 
   function buildRequestPreview() {
     const prompt = String(promptEl.value || "").trim();
     if (!prompt) throw new Error("prompt is required");
 
-    const duration = Math.max(1, Math.min(30, parseInt(String(durationEl.value || "6"), 10) || 6));
-    const resolution = String(resolutionEl.value || "720p").trim();
-    const body = { prompt, duration, resolution };
+    const profile = resolutionProfile(backendEl?.value);
+    const maximum = Number(profile.maxDurationSeconds || 10);
+    const rawDuration = parseInt(String(durationEl.value || "6"), 10) || 6;
+    if (rawDuration < 1 || rawDuration > maximum) {
+      throw new Error(`duration must be between 1 and ${maximum} seconds for this backend`);
+    }
+    const resolution = String(resolutionEl.value || profile.default).trim();
+    const body = { prompt, duration: rawDuration, resolution };
     const backendClass = String(backendEl?.value || "").trim();
     if (backendClass) body.backend_class = backendClass;
     return body;
