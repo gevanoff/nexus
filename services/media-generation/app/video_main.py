@@ -16,7 +16,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from video_options import HUNYUAN_RESOLUTION_PRESETS, LTX_RESOLUTION_PRESETS, validate_video_payload
+from app.video_options import HUNYUAN_RESOLUTION_PRESETS, LTX_RESOLUTION_PRESETS, validate_video_payload
 
 
 SUPPORTED_ENGINES = {"ltx", "hunyuan"}
