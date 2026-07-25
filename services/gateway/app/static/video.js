@@ -15,9 +15,9 @@
     ltx_video: {
       default: "540p",
       options: [
-        { value: "480p", label: "480p (704×384)" },
-        { value: "540p", label: "540p (768×448)" },
-        { value: "720p", label: "720p (768×512)" },
+        { value: "480p", label: "Low (704×384)" },
+        { value: "540p", label: "Standard (768×512)" },
+        { value: "720p", label: "720p-class (1280×704)" },
       ],
     },
     hunyuan_video: {
