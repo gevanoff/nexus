@@ -5,6 +5,13 @@
     selectedJobId: "",
     refreshTimer: null,
     loading: false,
+    canSubmit: false,
+    form: {
+      host: "",
+      branch: "main",
+      components: new Set(),
+    },
+    hostScroll: new Map(),
   };
 
   const el = (id) => document.getElementById(id);
@@ -20,7 +27,7 @@
   const deploymentForm = el("deploymentForm");
   const submitButton = el("submitButton");
   const formHint = el("formHint");
-  const jobsBody = el("jobsBody");
+  const jobsByHost = el("jobsByHost");
   const refreshButton = el("refreshButton");
   const autoRefresh = el("autoRefresh");
   const detailRefresh = el("detailRefresh");
@@ -98,15 +105,59 @@
     return state.capabilities?.allowed_components || [];
   }
 
+  function selectedComponents() {
+    return Array.from(componentList.querySelectorAll('input[name="component"]:checked'))
+      .map((input) => input.value);
+  }
+
+  function captureFormState() {
+    state.form.host = String(hostSelect.value || "");
+    state.form.branch = String(branchSelect.value || "main");
+    state.form.components = new Set(selectedComponents());
+  }
+
+  function captureHostScroll() {
+    jobsByHost.querySelectorAll(".host-job-panel[data-host]").forEach((panel) => {
+      const scroller = panel.querySelector(".host-job-scroll");
+      if (scroller) state.hostScroll.set(panel.dataset.host || "unknown", scroller.scrollTop);
+    });
+  }
+
+  function restoreHostScroll() {
+    jobsByHost.querySelectorAll(".host-job-panel[data-host]").forEach((panel) => {
+      const scroller = panel.querySelector(".host-job-scroll");
+      if (!scroller) return;
+      const saved = Number(state.hostScroll.get(panel.dataset.host || "unknown") || 0);
+      scroller.scrollTop = saved;
+    });
+  }
+
+  function markSelectedJobRows() {
+    jobsByHost.querySelectorAll("tr[data-job-id]").forEach((row) => {
+      const selected = !!state.selectedJobId && row.dataset.jobId === state.selectedJobId;
+      row.classList.toggle("selected", selected);
+      row.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+  }
+
   function renderCapabilities() {
     const capabilities = state.capabilities || {};
     const hosts = Array.isArray(capabilities.allowed_hosts) ? capabilities.allowed_hosts : [];
     const branches = Array.isArray(capabilities.allowed_branches) ? capabilities.allowed_branches : ["main"];
+    const previousHost = state.form.host;
+    const previousBranch = state.form.branch || "main";
 
     hostSelect.innerHTML = hosts.length
       ? `<option value="">Select a host</option>${hosts.map((host) => `<option value="${escapeHtml(host)}">${escapeHtml(host)}</option>`).join("")}`
       : '<option value="">No hosts available</option>';
-    branchSelect.innerHTML = branches.map((branch) => `<option value="${escapeHtml(branch)}">${escapeHtml(branch)}</option>`).join("");
+    hostSelect.value = hosts.includes(previousHost) ? previousHost : "";
+    state.form.host = hostSelect.value;
+
+    branchSelect.innerHTML = branches
+      .map((branch) => `<option value="${escapeHtml(branch)}">${escapeHtml(branch)}</option>`)
+      .join("");
+    branchSelect.value = branches.includes(previousBranch) ? previousBranch : (branches[0] || "main");
+    state.form.branch = branchSelect.value;
     renderComponents();
   }
 
@@ -114,41 +165,89 @@
     const host = hostSelect.value;
     const components = topologyForHost(host);
     if (!host) {
+      state.form.components.clear();
       componentList.innerHTML = '<div class="muted">Select a host.</div>';
       return;
     }
     if (!components.length) {
+      state.form.components.clear();
       componentList.innerHTML = '<div class="muted">No deployable components are assigned to this host.</div>';
       return;
     }
+
+    const valid = new Set(components);
+    state.form.components = new Set(
+      Array.from(state.form.components).filter((component) => valid.has(component)),
+    );
     componentList.innerHTML = components
       .map((component) => `
         <label class="component-option">
-          <input type="checkbox" name="component" value="${escapeHtml(component)}" />
+          <input type="checkbox" name="component" value="${escapeHtml(component)}" ${state.form.components.has(component) ? "checked" : ""} />
           <span>${escapeHtml(component)}</span>
         </label>`)
       .join("");
+    componentList.querySelectorAll('input[name="component"]').forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked) state.form.components.add(input.value);
+        else state.form.components.delete(input.value);
+      });
+    });
   }
 
   function renderJobs() {
+    captureHostScroll();
     if (!state.jobs.length) {
-      jobsBody.innerHTML = '<tr><td colspan="5" class="empty">No deployment jobs have been recorded.</td></tr>';
+      jobsByHost.innerHTML = '<div class="empty">No deployment jobs have been recorded.</div>';
       return;
     }
-    jobsBody.innerHTML = state.jobs.map((job) => {
-      const status = String(job.status || "unknown");
-      return `
-        <tr data-job-id="${escapeHtml(job.id)}">
-          <td><span class="job-status ${escapeHtml(status)}">${escapeHtml(status)}</span></td>
-          <td>${escapeHtml(job.host)}</td>
-          <td>${escapeHtml((job.components || []).join(", "))}</td>
-          <td>${escapeHtml(formatTime(job.created_at))}</td>
-          <td>${escapeHtml(job.requested_by || "—")}</td>
-        </tr>`;
-    }).join("");
-    jobsBody.querySelectorAll("tr[data-job-id]").forEach((row) => {
+
+    const grouped = new Map();
+    for (const job of state.jobs) {
+      const host = String(job.host || "unknown");
+      if (!grouped.has(host)) grouped.set(host, []);
+      grouped.get(host).push(job);
+    }
+
+    jobsByHost.innerHTML = Array.from(grouped.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([host, jobs]) => {
+        jobs.sort((left, right) => Number(right.created_at || 0) - Number(left.created_at || 0));
+        const active = jobs.filter((job) => ["queued", "running"].includes(String(job.status))).length;
+        const rows = jobs.map((job) => {
+          const status = String(job.status || "unknown");
+          const selected = String(job.id || "") === state.selectedJobId;
+          return `
+            <tr data-job-id="${escapeHtml(job.id)}" class="${selected ? "selected" : ""}" aria-selected="${selected ? "true" : "false"}">
+              <td><span class="job-status ${escapeHtml(status)}">${escapeHtml(status)}</span></td>
+              <td>${escapeHtml((job.components || []).join(", "))}</td>
+              <td>${escapeHtml(formatTime(job.created_at))}</td>
+              <td>${escapeHtml(job.requested_by || "—")}</td>
+            </tr>`;
+        }).join("");
+        const countLabel = active
+          ? `${jobs.length} total · ${active} active`
+          : `${jobs.length} deployment${jobs.length === 1 ? "" : "s"}`;
+        return `
+          <section class="host-job-panel" data-host="${escapeHtml(host)}">
+            <div class="host-job-header">
+              <strong>${escapeHtml(host)}</strong>
+              <span class="host-job-count">${escapeHtml(countLabel)}</span>
+            </div>
+            <div class="host-job-scroll">
+              <table>
+                <thead><tr><th>Status</th><th>Components</th><th>Requested</th><th>Started by</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </section>`;
+      })
+      .join("");
+
+    jobsByHost.querySelectorAll("tr[data-job-id]").forEach((row) => {
       row.addEventListener("click", () => selectJob(row.dataset.jobId));
     });
+    restoreHostScroll();
+    markSelectedJobRows();
   }
 
   function renderSummary(payload) {
@@ -161,14 +260,16 @@
     const active = state.jobs.filter((job) => ["queued", "running"].includes(String(job.status)));
     activeValue.textContent = active.length ? `${active.length} queued or running` : "Idle";
 
-    submitButton.disabled = !configured || !reachable;
-    formHint.textContent = configured && reachable
+    state.canSubmit = configured && reachable;
+    submitButton.disabled = !state.canSubmit;
+    formHint.textContent = state.canSubmit
       ? "Deployments are serialized by the controller."
       : "Deployment submission is disabled until the controller is reachable.";
   }
 
   async function loadStatus({ quiet = false } = {}) {
     if (state.loading) return;
+    captureFormState();
     state.loading = true;
     refreshButton.disabled = true;
     try {
@@ -189,6 +290,7 @@
     } catch (error) {
       configuredValue.innerHTML = statusHtml("Unknown", "warn");
       controllerValue.innerHTML = statusHtml("Unavailable", "bad");
+      state.canSubmit = false;
       submitButton.disabled = true;
       if (!quiet) showBanner(error.message, "error");
     } finally {
@@ -208,6 +310,7 @@
   async function selectJob(jobId) {
     state.selectedJobId = String(jobId || "");
     detailRefresh.disabled = !state.selectedJobId;
+    markSelectedJobRows();
     await loadJob(state.selectedJobId);
   }
 
@@ -234,18 +337,16 @@
     }
   }
 
-  function selectedComponents() {
-    return Array.from(componentList.querySelectorAll('input[name="component"]:checked')).map((input) => input.value);
-  }
-
   deploymentForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const host = hostSelect.value;
-    const components = selectedComponents();
-    const branch = branchSelect.value || "main";
+    captureFormState();
+    const host = state.form.host;
+    const components = Array.from(state.form.components);
+    const branch = state.form.branch || "main";
     const reason = reasonInput.value.trim();
     if (!host) return showBanner("Select a target host.", "error");
     if (!components.length) return showBanner("Select at least one component.", "error");
+    if (!state.canSubmit) return showBanner("Deployment Control is not currently reachable.", "error");
 
     const summary = `Deploy ${components.join(", ")} to ${host} from ${branch}?`;
     if (!window.confirm(summary)) return;
@@ -265,11 +366,18 @@
     } catch (error) {
       showBanner(error.message, "error");
     } finally {
-      submitButton.disabled = false;
+      submitButton.disabled = !state.canSubmit;
     }
   });
 
-  hostSelect.addEventListener("change", renderComponents);
+  hostSelect.addEventListener("change", () => {
+    state.form.host = hostSelect.value;
+    state.form.components.clear();
+    renderComponents();
+  });
+  branchSelect.addEventListener("change", () => {
+    state.form.branch = branchSelect.value || "main";
+  });
   refreshButton.addEventListener("click", () => loadStatus());
   detailRefresh.addEventListener("click", () => loadJob(state.selectedJobId));
   autoRefresh.addEventListener("change", scheduleRefresh);

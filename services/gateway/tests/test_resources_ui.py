@@ -47,7 +47,7 @@ def test_resources_ui_hides_duplicate_core_services_section() -> None:
 
     assert 'id="control_plane_section"' in html
     assert 'id="core_services_section" class="resource-subsection" hidden' in html
-    assert "/static/resources.js?v=22" in html
+    assert "/static/resources.js?v=23" in html
     assert "splitCoreServicesForResourceUi" in js
     assert "controlPlaneCoreServiceIds" in js
     assert "hideWhenEmpty: true" in js
@@ -109,7 +109,8 @@ def test_resources_merge_preserves_lifecycle_backend_host() -> None:
     static_root = Path(__file__).resolve().parents[1] / "app" / "static"
     js = (static_root / "resources.js").read_text(encoding="utf-8")
     assert (
-        "host: existing.host || existing.hostname || backend.hostname || backend.host"
+        "host: backend.deployment_host || existing.deployment_host || existing.host || "
+        "existing.hostname || backend.hostname || backend.host"
         in js
     )
 

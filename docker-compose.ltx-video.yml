@@ -26,11 +26,10 @@ services:
       - LTX_QUANTIZATION=${LTX_QUANTIZATION:-fp8-cast}
       - HF_HOME=${LTX_HF_HOME:-${HF_HOME:-/data/huggingface}}
       - HUGGINGFACE_HUB_CACHE=${LTX_HF_HOME:-${HF_HOME:-/data/huggingface}}/hub
-      - TRANSFORMERS_CACHE=${LTX_HF_HOME:-${HF_HOME:-/data/huggingface}}/transformers
       - XDG_CACHE_HOME=/data/cache
       - NVIDIA_VISIBLE_DEVICES=${LTX_CUDA_VISIBLE_DEVICES:-0}
       - CUDA_VISIBLE_DEVICES=0
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - PYTORCH_ALLOC_CONF=expandable_segments:True
     volumes:
       - ${LTX_DATA_BIND_SOURCE:-${NEXUS_RUNTIME_ROOT:?NEXUS_RUNTIME_ROOT must be set}/ltx-video}:/data
       - ${HF_HOME_BIND_SOURCE:-/data/huggingface}:${LTX_HF_HOME:-${HF_HOME:-/data/huggingface}}

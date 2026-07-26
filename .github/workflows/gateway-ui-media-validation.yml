@@ -1,0 +1,92 @@
+name: Gateway UI and Media Validation
+
+on:
+  pull_request:
+    paths:
+      - "services/gateway/app/resources_snapshot.py"
+      - "services/gateway/app/static/admin_deployments.*"
+      - "services/gateway/app/static/resources.*"
+      - "services/gateway/app/static/video.*"
+      - "services/gateway/tests/test_deployment_admin_and_video_profiles.py"
+      - "services/gateway/tests/test_deployment_admin_routes.py"
+      - "services/gateway/tests/test_resources_ui.py"
+      - "services/media-generation/app/**"
+      - ".github/workflows/gateway-ui-media-validation.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "services/gateway/app/resources_snapshot.py"
+      - "services/gateway/app/static/admin_deployments.*"
+      - "services/gateway/app/static/resources.*"
+      - "services/gateway/app/static/video.*"
+      - "services/gateway/tests/test_deployment_admin_and_video_profiles.py"
+      - "services/gateway/tests/test_deployment_admin_routes.py"
+      - "services/gateway/tests/test_resources_ui.py"
+      - "services/media-generation/app/**"
+      - ".github/workflows/gateway-ui-media-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  focused-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: services/gateway/app/requirements.freeze.txt
+
+      - name: Install focused test dependencies
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -r services/gateway/app/requirements.freeze.txt pytest
+
+      - name: Compile and import changed Python modules
+        run: |
+          python -m py_compile \
+            services/gateway/app/resources_snapshot.py \
+            services/media-generation/app/video_main.py \
+            services/media-generation/app/video_options.py \
+            services/media-generation/app/run_video.py
+          PYTHONPATH=services/media-generation \
+            NEXUS_MEDIA_ENGINE=ltx \
+            python -c "from app.video_main import app; assert app is not None"
+          PYTHONPATH=services/media-generation/app \
+            python -c "import run_video; assert callable(run_video.main)"
+
+      - name: Check browser script syntax
+        run: |
+          node --check services/gateway/app/static/admin_deployments.js
+          node --check services/gateway/app/static/resources.js
+          node --check services/gateway/app/static/video.js
+
+      - name: Run focused Gateway tests
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: |
+          set +e
+          pytest -q --tb=short \
+            services/gateway/tests/test_deployment_admin_and_video_profiles.py \
+            services/gateway/tests/test_deployment_admin_routes.py \
+            services/gateway/tests/test_resources_ui.py \
+            > /tmp/focused-pytest.log 2>&1
+          status=$?
+          cat /tmp/focused-pytest.log
+          exit "$status"
+
+      - name: Upload focused pytest diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-pytest-log
+          path: /tmp/focused-pytest.log
+          if-no-files-found: warn
+          retention-days: 3
