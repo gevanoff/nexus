@@ -59,7 +59,12 @@ def evaluate_cycle_progress(
             current.finish_state != prior.finish_state,
         )
     )
-    stagnant = 0 if progressed else previous.stagnant_cycles + 1
+    # Cycle numbering restarts for every new agent run. The durable observation
+    # remains useful for detecting actual progress, but the exhausted
+    # no-progress allowance belongs to the run that accumulated it.
+    new_run = prior is not None and current.cycle <= prior.cycle
+    prior_stagnant_cycles = 0 if new_run else previous.stagnant_cycles
+    stagnant = 0 if progressed else prior_stagnant_cycles + 1
     pause = stagnant >= max(1, int(max_stagnant_cycles))
     return ProgressDecision(
         state=ProgressState(current, stagnant),
