@@ -49,7 +49,7 @@ def _stagnation_threshold(task: Dict[str, Any]) -> int:
     configured = _as_int(getattr(S, "CODING_SEMANTIC_MEMORY_STAGNANT_CYCLES", 0) or 0)
     if configured > 0:
         return max(1, min(configured, maximum - 1))
-    return max(2, min(4, maximum // 2, maximum - 1))
+    return max(1, min(4, max(1, maximum // 2), maximum - 1))
 
 
 def _current_run_events(task: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -108,15 +108,15 @@ def build_investigation_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
     events = _current_run_events(task)
     inspected = _dedupe_recent(
         [_inspection_target(event) for event in events if str(event.get("type") or "") == "tool_started"],
-        limit=16,
+        limit=10,
     )
     notes = _dedupe_recent(
         [
-            _clip(event.get("content"), 600)
+            _clip(event.get("content"), 400)
             for event in events
             if str(event.get("type") or "") == "assistant" and str(event.get("content") or "").strip()
         ],
-        limit=3,
+        limit=2,
     )
     plan = cw.normalize_project_plan(task.get("project_plan"), fallback_goal=str(task.get("prompt") or ""))
     items = plan.get("items") if isinstance(plan.get("items"), list) else []
@@ -174,6 +174,9 @@ def render_checkpoint_guidance(checkpoint: Dict[str, Any]) -> str:
             f"- No durable state transition has occurred for {checkpoint.get('stagnant_cycles') or 0} cycles "
             f"as of cycle {checkpoint.get('cycle') or 0}."
         ),
+        f"- Unresolved question: {checkpoint.get('unresolved_question') or ''}",
+        f"- Required next action: {checkpoint.get('next_action') or ''}",
+        "- A note-only rewrite against the same repository state will not earn another recovery checkpoint.",
     ]
     if checkpoint.get("active_plan_item"):
         lines.append(f"- Active project-plan item: {checkpoint['active_plan_item']}")
@@ -181,15 +184,8 @@ def render_checkpoint_guidance(checkpoint: Dict[str, Any]) -> str:
         lines.append("- Already inspected; do not repeat unless directly required for the next edit:")
         lines.extend(f"  - {item}" for item in inspected)
     if notes:
-        lines.append("- Recent model notes (unverified; confirm against repository evidence rather than treating them as facts):")
+        lines.append("- Recent model notes (unverified; confirm against repository evidence):")
         lines.extend(f"  - {item}" for item in notes)
-    lines.extend(
-        [
-            f"- Unresolved question: {checkpoint.get('unresolved_question') or ''}",
-            f"- Required next action: {checkpoint.get('next_action') or ''}",
-            "A note-only rewrite against the same repository state will not earn another recovery checkpoint.",
-        ]
-    )
     return "\n".join(lines)
 
 
