@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from app import coding_routes_guarded
+from app import coding_semantic_memory as memory
+
+
+def _task(*, stagnant_cycles=4, plan_revision=1, workspace_fingerprint="same"):
+    return {
+        "id": "code_abcdef123456",
+        "prompt": "Fix archived workspace diagnostics",
+        "agent_status": "running",
+        "agent_run_id": "run-2",
+        "agent_cycle": 4,
+        "agent_progress_state": {
+            "stagnant_cycles": stagnant_cycles,
+            "observation": {
+                "workspace_fingerprint": workspace_fingerprint,
+                "plan_revision": plan_revision,
+                "validation_revision": 0,
+                "diff_review_revision": 0,
+                "finish_state": "running",
+            },
+        },
+        "mission": {"budget_policy": {"max_no_progress_cycles": 8}},
+        "project_plan": {
+            "goal": "Fix archived workspace diagnostics",
+            "revision": plan_revision,
+            "items": [
+                {
+                    "id": "inspect",
+                    "title": "Trace archive diagnostics",
+                    "status": "in_progress",
+                    "summary": "Identify the smallest integration point",
+                }
+            ],
+        },
+        "agent_events": [
+            {"type": "started", "run_id": "run-1"},
+            {
+                "type": "tool_started",
+                "name": "coding_read_file_lines",
+                "args": {"path": "old.py", "start_line": 1, "line_count": 20},
+            },
+            {"type": "started", "run_id": "run-2"},
+            {
+                "type": "assistant",
+                "content": "The archive report lacks a stable stop-reason summary; I need the rendering call site.",
+            },
+            {
+                "type": "tool_started",
+                "name": "coding_search_text",
+                "args": {"path": "services/gateway/app", "query": "inspect_archived_task"},
+            },
+            {
+                "type": "tool_started",
+                "name": "coding_read_file_lines",
+                "args": {
+                    "path": "services/gateway/app/coding_workspace.py",
+                    "start_line": 3043,
+                    "line_count": 80,
+                },
+            },
+        ],
+    }
+
+
+def _install_workspace_stubs(monkeypatch, task):
+    messages = []
+
+    def mutate(_task_id, mutator):
+        mutator(task)
+        return task
+
+    def append_guidance(_task_id, *, message, actor):
+        messages.append({"message": message, "actor": actor})
+        task.setdefault("guidance_messages", []).append({"content": message, "actor": actor})
+        task["last_guidance_at"] = 123.0
+        return task
+
+    monkeypatch.setattr(memory.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(memory.cw, "mutate_task", mutate)
+    monkeypatch.setattr(memory.cw, "append_guidance_message", append_guidance)
+    monkeypatch.setattr(memory.cw, "normalize_coding_mission", lambda value: value["mission"])
+    monkeypatch.setattr(memory.cw, "normalize_project_plan", lambda value, fallback_goal="": value)
+    return messages
+
+
+def test_checkpoint_contains_only_current_run_inspection(monkeypatch):
+    task = _task()
+    monkeypatch.setattr(memory.cw, "normalize_project_plan", lambda value, fallback_goal="": value)
+
+    checkpoint = memory.build_investigation_checkpoint(task)
+
+    assert checkpoint["inspected_targets"] == [
+        "search services/gateway/app: inspect_archived_task",
+        "read services/gateway/app/coding_workspace.py lines 3043-3122",
+    ]
+    assert "old.py" not in str(checkpoint)
+    assert checkpoint["active_plan_item"].startswith("Trace archive diagnostics")
+    assert checkpoint["unverified_model_notes"]
+
+
+def test_stagnation_checkpoint_is_persisted_and_injected_once(monkeypatch):
+    task = _task()
+    messages = _install_workspace_stubs(monkeypatch, task)
+
+    assert memory.process_task(task["id"]) is True
+    assert memory.process_task(task["id"]) is False
+
+    assert len(messages) == 1
+    assert messages[0]["actor"] == "nexus-controller"
+    assert "Required next action" in messages[0]["message"]
+    assert task["agent_investigation_checkpoint"]["stagnant_cycles"] == 4
+    assert task["agent_events"][-1]["type"] == "investigation_checkpoint"
+
+
+def test_required_action_precedes_bounded_inspection_ledger(monkeypatch):
+    task = _task()
+    monkeypatch.setattr(memory.cw, "normalize_project_plan", lambda value, fallback_goal="": value)
+    checkpoint = memory.build_investigation_checkpoint(task)
+
+    guidance = memory.render_checkpoint_guidance(checkpoint)
+
+    assert guidance.index("Required next action") < guidance.index("Already inspected")
+    assert "Required next action" in guidance[:1600]
+
+
+def test_durable_state_change_allows_one_new_checkpoint(monkeypatch):
+    task = _task()
+    messages = _install_workspace_stubs(monkeypatch, task)
+
+    assert memory.process_task(task["id"]) is True
+    task["agent_progress_state"]["observation"]["plan_revision"] = 2
+    task["agent_progress_state"]["stagnant_cycles"] = 4
+    task["project_plan"]["revision"] = 2
+
+    assert memory.process_task(task["id"]) is True
+    assert memory.process_task(task["id"]) is False
+    assert len(messages) == 2
+
+
+def test_new_run_same_durable_state_does_not_receive_fresh_credit(monkeypatch):
+    task = _task()
+    messages = _install_workspace_stubs(monkeypatch, task)
+
+    assert memory.process_task(task["id"]) is True
+    task["agent_run_id"] = "run-3"
+    task["agent_cycle"] = 4
+    task["agent_progress_state"]["stagnant_cycles"] = 4
+    task["agent_events"].append({"type": "started", "run_id": "run-3"})
+
+    assert memory.process_task(task["id"]) is False
+    assert len(messages) == 1
+
+
+def test_small_no_progress_budget_intervenes_before_terminal_cycle(monkeypatch):
+    task = _task(stagnant_cycles=1)
+    task["mission"]["budget_policy"]["max_no_progress_cycles"] = 2
+    monkeypatch.setattr(memory.cw, "normalize_coding_mission", lambda value: value["mission"])
+
+    assert memory._stagnation_threshold(task) == 1
+
+
+def test_inactive_workspace_is_ignored(monkeypatch):
+    task = _task()
+    task["agent_status"] = "paused"
+    messages = _install_workspace_stubs(monkeypatch, task)
+
+    assert memory.process_task(task["id"]) is False
+    assert messages == []
+
+
+def test_router_registers_semantic_memory_lifecycle_once():
+    assert coding_routes_guarded.start_semantic_memory in coding_routes_guarded.router.on_startup
+    assert coding_routes_guarded.stop_semantic_memory in coding_routes_guarded.router.on_shutdown
+    assert coding_routes_guarded.router.on_startup.count(coding_routes_guarded.start_semantic_memory) == 1
+    assert coding_routes_guarded.router.on_shutdown.count(coding_routes_guarded.stop_semantic_memory) == 1
