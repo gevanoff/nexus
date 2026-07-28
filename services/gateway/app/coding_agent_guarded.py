@@ -52,8 +52,7 @@ async def start_agent_run(
     mission_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     task = await asyncio.to_thread(cw.load_task, task_id)
-    persisted_status = str(task.get("agent_status") or "").strip().lower()
-    if persisted_status in _agent._ACTIVE_AGENT_STATUSES or _agent._active_runner(task_id) is not None:
+    if _agent._active_runner(task_id) is not None:
         return await _start_original(
             task_id,
             git_token_value=git_token_value,
@@ -67,6 +66,10 @@ async def start_agent_run(
             context_reset_cycles=context_reset_cycles,
             mission_overrides=mission_overrides,
         )
+
+    persisted_status = str(task.get("agent_status") or "").strip().lower()
+    if persisted_status in _agent._ACTIVE_AGENT_STATUSES:
+        task = await asyncio.to_thread(_agent._mark_stale_agent_paused, task_id, task)
 
     reconciliation = await reconcile_before_run(
         task_id,
