@@ -52,7 +52,7 @@ async def resume_interrupted_agent_runs(task_ids: Sequence[str]) -> Dict[str, An
         if not task_id:
             continue
         try:
-            task = await _agent.recover_stale_agent_run(task_id)
+            task = cw.load_task(task_id)
             reconciliation = await reconcile_before_run(
                 task_id,
                 git_token_value=_agent._git_token_for_task_owner(task),
