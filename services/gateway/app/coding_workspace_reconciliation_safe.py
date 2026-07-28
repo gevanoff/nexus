@@ -29,17 +29,21 @@ def _workspace_dirty(task_id: str) -> Optional[bool]:
     return int(counts.get("total") or 0) > 0
 
 
-def _merged_pull_request_state(
+def _pull_request_state(
     task: Dict[str, Any],
     *,
     pr_number: int,
     git_token_value: Optional[str],
-) -> Optional[Dict[str, Any]]:
-    if pr_number <= 0:
-        return None
+) -> Dict[str, Any]:
     owner_repo = cw._github_owner_repo(str(task.get("repo_url") or ""))
     if owner_repo is None:
-        return None
+        return {
+            "known": False,
+            "integrated": False,
+            "source": "github_pr",
+            "pr_number": pr_number,
+            "error": "repository URL is not a GitHub repository",
+        }
     owner, repo = owner_repo
     result = cw._github_api_request(
         "GET",
@@ -47,14 +51,19 @@ def _merged_pull_request_state(
         git_token_value=git_token_value,
     )
     if not result.get("ok"):
-        return None
+        return {
+            "known": False,
+            "integrated": False,
+            "source": "github_pr",
+            "pr_number": pr_number,
+            "error": str(result.get("error") or result.get("body") or "GitHub PR lookup failed")[:1000],
+        }
     body = result.get("body") if isinstance(result.get("body"), dict) else {}
-    if not bool(body.get("merged_at") or body.get("merged")):
-        return None
     head = body.get("head") if isinstance(body.get("head"), dict) else {}
+    merged = bool(body.get("merged_at") or body.get("merged"))
     return {
         "known": True,
-        "integrated": True,
+        "integrated": merged,
         "source": "github_pr",
         "pr_number": pr_number,
         "pr_url": str(body.get("html_url") or ""),
@@ -65,6 +74,27 @@ def _merged_pull_request_state(
     }
 
 
+def _mark_local_integration(
+    task_id: str,
+    task: Dict[str, Any],
+    local_state: Dict[str, Any],
+    pr_state: Dict[str, Any],
+    *,
+    actor: str,
+) -> Dict[str, Any]:
+    evidence = dict(local_state)
+    evidence.update(
+        {
+            "pr_number": pr_state.get("pr_number"),
+            "pr_url": pr_state.get("pr_url"),
+            "merged_at": pr_state.get("merged_at"),
+            "pr_head_sha": pr_state.get("pr_head_sha"),
+        }
+    )
+    stored = base._mark_integrated(task_id, evidence, actor=actor)
+    return {"proceed": False, "status": "integrated", "evidence": evidence, "task": stored}
+
+
 def reconcile_task_before_run(
     task_id: str,
     *,
@@ -73,25 +103,59 @@ def reconcile_task_before_run(
 ) -> Dict[str, Any]:
     task = cw.load_task(task_id)
     pr_number, pr_url = base._pull_request_reference(task)
-    merged = _merged_pull_request_state(
-        task,
-        pr_number=pr_number,
-        git_token_value=git_token_value,
-    )
-    if merged is None:
+    if pr_number <= 0:
         return base.reconcile_task_before_run(
             task_id,
             git_token_value=git_token_value,
             actor=actor,
         )
-    if pr_url and not merged.get("pr_url"):
-        merged["pr_url"] = pr_url
+
+    pr_state = _pull_request_state(
+        task,
+        pr_number=pr_number,
+        git_token_value=git_token_value,
+    )
+    if pr_url and not pr_state.get("pr_url"):
+        pr_state["pr_url"] = pr_url
+
+    if pr_state.get("known") and not pr_state.get("integrated"):
+        if str(pr_state.get("state") or "").strip().lower() == "open":
+            return {
+                "proceed": True,
+                "status": "open_pull_request",
+                "evidence": pr_state,
+                "task": task,
+            }
+        local_state = base._local_integration_state(task, git_token_value=git_token_value)
+        if local_state.get("integrated"):
+            return _mark_local_integration(task_id, task, local_state, pr_state, actor=actor)
+        evidence = dict(pr_state)
+        evidence["workspace_state"] = local_state
+        return {
+            "proceed": True,
+            "status": "not_integrated" if local_state.get("known") else "reconciliation_unknown",
+            "evidence": evidence,
+            "task": task,
+        }
+
+    if not pr_state.get("known"):
+        local_state = base._local_integration_state(task, git_token_value=git_token_value)
+        if local_state.get("integrated"):
+            return _mark_local_integration(task_id, task, local_state, pr_state, actor=actor)
+        evidence = dict(pr_state)
+        evidence["workspace_state"] = local_state
+        return {
+            "proceed": True,
+            "status": "not_integrated" if local_state.get("known") else "reconciliation_unknown",
+            "evidence": evidence,
+            "task": task,
+        }
 
     current_head = _workspace_head(task_id, task)
     dirty = _workspace_dirty(task_id)
-    pr_head = str(merged.get("pr_head_sha") or "").strip()
+    pr_head = str(pr_state.get("pr_head_sha") or "").strip()
     if dirty is True:
-        evidence = dict(merged)
+        evidence = dict(pr_state)
         evidence.update(
             {
                 "integrated": False,
@@ -107,23 +171,14 @@ def reconcile_task_before_run(
             "task": task,
         }
     if current_head and pr_head and current_head == pr_head and dirty is False:
-        stored = base._mark_integrated(task_id, merged, actor=actor)
-        return {"proceed": False, "status": "integrated", "evidence": merged, "task": stored}
+        stored = base._mark_integrated(task_id, pr_state, actor=actor)
+        return {"proceed": False, "status": "integrated", "evidence": pr_state, "task": stored}
 
     local_state = base._local_integration_state(task, git_token_value=git_token_value)
     if local_state.get("integrated") and dirty is False:
-        local_state.update(
-            {
-                "pr_number": pr_number,
-                "pr_url": str(merged.get("pr_url") or pr_url),
-                "merged_at": merged.get("merged_at"),
-                "pr_head_sha": pr_head,
-            }
-        )
-        stored = base._mark_integrated(task_id, local_state, actor=actor)
-        return {"proceed": False, "status": "integrated", "evidence": local_state, "task": stored}
+        return _mark_local_integration(task_id, task, local_state, pr_state, actor=actor)
 
-    evidence = dict(merged)
+    evidence = dict(pr_state)
     evidence.update(
         {
             "integrated": False,
