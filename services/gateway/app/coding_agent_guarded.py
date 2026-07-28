@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Sequence
 
 from app import coding_agent as _agent
 from app import coding_workspace as cw
-from app.coding_workspace_reconciliation_safe import reconcile_before_run
+from app.coding_workspace_reconciliation import reconcile_before_run
 
 
 async def start_agent_run(

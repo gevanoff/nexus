@@ -32,10 +32,16 @@ def _mutator_store(task):
     return mutate
 
 
+def _clean_summary():
+    return {"ok": True, "counts": {"total": 0}, "files": []}
+
+
 def test_merged_pull_request_marks_workspace_integrated(monkeypatch):
     task = _task()
     monkeypatch.setattr(reconciliation.cw, "load_task", lambda _task_id: task)
     monkeypatch.setattr(reconciliation.cw, "mutate_task", _mutator_store(task))
+    monkeypatch.setattr(reconciliation.cw, "git_head", lambda _task_id: {"ok": True, "commit": "work-sha"})
+    monkeypatch.setattr(reconciliation.cw, "git_change_summary", lambda _task_id: _clean_summary())
     monkeypatch.setattr(
         reconciliation.cw,
         "_github_api_request",
@@ -47,6 +53,7 @@ def test_merged_pull_request_marks_workspace_integrated(monkeypatch):
                 "merged_at": "2026-07-27T23:00:00Z",
                 "html_url": "https://github.com/gevanoff/nexus/pull/50",
                 "merge_commit_sha": "merged-sha",
+                "head": {"sha": "work-sha"},
             },
         },
     )
@@ -73,6 +80,7 @@ def test_open_pull_request_remains_resumable(monkeypatch):
                 "state": "open",
                 "merged_at": None,
                 "html_url": "https://github.com/gevanoff/nexus/pull/50",
+                "head": {"sha": "work-sha"},
             },
         },
     )
@@ -104,6 +112,8 @@ def test_local_ancestor_marks_workspace_integrated_when_pr_lookup_unknown(monkey
     task = _task(last_pr_output="", last_pushed_at=123.0)
     monkeypatch.setattr(reconciliation.cw, "load_task", lambda _task_id: task)
     monkeypatch.setattr(reconciliation.cw, "mutate_task", _mutator_store(task))
+    monkeypatch.setattr(reconciliation.cw, "git_head", lambda _task_id: {"ok": True, "commit": "work-sha"})
+    monkeypatch.setattr(reconciliation.cw, "git_change_summary", lambda _task_id: _clean_summary())
     monkeypatch.setattr(
         reconciliation,
         "_local_integration_state",
@@ -125,6 +135,8 @@ def test_local_ancestor_marks_workspace_integrated_when_pr_lookup_unknown(monkey
 def test_unknown_reconciliation_does_not_block_resume(monkeypatch):
     task = _task(last_pr_output="", last_pushed_at=123.0)
     monkeypatch.setattr(reconciliation.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(reconciliation.cw, "git_head", lambda _task_id: {"ok": True, "commit": "work-sha"})
+    monkeypatch.setattr(reconciliation.cw, "git_change_summary", lambda _task_id: _clean_summary())
     monkeypatch.setattr(
         reconciliation,
         "_local_integration_state",

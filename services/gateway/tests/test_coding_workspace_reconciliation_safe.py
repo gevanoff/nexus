@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app import coding_workspace_reconciliation_safe as reconciliation
+from app import coding_workspace_reconciliation as reconciliation
 
 
 def _task(**overrides):
@@ -41,7 +41,7 @@ def test_advanced_workspace_after_merge_remains_resumable(monkeypatch):
     monkeypatch.setattr(reconciliation.cw, "git_change_summary", lambda _task_id: _clean_summary())
     monkeypatch.setattr(reconciliation.cw, "_github_api_request", lambda *args, **kwargs: _merged_pr("old-pr-head"))
     monkeypatch.setattr(
-        reconciliation.base,
+        reconciliation,
         "_local_integration_state",
         lambda *args, **kwargs: {
             "known": True,
@@ -66,7 +66,7 @@ def test_workspace_at_merged_pr_head_is_terminal(monkeypatch):
     monkeypatch.setattr(reconciliation.cw, "git_change_summary", lambda _task_id: _clean_summary())
     monkeypatch.setattr(reconciliation.cw, "_github_api_request", lambda *args, **kwargs: _merged_pr("pr-head"))
     monkeypatch.setattr(
-        reconciliation.base,
+        reconciliation,
         "_mark_integrated",
         lambda task_id, evidence, actor: stored | {"agent_status": "completed", "evidence": evidence},
     )
@@ -124,7 +124,7 @@ def test_pr_lookup_failure_does_not_delegate_to_unsafe_second_lookup(monkeypatch
         lambda *args, **kwargs: {"ok": False, "error": "temporary failure"},
     )
     monkeypatch.setattr(
-        reconciliation.base,
+        reconciliation,
         "_local_integration_state",
         lambda *args, **kwargs: {
             "known": False,
@@ -132,11 +132,6 @@ def test_pr_lookup_failure_does_not_delegate_to_unsafe_second_lookup(monkeypatch
             "source": "git_ancestry",
             "error": "network unavailable",
         },
-    )
-    monkeypatch.setattr(
-        reconciliation.base,
-        "reconcile_task_before_run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unsafe delegate called")),
     )
 
     result = reconciliation.reconcile_task_before_run("code_abcdef123456")
@@ -152,7 +147,7 @@ def test_merged_pr_with_unknown_workspace_relationship_fails_open(monkeypatch):
     monkeypatch.setattr(reconciliation.cw, "git_change_summary", lambda _task_id: {"ok": False})
     monkeypatch.setattr(reconciliation.cw, "_github_api_request", lambda *args, **kwargs: _merged_pr("pr-head"))
     monkeypatch.setattr(
-        reconciliation.base,
+        reconciliation,
         "_local_integration_state",
         lambda *args, **kwargs: {
             "known": False,
