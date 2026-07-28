@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Any, Dict, Optional
+
+from app import coding_workspace as cw
+from app import coding_workspace_reconciliation as base
+
+
+def _workspace_head(task_id: str, task: Dict[str, Any]) -> str:
+    try:
+        result = cw.git_head(task_id)
+        commit = str(result.get("commit") or "").strip() if isinstance(result, dict) else ""
+        if commit:
+            return commit
+    except Exception:
+        pass
+    return str(task.get("last_commit") or task.get("last_checkpoint_commit") or "").strip()
+
+
+def _merged_pull_request_state(
+    task: Dict[str, Any],
+    *,
+    pr_number: int,
+    git_token_value: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if pr_number <= 0:
+        return None
+    owner_repo = cw._github_owner_repo(str(task.get("repo_url") or ""))
+    if owner_repo is None:
+        return None
+    owner, repo = owner_repo
+    result = cw._github_api_request(
+        "GET",
+        f"/repos/{owner}/{repo}/pulls/{pr_number}",
+        git_token_value=git_token_value,
+    )
+    if not result.get("ok"):
+        return None
+    body = result.get("body") if isinstance(result.get("body"), dict) else {}
+    if not bool(body.get("merged_at") or body.get("merged")):
+        return None
+    head = body.get("head") if isinstance(body.get("head"), dict) else {}
+    return {
+        "known": True,
+        "integrated": True,
+        "source": "github_pr",
+        "pr_number": pr_number,
+        "pr_url": str(body.get("html_url") or ""),
+        "state": str(body.get("state") or ""),
+        "merged_at": body.get("merged_at"),
+        "merge_commit_sha": str(body.get("merge_commit_sha") or ""),
+        "pr_head_sha": str(head.get("sha") or ""),
+    }
+
+
+def reconcile_task_before_run(
+    task_id: str,
+    *,
+    git_token_value: Optional[str] = None,
+    actor: str = "coding-agent",
+) -> Dict[str, Any]:
+    task = cw.load_task(task_id)
+    pr_number, pr_url = base._pull_request_reference(task)
+    merged = _merged_pull_request_state(
+        task,
+        pr_number=pr_number,
+        git_token_value=git_token_value,
+    )
+    if merged is None:
+        return base.reconcile_task_before_run(
+            task_id,
+            git_token_value=git_token_value,
+            actor=actor,
+        )
+    if pr_url and not merged.get("pr_url"):
+        merged["pr_url"] = pr_url
+
+    current_head = _workspace_head(task_id, task)
+    pr_head = str(merged.get("pr_head_sha") or "").strip()
+    if current_head and pr_head and current_head == pr_head:
+        stored = base._mark_integrated(task_id, merged, actor=actor)
+        return {"proceed": False, "status": "integrated", "evidence": merged, "task": stored}
+
+    local_state = base._local_integration_state(task, git_token_value=git_token_value)
+    if local_state.get("integrated"):
+        local_state.update(
+            {
+                "pr_number": pr_number,
+                "pr_url": str(merged.get("pr_url") or pr_url),
+                "merged_at": merged.get("merged_at"),
+                "pr_head_sha": pr_head,
+            }
+        )
+        stored = base._mark_integrated(task_id, local_state, actor=actor)
+        return {"proceed": False, "status": "integrated", "evidence": local_state, "task": stored}
+
+    evidence = dict(merged)
+    evidence.update(
+        {
+            "integrated": False,
+            "current_head": current_head,
+            "workspace_state": local_state,
+        }
+    )
+    if current_head and pr_head and current_head != pr_head:
+        evidence["reason"] = "workspace_head_advanced_after_merged_pull_request"
+        return {
+            "proceed": True,
+            "status": "post_merge_changes",
+            "evidence": evidence,
+            "task": task,
+        }
+    if local_state.get("known"):
+        evidence["reason"] = "workspace_changes_not_integrated"
+        return {
+            "proceed": True,
+            "status": "post_merge_changes",
+            "evidence": evidence,
+            "task": task,
+        }
+
+    evidence["reason"] = "merged_pull_request_but_workspace_relationship_unknown"
+    return {
+        "proceed": True,
+        "status": "reconciliation_unknown",
+        "evidence": evidence,
+        "task": task,
+    }
+
+
+async def reconcile_before_run(
+    task_id: str,
+    *,
+    git_token_value: Optional[str] = None,
+    actor: str = "coding-agent",
+) -> Dict[str, Any]:
+    return await asyncio.to_thread(
+        reconcile_task_before_run,
+        task_id,
+        git_token_value=git_token_value,
+        actor=actor,
+    )
