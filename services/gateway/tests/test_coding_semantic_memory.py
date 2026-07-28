@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from app import coding_routes_guarded
+import asyncio
+
+import pytest
+
 from app import coding_semantic_memory as memory
 
 
@@ -170,8 +173,20 @@ def test_inactive_workspace_is_ignored(monkeypatch):
     assert messages == []
 
 
-def test_router_registers_semantic_memory_lifecycle_once():
-    assert coding_routes_guarded.start_semantic_memory in coding_routes_guarded.router.on_startup
-    assert coding_routes_guarded.stop_semantic_memory in coding_routes_guarded.router.on_shutdown
-    assert coding_routes_guarded.router.on_startup.count(coding_routes_guarded.start_semantic_memory) == 1
-    assert coding_routes_guarded.router.on_shutdown.count(coding_routes_guarded.stop_semantic_memory) == 1
+@pytest.mark.asyncio
+async def test_runtime_start_and_stop_are_idempotent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(memory, "scan_once", lambda: calls.append("scan") or {"ok": True, "processed": [], "failures": {}})
+    monkeypatch.setattr(memory, "_poll_interval", lambda: 60.0)
+    memory._RUNTIME_TASK = None
+
+    await memory.start_runtime()
+    first = memory._RUNTIME_TASK
+    await memory.start_runtime()
+    assert memory._RUNTIME_TASK is first
+    await asyncio.sleep(0)
+    assert calls == ["scan"]
+
+    await memory.stop_runtime()
+    assert memory._RUNTIME_TASK is None
+    await memory.stop_runtime()
