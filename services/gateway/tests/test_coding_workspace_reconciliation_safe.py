@@ -93,7 +93,56 @@ def test_dirty_workspace_at_merged_pr_head_remains_resumable(monkeypatch):
 
     assert result["proceed"] is True
     assert result["status"] == "post_merge_changes"
-    assert result["evidence"]["reason"] == "workspace_has_uncommitted_changes_after_merged_pull_request"
+    assert result["evidence"]["reason"] == "workspace_has_uncommitted_changes"
+
+
+def test_dirty_workspace_without_pr_metadata_remains_resumable(monkeypatch):
+    task = _task(last_pr_output="", last_pushed_at=123.0)
+    monkeypatch.setattr(reconciliation.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(reconciliation.cw, "git_head", lambda _task_id: {"ok": True, "commit": "workspace-head"})
+    monkeypatch.setattr(
+        reconciliation.cw,
+        "git_change_summary",
+        lambda _task_id: {"ok": True, "counts": {"total": 1}, "files": [{"path": "new.py"}]},
+    )
+
+    result = reconciliation.reconcile_task_before_run("code_abcdef123456")
+
+    assert result["proceed"] is True
+    assert result["status"] == "post_merge_changes"
+    assert result["evidence"]["reason"] == "workspace_has_uncommitted_changes"
+
+
+def test_pr_lookup_failure_does_not_delegate_to_unsafe_second_lookup(monkeypatch):
+    task = _task()
+    monkeypatch.setattr(reconciliation.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(reconciliation.cw, "git_head", lambda _task_id: {"ok": False, "commit": ""})
+    monkeypatch.setattr(reconciliation.cw, "git_change_summary", lambda _task_id: {"ok": False})
+    monkeypatch.setattr(
+        reconciliation.cw,
+        "_github_api_request",
+        lambda *args, **kwargs: {"ok": False, "error": "temporary failure"},
+    )
+    monkeypatch.setattr(
+        reconciliation.base,
+        "_local_integration_state",
+        lambda *args, **kwargs: {
+            "known": False,
+            "integrated": False,
+            "source": "git_ancestry",
+            "error": "network unavailable",
+        },
+    )
+    monkeypatch.setattr(
+        reconciliation.base,
+        "reconcile_task_before_run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unsafe delegate called")),
+    )
+
+    result = reconciliation.reconcile_task_before_run("code_abcdef123456")
+
+    assert result["proceed"] is True
+    assert result["status"] == "reconciliation_unknown"
 
 
 def test_merged_pr_with_unknown_workspace_relationship_fails_open(monkeypatch):
