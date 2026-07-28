@@ -229,3 +229,43 @@ async def test_guarded_start_delegates_active_run_before_reconciliation(monkeypa
     assert started is True
     assert reconciled is False
     assert result["agent"]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_guarded_start_recovers_stale_active_state_before_reconciliation(monkeypatch):
+    task = _task(agent_status="running")
+    recovered_task = _task(agent_status="paused")
+    integrated_task = _task(agent_status="completed")
+    order = []
+    started = False
+
+    def fake_recover(task_id, current):
+        assert current is task
+        order.append("recover")
+        return recovered_task
+
+    async def fake_reconcile(*args, **kwargs):
+        order.append("reconcile")
+        return {"proceed": False, "task": integrated_task}
+
+    async def fake_start(*args, **kwargs):
+        nonlocal started
+        started = True
+        return {}
+
+    monkeypatch.setattr(coding_agent_guarded.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(coding_agent_guarded._agent, "_active_runner", lambda _task_id: None)
+    monkeypatch.setattr(coding_agent_guarded._agent, "_mark_stale_agent_paused", fake_recover)
+    monkeypatch.setattr(coding_agent_guarded, "reconcile_before_run", fake_reconcile)
+    monkeypatch.setattr(coding_agent_guarded._agent, "start_agent_run", fake_start)
+    monkeypatch.setattr(
+        coding_agent_guarded.cw,
+        "public_task",
+        lambda value: {"agent": {"status": value["agent_status"]}},
+    )
+
+    result = await coding_agent_guarded.start_agent_run(task["id"])
+
+    assert order == ["recover", "reconcile"]
+    assert started is False
+    assert result["agent"]["status"] == "completed"
