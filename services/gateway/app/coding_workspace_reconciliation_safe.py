@@ -18,6 +18,17 @@ def _workspace_head(task_id: str, task: Dict[str, Any]) -> str:
     return str(task.get("last_commit") or task.get("last_checkpoint_commit") or "").strip()
 
 
+def _workspace_dirty(task_id: str) -> Optional[bool]:
+    try:
+        result = cw.git_change_summary(task_id)
+    except Exception:
+        return None
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
+    counts = result.get("counts") if isinstance(result.get("counts"), dict) else {}
+    return int(counts.get("total") or 0) > 0
+
+
 def _merged_pull_request_state(
     task: Dict[str, Any],
     *,
@@ -77,13 +88,30 @@ def reconcile_task_before_run(
         merged["pr_url"] = pr_url
 
     current_head = _workspace_head(task_id, task)
+    dirty = _workspace_dirty(task_id)
     pr_head = str(merged.get("pr_head_sha") or "").strip()
-    if current_head and pr_head and current_head == pr_head:
+    if dirty is True:
+        evidence = dict(merged)
+        evidence.update(
+            {
+                "integrated": False,
+                "current_head": current_head,
+                "workspace_dirty": True,
+                "reason": "workspace_has_uncommitted_changes_after_merged_pull_request",
+            }
+        )
+        return {
+            "proceed": True,
+            "status": "post_merge_changes",
+            "evidence": evidence,
+            "task": task,
+        }
+    if current_head and pr_head and current_head == pr_head and dirty is False:
         stored = base._mark_integrated(task_id, merged, actor=actor)
         return {"proceed": False, "status": "integrated", "evidence": merged, "task": stored}
 
     local_state = base._local_integration_state(task, git_token_value=git_token_value)
-    if local_state.get("integrated"):
+    if local_state.get("integrated") and dirty is False:
         local_state.update(
             {
                 "pr_number": pr_number,
@@ -100,6 +128,7 @@ def reconcile_task_before_run(
         {
             "integrated": False,
             "current_head": current_head,
+            "workspace_dirty": dirty,
             "workspace_state": local_state,
         }
     )
@@ -111,7 +140,7 @@ def reconcile_task_before_run(
             "evidence": evidence,
             "task": task,
         }
-    if local_state.get("known"):
+    if local_state.get("known") and dirty is False:
         evidence["reason"] = "workspace_changes_not_integrated"
         return {
             "proceed": True,
