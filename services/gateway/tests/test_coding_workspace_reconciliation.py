@@ -167,6 +167,8 @@ async def test_guarded_start_does_not_call_agent_for_integrated_workspace(monkey
         called = True
         return {}
 
+    monkeypatch.setattr(coding_agent_guarded.cw, "load_task", lambda _task_id: integrated_task)
+    monkeypatch.setattr(coding_agent_guarded._agent, "_active_runner", lambda _task_id: None)
     monkeypatch.setattr(coding_agent_guarded, "reconcile_before_run", fake_reconcile)
     monkeypatch.setattr(coding_agent_guarded._agent, "start_agent_run", fake_start)
     monkeypatch.setattr(
@@ -183,15 +185,47 @@ async def test_guarded_start_does_not_call_agent_for_integrated_workspace(monkey
 
 @pytest.mark.asyncio
 async def test_guarded_start_delegates_when_work_is_not_integrated(monkeypatch):
+    task = _task(agent_status="paused")
+
     async def fake_reconcile(*args, **kwargs):
-        return {"proceed": True, "task": _task()}
+        return {"proceed": True, "task": task}
 
     async def fake_start(*args, **kwargs):
         return {"agent": {"status": "queued"}}
 
+    monkeypatch.setattr(coding_agent_guarded.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(coding_agent_guarded._agent, "_active_runner", lambda _task_id: None)
     monkeypatch.setattr(coding_agent_guarded, "reconcile_before_run", fake_reconcile)
     monkeypatch.setattr(coding_agent_guarded._agent, "start_agent_run", fake_start)
 
     result = await coding_agent_guarded.start_agent_run("code_abcdef123456")
 
     assert result["agent"]["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_guarded_start_delegates_active_run_before_reconciliation(monkeypatch):
+    task = _task(agent_status="running")
+    reconciled = False
+    started = False
+
+    async def fake_reconcile(*args, **kwargs):
+        nonlocal reconciled
+        reconciled = True
+        return {"proceed": False, "task": task}
+
+    async def fake_start(*args, **kwargs):
+        nonlocal started
+        started = True
+        return {"agent": {"status": "running"}}
+
+    monkeypatch.setattr(coding_agent_guarded.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(coding_agent_guarded._agent, "_active_runner", lambda _task_id: object())
+    monkeypatch.setattr(coding_agent_guarded, "reconcile_before_run", fake_reconcile)
+    monkeypatch.setattr(coding_agent_guarded._agent, "start_agent_run", fake_start)
+
+    result = await coding_agent_guarded.start_agent_run(task["id"])
+
+    assert started is True
+    assert reconciled is False
+    assert result["agent"]["status"] == "running"
