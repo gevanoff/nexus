@@ -19,7 +19,7 @@ from app.openai_routes import router as openai_router
 from app.model_aliases import get_aliases, get_aliases_state
 from app.tools_bus import router as tools_router
 from app.agent_routes import router as agent_router
-from app.coding_routes import router as coding_router
+from app.coding_routes_guarded import router as coding_router
 from app.agent_api.routes import router as agent_api_router
 from app.agent_api.errors import ApiError, error_response, install_agent_api_error_handlers
 from app.ui_routes import router as ui_router
@@ -132,13 +132,14 @@ async def lifespan(_app: FastAPI):
 
     if interrupted_task_ids:
         try:
-            from app import coding_agent as coding_agent_controller
+            from app import coding_agent_guarded as coding_agent_controller
 
             resumed = await coding_agent_controller.resume_interrupted_agent_runs(interrupted_task_ids)
             logger.warning(
-                "startup: resumed interrupted coding runs resumed=%s tasks=%s failures=%s",
+                "startup: resumed interrupted coding runs resumed=%s tasks=%s integrated=%s failures=%s",
                 resumed.get("resumed"),
                 resumed.get("tasks"),
+                resumed.get("integrated"),
                 resumed.get("failures"),
             )
         except Exception as e:
