@@ -1,21 +1,23 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
-from fastapi import HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app import coding_agent_guarded as guarded_agent
+from app import coding_debug_report
 from app import coding_routes as routes
 from app import coding_workspace as cw
 
 
-# Route handlers resolve their module-level controller dependency at call time.
-# Bind that dependency to the explicit reconciliation facade before exporting
-# the existing router so authentication, request models, and response contracts
-# remain unchanged.
+# Existing route handlers resolve this module-level controller at call time.
 routes.ca = guarded_agent
-router = routes.router
+router = APIRouter()
+_DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
+_CODING_SCRIPT_MARKER = '<script src="/static/coding.js?v=15"></script>'
 
 
 class CodingFollowUpRequest(BaseModel):
@@ -27,6 +29,57 @@ class CodingFollowUpRequest(BaseModel):
 def _integrated_reason(task: dict) -> str:
     terminal = task.get("terminal_result") if isinstance(task.get("terminal_result"), dict) else {}
     return str(task.get("agent_stop_reason_code") or terminal.get("stop_reason_code") or "").strip()
+
+
+def _inject_debug_report_script(html: str) -> str:
+    if _DEBUG_SCRIPT_TAG in html:
+        return html
+    if _CODING_SCRIPT_MARKER in html:
+        return html.replace(_CODING_SCRIPT_MARKER, f"{_DEBUG_SCRIPT_TAG}\n    {_CODING_SCRIPT_MARKER}", 1)
+    return html.replace("</body>", f"  {_DEBUG_SCRIPT_TAG}\n  </body>", 1)
+
+
+async def _coding_page(req: Request) -> HTMLResponse:
+    routes._require_ui_access(req)
+    html = Path("app/static/coding.html").read_text(encoding="utf-8")
+    return HTMLResponse(
+        _inject_debug_report_script(html),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/ui/coding", include_in_schema=False)
+async def ui_coding_with_debug_report(req: Request) -> HTMLResponse:
+    return await _coding_page(req)
+
+
+@router.get("/ui/coding/", include_in_schema=False)
+async def ui_coding_with_debug_report_slash(req: Request) -> HTMLResponse:
+    return await _coding_page(req)
+
+
+@router.get("/ui/api/coding/tasks/{task_id}/debug-report", include_in_schema=False)
+async def ui_coding_debug_report(req: Request, task_id: str) -> PlainTextResponse:
+    routes._require_coding_ui(req)
+    try:
+        active_runner = guarded_agent._active_runner(task_id) is not None
+    except Exception:
+        active_runner = None
+    report = await routes._to_thread(
+        coding_debug_report.build_debug_report,
+        task_id,
+        active_runner=active_runner,
+    )
+    filename = coding_debug_report.report_filename(task_id)
+    return PlainTextResponse(
+        report,
+        media_type="text/markdown",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/ui/api/coding/tasks/{task_id}/follow-up", include_in_schema=False)
@@ -55,3 +108,7 @@ async def ui_coding_create_follow_up(
         "source_task_id": task_id,
         "action": "created_follow_up_workspace",
     }
+
+
+# Preserve all existing Coding Workspace routes after the explicit page/report routes.
+router.include_router(routes.router)
