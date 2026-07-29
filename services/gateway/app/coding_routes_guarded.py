@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +18,7 @@ from app import coding_workspace as cw
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
-_CODING_SCRIPT_MARKER = '<script src="/static/coding.js?v=15"></script>'
+_CODING_SCRIPT_RE = re.compile(r'<script\s+src="/static/coding\.js(?:\?v=[^"]*)?"\s*></script>')
 
 
 class CodingFollowUpRequest(BaseModel):
@@ -34,8 +35,9 @@ def _integrated_reason(task: dict) -> str:
 def _inject_debug_report_script(html: str) -> str:
     if _DEBUG_SCRIPT_TAG in html:
         return html
-    if _CODING_SCRIPT_MARKER in html:
-        return html.replace(_CODING_SCRIPT_MARKER, f"{_DEBUG_SCRIPT_TAG}\n    {_CODING_SCRIPT_MARKER}", 1)
+    match = _CODING_SCRIPT_RE.search(html)
+    if match:
+        return f"{html[:match.start()]}{_DEBUG_SCRIPT_TAG}\n    {html[match.start():]}"
     return html.replace("</body>", f"  {_DEBUG_SCRIPT_TAG}\n  </body>", 1)
 
 
