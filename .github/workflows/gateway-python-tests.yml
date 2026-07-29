@@ -3,19 +3,9 @@ name: Gateway Python Tests
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - "services/gateway/**"
-      - "deploy/**"
-      - "docker-compose*.yml"
-      - ".github/workflows/gateway-python-tests.yml"
   push:
     branches:
       - main
-    paths:
-      - "services/gateway/**"
-      - "deploy/**"
-      - "docker-compose*.yml"
-      - ".github/workflows/gateway-python-tests.yml"
 
 permissions:
   contents: read
@@ -70,6 +60,7 @@ jobs:
           sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
 
       - name: Run full Gateway test suite
+        timeout-minutes: 25
         env:
           PYTHONPATH: services/gateway
           GATEWAY_BEARER_TOKEN: test-token
