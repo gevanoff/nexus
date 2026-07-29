@@ -68,6 +68,11 @@
     status.className = isError ? "hint status error" : "hint status";
   }
 
+  function pageIsBusy() {
+    const refresh = document.getElementById("refreshTasks");
+    return Boolean(refresh && refresh.disabled);
+  }
+
   function refreshBindings() {
     refreshPending = false;
     const items = Array.from(document.querySelectorAll("#tasks .task-item"));
@@ -78,7 +83,10 @@
       else delete item.dataset.debugTaskId;
     });
     const button = document.getElementById("debugReportBtn");
-    if (button) button.disabled = reportInFlight || !selectedTaskId();
+    if (button) {
+      const shouldDisable = reportInFlight || pageIsBusy() || !selectedTaskId();
+      if (button.disabled !== shouldDisable) button.disabled = shouldDisable;
+    }
   }
 
   function scheduleRefresh() {
@@ -150,7 +158,7 @@
 
   async function generateDebugReport() {
     const taskId = selectedTaskId();
-    if (!taskId || reportInFlight) return;
+    if (!taskId || reportInFlight || pageIsBusy()) return;
     reportInFlight = true;
     const button = document.getElementById("debugReportBtn");
     if (button) {
@@ -202,6 +210,13 @@
         subtree: true,
         attributes: true,
         attributeFilter: ["class"],
+      });
+    }
+    const refresh = document.getElementById("refreshTasks");
+    if (refresh) {
+      new MutationObserver(scheduleRefresh).observe(refresh, {
+        attributes: true,
+        attributeFilter: ["disabled"],
       });
     }
     [document.getElementById("taskSearch"), document.getElementById("taskFilter")].forEach((element) => {
