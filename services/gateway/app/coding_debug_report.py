@@ -104,9 +104,10 @@ def _sanitize(value: Any, *, key: str = "", depth: int = 0) -> Any:
         return output
     if isinstance(value, (list, tuple)):
         items = list(value)
-        return [_sanitize(item, depth=depth + 1) for item in items[:120]] + (
-            ["[TRUNCATED_ITEMS]"] if len(items) > 120 else []
-        )
+        output = [_sanitize(item, depth=depth + 1) for item in items[:120]]
+        if len(items) > 120:
+            output.append("[TRUNCATED_ITEMS]")
+        return output
     if isinstance(value, str):
         return redact_text(value, limit=4000)
     if value is None or isinstance(value, (bool, int, float)):
@@ -124,7 +125,6 @@ def _event_view(event: Dict[str, Any]) -> Dict[str, Any]:
         "name",
         "status",
         "summary",
-        "content",
         "error",
         "stop_reason_code",
         "backend",
@@ -134,6 +134,9 @@ def _event_view(event: Dict[str, Any]) -> Dict[str, Any]:
         value = event.get(key)
         if value not in (None, ""):
             output[key] = redact_text(value, limit=1600) if isinstance(value, str) else value
+    message = event.get("content")
+    if message not in (None, ""):
+        output["message"] = redact_text(message, limit=1600)
     args = event.get("args") if isinstance(event.get("args"), dict) else {}
     safe_args = {key: args.get(key) for key in _SAFE_EVENT_ARG_KEYS if key in args}
     if safe_args:
@@ -177,10 +180,31 @@ def _guidance_view(message: Dict[str, Any]) -> Dict[str, Any]:
             "role": str(message.get("role") or ""),
             "actor": redact_text(message.get("actor"), limit=200),
             "run_id": str(message.get("run_id") or ""),
-            "content": redact_text(message.get("content"), limit=1600),
+            "message": redact_text(message.get("content"), limit=1600),
         }.items()
         if value not in (None, "")
     }
+
+
+def _terminal_view(terminal: Dict[str, Any]) -> Dict[str, Any]:
+    output: Dict[str, Any] = {}
+    for key in (
+        "status",
+        "success",
+        "summary",
+        "error",
+        "stop_reason_code",
+        "finished_at",
+        "commit",
+        "pr_number",
+        "pr_url",
+        "push_output",
+        "pr_output",
+    ):
+        value = terminal.get(key)
+        if value not in (None, ""):
+            output[key] = redact_text(value, limit=2400) if isinstance(value, str) else value
+    return output
 
 
 def _safe_collect(name: str, callback) -> Dict[str, Any]:
@@ -197,10 +221,7 @@ def _safe_collect(name: str, callback) -> Dict[str, Any]:
 def _git_snapshot(task_id: str) -> Dict[str, Any]:
     head_result = _safe_collect("git_head", lambda: cw.git_head(task_id))
     change_result = _safe_collect("git_change_summary", lambda: cw.git_change_summary(task_id))
-    output: Dict[str, Any] = {
-        "head": _sanitize(head_result),
-        "changes": _sanitize(change_result),
-    }
+    output: Dict[str, Any] = {"head": _sanitize(head_result)}
     changes = change_result.get("value") if change_result.get("ok") else None
     if isinstance(changes, dict):
         output["changes"] = {
@@ -209,7 +230,37 @@ def _git_snapshot(task_id: str) -> Dict[str, Any]:
             "files": _sanitize(changes.get("files") if isinstance(changes.get("files"), list) else []),
             "truncated": bool(changes.get("truncated")),
         }
+    else:
+        output["changes"] = _sanitize(change_result)
     return output
+
+
+def _durable_state_view(result: Dict[str, Any]) -> Dict[str, Any]:
+    if not result.get("ok"):
+        return _sanitize(result)
+    state = result.get("value") if isinstance(result.get("value"), dict) else {}
+    output = {
+        "ok": True,
+        "schema": state.get("schema"),
+        "generated_at": state.get("generated_at"),
+        "branch": _sanitize(state.get("branch") if isinstance(state.get("branch"), dict) else {}),
+        "progress": _sanitize(state.get("progress") if isinstance(state.get("progress"), dict) else {}),
+        "changes": _sanitize(state.get("changes") if isinstance(state.get("changes"), dict) else {}),
+        "validation": _sanitize(state.get("validation") if isinstance(state.get("validation"), dict) else {}),
+        "diff_review": _sanitize(state.get("diff_review") if isinstance(state.get("diff_review"), dict) else {}),
+        "blockers": _sanitize(state.get("blockers") if isinstance(state.get("blockers"), list) else []),
+        "recent_guidance": [
+            _guidance_view(item)
+            for item in (state.get("recent_guidance") or [])
+            if isinstance(item, dict)
+        ],
+        "recent_events": [
+            _event_view(item)
+            for item in (state.get("recent_events") or [])
+            if isinstance(item, dict)
+        ],
+    }
+    return _sanitize(output)
 
 
 def _runtime_snapshot() -> Dict[str, Any]:
@@ -225,11 +276,7 @@ def _runtime_snapshot() -> Dict[str, Any]:
     return {name: _sanitize(getattr(S, name, None), key=name) for name in names}
 
 
-def collect_debug_snapshot(
-    task_id: str,
-    *,
-    active_runner: Optional[bool] = None,
-) -> Dict[str, Any]:
+def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None) -> Dict[str, Any]:
     task = cw.load_task(task_id)
     state_result = _safe_collect("coding_state_snapshot", lambda: cw.coding_state_snapshot(task_id))
     events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
@@ -267,7 +314,7 @@ def collect_debug_snapshot(
             "last_pushed_at": task.get("last_pushed_at"),
             "last_pr_at": task.get("last_pr_at"),
             "last_pr_output": redact_text(task.get("last_pr_output"), limit=1600),
-            "prompt": redact_text(task.get("prompt"), limit=2400),
+            "task_brief": redact_text(task.get("prompt"), limit=2400),
         },
         "agent": {
             "active_runner": active_runner,
@@ -297,9 +344,9 @@ def collect_debug_snapshot(
         },
         "project_plan": _sanitize(plan),
         "mission": _sanitize(mission),
-        "terminal_result": _sanitize(terminal),
+        "terminal_result": _terminal_view(terminal),
         "git": _git_snapshot(task_id),
-        "durable_state": _sanitize(state_result),
+        "durable_state": _durable_state_view(state_result),
         "runtime_config": _runtime_snapshot(),
         "recent_runs": [_run_view(item) for item in runs[-20:]],
         "recent_guidance": [_guidance_view(item) for item in guidance[-20:]],
@@ -322,7 +369,7 @@ def _event_lines(events: Iterable[Dict[str, Any]]) -> List[str]:
         kind = str(event.get("type") or "event")
         cycle = event.get("cycle")
         name = str(event.get("name") or "")
-        summary = str(event.get("summary") or event.get("content") or event.get("error") or "")
+        summary = str(event.get("summary") or event.get("message") or event.get("error") or "")
         prefix = f"cycle {cycle} · " if cycle not in (None, "") else ""
         target = f" · {name}" if name else ""
         lines.append(f"- {prefix}{kind}{target}: {_clip(summary, 500) if summary else '-'}")
