@@ -95,24 +95,23 @@
     scheduleRefresh();
   }
 
+  function captureTaskPayload(payload) {
+    if (Array.isArray(payload && payload.tasks)) {
+      capturedTasks = payload.tasks;
+      scheduleRefresh();
+    }
+    if (payload && payload.task) updateCapturedTask(payload.task);
+  }
+
   function watchTaskResponses() {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
       const response = await originalFetch(input, init);
       try {
         const rawUrl = typeof input === "string" ? input : input && input.url;
-        const method = String((init && init.method) || (input && input.method) || "GET").toUpperCase();
         const url = new URL(rawUrl, window.location.origin);
-        if (response.ok && method === "GET" && url.pathname === TASKS_PATH) {
-          response.clone().json().then((payload) => {
-            capturedTasks = Array.isArray(payload && payload.tasks) ? payload.tasks : [];
-            scheduleRefresh();
-          }).catch(() => {});
-        } else if (response.ok && method === "GET") {
-          const match = url.pathname.match(/^\/ui\/api\/coding\/tasks\/(code_[a-f0-9]{12})$/);
-          if (match) {
-            response.clone().json().then((payload) => updateCapturedTask(payload && payload.task)).catch(() => {});
-          }
+        if (response.ok && url.pathname.startsWith(TASKS_PATH) && !url.pathname.endsWith("/debug-report")) {
+          response.clone().json().then(captureTaskPayload).catch(() => {});
         }
       } catch (error) {
         // Diagnostics are best-effort and must never interfere with workspace requests.
@@ -127,11 +126,11 @@
     return match && match[1] ? match[1] : `nexus-${taskId}-debug-report.md`;
   }
 
-  function showReport(report) {
+  function showReport(report, taskId) {
     const output = document.getElementById("output");
     const title = document.getElementById("outputTitle");
     if (output) output.textContent = report;
-    if (title) title.textContent = "debug report";
+    if (title) title.textContent = `debug report · ${taskId}`;
     const panel = output && output.closest("details");
     if (panel) panel.open = true;
   }
@@ -166,9 +165,9 @@
       });
       const report = await response.text();
       if (!response.ok) throw new Error(report || `HTTP ${response.status}`);
-      showReport(report);
+      showReport(report, taskId);
       downloadReport(report, filenameFromResponse(response, taskId));
-      setStatus("Debug report generated, shown in Output, and downloaded.");
+      setStatus(`Debug report generated for ${taskId}, shown in Output, and downloaded.`);
     } catch (error) {
       setStatus(`Debug report failed: ${String(error && error.message ? error.message : error)}`, true);
     } finally {
