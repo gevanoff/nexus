@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import socket
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,17 +11,39 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MEDIA_APP = REPO_ROOT / "services" / "media-generation" / "app"
+MEDIA_ROOT = REPO_ROOT / "services" / "media-generation"
+MEDIA_APP = MEDIA_ROOT / "app"
 GATEWAY_TOOLS = REPO_ROOT / "services" / "gateway" / "tools"
 
 
 def _load_module(path: Path):
     name = f"_nexus_test_{path.stem}_{uuid4().hex}"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    original_path = list(sys.path)
+    saved_app_modules: dict[str, object] = {}
+    isolate_media_package = path.parent == MEDIA_APP and path.name == "video_main.py"
+    if path.parent == MEDIA_APP:
+        sys.path.insert(0, str(MEDIA_ROOT if isolate_media_package else MEDIA_APP))
+    if isolate_media_package:
+        saved_app_modules = {
+            module_name: module
+            for module_name, module in list(sys.modules.items())
+            if module_name == "app" or module_name.startswith("app.")
+        }
+        for module_name in saved_app_modules:
+            sys.modules.pop(module_name, None)
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path[:] = original_path
+        if isolate_media_package:
+            for module_name in list(sys.modules):
+                if module_name == "app" or module_name.startswith("app."):
+                    sys.modules.pop(module_name, None)
+            sys.modules.update(saved_app_modules)
 
 
 def _public_resolution(*args, **kwargs):
