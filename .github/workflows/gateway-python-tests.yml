@@ -23,21 +23,29 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: services/gateway/app/requirements.freeze.txt
+          cache-dependency-path: |
+            services/gateway/app/requirements.freeze.txt
+            services/gateway/tests/requirements.freeze.txt
 
       - name: Install Gateway test dependencies
+        shell: bash
         run: |
-          python -m pip install --quiet --upgrade pip
+          set -o pipefail
+          python -m pip --version | tee "${RUNNER_TEMP}/gateway-pip-install.log"
           python -m pip install --quiet \
             -r services/gateway/app/requirements.freeze.txt \
-            pytest \
-            pytest-asyncio
+            -r services/gateway/tests/requirements.freeze.txt \
+            2>&1 | tee -a "${RUNNER_TEMP}/gateway-pip-install.log"
+          python -m pip check 2>&1 | tee -a "${RUNNER_TEMP}/gateway-pip-install.log"
+          python -m pip freeze --all | sort > "${RUNNER_TEMP}/gateway-python-environment.txt"
 
       - name: Prepare writable Gateway runtime paths
         run: |
@@ -84,6 +92,8 @@ jobs:
         with:
           name: gateway-pytest-diagnostics
           path: |
+            ${{ runner.temp }}/gateway-pip-install.log
+            ${{ runner.temp }}/gateway-python-environment.txt
             ${{ runner.temp }}/gateway-pytest.log
             ${{ runner.temp }}/gateway-pytest.xml
           if-no-files-found: warn
