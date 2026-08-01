@@ -110,7 +110,11 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
     if same_state_new_run and kind != "continuation":
         controller["suppress_interventions_for_run"] = run_id
         kind = "observe"
-    elif suppressed_run == run_id and str(raw_controller.get("state_key") or "") == state_key:
+    elif (
+        suppressed_run
+        and suppressed_run == run_id
+        and str(raw_controller.get("state_key") or "") == state_key
+    ):
         controller["suppress_interventions_for_run"] = run_id
         kind = "observe"
     elif (
