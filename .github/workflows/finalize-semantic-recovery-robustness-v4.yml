@@ -1,0 +1,233 @@
+name: Finalize semantic recovery robustness v4
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-semantic-memory-cycle-race
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Apply line-oriented robustness corrections
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one anchor, found {count}")
+              return text.replace(old, new, 1)
+
+          agent_path = Path("services/gateway/app/coding_agent.py")
+          agent = agent_path.read_text(encoding="utf-8")
+          agent = replace_once(
+              agent,
+              "    checkpoint_check_completed = False\n",
+              "",
+              "checkpoint completion initialization",
+          )
+          agent = replace_once(
+              agent,
+              "        checkpoint_check_completed = True\n",
+              "",
+              "checkpoint completion assignment",
+          )
+          agent = replace_once(
+              agent,
+              '                "summary": f"{type(exc).__name__}: {exc}",\n',
+              '                "summary": _clip_text(f"{type(exc).__name__}: {exc}", 1000),\n',
+              "checkpoint failure summary",
+          )
+          agent = replace_once(
+              agent,
+              "    if decision.pause and not fresh_checkpoint and checkpoint_check_completed:\n",
+              "    if decision.pause and not fresh_checkpoint:\n",
+              "checkpoint freshness condition",
+          )
+          agent_path.write_text(agent, encoding="utf-8")
+
+          guard_path = Path("services/gateway/tests/test_coding_runtime_guardrails.py")
+          guard = guard_path.read_text(encoding="utf-8")
+          guard = replace_once(
+              guard,
+              "    # The cycle-four semantic checkpoint becomes controller guidance on the\n",
+              "    # The staged semantic checkpoint becomes controller guidance on the\n",
+              "guardrail checkpoint comment",
+          )
+          derived_expectation = "".join(
+              [
+                  "    checkpoint_cycle = coding_agent.coding_semantic_memory._stagnation_threshold(\n",
+                  "        {**task, \"mission\": mission}\n",
+                  "    )\n",
+                  "    expected_cycles = (\n",
+                  "        checkpoint_cycle\n",
+                  "        + 1\n",
+                  "        + int(mission[\"budget_policy\"][\"max_no_progress_cycles\"])\n",
+                  "    )\n",
+                  "    assert tool_calls == expected_cycles * len(batch)\n",
+              ]
+          )
+          guard = replace_once(
+              guard,
+              "    assert tool_calls == 13 * len(batch)\n",
+              derived_expectation,
+              "derived guardrail cycle expectation",
+          )
+          guard_path.write_text(guard, encoding="utf-8")
+
+          semantic_path = Path("services/gateway/tests/test_coding_semantic_memory.py")
+          semantic = semantic_path.read_text(encoding="utf-8")
+          marker = (
+              "@pytest.mark.asyncio\n"
+              "async def test_cycle_boundary_pauses_after_checkpoint_credit_is_used(monkeypatch):\n"
+          )
+          inserted_tests = textwrap.dedent(
+              '''
+              @pytest.mark.asyncio
+              async def test_cycle_boundary_recovers_after_sync_failure_when_scanner_injected(monkeypatch):
+                  calls = []
+                  decision = SimpleNamespace(
+                      pause=True,
+                      reason_code="no_progress_limit",
+                      summary="paused",
+                      state=SimpleNamespace(stagnant_cycles=8),
+                  )
+
+                  def fail_checkpoint(_task_id):
+                      calls.append(("checkpoint", "failed"))
+                      raise RuntimeError("synchronous check unavailable")
+
+                  monkeypatch.setattr(coding_agent.coding_semantic_memory, "process_task", fail_checkpoint)
+                  monkeypatch.setattr(
+                      coding_agent.cw,
+                      "load_task",
+                      lambda _task_id: {
+                          "agent_run_id": "run-2",
+                          "agent_investigation_checkpoint": {"run_id": "run-2", "cycle": 8},
+                      },
+                  )
+                  monkeypatch.setattr(
+                      coding_agent,
+                      "_append_event",
+                      lambda task_id, event: calls.append(("event", event["type"])) or event,
+                  )
+
+                  await coding_agent._enforce_cycle_progress_decision(
+                      "code_abcdef123456",
+                      cycle=8,
+                      decision=decision,
+                  )
+
+                  assert calls == [
+                      ("checkpoint", "failed"),
+                      ("event", "investigation_checkpoint_error"),
+                      ("event", "no_progress_recovery"),
+                  ]
+
+
+              @pytest.mark.asyncio
+              async def test_cycle_boundary_clips_checkpoint_failure_event(monkeypatch):
+                  events = []
+                  decision = SimpleNamespace(
+                      pause=True,
+                      reason_code="no_progress_limit",
+                      summary="paused",
+                      state=SimpleNamespace(stagnant_cycles=8),
+                  )
+
+                  def fail_checkpoint(_task_id):
+                      raise RuntimeError("x" * 5000)
+
+                  monkeypatch.setattr(coding_agent.coding_semantic_memory, "process_task", fail_checkpoint)
+                  monkeypatch.setattr(
+                      coding_agent.cw,
+                      "load_task",
+                      lambda _task_id: {
+                          "agent_run_id": "run-2",
+                          "agent_investigation_checkpoint": {"run_id": "run-2", "cycle": 7},
+                      },
+                  )
+                  monkeypatch.setattr(
+                      coding_agent,
+                      "_append_event",
+                      lambda task_id, event: events.append(event) or event,
+                  )
+
+                  with pytest.raises(coding_agent._CodingAgentPaused):
+                      await coding_agent._enforce_cycle_progress_decision(
+                          "code_abcdef123456",
+                          cycle=8,
+                          decision=decision,
+                      )
+
+                  error_event = next(
+                      event for event in events if event["type"] == "investigation_checkpoint_error"
+                  )
+                  assert "truncated" in error_event["summary"]
+                  assert len(error_event["summary"]) < 1100
+
+
+              '''
+          ).lstrip()
+          semantic = replace_once(
+              semantic,
+              marker,
+              inserted_tests + marker,
+              "semantic robustness test insertion",
+          )
+          semantic_path.write_text(semantic, encoding="utf-8")
+
+          for workflow in (
+              "finalize-semantic-recovery-robustness.yml",
+              "finalize-semantic-recovery-robustness-v2.yml",
+              "finalize-semantic-recovery-robustness-v3.yml",
+              "finalize-semantic-recovery-robustness-v4.yml",
+          ):
+              Path(".github/workflows", workflow).unlink(missing_ok=True)
+          PY
+
+      - name: Validate focused behavior
+        env:
+          GATEWAY_BEARER_TOKEN: test-token
+          PYTHONPATH: services/gateway
+        shell: bash
+        run: |
+          python -m pip install --quiet \
+            -r services/gateway/app/requirements.freeze.txt \
+            -r services/gateway/tests/requirements.freeze.txt
+          python -m py_compile \
+            services/gateway/app/coding_agent.py \
+            services/gateway/app/coding_semantic_memory.py \
+            services/gateway/tests/test_coding_semantic_memory.py \
+            services/gateway/tests/test_coding_runtime_guardrails.py
+          python -m pytest -q \
+            services/gateway/tests/test_coding_semantic_memory.py \
+            services/gateway/tests/test_coding_runtime_guardrails.py
+
+      - name: Commit corrected implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Harden semantic recovery edge cases"
+          git push origin HEAD:agent/fix-semantic-memory-cycle-race
