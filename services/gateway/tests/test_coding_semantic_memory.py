@@ -281,6 +281,90 @@ async def test_cycle_boundary_recovers_when_background_scanner_won_claim(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_cycle_boundary_recovers_after_sync_failure_when_scanner_injected(monkeypatch):
+    calls = []
+    decision = SimpleNamespace(
+        pause=True,
+        reason_code="no_progress_limit",
+        summary="paused",
+        state=SimpleNamespace(stagnant_cycles=8),
+    )
+
+    def fail_checkpoint(_task_id):
+        calls.append(("checkpoint", "failed"))
+        raise RuntimeError("synchronous check unavailable")
+
+    monkeypatch.setattr(coding_agent.coding_semantic_memory, "process_task", fail_checkpoint)
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "load_task",
+        lambda _task_id: {
+            "agent_run_id": "run-2",
+            "agent_investigation_checkpoint": {"run_id": "run-2", "cycle": 8},
+        },
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "_append_event",
+        lambda task_id, event: calls.append(("event", event["type"])) or event,
+    )
+
+    await coding_agent._enforce_cycle_progress_decision(
+        "code_abcdef123456",
+        cycle=8,
+        decision=decision,
+    )
+
+    assert calls == [
+        ("checkpoint", "failed"),
+        ("event", "investigation_checkpoint_error"),
+        ("event", "no_progress_recovery"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cycle_boundary_clips_checkpoint_failure_event(monkeypatch):
+    events = []
+    decision = SimpleNamespace(
+        pause=True,
+        reason_code="no_progress_limit",
+        summary="paused",
+        state=SimpleNamespace(stagnant_cycles=8),
+    )
+
+    def fail_checkpoint(_task_id):
+        raise RuntimeError("x" * 5000)
+
+    monkeypatch.setattr(coding_agent.coding_semantic_memory, "process_task", fail_checkpoint)
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "load_task",
+        lambda _task_id: {
+            "agent_run_id": "run-2",
+            "agent_investigation_checkpoint": {"run_id": "run-2", "cycle": 7},
+        },
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "_append_event",
+        lambda task_id, event: events.append(event) or event,
+    )
+
+    with pytest.raises(coding_agent._CodingAgentPaused):
+        await coding_agent._enforce_cycle_progress_decision(
+            "code_abcdef123456",
+            cycle=8,
+            decision=decision,
+        )
+
+    error_event = next(
+        event for event in events if event["type"] == "investigation_checkpoint_error"
+    )
+    assert "truncated" in error_event["summary"]
+    assert len(error_event["summary"]) < 1100
+
+
+@pytest.mark.asyncio
 async def test_cycle_boundary_pauses_after_checkpoint_credit_is_used(monkeypatch):
     calls = []
     decision = SimpleNamespace(
