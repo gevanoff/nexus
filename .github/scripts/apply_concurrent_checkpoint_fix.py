@@ -173,14 +173,7 @@ async def test_cycle_boundary_pauses_after_checkpoint_credit_is_used(monkeypatch
         coding_agent,
         "_append_event",
 '''
-    # The first matching false-result block now belongs to the newly inserted
-    # concurrent test. Replace the second occurrence for the exhausted-credit case.
-    first = text.find(old)
-    second = text.find(old, first + len(old)) if first >= 0 else -1
-    if second < 0:
-        raise SystemExit("exhausted-credit monkeypatch anchor not found")
-    text = text[:second] + text[second:].replace(old, new, 1)
-
+    text = replace_once(text, old, new, "exhausted-credit monkeypatch")
     TESTS.write_text(text, encoding="utf-8")
 
 
