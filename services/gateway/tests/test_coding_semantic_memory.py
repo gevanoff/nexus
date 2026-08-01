@@ -237,6 +237,46 @@ async def test_cycle_boundary_checkpoint_recovers_before_terminal_pause(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_cycle_boundary_recovers_when_background_scanner_won_claim(monkeypatch):
+    calls = []
+    decision = SimpleNamespace(
+        pause=True,
+        reason_code="no_progress_limit",
+        summary="paused",
+        state=SimpleNamespace(stagnant_cycles=8),
+    )
+    monkeypatch.setattr(
+        coding_agent.coding_semantic_memory,
+        "process_task",
+        lambda task_id: calls.append(("checkpoint", task_id)) or False,
+    )
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "load_task",
+        lambda _task_id: {
+            "agent_run_id": "run-2",
+            "agent_investigation_checkpoint": {"run_id": "run-2", "cycle": 8},
+        },
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "_append_event",
+        lambda task_id, event: calls.append(("event", event["type"])) or event,
+    )
+
+    await coding_agent._enforce_cycle_progress_decision(
+        "code_abcdef123456",
+        cycle=8,
+        decision=decision,
+    )
+
+    assert calls == [
+        ("checkpoint", "code_abcdef123456"),
+        ("event", "no_progress_recovery"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_cycle_boundary_pauses_after_checkpoint_credit_is_used(monkeypatch):
     calls = []
     decision = SimpleNamespace(
@@ -249,6 +289,14 @@ async def test_cycle_boundary_pauses_after_checkpoint_credit_is_used(monkeypatch
         coding_agent.coding_semantic_memory,
         "process_task",
         lambda task_id: calls.append(("checkpoint", task_id)) or False,
+    )
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "load_task",
+        lambda _task_id: {
+            "agent_run_id": "run-2",
+            "agent_investigation_checkpoint": {"run_id": "run-2", "cycle": 7},
+        },
     )
     monkeypatch.setattr(
         coding_agent,

@@ -2613,10 +2613,12 @@ async def _enforce_cycle_progress_decision(
     decision: ProgressDecision,
 ) -> None:
     checkpoint_injected = False
+    checkpoint_check_completed = False
     try:
         checkpoint_injected = bool(
             await asyncio.to_thread(coding_semantic_memory.process_task, task_id)
         )
+        checkpoint_check_completed = True
     except Exception as exc:
         logger.warning(
             "coding semantic checkpoint failed task_id=%s cycle=%s (%s: %s)",
@@ -2635,7 +2637,30 @@ async def _enforce_cycle_progress_decision(
             },
         )
 
-    if checkpoint_injected and decision.pause:
+    fresh_checkpoint = checkpoint_injected
+    if decision.pause and not fresh_checkpoint and checkpoint_check_completed:
+        try:
+            latest = await asyncio.to_thread(cw.load_task, task_id)
+            checkpoint = (
+                latest.get("agent_investigation_checkpoint")
+                if isinstance(latest.get("agent_investigation_checkpoint"), dict)
+                else {}
+            )
+            fresh_checkpoint = (
+                int(checkpoint.get("cycle") or 0) == cycle
+                and str(checkpoint.get("run_id") or "")
+                == str(latest.get("agent_run_id") or "")
+            )
+        except Exception as exc:
+            logger.warning(
+                "coding semantic checkpoint freshness check failed task_id=%s cycle=%s (%s: %s)",
+                task_id,
+                cycle,
+                type(exc).__name__,
+                exc,
+            )
+
+    if fresh_checkpoint and decision.pause:
         await asyncio.to_thread(
             _append_event,
             task_id,
