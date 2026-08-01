@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.backends import backend_hostname, get_admission_controller, get_registry, llm_backends
 from app import coding_model_policy
+from app import coding_semantic_memory
 from app import coding_workspace as cw
 from app.coding_runtime_guardrails import (
     ProgressDecision,
@@ -2605,6 +2606,98 @@ async def request_stop(task_id: str) -> Dict[str, Any]:
     return await request_pause(task_id)
 
 
+async def _enforce_cycle_progress_decision(
+    task_id: str,
+    *,
+    cycle: int,
+    decision: ProgressDecision,
+) -> None:
+    checkpoint_injected = False
+    try:
+        checkpoint_injected = bool(
+            await asyncio.to_thread(coding_semantic_memory.process_task, task_id)
+        )
+    except Exception as exc:
+        logger.warning(
+            "coding semantic checkpoint failed task_id=%s cycle=%s (%s: %s)",
+            task_id,
+            cycle,
+            type(exc).__name__,
+            exc,
+        )
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "investigation_checkpoint_error",
+                "cycle": cycle,
+                "summary": _clip_text(f"{type(exc).__name__}: {exc}", 1000),
+            },
+        )
+
+    fresh_checkpoint = checkpoint_injected
+    if decision.pause and not fresh_checkpoint:
+        try:
+            latest = await asyncio.to_thread(cw.load_task, task_id)
+            checkpoint = (
+                latest.get("agent_investigation_checkpoint")
+                if isinstance(latest.get("agent_investigation_checkpoint"), dict)
+                else {}
+            )
+            fresh_checkpoint = (
+                int(checkpoint.get("cycle") or 0) == cycle
+                and str(checkpoint.get("run_id") or "")
+                == str(latest.get("agent_run_id") or "")
+            )
+        except Exception as exc:
+            logger.warning(
+                "coding semantic checkpoint freshness check failed task_id=%s cycle=%s (%s: %s)",
+                task_id,
+                cycle,
+                type(exc).__name__,
+                exc,
+            )
+
+    if fresh_checkpoint and decision.pause:
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "no_progress_recovery",
+                "cycle": cycle,
+                "stagnant_cycles": decision.state.stagnant_cycles,
+                "summary": (
+                    "A durable investigation checkpoint was injected at the no-progress boundary. "
+                    "Granting one bounded recovery transition so the model can act on the required next action."
+                ),
+            },
+        )
+        return
+
+    if not decision.pause:
+        return
+
+    await asyncio.to_thread(
+        _append_event,
+        task_id,
+        {
+            "type": "no_progress_limit",
+            "cycle": cycle,
+            "reason_code": decision.reason_code,
+            "summary": decision.summary,
+            "stagnant_cycles": decision.state.stagnant_cycles,
+        },
+    )
+    raise _CodingAgentPaused(
+        decision.summary,
+        reason_code=decision.reason_code,
+        details={
+            "cycle": cycle,
+            "stagnant_cycles": decision.state.stagnant_cycles,
+        },
+    )
+
+
 async def _run_agent(
     task_id: str,
     *,
@@ -2757,6 +2850,9 @@ async def _run_agent(
                 )
             cycle += 1
             _raise_if_paused(task_id)
+            await asyncio.to_thread(_mutate_task, task_id, {"agent_cycle": cycle, "agent_last_event_at": now_unix()})
+            await asyncio.to_thread(_update_run_record, task_id, run_id, {"cycle": cycle})
+            await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
             new_guidance, seen_guidance_count = await asyncio.to_thread(_new_guidance_since, task_id, seen_guidance_count)
             if new_guidance:
                 guidance_text = "\n\n".join(
@@ -2810,10 +2906,6 @@ async def _run_agent(
                         "summary": "Agent conversation context compacted from durable workspace state.",
                     },
                 )
-            await asyncio.to_thread(_mutate_task, task_id, {"agent_cycle": cycle, "agent_last_event_at": now_unix()})
-            await asyncio.to_thread(_update_run_record, task_id, run_id, {"cycle": cycle})
-            await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
-
             request_text_tool_mode = not _backend_supports_tool_calling(backend)
             request_messages = _compact_text_tool_messages(messages) if request_text_tool_mode else messages
             req = ChatCompletionRequest(
@@ -3191,26 +3283,11 @@ async def _run_agent(
                     "stagnant_cycles": decision.state.stagnant_cycles,
                 },
             )
-            if decision.pause:
-                await asyncio.to_thread(
-                    _append_event,
-                    task_id,
-                    {
-                        "type": "no_progress_limit",
-                        "cycle": cycle,
-                        "reason_code": decision.reason_code,
-                        "summary": decision.summary,
-                        "stagnant_cycles": decision.state.stagnant_cycles,
-                    },
-                )
-                raise _CodingAgentPaused(
-                    decision.summary,
-                    reason_code=decision.reason_code,
-                    details={
-                        "cycle": cycle,
-                        "stagnant_cycles": decision.state.stagnant_cycles,
-                    },
-                )
+            await _enforce_cycle_progress_decision(
+                task_id,
+                cycle=cycle,
+                decision=decision,
+            )
 
             if stop_after_tools:
                 break

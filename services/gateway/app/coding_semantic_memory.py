@@ -193,6 +193,7 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
     claimed = {"value": False}
     state_key = str(checkpoint.get("state_key") or "")
     run_id = str(checkpoint.get("run_id") or "")
+    guidance = render_checkpoint_guidance(checkpoint)
 
     def apply(task: Dict[str, Any]) -> None:
         if str(task.get("agent_status") or "").strip().lower() not in _ACTIVE_STATUSES:
@@ -201,13 +202,14 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
             return
         if str(task.get("agent_investigation_guidance_state_key") or "") == state_key:
             return
+        now = time.time()
         task["agent_investigation_checkpoint"] = dict(checkpoint)
         task["agent_investigation_guidance_state_key"] = state_key
         events = task.get("agent_events") if isinstance(task.get("agent_events"), list) else []
         events.append(
             {
                 "type": "investigation_checkpoint",
-                "ts": int(time.time()),
+                "ts": int(now),
                 "cycle": checkpoint.get("cycle"),
                 "stagnant_cycles": checkpoint.get("stagnant_cycles"),
                 "state_key": state_key,
@@ -215,19 +217,23 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
             }
         )
         task["agent_events"] = events[-1000:]
+        messages = task.get("guidance_messages") if isinstance(task.get("guidance_messages"), list) else []
+        messages.append(
+            {
+                "ts": now,
+                "role": "user",
+                "actor": "nexus-controller",
+                "run_id": run_id,
+                "content": guidance,
+            }
+        )
+        task["guidance_messages"] = messages[-200:]
+        task["last_guidance_at"] = now
+        task.pop("agent_investigation_checkpoint_error", None)
         claimed["value"] = True
 
     cw.mutate_task(task_id, apply)
     return claimed["value"]
-
-
-def _release_checkpoint_claim(task_id: str, state_key: str, error: str) -> None:
-    def apply(task: Dict[str, Any]) -> None:
-        if str(task.get("agent_investigation_guidance_state_key") or "") == state_key:
-            task["agent_investigation_guidance_state_key"] = ""
-            task["agent_investigation_checkpoint_error"] = _clip(error, 1000)
-
-    cw.mutate_task(task_id, apply)
 
 
 def process_task(task_id: str) -> bool:
@@ -238,20 +244,7 @@ def process_task(task_id: str) -> bool:
     stagnant = _as_int(progress.get("stagnant_cycles"))
     if stagnant < _stagnation_threshold(task):
         return False
-    checkpoint = build_investigation_checkpoint(task)
-    if not _claim_checkpoint(task_id, checkpoint):
-        return False
-    state_key = str(checkpoint.get("state_key") or "")
-    try:
-        cw.append_guidance_message(
-            task_id,
-            message=render_checkpoint_guidance(checkpoint),
-            actor="nexus-controller",
-        )
-    except Exception as exc:
-        _release_checkpoint_claim(task_id, state_key, f"{type(exc).__name__}: {exc}")
-        raise
-    return True
+    return _claim_checkpoint(task_id, build_investigation_checkpoint(task))
 
 
 def scan_once() -> Dict[str, Any]:

@@ -60,7 +60,7 @@ def test_eight_multi_tool_inspection_cycles_pause_on_cycle_eight() -> None:
 
 
 @pytest.mark.asyncio
-async def test_real_agent_loop_evaluates_once_per_multi_tool_cycle(monkeypatch) -> None:
+async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypatch) -> None:
     task = {
         "id": "code_test",
         "prompt": "inspect",
@@ -152,7 +152,22 @@ async def test_real_agent_loop_evaluates_once_per_multi_tool_cycle(monkeypatch) 
         context_reset_cycles=0,
     )
 
-    assert tool_calls == 8 * len(batch)
+    # The staged semantic checkpoint becomes controller guidance on the
+    # following cycle and earns exactly one reset. With no edit, validation,
+    # review, plan-state change, or finish transition afterward, the run still
+    # terminates deterministically after a second stagnant streak.
+    checkpoint_cycle = coding_agent.coding_semantic_memory._stagnation_threshold(
+        {**task, "mission": mission}
+    )
+    expected_cycles = (
+        checkpoint_cycle
+        + 1
+        + int(mission["budget_policy"]["max_no_progress_cycles"])
+    )
+    assert tool_calls == expected_cycles * len(batch)
+    event_types = [str(item.get("type") or "") for item in task["agent_events"]]
+    assert event_types.count("investigation_checkpoint") == 1
+    assert event_types.count("no_progress_limit") == 1
     assert task["agent_status"] == "paused"
     assert task["agent_stop_reason_code"] == "no_progress_limit"
     assert task["agent_progress_state"]["stagnant_cycles"] == 8
