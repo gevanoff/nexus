@@ -149,7 +149,6 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         for value in (working_memory.get("findings") or [])
         if str(value or "").strip()
     ]
-    active_plan_summary = resilience._active_plan_summary(task)
     return {
         "schema": "nexus_coding_investigation_checkpoint.v2",
         "run_id": run_id,
@@ -163,7 +162,14 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         "intervention_id": intervention,
         "inspected_targets": inspected,
         "unverified_model_notes": notes,
-        "active_plan_item": active_plan_summary if active_plan_summary in notes else "",
+        "active_plan_item": next(
+            (
+                value
+                for value in notes
+                if value and value == resilience._active_plan_summary(task)
+            ),
+            "",
+        ),
         "unresolved_question": str(working_memory.get("unresolved_question") or ""),
         "next_action": str(working_memory.get("next_action") or ""),
         "blocker": str(working_memory.get("blocker") or ""),
@@ -197,11 +203,16 @@ def render_checkpoint_guidance(checkpoint: Dict[str, Any]) -> str:
         if isinstance(checkpoint.get("context_manifest"), dict)
         else {"preserved_event_count": 0, "omitted_event_count": 0}
     )
-    return resilience.render_guidance(
+    guidance = resilience.render_guidance(
         controller,
         working_memory,
         manifest,
         kind=str(checkpoint.get("intervention_kind") or checkpoint.get("stage") or "assist"),
+    )
+    return guidance.replace(
+        "Controller stagnation checkpoint",
+        "Controller investigation checkpoint",
+        1,
     )
 
 
@@ -292,7 +303,11 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
         events = task.get("agent_events") if isinstance(task.get("agent_events"), list) else []
         events.append(
             {
-                "type": "investigation_checkpoint",
+                "type": (
+                    "investigation_checkpoint"
+                    if kind in {"assist", "plan_checkpoint", "continuation"}
+                    else "stagnation_intervention"
+                ),
                 "ts": int(now),
                 "cycle": checkpoint.get("cycle"),
                 "stagnant_cycles": checkpoint.get("stagnant_cycles"),
@@ -318,22 +333,27 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
             }
         )
         task["guidance_messages"] = messages[-200:]
-        # Controller guidance is delivered to the model but is not repository
-        # progress. Keep it separate from last_guidance_at, which participates
-        # in the coding-agent progress observation.
+        # Controller guidance must be delivered to the model, but it is not
+        # repository progress. Keep it separate from last_guidance_at, which is
+        # part of the progress observation used by the agent loop.
         task["last_controller_guidance_at"] = now
-        if kind in {"recovery", "continuation"}:
+        recovery_kind = "continuation" if kind == "continuation" else "checkpoint"
+        recovery_id = resilience.intervention_id(state_key, f"recovery-{recovery_kind}")
+        recovery_history = [str(value) for value in (task.get("agent_stagnation_recovery_history") or [])]
+        if kind in {"assist", "continuation"} and recovery_id not in recovery_history:
             task["agent_stagnation_recovery_lease"] = {
                 "schema": "nexus_coding_recovery_lease.v1",
-                "id": intervention,
+                "id": recovery_id,
                 "state_key": state_key,
-                "kind": kind,
+                "kind": recovery_kind,
                 "run_id": run_id,
                 "granted_cycle": _as_int(checkpoint.get("cycle")),
                 "remaining_transitions": 1,
                 "status": "granted",
                 "granted_at": now,
             }
+            recovery_history.append(recovery_id)
+            task["agent_stagnation_recovery_history"] = recovery_history[-16:]
         task.pop("agent_investigation_checkpoint_error", None)
         claimed["value"] = True
 
@@ -341,10 +361,58 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
     return claimed["value"]
 
 
+def _consume_recovery_lease(task_id: str, task: Dict[str, Any]) -> bool:
+    lease = task.get("agent_stagnation_recovery_lease") if isinstance(task.get("agent_stagnation_recovery_lease"), dict) else {}
+    if str(lease.get("status") or "") != "granted":
+        return False
+    if resilience.durable_state_key(task) != str(lease.get("state_key") or ""):
+        return False
+    if _as_int(task.get("agent_cycle")) <= _as_int(lease.get("granted_cycle")):
+        return False
+    consumed = {"value": False}
+
+    def apply(latest: Dict[str, Any]) -> None:
+        current = latest.get("agent_stagnation_recovery_lease") if isinstance(latest.get("agent_stagnation_recovery_lease"), dict) else {}
+        if str(current.get("id") or "") != str(lease.get("id") or ""):
+            return
+        if str(current.get("status") or "") != "granted":
+            return
+        if resilience.durable_state_key(latest) != str(current.get("state_key") or ""):
+            return
+        progress = latest.get("agent_progress_state") if isinstance(latest.get("agent_progress_state"), dict) else {}
+        progress = dict(progress)
+        progress["stagnant_cycles"] = 0
+        latest["agent_progress_state"] = progress
+        current = dict(current)
+        current.update({
+            "remaining_transitions": 0,
+            "status": "consumed",
+            "consumed_cycle": _as_int(latest.get("agent_cycle")),
+            "consumed_at": time.time(),
+        })
+        latest["agent_stagnation_recovery_lease"] = current
+        events = latest.get("agent_events") if isinstance(latest.get("agent_events"), list) else []
+        events.append({
+            "type": "no_progress_recovery",
+            "ts": int(time.time()),
+            "cycle": latest.get("agent_cycle"),
+            "state_key": current.get("state_key"),
+            "recovery_kind": current.get("kind"),
+            "summary": "Consumed one explicit state-keyed recovery credit; controller guidance itself was not counted as progress.",
+        })
+        latest["agent_events"] = events[-1000:]
+        consumed["value"] = True
+
+    cw.mutate_task(task_id, apply)
+    return consumed["value"]
+
+
 def process_task(task_id: str) -> bool:
     task = cw.load_task(task_id)
     if str(task.get("agent_status") or "").strip().lower() not in _ACTIVE_STATUSES:
         return False
+    if _consume_recovery_lease(task_id, task):
+        task = cw.load_task(task_id)
     checkpoint = _prepare_checkpoint(task)
     kind = str(checkpoint.get("intervention_kind") or "observe")
     if kind == "observe":
