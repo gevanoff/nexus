@@ -25,7 +25,9 @@ jobs:
           python-version: "3.11"
 
       - name: Apply deterministic patch
-        run: python .github/scripts/apply_semantic_memory_cycle_fix.py
+        run: |
+          python .github/scripts/apply_semantic_memory_cycle_fix.py
+          python .github/scripts/update_semantic_memory_guardrail_test.py
 
       - name: Validate focused behavior
         env:
