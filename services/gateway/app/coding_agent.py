@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.backends import backend_hostname, get_admission_controller, get_registry, llm_backends
 from app import coding_model_policy
+from app import coding_semantic_memory
 from app import coding_workspace as cw
 from app.coding_runtime_guardrails import (
     ProgressDecision,
@@ -2605,6 +2606,75 @@ async def request_stop(task_id: str) -> Dict[str, Any]:
     return await request_pause(task_id)
 
 
+async def _enforce_cycle_progress_decision(
+    task_id: str,
+    *,
+    cycle: int,
+    decision: ProgressDecision,
+) -> None:
+    checkpoint_injected = False
+    try:
+        checkpoint_injected = bool(
+            await asyncio.to_thread(coding_semantic_memory.process_task, task_id)
+        )
+    except Exception as exc:
+        logger.warning(
+            "coding semantic checkpoint failed task_id=%s cycle=%s (%s: %s)",
+            task_id,
+            cycle,
+            type(exc).__name__,
+            exc,
+        )
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "investigation_checkpoint_error",
+                "cycle": cycle,
+                "summary": f"{type(exc).__name__}: {exc}",
+            },
+        )
+
+    if checkpoint_injected and decision.pause:
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "no_progress_recovery",
+                "cycle": cycle,
+                "stagnant_cycles": decision.state.stagnant_cycles,
+                "summary": (
+                    "A durable investigation checkpoint was injected at the no-progress boundary. "
+                    "Granting one recovery cycle so the model can act on the required next action."
+                ),
+            },
+        )
+        return
+
+    if not decision.pause:
+        return
+
+    await asyncio.to_thread(
+        _append_event,
+        task_id,
+        {
+            "type": "no_progress_limit",
+            "cycle": cycle,
+            "reason_code": decision.reason_code,
+            "summary": decision.summary,
+            "stagnant_cycles": decision.state.stagnant_cycles,
+        },
+    )
+    raise _CodingAgentPaused(
+        decision.summary,
+        reason_code=decision.reason_code,
+        details={
+            "cycle": cycle,
+            "stagnant_cycles": decision.state.stagnant_cycles,
+        },
+    )
+
+
 async def _run_agent(
     task_id: str,
     *,
@@ -3191,26 +3261,11 @@ async def _run_agent(
                     "stagnant_cycles": decision.state.stagnant_cycles,
                 },
             )
-            if decision.pause:
-                await asyncio.to_thread(
-                    _append_event,
-                    task_id,
-                    {
-                        "type": "no_progress_limit",
-                        "cycle": cycle,
-                        "reason_code": decision.reason_code,
-                        "summary": decision.summary,
-                        "stagnant_cycles": decision.state.stagnant_cycles,
-                    },
-                )
-                raise _CodingAgentPaused(
-                    decision.summary,
-                    reason_code=decision.reason_code,
-                    details={
-                        "cycle": cycle,
-                        "stagnant_cycles": decision.state.stagnant_cycles,
-                    },
-                )
+            await _enforce_cycle_progress_decision(
+                task_id,
+                cycle=cycle,
+                decision=decision,
+            )
 
             if stop_after_tools:
                 break
