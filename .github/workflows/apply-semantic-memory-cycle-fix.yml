@@ -19,10 +19,18 @@ jobs:
         with:
           ref: agent/fix-semantic-memory-cycle-race
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Apply deterministic patch
         run: python .github/scripts/apply_semantic_memory_cycle_fix.py
 
       - name: Validate focused behavior
+        env:
+          GATEWAY_BEARER_TOKEN: test-token
+          PYTHONPATH: services/gateway
         shell: bash
         run: |
           python -m pip install --quiet \
@@ -31,10 +39,9 @@ jobs:
           python -m py_compile \
             services/gateway/app/coding_agent.py \
             services/gateway/app/coding_semantic_memory.py
-          cd services/gateway
-          PYTHONPATH=. python -m pytest -q \
-            tests/test_coding_semantic_memory.py \
-            tests/test_coding_runtime_guardrails.py
+          python -m pytest -q \
+            services/gateway/tests/test_coding_semantic_memory.py \
+            services/gateway/tests/test_coding_runtime_guardrails.py
 
       - name: Commit corrected implementation
         shell: bash
