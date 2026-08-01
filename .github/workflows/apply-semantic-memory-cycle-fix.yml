@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --quiet \
             -r services/gateway/app/requirements.freeze.txt \
-            -r services/gateway/app/requirements.tests.freeze.txt
+            -r services/gateway/tests/requirements.freeze.txt
           python -m py_compile \
             services/gateway/app/coding_agent.py \
             services/gateway/app/coding_semantic_memory.py
