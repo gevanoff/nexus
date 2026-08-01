@@ -2670,7 +2670,7 @@ async def _enforce_cycle_progress_decision(
                 "stagnant_cycles": decision.state.stagnant_cycles,
                 "summary": (
                     "A durable investigation checkpoint was injected at the no-progress boundary. "
-                    "Granting one recovery cycle so the model can act on the required next action."
+                    "Granting one bounded recovery transition so the model can act on the required next action."
                 ),
             },
         )
