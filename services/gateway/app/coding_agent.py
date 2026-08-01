@@ -2852,6 +2852,9 @@ async def _run_agent(
                 )
             cycle += 1
             _raise_if_paused(task_id)
+            await asyncio.to_thread(_mutate_task, task_id, {"agent_cycle": cycle, "agent_last_event_at": now_unix()})
+            await asyncio.to_thread(_update_run_record, task_id, run_id, {"cycle": cycle})
+            await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
             new_guidance, seen_guidance_count = await asyncio.to_thread(_new_guidance_since, task_id, seen_guidance_count)
             if new_guidance:
                 guidance_text = "\n\n".join(
@@ -2905,10 +2908,6 @@ async def _run_agent(
                         "summary": "Agent conversation context compacted from durable workspace state.",
                     },
                 )
-            await asyncio.to_thread(_mutate_task, task_id, {"agent_cycle": cycle, "agent_last_event_at": now_unix()})
-            await asyncio.to_thread(_update_run_record, task_id, run_id, {"cycle": cycle})
-            await asyncio.to_thread(_append_event, task_id, {"type": "cycle_started", "cycle": cycle})
-
             request_text_tool_mode = not _backend_supports_tool_calling(backend)
             request_messages = _compact_text_tool_messages(messages) if request_text_tool_mode else messages
             req = ChatCompletionRequest(

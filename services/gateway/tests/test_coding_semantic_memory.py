@@ -76,20 +76,19 @@ def _install_workspace_stubs(monkeypatch, task):
     messages = []
 
     def mutate(_task_id, mutator):
+        before = len(task.get("guidance_messages") or [])
         mutator(task)
-        return task
-
-    def append_guidance(_task_id, *, message, actor):
-        messages.append({"message": message, "actor": actor})
-        task.setdefault("guidance_messages", []).append(
-            {"content": message, "actor": actor, "ts": 123.0}
-        )
-        task["last_guidance_at"] = 123.0
+        for item in (task.get("guidance_messages") or [])[before:]:
+            messages.append(
+                {
+                    "message": str(item.get("content") or ""),
+                    "actor": str(item.get("actor") or ""),
+                }
+            )
         return task
 
     monkeypatch.setattr(memory.cw, "load_task", lambda _task_id: task)
     monkeypatch.setattr(memory.cw, "mutate_task", mutate)
-    monkeypatch.setattr(memory.cw, "append_guidance_message", append_guidance)
     monkeypatch.setattr(memory.cw, "normalize_coding_mission", lambda value: value["mission"])
     monkeypatch.setattr(memory.cw, "normalize_project_plan", lambda value, fallback_goal="": value)
     return messages
@@ -113,6 +112,11 @@ def test_checkpoint_contains_only_current_run_inspection(monkeypatch):
 def test_stagnation_checkpoint_is_persisted_and_injected_once(monkeypatch):
     task = _task()
     messages = _install_workspace_stubs(monkeypatch, task)
+    monkeypatch.setattr(
+        memory.cw,
+        "append_guidance_message",
+        lambda *args, **kwargs: pytest.fail("checkpoint guidance must use the atomic task mutation"),
+    )
 
     assert memory.process_task(task["id"]) is True
     assert memory.process_task(task["id"]) is False
