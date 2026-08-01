@@ -1,0 +1,53 @@
+name: Apply concurrent semantic checkpoint fix
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-semantic-memory-cycle-race
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Apply deterministic patch
+        run: python .github/scripts/apply_concurrent_checkpoint_fix.py
+
+      - name: Validate focused behavior
+        env:
+          GATEWAY_BEARER_TOKEN: test-token
+          PYTHONPATH: services/gateway
+        shell: bash
+        run: |
+          python -m pip install --quiet \
+            -r services/gateway/app/requirements.freeze.txt \
+            -r services/gateway/tests/requirements.freeze.txt
+          python -m py_compile \
+            services/gateway/app/coding_agent.py \
+            services/gateway/app/coding_semantic_memory.py
+          python -m pytest -q \
+            services/gateway/tests/test_coding_semantic_memory.py \
+            services/gateway/tests/test_coding_runtime_guardrails.py
+
+      - name: Commit corrected implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Handle concurrent semantic checkpoint injection"
+          git push origin HEAD:agent/fix-semantic-memory-cycle-race
