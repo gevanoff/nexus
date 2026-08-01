@@ -2,29 +2,80 @@ from __future__ import annotations
 
 import importlib.util
 import socket
+import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MEDIA_APP = REPO_ROOT / "services" / "media-generation" / "app"
+MEDIA_ROOT = REPO_ROOT / "services" / "media-generation"
+MEDIA_APP = MEDIA_ROOT / "app"
 GATEWAY_TOOLS = REPO_ROOT / "services" / "gateway" / "tools"
+
+
+def _matches_module_prefix(module_name: str, prefixes: tuple[str, ...]) -> bool:
+    return any(module_name == prefix or module_name.startswith(f"{prefix}.") for prefix in prefixes)
 
 
 def _load_module(path: Path):
     name = f"_nexus_test_{path.stem}_{uuid4().hex}"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    original_path = list(sys.path)
+    media_module = path.parent == MEDIA_APP
+    isolate_media_package = media_module and path.name == "video_main.py"
+    isolated_prefixes: tuple[str, ...] = ()
+    if media_module:
+        sys.path.insert(0, str(MEDIA_ROOT if isolate_media_package else MEDIA_APP))
+        isolated_prefixes = ("video_options",)
+        if isolate_media_package:
+            isolated_prefixes = ("app", *isolated_prefixes)
+    saved_modules = {
+        module_name: module
+        for module_name, module in list(sys.modules.items())
+        if _matches_module_prefix(module_name, isolated_prefixes)
+    }
+    for module_name in saved_modules:
+        sys.modules.pop(module_name, None)
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path[:] = original_path
+        for module_name in list(sys.modules):
+            if _matches_module_prefix(module_name, isolated_prefixes):
+                sys.modules.pop(module_name, None)
+        sys.modules.update(saved_modules)
 
 
 def _public_resolution(*args, **kwargs):
     return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+
+def test_media_loader_restores_conflicting_import_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel_app = ModuleType("app")
+    sentinel_app_video_options = ModuleType("app.video_options")
+    sentinel_video_options = ModuleType("video_options")
+    monkeypatch.setitem(sys.modules, "app", sentinel_app)
+    monkeypatch.setitem(sys.modules, "app.video_options", sentinel_app_video_options)
+    monkeypatch.setitem(sys.modules, "video_options", sentinel_video_options)
+    original_path = list(sys.path)
+
+    _load_module(MEDIA_APP / "run_video.py")
+    assert sys.modules["video_options"] is sentinel_video_options
+    assert sys.modules["app"] is sentinel_app
+    assert sys.modules["app.video_options"] is sentinel_app_video_options
+    assert sys.path == original_path
+
+    _load_module(MEDIA_APP / "video_main.py")
+    assert sys.modules["video_options"] is sentinel_video_options
+    assert sys.modules["app"] is sentinel_app
+    assert sys.modules["app.video_options"] is sentinel_app_video_options
+    assert sys.path == original_path
 
 
 def test_remote_video_input_pins_the_validated_address_and_disables_proxies(
