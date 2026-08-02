@@ -227,6 +227,40 @@ def _max_rounds_response(model: str, rounds: int) -> dict[str, Any]:
     }
 
 
+def _tool_results_response(
+    model: str,
+    outputs: list[tuple[str, dict[str, Any]]],
+    output_limit: int,
+) -> dict[str, Any]:
+    name, raw_result = next(
+        ((tool_name, result) for tool_name, result in reversed(outputs) if result.get("ok") is True),
+        outputs[-1],
+    )
+    result = redact_secrets(raw_result)
+    rows = result.get("results") if isinstance(result, dict) else None
+    if name == "web_search" and isinstance(rows, list) and rows:
+        lines = ["Search results:"]
+        for index, row in enumerate(rows[:5], start=1):
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title") or "Untitled result").strip()
+            url = str(row.get("url") or "").strip()
+            snippet = str(row.get("snippet") or "").strip()
+            lines.append(f"{index}. {title}" + (f"\n{url}" if url else ""))
+            if snippet:
+                lines.append(snippet)
+        content = "\n\n".join(lines)
+    else:
+        content = f"Tool result ({name}):\n{_bounded_json(result, output_limit)}"
+    return {
+        "id": new_id("chatcmpl"),
+        "object": "chat.completion",
+        "created": now_unix(),
+        "model": model,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+    }
+
+
 async def run_gateway_tool_loop(
     initial_req: ChatCompletionRequest,
     *,
@@ -240,6 +274,7 @@ async def run_gateway_tool_loop(
     allowed = enabled_tool_names(set(policy.toolsets))
     calls_seen: list[str] = []
     executed: list[str] = []
+    tool_outputs: list[tuple[str, dict[str, Any]]] = []
     rounds_seen: int = 0
 
     async def loop() -> GatewayToolLoopResult:
@@ -272,11 +307,23 @@ async def run_gateway_tool_loop(
                 calls_seen.append(name)
                 if name in allowed:
                     executed.append(name)
+                tool_outputs.append((name, result))
                 messages.append(ChatMessage(role="tool", tool_call_id=call_id, content=_bounded_json(result, policy.output_limit)))
             req = req.model_copy(update={"messages": messages, "tool_choice": "auto", "stream": False})
             if round_index + 1 >= policy.max_tool_rounds:
+                final_messages = [
+                    *req.messages,
+                    ChatMessage(
+                        role="user",
+                        content=(
+                            "Using only the tool results already provided above, answer the original "
+                            "request now. Do not call, request, or mention any tools."
+                        ),
+                    ),
+                ]
                 final_req = req.model_copy(
                     update={
+                        "messages": final_messages,
                         "tools": None,
                         "tool_choice": None,
                         "parallel_tool_calls": None,
@@ -290,10 +337,12 @@ async def run_gateway_tool_loop(
                     else {}
                 ) or {}
                 final_message = final_choice.get("message") if isinstance(final_choice, dict) else {}
+                final_content = (final_message or {}).get("content")
                 final_calls = normalize_tool_calls_for_openai(
                     (final_message or {}).get("tool_calls"), generate_missing_ids=True
                 )
-                if not final_calls:
+                leaked_text_call = isinstance(final_content, str) and "[TOOL_CALLS]" in final_content
+                if not final_calls and not leaked_text_call:
                     return GatewayToolLoopResult(
                         final_response,
                         tuple(calls_seen),
@@ -301,15 +350,18 @@ async def run_gateway_tool_loop(
                         round_index + 1,
                         "max_tool_rounds_finalized",
                     )
-                stopped = _max_rounds_response(
-                    str(final_response.get("model") or req.model), policy.max_tool_rounds
+                model = str(final_response.get("model") or req.model)
+                stopped = (
+                    _tool_results_response(model, tool_outputs, policy.output_limit)
+                    if tool_outputs
+                    else _max_rounds_response(model, policy.max_tool_rounds)
                 )
                 return GatewayToolLoopResult(
                     stopped,
                     tuple(calls_seen),
                     tuple(executed),
                     round_index + 1,
-                    "max_tool_rounds",
+                    "max_tool_rounds_result_fallback" if tool_outputs else "max_tool_rounds",
                 )
         raise AssertionError("unreachable")
 

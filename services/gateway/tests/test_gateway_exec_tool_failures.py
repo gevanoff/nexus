@@ -1,5 +1,6 @@
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,7 +51,8 @@ async def test_max_tool_rounds_stops_repeating_model(monkeypatch, tmp_path):
         calls += 1
         if req.tools is None:
             assert req.tool_choice is None
-            assert req.messages[-1].role == "tool"
+            assert req.messages[-2].role == "tool"
+            assert "answer the original request" in req.messages[-1].content
             return {"model": "model", "choices": [{"message": {"role": "assistant", "content": "Final answer from tool results."}, "finish_reason": "stop"}]}
         return {"model": "model", "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [{"id": "call_loop", "type": "function", "function": {"name": "nexus_health", "arguments": '{"include_upstreams":false,"include_models":false}'}}]}, "finish_reason": "tool_calls"}]}
 
@@ -75,5 +77,38 @@ async def test_max_tool_rounds_stops_if_backend_ignores_disabled_tools(monkeypat
     alias = ModelAlias(backend="local_vllm", upstream_model="model", tools=True)
     req = ChatCompletionRequest(model="default", messages=[ChatMessage(role="user", content="loop")], x_nexus={"tool_execution_mode": "gateway_exec", "max_tool_rounds": 2})
     result = await run_gateway_tool_loop(req, policy=resolve_execution_policy(req, alias), alias=alias, call_backend=upstream, request_id="loop")
-    assert result.stopped_reason == "max_tool_rounds"
-    assert "stopped tool execution" in result.response["choices"][0]["message"]["content"]
+    assert result.stopped_reason == "max_tool_rounds_result_fallback"
+    assert "Tool result (nexus_health)" in result.response["choices"][0]["message"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_text_tool_call_leak_after_round_cap_returns_search_results(monkeypatch, tmp_path):
+    monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLS", True)
+    monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLSETS", "web")
+    monkeypatch.setattr(S, "NEXUS_TOOL_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
+
+    async def fake_search(_args):
+        return {"ok": True, "results": [{"title": "OpenAI", "url": "https://openai.com/", "snippet": "Official site"}]}
+
+    monkeypatch.setattr("app.tool_calling.executor.builtin_tool_definitions", lambda: {
+        "web_search": SimpleNamespace(parameters={"type": "object"}, implementation=fake_search, uses_caller_context=False, timeout_sec=5.0)
+    })
+    monkeypatch.setattr("app.tool_calling.executor.enabled_tool_names", lambda _sets: {"web_search"})
+    monkeypatch.setattr("app.tool_calling.executor.openai_tools_for_policy", lambda _sets: [{"type": "function", "function": {"name": "web_search", "description": "Search", "parameters": {"type": "object", "properties": {}}}}])
+    calls = 0
+
+    async def upstream(req):
+        nonlocal calls
+        calls += 1
+        if req.tools is None:
+            return {"model": "model", "choices": [{"message": {"role": "assistant", "content": "Trying again.[TOOL_CALLS]web_search{\\\"query\\\":\\\"OpenAI\\\"}"}, "finish_reason": "stop"}]}
+        return {"model": "model", "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [{"id": f"call_{calls}", "type": "function", "function": {"name": "web_search", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]}
+
+    alias = ModelAlias(backend="local_vllm", upstream_model="model", tools=True)
+    req = ChatCompletionRequest(model="default", messages=[ChatMessage(role="user", content="Search")], x_nexus={"tool_execution_mode": "gateway_exec", "max_tool_rounds": 2})
+    result = await run_gateway_tool_loop(req, policy=resolve_execution_policy(req, alias), alias=alias, call_backend=upstream, request_id="text-leak")
+    content = result.response["choices"][0]["message"]["content"]
+    assert result.stopped_reason == "max_tool_rounds_result_fallback"
+    assert "OpenAI" in content
+    assert "https://openai.com/" in content
+    assert "[TOOL_CALLS]" not in content
