@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 import secrets
@@ -129,6 +130,16 @@ def _append_hidden_fields(target: dict[str, Any], text: str) -> None:
 
 
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_BARE_TEXT_TOOL_CALL_RE = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_.-]{0,127})\s*(\{.*\})\s*$",
+    re.DOTALL,
+)
+_MARKED_TEXT_TOOL_CALL_RE = re.compile(
+    r"^.*?\[TOOL_CALLS\]\s*([A-Za-z_][A-Za-z0-9_.-]{0,127})\s*(.*)$",
+    re.DOTALL,
+)
+_TEXT_TOOL_ARGUMENT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.-]{0,127})\s*:\s*(.*)$")
+_WEB_SEARCH_TEXT_ALIASES = {"search_engine_query", "web_search_query"}
 
 
 def allowed_tool_names_from_specs(tools: Any) -> set[str] | None:
@@ -154,6 +165,90 @@ def _normalize_allowed_tool_names(allowed_tool_names: Any) -> set[str] | None:
         return None
     out = {str(name).strip() for name in allowed_tool_names if str(name).strip()}
     return out
+
+
+def _parse_text_tool_arguments(raw_args: str) -> dict[str, Any] | None:
+    raw_args = raw_args.strip()
+    if not raw_args:
+        return {}
+    if raw_args.startswith("{"):
+        try:
+            value = json.loads(raw_args)
+        except Exception:
+            return None
+        return value if isinstance(value, dict) else None
+    if raw_args.startswith("(") or ("=" in raw_args and "\n" not in raw_args):
+        if raw_args.startswith("(") and not raw_args.endswith(")"):
+            return None
+        source = f"_tool{raw_args}" if raw_args.startswith("(") else f"_tool({raw_args})"
+        try:
+            expression = ast.parse(source, mode="eval").body
+        except SyntaxError:
+            return None
+        if not isinstance(expression, ast.Call) or expression.args:
+            return None
+        args: dict[str, Any] = {}
+        for keyword in expression.keywords:
+            if keyword.arg is None or keyword.arg in args:
+                return None
+            try:
+                args[keyword.arg] = ast.literal_eval(keyword.value)
+            except (ValueError, TypeError):
+                return None
+        return args
+    args: dict[str, Any] = {}
+    for raw_line in raw_args.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = _TEXT_TOOL_ARGUMENT_RE.match(line)
+        if not match:
+            return None
+        key, raw_value = match.groups()
+        raw_value = raw_value.strip()
+        try:
+            args[key] = json.loads(raw_value)
+        except Exception:
+            args[key] = raw_value
+    return args
+
+
+def extract_text_tool_call(content: Any, allowed_tool_names: Any) -> list[dict[str, Any]] | None:
+    """Convert narrow local-model text tool syntax into one validated call."""
+    if not isinstance(content, str) or not content.strip():
+        return None
+    match = _BARE_TEXT_TOOL_CALL_RE.match(content)
+    if match:
+        name, raw_args = match.groups()
+    else:
+        match = _MARKED_TEXT_TOOL_CALL_RE.match(content)
+        if not match or "[TOOL_CALLS]" in match.group(2):
+            return None
+        name, raw_args = match.groups()
+    args = _parse_text_tool_arguments(raw_args)
+    if args is None:
+        return None
+    allowed = _normalize_allowed_tool_names(allowed_tool_names)
+    name = name.strip()
+    if allowed is not None and name not in allowed:
+        if "web_search" in allowed and name in _WEB_SEARCH_TEXT_ALIASES:
+            name = "web_search"
+        else:
+            return None
+    if name == "web_search":
+        if "limit" not in args and "max_results" in args:
+            args["limit"] = args.pop("max_results")
+        args.setdefault("limit", 5)
+    return [
+        {
+            "id": "textcall1",
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(args, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+            },
+        }
+    ]
 
 
 def tool_call_name_error(name: Any, allowed_tool_names: Any = None) -> str | None:
@@ -422,6 +517,11 @@ def sanitize_chat_choices(
 
         message = choice.get("message")
         if isinstance(message, dict):
+            if "tool_calls" not in message and allowed is not None:
+                extracted = extract_text_tool_call(message.get("content"), allowed)
+                if extracted:
+                    message["tool_calls"] = extracted
+                    message["content"] = None
             if "tool_calls" in message:
                 message["tool_calls"] = _normalize_tool_calls(message.get("tool_calls"), stream_delta=False)
                 message["tool_calls"], dropped = _filter_nonstream_tool_calls(

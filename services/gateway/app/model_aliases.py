@@ -88,7 +88,6 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             buffer_tool_call_stream=True,
             preferred_tool_call_parser="mistral",
             preferred_chat_template="",
-            tool_fallback_alias="long",
         ),
         "coder": ModelAlias(
             backend=default_backend,

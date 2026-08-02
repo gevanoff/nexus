@@ -19,15 +19,23 @@ def _request(model: str, **updates) -> ChatCompletionRequest:
 
 def _install_routes(monkeypatch):
     aliases = {
-        "fast": ModelAlias("local_vllm_fast", "fast-model", tools=True, tool_fallback_alias="long"),
+        "fast": ModelAlias("local_vllm_fast", "fast-model", tools=True),
         "stackrot-chat": ModelAlias(
             "local_vllm_fast",
             "fast-model",
             tools=True,
             tool_mode="gateway_exec",
             tool_mode_explicit=True,
-            tool_fallback_alias="long",
             soul="stackrot",
+        ),
+        "cinder-chat": ModelAlias(
+            "local_vllm_meltdown",
+            "cinder-model",
+            tools=True,
+            tool_mode="gateway_exec",
+            tool_mode_explicit=True,
+            tool_fallback_alias="fast",
+            soul="meltdown",
         ),
         "long": ModelAlias("local_mlx", "long-model", tools=True),
     }
@@ -82,7 +90,7 @@ def test_fast_chat_without_tools_stays_on_fast_backend(monkeypatch):
     assert (route.model, backend, alias_name) == ("fast-model", "local_vllm_fast", "fast")
 
 
-def test_fast_chat_with_client_tools_uses_configured_fallback(monkeypatch):
+def test_fast_chat_with_client_tools_stays_on_fast_backend(monkeypatch):
     calls = _install_routes(monkeypatch)
     tools = [
         {
@@ -100,11 +108,11 @@ def test_fast_chat_with_client_tools_uses_configured_fallback(monkeypatch):
         headers={},
     )
 
-    assert calls == ["fast", "long"]
-    assert (route.model, backend, alias_name) == ("long-model", "local_mlx", "fast")
+    assert calls == ["fast"]
+    assert (route.model, backend, alias_name) == ("fast-model", "local_vllm_fast", "fast")
 
 
-def test_alias_gateway_exec_uses_fallback_and_preserves_persona_alias(monkeypatch):
+def test_fast_persona_gateway_exec_stays_on_fast_backend(monkeypatch):
     calls = _install_routes(monkeypatch)
 
     route, backend, alias_name = openai_routes._route_chat_request(
@@ -112,5 +120,17 @@ def test_alias_gateway_exec_uses_fallback_and_preserves_persona_alias(monkeypatc
         headers={},
     )
 
-    assert calls == ["stackrot-chat", "long"]
-    assert (route.model, backend, alias_name) == ("long-model", "local_mlx", "stackrot-chat")
+    assert calls == ["stackrot-chat"]
+    assert (route.model, backend, alias_name) == ("fast-model", "local_vllm_fast", "stackrot-chat")
+
+
+def test_cinder_gateway_exec_falls_back_to_fast_and_preserves_persona(monkeypatch):
+    calls = _install_routes(monkeypatch)
+
+    route, backend, alias_name = openai_routes._route_chat_request(
+        _request("cinder-chat"),
+        headers={},
+    )
+
+    assert calls == ["cinder-chat", "fast"]
+    assert (route.model, backend, alias_name) == ("fast-model", "local_vllm_fast", "cinder-chat")

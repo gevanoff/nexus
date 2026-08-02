@@ -11,7 +11,6 @@
       "buffer_tool_call_stream": true,
       "preferred_tool_call_parser": "mistral",
       "preferred_chat_template": "",
-      "tool_fallback_alias": "long",
       "max_tokens_cap": 2048
     },
     "default": {
@@ -115,7 +114,6 @@
       "auto_inject_tools": true,
       "toolsets": ["core", "web"],
       "max_tool_rounds": 2,
-      "tool_fallback_alias": "long",
       "max_tokens_cap": 768,
       "soul": "stackrot"
     },
@@ -131,7 +129,7 @@
       "auto_inject_tools": true,
       "toolsets": ["core", "web"],
       "max_tool_rounds": 2,
-      "tool_fallback_alias": "long",
+      "tool_fallback_alias": "fast",
       "max_tokens_cap": 768,
       "soul": "meltdown"
     },
