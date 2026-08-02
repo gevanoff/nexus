@@ -60,6 +60,62 @@ def stable_hash(value: Any) -> str:
     return hashlib.sha256(stable_json(value).encode("utf-8")).hexdigest()
 
 
+def event_fingerprint(event: Mapping[str, Any]) -> str:
+    """Return an opaque cursor for one persisted event.
+
+    The cursor deliberately hashes the complete event rather than persisting
+    command arguments or assistant content in controller metadata.
+    """
+    return stable_hash(dict(event))
+
+
+def new_events_since(
+    events: Sequence[Mapping[str, Any]],
+    controller: Mapping[str, Any],
+    *,
+    run_id: str,
+    rollover_window: int = 64,
+) -> List[Mapping[str, Any]]:
+    """Return events appended after the controller's opaque tail cursor.
+
+    ``agent_events`` is capped, so its length is not a monotonic offset.  A
+    cursor normally survives the rolling window and identifies the exact tail.
+    If more than the entire buffer turns over between samples, conservatively
+    replay a bounded tail; ledger signatures make that replay idempotent enough
+    to resume observation without permanently dropping new events.
+    """
+    current = list(events)
+    if str(controller.get("run_id") or "") != run_id:
+        return current
+
+    cursor = str(controller.get("processed_event_cursor") or "")
+    if cursor:
+        for index in range(len(current) - 1, -1, -1):
+            if event_fingerprint(current[index]) == cursor:
+                unseen = current[index + 1 :]
+                if unseen:
+                    return unseen
+                break
+        else:
+            return current[-max(1, min(int(rollover_window), len(current))) :]
+
+    processed_count = as_int(controller.get("processed_event_count"))
+    start = max(0, min(processed_count, len(current)))
+    unseen = current[start:]
+    if unseen:
+        return unseen
+
+    # A capped buffer can keep the same length while replacing its oldest
+    # entries. If the cycle advanced but the prior cursor was unavailable (for
+    # example after migration), replay a bounded tail instead of going blind.
+    if (
+        len(current) >= 1000
+        and as_int(controller.get("last_cycle")) < as_int(current[-1].get("cycle"))
+    ):
+        return current[-max(1, min(int(rollover_window), len(current))) :]
+    return []
+
+
 def progress_observation(task: Mapping[str, Any]) -> Dict[str, Any]:
     progress = task.get("agent_progress_state") if isinstance(task.get("agent_progress_state"), dict) else {}
     observation = progress.get("observation") if isinstance(progress.get("observation"), dict) else {}
@@ -134,7 +190,12 @@ def inspection_target(event: Mapping[str, Any]) -> str:
         return f"list {_path(args.get('path'))}"
     if name == "coding_run_command":
         argv = args.get("argv") if isinstance(args.get("argv"), list) else []
-        return "validate " + clip(" ".join(str(item) for item in argv), 180)
+        normalized = [str(item).strip() for item in argv if str(item).strip()]
+        command = _path(normalized[0], default="command").rsplit("/", 1)[-1] if normalized else "command"
+        # Never persist raw argv: validation commands commonly contain headers,
+        # tokens, or passwords. The basename is useful orientation and the
+        # opaque hash preserves semantic grouping without exposing arguments.
+        return f"validate {clip(command, 80)} argv:{stable_hash(normalized)[:16]}"
     return name.removeprefix("coding_")
 
 
@@ -292,7 +353,7 @@ def _recent_assistant_notes(events: Sequence[Mapping[str, Any]], *, limit: int =
     return notes
 
 
-def _active_plan_summary(task: Mapping[str, Any]) -> str:
+def active_plan_summary(task: Mapping[str, Any]) -> str:
     plan = task.get("project_plan") if isinstance(task.get("project_plan"), dict) else {}
     items = plan.get("items") if isinstance(plan.get("items"), list) else []
     active = next((item for item in items if isinstance(item, dict) and str(item.get("status") or "").strip().lower() == "in_progress"), None)
@@ -311,7 +372,7 @@ def build_working_memory(
         text = clip(value, 500)
         if text and text not in findings:
             findings.append(text)
-    active_plan = _active_plan_summary(task)
+    active_plan = active_plan_summary(task)
     if active_plan and active_plan not in findings:
         findings.append(active_plan)
     for note in _recent_assistant_notes(events):
@@ -329,9 +390,10 @@ def build_working_memory(
         "stagnant_execution": ("What concrete action will change workspace, validation, review, or terminal state?", "Take one bounded action that changes durable state, or finish with a concrete blocker."),
     }
     unresolved_default, next_default = defaults.get(classification, defaults["stagnant_execution"])
-    unresolved = clip(previous.get("unresolved_question") or unresolved_default, 700)
-    next_action = clip(previous.get("next_action") or next_default, 700)
-    blocker = clip(previous.get("blocker"), 700)
+    previous_directives = previous if str(previous.get("state_key") or "") == state_key else {}
+    unresolved = clip(previous_directives.get("unresolved_question") or unresolved_default, 700)
+    next_action = clip(previous_directives.get("next_action") or next_default, 700)
+    blocker = clip(previous_directives.get("blocker"), 700)
     content = {
         "state_key": state_key, "findings": findings, "inspected_targets": inspected,
         "unresolved_question": unresolved, "next_action": next_action,
@@ -387,7 +449,9 @@ def build_context_manifest(
         "working_memory_revision": as_int(working_memory.get("revision")),
         "generated_at": time.time(),
     }
-    manifest["manifest_hash"] = stable_hash(manifest)
+    manifest["manifest_hash"] = stable_hash(
+        {key: value for key, value in manifest.items() if key != "generated_at"}
+    )
     return manifest
 
 
@@ -438,7 +502,7 @@ def render_guidance(
     classification = str(controller.get("classification") or "stagnant_execution")
     stage = str(controller.get("stage") or kind)
     lines = [
-        "Controller stagnation checkpoint (authoritative across compaction, restart, and continuation):",
+        "Controller investigation checkpoint (stagnation resilience; authoritative across compaction, restart, and continuation):",
         f"- Classification: {classification}.",
         f"- Intervention stage: {stage}; controller no-outcome cycles: {as_int(controller.get('cycles'))}.",
         f"- Durable state key: {controller.get('state_key') or ''}.",

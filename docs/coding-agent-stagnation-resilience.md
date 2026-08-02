@@ -21,11 +21,11 @@ Plan and guidance revisions are deliberately excluded. They remain useful contex
 
 Active tasks may contain these backward-compatible optional fields:
 
-- `agent_stagnation_controller`: state key, monotonic no-outcome cycle count, classification, intervention stage, thresholds, and bounded intervention history;
+- `agent_stagnation_controller`: state key, monotonic no-outcome cycle and event cursors, classification, intervention stage, thresholds, and bounded intervention history;
 - `agent_inspection_ledger`: normalized read, search, tree, review, and validation signatures with occurrence counts and recency;
 - `agent_working_memory`: bounded findings, inspected targets, unresolved question, exactly one next action, blocker, revision, and provenance;
 - `agent_context_manifest`: source event counts, omitted event counts, preserved semantic sections, and a manifest hash;
-- `agent_stagnation_recovery_lease`: one state-keyed recovery transition for a terminal intervention or a continuation after `no_progress_limit`.
+- `agent_stagnation_recovery_lease`: one state-keyed transition granted by an assist checkpoint or by a continuation after `no_progress_limit`. Terminal-boundary recovery continues to use the existing synchronous cycle-boundary transition, avoiding double credit.
 
 Older task JSON remains valid because all new fields are optional and derived lazily.
 
@@ -36,7 +36,8 @@ Exact command equality is insufficient. The controller normalizes behavior:
 - adjacent line reads of the same file share one inspection signature;
 - searches are grouped by normalized path and stable query tokens;
 - status, diff, and change-summary calls are review behavior;
-- validation commands are grouped by normalized argv hash.
+- validation commands are grouped by normalized argv hash, while persisted targets contain only the command basename and opaque hash so arguments cannot leak credentials;
+- capped raw-event buffers resume from an opaque tail cursor instead of treating the fixed buffer length as a monotonic offset.
 
 The controller classifies stagnant runs as inspection, review, validation, reasoning, plan-churn, or generic execution loops.
 
@@ -47,7 +48,7 @@ Thresholds are derived from the mission's `max_no_progress_cycles` budget:
 1. **Observe**: persist controller state and provenance without injecting guidance.
 2. **Assist**: persist working memory and require one bounded next action.
 3. **Interrupt**: require the next cycle to edit, validate/review an edit, or finish with a blocker.
-4. **Recovery**: grant one state-keyed recovery intervention at the terminal boundary.
+4. **Recovery**: grant one state-keyed recovery intervention at the terminal boundary through the existing synchronous cycle-boundary path.
 
 A continuation after `no_progress_limit` receives one distinct continuation recovery for the same state. Generic restarts do not receive fresh intervention credit.
 
@@ -79,6 +80,7 @@ This makes compaction and continuation deterministic without pretending that a l
 - Same-state continuations after `no_progress_limit` receive one distinct bounded recovery.
 - Workspace, validation, diff-review, or finish transitions produce a new state key and reset the controller naturally.
 - Background scanner and synchronous cycle-boundary claims remain idempotent through the atomic task mutation.
+- Concurrent samples are monotonic: an older cycle or event cursor cannot replace newer controller, ledger, working-memory, or manifest state.
 
 ## Validation
 
@@ -86,8 +88,10 @@ Focused regression coverage verifies:
 
 - state-key stability under plan and guidance churn;
 - semantic coalescing of adjacent reads;
+- command-argument redaction and capped event-buffer rollover;
 - stagnation persistence across run restart;
 - controller guidance delivery without progress minting;
 - one plan checkpoint per unchanged output state;
+- stale concurrent-sample rejection;
 - one no-progress continuation recovery;
 - compaction provenance and working-memory preservation.

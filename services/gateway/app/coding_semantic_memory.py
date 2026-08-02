@@ -11,7 +11,6 @@ from app.config import S, logger
 
 _RUNTIME_TASK: Optional[asyncio.Task[Any]] = None
 _ACTIVE_STATUSES = {"queued", "running", "stopping", "pausing"}
-_INSPECTION_TOOLS = set(resilience._INSPECTION_TOOLS)
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -47,23 +46,42 @@ def _current_run_events(task: Dict[str, Any]) -> List[Dict[str, Any]]:
     return resilience.current_run_events(task)
 
 
-def _inspection_target(event: Dict[str, Any]) -> str:
-    return resilience.inspection_target(event)
+def _sample_metrics(controller: Dict[str, Any]) -> tuple[int, int, int, int]:
+    return (
+        _as_int(controller.get("last_cycle")),
+        max(
+            _as_int(controller.get("processed_event_total")),
+            _as_int(controller.get("processed_event_count")),
+        ),
+        _as_int(controller.get("plan_revision")),
+        _as_int(controller.get("progress_stagnant_cycles")),
+    )
 
 
-def _dedupe_recent(values: List[str], *, limit: int) -> List[str]:
-    output: List[str] = []
-    seen = set()
-    for value in reversed(values):
-        key = value.casefold()
-        if not value or key in seen:
-            continue
-        seen.add(key)
-        output.append(value)
-        if len(output) >= limit:
-            break
-    output.reverse()
-    return output
+def _same_controller_stream(existing: Dict[str, Any], prepared: Dict[str, Any]) -> bool:
+    return (
+        str(existing.get("run_id") or "") == str(prepared.get("run_id") or "")
+        and str(existing.get("state_key") or "") == str(prepared.get("state_key") or "")
+    )
+
+
+def _sample_is_stale(existing: Dict[str, Any], prepared: Dict[str, Any]) -> bool:
+    return _same_controller_stream(existing, prepared) and _sample_metrics(prepared) < _sample_metrics(existing)
+
+
+def _sample_is_newer(existing: Dict[str, Any], prepared: Dict[str, Any]) -> bool:
+    return not _same_controller_stream(existing, prepared) or _sample_metrics(prepared) > _sample_metrics(existing)
+
+
+def _observation_complete(task: Dict[str, Any], prepared: Dict[str, Any]) -> bool:
+    existing = task.get("agent_stagnation_controller") if isinstance(task.get("agent_stagnation_controller"), dict) else {}
+    cursor = str(prepared.get("processed_event_cursor") or "")
+    return (
+        (not cursor or str(existing.get("processed_event_cursor") or "") == cursor)
+        and isinstance(task.get("agent_inspection_ledger"), list)
+        and isinstance(task.get("agent_working_memory"), dict)
+        and isinstance(task.get("agent_context_manifest"), dict)
+    )
 
 
 def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,8 +95,15 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         else {}
     )
     previous_run_id = str(raw_controller.get("run_id") or "")
-    processed_count = _as_int(raw_controller.get("processed_event_count")) if previous_run_id == run_id else 0
-    new_events = events[max(0, min(processed_count, len(events))) :]
+    new_events = resilience.new_events_since(events, raw_controller, run_id=run_id)
+    previous_event_total = (
+        max(
+            _as_int(raw_controller.get("processed_event_total")),
+            _as_int(raw_controller.get("processed_event_count")),
+        )
+        if previous_run_id == run_id
+        else 0
+    )
     ledger = resilience.update_inspection_ledger(
         task.get("agent_inspection_ledger"),
         new_events,
@@ -97,6 +122,10 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         max_no_progress_cycles=_max_no_progress_cycles(task),
     )
     controller["processed_event_count"] = len(events)
+    controller["processed_event_total"] = previous_event_total + len(new_events)
+    controller["processed_event_cursor"] = (
+        resilience.event_fingerprint(events[-1]) if events else ""
+    )
 
     current_plan_revision = _as_int(resilience.progress_observation(task).get("plan_revision"))
     previous_plan_revision = _as_int(raw_controller.get("plan_revision"))
@@ -121,12 +150,16 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         bool(raw_controller)
         and kind not in {"observe", "continuation", "recovery"}
         and current_plan_revision > previous_plan_revision
-        and not resilience.intervention_already_claimed(
-            raw_controller,
-            resilience.intervention_id(state_key, "plan_checkpoint"),
-        )
     ):
-        kind = "plan_checkpoint"
+        plan_intervention = resilience.intervention_id(state_key, "plan_checkpoint")
+        # A note-only plan revision can receive one checkpoint for orientation,
+        # but later revisions in the same durable state must not fall through
+        # into assist/interrupt credit.
+        kind = (
+            "observe"
+            if resilience.intervention_already_claimed(raw_controller, plan_intervention)
+            else "plan_checkpoint"
+        )
     controller["intervention_kind"] = kind
 
     working_memory = resilience.build_working_memory(
@@ -166,14 +199,7 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         "intervention_id": intervention,
         "inspected_targets": inspected,
         "unverified_model_notes": notes,
-        "active_plan_item": next(
-            (
-                value
-                for value in notes
-                if value and value == resilience._active_plan_summary(task)
-            ),
-            "",
-        ),
+        "active_plan_item": _clip(resilience.active_plan_summary(task), 500),
         "unresolved_question": str(working_memory.get("unresolved_question") or ""),
         "next_action": str(working_memory.get("next_action") or ""),
         "blocker": str(working_memory.get("blocker") or ""),
@@ -181,6 +207,11 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         "controller": controller,
         "working_memory": working_memory,
         "context_manifest": manifest,
+        "observation_changed": (
+            _sample_is_newer(raw_controller, controller)
+            or (bool(events) and not str(raw_controller.get("processed_event_cursor") or ""))
+            or not _observation_complete(task, controller)
+        ),
     }
 
 
@@ -207,16 +238,11 @@ def render_checkpoint_guidance(checkpoint: Dict[str, Any]) -> str:
         if isinstance(checkpoint.get("context_manifest"), dict)
         else {"preserved_event_count": 0, "omitted_event_count": 0}
     )
-    guidance = resilience.render_guidance(
+    return resilience.render_guidance(
         controller,
         working_memory,
         manifest,
         kind=str(checkpoint.get("intervention_kind") or checkpoint.get("stage") or "assist"),
-    )
-    return guidance.replace(
-        "Controller stagnation checkpoint",
-        "Controller investigation checkpoint",
-        1,
     )
 
 
@@ -226,7 +252,7 @@ def _merge_controller_history(latest: Dict[str, Any], prepared: Dict[str, Any]) 
         if isinstance(latest.get("agent_stagnation_controller"), dict)
         else {}
     )
-    merged = dict(prepared)
+    merged = dict(existing if _sample_is_stale(existing, prepared) else prepared)
     existing_history = [item for item in (existing.get("interventions") or []) if isinstance(item, dict)]
     prepared_history = [item for item in (prepared.get("interventions") or []) if isinstance(item, dict)]
     seen = set()
@@ -242,6 +268,8 @@ def _merge_controller_history(latest: Dict[str, Any], prepared: Dict[str, Any]) 
 
 
 def _persist_observation(task_id: str, checkpoint: Dict[str, Any]) -> bool:
+    if not bool(checkpoint.get("observation_changed")):
+        return False
     persisted = {"value": False}
     run_id = str(checkpoint.get("run_id") or "")
     state_key = str(checkpoint.get("state_key") or "")
@@ -254,6 +282,11 @@ def _persist_observation(task_id: str, checkpoint: Dict[str, Any]) -> bool:
         if resilience.durable_state_key(task) != state_key:
             return
         controller = checkpoint.get("controller") if isinstance(checkpoint.get("controller"), dict) else {}
+        existing = task.get("agent_stagnation_controller") if isinstance(task.get("agent_stagnation_controller"), dict) else {}
+        if _sample_is_stale(existing, controller):
+            return
+        if not _sample_is_newer(existing, controller) and _observation_complete(task, controller):
+            return
         task["agent_stagnation_controller"] = _merge_controller_history(task, controller)
         task["agent_inspection_ledger"] = list(checkpoint.get("inspection_ledger") or [])[-32:]
         task["agent_working_memory"] = dict(checkpoint.get("working_memory") or {})
@@ -288,6 +321,8 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
             return
 
         controller = checkpoint.get("controller") if isinstance(checkpoint.get("controller"), dict) else {}
+        if _sample_is_stale(latest_controller, controller):
+            return
         controller = _merge_controller_history(task, controller)
         controller = resilience.append_intervention(
             controller,
