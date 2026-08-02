@@ -274,6 +274,43 @@ async def run_gateway_tool_loop(
                     executed.append(name)
                 messages.append(ChatMessage(role="tool", tool_call_id=call_id, content=_bounded_json(result, policy.output_limit)))
             req = req.model_copy(update={"messages": messages, "tool_choice": "auto", "stream": False})
+            if round_index + 1 >= policy.max_tool_rounds:
+                final_req = req.model_copy(
+                    update={
+                        "tools": None,
+                        "tool_choice": None,
+                        "parallel_tool_calls": None,
+                        "stream": False,
+                    }
+                )
+                final_response = await call_backend(final_req)
+                final_choice = (
+                    (final_response.get("choices") or [{}])[0]
+                    if isinstance(final_response, dict)
+                    else {}
+                ) or {}
+                final_message = final_choice.get("message") if isinstance(final_choice, dict) else {}
+                final_calls = normalize_tool_calls_for_openai(
+                    (final_message or {}).get("tool_calls"), generate_missing_ids=True
+                )
+                if not final_calls:
+                    return GatewayToolLoopResult(
+                        final_response,
+                        tuple(calls_seen),
+                        tuple(executed),
+                        round_index + 1,
+                        "max_tool_rounds_finalized",
+                    )
+                stopped = _max_rounds_response(
+                    str(final_response.get("model") or req.model), policy.max_tool_rounds
+                )
+                return GatewayToolLoopResult(
+                    stopped,
+                    tuple(calls_seen),
+                    tuple(executed),
+                    round_index + 1,
+                    "max_tool_rounds",
+                )
         raise AssertionError("unreachable")
 
     try:

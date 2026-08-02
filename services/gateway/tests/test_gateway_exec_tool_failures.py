@@ -43,6 +43,32 @@ async def test_max_tool_rounds_stops_repeating_model(monkeypatch, tmp_path):
     monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLSETS", "core")
     monkeypatch.setattr(S, "NEXUS_TOOL_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
 
+    calls = 0
+
+    async def upstream(req):
+        nonlocal calls
+        calls += 1
+        if req.tools is None:
+            assert req.tool_choice is None
+            assert req.messages[-1].role == "tool"
+            return {"model": "model", "choices": [{"message": {"role": "assistant", "content": "Final answer from tool results."}, "finish_reason": "stop"}]}
+        return {"model": "model", "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [{"id": "call_loop", "type": "function", "function": {"name": "nexus_health", "arguments": '{"include_upstreams":false,"include_models":false}'}}]}, "finish_reason": "tool_calls"}]}
+
+    alias = ModelAlias(backend="local_vllm", upstream_model="model", tools=True)
+    req = ChatCompletionRequest(model="default", messages=[ChatMessage(role="user", content="loop")], x_nexus={"tool_execution_mode": "gateway_exec", "max_tool_rounds": 2})
+    result = await run_gateway_tool_loop(req, policy=resolve_execution_policy(req, alias), alias=alias, call_backend=upstream, request_id="loop")
+    assert result.stopped_reason == "max_tool_rounds_finalized"
+    assert result.response["choices"][0]["message"]["content"] == "Final answer from tool results."
+    assert result.tools_executed == ("nexus_health", "nexus_health")
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_max_tool_rounds_stops_if_backend_ignores_disabled_tools(monkeypatch, tmp_path):
+    monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLS", True)
+    monkeypatch.setattr(S, "NEXUS_AUTO_INJECT_TOOLSETS", "core")
+    monkeypatch.setattr(S, "NEXUS_TOOL_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
+
     async def upstream(_req):
         return {"model": "model", "choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [{"id": "call_loop", "type": "function", "function": {"name": "nexus_health", "arguments": '{"include_upstreams":false,"include_models":false}'}}]}, "finish_reason": "tool_calls"}]}
 
