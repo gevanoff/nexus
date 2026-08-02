@@ -24,12 +24,29 @@ def test_bing_results_parser_returns_bounded_structured_results():
     ]
 
 
+def test_bing_rss_parser_returns_safe_structured_results():
+    feed = """
+    <rss><channel>
+      <item><title>First result</title><link>https://example.com/a</link><description>A &amp; B</description></item>
+      <item><title>Unsafe</title><link>javascript:alert(1)</link><description>Skip</description></item>
+      <item><title>Second result</title><link>https://example.com/b</link><description><![CDATA[More <b>text</b>]]></description></item>
+    </channel></rss>
+    """
+
+    results = registry._parse_bing_rss_results(feed, 2)
+
+    assert results == [
+        {"title": "First result", "url": "https://example.com/a", "snippet": "A & B"},
+        {"title": "Second result", "url": "https://example.com/b", "snippet": "More text"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_web_search_uses_fixed_endpoint_and_parses_results(monkeypatch):
     captured = {}
 
     class FakeResponse:
-        text = '<li class="b_algo"><h2><a href="https://example.com">Example</a></h2><p>Snippet</p></li>'
+        text = '<rss><channel><item><title>Example</title><link>https://example.com</link><description>Snippet</description></item></channel></rss>'
 
         def raise_for_status(self):
             return None
@@ -51,7 +68,10 @@ async def test_web_search_uses_fixed_endpoint_and_parses_results(monkeypatch):
         {"query": "current information", "limit": 3}
     )
 
-    assert captured == {"url": "https://www.bing.com/search", "params": {"q": "current information"}}
+    assert captured == {
+        "url": "https://www.bing.com/search",
+        "params": {"q": "current information", "format": "rss"},
+    }
     assert result["ok"] is True
     assert result["provider"] == "bing"
     assert result["results"][0]["title"] == "Example"

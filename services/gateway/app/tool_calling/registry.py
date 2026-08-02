@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +167,25 @@ def _parse_bing_results(page: str, limit: int) -> list[dict[str, str]]:
     return results
 
 
+def _parse_bing_rss_results(feed: str, limit: int) -> list[dict[str, str]]:
+    try:
+        root = ET.fromstring(feed or "")
+    except ET.ParseError:
+        return []
+    results: list[dict[str, str]] = []
+    for item in root.findall(".//item"):
+        title = " ".join(str(item.findtext("title") or "").split())[:500]
+        url = str(item.findtext("link") or "").strip()
+        parsed = urlsplit(url)
+        if not title or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        snippet = _plain_html_text(str(item.findtext("description") or ""))[:1000]
+        results.append({"title": title, "url": url[:2000], "snippet": snippet})
+        if len(results) >= limit:
+            break
+    return results
+
+
 async def _web_search(args: dict[str, Any]) -> dict[str, Any]:
     query = str(args.get("query") or "").strip()
     if not query or len(query) > 500:
@@ -180,13 +200,19 @@ async def _web_search(args: dict[str, Any]) -> dict[str, Any]:
         )
     }
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
-        response = await client.get("https://www.bing.com/search", params={"q": query})
+        response = await client.get(
+            "https://www.bing.com/search",
+            params={"q": query, "format": "rss"},
+        )
         response.raise_for_status()
+    results = _parse_bing_rss_results(response.text, limit)
+    if not results:
+        results = _parse_bing_results(response.text, limit)
     return {
         "ok": True,
         "query": query,
         "provider": "bing",
-        "results": _parse_bing_results(response.text, limit),
+        "results": results,
     }
 
 
