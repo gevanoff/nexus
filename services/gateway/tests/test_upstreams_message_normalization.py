@@ -156,6 +156,25 @@ def test_normalize_openai_tools_payload_drops_continue_metadata():
     ]
 
 
+def test_normalize_openai_tools_payload_drops_strict_for_legacy_vllm():
+    payload = {
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "parameters": {"type": "object", "properties": {}},
+                    "strict": True,
+                },
+            }
+        ]
+    }
+
+    normalized = _normalize_openai_tools_payload(payload, include_strict=False)
+
+    assert "strict" not in normalized["tools"][0]["function"]
+
+
 def test_glm_input_guard_rejects_oversized_prompt(monkeypatch):
     monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 100, raising=False)
     request = ChatCompletionRequest(

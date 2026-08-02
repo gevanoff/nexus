@@ -93,7 +93,7 @@ def _normalize_messages_for_openai_backend(msgs: List[Dict[str, Any]]) -> List[D
     return out
 
 
-def _normalize_openai_tool(tool: Any) -> dict[str, Any] | None:
+def _normalize_openai_tool(tool: Any, *, include_strict: bool = True) -> dict[str, Any] | None:
     if not isinstance(tool, dict):
         return None
     function = tool.get("function")
@@ -116,7 +116,7 @@ def _normalize_openai_tool(tool: Any) -> dict[str, Any] | None:
         out_function["parameters"] = {"type": "object", "properties": {}}
 
     strict = function.get("strict")
-    if isinstance(strict, bool):
+    if include_strict and isinstance(strict, bool):
         out_function["strict"] = strict
 
     return {"type": "function", "function": out_function}
@@ -137,7 +137,11 @@ def _normalize_tool_choice(tool_choice: Any) -> Any:
     return {"type": "function", "function": {"name": name.strip()}}
 
 
-def _normalize_openai_tools_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_openai_tools_payload(
+    payload: Dict[str, Any],
+    *,
+    include_strict: bool = True,
+) -> Dict[str, Any]:
     tools = payload.get("tools")
     tool_choice = payload.get("tool_choice")
     if not isinstance(tools, list) and not isinstance(tool_choice, dict):
@@ -147,7 +151,7 @@ def _normalize_openai_tools_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(tools, list):
         normalized_tools = []
         for tool in tools:
-            normalized_tool = _normalize_openai_tool(tool)
+            normalized_tool = _normalize_openai_tool(tool, include_strict=include_strict)
             if normalized_tool is not None:
                 normalized_tools.append(normalized_tool)
         out["tools"] = normalized_tools
@@ -465,11 +469,12 @@ async def call_openai_chat(
     backend_name: str = "local_vllm",
     request_id: str | None = None,
 ) -> Dict[str, Any]:
+    provider = backend_provider_name(backend_name)
     payload = req.model_dump(exclude_none=True)
     payload.pop("x_nexus", None)
     if "messages" in payload and isinstance(payload["messages"], list):
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
-    payload = _normalize_openai_tools_payload(payload)
+    payload = _normalize_openai_tools_payload(payload, include_strict=provider != "vllm")
     payload = canonicalize_chat_payload(payload)
     prefix = prompt_prefix_fingerprint(payload)
     observed = get_prefix_observation_cache(
@@ -483,7 +488,6 @@ async def call_openai_chat(
     allowed_tool_names = allowed_tool_names_from_specs(payload.get("tools")) if "tools" in payload else None
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=req.model)
 
-    provider = backend_provider_name(backend_name)
     target = (base_url or _default_base_url_for_provider(provider)).rstrip("/")
 
     started = time.monotonic()
@@ -723,10 +727,11 @@ async def stream_openai_chat(
     backend_name: str = "local_vllm",
     request_id: str | None = None,
 ) -> AsyncIterator[bytes]:
+    provider = backend_provider_name(backend_name)
     if "messages" in payload and isinstance(payload["messages"], list):
         payload = dict(payload)
         payload["messages"] = _normalize_messages_for_openai_backend(payload["messages"])
-    payload = _normalize_openai_tools_payload(payload)
+    payload = _normalize_openai_tools_payload(payload, include_strict=provider != "vllm")
     payload = canonicalize_chat_payload(payload)
     prefix = prompt_prefix_fingerprint(payload)
     observed = get_prefix_observation_cache(
@@ -740,7 +745,6 @@ async def stream_openai_chat(
     allowed_tool_names = allowed_tool_names_from_specs(payload.get("tools")) if "tools" in payload else None
     payload = _apply_backend_generation_defaults(payload, backend_name=backend_name, model_name=str(payload.get("model") or ""))
 
-    provider = backend_provider_name(backend_name)
     target = (base_url or _default_base_url_for_provider(provider)).rstrip("/")
 
     started = time.monotonic()
