@@ -1288,7 +1288,23 @@ def guardrail_reason_for_target(
         # stripping tools while the background scheduler refreshes a healthy,
         # unchanged backend/model target after a gateway restart.
         result = status.get("result")
-        if status.get("stale") and isinstance(result, dict) and result.get("ok") is True:
+        category = str(
+            status.get("category")
+            or _tool_choice_category(tool_choice, has_tools=has_tools)
+        )
+        by_category = result.get("by_category") if isinstance(result, dict) else None
+        category_result = (
+            by_category.get(category)
+            if isinstance(by_category, dict)
+            else None
+        )
+        if (
+            status.get("stale")
+            and isinstance(result, dict)
+            and result.get("ok") is True
+            and isinstance(category_result, dict)
+            and _category_passed(result, category)
+        ):
             return None
     return str(status.get("reason") or "latest tool qualification does not allow tool use")
 

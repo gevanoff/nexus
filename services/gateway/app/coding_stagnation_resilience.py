@@ -473,8 +473,9 @@ def intervention_kind(task: Mapping[str, Any], controller: Mapping[str, Any]) ->
     return str(controller.get("stage") or "observe")
 
 
-def intervention_id(state_key: str, kind: str) -> str:
-    return f"{state_key}:{kind}"
+def intervention_id(state_key: str, kind: str, *, run_id: str = "") -> str:
+    base = f"{state_key}:{kind}"
+    return f"{base}:{run_id}" if run_id else base
 
 
 def intervention_already_claimed(controller: Mapping[str, Any], intervention: str) -> bool:

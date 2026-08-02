@@ -151,7 +151,11 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         and kind not in {"observe", "continuation", "recovery"}
         and current_plan_revision > previous_plan_revision
     ):
-        plan_intervention = resilience.intervention_id(state_key, "plan_checkpoint")
+        plan_intervention = resilience.intervention_id(
+            state_key,
+            "plan_checkpoint",
+            run_id=run_id,
+        )
         # A note-only plan revision can receive one checkpoint for orientation,
         # but later revisions in the same durable state must not fall through
         # into assist/interrupt credit.
@@ -175,7 +179,11 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         working_memory=working_memory,
         events=events,
     )
-    intervention = resilience.intervention_id(state_key, kind)
+    # Guidance credit is per run. A resumed run must not inherit prior-run
+    # assist/interrupt/recovery claims for the same durable output state.
+    # Recovery leases remain state-keyed in _claim_checkpoint so unchanged
+    # state cannot gain an unlimited number of guardrail transitions.
+    intervention = resilience.intervention_id(state_key, kind, run_id=run_id)
     inspected = [
         _clip(item.get("target"), 240)
         for item in ledger[-12:]
@@ -422,6 +430,25 @@ def _consume_recovery_lease(task_id: str, task: Dict[str, Any]) -> bool:
         progress = dict(progress)
         progress["stagnant_cycles"] = 0
         latest["agent_progress_state"] = progress
+        controller = (
+            latest.get("agent_stagnation_controller")
+            if isinstance(latest.get("agent_stagnation_controller"), dict)
+            else {}
+        )
+        if (
+            str(controller.get("state_key") or "") == str(current.get("state_key") or "")
+            and str(controller.get("run_id") or "") == str(latest.get("agent_run_id") or "")
+        ):
+            controller = dict(controller)
+            controller.update({
+                "last_cycle": _as_int(latest.get("agent_cycle")),
+                "cycles": 0,
+                "progress_stagnant_cycles": 0,
+                "stage": "observe",
+                "intervention_kind": "observe",
+                "updated_at": time.time(),
+            })
+            latest["agent_stagnation_controller"] = controller
         current = dict(current)
         current.update({
             "remaining_transitions": 0,
@@ -452,6 +479,23 @@ def process_task(task_id: str) -> bool:
         return False
     if _consume_recovery_lease(task_id, task):
         task = cw.load_task(task_id)
+    else:
+        lease = (
+            task.get("agent_stagnation_recovery_lease")
+            if isinstance(task.get("agent_stagnation_recovery_lease"), dict)
+            else {}
+        )
+        if (
+            str(lease.get("status") or "") == "granted"
+            and str(lease.get("kind") or "") == "continuation"
+            and str(lease.get("state_key") or "") == resilience.durable_state_key(task)
+            and str(lease.get("run_id") or "") == str(task.get("agent_run_id") or "")
+            and _as_int(task.get("agent_cycle")) <= _as_int(lease.get("granted_cycle"))
+        ):
+            # The checkpoint that granted this lease has already been claimed
+            # for the current sample. Do not immediately fall through from a
+            # continuation checkpoint into a terminal-stage checkpoint.
+            return False
     checkpoint = _prepare_checkpoint(task)
     kind = str(checkpoint.get("intervention_kind") or "observe")
     if kind == "observe":

@@ -390,6 +390,37 @@ def test_no_progress_continuation_receives_one_state_keyed_recovery(monkeypatch)
     assert task["agent_stagnation_recovery_lease"]["remaining_transitions"] == 1
     assert memory.process_task(task["id"]) is False
 
+    task["agent_cycle"] = 2
+    task["agent_progress_state"]["stagnant_cycles"] = 9
+    assert memory.process_task(task["id"]) is False
+    assert task["agent_stagnation_recovery_lease"]["status"] == "consumed"
+    assert task["agent_progress_state"]["stagnant_cycles"] == 0
+    assert task["agent_stagnation_controller"]["cycles"] == 0
+    assert task["agent_stagnation_controller"]["stage"] == "observe"
+
+    task["agent_cycle"] = 3
+    task["agent_progress_state"]["stagnant_cycles"] = 3
+    assert memory.process_task(task["id"]) is True
+    assert task["agent_stagnation_controller"]["last_intervention_kind"] == "assist"
+    assert task["agent_stagnation_controller"]["last_intervention_id"].endswith(":run-3")
+
+
+def test_guidance_interventions_are_scoped_to_run_but_recovery_credit_is_not():
+    key = "durable-state"
+    state_recovery = resilience.intervention_id(key, "recovery-continuation")
+
+    assert resilience.intervention_id(key, "assist", run_id="run-2") != resilience.intervention_id(
+        key,
+        "assist",
+        run_id="run-3",
+    )
+    assert state_recovery == f"{key}:recovery-continuation"
+    assert state_recovery != resilience.intervention_id(
+        key,
+        "recovery-continuation",
+        run_id="run-3",
+    )
+
 
 def test_context_manifest_records_compaction_provenance():
     task = _task()

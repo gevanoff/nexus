@@ -153,9 +153,10 @@ async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypa
     )
 
     # The staged semantic checkpoint becomes controller guidance on the
-    # following cycle and earns exactly one reset. With no edit, validation,
-    # review, plan-state change, or finish transition afterward, the run still
-    # terminates deterministically after a second stagnant streak.
+    # following cycle and earns exactly one reset. A fresh terminal-stage
+    # checkpoint then permits one final bounded action cycle. With no edit,
+    # validation, review, plan-state change, or finish transition afterward,
+    # the run still terminates deterministically on the next cycle.
     checkpoint_cycle = coding_agent.coding_semantic_memory._stagnation_threshold(
         {**task, "mission": mission}
     )
@@ -163,6 +164,7 @@ async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypa
         checkpoint_cycle
         + 1
         + int(mission["budget_policy"]["max_no_progress_cycles"])
+        + 1
     )
     assert tool_calls == expected_cycles * len(batch)
     event_types = [str(item.get("type") or "") for item in task["agent_events"]]
@@ -170,7 +172,7 @@ async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypa
     assert event_types.count("no_progress_limit") == 1
     assert task["agent_status"] == "paused"
     assert task["agent_stop_reason_code"] == "no_progress_limit"
-    assert task["agent_progress_state"]["stagnant_cycles"] == 8
+    assert task["agent_progress_state"]["stagnant_cycles"] == 9
     assert task["agent_pause_requested"] is False
 
 

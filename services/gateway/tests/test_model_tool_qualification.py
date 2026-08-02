@@ -415,7 +415,15 @@ def test_guardrail_allows_stale_success_when_results_are_optional(monkeypatch):
     monkeypatch.setattr(
         qual,
         "qualification_status_for_target",
-        lambda **_kwargs: {"qualified": False, "stale": True, "result": {"ok": True}},
+        lambda **_kwargs: {
+            "qualified": False,
+            "stale": True,
+            "category": "auto",
+            "result": {
+                "ok": True,
+                "by_category": {"auto": {"passed": 1, "total": 1}},
+            },
+        },
     )
 
     assert (
@@ -452,6 +460,39 @@ def test_guardrail_blocks_stale_success_when_results_are_required(monkeypatch):
             alias_name="long",
             backend_class="local_mlx",
             resolved_model="mlx-model",
+            tool_choice="auto",
+        )
+        == "tool qualification is stale"
+    )
+
+
+def test_guardrail_blocks_stale_aggregate_success_when_requested_category_failed(monkeypatch):
+    monkeypatch.setattr(
+        qual.S,
+        "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        qual,
+        "qualification_status_for_target",
+        lambda **_kwargs: {
+            "qualified": False,
+            "stale": True,
+            "category": "auto",
+            "result": {
+                "ok": True,
+                "by_category": {"auto": {"passed": 0, "total": 1}},
+            },
+            "reason": "tool qualification is stale",
+        },
+    )
+
+    assert (
+        qual.guardrail_reason_for_target(
+            alias_name="fast",
+            backend_class="local_vllm_fast",
+            resolved_model="fast-model",
             tool_choice="auto",
         )
         == "tool qualification is stale"
