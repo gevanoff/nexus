@@ -405,6 +405,59 @@ def test_qualification_status_blocks_stale_result(tmp_path, monkeypatch):
     assert status["stale"] is True
 
 
+def test_guardrail_allows_stale_success_when_results_are_optional(monkeypatch):
+    monkeypatch.setattr(
+        qual.S,
+        "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        qual,
+        "qualification_status_for_target",
+        lambda **_kwargs: {"qualified": False, "stale": True, "result": {"ok": True}},
+    )
+
+    assert (
+        qual.guardrail_reason_for_target(
+            alias_name="long",
+            backend_class="local_mlx",
+            resolved_model="mlx-model",
+            tool_choice="auto",
+        )
+        is None
+    )
+
+
+def test_guardrail_blocks_stale_success_when_results_are_required(monkeypatch):
+    monkeypatch.setattr(
+        qual.S,
+        "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT",
+        True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        qual,
+        "qualification_status_for_target",
+        lambda **_kwargs: {
+            "qualified": False,
+            "stale": True,
+            "result": {"ok": True},
+            "reason": "tool qualification is stale",
+        },
+    )
+
+    assert (
+        qual.guardrail_reason_for_target(
+            alias_name="long",
+            backend_class="local_mlx",
+            resolved_model="mlx-model",
+            tool_choice="auto",
+        )
+        == "tool qualification is stale"
+    )
+
+
 def test_qualification_status_blocks_alias_target_mismatch(tmp_path):
     path = tmp_path / "tools.jsonl"
     item = {

@@ -1279,8 +1279,17 @@ def guardrail_reason_for_target(
     )
     if status.get("qualified"):
         return None
-    if status.get("missing") and not bool(getattr(S, "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT", False)):
-        return None
+    require_result = bool(getattr(S, "MODEL_TOOL_QUALIFICATION_GUARDRAIL_REQUIRE_RESULT", False))
+    if not require_result:
+        if status.get("missing"):
+            return None
+        # Fail open for an expired result that previously passed the complete
+        # suite. This matches the configured missing-result policy and avoids
+        # stripping tools while the background scheduler refreshes a healthy,
+        # unchanged backend/model target after a gateway restart.
+        result = status.get("result")
+        if status.get("stale") and isinstance(result, dict) and result.get("ok") is True:
+            return None
     return str(status.get("reason") or "latest tool qualification does not allow tool use")
 
 

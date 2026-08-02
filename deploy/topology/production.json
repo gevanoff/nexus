@@ -120,7 +120,7 @@
       "NEXUS_AUTO_INJECT_TOOLS": "true",
       "NEXUS_AUTO_INJECT_TOOLSETS": "core,repo,ops",
       "NEXUS_UI_GATEWAY_EXEC": "false",
-      "MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS": "default,reasoning,fast-reasoning,fast"
+      "MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS": "mlx,default,reasoning,fast-reasoning,fast"
     }
   },
   "hosts": {

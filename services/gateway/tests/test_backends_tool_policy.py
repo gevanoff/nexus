@@ -95,7 +95,9 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     assert env["VLLM_FAST_TOOL_CALL_PARSER"] == "mistral"
     assert env["VLLM_CHAT_TEMPLATE"] == "/vllm-workspace/examples/tool_chat_template_mistral_parallel.jinja"
     assert env["VLLM_FAST_CHAT_TEMPLATE"] == ""
-    assert env["MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS"].split(",")[-1] == "fast"
+    auto_qualification_models = env["MODEL_TOOL_QUALIFICATION_AUTO_RUN_MODELS"].split(",")
+    assert auto_qualification_models[0] == "mlx"
+    assert auto_qualification_models[-1] == "fast"
     assert env["TELEGRAM_REQUIRE_MENTION"] == "true"
     assert env["TELEGRAM_MENTION_PATTERNS"] == "Nexus"
     assert env["NEXUS_TOOL_EXECUTION_DEFAULT"] == "client_exec"
