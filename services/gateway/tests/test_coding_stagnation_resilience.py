@@ -422,6 +422,51 @@ def test_guidance_interventions_are_scoped_to_run_but_recovery_credit_is_not():
     )
 
 
+def test_legacy_consumed_continuation_repairs_controller_once(monkeypatch):
+    task = _task(stagnant_cycles=8)
+    key = resilience.durable_state_key(task)
+    recovery_id = resilience.intervention_id(key, "recovery-continuation")
+    task["agent_stagnation_controller"] = {
+        "schema": resilience.SCHEMA,
+        "state_key": key,
+        "run_id": "run-2",
+        "last_cycle": 8,
+        "cycles": 12,
+        "progress_stagnant_cycles": 8,
+        "plan_revision": 1,
+        "interventions": [],
+    }
+    task["agent_stagnation_recovery_history"] = [recovery_id]
+    task["agent_stagnation_recovery_lease"] = {
+        "id": recovery_id,
+        "state_key": key,
+        "kind": "continuation",
+        "run_id": "run-2",
+        "status": "consumed",
+    }
+    task["agent_previous_status"] = "paused"
+    task["agent_previous_summary"] = "Coding run paused after 8 cycles without a durable state transition."
+    task["agent_run_id"] = "run-3"
+    task["agent_cycle"] = 1
+    task["agent_events"].append({"type": "started", "run_id": "run-3", "ts": 6})
+    _install_workspace(monkeypatch, task)
+
+    assert memory.process_task(task["id"]) is True
+    assert task["agent_progress_state"]["stagnant_cycles"] == 0
+    assert task["agent_stagnation_controller"]["cycles"] == 1
+    assert task["agent_stagnation_recovery_lease"]["status"] == "consumed"
+    assert task["agent_stagnation_recovery_lease"]["controller_reset_version"] == 2
+    assert task["agent_stagnation_recovery_history"] == [recovery_id]
+
+    assert memory.process_task(task["id"]) is False
+    repairs = [
+        item
+        for item in task["agent_events"]
+        if item.get("recovery_kind") == "continuation-compatibility-repair"
+    ]
+    assert len(repairs) == 1
+
+
 def test_context_manifest_records_compaction_provenance():
     task = _task()
     task["agent_events"].extend(

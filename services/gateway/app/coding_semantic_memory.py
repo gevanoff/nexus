@@ -455,6 +455,7 @@ def _consume_recovery_lease(task_id: str, task: Dict[str, Any]) -> bool:
             "status": "consumed",
             "consumed_cycle": _as_int(latest.get("agent_cycle")),
             "consumed_at": time.time(),
+            "controller_reset_version": 2,
         })
         latest["agent_stagnation_recovery_lease"] = current
         events = latest.get("agent_events") if isinstance(latest.get("agent_events"), list) else []
@@ -473,10 +474,109 @@ def _consume_recovery_lease(task_id: str, task: Dict[str, Any]) -> bool:
     return consumed["value"]
 
 
+def _repair_legacy_consumed_continuation(task_id: str, task: Dict[str, Any]) -> bool:
+    lease = (
+        task.get("agent_stagnation_recovery_lease")
+        if isinstance(task.get("agent_stagnation_recovery_lease"), dict)
+        else {}
+    )
+    controller = (
+        task.get("agent_stagnation_controller")
+        if isinstance(task.get("agent_stagnation_controller"), dict)
+        else {}
+    )
+    state_key = resilience.durable_state_key(task)
+    run_id = str(task.get("agent_run_id") or "")
+    previous_run_id = str(controller.get("run_id") or "")
+    if (
+        str(lease.get("status") or "") != "consumed"
+        or str(lease.get("kind") or "") != "continuation"
+        or _as_int(lease.get("controller_reset_version")) >= 2
+        or str(lease.get("state_key") or "") != state_key
+        or str(controller.get("state_key") or "") != state_key
+        or not previous_run_id
+        or previous_run_id == run_id
+        or not resilience.continuation_after_no_progress(
+            task,
+            {"previous_run_id": previous_run_id, "run_id": run_id},
+        )
+    ):
+        return False
+    repaired = {"value": False}
+
+    def apply(latest: Dict[str, Any]) -> None:
+        current = (
+            latest.get("agent_stagnation_recovery_lease")
+            if isinstance(latest.get("agent_stagnation_recovery_lease"), dict)
+            else {}
+        )
+        current_controller = (
+            latest.get("agent_stagnation_controller")
+            if isinstance(latest.get("agent_stagnation_controller"), dict)
+            else {}
+        )
+        latest_run_id = str(latest.get("agent_run_id") or "")
+        latest_previous_run_id = str(current_controller.get("run_id") or "")
+        if (
+            str(current.get("id") or "") != str(lease.get("id") or "")
+            or str(current.get("status") or "") != "consumed"
+            or str(current.get("kind") or "") != "continuation"
+            or _as_int(current.get("controller_reset_version")) >= 2
+            or resilience.durable_state_key(latest) != state_key
+            or str(current_controller.get("state_key") or "") != state_key
+            or not latest_previous_run_id
+            or latest_previous_run_id == latest_run_id
+            or not resilience.continuation_after_no_progress(
+                latest,
+                {"previous_run_id": latest_previous_run_id, "run_id": latest_run_id},
+            )
+        ):
+            return
+        progress = (
+            latest.get("agent_progress_state")
+            if isinstance(latest.get("agent_progress_state"), dict)
+            else {}
+        )
+        progress = dict(progress)
+        progress["stagnant_cycles"] = 0
+        latest["agent_progress_state"] = progress
+        current_controller = dict(current_controller)
+        current_controller.update({
+            "cycles": 0,
+            "progress_stagnant_cycles": 0,
+            "stage": "observe",
+            "intervention_kind": "observe",
+            "updated_at": time.time(),
+        })
+        latest["agent_stagnation_controller"] = current_controller
+        current = dict(current)
+        current.update({
+            "controller_reset_version": 2,
+            "controller_reset_repaired_at": time.time(),
+        })
+        latest["agent_stagnation_recovery_lease"] = current
+        events = latest.get("agent_events") if isinstance(latest.get("agent_events"), list) else []
+        events.append({
+            "type": "no_progress_recovery",
+            "ts": int(time.time()),
+            "cycle": latest.get("agent_cycle"),
+            "state_key": state_key,
+            "recovery_kind": "continuation-compatibility-repair",
+            "summary": "Applied the controller reset omitted by a legacy consumed continuation lease without granting new recovery credit.",
+        })
+        latest["agent_events"] = events[-1000:]
+        repaired["value"] = True
+
+    cw.mutate_task(task_id, apply)
+    return repaired["value"]
+
+
 def process_task(task_id: str) -> bool:
     task = cw.load_task(task_id)
     if str(task.get("agent_status") or "").strip().lower() not in _ACTIVE_STATUSES:
         return False
+    if _repair_legacy_consumed_continuation(task_id, task):
+        task = cw.load_task(task_id)
     if _consume_recovery_lease(task_id, task):
         task = cw.load_task(task_id)
     else:
