@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import html
 import json
 import os
 import re
@@ -28,6 +29,16 @@ from app.tool_calling.schemas import strict_object_schema
 
 ToolImplementation = Callable[..., Awaitable[dict[str, Any]]]
 _SECRET_RE = re.compile(r"(?i)\b(authorization|bearer|api[_-]?key|password|secret|token|cookie)\b(\s*[:=]\s*)(bearer\s+)?([^\s,;]+)")
+_BING_RESULT_RE = re.compile(
+    r'<li\b[^>]*class=["\'][^"\']*\bb_algo\b[^"\']*["\'][^>]*>(.*?)</li>',
+    re.IGNORECASE | re.DOTALL,
+)
+_BING_TITLE_RE = re.compile(
+    r'<h2\b[^>]*>.*?<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>.*?</h2>',
+    re.IGNORECASE | re.DOTALL,
+)
+_BING_SNIPPET_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 @dataclass(frozen=True)
@@ -128,6 +139,55 @@ async def _alias(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _diagnostics(_args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "aliases": tool_calling_diagnostics()}
+
+
+def _plain_html_text(value: str) -> str:
+    return " ".join(html.unescape(_HTML_TAG_RE.sub(" ", value or "")).split())
+
+
+def _parse_bing_results(page: str, limit: int) -> list[dict[str, str]]:
+    results: list[dict[str, str]] = []
+    for block in _BING_RESULT_RE.findall(page or ""):
+        title_match = _BING_TITLE_RE.search(block)
+        if title_match is None:
+            continue
+        url = html.unescape(title_match.group(1)).strip()
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        title = _plain_html_text(title_match.group(2))[:500]
+        if not title:
+            continue
+        snippet_match = _BING_SNIPPET_RE.search(block)
+        snippet = _plain_html_text(snippet_match.group(1))[:1000] if snippet_match else ""
+        results.append({"title": title, "url": url[:2000], "snippet": snippet})
+        if len(results) >= limit:
+            break
+    return results
+
+
+async def _web_search(args: dict[str, Any]) -> dict[str, Any]:
+    query = str(args.get("query") or "").strip()
+    if not query or len(query) > 500:
+        return {"ok": False, "error": "query must contain 1-500 characters"}
+    limit = int(args.get("limit") or 5)
+    if limit < 1 or limit > 10:
+        return {"ok": False, "error": "limit must be between 1 and 10"}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/127.0 Safari/537.36"
+        )
+    }
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
+        response = await client.get("https://www.bing.com/search", params={"q": query})
+        response.raise_for_status()
+    return {
+        "ok": True,
+        "query": query,
+        "provider": "bing",
+        "results": _parse_bing_results(response.text, limit),
+    }
 
 
 async def _file_list(args: dict[str, Any]) -> dict[str, Any]:
@@ -363,6 +423,18 @@ _DEFINITIONS = [
     NexusToolDefinition("nexus_models_list", "List configured aliases and served model capabilities.", _props(include_capabilities={"type": "boolean"}), "core", implementation=_models),
     NexusToolDefinition("nexus_alias_resolve", "Resolve one model alias and its tool capabilities.", _props(alias={"type": "string"}), "core", implementation=_alias),
     NexusToolDefinition("nexus_tool_diagnostics", "Report provider-neutral tool-calling capabilities for every alias.", _props(), "core", implementation=_diagnostics),
+    NexusToolDefinition(
+        "web_search",
+        "Search the public web for current information and return titles, URLs, and short snippets.",
+        _props(
+            query={"type": "string", "minLength": 1, "maxLength": 500},
+            limit={"type": "integer", "minimum": 1, "maximum": 10},
+        ),
+        "web",
+        timeout_sec=20.0,
+        output_limit=20000,
+        implementation=_web_search,
+    ),
     NexusToolDefinition("nexus_file_list", "List bounded files under allowlisted Nexus roots.", _props(path={"type": "string"}, max_depth={"type": "integer", "minimum": 0, "maximum": 5}, limit={"type": "integer", "minimum": 1, "maximum": 200}), "repo", implementation=_file_list),
     NexusToolDefinition("nexus_file_read", "Read a bounded text file under allowlisted Nexus roots.", _props(path={"type": "string"}, start_line={"type": ["integer", "null"], "minimum": 1}, end_line={"type": ["integer", "null"], "minimum": 1}, max_chars={"type": "integer", "minimum": 1, "maximum": 50000}), "repo", output_limit=50000, implementation=_file_read),
     NexusToolDefinition("nexus_file_stat", "Inspect metadata for a file or directory under allowlisted Nexus roots.", _props(path={"type": "string"}), "repo", implementation=_file_stat),

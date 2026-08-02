@@ -31,6 +31,7 @@ With `stream=true`, Gateway buffers internal model/tool rounds and emits only th
 ## Built-In Toolsets
 
 - `core`: `nexus_health`, `nexus_models_list`, `nexus_alias_resolve`, `nexus_tool_diagnostics`
+- `web`: `web_search` (bounded public web search through a fixed search endpoint)
 - `repo`: `nexus_file_list`, `nexus_file_read`, `nexus_file_stat`, `nexus_file_grep`, `nexus_git_status`, `nexus_git_diff`, `nexus_git_log`
 - `ops`: `nexus_resources_snapshot`, `nexus_docker_ps`, `nexus_docker_logs`, `nexus_service_status`, `nexus_http_request`
 - `write_ops`: write/restart tools (definitions present but not executable until implementations are added), disabled by default

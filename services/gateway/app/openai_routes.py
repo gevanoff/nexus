@@ -200,6 +200,20 @@ def _tool_fields_present(cc: ChatCompletionRequest) -> bool:
     return bool(cc.tools) or cc.tool_choice is not None or cc.parallel_tool_calls is not None
 
 
+def _request_needs_tool_route(cc: ChatCompletionRequest, alias_config: Any = None) -> bool:
+    if request_has_tool_intent(cc):
+        return True
+    extension = cc.x_nexus if isinstance(cc.x_nexus, dict) else {}
+    requested_mode = str(extension.get("tool_execution_mode") or "").strip().lower()
+    if requested_mode == "gateway_exec":
+        return True
+    return bool(
+        alias_config is not None
+        and getattr(alias_config, "tool_mode_explicit", False)
+        and str(getattr(alias_config, "tool_mode", "") or "").strip().lower() == "gateway_exec"
+    )
+
+
 def _tool_execution_disabled_response(cc: ChatCompletionRequest, *, request_id: str) -> JSONResponse:
     return _openai_error_response(
         "Tool use is disabled for this request; omit tools and parallel_tool_calls, and set tool_choice to none or omit it.",
@@ -1069,13 +1083,37 @@ def _route_chat_request(
         enable_policy=S.ROUTER_ENABLE_POLICY,
         enable_request_type=enable_request_type,
     )
+    alias_name = _selected_alias_name(cc.model, route.reason)
+    aliases = get_aliases()
+    alias_config = aliases.get(alias_name or "")
+    fallback_alias = str(getattr(alias_config, "tool_fallback_alias", "") or "").strip().lower()
+    if _request_needs_tool_route(cc, alias_config) and fallback_alias and fallback_alias != alias_name:
+        fallback_config = aliases.get(fallback_alias)
+        if fallback_config is not None and fallback_config.tools is not False:
+            fallback_route = decide_route(
+                cfg=router_cfg(),
+                request_model=fallback_alias,
+                headers=headers,
+                messages=[m.model_dump(exclude_none=True) for m in cc.messages],
+                has_tools=False,
+                enable_policy=S.ROUTER_ENABLE_POLICY,
+                enable_request_type=enable_request_type,
+            )
+            logger.info(
+                "tool route fallback alias=%s fallback_alias=%s backend=%s model=%s",
+                alias_name,
+                fallback_alias,
+                fallback_route.backend,
+                fallback_route.model,
+            )
+            route = fallback_route
+
     backend_class = get_registry().resolve_backend_class(route.backend)
     if backend_class == "local_mlx":
         block = mlx_huge_lane.request_block(route.model)
         if block:
             status_code = 503 if block.get("retryable") or block.get("error") == "mlx_huge_transition_failed" else 409
             raise HTTPException(status_code=status_code, detail=block)
-    alias_name = _selected_alias_name(cc.model, route.reason)
     return route, backend_class, alias_name
 
 

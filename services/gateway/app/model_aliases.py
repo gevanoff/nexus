@@ -41,6 +41,7 @@ class ModelAlias:
     auto_inject_tools: bool = False
     toolsets: tuple[str, ...] = ()
     max_tool_rounds: Optional[int] = None
+    tool_fallback_alias: str = ""
     soul: str = ""
 
 
@@ -87,6 +88,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             buffer_tool_call_stream=True,
             preferred_tool_call_parser="mistral",
             preferred_chat_template="",
+            tool_fallback_alias="long",
         ),
         "coder": ModelAlias(
             backend=default_backend,
@@ -260,6 +262,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         toolsets = tuple(str(item).strip() for item in toolsets_raw if str(item).strip()) if isinstance(toolsets_raw, list) else ()
         rounds_raw = v.get("max_tool_rounds")
         max_tool_rounds = rounds_raw if isinstance(rounds_raw, int) and rounds_raw > 0 else None
+        tool_fallback_alias = str(v.get("tool_fallback_alias") or "").strip().lower()
         soul = str(v.get("soul") or "").strip().lower()
 
         return ModelAlias(
@@ -288,6 +291,7 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             auto_inject_tools=auto_inject_tools,
             toolsets=toolsets,
             max_tool_rounds=max_tool_rounds,
+            tool_fallback_alias=tool_fallback_alias,
             soul=soul,
         )
 

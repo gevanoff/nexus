@@ -8,6 +8,55 @@ from app.config import S
 from app.tool_calling import registry
 
 
+def test_bing_results_parser_returns_bounded_structured_results():
+    page = """
+    <ol>
+      <li class="b_algo"><h2><a href="https://example.com/a">First <strong>result</strong></a></h2><p>A &amp; B</p></li>
+      <li class="b_algo"><h2><a href="javascript:alert(1)">Unsafe</a></h2></li>
+      <li class="b_algo"><h2><a href="https://example.com/b">Second result</a></h2><p>More text</p></li>
+    </ol>
+    """
+
+    results = registry._parse_bing_results(page, 1)
+
+    assert results == [
+        {"title": "First result", "url": "https://example.com/a", "snippet": "A & B"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_web_search_uses_fixed_endpoint_and_parses_results(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        text = '<li class="b_algo"><h2><a href="https://example.com">Example</a></h2><p>Snippet</p></li>'
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url, params):
+            captured.update(url=url, params=params)
+            return FakeResponse()
+
+    monkeypatch.setattr(registry.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+
+    result = await registry.builtin_tool_definitions()["web_search"].implementation(
+        {"query": "current information", "limit": 3}
+    )
+
+    assert captured == {"url": "https://www.bing.com/search", "params": {"q": "current information"}}
+    assert result["ok"] is True
+    assert result["provider"] == "bing"
+    assert result["results"][0]["title"] == "Example"
+
+
 @pytest.mark.asyncio
 async def test_file_read_is_bounded_and_blocks_traversal(monkeypatch, tmp_path):
     root = tmp_path / "repo"
