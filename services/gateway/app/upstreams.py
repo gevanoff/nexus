@@ -11,7 +11,7 @@ from app.backends import backend_provider_name, get_registry
 from app.config import S, logger
 from app.context_budget import TOKEN_ESTIMATOR_NAME, estimate_tokens
 from app.httpx_client import httpx_client as _httpx_client
-from app.model_aliases import get_alias, get_aliases
+from app.model_aliases import get_alias
 from app.models import ChatCompletionRequest
 from app.openai_utils import allowed_tool_names_from_specs, normalize_tool_calls_for_openai, sanitize_chat_choices, sse, sse_done
 from app.prompt_canonicalization import (
@@ -343,7 +343,7 @@ def _request_alias_policy(
             return None
     except Exception:
         return None
-    if str(alias.upstream_model or "").strip() != str(model_name or "").strip():
+    if str(alias.upstream_model or "").strip().lower() != str(model_name or "").strip().lower():
         return None
     return alias
 
@@ -456,22 +456,12 @@ def _alias_cap_value(alias: Any, *, backend_name: str) -> int | None:
 
 
 def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, model_name: str) -> int | None:
-    requested_alias = get_alias(str(req.model or "").strip().lower())
-    cap = _alias_cap_value(requested_alias, backend_name=backend_name)
-    if cap is not None:
-        return cap
-
-    normalized_model = str(model_name or "").strip()
-    caps: list[int] = []
-    for alias in get_aliases().values():
-        if str(alias.upstream_model or "").strip() != normalized_model:
-            continue
-        candidate_cap = _alias_cap_value(alias, backend_name=backend_name)
-        if candidate_cap is not None:
-            caps.append(candidate_cap)
-    if not caps:
-        return None
-    return max(caps)
+    requested_alias = _request_alias_policy(
+        req,
+        backend_name=backend_name,
+        model_name=model_name,
+    )
+    return _alias_cap_value(requested_alias, backend_name=backend_name)
 
 
 def _bounded_max_tokens(
@@ -504,7 +494,7 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
     thinking_enabled = getattr(alias, "thinking_enabled", None) if alias is not None else None
     if provider == "mlx" and _model_uses_glm_thinking_template(model_name) and isinstance(thinking_enabled, bool):
         kwargs = dict(req.chat_template_kwargs or {})
-        kwargs.setdefault("enable_thinking", thinking_enabled)
+        kwargs["enable_thinking"] = thinking_enabled
         updates["chat_template_kwargs"] = kwargs
     max_tokens = _bounded_max_tokens(
         req,
