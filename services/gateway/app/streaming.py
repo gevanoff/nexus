@@ -159,6 +159,7 @@ async def passthrough_sse(
     *,
     request_id: str | None = None,
     allowed_tool_names: Any = None,
+    tool_specs: Any = None,
     backend_name: str = "",
     model_name: str = "",
 ) -> AsyncIterator[bytes]:
@@ -225,6 +226,7 @@ async def passthrough_sse(
                 obj,
                 stream_parser=parser,
                 allowed_tool_names=allowed_tool_names,
+                tool_specs=tool_specs,
                 tool_diagnostics=diagnostics,
                 stream_tool_state=tool_state,
             )

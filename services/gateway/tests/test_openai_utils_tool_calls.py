@@ -67,6 +67,93 @@ def test_sanitize_chat_choices_normalizes_stream_delta_tool_arguments_without_ne
     }
 
 
+def test_sanitize_chat_choices_coerces_glm_string_arguments_to_declared_types():
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "Read",
+                                "arguments": {
+                                    "file_path": "/tmp/example.swift",
+                                    "offset": "1",
+                                    "limit": "200",
+                                },
+                            }
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "Read",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string"},
+                        "offset": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+        }
+    ]
+
+    out = sanitize_chat_choices(payload, allowed_tool_names={"Read"}, tool_specs=tools)
+    arguments = out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+
+    assert arguments == '{"file_path":"/tmp/example.swift","limit":200,"offset":1}'
+
+
+def test_sanitize_chat_choices_preserves_numeric_text_for_string_or_union_schema():
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "lookup",
+                                "arguments": {"string_id": "123", "flexible_id": "456"},
+                            }
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "string_id": {"type": "string"},
+                        "flexible_id": {"type": ["string", "integer"]},
+                    },
+                },
+            },
+        }
+    ]
+
+    out = sanitize_chat_choices(payload, tool_specs=tools)
+    arguments = out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+
+    assert arguments == '{"flexible_id":"456","string_id":"123"}'
+
+
 def test_sanitize_chat_choices_suppresses_contaminated_nonstream_tool_name():
     payload = {
         "choices": [

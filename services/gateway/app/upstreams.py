@@ -501,6 +501,7 @@ async def call_openai_chat(
                 sanitize_chat_choices(
                     out,
                     allowed_tool_names=allowed_tool_names,
+                    tool_specs=payload.get("tools"),
                     tool_diagnostics=diagnostics,
                 )
                 _log_invalid_response_tool_calls(
@@ -767,6 +768,7 @@ async def stream_openai_chat(
                     r,
                     request_id=request_id,
                     allowed_tool_names=allowed_tool_names,
+                    tool_specs=payload.get("tools"),
                     backend_name=backend_name,
                     model_name=str(payload.get("model") or ""),
                 )

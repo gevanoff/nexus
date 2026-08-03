@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 import secrets
 import time
@@ -429,6 +430,126 @@ def normalize_tool_calls_for_openai(
     return out
 
 
+def _tool_parameter_schemas(tool_specs: Any) -> dict[str, dict[str, Any]]:
+    schemas: dict[str, dict[str, Any]] = {}
+    if not isinstance(tool_specs, list):
+        return schemas
+    for tool in tool_specs:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        parameters = function.get("parameters")
+        if isinstance(name, str) and name.strip() and isinstance(parameters, dict):
+            schemas[name.strip()] = parameters
+    return schemas
+
+
+def _schema_types(schema: Any) -> set[str]:
+    if not isinstance(schema, dict):
+        return set()
+    raw_type = schema.get("type")
+    if isinstance(raw_type, str):
+        types = {raw_type}
+    elif isinstance(raw_type, list):
+        types = {str(item) for item in raw_type if isinstance(item, str)}
+    else:
+        types = set()
+    for keyword in ("anyOf", "oneOf"):
+        variants = schema.get(keyword)
+        if isinstance(variants, list):
+            for variant in variants:
+                types.update(_schema_types(variant))
+    return types
+
+
+def _coerce_string_for_schema(value: str, schema: Any) -> Any:
+    types = _schema_types(schema)
+    if not types or "string" in types:
+        return value
+    stripped = value.strip()
+    if "integer" in types and re.fullmatch(r"-?(?:0|[1-9][0-9]*)", stripped):
+        try:
+            return int(stripped)
+        except Exception:
+            pass
+    if "number" in types:
+        try:
+            parsed_number = json.loads(stripped)
+        except Exception:
+            parsed_number = None
+        if (
+            isinstance(parsed_number, (int, float))
+            and not isinstance(parsed_number, bool)
+            and math.isfinite(parsed_number)
+        ):
+            return parsed_number
+    if "boolean" in types and stripped.lower() in {"true", "false"}:
+        return stripped.lower() == "true"
+    if "null" in types and stripped == "null":
+        return None
+    if types.intersection({"array", "object"}):
+        try:
+            parsed_container = json.loads(stripped)
+        except Exception:
+            parsed_container = None
+        if "array" in types and isinstance(parsed_container, list):
+            return parsed_container
+        if "object" in types and isinstance(parsed_container, dict):
+            return parsed_container
+    return value
+
+
+def _coerce_value_for_schema(value: Any, schema: Any) -> Any:
+    if not isinstance(schema, dict):
+        return value
+    if isinstance(value, str):
+        value = _coerce_string_for_schema(value, schema)
+    if isinstance(value, dict):
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            return {
+                key: _coerce_value_for_schema(item, properties.get(key))
+                for key, item in value.items()
+            }
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        return [_coerce_value_for_schema(item, schema["items"]) for item in value]
+    return value
+
+
+def _coerce_tool_call_arguments_for_schemas(tool_calls: Any, tool_specs: Any) -> Any:
+    schemas = _tool_parameter_schemas(tool_specs)
+    if not schemas or not isinstance(tool_calls, list):
+        return tool_calls
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        function = tool_call.get("function")
+        if not isinstance(function, dict):
+            continue
+        schema = schemas.get(str(function.get("name") or ""))
+        raw_arguments = function.get("arguments")
+        if not isinstance(schema, dict) or not isinstance(raw_arguments, str):
+            continue
+        try:
+            arguments = json.loads(raw_arguments)
+        except Exception:
+            continue
+        if not isinstance(arguments, dict):
+            continue
+        coerced = _coerce_value_for_schema(arguments, schema)
+        if coerced != arguments:
+            function["arguments"] = json.dumps(
+                coerced,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+    return tool_calls
+
+
 def _normalize_tool_calls(value: Any, *, stream_delta: bool) -> Any:
     return normalize_tool_calls_for_openai(value, stream_delta=stream_delta)
 
@@ -474,6 +595,7 @@ def sanitize_chat_choices(
     *,
     stream_parser: ThinkTagStreamParser | None = None,
     allowed_tool_names: Any = None,
+    tool_specs: Any = None,
     tool_diagnostics: list[dict[str, Any]] | None = None,
     stream_tool_state: ToolCallValidationState | None = None,
 ) -> Any:
@@ -495,6 +617,10 @@ def sanitize_chat_choices(
             if "tool_calls" in delta:
                 before = delta.get("tool_calls")
                 normalized_tool_calls = _normalize_tool_calls(before, stream_delta=True)
+                normalized_tool_calls = _coerce_tool_call_arguments_for_schemas(
+                    normalized_tool_calls,
+                    tool_specs,
+                )
                 if stream_tool_state is not None and isinstance(normalized_tool_calls, list):
                     filtered = stream_tool_state.filter_stream_tool_calls(
                         normalized_tool_calls,
@@ -524,6 +650,10 @@ def sanitize_chat_choices(
                     message["content"] = None
             if "tool_calls" in message:
                 message["tool_calls"] = _normalize_tool_calls(message.get("tool_calls"), stream_delta=False)
+                message["tool_calls"] = _coerce_tool_call_arguments_for_schemas(
+                    message.get("tool_calls"),
+                    tool_specs,
+                )
                 message["tool_calls"], dropped = _filter_nonstream_tool_calls(
                     message.get("tool_calls"),
                     allowed_tool_names=allowed,
