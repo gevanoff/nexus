@@ -117,3 +117,64 @@ def test_unprofiled_route_keeps_legacy_fallback(monkeypatch):
     monkeypatch.setattr(coding_agent, "get_aliases", lambda: {})
     monkeypatch.setattr(coding_agent.S, "CODING_AGENT_CONTEXT_RESET_CHARS", 64_000, raising=False)
     assert coding_agent._context_reset_tokens(None, model="unconfigured") == 21_334
+
+
+def test_alias_model_matching_is_case_insensitive(monkeypatch):
+    alias = _glm_alias(upstream_model="MLX-Community/GLM-5.2-4BIT")
+    monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "coder" else None)
+    monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
+    request = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "debug"}])
+
+    resolved = upstreams._request_alias_policy(
+        request,
+        backend_name="local_mlx",
+        model_name="mlx-community/glm-5.2-4bit",
+    )
+
+    assert resolved is alias
+
+
+def test_alias_thinking_policy_overrides_client_request(monkeypatch):
+    alias = _glm_alias(
+        max_tokens_cap=4_096,
+        max_input_tokens=26_000,
+        coding_context_reset_tokens=None,
+        thinking_enabled=False,
+    )
+    monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "glm-chat" else None)
+    monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        upstreams,
+        "_resolve_backend_target",
+        lambda _name: ("local_mlx", "mlx", "http://mlx.test/v1"),
+    )
+    monkeypatch.setattr(upstreams, "_enforce_backend_input_limit", lambda *_args, **_kwargs: None)
+    request = ChatCompletionRequest(
+        model="glm-chat",
+        messages=[{"role": "user", "content": "hello"}],
+        chat_template_kwargs={"enable_thinking": True},
+    )
+
+    routed = upstreams.route_request_for_backend(request, "local_mlx", alias.upstream_model)
+
+    assert routed.chat_template_kwargs["enable_thinking"] is False
+
+
+def test_raw_glm_model_does_not_inherit_long_alias_output_cap(monkeypatch):
+    model = "mlx-community/GLM-5.2-4bit"
+    monkeypatch.setattr(upstreams, "get_alias", lambda _name: None)
+    monkeypatch.setattr(
+        upstreams,
+        "_resolve_backend_target",
+        lambda _name: ("local_mlx", "mlx", "http://mlx.test/v1"),
+    )
+    monkeypatch.setattr(upstreams, "_enforce_backend_input_limit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 98_304, raising=False)
+    request = ChatCompletionRequest(
+        model=model,
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    routed = upstreams.route_request_for_backend(request, "local_mlx", model)
+
+    assert routed.max_tokens is None
