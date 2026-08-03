@@ -224,14 +224,18 @@ def _state_read_signature(name: str, args: Dict[str, Any]) -> str:
     if name in {"coding_git_diff", "coding_git_status"}:
         return name
     if name in {"coding_read_file", "coding_read_file_lines"}:
-        return f"{name}:{args.get('path') or ''}:{args.get('start_line') or ''}:{args.get('end_line') or ''}"
+        # The budget is intentionally per file, not per line range. Counting
+        # each slightly different range as a new read lets a model reread the
+        # same file indefinitely without ever receiving the inspection-loop
+        # guidance.
+        return f"coding_read_file:{str(args.get('path') or '').strip()}"
     return ""
 
 
 def _repeated_state_read_decision(count: int, maximum: int) -> str:
     # Inspection limits are coaching thresholds, not independent run budgets.
     # The explicit cycle and wall-clock budgets are the only normal horizons.
-    if count == maximum:
+    if count >= maximum:
         return "guide"
     return "continue"
 
@@ -2251,6 +2255,12 @@ def _task_context(task: Dict[str, Any]) -> str:
     base = f"{base}\n\n{_project_plan_context(task)}"
     try:
         snapshot = cw.coding_state_snapshot(str(task.get("id") or ""))
+        # Guidance is already rendered above and recent run events are rendered
+        # by _previous_run_context. Repeating both full collections inside the
+        # snapshot made a freshly compacted GLM prompt larger than the 64k
+        # compaction threshold, causing another reset on every cycle.
+        snapshot.pop("recent_guidance", None)
+        snapshot.pop("recent_events", None)
         base = f"{base}\n\nController state snapshot (authoritative):\n{json.dumps(snapshot, ensure_ascii=False, sort_keys=True)}"
     except Exception:
         pass
@@ -2815,8 +2825,7 @@ async def _run_agent(
         validation_failed_after_edit = False
         diff_result_after_edit: Optional[Dict[str, Any]] = None
         validation_argv_after_edit: Optional[List[str]] = None
-        repeated_state_reads = 0
-        last_state_read = ""
+        state_read_counts: Dict[str, int] = {}
         active_mission = _mission_for_task(task)
         progress_policy = active_mission.get("budget_policy") or {}
         context_policy = active_mission.get("context_policy") or {}
@@ -3156,14 +3165,10 @@ async def _run_agent(
                     result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
                 state_read = _state_read_signature(name, args)
-                if state_read and state_read == last_state_read:
-                    repeated_state_reads += 1
-                elif state_read:
-                    repeated_state_reads = 1
-                    last_state_read = state_read
-                else:
-                    repeated_state_reads = 0
-                    last_state_read = ""
+                repeated_state_reads = 0
+                if state_read:
+                    repeated_state_reads = state_read_counts.get(state_read, 0) + 1
+                    state_read_counts[state_read] = repeated_state_reads
                 repeated_limit = max_repeated_same_file_reads if state_read.startswith("coding_read_file") else max_repeated_state_reads
                 progress_decision = _repeated_state_read_decision(repeated_state_reads, repeated_limit)
                 if progress_decision == "guide":
@@ -3341,6 +3346,8 @@ async def _run_agent(
                 cycle=cycle,
                 decision=decision,
             )
+            if decision.progressed:
+                state_read_counts.clear()
 
             if stop_after_tools:
                 break

@@ -109,8 +109,36 @@ def test_coding_context_reset_cycles_zero_disables_interval_reset():
 
 def test_coding_progress_budget_detects_repeated_diff_loop():
     assert ca._state_read_signature("coding_git_diff", {}) == "coding_git_diff"
+    assert ca._state_read_signature(
+        "coding_read_file_lines",
+        {"path": "app/main.py", "start_line": 10, "line_count": 20},
+    ) == "coding_read_file:app/main.py"
+    assert ca._state_read_signature(
+        "coding_read_file_lines",
+        {"path": "app/main.py", "start_line": 100, "line_count": 50},
+    ) == "coding_read_file:app/main.py"
     assert ca._repeated_state_read_decision(6, 6) == "guide"
-    assert ca._repeated_state_read_decision(7, 6) == "continue"
+    assert ca._repeated_state_read_decision(7, 6) == "guide"
+
+
+def test_model_task_context_omits_duplicate_snapshot_history(monkeypatch):
+    monkeypatch.setattr(
+        ca.cw,
+        "coding_state_snapshot",
+        lambda _task_id: {
+            "schema": "nexus_coding_state.v1",
+            "progress": {"cycle": 3, "next_recommended_action": "edit"},
+            "recent_guidance": [{"content": "duplicate-guidance-sentinel"}],
+            "recent_events": [{"summary": "duplicate-event-sentinel"}],
+        },
+    )
+
+    context = ca._task_context(_task(agent_events=[]))
+
+    assert "Controller state snapshot (authoritative)" in context
+    assert "next_recommended_action" in context
+    assert "duplicate-guidance-sentinel" not in context
+    assert "duplicate-event-sentinel" not in context
 
 
 def test_coding_cancellation_distinguishes_user_pause_from_gateway_restart():
