@@ -397,7 +397,7 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["fast-reasoning"]["model"] == strong_model
     assert aliases["fast-reasoning"]["context_window"] == 65536
     assert aliases["fast-reasoning"]["max_tokens_cap"] == 2048
-    assert aliases["long"]["context_window"] == 262144
+    assert aliases["long"]["context_window"] == 131072
     assert aliases["long"]["thinking_enabled"] is True
     assert aliases["long"]["tools"] is True
     assert aliases["ai2-chat"]["context_window"] == 32768

@@ -6,7 +6,12 @@
       "context_window": 65536,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": false,
       "buffer_tool_call_stream": true,
       "preferred_tool_call_parser": "mistral",
@@ -19,7 +24,12 @@
       "context_window": 65536,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "xlam",
       "preferred_chat_template": "tool_chat_template_mistral_parallel.jinja",
@@ -34,7 +44,12 @@
       "thinking_enabled": false,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "glm4_moe",
       "reasoning_parser": "glm4_moe",
@@ -49,7 +64,12 @@
       "thinking_enabled": false,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "glm4_moe",
       "reasoning_parser": "glm4_moe",
@@ -65,7 +85,12 @@
       "thinking_enabled": true,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "glm4_moe",
       "reasoning_parser": "glm4_moe",
@@ -75,19 +100,24 @@
     "long": {
       "backend": "local_mlx",
       "model": "mlx-community/GLM-5.2-4bit",
-      "label": "GLM-5.2 Long 256K",
-      "context_window": 262144,
-      "max_input_tokens": 210000,
-      "coding_context_reset_tokens": 185000,
+      "label": "GLM-5.2 Long 131K",
+      "context_window": 131072,
+      "max_input_tokens": 104000,
+      "coding_context_reset_tokens": 94000,
       "thinking_enabled": true,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "glm4_moe",
       "reasoning_parser": "glm4_moe",
       "coding": true,
-      "max_tokens_cap": 32768
+      "max_tokens_cap": 24576
     },
     "fast-reasoning": {
       "backend": "local_vllm",
@@ -95,7 +125,12 @@
       "context_window": 65536,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "xlam",
       "max_tokens_cap": 2048
@@ -136,10 +171,18 @@
       "context_window": 65536,
       "tools": true,
       "tool_mode": "gateway_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "auto_inject_tools": true,
-      "toolsets": ["core", "web"],
+      "toolsets": [
+        "core",
+        "web"
+      ],
       "max_tool_rounds": 2,
       "max_tokens_cap": 768,
       "soul": "stackrot"
@@ -151,10 +194,18 @@
       "context_window": 8192,
       "tools": true,
       "tool_mode": "gateway_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "auto_inject_tools": true,
-      "toolsets": ["core", "web"],
+      "toolsets": [
+        "core",
+        "web"
+      ],
       "max_tool_rounds": 2,
       "tool_fallback_alias": "fast",
       "max_tokens_cap": 768,
@@ -178,7 +229,12 @@
       "thinking_enabled": true,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "glm4_moe",
       "reasoning_parser": "glm4_moe",
@@ -194,7 +250,12 @@
       "thinking_enabled": true,
       "tools": true,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none", "auto", "required", "named"],
+      "supports_tool_choice": [
+        "none",
+        "auto",
+        "required",
+        "named"
+      ],
       "supports_parallel_tool_calls": true,
       "preferred_tool_call_parser": "glm4_moe",
       "reasoning_parser": "glm4_moe",
@@ -210,7 +271,9 @@
       "model": "mlx-community/DeepSeek-R1-0528-4bit",
       "tools": false,
       "tool_mode": "client_exec",
-      "supports_tool_choice": ["none"],
+      "supports_tool_choice": [
+        "none"
+      ],
       "reasoning_parser": "qwen3",
       "label": "DeepSeek R1 0528 4-bit",
       "context_window": 65536,

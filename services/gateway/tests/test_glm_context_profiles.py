@@ -46,10 +46,10 @@ def test_repository_aliases_separate_glm_roles():
     assert aliases["coder"]["max_tokens_cap"] == 16_384
     assert aliases["reasoning"]["model"] == "mlx-community/GLM-5.2-4bit"
     assert aliases["reasoning"]["thinking_enabled"] is True
-    assert aliases["long"]["context_window"] == 262_144
-    assert aliases["long"]["max_input_tokens"] == 210_000
-    assert aliases["long"]["coding_context_reset_tokens"] == 185_000
-    assert aliases["long"]["max_tokens_cap"] == 32_768
+    assert aliases["long"]["context_window"] == 131_072
+    assert aliases["long"]["max_input_tokens"] == 104_000
+    assert aliases["long"]["coding_context_reset_tokens"] == 94_000
+    assert aliases["long"]["max_tokens_cap"] == 24_576
 
 
 def test_token_estimator_is_conservative():
@@ -178,3 +178,33 @@ def test_raw_glm_model_does_not_inherit_long_alias_output_cap(monkeypatch):
     routed = upstreams.route_request_for_backend(request, "local_mlx", model)
 
     assert routed.max_tokens is None
+
+
+
+def test_oversized_coder_request_uses_matching_long_policy(monkeypatch):
+    coder = _glm_alias(max_input_tokens=100_000, max_tokens_cap=16_384)
+    long_alias = _glm_alias(
+        max_input_tokens=104_000,
+        coding_context_reset_tokens=94_000,
+        max_tokens_cap=24_576,
+        thinking_enabled=True,
+    )
+    monkeypatch.setattr(
+        upstreams,
+        "get_alias",
+        lambda name: {"coder": coder, "long": long_alias}.get(name),
+    )
+    monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(upstreams, "estimate_tokens", lambda _payload: 102_000)
+    request = ChatCompletionRequest(
+        model="coder",
+        messages=[{"role": "user", "content": "large debugging context"}],
+    )
+
+    selected = upstreams._request_alias_policy(
+        request,
+        backend_name="local_mlx",
+        model_name=coder.upstream_model,
+    )
+
+    assert selected is long_alias

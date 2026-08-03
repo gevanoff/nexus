@@ -329,22 +329,47 @@ def _alias_matches_backend(alias: Any, *, backend_name: str) -> bool:
     return alias_backend == resolved_backend
 
 
+def _alias_matches_target(alias: Any, *, backend_name: str, model_name: str) -> bool:
+    if alias is None:
+        return False
+    try:
+        if not _alias_matches_backend(alias, backend_name=backend_name):
+            return False
+    except Exception:
+        return False
+    return (
+        str(alias.upstream_model or "").strip().lower()
+        == str(model_name or "").strip().lower()
+    )
+
+
 def _request_alias_policy(
     req: ChatCompletionRequest,
     *,
     backend_name: str,
     model_name: str,
 ) -> Any:
-    alias = get_alias(str(req.model or "").strip().lower())
-    if alias is None:
+    requested_name = str(req.model or "").strip().lower()
+    alias = get_alias(requested_name)
+    if not _alias_matches_target(alias, backend_name=backend_name, model_name=model_name):
         return None
-    try:
-        if not _alias_matches_backend(alias, backend_name=backend_name):
-            return None
-    except Exception:
-        return None
-    if str(alias.upstream_model or "").strip().lower() != str(model_name or "").strip().lower():
-        return None
+
+    alias_limit = getattr(alias, "max_input_tokens", None)
+    if requested_name != "long" and isinstance(alias_limit, int) and alias_limit > 0:
+        input_tokens = estimate_tokens(_mlx_glm_input_payload(req))
+        if input_tokens > alias_limit:
+            long_alias = get_alias("long")
+            long_limit = getattr(long_alias, "max_input_tokens", None)
+            if (
+                _alias_matches_target(
+                    long_alias,
+                    backend_name=backend_name,
+                    model_name=model_name,
+                )
+                and isinstance(long_limit, int)
+                and input_tokens <= long_limit
+            ):
+                return long_alias
     return alias
 
 
