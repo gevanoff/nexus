@@ -455,16 +455,48 @@ def build_context_manifest(
     return manifest
 
 
-def continuation_after_no_progress(task: Mapping[str, Any], controller: Mapping[str, Any]) -> bool:
+def previous_run_stop_reason(task: Mapping[str, Any]) -> str:
+    previous_run_id = str(task.get("agent_previous_run_id") or "").strip()
+    if previous_run_id:
+        for run in reversed(task.get("agent_runs") or []):
+            if not isinstance(run, Mapping):
+                continue
+            if str(run.get("run_id") or "").strip() != previous_run_id:
+                continue
+            reason = str(run.get("stop_reason_code") or "").strip()
+            if reason:
+                return reason
+            break
+    direct = str(task.get("agent_previous_stop_reason_code") or "").strip()
+    if direct:
+        return direct
+    terminal = task.get("terminal_result") if isinstance(task.get("terminal_result"), dict) else {}
+    return str(task.get("agent_stop_reason_code") or terminal.get("stop_reason_code") or "").strip()
+
+
+def _new_controller_run(controller: Mapping[str, Any]) -> bool:
     previous_run_id = str(controller.get("previous_run_id") or "")
     run_id = str(controller.get("run_id") or "")
-    if not previous_run_id or previous_run_id == run_id:
+    return bool(previous_run_id and previous_run_id != run_id)
+
+
+def continuation_after_no_progress(task: Mapping[str, Any], controller: Mapping[str, Any]) -> bool:
+    if not _new_controller_run(controller):
         return False
-    terminal = task.get("terminal_result") if isinstance(task.get("terminal_result"), dict) else {}
-    reason = str(task.get("agent_previous_stop_reason_code") or task.get("agent_stop_reason_code") or terminal.get("stop_reason_code") or "").strip()
+    reason = previous_run_stop_reason(task)
     previous_status = str(task.get("agent_previous_status") or "").strip().lower()
     previous_summary = str(task.get("agent_previous_summary") or "").lower()
     return reason == "no_progress_limit" or (previous_status == "paused" and "without a durable state transition" in previous_summary)
+
+
+def continuation_after_gateway_interruption(
+    task: Mapping[str, Any],
+    controller: Mapping[str, Any],
+) -> bool:
+    if not _new_controller_run(controller):
+        return False
+    previous_status = str(task.get("agent_previous_status") or "").strip().lower()
+    return previous_status == "interrupted" and previous_run_stop_reason(task) == "gateway_stopped"
 
 
 def intervention_kind(task: Mapping[str, Any], controller: Mapping[str, Any]) -> str:

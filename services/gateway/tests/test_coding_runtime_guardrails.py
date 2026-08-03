@@ -59,6 +59,31 @@ def test_eight_multi_tool_inspection_cycles_pause_on_cycle_eight() -> None:
     assert decision.state.stagnant_cycles == 8
 
 
+def test_glm_route_gets_longer_hard_limit_without_changing_default_routes() -> None:
+    policy = {
+        "max_no_progress_cycles": 8,
+        "long_model_max_no_progress_cycles": 12,
+    }
+
+    assert coding_agent._effective_max_no_progress_cycles(
+        policy,
+        backend="local_mlx",
+        upstream_model="mlx-community/GLM-5.2-4bit",
+    ) == 12
+    assert coding_agent._effective_max_no_progress_cycles(
+        policy,
+        backend="local_vllm_fast",
+        upstream_model="fast-model",
+    ) == 8
+
+    policy["max_no_progress_cycles"] = 16
+    assert coding_agent._effective_max_no_progress_cycles(
+        policy,
+        backend="local_mlx",
+        upstream_model="mlx-community/GLM-5.2-4bit",
+    ) == 16
+
+
 @pytest.mark.asyncio
 async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypatch) -> None:
     task = {

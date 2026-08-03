@@ -49,6 +49,9 @@ def test_coding_mission_contract_defaults():
     assert mission["completion_policy"]["require_commit_on_success"] is True
     assert mission["publish_policy"]["push"] == "never"
     assert mission["context_policy"]["context_reset_cycles"] == 0
+    assert mission["budget_policy"]["max_no_progress_cycles"] == 8
+    assert mission["budget_policy"]["recovery_checkpoint_cycles"] == 8
+    assert mission["budget_policy"]["long_model_max_no_progress_cycles"] == 12
 
 
 def test_coding_finalization_commits_on_success(monkeypatch):

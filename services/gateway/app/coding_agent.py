@@ -2272,6 +2272,25 @@ def _choose_model(task: Dict[str, Any], requested_model: Optional[str]) -> str:
     return model
 
 
+def _effective_max_no_progress_cycles(
+    progress_policy: Dict[str, Any],
+    *,
+    backend: str,
+    upstream_model: str,
+) -> int:
+    """Apply a longer hard pause to the slow resident GLM coding route."""
+    configured = max(2, int(progress_policy.get("max_no_progress_cycles") or 8))
+    normalized_backend = str(backend or "").strip().lower()
+    normalized_model = str(upstream_model or "").strip().lower()
+    if normalized_backend == "local_mlx" and "glm-5.2" in normalized_model:
+        long_model_limit = max(
+            2,
+            int(progress_policy.get("long_model_max_no_progress_cycles") or 12),
+        )
+        return max(configured, long_model_limit)
+    return configured
+
+
 def _idle_only_huge_model_policy(model: str) -> Optional[Dict[str, Any]]:
     policy = coding_model_policy.describe_workspace_model(model)
     if str(policy.get("run_policy") or "") == "idle_only":
@@ -2365,6 +2384,7 @@ async def start_agent_run(
     previous_status = str(task.get("agent_status") or "idle")
     previous_summary = str(task.get("agent_summary") or "")
     previous_error = str(task.get("agent_error") or "")
+    previous_stop_reason_code = str(task.get("agent_stop_reason_code") or "")
     requested_prompt = str(prompt or "").strip()
     effective_prompt = requested_prompt or str(task.get("prompt") or "").strip()
     now = time.time()
@@ -2420,6 +2440,7 @@ async def start_agent_run(
                 "agent_previous_status": previous_status,
                 "agent_previous_summary": previous_summary,
                 "agent_previous_error": previous_error,
+                "agent_previous_stop_reason_code": previous_stop_reason_code,
                 "agent_stop_requested": False,
                 "agent_pause_requested": False,
                 "agent_auto_resume_pending": False,
@@ -2482,6 +2503,7 @@ async def start_agent_run(
             "agent_previous_status": previous_status,
             "agent_previous_summary": previous_summary,
             "agent_previous_error": previous_error,
+            "agent_previous_stop_reason_code": previous_stop_reason_code,
             "agent_stop_requested": False,
             "agent_pause_requested": False,
             "agent_auto_resume_pending": False,
@@ -2800,7 +2822,38 @@ async def _run_agent(
         context_policy = active_mission.get("context_policy") or {}
         max_repeated_state_reads = int(progress_policy.get("max_repeated_state_reads") or 6)
         max_repeated_same_file_reads = int(progress_policy.get("max_repeated_same_file_reads") or 4)
-        max_no_progress_cycles = int(progress_policy.get("max_no_progress_cycles") or 8)
+        max_no_progress_cycles = _effective_max_no_progress_cycles(
+            progress_policy,
+            backend=backend,
+            upstream_model=upstream_model,
+        )
+        recovery_checkpoint_cycles = max(
+            2,
+            min(
+                int(
+                    progress_policy.get("recovery_checkpoint_cycles")
+                    or min(8, max_no_progress_cycles)
+                ),
+                max_no_progress_cycles,
+            ),
+        )
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_effective_max_no_progress_cycles": max_no_progress_cycles,
+                "agent_recovery_checkpoint_cycles": recovery_checkpoint_cycles,
+            },
+        )
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {
+                "max_no_progress_cycles": max_no_progress_cycles,
+                "recovery_checkpoint_cycles": recovery_checkpoint_cycles,
+            },
+        )
         context_reset_chars = _context_reset_chars(context_policy.get("context_reset_chars"))
         persisted_progress = progress_state_from_dict(task.get("agent_progress_state"))
         prior_observation = persisted_progress.observation

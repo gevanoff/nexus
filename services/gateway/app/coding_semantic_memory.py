@@ -28,14 +28,24 @@ def _poll_interval() -> float:
         return 2.0
 
 
-def _max_no_progress_cycles(task: Dict[str, Any]) -> int:
+def _recovery_checkpoint_cycles(task: Dict[str, Any]) -> int:
+    """Return the semantic recovery stage, independent of the hard pause."""
     mission = cw.normalize_coding_mission(task)
     budget = mission.get("budget_policy") if isinstance(mission.get("budget_policy"), dict) else {}
-    return max(2, _as_int(budget.get("max_no_progress_cycles") or 8))
+    hard_limit = max(
+        2,
+        _as_int(budget.get("max_no_progress_cycles") or 8),
+        _as_int(task.get("agent_effective_max_no_progress_cycles")),
+    )
+    configured = _as_int(
+        budget.get("recovery_checkpoint_cycles")
+        or min(8, hard_limit)
+    )
+    return max(2, min(configured, hard_limit))
 
 
 def _stagnation_threshold(task: Dict[str, Any]) -> int:
-    maximum = _max_no_progress_cycles(task)
+    maximum = _recovery_checkpoint_cycles(task)
     configured = _as_int(getattr(S, "CODING_SEMANTIC_MEMORY_STAGNANT_CYCLES", 0) or 0)
     if configured > 0:
         return max(1, min(configured, maximum - 1))
@@ -119,7 +129,7 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         cycle=cycle,
         progress_stagnant_cycles=_as_int(progress.get("stagnant_cycles")),
         classification=classification,
-        max_no_progress_cycles=_max_no_progress_cycles(task),
+        max_no_progress_cycles=_recovery_checkpoint_cycles(task),
     )
     controller["processed_event_count"] = len(events)
     controller["processed_event_total"] = previous_event_total + len(new_events)
@@ -135,14 +145,21 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         and previous_run_id != run_id
         and str(raw_controller.get("state_key") or "") == state_key
     )
+    gateway_recovery = resilience.continuation_after_gateway_interruption(
+        task,
+        controller,
+    )
     suppressed_run = str(raw_controller.get("suppress_interventions_for_run") or "")
-    if same_state_new_run and kind != "continuation":
+    # An automatic restart after a Gateway deployment is the same run in
+    # operational terms: retain its accumulated stage and keep guiding it.
+    if same_state_new_run and kind != "continuation" and not gateway_recovery:
         controller["suppress_interventions_for_run"] = run_id
         kind = "observe"
     elif (
         suppressed_run
         and suppressed_run == run_id
         and str(raw_controller.get("state_key") or "") == state_key
+        and not gateway_recovery
     ):
         controller["suppress_interventions_for_run"] = run_id
         kind = "observe"

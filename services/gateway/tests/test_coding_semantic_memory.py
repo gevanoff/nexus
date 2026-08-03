@@ -191,6 +191,48 @@ def test_new_run_same_durable_state_does_not_receive_fresh_credit(monkeypatch):
     assert len(messages) == 1
 
 
+def test_gateway_interrupted_run_continues_staged_guidance(monkeypatch):
+    task = _task()
+    messages = _install_workspace_stubs(monkeypatch, task)
+
+    assert memory.process_task(task["id"]) is True
+    task.update(
+        {
+            "agent_previous_run_id": "run-2",
+            "agent_previous_status": "interrupted",
+            "agent_run_id": "run-3",
+            "agent_cycle": 1,
+            "agent_runs": [
+                {
+                    "run_id": "run-2",
+                    "status": "interrupted",
+                    "stop_reason_code": "gateway_stopped",
+                }
+            ],
+        }
+    )
+    task["agent_progress_state"]["stagnant_cycles"] = 1
+    task["agent_events"].append({"type": "started", "run_id": "run-3"})
+
+    assert memory.process_task(task["id"]) is True
+    assert len(messages) == 2
+    assert task["agent_stagnation_controller"]["last_intervention_kind"] == "interrupt"
+    assert task["agent_stagnation_controller"].get("suppress_interventions_for_run") is None
+
+
+def test_recovery_checkpoint_stays_at_eight_when_hard_limit_is_twelve(monkeypatch):
+    task = _task(stagnant_cycles=8)
+    task["agent_cycle"] = 8
+    task["agent_effective_max_no_progress_cycles"] = 12
+    task["mission"]["budget_policy"]["recovery_checkpoint_cycles"] = 8
+    monkeypatch.setattr(memory.cw, "normalize_coding_mission", lambda value: value["mission"])
+
+    checkpoint = memory.build_investigation_checkpoint(task)
+
+    assert checkpoint["controller"]["thresholds"]["terminal"] == 8
+    assert checkpoint["stage"] == "recovery"
+
+
 def test_small_no_progress_budget_intervenes_before_terminal_cycle(monkeypatch):
     task = _task(stagnant_cycles=1)
     task["mission"]["budget_policy"]["max_no_progress_cycles"] = 2

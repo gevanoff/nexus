@@ -688,6 +688,7 @@ def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str,
     context = raw.get("context_policy") if isinstance(raw.get("context_policy"), dict) else {}
     context.update(supplied.get("context_policy") if isinstance(supplied.get("context_policy"), dict) else {})
     prompt = str(supplied.get("goal") or raw.get("goal") or task.get("prompt") or "").strip()
+    max_no_progress_cycles = int(budget.get("max_no_progress_cycles") or 8)
     return {
         "schema": "nexus_coding_mission.v1",
         "goal": prompt,
@@ -711,7 +712,14 @@ def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str,
         "budget_policy": {
             "max_cycles": int(budget.get("max_cycles") or 1000),
             "max_runtime_sec": int(budget.get("max_runtime_sec") or 21600),
-            "max_no_progress_cycles": int(budget.get("max_no_progress_cycles") or 8),
+            "max_no_progress_cycles": max_no_progress_cycles,
+            "recovery_checkpoint_cycles": int(
+                budget.get("recovery_checkpoint_cycles")
+                or min(8, max_no_progress_cycles)
+            ),
+            "long_model_max_no_progress_cycles": int(
+                budget.get("long_model_max_no_progress_cycles") or 12
+            ),
             "max_repeated_state_reads": int(budget.get("max_repeated_state_reads") or 6),
             "max_repeated_same_file_reads": int(budget.get("max_repeated_same_file_reads") or 4),
         },
