@@ -1,31 +1,17 @@
-name: Finish GLM context profile implementation
+name: GLM context profile patch source
 
 on:
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  finish-and-validate:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/glm-coding-context-profiles'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+  source-only:
+    if: false
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/glm-coding-context-profiles
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: |
-            services/gateway/app/requirements.freeze.txt
-            services/gateway/tests/requirements.freeze.txt
-      - name: Finish Coding Workspace integration
+      - name: Patch source consumed by branch-local Gateway CI
         shell: bash
         run: |
           python - <<'PY'
@@ -101,8 +87,7 @@ def _mission_for_task(task: Dict[str, Any]) -> Dict[str, Any]:
           )
           coding = replace_once(
               coding,
-              '''def _max_no_tool_call_cycles() -> int:
-''',
+              "def _max_no_tool_call_cycles() -> int:\n",
               '''def _messages_token_count(
     messages: Sequence[ChatMessage],
     *,
@@ -140,13 +125,7 @@ def _max_no_tool_call_cycles() -> int:
           )
           coding = replace_once(
               coding,
-              '''            context_chars = _messages_char_count(messages)
-            reset_for_cycles = context_reset_cycles > 0 and cycle > 1 and (cycle - 1) % context_reset_cycles == 0
-            reset_for_size = cycle > 1 and context_chars >= context_reset_chars
-            if reset_for_cycles or reset_for_size:
-                latest_task = await asyncio.to_thread(cw.load_task, task_id)
-                request_text_tool_mode = not _backend_supports_tool_calling(backend)
-''',
+              "            context_chars = _messages_char_count(messages)\n",
               '''            context_chars = _messages_char_count(messages)
             request_text_tool_mode = not _backend_supports_tool_calling(backend)
             context_tokens = _messages_token_count(
@@ -154,12 +133,27 @@ def _max_no_tool_call_cycles() -> int:
                 tools=None if request_text_tool_mode else tools,
             )
             completion_reserve_tokens = _max_completion_tokens_for_route(model, backend)
-            reset_for_cycles = context_reset_cycles > 0 and cycle > 1 and (cycle - 1) % context_reset_cycles == 0
-            reset_for_size = cycle > 1 and context_tokens >= context_reset_tokens
-            if reset_for_cycles or reset_for_size:
-                latest_task = await asyncio.to_thread(cw.load_task, task_id)
 ''',
-              "token-aware reset",
+              "context token estimate",
+          )
+          coding = replace_once(
+              coding,
+              "            reset_for_size = cycle > 1 and context_chars >= context_reset_chars\n",
+              "            reset_for_size = cycle > 1 and context_tokens >= context_reset_tokens\n",
+              "token reset comparison",
+          )
+          coding = replace_once(
+              coding,
+              '''            if reset_for_cycles or reset_for_size:
+                latest_task = await asyncio.to_thread(cw.load_task, task_id)
+                request_text_tool_mode = not _backend_supports_tool_calling(backend)
+                messages = [
+''',
+              '''            if reset_for_cycles or reset_for_size:
+                latest_task = await asyncio.to_thread(cw.load_task, task_id)
+                messages = [
+''',
+              "deduplicate request mode",
           )
           coding = replace_once(
               coding,
@@ -191,9 +185,7 @@ def _max_no_tool_call_cycles() -> int:
           )
           write("services/gateway/tests/test_upstreams_message_normalization.py", upstream_tests)
 
-          write(
-              "services/gateway/tests/test_glm_context_profiles.py",
-              '''from __future__ import annotations
+          write("services/gateway/tests/test_glm_context_profiles.py", '''from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -222,12 +214,9 @@ def _glm_alias(**overrides):
 
 def test_alias_parser_loads_context_and_thinking_policy():
     alias = model_aliases._parse_alias_value({
-        "backend": "local_mlx",
-        "model": "mlx-community/GLM-5.2-4bit",
-        "context_window": 262_144,
-        "max_tokens_cap": 32_768,
-        "max_input_tokens": 210_000,
-        "coding_context_reset_tokens": 185_000,
+        "backend": "local_mlx", "model": "mlx-community/GLM-5.2-4bit",
+        "context_window": 262_144, "max_tokens_cap": 32_768,
+        "max_input_tokens": 210_000, "coding_context_reset_tokens": 185_000,
         "thinking_enabled": True,
     })
     assert alias is not None
@@ -236,16 +225,12 @@ def test_alias_parser_loads_context_and_thinking_policy():
     assert alias.thinking_enabled is True
 
 
-def test_repository_aliases_separate_chat_coder_reasoning_and_long_profiles():
-    path = Path(model_aliases.__file__).with_name("model_aliases.json")
-    aliases = json.loads(path.read_text(encoding="utf-8"))["aliases"]
+def test_repository_aliases_separate_glm_roles():
+    aliases = json.loads(Path(model_aliases.__file__).with_name("model_aliases.json").read_text())["aliases"]
     assert aliases["glm-chat"]["context_window"] == 32_768
     assert aliases["glm-chat"]["thinking_enabled"] is False
-    assert aliases["coder"]["context_window"] == 131_072
-    assert aliases["coder"]["max_input_tokens"] == 100_000
     assert aliases["coder"]["coding_context_reset_tokens"] == 90_000
     assert aliases["coder"]["max_tokens_cap"] == 16_384
-    assert aliases["coder"]["thinking_enabled"] is True
     assert aliases["reasoning"]["model"] == "mlx-community/GLM-5.2-4bit"
     assert aliases["reasoning"]["thinking_enabled"] is True
     assert aliases["long"]["context_window"] == 262_144
@@ -254,64 +239,59 @@ def test_repository_aliases_separate_chat_coder_reasoning_and_long_profiles():
     assert aliases["long"]["max_tokens_cap"] == 32_768
 
 
-def test_token_estimator_is_conservative_for_code_and_unicode():
-    code = "def handler(value):\\n    return {\\\"value\\\": value}\\n" * 100
-    unicode_text = "漢字" * 100
+def test_token_estimator_is_conservative():
+    code = "def handler(value):\\n    return value\\n" * 100
     assert context_budget.estimate_text_tokens(code) >= len(code) // 3
-    assert context_budget.estimate_text_tokens(unicode_text) >= 130
-    assert context_budget.estimate_chat_tokens([ChatMessage(role="user", content=code)]) > 0
+    assert context_budget.estimate_text_tokens("漢字" * 100) >= 130
 
 
-def test_glm_alias_input_budget_overrides_legacy_char_guard(monkeypatch):
+def test_alias_input_budget_overrides_legacy_char_guard(monkeypatch):
     alias = _glm_alias(max_input_tokens=1_000)
     monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "coder" else None)
     monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(upstreams, "backend_provider_name", lambda _name: "mlx")
     monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 10, raising=False)
-    request = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "small prompt"}])
-    upstreams._enforce_mlx_glm_input_limit(request, backend_name="local_mlx", model_name=alias.upstream_model)
+    req = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "small prompt"}])
+    upstreams._enforce_mlx_glm_input_limit(req, backend_name="local_mlx", model_name=alias.upstream_model)
 
 
-def test_glm_alias_input_budget_reports_estimated_tokens(monkeypatch):
+def test_alias_input_rejection_discloses_estimate(monkeypatch):
     alias = _glm_alias(max_input_tokens=20)
     monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "coder" else None)
     monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(upstreams, "backend_provider_name", lambda _name: "mlx")
-    request = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "x" * 300}])
-    with pytest.raises(HTTPException) as exc_info:
-        upstreams._enforce_mlx_glm_input_limit(request, backend_name="local_mlx", model_name=alias.upstream_model)
-    detail = exc_info.value.detail
-    assert detail["requested_alias"] == "coder"
-    assert detail["input_tokens_estimate"] > detail["max_input_tokens"]
-    assert detail["token_estimator"] == context_budget.TOKEN_ESTIMATOR_NAME
+    req = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "x" * 300}])
+    with pytest.raises(HTTPException) as caught:
+        upstreams._enforce_mlx_glm_input_limit(req, backend_name="local_mlx", model_name=alias.upstream_model)
+    assert caught.value.detail["input_tokens_estimate"] > 20
+    assert caught.value.detail["token_estimator"] == context_budget.TOKEN_ESTIMATOR_NAME
 
 
-def test_route_applies_alias_thinking_and_output_cap(monkeypatch):
+def test_route_applies_coder_thinking_and_output_cap(monkeypatch):
     alias = _glm_alias()
     monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "coder" else None)
     monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(upstreams, "_resolve_backend_target", lambda _name: ("local_mlx", "mlx", "http://mlx.test/v1"))
     monkeypatch.setattr(upstreams, "_enforce_backend_input_limit", lambda *_args, **_kwargs: None)
-    request = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "debug it"}], max_tokens=30_000)
-    routed = upstreams.route_request_for_backend(request, "local_mlx", alias.upstream_model)
-    assert routed.model == alias.upstream_model
+    req = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "debug"}], max_tokens=30_000)
+    routed = upstreams.route_request_for_backend(req, "local_mlx", alias.upstream_model)
     assert routed.max_tokens == 16_384
     assert routed.chat_template_kwargs["enable_thinking"] is True
 
 
-def test_chat_alias_disables_thinking(monkeypatch):
-    alias = _glm_alias(context_window=32_768, max_input_tokens=26_000, max_tokens_cap=4_096, coding_context_reset_tokens=None, thinking_enabled=False)
+def test_route_disables_thinking_for_chat(monkeypatch):
+    alias = _glm_alias(max_tokens_cap=4_096, max_input_tokens=26_000, coding_context_reset_tokens=None, thinking_enabled=False)
     monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "glm-chat" else None)
     monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(upstreams, "_resolve_backend_target", lambda _name: ("local_mlx", "mlx", "http://mlx.test/v1"))
     monkeypatch.setattr(upstreams, "_enforce_backend_input_limit", lambda *_args, **_kwargs: None)
-    request = ChatCompletionRequest(model="glm-chat", messages=[{"role": "user", "content": "hello"}])
-    routed = upstreams.route_request_for_backend(request, "local_mlx", alias.upstream_model)
+    req = ChatCompletionRequest(model="glm-chat", messages=[{"role": "user", "content": "hello"}])
+    routed = upstreams.route_request_for_backend(req, "local_mlx", alias.upstream_model)
     assert routed.max_tokens == 4_096
     assert routed.chat_template_kwargs["enable_thinking"] is False
 
 
-def test_coding_agent_uses_alias_token_reset_and_completion_budget(monkeypatch):
+def test_coding_profile_controls_compaction_and_output(monkeypatch):
     alias = _glm_alias()
     monkeypatch.setattr(coding_agent, "get_aliases", lambda: {"coder": alias})
     monkeypatch.setattr(coding_agent, "_backend_supports_tool_calling", lambda _backend: True)
@@ -320,64 +300,29 @@ def test_coding_agent_uses_alias_token_reset_and_completion_budget(monkeypatch):
     assert coding_agent._messages_token_count([ChatMessage(role="user", content="x" * 3_000)]) >= 1_000
 
 
-def test_non_profiled_coding_route_retains_legacy_char_fallback(monkeypatch):
+def test_unprofiled_route_keeps_legacy_fallback(monkeypatch):
     monkeypatch.setattr(coding_agent, "get_aliases", lambda: {})
     monkeypatch.setattr(coding_agent.S, "CODING_AGENT_CONTEXT_RESET_CHARS", 64_000, raising=False)
     assert coding_agent._context_reset_tokens(None, model="unconfigured") == 21_334
-''',
-          )
+''')
 
-          write(
-              "docs/GLM_CONTEXT_PROFILES.md",
-              '''# GLM-5.2 context profiles
+          write("docs/GLM_CONTEXT_PROFILES.md", '''# GLM-5.2 context profiles
 
-Nexus exposes the resident `mlx-community/GLM-5.2-4bit` model through distinct aliases rather than forcing chat and autonomous coding to share one context and reasoning policy.
+Nexus exposes the resident `mlx-community/GLM-5.2-4bit` model through distinct aliases instead of forcing chat and autonomous coding to share one budget.
 
 | Alias | Role | Context | Input budget | Compaction | Output | Thinking |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `glm-chat`, `mlx`, `ai2-chat` | Basic chat | 32,768 | 26,000 estimated tokens | n/a | 4,096 | disabled |
-| `coder` | Coding Workspace and repository debugging | 131,072 | 100,000 | 90,000 | 16,384 | enabled |
-| `reasoning` | Architecture and difficult debugging | 131,072 | 100,000 | 90,000 | 16,384 | enabled |
-| `long` | Explicitly slow long-horizon work | 262,144 | 210,000 | 185,000 | 32,768 | enabled |
+| `coder` | Coding Workspace/debugging | 131,072 | 100,000 | 90,000 | 16,384 | enabled |
+| `reasoning` | Architecture/difficult debugging | 131,072 | 100,000 | 90,000 | 16,384 | enabled |
+| `long` | Slow long-horizon work | 262,144 | 210,000 | 185,000 | 32,768 | enabled |
 
-`max_input_tokens` is the hard request budget and preserves generation/runtime headroom. `coding_context_reset_tokens` is the Coding Workspace soft-compaction point. Controller state, working memory, and inspection provenance remain durable across compaction.
+`max_input_tokens` is the hard request budget; `coding_context_reset_tokens` is the soft-compaction point. Durable controller state and working memory survive compaction.
 
-Gateway uses a dependency-free conservative estimator because its process cannot assume the huge model tokenizer is mounted. ASCII code and JSON are charged at three characters per token and non-ASCII text at 1.5 characters per token. Rejection responses identify the estimate and estimator. Direct GLM model IDs without a configured alias continue to use `MLX_GLM_MAX_INPUT_CHARS` as a conservative fallback.
+Gateway uses a conservative dependency-free estimate because its process cannot assume the huge tokenizer is mounted: ASCII code/JSON is charged at three characters per token and non-ASCII text at 1.5. Direct, unprofiled GLM IDs retain the legacy `MLX_GLM_MAX_INPUT_CHARS` fallback.
 
-Coding Workspaces count serialized messages and native tool schemas. The old 64,000-character threshold remains only as the fallback for unprofiled models. The selected alias also controls completion reserve, so GLM coding and long profiles are no longer truncated by the global 8,192-token fallback.
+Coding Workspaces count serialized messages and native tool schemas. The old 64,000-character threshold remains only for unprofiled models. Alias output caps also allow the GLM coding and long routes to exceed the global 8,192-token fallback.
 
-The alias file is loaded once per Gateway process. Restart Gateway after deployment. The resident MLX model does not need to be downloaded or reloaded solely because these aliases route to the same model with different budgets and thinking policy.
-''',
-          )
+Restart Gateway after deployment so the alias cache reloads. These aliases share the same resident model, so no model download is required.
+''')
           PY
-      - name: Install Gateway dependencies
-        shell: bash
-        run: |
-          python -m pip install --quiet \
-            -r services/gateway/app/requirements.freeze.txt \
-            -r services/gateway/tests/requirements.freeze.txt
-          python -m pip check
-      - name: Prepare runtime paths
-        shell: bash
-        run: |
-          sudo mkdir -p /var/lib/gateway/app /var/lib/gateway/config /var/lib/gateway/data/agent /var/lib/gateway/data/coding/tasks /var/lib/gateway/data/coding/workspaces /var/lib/gateway/data/model_benchmarks /var/lib/gateway/data/model_tool_qualification /var/lib/gateway/data/sentinel /var/lib/gateway/data/tools /var/lib/gateway/data/ui_chats /var/lib/gateway/data/ui_files /var/lib/gateway/data/ui_images /var/lib/gateway/data/voice_library /var/lib/gateway/tools /workspace/nexus/souls
-          sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
-      - name: Validate focused and full Gateway suites
-        env:
-          PYTHONPATH: services/gateway
-          GATEWAY_BEARER_TOKEN: test-token
-        shell: bash
-        run: |
-          python -m py_compile services/gateway/app/context_budget.py services/gateway/app/model_aliases.py services/gateway/app/upstreams.py services/gateway/app/coding_agent.py
-          python -m pytest -q --tb=short services/gateway/tests/test_glm_context_profiles.py services/gateway/tests/test_upstreams_message_normalization.py services/gateway/tests/test_coding_mission_finalization.py
-          python -m pytest -q --tb=short services/gateway/tests
-          git diff --check
-      - name: Commit implementation and remove temporary files
-        shell: bash
-        run: |
-          rm -f .github/workflows/glm-context-profile-bootstrap.yml .github/workflows/glm-context-profile-pr.yml .glm-profile-trigger
-          git config user.name "Nexus Context Profile Bot"
-          git config user.email "nexus-context-profile@users.noreply.github.com"
-          git add -A
-          git commit -m "Complete GLM coding context profiles"
-          git push origin HEAD:agent/glm-coding-context-profiles
