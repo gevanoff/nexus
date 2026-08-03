@@ -18,3 +18,5 @@ Coding Workspaces count serialized messages and native tool schemas. The old 64,
 Context, output, and thinking policies are granted only by an explicitly selected alias. A raw upstream model ID does not inherit the `long` alias output allowance, and client-supplied `enable_thinking` values cannot override the selected profile. Alias-to-model matching is case-insensitive but still requires the configured backend and model identity to agree.
 
 Restart Gateway after deployment so the alias cache reloads. These aliases share the same resident model, so no model download is required. Verify the deployed `/v1/models` metadata and run one request through `glm-chat`, `coder`, and `long` to confirm that each alias reports the intended context policy and thinking mode.
+
+The final profile values must remain bounded by the context window verified for the deployed MLX runtime.
