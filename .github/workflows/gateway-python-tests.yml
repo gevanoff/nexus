@@ -63,7 +63,14 @@ jobs:
           start = source.index(start_marker) + len(start_marker)
           end = source.index(end_marker, start)
           block = source[start:end]
-          lines = [line[10:] if line.startswith('          ') else line for line in block.splitlines()]
+          lines = []
+          in_triple_string = False
+          for line in block.splitlines():
+              if not in_triple_string and line.startswith('          '):
+                  line = line[10:]
+              lines.append(line)
+              if line.count("'''") % 2 == 1:
+                  in_triple_string = not in_triple_string
           Path('/tmp/finish_glm_profiles.py').write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PYCODE
           python /tmp/finish_glm_profiles.py
