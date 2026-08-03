@@ -15,4 +15,4 @@ Gateway uses a conservative dependency-free estimate because its process cannot 
 
 Coding Workspaces count serialized messages and native tool schemas. The old 64,000-character threshold remains only for unprofiled models. Alias output caps also allow the GLM coding and long routes to exceed the global 8,192-token fallback.
 
-Restart Gateway after deployment so the alias cache reloads. These aliases share the same resident model, so no model download is required.
+Restart Gateway after deployment so the alias cache reloads. These aliases share the same resident model, so no model download is required. Verify the deployed `/v1/models` metadata and run one request through `glm-chat`, `coder`, and `long` to confirm that each alias reports the intended context policy and thinking mode.
