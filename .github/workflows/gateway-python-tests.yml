@@ -36,6 +36,18 @@ jobs:
           from pathlib import Path
 
           source = Path('.github/workflows/glm-context-profile-pr.yml').read_text(encoding='utf-8')
+          cosmetic_start = source.index(
+              "          coding = replace_once(\n"
+              "              coding,\n"
+              "              '''            if reset_for_cycles or reset_for_size:\n"
+          )
+          cosmetic_end = source.index(
+              "          coding = replace_once(\n"
+              "              coding,\n"
+              "              '''                        \"previous_context_chars\": context_chars,\n",
+              cosmetic_start,
+          )
+          source = source[:cosmetic_start] + source[cosmetic_end:]
           start_marker = "          python - <<'PY'\n"
           end_marker = "\n          PY\n"
           start = source.index(start_marker) + len(start_marker)
