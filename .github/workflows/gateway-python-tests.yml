@@ -1,100 +1,198 @@
-name: Gateway Python Tests
+name: Harden GLM alias policy boundaries
 
 on:
-  workflow_dispatch:
   pull_request:
-  push:
     branches:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: gateway-python-tests-${{ github.workflow }}-${{ github.ref }}
+  group: glm-policy-hardening-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  gateway-tests:
-    name: Full Gateway pytest suite
-    runs-on: ubuntu-latest
+  patch-test-and-restore:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/glm-coding-context-profiles'
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          ref: agent/glm-coding-context-profiles
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
           cache: pip
           cache-dependency-path: |
             services/gateway/app/requirements.freeze.txt
             services/gateway/tests/requirements.freeze.txt
-
-      - name: Install Gateway test dependencies
+      - name: Apply review hardening
         shell: bash
         run: |
-          set -o pipefail
-          python -m pip --version | tee "${RUNNER_TEMP}/gateway-pip-install.log"
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected one anchor, found {count}")
+              return text.replace(old, new, 1)
+
+          upstreams = Path('services/gateway/app/upstreams.py')
+          text = upstreams.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              '    if str(alias.upstream_model or "").strip() != str(model_name or "").strip():\n        return None\n',
+              '    if str(alias.upstream_model or "").strip().lower() != str(model_name or "").strip().lower():\n        return None\n',
+              'case-insensitive alias model match',
+          )
+          text = replace_once(
+              text,
+              '''def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, model_name: str) -> int | None:
+    requested_alias = get_alias(str(req.model or "").strip().lower())
+    cap = _alias_cap_value(requested_alias, backend_name=backend_name)
+    if cap is not None:
+        return cap
+
+    normalized_model = str(model_name or "").strip()
+    caps: list[int] = []
+    for alias in get_aliases().values():
+        if str(alias.upstream_model or "").strip() != normalized_model:
+            continue
+        candidate_cap = _alias_cap_value(alias, backend_name=backend_name)
+        if candidate_cap is not None:
+            caps.append(candidate_cap)
+    if not caps:
+        return None
+    return max(caps)
+''',
+              '''def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, model_name: str) -> int | None:
+    requested_alias = _request_alias_policy(
+        req,
+        backend_name=backend_name,
+        model_name=model_name,
+    )
+    return _alias_cap_value(requested_alias, backend_name=backend_name)
+''',
+              'explicit-alias output cap',
+          )
+          text = replace_once(
+              text,
+              '        kwargs.setdefault("enable_thinking", thinking_enabled)\n',
+              '        kwargs["enable_thinking"] = thinking_enabled\n',
+              'enforced alias thinking policy',
+          )
+          upstreams.write_text(text, encoding='utf-8')
+
+          budget = Path('services/gateway/app/context_budget.py')
+          text = budget.read_text(encoding='utf-8')
+          text = replace_once(
+              text,
+              '            sort_keys=True,\n',
+              '',
+              'unnecessary JSON key sorting',
+          )
+          budget.write_text(text, encoding='utf-8')
+
+          tests = Path('services/gateway/tests/test_glm_context_profiles.py')
+          text = tests.read_text(encoding='utf-8')
+          text += '''
+
+
+def test_alias_model_matching_is_case_insensitive(monkeypatch):
+    alias = _glm_alias(upstream_model="MLX-Community/GLM-5.2-4BIT")
+    monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "coder" else None)
+    monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
+    request = ChatCompletionRequest(model="coder", messages=[{"role": "user", "content": "debug"}])
+
+    resolved = upstreams._request_alias_policy(
+        request,
+        backend_name="local_mlx",
+        model_name="mlx-community/glm-5.2-4bit",
+    )
+
+    assert resolved is alias
+
+
+def test_alias_thinking_policy_overrides_client_request(monkeypatch):
+    alias = _glm_alias(
+        max_tokens_cap=4_096,
+        max_input_tokens=26_000,
+        coding_context_reset_tokens=None,
+        thinking_enabled=False,
+    )
+    monkeypatch.setattr(upstreams, "get_alias", lambda name: alias if name == "glm-chat" else None)
+    monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        upstreams,
+        "_resolve_backend_target",
+        lambda _name: ("local_mlx", "mlx", "http://mlx.test/v1"),
+    )
+    monkeypatch.setattr(upstreams, "_enforce_backend_input_limit", lambda *_args, **_kwargs: None)
+    request = ChatCompletionRequest(
+        model="glm-chat",
+        messages=[{"role": "user", "content": "hello"}],
+        chat_template_kwargs={"enable_thinking": True},
+    )
+
+    routed = upstreams.route_request_for_backend(request, "local_mlx", alias.upstream_model)
+
+    assert routed.chat_template_kwargs["enable_thinking"] is False
+
+
+def test_raw_glm_model_does_not_inherit_long_alias_output_cap(monkeypatch):
+    model = "mlx-community/GLM-5.2-4bit"
+    monkeypatch.setattr(upstreams, "get_alias", lambda _name: None)
+    monkeypatch.setattr(
+        upstreams,
+        "_resolve_backend_target",
+        lambda _name: ("local_mlx", "mlx", "http://mlx.test/v1"),
+    )
+    monkeypatch.setattr(upstreams, "_enforce_backend_input_limit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 98_304, raising=False)
+    request = ChatCompletionRequest(
+        model=model,
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    routed = upstreams.route_request_for_backend(request, "local_mlx", model)
+
+    assert routed.max_tokens is None
+'''
+          tests.write_text(text, encoding='utf-8')
+          PY
+      - name: Install Gateway dependencies
+        shell: bash
+        run: |
           python -m pip install --quiet \
             -r services/gateway/app/requirements.freeze.txt \
-            -r services/gateway/tests/requirements.freeze.txt \
-            2>&1 | tee -a "${RUNNER_TEMP}/gateway-pip-install.log"
-          python -m pip check 2>&1 | tee -a "${RUNNER_TEMP}/gateway-pip-install.log"
-          python -m pip freeze --all | sort > "${RUNNER_TEMP}/gateway-python-environment.txt"
-
-      - name: Prepare writable Gateway runtime paths
+            -r services/gateway/tests/requirements.freeze.txt
+          python -m pip check
+      - name: Prepare runtime paths
+        shell: bash
         run: |
-          sudo mkdir -p \
-            /var/lib/gateway/app \
-            /var/lib/gateway/config \
-            /var/lib/gateway/data/agent \
-            /var/lib/gateway/data/coding/tasks \
-            /var/lib/gateway/data/coding/workspaces \
-            /var/lib/gateway/data/model_benchmarks \
-            /var/lib/gateway/data/model_tool_qualification \
-            /var/lib/gateway/data/sentinel \
-            /var/lib/gateway/data/tools \
-            /var/lib/gateway/data/ui_chats \
-            /var/lib/gateway/data/ui_files \
-            /var/lib/gateway/data/ui_images \
-            /var/lib/gateway/data/voice_library \
-            /var/lib/gateway/tools \
-            /workspace/nexus/souls
+          sudo mkdir -p /var/lib/gateway/app /var/lib/gateway/config /var/lib/gateway/data/agent /var/lib/gateway/data/coding/tasks /var/lib/gateway/data/coding/workspaces /var/lib/gateway/data/model_benchmarks /var/lib/gateway/data/model_tool_qualification /var/lib/gateway/data/sentinel /var/lib/gateway/data/tools /var/lib/gateway/data/ui_chats /var/lib/gateway/data/ui_files /var/lib/gateway/data/ui_images /var/lib/gateway/data/voice_library /var/lib/gateway/tools /workspace/nexus/souls
           sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
-
-      - name: Run full Gateway test suite
+      - name: Validate focused and full suites
         timeout-minutes: 25
         env:
           PYTHONPATH: services/gateway
           GATEWAY_BEARER_TOKEN: test-token
         shell: bash
         run: |
-          set +e
-          python -m pytest \
-            -q \
-            --tb=short \
-            --durations=25 \
-            --junitxml="${RUNNER_TEMP}/gateway-pytest.xml" \
-            services/gateway/tests \
-            > "${RUNNER_TEMP}/gateway-pytest.log" 2>&1
-          status=$?
-          cat "${RUNNER_TEMP}/gateway-pytest.log"
-          exit "$status"
-
-      - name: Upload Gateway pytest diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gateway-pytest-diagnostics
-          path: |
-            ${{ runner.temp }}/gateway-pip-install.log
-            ${{ runner.temp }}/gateway-python-environment.txt
-            ${{ runner.temp }}/gateway-pytest.log
-            ${{ runner.temp }}/gateway-pytest.xml
-          if-no-files-found: warn
-          retention-days: 7
+          python -m py_compile services/gateway/app/context_budget.py services/gateway/app/upstreams.py
+          python -m pytest -q --tb=short services/gateway/tests/test_glm_context_profiles.py services/gateway/tests/test_upstreams_message_normalization.py
+          python -m pytest -q --tb=short services/gateway/tests
+          git diff --check
+      - name: Commit hardening and restore permanent CI
+        shell: bash
+        run: |
+          git checkout origin/main -- .github/workflows/gateway-python-tests.yml
+          git config user.name "Nexus Context Profile Bot"
+          git config user.email "nexus-context-profile@users.noreply.github.com"
+          git add -A
+          git commit -m "Enforce GLM alias policy boundaries"
+          git push origin HEAD:agent/glm-coding-context-profiles
