@@ -11,7 +11,7 @@ from app.backends import backend_provider_name, get_registry
 from app.config import S, logger
 from app.context_budget import TOKEN_ESTIMATOR_NAME, estimate_tokens
 from app.httpx_client import httpx_client as _httpx_client
-from app.model_aliases import get_alias
+from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
 from app.openai_utils import allowed_tool_names_from_specs, normalize_tool_calls_for_openai, sanitize_chat_choices, sse, sse_done
 from app.prompt_canonicalization import (
@@ -456,12 +456,30 @@ def _alias_cap_value(alias: Any, *, backend_name: str) -> int | None:
 
 
 def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, model_name: str) -> int | None:
+    requested_name = str(req.model or "").strip()
     requested_alias = _request_alias_policy(
         req,
         backend_name=backend_name,
         model_name=model_name,
     )
-    return _alias_cap_value(requested_alias, backend_name=backend_name)
+    cap = _alias_cap_value(requested_alias, backend_name=backend_name)
+    if cap is not None:
+        return cap
+
+    if requested_name.lower() == str(model_name or "").strip().lower():
+        return None
+
+    normalized_model = str(model_name or "").strip().lower()
+    selector_caps: list[int] = []
+    for alias in get_aliases().values():
+        if str(alias.upstream_model or "").strip().lower() != normalized_model:
+            continue
+        candidate_cap = _alias_cap_value(alias, backend_name=backend_name)
+        if candidate_cap is not None:
+            selector_caps.append(candidate_cap)
+    if not selector_caps:
+        return None
+    return min(selector_caps)
 
 
 def _bounded_max_tokens(
