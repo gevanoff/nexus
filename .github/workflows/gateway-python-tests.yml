@@ -1,139 +1,100 @@
 name: Gateway Python Tests
 
 on:
+  workflow_dispatch:
   pull_request:
+  push:
     branches:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: gateway-python-tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  finalize-glm-context-profiles:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/glm-coding-context-profiles'
-    runs-on: ubuntu-24.04
+  gateway-tests:
+    name: Full Gateway pytest suite
+    runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
         with:
-          ref: agent/glm-coding-context-profiles
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
           cache: pip
           cache-dependency-path: |
             services/gateway/app/requirements.freeze.txt
             services/gateway/tests/requirements.freeze.txt
-      - name: Apply remaining implementation
+
+      - name: Install Gateway test dependencies
         shell: bash
         run: |
-          python - <<'PYCODE'
-          from pathlib import Path
-
-          source = Path('.github/workflows/glm-context-profile-pr.yml').read_text(encoding='utf-8')
-          cosmetic_start = source.index(
-              "          coding = replace_once(\n"
-              "              coding,\n"
-              "              '''            if reset_for_cycles or reset_for_size:\n"
-          )
-          cosmetic_end = source.index(
-              "          coding = replace_once(\n"
-              "              coding,\n"
-              "              '''                        \"previous_context_chars\": context_chars,\n",
-              cosmetic_start,
-          )
-          source = source[:cosmetic_start] + source[cosmetic_end:]
-          diagnostics_start = source.index(
-              "          coding = replace_once(\n"
-              "              coding,\n"
-              "              '''                        \"previous_context_chars\": context_chars,\n"
-          )
-          diagnostics_end = source.index(
-              "          write(\"services/gateway/app/coding_agent.py\", coding)",
-              diagnostics_start,
-          )
-          source = source[:diagnostics_start] + source[diagnostics_end:]
-          start_marker = "          python - <<'PY'\n"
-          end_marker = "\n          PY\n"
-          start = source.index(start_marker) + len(start_marker)
-          end = source.index(end_marker, start)
-          block = source[start:end]
-          lines = []
-          in_triple_string = False
-          for line in block.splitlines():
-              if not in_triple_string and line.startswith('          '):
-                  line = line[10:]
-              lines.append(line)
-              if line.count("'''") % 2 == 1:
-                  in_triple_string = not in_triple_string
-          Path('/tmp/finish_glm_profiles.py').write_text('\n'.join(lines) + '\n', encoding='utf-8')
-          PYCODE
-          python /tmp/finish_glm_profiles.py
-          python - <<'PYFIX'
-          from pathlib import Path
-
-          social = Path('services/gateway/tests/test_social_generation_fixes.py')
-          text = social.read_text(encoding='utf-8')
-          text = text.replace(
-              '    assert aliases["reasoning"]["max_tokens_cap"] == 4096\n',
-              '    assert aliases["reasoning"]["max_tokens_cap"] == 16384\n',
-              1,
-          )
-          social.write_text(text, encoding='utf-8')
-
-          settings = Path('services/gateway/tests/test_user_llm_settings.py')
-          text = settings.read_text(encoding='utf-8')
-          replacements = {
-              '    assert aliases["mlx"]["context_window"] == 131072\n':
-                  '    assert aliases["mlx"]["context_window"] == 32768\n    assert aliases["mlx"]["thinking_enabled"] is False\n',
-              '    assert aliases["long"]["context_window"] == 131072\n':
-                  '    assert aliases["long"]["context_window"] == 262144\n    assert aliases["long"]["thinking_enabled"] is True\n',
-              '    assert aliases["ai2-chat"]["context_window"] == 131072\n':
-                  '    assert aliases["ai2-chat"]["context_window"] == 32768\n',
-              '    assert aliases["reasoning"]["backend"] == "local_vllm"\n    assert aliases["reasoning"]["model"] == strong_model\n    assert aliases["reasoning"]["context_window"] == 65536\n    assert aliases["reasoning"]["max_tokens_cap"] == 4096\n':
-                  '    assert aliases["reasoning"]["backend"] == "local_mlx"\n    assert aliases["reasoning"]["model"] == mlx_model\n    assert aliases["reasoning"]["context_window"] == 131072\n    assert aliases["reasoning"]["max_tokens_cap"] == 16384\n    assert aliases["reasoning"]["thinking_enabled"] is True\n',
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise RuntimeError(f'missing alias contract anchor: {old!r}')
-              text = text.replace(old, new, 1)
-          settings.write_text(text, encoding='utf-8')
-          PYFIX
-      - name: Install Gateway dependencies
-        shell: bash
-        run: |
+          set -o pipefail
+          python -m pip --version | tee "${RUNNER_TEMP}/gateway-pip-install.log"
           python -m pip install --quiet \
             -r services/gateway/app/requirements.freeze.txt \
-            -r services/gateway/tests/requirements.freeze.txt
-          python -m pip check
-      - name: Prepare runtime paths
-        shell: bash
+            -r services/gateway/tests/requirements.freeze.txt \
+            2>&1 | tee -a "${RUNNER_TEMP}/gateway-pip-install.log"
+          python -m pip check 2>&1 | tee -a "${RUNNER_TEMP}/gateway-pip-install.log"
+          python -m pip freeze --all | sort > "${RUNNER_TEMP}/gateway-python-environment.txt"
+
+      - name: Prepare writable Gateway runtime paths
         run: |
-          sudo mkdir -p /var/lib/gateway/app /var/lib/gateway/config /var/lib/gateway/data/agent /var/lib/gateway/data/coding/tasks /var/lib/gateway/data/coding/workspaces /var/lib/gateway/data/model_benchmarks /var/lib/gateway/data/model_tool_qualification /var/lib/gateway/data/sentinel /var/lib/gateway/data/tools /var/lib/gateway/data/ui_chats /var/lib/gateway/data/ui_files /var/lib/gateway/data/ui_images /var/lib/gateway/data/voice_library /var/lib/gateway/tools /workspace/nexus/souls
+          sudo mkdir -p \
+            /var/lib/gateway/app \
+            /var/lib/gateway/config \
+            /var/lib/gateway/data/agent \
+            /var/lib/gateway/data/coding/tasks \
+            /var/lib/gateway/data/coding/workspaces \
+            /var/lib/gateway/data/model_benchmarks \
+            /var/lib/gateway/data/model_tool_qualification \
+            /var/lib/gateway/data/sentinel \
+            /var/lib/gateway/data/tools \
+            /var/lib/gateway/data/ui_chats \
+            /var/lib/gateway/data/ui_files \
+            /var/lib/gateway/data/ui_images \
+            /var/lib/gateway/data/voice_library \
+            /var/lib/gateway/tools \
+            /workspace/nexus/souls
           sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
-      - name: Validate focused and full Gateway suites
+
+      - name: Run full Gateway test suite
         timeout-minutes: 25
         env:
           PYTHONPATH: services/gateway
           GATEWAY_BEARER_TOKEN: test-token
         shell: bash
         run: |
-          python -m py_compile services/gateway/app/context_budget.py services/gateway/app/model_aliases.py services/gateway/app/upstreams.py services/gateway/app/coding_agent.py
-          python -m pytest -q --tb=short services/gateway/tests/test_glm_context_profiles.py services/gateway/tests/test_upstreams_message_normalization.py services/gateway/tests/test_coding_mission_finalization.py
-          python -m pytest -q --tb=short services/gateway/tests
-          git diff --check
-      - name: Commit implementation and restore permanent CI
-        shell: bash
-        run: |
-          git checkout origin/main -- .github/workflows/gateway-python-tests.yml
-          rm -f .github/workflows/glm-context-profile-bootstrap.yml .github/workflows/glm-context-profile-pr.yml .glm-profile-trigger
-          git config user.name "Nexus Context Profile Bot"
-          git config user.email "nexus-context-profile@users.noreply.github.com"
-          git add -A
-          git commit -m "Complete GLM coding context profiles"
-          git push origin HEAD:agent/glm-coding-context-profiles
+          set +e
+          python -m pytest \
+            -q \
+            --tb=short \
+            --durations=25 \
+            --junitxml="${RUNNER_TEMP}/gateway-pytest.xml" \
+            services/gateway/tests \
+            > "${RUNNER_TEMP}/gateway-pytest.log" 2>&1
+          status=$?
+          cat "${RUNNER_TEMP}/gateway-pytest.log"
+          exit "$status"
+
+      - name: Upload Gateway pytest diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-pytest-diagnostics
+          path: |
+            ${{ runner.temp }}/gateway-pip-install.log
+            ${{ runner.temp }}/gateway-python-environment.txt
+            ${{ runner.temp }}/gateway-pytest.log
+            ${{ runner.temp }}/gateway-pytest.xml
+          if-no-files-found: warn
+          retention-days: 7
