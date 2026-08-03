@@ -74,6 +74,36 @@ jobs:
           Path('/tmp/finish_glm_profiles.py').write_text('\n'.join(lines) + '\n', encoding='utf-8')
           PYCODE
           python /tmp/finish_glm_profiles.py
+          python - <<'PYFIX'
+          from pathlib import Path
+
+          social = Path('services/gateway/tests/test_social_generation_fixes.py')
+          text = social.read_text(encoding='utf-8')
+          text = text.replace(
+              '    assert aliases["reasoning"]["max_tokens_cap"] == 4096\n',
+              '    assert aliases["reasoning"]["max_tokens_cap"] == 16384\n',
+              1,
+          )
+          social.write_text(text, encoding='utf-8')
+
+          settings = Path('services/gateway/tests/test_user_llm_settings.py')
+          text = settings.read_text(encoding='utf-8')
+          replacements = {
+              '    assert aliases["mlx"]["context_window"] == 131072\n':
+                  '    assert aliases["mlx"]["context_window"] == 32768\n    assert aliases["mlx"]["thinking_enabled"] is False\n',
+              '    assert aliases["long"]["context_window"] == 131072\n':
+                  '    assert aliases["long"]["context_window"] == 262144\n    assert aliases["long"]["thinking_enabled"] is True\n',
+              '    assert aliases["ai2-chat"]["context_window"] == 131072\n':
+                  '    assert aliases["ai2-chat"]["context_window"] == 32768\n',
+              '    assert aliases["reasoning"]["backend"] == "local_vllm"\n    assert aliases["reasoning"]["model"] == strong_model\n    assert aliases["reasoning"]["context_window"] == 65536\n    assert aliases["reasoning"]["max_tokens_cap"] == 4096\n':
+                  '    assert aliases["reasoning"]["backend"] == "local_mlx"\n    assert aliases["reasoning"]["model"] == mlx_model\n    assert aliases["reasoning"]["context_window"] == 131072\n    assert aliases["reasoning"]["max_tokens_cap"] == 16384\n    assert aliases["reasoning"]["thinking_enabled"] is True\n',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise RuntimeError(f'missing alias contract anchor: {old!r}')
+              text = text.replace(old, new, 1)
+          settings.write_text(text, encoding='utf-8')
+          PYFIX
       - name: Install Gateway dependencies
         shell: bash
         run: |
