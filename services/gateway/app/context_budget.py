@@ -38,7 +38,6 @@ def estimate_tokens(value: Any) -> int:
             value,
             ensure_ascii=False,
             separators=(",", ":"),
-            sort_keys=True,
             default=str,
         )
     except Exception:
