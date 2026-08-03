@@ -48,6 +48,16 @@ jobs:
               cosmetic_start,
           )
           source = source[:cosmetic_start] + source[cosmetic_end:]
+          diagnostics_start = source.index(
+              "          coding = replace_once(\n"
+              "              coding,\n"
+              "              '''                        \"previous_context_chars\": context_chars,\n"
+          )
+          diagnostics_end = source.index(
+              "          write(\"services/gateway/app/coding_agent.py\", coding)",
+              diagnostics_start,
+          )
+          source = source[:diagnostics_start] + source[diagnostics_end:]
           start_marker = "          python - <<'PY'\n"
           end_marker = "\n          PY\n"
           start = source.index(start_marker) + len(start_marker)
