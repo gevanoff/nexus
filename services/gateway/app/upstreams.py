@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app.backends import backend_provider_name, get_registry
 from app.config import S, logger
+from app.context_budget import TOKEN_ESTIMATOR_NAME, estimate_tokens
 from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
@@ -310,12 +311,41 @@ def _log_invalid_response_tool_calls(
         )
 
 
-def _mlx_glm_input_chars(req: ChatCompletionRequest) -> int:
-    payload = req.model_dump(
+def _mlx_glm_input_payload(req: ChatCompletionRequest) -> Dict[str, Any]:
+    return req.model_dump(
         include={"messages", "tools", "tool_choice", "response_format", "chat_template_kwargs"},
         exclude_none=True,
     )
-    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str))
+
+
+def _mlx_glm_input_chars(req: ChatCompletionRequest) -> int:
+    return len(json.dumps(_mlx_glm_input_payload(req), ensure_ascii=False, separators=(",", ":"), default=str))
+
+
+def _alias_matches_backend(alias: Any, *, backend_name: str) -> bool:
+    registry = get_registry()
+    alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
+    resolved_backend = registry.resolve_backend_class(backend_name) or backend_name
+    return alias_backend == resolved_backend
+
+
+def _request_alias_policy(
+    req: ChatCompletionRequest,
+    *,
+    backend_name: str,
+    model_name: str,
+) -> Any:
+    alias = get_alias(str(req.model or "").strip().lower())
+    if alias is None:
+        return None
+    try:
+        if not _alias_matches_backend(alias, backend_name=backend_name):
+            return None
+    except Exception:
+        return None
+    if str(alias.upstream_model or "").strip() != str(model_name or "").strip():
+        return None
+    return alias
 
 
 def _enforce_mlx_glm_input_limit(
@@ -334,6 +364,33 @@ def _enforce_mlx_glm_input_limit(
     normalized_model = str(model_name or "").strip().lower()
     if normalized_model not in configured_glm_models and "glm-5.2" not in normalized_model:
         return
+
+    alias = _request_alias_policy(
+        req,
+        backend_name=backend_name,
+        model_name=model_name,
+    )
+    alias_limit = getattr(alias, "max_input_tokens", None) if alias is not None else None
+    if isinstance(alias_limit, int) and alias_limit > 0:
+        input_tokens = estimate_tokens(_mlx_glm_input_payload(req))
+        if input_tokens <= alias_limit:
+            return
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "mlx_glm_input_too_large",
+                "model": model_name,
+                "requested_alias": str(req.model or ""),
+                "input_tokens_estimate": input_tokens,
+                "max_input_tokens": alias_limit,
+                "context_window": getattr(alias, "context_window", None),
+                "token_estimator": TOKEN_ESTIMATOR_NAME,
+                "message": (
+                    "GLM-5.2 input exceeds this alias's reserved context budget. "
+                    "Use the long profile, compact the conversation, or reduce attached tool/file context."
+                ),
+            },
+        )
 
     try:
         limit = int(getattr(S, "MLX_GLM_MAX_INPUT_CHARS", 98_304) or 0)
@@ -354,9 +411,8 @@ def _enforce_mlx_glm_input_limit(
             "input_chars": input_chars,
             "max_input_chars": limit,
             "message": (
-                "GLM-5.2 input exceeds the interactive latency guard. "
-                "Start a new or compacted conversation, reduce attached tool/file context, "
-                "or select a different model."
+                "GLM-5.2 input exceeds the fallback interactive latency guard. "
+                "Use a configured GLM alias, start a compacted conversation, or reduce attached context."
             ),
         },
     )
@@ -385,13 +441,6 @@ def _enforce_backend_input_limit(req: ChatCompletionRequest, *, backend_name: st
             "message": "Input exceeds this backend's memory-safe context limit. Start a new chat or choose a larger model host.",
         },
     )
-
-
-def _alias_matches_backend(alias: Any, *, backend_name: str) -> bool:
-    registry = get_registry()
-    alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
-    resolved_backend = registry.resolve_backend_class(backend_name) or backend_name
-    return alias_backend == resolved_backend
 
 
 def _alias_cap_value(alias: Any, *, backend_name: str) -> int | None:
@@ -451,6 +500,12 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
     _enforce_backend_input_limit(req, backend_name=_resolved)
     _enforce_mlx_glm_input_limit(req, backend_name=_resolved, model_name=model_name)
     updates: Dict[str, Any] = {"model": model_name}
+    alias = _request_alias_policy(req, backend_name=_resolved, model_name=model_name)
+    thinking_enabled = getattr(alias, "thinking_enabled", None) if alias is not None else None
+    if provider == "mlx" and _model_uses_glm_thinking_template(model_name) and isinstance(thinking_enabled, bool):
+        kwargs = dict(req.chat_template_kwargs or {})
+        kwargs.setdefault("enable_thinking", thinking_enabled)
+        updates["chat_template_kwargs"] = kwargs
     max_tokens = _bounded_max_tokens(
         req,
         backend_name=_resolved,
