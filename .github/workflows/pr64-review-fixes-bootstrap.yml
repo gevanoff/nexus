@@ -44,6 +44,9 @@ jobs:
             -r services/gateway/tests/requirements.freeze.txt
           python -m pip check
 
+      - name: Repair bootstrap source
+        run: python services/gateway/tools/fix_pr64_bootstrap_escape.py
+
       - name: Apply review fixes
         run: python services/gateway/tools/apply_pr64_review_fixes.py
 
@@ -87,6 +90,7 @@ jobs:
         run: |
           rm -f \
             services/gateway/tools/apply_pr64_review_fixes.py \
+            services/gateway/tools/fix_pr64_bootstrap_escape.py \
             .github/workflows/pr64-review-fixes-bootstrap.yml
           git add -A
           if git diff --cached --quiet; then
