@@ -5,6 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from app import coding_stagnation_resilience as resilience
+from app import coding_forced_action as forced_action
 from app import coding_workspace as cw
 from app.config import S, logger
 
@@ -316,6 +317,7 @@ def _persist_observation(task_id: str, checkpoint: Dict[str, Any]) -> bool:
         task["agent_inspection_ledger"] = list(checkpoint.get("inspection_ledger") or [])[-32:]
         task["agent_working_memory"] = dict(checkpoint.get("working_memory") or {})
         task["agent_context_manifest"] = dict(checkpoint.get("context_manifest") or {})
+        forced_action.retire_if_state_changed(task, state_key=state_key)
         persisted["value"] = True
 
     cw.mutate_task(task_id, apply)
@@ -361,6 +363,16 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
         task["agent_inspection_ledger"] = list(checkpoint.get("inspection_ledger") or [])[-32:]
         task["agent_working_memory"] = dict(checkpoint.get("working_memory") or {})
         task["agent_context_manifest"] = dict(checkpoint.get("context_manifest") or {})
+        forced_action.retire_if_state_changed(task, state_key=state_key)
+        if kind in {"interrupt", "recovery", "continuation"}:
+            task["agent_forced_action"] = forced_action.activate(
+                task,
+                state_key=state_key,
+                run_id=run_id,
+                cycle=_as_int(checkpoint.get("cycle")),
+                stage=kind,
+                required_action=str((checkpoint.get("working_memory") or {}).get("next_action") or checkpoint.get("next_action") or ""),
+            )
         task["agent_investigation_checkpoint"] = dict(checkpoint)
         task["agent_investigation_guidance_state_key"] = intervention
 
@@ -401,10 +413,10 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
         # repository progress. Keep it separate from last_guidance_at, which is
         # part of the progress observation used by the agent loop.
         task["last_controller_guidance_at"] = now
-        recovery_kind = "continuation" if kind == "continuation" else "checkpoint"
+        recovery_kind = "checkpoint"
         recovery_id = resilience.intervention_id(state_key, f"recovery-{recovery_kind}")
         recovery_history = [str(value) for value in (task.get("agent_stagnation_recovery_history") or [])]
-        if kind in {"assist", "continuation"} and recovery_id not in recovery_history:
+        if kind == "assist" and recovery_id not in recovery_history:
             task["agent_stagnation_recovery_lease"] = {
                 "schema": "nexus_coding_recovery_lease.v1",
                 "id": recovery_id,
@@ -592,8 +604,8 @@ def process_task(task_id: str) -> bool:
     task = cw.load_task(task_id)
     if str(task.get("agent_status") or "").strip().lower() not in _ACTIVE_STATUSES:
         return False
-    if _repair_legacy_consumed_continuation(task_id, task):
-        task = cw.load_task(task_id)
+    # Unchanged resumes retain escalation. Legacy continuation credits are not
+    # revived because doing so recreates the full inspection window.
     if _consume_recovery_lease(task_id, task):
         task = cw.load_task(task_id)
     else:

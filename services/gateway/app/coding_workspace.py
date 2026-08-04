@@ -676,6 +676,31 @@ def load_task(task_id: str) -> Dict[str, Any]:
     return task
 
 
+_DIRECT_CHANGE_RE = re.compile(
+    r"\\b(fix|repair|resolve|implement|edit|modify|patch|add|remove|create|rewrite|change|update)\\b",
+    re.IGNORECASE,
+)
+_REVIEW_GOAL_MARKERS = (
+    "review this workspace",
+    "review scope",
+    "review only",
+    "audit",
+    "concrete findings",
+    "behavioral regressions",
+    "risky assumptions",
+    "missing tests",
+    "inspect relevant diffs",
+)
+
+
+def goal_expects_file_changes(goal: str) -> bool:
+    text = " ".join(str(goal or "").strip().lower().split())
+    if not text:
+        return True
+    review_goal = any(marker in text for marker in _REVIEW_GOAL_MARKERS)
+    return bool(_DIRECT_CHANGE_RE.search(text)) or not review_goal
+
+
 def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     raw = task.get("mission") if isinstance(task.get("mission"), dict) else {}
     supplied = overrides if isinstance(overrides, dict) else {}
@@ -689,6 +714,11 @@ def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str,
     context.update(supplied.get("context_policy") if isinstance(supplied.get("context_policy"), dict) else {})
     prompt = str(supplied.get("goal") or raw.get("goal") or task.get("prompt") or "").strip()
     max_no_progress_cycles = int(budget.get("max_no_progress_cycles") or 8)
+    expects_file_changes = goal_expects_file_changes(prompt)
+
+    def completion_bool(name: str, default: bool) -> bool:
+        return bool(completion[name]) if name in completion else default
+
     return {
         "schema": "nexus_coding_mission.v1",
         "goal": prompt,
@@ -696,10 +726,10 @@ def normalize_coding_mission(task: Dict[str, Any], overrides: Optional[Dict[str,
         "base_branch": str(task.get("base_branch") or "main"),
         "branch_name": str(task.get("branch_name") or ""),
         "completion_policy": {
-            "require_file_changes": bool(completion.get("require_file_changes", True)),
-            "require_validation_after_edit": bool(completion.get("require_validation_after_edit", True)),
-            "require_diff_review_after_edit": bool(completion.get("require_diff_review_after_edit", True)),
-            "require_commit_on_success": bool(completion.get("require_commit_on_success", True)),
+            "require_file_changes": completion_bool("require_file_changes", expects_file_changes),
+            "require_validation_after_edit": completion_bool("require_validation_after_edit", True),
+            "require_diff_review_after_edit": completion_bool("require_diff_review_after_edit", True),
+            "require_commit_on_success": completion_bool("require_commit_on_success", expects_file_changes),
             "commit_policy": str(completion.get("commit_policy") or "always_on_success"),
         },
         "publish_policy": {
@@ -745,7 +775,6 @@ def coding_mission_overrides(
     push = bool(push_on_success or draft_pr_on_success)
     return {
         "completion_policy": {
-            "require_commit_on_success": True,
             "commit_policy": str(commit_policy or "always_on_success"),
         },
         "publish_policy": {

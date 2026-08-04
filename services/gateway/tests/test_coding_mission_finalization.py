@@ -68,6 +68,22 @@ def test_coding_finalization_uses_existing_checkpoint_commit(monkeypatch):
     assert result["final_commit"] == "checkpoint"
 
 
+def test_review_finalization_succeeds_without_new_changes_or_commit(monkeypatch):
+    stored = _finalizer_mocks(monkeypatch, changed=False)
+    stored["prompt"] = "Review this workspace for concrete findings and missing tests."
+    stored["mission"] = {
+        "completion_policy": {
+            "require_file_changes": False,
+            "require_commit_on_success": False,
+            "require_validation_after_edit": True,
+            "require_diff_review_after_edit": True,
+        }
+    }
+    result = ca.finalize_successful_run("task-1", finish_summary="No actionable defect found.", run_id="run-1")
+    assert result["ok"] is True
+    assert result["finalization_status"] == "completed"
+
+
 def test_coding_finalization_push_on_success(monkeypatch):
     _finalizer_mocks(monkeypatch)
     pushed = []
