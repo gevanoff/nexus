@@ -11,7 +11,7 @@ Nexus exposes the resident `mlx-community/GLM-5.2-4bit` model through distinct a
 
 `max_input_tokens` is the hard request budget; `coding_context_reset_tokens` is the soft-compaction point. Durable controller state and working memory survive compaction.
 
-Gateway uses a conservative dependency-free estimate because its process cannot assume the huge tokenizer is mounted: ASCII code/JSON is charged at three characters per token and non-ASCII text at 1.5. Direct, unprofiled GLM IDs retain the legacy `MLX_GLM_MAX_INPUT_CHARS` fallback.
+Gateway uses the dependency-free `nexus_conservative_chars_v2` estimate because its process cannot assume the huge tokenizer is mounted. ASCII code and JSON are charged at three characters per estimated token. Non-ASCII input is charged at 0.75 code points per estimated token—more than one token per code point—to remain conservative for CJK, emoji, and other characters that may expand into multiple tokenizer pieces. Direct, unprofiled GLM IDs retain the legacy `MLX_GLM_MAX_INPUT_CHARS` fallback.
 
 Coding Workspaces count serialized messages and native tool schemas. The old 64,000-character threshold remains only for unprofiled models. Alias output caps also allow the GLM coding and long routes to exceed the global 8,192-token fallback. When a tracked coding selector is rerouted to a different backend model, compaction and completion budgets are recalculated from an alias matching that resolved backend/model rather than from the original selector name.
 
