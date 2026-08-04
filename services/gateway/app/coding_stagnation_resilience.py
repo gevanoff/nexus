@@ -390,6 +390,44 @@ def extract_concrete_commitment(events: Sequence[Mapping[str, Any]]) -> str:
     return ""
 
 
+
+def pending_concrete_commitment(events: Sequence[Mapping[str, Any]]) -> str:
+    # A commitment is pending only until the model attempts a workspace tool.
+    action_seen = False
+    for event in reversed(events):
+        event_type = str(event.get("type") or "")
+        if event_type == "tool_started":
+            action_seen = True
+            continue
+        if event_type != "assistant":
+            continue
+        commitment = extract_concrete_commitment([event])
+        if not commitment:
+            continue
+        return "" if action_seen else commitment
+    return ""
+
+
+def mission_requires_file_changes(task: Mapping[str, Any]) -> bool:
+    mission = task.get("mission") if isinstance(task.get("mission"), dict) else {}
+    completion = mission.get("completion_policy") if isinstance(mission.get("completion_policy"), dict) else {}
+    return bool(completion.get("require_file_changes", True))
+
+
+def action_kind_for_required_action(value: Any) -> str:
+    normalized = " ".join(str(value or "").strip().lower().split())
+    if not normalized:
+        return "bounded"
+    if "coding_finish" in normalized or normalized.startswith(("finish", "conclude", "report the review")):
+        return "finish"
+    if "coding_git_diff" in normalized or normalized.startswith(("review the diff", "inspect the diff")):
+        return "diff_review"
+    if normalized.startswith(("run ", "rerun ", "validate ", "test ", "check ")):
+        return "validate"
+    if normalized.startswith(("add ", "write ", "implement ", "fix ", "edit ", "update ", "remove ", "create ", "patch ")):
+        return "edit"
+    return "bounded"
+
 def generic_next_action(value: Any) -> bool:
     normalized = " ".join(str(value or "").strip().lower().split())
     return not normalized or any(normalized.startswith(prefix) for prefix in _GENERIC_ACTION_PREFIXES)
@@ -423,6 +461,9 @@ def build_working_memory(
     findings = findings[-6:]
     inspected = [clip(item.get("target"), 240) for item in ledger[-12:] if isinstance(item, dict)]
     classification = str(controller.get("classification") or "stagnant_execution")
+    stage = str(controller.get("stage") or "observe")
+    review_only = not mission_requires_file_changes(task)
+    enforced_stage = stage in {"interrupt", "recovery", "continuation"}
     defaults = {
         "inspection_loop": ("Which already-established finding identifies the smallest viable edit or a concrete blocker?", "Stop broad inspection. Make the smallest evidence-backed edit, or finish with a concrete blocker."),
         "review_loop": ("What unresolved defect remains after the repeated status/diff review?", "Convert the review finding into one edit or finish with a concrete blocker."),
@@ -431,20 +472,43 @@ def build_working_memory(
         "reasoning_loop": ("What concrete repository action follows from the current reasoning?", "Call one workspace tool that edits, validates, reviews an edit, or finishes with a blocker."),
         "stagnant_execution": ("What concrete action will change workspace, validation, review, or terminal state?", "Take one bounded action that changes durable state, or finish with a concrete blocker."),
     }
-    unresolved_default, next_default = defaults.get(classification, defaults["stagnant_execution"])
+    if review_only and enforced_stage:
+        unresolved_default = (
+            "Which concrete findings or validation results are sufficiently supported to report, "
+            "and which remain environment-dependent?"
+        )
+        next_default = (
+            "Call coding_finish with the concrete review findings and validation evidence already collected, "
+            "clearly distinguishing confirmed defects from environment or configuration blockers; "
+            "if none are verified, state that no actionable defect was found."
+        )
+    elif review_only:
+        review_defaults = {
+            "inspection_loop": ("Which already-inspected target can resolve the review with one bounded follow-up?", "Inspect one already-identified target, or finish with the evidence already collected."),
+            "review_loop": ("Which concrete finding remains unresolved after the repeated review?", "Resolve one concrete finding, or finish the review."),
+            "validation_loop": ("Which validation result is most informative for the review conclusion?", "Perform one targeted follow-up on the most informative validation result, or finish with the evidence already collected."),
+            "plan_churn": ("Which review question can be resolved by one repository action?", "Stop revising notes. Perform one bounded review action or finish."),
+            "reasoning_loop": ("What concrete review action follows from the current reasoning?", "Perform one bounded review action or finish with a concrete conclusion."),
+            "stagnant_execution": ("What evidence remains necessary before concluding the review?", "Take one bounded review action or finish with the current findings."),
+        }
+        unresolved_default, next_default = review_defaults.get(classification, review_defaults["stagnant_execution"])
+    else:
+        unresolved_default, next_default = defaults.get(classification, defaults["stagnant_execution"])
     previous_directives = previous if str(previous.get("state_key") or "") == state_key else {}
-    commitment = extract_concrete_commitment(events)
-    previous_action = clip(previous_directives.get("next_action"), 700)
-    next_action = commitment if commitment and generic_next_action(previous_action) else (previous_action or next_default)
-    action_source = "assistant_commitment" if commitment and next_action == commitment else "controller_default"
-    unresolved = clip(previous_directives.get("unresolved_question") or unresolved_default, 700)
-    if action_source == "assistant_commitment" and generic_next_action(previous_directives.get("unresolved_question")):
+    commitment = pending_concrete_commitment(events)
+    next_action = commitment or next_default
+    action_source = "assistant_commitment" if commitment else "controller_default"
+    unresolved = unresolved_default
+    if action_source == "assistant_commitment":
         unresolved = clip(f"What remains before executing this commitment: {commitment}", 700)
     next_action = clip(next_action, 700)
+    next_action_kind = action_kind_for_required_action(next_action)
+    blocker = clip(previous_directives.get("blocker"), 700)
     blocker = clip(previous_directives.get("blocker"), 700)
     content = {
         "state_key": state_key, "findings": findings, "inspected_targets": inspected,
         "unresolved_question": unresolved, "next_action": next_action,
+        "next_action_kind": next_action_kind,
         "required_action_source": action_source,
         "blocker": blocker, "classification": classification,
     }
@@ -462,6 +526,7 @@ def build_working_memory(
         "inspected_targets": inspected,
         "unresolved_question": unresolved,
         "next_action": next_action,
+        "next_action_kind": next_action_kind,
         "required_action_source": action_source,
         "blocker": blocker,
         "content_fingerprint": content_fingerprint,

@@ -7,7 +7,7 @@ from app import coding_stagnation_resilience as resilience
 
 
 SCHEMA = "nexus_coding_forced_action.v1"
-_ALLOWED_TOOLS = {
+_BASE_ALLOWED_TOOLS = {
     "coding_write_file",
     "coding_replace_text",
     "coding_apply_patch",
@@ -15,15 +15,65 @@ _ALLOWED_TOOLS = {
     "coding_git_diff",
     "coding_finish",
 }
+_ACTION_ALLOWED_TOOLS = {
+    "edit": {
+        "coding_write_file",
+        "coding_replace_text",
+        "coding_apply_patch",
+        "coding_finish",
+    },
+    "validate": {"coding_run_command", "coding_finish"},
+    "diff_review": {"coding_git_diff", "coding_finish"},
+    "finish": {"coding_finish"},
+    "bounded": set(_BASE_ALLOWED_TOOLS),
+}
 
 
-def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
+def _raw_active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     raw = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
     if str(raw.get("schema") or "") != SCHEMA or str(raw.get("status") or "") != "active":
         return {}
     if str(raw.get("state_key") or "") != resilience.durable_state_key(task):
         return {}
     return dict(raw)
+
+
+def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
+    events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
+    start = max(0, int(state.get("activation_event_count") or 0))
+    if start > len(events):
+        start = 0
+    count = 0
+    for event in events[start:]:
+        if str(event.get("type") or "") != "tool_finished":
+            continue
+        name = str(event.get("name") or "").strip()
+        if name == "coding_finish" or name not in _BASE_ALLOWED_TOOLS:
+            continue
+        result = event.get("result") if isinstance(event.get("result"), dict) else {}
+        if str(result.get("error") or "") == "forced_action_tool_rejected":
+            continue
+        count += 1
+    return count
+
+
+def _effective_allowed_tools(state: Mapping[str, Any], attempt_count: int) -> set[str]:
+    kind = str(state.get("action_kind") or "bounded")
+    allowed = set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
+    limit = max(1, int(state.get("attempt_limit") or 1))
+    if kind != "finish" and attempt_count >= limit:
+        return {"coding_finish"}
+    return allowed
+
+
+def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
+    state = _raw_active_state(task)
+    if not state:
+        return {}
+    attempts = _attempt_count(task, state)
+    state["attempt_count"] = attempts
+    state["allowed_tools"] = sorted(_effective_allowed_tools(state, attempts))
+    return state
 
 
 def activate(
@@ -34,15 +84,27 @@ def activate(
     cycle: int,
     stage: str,
     required_action: str,
+    action_kind: str = "",
 ) -> Dict[str, Any]:
     previous = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
+    normalized_action = str(required_action or "Take one edit, targeted validation, diff review, or terminal action.").strip()
+    normalized_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded")
     same_state = str(previous.get("state_key") or "") == state_key
+    same_directive = (
+        same_state
+        and str(previous.get("required_action") or "") == normalized_action
+        and str(previous.get("action_kind") or "bounded") == normalized_kind
+    )
     previous_run = str(previous.get("run_id") or "")
-    activation_count = int(previous.get("activation_count") or 0) + (0 if same_state and previous_run == run_id else 1)
+    activation_count = int(previous.get("activation_count") or 0) + (
+        0 if same_directive and previous_run == run_id else 1
+    )
     resume_count = int(previous.get("resume_count") or 0)
-    if same_state and previous_run and previous_run != run_id:
+    if same_directive and previous_run and previous_run != run_id:
         resume_count += 1
     now = time.time()
+    event_count = len([item for item in (task.get("agent_events") or []) if isinstance(item, dict)])
+    initial_allowed = _ACTION_ALLOWED_TOOLS.get(normalized_kind, _ACTION_ALLOWED_TOOLS["bounded"])
     return {
         "schema": SCHEMA,
         "status": "active",
@@ -50,12 +112,19 @@ def activate(
         "run_id": run_id,
         "cycle": int(cycle or 0),
         "stage": str(stage or "interrupt"),
-        "required_action": str(required_action or "Take one edit, targeted validation, diff review, or terminal action.").strip(),
-        "allowed_tools": sorted(_ALLOWED_TOOLS),
+        "required_action": normalized_action,
+        "action_kind": normalized_kind,
+        "allowed_tools": sorted(initial_allowed),
+        "attempt_limit": 1,
+        "activation_event_count": (
+            int(previous.get("activation_event_count") or 0)
+            if same_directive
+            else event_count
+        ),
         "activation_count": max(1, activation_count),
         "resume_count": resume_count,
         "rejection_limit": 2,
-        "activated_at": float(previous.get("activated_at") or now) if same_state else now,
+        "activated_at": float(previous.get("activated_at") or now) if same_directive else now,
         "updated_at": now,
     }
 
@@ -76,7 +145,8 @@ def retire_if_state_changed(task: Dict[str, Any], *, state_key: str) -> bool:
 
 
 def allowed_tool_names(task: Mapping[str, Any]) -> set[str]:
-    return set(_ALLOWED_TOOLS) if active_state(task) else set()
+    state = active_state(task)
+    return set(state.get("allowed_tools") or []) if state else set()
 
 
 def rejection_counter_for_state(
@@ -101,23 +171,35 @@ def evaluate_tool_call(
     if not state:
         return True, {}
     tool_name = str(name or "").strip()
-    allowed = tool_name in _ALLOWED_TOOLS
-    if tool_name == "coding_run_command":
+    allowed_tools = set(state.get("allowed_tools") or [])
+    allowed = tool_name in allowed_tools
+    if tool_name == "coding_run_command" and allowed:
         allowed = bool(is_validation_command(args.get("argv")))
     if allowed:
         return True, {}
     required_action = str(state.get("required_action") or "").strip()
+    attempts = int(state.get("attempt_count") or 0)
+    limit = max(1, int(state.get("attempt_limit") or 1))
+    if attempts >= limit and str(state.get("action_kind") or "") != "finish":
+        policy = "The required forced action already had its one allowed attempt; only coding_finish remains available."
+    else:
+        policy = (
+            f"Only tools for the current {state.get('action_kind') or 'bounded'} action are enabled. "
+            "Inspection, unrelated validation, and plan churn are disabled."
+        )
     message = (
         f"Forced-action mode rejected {tool_name or '(missing tool name)'}. "
-        "Inspection and arbitrary shell commands are disabled for this unchanged durable state. "
-        f"Required action: {required_action}"
+        f"{policy} Required action: {required_action}"
     )
     return False, {
         "ok": False,
         "error": "forced_action_tool_rejected",
         "message": message,
         "required_action": required_action,
-        "allowed_tools": sorted(_ALLOWED_TOOLS),
+        "action_kind": state.get("action_kind"),
+        "attempt_count": attempts,
+        "attempt_limit": limit,
+        "allowed_tools": sorted(allowed_tools),
         "state_key": state.get("state_key"),
         "stage": state.get("stage"),
     }
@@ -127,11 +209,22 @@ def prompt_context(task: Mapping[str, Any]) -> str:
     state = active_state(task)
     if not state:
         return ""
+    attempts = int(state.get("attempt_count") or 0)
+    limit = max(1, int(state.get("attempt_limit") or 1))
+    allowed = ", ".join(state.get("allowed_tools") or [])
+    if attempts >= limit and str(state.get("action_kind") or "") != "finish":
+        return (
+            "Controller forced-action mode is ACTIVE for the unchanged durable state. "
+            "The required action has already been attempted once. "
+            f"Required action: {state.get('required_action') or ''} "
+            "Call coding_finish now with the result or a concrete blocker."
+        )
     return (
         "Controller forced-action mode is ACTIVE for the unchanged durable state. "
-        "Inspection tools, repository orientation, plan churn, and arbitrary shell commands are unavailable. "
+        "Inspection, repository orientation, plan churn, and unrelated commands are unavailable. "
         f"Required action: {state.get('required_action') or ''} "
-        "Use exactly one of: a focused edit, a recognized validation command, coding_git_diff, or coding_finish."
+        f"Action kind: {state.get('action_kind') or 'bounded'}. "
+        f"Available tools: {allowed or 'coding_finish'}."
     )
 
 
