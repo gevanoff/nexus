@@ -13,7 +13,7 @@ Nexus exposes the resident `mlx-community/GLM-5.2-4bit` model through distinct a
 
 Gateway uses a conservative dependency-free estimate because its process cannot assume the huge tokenizer is mounted: ASCII code/JSON is charged at three characters per token and non-ASCII text at 1.5. Direct, unprofiled GLM IDs retain the legacy `MLX_GLM_MAX_INPUT_CHARS` fallback.
 
-Coding Workspaces count serialized messages and native tool schemas. The old 64,000-character threshold remains only for unprofiled models. Alias output caps also allow the GLM coding and long routes to exceed the global 8,192-token fallback.
+Coding Workspaces count serialized messages and native tool schemas. The old 64,000-character threshold remains only for unprofiled models. Alias output caps also allow the GLM coding and long routes to exceed the global 8,192-token fallback. When a tracked coding selector is rerouted to a different backend model, compaction and completion budgets are recalculated from an alias matching that resolved backend/model rather than from the original selector name.
 
 Context, output, and thinking policies are granted only by an explicitly selected alias. A raw upstream model ID does not inherit the `long` alias output allowance, and client-supplied `enable_thinking` values cannot override the selected profile. Alias-to-model matching is case-insensitive but still requires the configured backend and model identity to agree.
 
