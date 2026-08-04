@@ -54,8 +54,12 @@ def test_repository_aliases_separate_glm_roles():
 
 def test_token_estimator_is_conservative():
     code = "def handler(value):\n    return value\n" * 100
+    cjk = "漢字" * 100
+    emoji = "🧠" * 100
     assert context_budget.estimate_text_tokens(code) >= len(code) // 3
-    assert context_budget.estimate_text_tokens("漢字" * 100) >= 130
+    assert context_budget.estimate_text_tokens(cjk) >= 266
+    assert context_budget.estimate_text_tokens(emoji) >= 133
+    assert context_budget.TOKEN_ESTIMATOR_NAME == "nexus_conservative_chars_v2"
 
 
 def test_alias_input_budget_overrides_legacy_char_guard(monkeypatch):
@@ -180,7 +184,6 @@ def test_raw_glm_model_does_not_inherit_long_alias_output_cap(monkeypatch):
     assert routed.max_tokens is None
 
 
-
 def test_oversized_coder_request_uses_matching_long_policy(monkeypatch):
     coder = _glm_alias(max_input_tokens=100_000, max_tokens_cap=16_384)
     long_alias = _glm_alias(
@@ -208,7 +211,6 @@ def test_oversized_coder_request_uses_matching_long_policy(monkeypatch):
     )
 
     assert selected is long_alias
-
 
 
 def test_coding_budgets_follow_resolved_model_instead_of_selector(monkeypatch):
