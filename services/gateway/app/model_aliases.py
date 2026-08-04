@@ -21,6 +21,9 @@ class ModelAlias:
     context_window: Optional[int] = None
     tools: Optional[bool] = None
     max_tokens_cap: Optional[int] = None
+    max_input_tokens: Optional[int] = None
+    coding_context_reset_tokens: Optional[int] = None
+    thinking_enabled: Optional[bool] = None
     temperature_cap: Optional[float] = None
     label: str = ""
     coding: Optional[bool] = None
@@ -62,6 +65,7 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         default_strong_model = S.MLX_MODEL_STRONG
     strong_context_window = S.VLLM_MAX_MODEL_LEN if default_provider == "vllm" else 131_072
     strong_tool_parser = "xlam" if default_provider == "vllm" else "glm4_moe"
+    mlx_context_policy = default_provider == "mlx"
 
     return {
         # These four are the canonical policy surface.
@@ -94,6 +98,10 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             upstream_model=default_strong_model,
             context_window=strong_context_window,
             tools=True,
+            max_tokens_cap=16_384 if mlx_context_policy else None,
+            max_input_tokens=100_000 if mlx_context_policy else None,
+            coding_context_reset_tokens=90_000 if mlx_context_policy else None,
+            thinking_enabled=True if mlx_context_policy else None,
             coding=False,
             supports_tool_choice=("none", "auto", "required", "named"),
             supports_parallel_tool_calls=True,
@@ -125,8 +133,12 @@ def _default_aliases() -> Dict[str, ModelAlias]:
         "long": ModelAlias(
             backend=default_backend,
             upstream_model=default_strong_model,
-            context_window=strong_context_window,
+            context_window=131_072 if mlx_context_policy else strong_context_window,
             tools=True,
+            max_tokens_cap=24_576 if mlx_context_policy else None,
+            max_input_tokens=104_000 if mlx_context_policy else None,
+            coding_context_reset_tokens=94_000 if mlx_context_policy else None,
+            thinking_enabled=True if mlx_context_policy else None,
             coding=False,
             supports_tool_choice=("none", "auto", "required", "named"),
             supports_parallel_tool_calls=True,
@@ -138,7 +150,10 @@ def _default_aliases() -> Dict[str, ModelAlias]:
             upstream_model="mlx-community/GLM-5.2-4bit",
             context_window=131_072,
             tools=True,
-            max_tokens_cap=2048,
+            max_tokens_cap=16_384,
+            max_input_tokens=100_000,
+            coding_context_reset_tokens=90_000,
+            thinking_enabled=True,
             label="GLM-5.2 4-bit",
             coding=True,
             huge_candidate=True,
@@ -221,6 +236,19 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
         if isinstance(mt, int) and mt > 0:
             max_tokens_cap = mt
 
+        input_limit_raw = v.get("max_input_tokens") or v.get("input_token_limit")
+        max_input_tokens = (
+            input_limit_raw
+            if isinstance(input_limit_raw, int) and input_limit_raw > 0
+            else None
+        )
+        reset_raw = v.get("coding_context_reset_tokens") or v.get("context_reset_tokens")
+        coding_context_reset_tokens = (
+            reset_raw if isinstance(reset_raw, int) and reset_raw > 0 else None
+        )
+        thinking_raw = v.get("thinking_enabled")
+        thinking_enabled = thinking_raw if isinstance(thinking_raw, bool) else None
+
         tc = v.get("temperature_cap") or v.get("temp_cap")
         temperature_cap: Optional[float] = None
         if isinstance(tc, (int, float)) and tc >= 0:
@@ -270,6 +298,9 @@ def _parse_alias_value(v: Any) -> Optional[ModelAlias]:
             context_window=context_window,
             tools=tools,
             max_tokens_cap=max_tokens_cap,
+            max_input_tokens=max_input_tokens,
+            coding_context_reset_tokens=coding_context_reset_tokens,
+            thinking_enabled=thinking_enabled,
             temperature_cap=temperature_cap,
             label=label,
             coding=coding,

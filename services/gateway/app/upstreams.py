@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app.backends import backend_provider_name, get_registry
 from app.config import S, logger
+from app.context_budget import TOKEN_ESTIMATOR_NAME, estimate_tokens
 from app.httpx_client import httpx_client as _httpx_client
 from app.model_aliases import get_alias, get_aliases
 from app.models import ChatCompletionRequest
@@ -310,12 +311,66 @@ def _log_invalid_response_tool_calls(
         )
 
 
-def _mlx_glm_input_chars(req: ChatCompletionRequest) -> int:
-    payload = req.model_dump(
+def _mlx_glm_input_payload(req: ChatCompletionRequest) -> Dict[str, Any]:
+    return req.model_dump(
         include={"messages", "tools", "tool_choice", "response_format", "chat_template_kwargs"},
         exclude_none=True,
     )
-    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str))
+
+
+def _mlx_glm_input_chars(req: ChatCompletionRequest) -> int:
+    return len(json.dumps(_mlx_glm_input_payload(req), ensure_ascii=False, separators=(",", ":"), default=str))
+
+
+def _alias_matches_backend(alias: Any, *, backend_name: str) -> bool:
+    registry = get_registry()
+    alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
+    resolved_backend = registry.resolve_backend_class(backend_name) or backend_name
+    return alias_backend == resolved_backend
+
+
+def _alias_matches_target(alias: Any, *, backend_name: str, model_name: str) -> bool:
+    if alias is None:
+        return False
+    try:
+        if not _alias_matches_backend(alias, backend_name=backend_name):
+            return False
+    except Exception:
+        return False
+    return (
+        str(alias.upstream_model or "").strip().lower()
+        == str(model_name or "").strip().lower()
+    )
+
+
+def _request_alias_policy(
+    req: ChatCompletionRequest,
+    *,
+    backend_name: str,
+    model_name: str,
+) -> Any:
+    requested_name = str(req.model or "").strip().lower()
+    alias = get_alias(requested_name)
+    if not _alias_matches_target(alias, backend_name=backend_name, model_name=model_name):
+        return None
+
+    alias_limit = getattr(alias, "max_input_tokens", None)
+    if requested_name != "long" and isinstance(alias_limit, int) and alias_limit > 0:
+        input_tokens = estimate_tokens(_mlx_glm_input_payload(req))
+        if input_tokens > alias_limit:
+            long_alias = get_alias("long")
+            long_limit = getattr(long_alias, "max_input_tokens", None)
+            if (
+                _alias_matches_target(
+                    long_alias,
+                    backend_name=backend_name,
+                    model_name=model_name,
+                )
+                and isinstance(long_limit, int)
+                and input_tokens <= long_limit
+            ):
+                return long_alias
+    return alias
 
 
 def _enforce_mlx_glm_input_limit(
@@ -334,6 +389,33 @@ def _enforce_mlx_glm_input_limit(
     normalized_model = str(model_name or "").strip().lower()
     if normalized_model not in configured_glm_models and "glm-5.2" not in normalized_model:
         return
+
+    alias = _request_alias_policy(
+        req,
+        backend_name=backend_name,
+        model_name=model_name,
+    )
+    alias_limit = getattr(alias, "max_input_tokens", None) if alias is not None else None
+    if isinstance(alias_limit, int) and alias_limit > 0:
+        input_tokens = estimate_tokens(_mlx_glm_input_payload(req))
+        if input_tokens <= alias_limit:
+            return
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "mlx_glm_input_too_large",
+                "model": model_name,
+                "requested_alias": str(req.model or ""),
+                "input_tokens_estimate": input_tokens,
+                "max_input_tokens": alias_limit,
+                "context_window": getattr(alias, "context_window", None),
+                "token_estimator": TOKEN_ESTIMATOR_NAME,
+                "message": (
+                    "GLM-5.2 input exceeds this alias's reserved context budget. "
+                    "Use the long profile, compact the conversation, or reduce attached tool/file context."
+                ),
+            },
+        )
 
     try:
         limit = int(getattr(S, "MLX_GLM_MAX_INPUT_CHARS", 98_304) or 0)
@@ -354,9 +436,8 @@ def _enforce_mlx_glm_input_limit(
             "input_chars": input_chars,
             "max_input_chars": limit,
             "message": (
-                "GLM-5.2 input exceeds the interactive latency guard. "
-                "Start a new or compacted conversation, reduce attached tool/file context, "
-                "or select a different model."
+                "GLM-5.2 input exceeds the fallback interactive latency guard. "
+                "Use a configured GLM alias, start a compacted conversation, or reduce attached context."
             ),
         },
     )
@@ -387,13 +468,6 @@ def _enforce_backend_input_limit(req: ChatCompletionRequest, *, backend_name: st
     )
 
 
-def _alias_matches_backend(alias: Any, *, backend_name: str) -> bool:
-    registry = get_registry()
-    alias_backend = registry.resolve_backend_class(alias.backend) or alias.backend
-    resolved_backend = registry.resolve_backend_class(backend_name) or backend_name
-    return alias_backend == resolved_backend
-
-
 def _alias_cap_value(alias: Any, *, backend_name: str) -> int | None:
     if alias is None or alias.max_tokens_cap is None:
         return None
@@ -407,22 +481,29 @@ def _alias_cap_value(alias: Any, *, backend_name: str) -> int | None:
 
 
 def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, model_name: str) -> int | None:
-    requested_alias = get_alias(str(req.model or "").strip().lower())
+    requested_alias = _request_alias_policy(
+        req,
+        backend_name=backend_name,
+        model_name=model_name,
+    )
     cap = _alias_cap_value(requested_alias, backend_name=backend_name)
     if cap is not None:
         return cap
 
-    normalized_model = str(model_name or "").strip()
-    caps: list[int] = []
+    normalized_model = str(model_name or "").strip().lower()
+    compatible_caps: list[int] = []
     for alias in get_aliases().values():
-        if str(alias.upstream_model or "").strip() != normalized_model:
+        if str(alias.upstream_model or "").strip().lower() != normalized_model:
             continue
         candidate_cap = _alias_cap_value(alias, backend_name=backend_name)
         if candidate_cap is not None:
-            caps.append(candidate_cap)
-    if not caps:
+            compatible_caps.append(candidate_cap)
+    if not compatible_caps:
         return None
-    return max(caps)
+    # A raw upstream model ID has no profile of its own. Keep it from silently
+    # acquiring the largest alias allowance by applying the most conservative
+    # cap configured for the same backend/model pair.
+    return min(compatible_caps)
 
 
 def _bounded_max_tokens(
@@ -451,6 +532,12 @@ def route_request_for_backend(req: ChatCompletionRequest, backend_name: str, mod
     _enforce_backend_input_limit(req, backend_name=_resolved)
     _enforce_mlx_glm_input_limit(req, backend_name=_resolved, model_name=model_name)
     updates: Dict[str, Any] = {"model": model_name}
+    alias = _request_alias_policy(req, backend_name=_resolved, model_name=model_name)
+    thinking_enabled = getattr(alias, "thinking_enabled", None) if alias is not None else None
+    if provider == "mlx" and _model_uses_glm_thinking_template(model_name) and isinstance(thinking_enabled, bool):
+        kwargs = dict(req.chat_template_kwargs or {})
+        kwargs["enable_thinking"] = thinking_enabled
+        updates["chat_template_kwargs"] = kwargs
     max_tokens = _bounded_max_tokens(
         req,
         backend_name=_resolved,

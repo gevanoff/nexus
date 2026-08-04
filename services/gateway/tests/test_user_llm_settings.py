@@ -380,7 +380,8 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["coder"]["backend"] == "local_mlx"
     assert aliases["coder"]["model"] == mlx_model
     assert aliases["coder"]["context_window"] == 131072
-    assert aliases["mlx"]["context_window"] == 131072
+    assert aliases["mlx"]["context_window"] == 32768
+    assert aliases["mlx"]["thinking_enabled"] is False
     assert aliases["fast"]["backend"] == "local_vllm_fast"
     assert aliases["fast"]["model"] == fast_model
     assert aliases["fast"]["context_window"] == 65536
@@ -397,12 +398,14 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["fast-reasoning"]["context_window"] == 65536
     assert aliases["fast-reasoning"]["max_tokens_cap"] == 2048
     assert aliases["long"]["context_window"] == 131072
+    assert aliases["long"]["thinking_enabled"] is True
     assert aliases["long"]["tools"] is True
-    assert aliases["ai2-chat"]["context_window"] == 131072
-    assert aliases["reasoning"]["backend"] == "local_vllm"
-    assert aliases["reasoning"]["model"] == strong_model
-    assert aliases["reasoning"]["context_window"] == 65536
-    assert aliases["reasoning"]["max_tokens_cap"] == 4096
+    assert aliases["ai2-chat"]["context_window"] == 32768
+    assert aliases["reasoning"]["backend"] == "local_mlx"
+    assert aliases["reasoning"]["model"] == mlx_model
+    assert aliases["reasoning"]["context_window"] == 131072
+    assert aliases["reasoning"]["max_tokens_cap"] == 16384
+    assert aliases["reasoning"]["thinking_enabled"] is True
     assert aliases["glm-5.2"]["huge_candidate"] is True
     assert aliases["glm-5.2"]["huge_default"] is True
     assert aliases["glm-5.2"]["context_window"] == 131072

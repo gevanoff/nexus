@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.backends import backend_hostname, get_admission_controller, get_registry, llm_backends
 from app import coding_model_policy
+from app import context_budget
 from app import coding_semantic_memory
 from app import coding_workspace as cw
 from app.coding_runtime_guardrails import (
@@ -168,11 +169,64 @@ def _text_tool_max_completion_tokens() -> int:
         return 256
 
 
-def _max_completion_tokens_for_route(model: str, backend: str) -> int:
+def _resolved_alias_for_route(
+    model: str,
+    backend: str,
+    upstream_model: str,
+) -> Any:
+    aliases = get_aliases()
+    requested = aliases.get(str(model or "").strip().lower())
+    if not backend and not upstream_model:
+        return requested
+
+    registry = get_registry()
+    resolver = getattr(registry, "resolve_backend_class", None)
+
+    def resolve_backend(value: str) -> str:
+        if callable(resolver):
+            return resolver(value) or value
+        return value
+
+    resolved_backend = resolve_backend(backend)
+    normalized_upstream = str(upstream_model or "").strip().lower()
+
+    def matches(alias: Any) -> bool:
+        if alias is None:
+            return False
+        if resolve_backend(alias.backend) != resolved_backend:
+            return False
+        if not normalized_upstream:
+            return alias is requested
+        return str(alias.upstream_model or "").strip().lower() == normalized_upstream
+
+    if matches(requested):
+        return requested
+
+    matching_coding_aliases = [
+        alias
+        for alias in aliases.values()
+        if alias is not requested and alias.coding is True and matches(alias)
+    ]
+    if not matching_coding_aliases:
+        return None
+    return min(
+        matching_coding_aliases,
+        key=lambda alias: int(alias.context_window or 2**31),
+    )
+
+
+def _max_completion_tokens_for_route(
+    model: str,
+    backend: str,
+    upstream_model: str = "",
+) -> int:
     cap = _max_completion_tokens()
-    alias = get_aliases().get(str(model or "").strip().lower())
+    alias = _resolved_alias_for_route(model, backend, upstream_model)
     if alias is not None and alias.max_tokens_cap is not None:
-        cap = min(cap, int(alias.max_tokens_cap))
+        try:
+            cap = max(128, min(int(alias.max_tokens_cap), 32_768))
+        except Exception:
+            pass
     if not _backend_supports_tool_calling(backend):
         cap = min(cap, _text_tool_max_completion_tokens())
     return cap
@@ -214,6 +268,31 @@ def _context_reset_chars(value: Optional[int] = None) -> int:
         return max(20_000, min(configured, 64_000))
     except Exception:
         return 64_000
+
+
+def _context_reset_tokens(
+    value: Optional[int] = None,
+    *,
+    model: str = "",
+    backend: str = "",
+    upstream_model: str = "",
+) -> int:
+    alias = _resolved_alias_for_route(model, backend, upstream_model)
+    max_input_tokens = getattr(alias, "max_input_tokens", None) if alias is not None else None
+
+    def _bounded_reset(candidate: int) -> int:
+        reset_tokens = max(8_000, candidate)
+        if isinstance(max_input_tokens, int) and max_input_tokens > 0:
+            reset_tokens = min(reset_tokens, max_input_tokens)
+        return max(1, reset_tokens)
+
+    alias_limit = getattr(alias, "coding_context_reset_tokens", None) if alias is not None else None
+    if isinstance(alias_limit, int) and alias_limit > 0:
+        return _bounded_reset(alias_limit)
+    context_window = getattr(alias, "context_window", None) if alias is not None else None
+    if isinstance(context_window, int) and context_window > 0:
+        return _bounded_reset(int(context_window * 0.8))
+    return max(8_000, context_budget.estimate_char_budget_tokens(_context_reset_chars(value)))
 
 
 def _mission_for_task(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -363,6 +442,14 @@ def _messages_char_count(messages: Sequence[ChatMessage]) -> int:
         except Exception:
             total += len(str(message.content or ""))
     return total
+
+
+def _messages_token_count(
+    messages: Sequence[ChatMessage],
+    *,
+    tools: Optional[Sequence[ToolSpec]] = None,
+) -> int:
+    return context_budget.estimate_chat_tokens(messages, tools=tools)
 
 
 def _max_no_tool_call_cycles() -> int:
@@ -2864,6 +2951,21 @@ async def _run_agent(
             },
         )
         context_reset_chars = _context_reset_chars(context_policy.get("context_reset_chars"))
+        context_reset_tokens = _context_reset_tokens(
+            context_policy.get("context_reset_chars"),
+            model=model,
+            backend=backend,
+            upstream_model=upstream_model,
+        )
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_context_reset_tokens": context_reset_tokens,
+                "agent_context_reset_chars_fallback": context_reset_chars,
+                "agent_context_token_estimator": context_budget.TOKEN_ESTIMATOR_NAME,
+            },
+        )
         persisted_progress = progress_state_from_dict(task.get("agent_progress_state"))
         prior_observation = persisted_progress.observation
         validation_revision = prior_observation.validation_revision if prior_observation is not None else 0
@@ -2935,8 +3037,32 @@ async def _run_agent(
                         },
                     )
             context_chars = _messages_char_count(messages)
+            request_text_tool_mode = not _backend_supports_tool_calling(backend)
+            context_tokens = _messages_token_count(
+                messages,
+                tools=None if request_text_tool_mode else tools,
+            )
+            resolved_context_reset_tokens = _context_reset_tokens(
+                context_policy.get("context_reset_chars"),
+                model=model,
+                backend=backend,
+                upstream_model=upstream_model,
+            )
+            if resolved_context_reset_tokens != context_reset_tokens:
+                context_reset_tokens = resolved_context_reset_tokens
+                await asyncio.to_thread(
+                    _mutate_task,
+                    task_id,
+                    {
+                        "agent_context_reset_tokens": context_reset_tokens,
+                        "agent_context_reset_route": {
+                            "backend": backend,
+                            "upstream_model": upstream_model,
+                        },
+                    },
+                )
             reset_for_cycles = context_reset_cycles > 0 and cycle > 1 and (cycle - 1) % context_reset_cycles == 0
-            reset_for_size = cycle > 1 and context_chars >= context_reset_chars
+            reset_for_size = cycle > 1 and context_tokens >= context_reset_tokens
             if reset_for_cycles or reset_for_size:
                 latest_task = await asyncio.to_thread(cw.load_task, task_id)
                 request_text_tool_mode = not _backend_supports_tool_calling(backend)
@@ -2976,7 +3102,7 @@ async def _run_agent(
                 tools=None if request_text_tool_mode else tools,
                 tool_choice=None if request_text_tool_mode else "auto",
                 temperature=0.1,
-                max_tokens=_max_completion_tokens_for_route(model, backend),
+                max_tokens=_max_completion_tokens_for_route(model, backend, upstream_model),
                 stream=False,
             )
             resp, backend, upstream_model = await _call_backend_chat_with_retry(

@@ -40,7 +40,7 @@ def test_interactive_alias_caps_support_structured_outputs():
     assert aliases["fast"]["max_tokens_cap"] == 2048
     assert aliases["fast-reasoning"]["max_tokens_cap"] == 2048
     assert aliases["default"]["max_tokens_cap"] == 4096
-    assert aliases["reasoning"]["max_tokens_cap"] == 4096
+    assert aliases["reasoning"]["max_tokens_cap"] == 16384
 
 
 @pytest.mark.asyncio

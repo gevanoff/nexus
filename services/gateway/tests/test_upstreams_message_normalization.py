@@ -177,6 +177,7 @@ def test_normalize_openai_tools_payload_drops_strict_for_legacy_vllm():
 
 def test_glm_input_guard_rejects_oversized_prompt(monkeypatch):
     monkeypatch.setattr(upstreams.S, "MLX_GLM_MAX_INPUT_CHARS", 100, raising=False)
+    monkeypatch.setattr(upstreams, "get_alias", lambda _name: None)
     request = ChatCompletionRequest(
         model="coder",
         messages=[{"role": "user", "content": "x" * 200}],
