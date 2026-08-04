@@ -375,7 +375,7 @@ def finalize_successful_run(
         base_counts = base_changes.get("counts") if isinstance(base_changes.get("counts"), dict) else {}
         actual_delta = int(base_counts.get("total") or 0) > 0 or has_uncommitted
         require_file_changes = bool(completion.get("require_file_changes", True)) and expects_workspace_edits
-        require_commit_on_success = bool(completion.get("require_commit_on_success", True)) and (expects_workspace_edits or actual_delta)
+        require_commit_on_success = bool(completion.get("require_commit_on_success", True)) or actual_delta
         if require_file_changes and not actual_delta:
             raise RuntimeError("successful run has no meaningful delta versus the base branch")
         if actual_delta and completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
@@ -2923,6 +2923,7 @@ async def _run_agent(
         no_tool_cycles = 0
         semantic_reroutes = 0
         forced_action_rejections = 0
+        forced_action_rejection_state_key = ""
         semantic_failed_backends: set[str] = set()
         workspace_modified = False
         diff_reviewed_after_edit = False
@@ -3057,6 +3058,13 @@ async def _run_agent(
                     )
             latest_policy_task = await asyncio.to_thread(cw.load_task, task_id)
             tools = _tool_specs_for_task(latest_policy_task)
+            forced_action_rejection_state_key, forced_action_rejections = (
+                forced_action.rejection_counter_for_state(
+                    forced_action_rejection_state_key,
+                    forced_action_rejections,
+                    latest_policy_task,
+                )
+            )
             context_chars = _messages_char_count(messages)
             request_text_tool_mode = not _backend_supports_tool_calling(backend)
             context_tokens = _messages_token_count(

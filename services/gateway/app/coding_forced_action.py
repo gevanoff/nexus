@@ -79,6 +79,17 @@ def allowed_tool_names(task: Mapping[str, Any]) -> set[str]:
     return set(_ALLOWED_TOOLS) if active_state(task) else set()
 
 
+def rejection_counter_for_state(
+    previous_state_key: str,
+    previous_count: int,
+    task: Mapping[str, Any],
+) -> tuple[str, int]:
+    current_key = str(active_state(task).get("state_key") or "")
+    if current_key != str(previous_state_key or ""):
+        return current_key, 0
+    return current_key, max(0, int(previous_count or 0))
+
+
 def evaluate_tool_call(
     task: Mapping[str, Any],
     *,

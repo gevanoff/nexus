@@ -386,6 +386,28 @@ def test_no_progress_continuation_enters_forced_action_without_fresh_recovery(mo
     assert task["agent_forced_action"]["stage"] == "continuation"
 
 
+def test_granted_legacy_continuation_lease_is_retired_without_reset(monkeypatch):
+    task = _task(stagnant_cycles=8)
+    key = resilience.durable_state_key(task)
+    task["agent_stagnation_recovery_lease"] = {
+        "schema": "nexus_coding_recovery_lease.v1",
+        "id": f"{key}:legacy-continuation",
+        "state_key": key,
+        "kind": "continuation",
+        "run_id": "run-2",
+        "granted_cycle": 1,
+        "remaining_transitions": 1,
+        "status": "granted",
+    }
+    task["agent_cycle"] = 2
+    _install_workspace(monkeypatch, task)
+
+    assert memory._consume_recovery_lease(task["id"], task) is False
+    assert task["agent_progress_state"]["stagnant_cycles"] == 8
+    assert task["agent_stagnation_recovery_lease"]["status"] == "superseded"
+    assert task["agent_stagnation_recovery_lease"]["remaining_transitions"] == 0
+
+
 def test_guidance_interventions_are_scoped_to_run_but_recovery_credit_is_not():
     key = "durable-state"
     state_recovery = resilience.intervention_id(key, "recovery-continuation")

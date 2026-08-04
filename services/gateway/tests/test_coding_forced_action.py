@@ -47,6 +47,29 @@ def test_forced_action_persists_across_unchanged_resume_and_expires_on_progress(
     assert task["agent_forced_action"]["status"] == "superseded"
 
 
+def test_rejection_counter_resets_when_forced_state_changes_or_expires():
+    task = _task()
+    first_key = resilience.durable_state_key(task)
+    task["agent_forced_action"] = forced.activate(
+        task,
+        state_key=first_key,
+        run_id="run-2",
+        cycle=6,
+        stage="interrupt",
+        required_action="Add the regression test.",
+    )
+    key, count = forced.rejection_counter_for_state("", 1, task)
+    assert key == first_key
+    assert count == 0
+    key, count = forced.rejection_counter_for_state(key, 1, task)
+    assert count == 1
+
+    task["agent_progress_state"]["observation"]["workspace_fingerprint"] = "edited"
+    key, count = forced.rejection_counter_for_state(key, 1, task)
+    assert key == ""
+    assert count == 0
+
+
 def test_forced_action_allows_only_edits_validation_diff_or_finish():
     task = _task()
     key = resilience.durable_state_key(task)

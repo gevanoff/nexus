@@ -441,6 +441,30 @@ def _consume_recovery_lease(task_id: str, task: Dict[str, Any]) -> bool:
     lease = task.get("agent_stagnation_recovery_lease") if isinstance(task.get("agent_stagnation_recovery_lease"), dict) else {}
     if str(lease.get("status") or "") != "granted":
         return False
+    if str(lease.get("kind") or "") == "continuation":
+        def retire_legacy_continuation(latest: Dict[str, Any]) -> None:
+            current = (
+                latest.get("agent_stagnation_recovery_lease")
+                if isinstance(latest.get("agent_stagnation_recovery_lease"), dict)
+                else {}
+            )
+            if (
+                str(current.get("id") or "") != str(lease.get("id") or "")
+                or str(current.get("status") or "") != "granted"
+                or str(current.get("kind") or "") != "continuation"
+            ):
+                return
+            current = dict(current)
+            current.update({
+                "status": "superseded",
+                "remaining_transitions": 0,
+                "superseded_at": time.time(),
+                "superseded_reason": "continuation recovery no longer resets unchanged state",
+            })
+            latest["agent_stagnation_recovery_lease"] = current
+
+        cw.mutate_task(task_id, retire_legacy_continuation)
+        return False
     if resilience.durable_state_key(task) != str(lease.get("state_key") or ""):
         return False
     if _as_int(task.get("agent_cycle")) <= _as_int(lease.get("granted_cycle")):

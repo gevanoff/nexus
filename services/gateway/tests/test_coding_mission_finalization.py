@@ -28,12 +28,12 @@ def _task(**extra):
     return task
 
 
-def _finalizer_mocks(monkeypatch, *, changed=True, commit_ok=True):
+def _finalizer_mocks(monkeypatch, *, changed=True, base_delta=True, commit_ok=True):
     task = _task()
     stored = dict(task)
     monkeypatch.setattr(cw, "load_task", lambda _task_id: dict(stored))
     monkeypatch.setattr(cw, "git_status", lambda *_a, **_k: {"ok": True})
-    monkeypatch.setattr(cw, "git_diff", lambda *_a, **_k: {"ok": True, "changes": {"counts": {"total": 1}}})
+    monkeypatch.setattr(cw, "git_diff", lambda *_a, **_k: {"ok": True, "changes": {"counts": {"total": 1 if base_delta else 0}}})
     monkeypatch.setattr(cw, "git_change_summary", lambda *_a, **_k: {"ok": True, "counts": {"total": 1 if changed else 0}})
     monkeypatch.setattr(cw, "git_head", lambda *_a, **_k: {"ok": True, "commit": "checkpoint" if not changed else "start"})
     monkeypatch.setattr(cw, "commit_task", lambda *_a, **_k: {"ok": commit_ok, "last_commit": "final", "error": "commit failed" if not commit_ok else ""})
@@ -69,7 +69,7 @@ def test_coding_finalization_uses_existing_checkpoint_commit(monkeypatch):
 
 
 def test_review_finalization_succeeds_without_new_changes_or_commit(monkeypatch):
-    stored = _finalizer_mocks(monkeypatch, changed=False)
+    stored = _finalizer_mocks(monkeypatch, changed=False, base_delta=False)
     stored["prompt"] = "Review this workspace for concrete findings and missing tests."
     stored["mission"] = {
         "completion_policy": {
@@ -82,6 +82,31 @@ def test_review_finalization_succeeds_without_new_changes_or_commit(monkeypatch)
     result = ca.finalize_successful_run("task-1", finish_summary="No actionable defect found.", run_id="run-1")
     assert result["ok"] is True
     assert result["finalization_status"] == "completed"
+
+
+def test_review_finalization_commits_when_review_produces_delta(monkeypatch):
+    stored = _finalizer_mocks(monkeypatch, changed=True, base_delta=True)
+    stored["prompt"] = "Review this workspace for concrete findings and missing tests."
+    stored["mission"] = {
+        "completion_policy": {
+            "require_file_changes": False,
+            "require_commit_on_success": False,
+            "require_validation_after_edit": True,
+            "require_diff_review_after_edit": True,
+        }
+    }
+    commits = []
+    monkeypatch.setattr(
+        cw,
+        "commit_task",
+        lambda *_a, **_k: commits.append(True) or {"ok": True, "last_commit": "review-fix"},
+    )
+
+    result = ca.finalize_successful_run("task-1", finish_summary="Found and fixed a defect.", run_id="run-1")
+
+    assert result["ok"] is True
+    assert commits == [True]
+    assert result["final_commit"] == "review-fix"
 
 
 def test_coding_finalization_push_on_success(monkeypatch):
