@@ -18,6 +18,10 @@ The controller extracts the latest explicit model commitment framed as an edit, 
 
 Goals that are clearly review/audit-only default to no required file change and no required new commit. If a review produces edits, the ordinary validation, diff-review, and commit gates still apply. Fix-oriented goals retain the existing mandatory-delta behavior.
 
+## Observability
+
+Debug reports expose the active forced-action record, durable state key, required action, activation and resume counts, and the current allowed-tool list. Runtime events distinguish individual rejections (`forced_action_tool_rejected`), model reroutes (`forced_action_reroute`), and terminal policy failure (`forced_action_noncompliance`). This makes enforcement failures separable from ordinary no-progress pauses.
+
 ## Compatibility
 
 Existing task fields remain optional. Stale forced-action records are ignored when their durable state key no longer matches. New no-progress continuations do not receive a recovery-counter reset; legacy metadata remains readable but is not revived into fresh continuation credit.
