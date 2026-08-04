@@ -120,6 +120,8 @@ def test_fix_mission_still_requires_changes_and_commit():
     )
     assert mission["completion_policy"]["require_file_changes"] is True
     assert mission["completion_policy"]["require_commit_on_success"] is True
+
+
 def test_commitment_extraction_stops_before_transition_clause():
     events = [
         {
@@ -191,6 +193,8 @@ def test_forced_action_prompts_only_advertise_allowed_actions():
     assert "coding_git_diff" not in text_guidance
     assert all("coding_search_text" not in item for item in manifest["guidance"])
     assert set(manifest["tool_names"]) == forced.allowed_tool_names(task)
+
+
 def test_completed_commitment_is_not_reused_as_required_action():
     task = _task()
     task["mission"] = {"completion_policy": {"require_file_changes": True}}
@@ -266,3 +270,13 @@ def test_pending_commitment_survives_until_a_tool_is_attempted():
         {"type": "assistant", "content": "I have enough evidence. I'll add the regression test now."},
     ]
     assert resilience.pending_concrete_commitment(events) == "Add the regression test now."
+
+
+def test_completed_commitment_expires_when_only_tool_finished_remains_after_rollover():
+    events = [
+        {"type": "assistant", "content": "I'll run with the correct relative path.", "ts": 1},
+        {"type": "tool_finished", "name": "coding_run_command", "result": {"ok": True}, "ts": 2},
+        {"type": "assistant", "content": "The targeted validation completed; I need to decide what follows.", "ts": 3},
+    ]
+
+    assert resilience.pending_concrete_commitment(events) == ""
