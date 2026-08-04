@@ -5,9 +5,9 @@ import math
 from typing import Any, Sequence
 
 
-TOKEN_ESTIMATOR_NAME = "nexus_conservative_chars_v1"
+TOKEN_ESTIMATOR_NAME = "nexus_conservative_chars_v2"
 _ASCII_CHARS_PER_TOKEN = 3.0
-_NON_ASCII_CHARS_PER_TOKEN = 1.5
+_NON_ASCII_CHARS_PER_TOKEN = 0.75
 
 
 def estimate_text_tokens(text: str) -> int:
@@ -15,9 +15,11 @@ def estimate_text_tokens(text: str) -> int:
 
     Gateway cannot assume the huge model tokenizer is present in its own
     process. This estimator deliberately budgets code and JSON more
-    conservatively than the common four-characters-per-token heuristic while
-    charging non-ASCII text more heavily. Alias limits retain explicit safety
-    headroom around this estimate.
+    conservatively than the common four-characters-per-token heuristic. It
+    charges non-ASCII text at more than one estimated token per code point so
+    CJK, emoji, and other multi-byte text cannot slip past alias limits merely
+    because Python reports them as one character. Alias limits retain explicit
+    safety headroom around this estimate.
     """
 
     value = str(text or "")
