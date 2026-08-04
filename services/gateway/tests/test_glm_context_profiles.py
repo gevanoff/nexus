@@ -208,3 +208,72 @@ def test_oversized_coder_request_uses_matching_long_policy(monkeypatch):
     )
 
     assert selected is long_alias
+
+
+
+def test_coding_budgets_follow_resolved_model_instead_of_selector(monkeypatch):
+    coder = model_aliases.ModelAlias(
+        backend="local_mlx",
+        upstream_model="mlx-community/GLM-5.2-4bit",
+        context_window=131_072,
+        coding_context_reset_tokens=90_000,
+        max_tokens_cap=16_384,
+        coding=True,
+    )
+    deepseek = model_aliases.ModelAlias(
+        backend="local_mlx",
+        upstream_model="mlx-community/DeepSeek-R1-0528-4bit",
+        context_window=65_536,
+        max_tokens_cap=2_048,
+        coding=True,
+    )
+
+    class Registry:
+        @staticmethod
+        def resolve_backend_class(value):
+            return value
+
+    monkeypatch.setattr(
+        coding_agent,
+        "get_aliases",
+        lambda: {"coder": coder, "deepseek-r1": deepseek},
+    )
+    monkeypatch.setattr(coding_agent, "get_registry", lambda: Registry())
+    monkeypatch.setattr(coding_agent, "_backend_supports_tool_calling", lambda _backend: True)
+
+    assert coding_agent._context_reset_tokens(
+        64_000,
+        model="coder",
+        backend="local_mlx",
+        upstream_model=deepseek.upstream_model,
+    ) == 52_428
+    assert coding_agent._max_completion_tokens_for_route(
+        "coder",
+        "local_mlx",
+        deepseek.upstream_model,
+    ) == 2_048
+
+
+def test_coding_budgets_keep_requested_alias_when_route_matches(monkeypatch):
+    coder = _glm_alias()
+
+    class Registry:
+        @staticmethod
+        def resolve_backend_class(value):
+            return value
+
+    monkeypatch.setattr(coding_agent, "get_aliases", lambda: {"coder": coder})
+    monkeypatch.setattr(coding_agent, "get_registry", lambda: Registry())
+    monkeypatch.setattr(coding_agent, "_backend_supports_tool_calling", lambda _backend: True)
+
+    assert coding_agent._context_reset_tokens(
+        64_000,
+        model="coder",
+        backend="local_mlx",
+        upstream_model=coder.upstream_model,
+    ) == 90_000
+    assert coding_agent._max_completion_tokens_for_route(
+        "coder",
+        "local_mlx",
+        coder.upstream_model,
+    ) == 16_384
