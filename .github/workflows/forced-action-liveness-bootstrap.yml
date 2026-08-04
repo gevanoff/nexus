@@ -59,6 +59,22 @@ jobs:
       - name: Apply liveness fixes
         run: python services/gateway/tools/apply_forced_action_liveness.py
 
+      - name: Align forced prompt with scoped tools
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("services/gateway/app/coding_agent.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''            "Use only a focused edit, a recognized targeted validation command, coding_git_diff, or coding_finish. "'''
+          new = '''            f"Use only the currently available tools: {', '.join(sorted(forced_action.allowed_tool_names(task))) or 'coding_finish'}. "'''
+          count = text.count(old)
+          if count != 1:
+              raise RuntimeError(f"expected one forced-prompt target, found {count}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
       - name: Prepare writable Gateway runtime paths
         run: |
           sudo mkdir -p \
