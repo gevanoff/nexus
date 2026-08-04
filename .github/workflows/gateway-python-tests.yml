@@ -60,7 +60,9 @@ jobs:
         shell: bash
         run: |
           git checkout origin/main -- .github/workflows/gateway-python-tests.yml
-          rm -f services/gateway/tools/address_pr63_review.py
+          rm -f \
+            services/gateway/tools/address_pr63_review.py \
+            .pr63-review-trigger
           git config user.name "Nexus Review Fix Bot"
           git config user.email "nexus-review-fix@users.noreply.github.com"
           git add -A
