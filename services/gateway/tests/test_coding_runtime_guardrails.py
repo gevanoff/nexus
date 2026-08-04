@@ -85,10 +85,10 @@ def test_glm_route_gets_longer_hard_limit_without_changing_default_routes() -> N
 
 
 @pytest.mark.asyncio
-async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypatch) -> None:
+async def test_real_agent_loop_enforces_forced_action_against_repeated_reads(monkeypatch) -> None:
     task = {
         "id": "code_test",
-        "prompt": "inspect",
+        "prompt": "Review this workspace for behavioral regressions and missing tests.",
         "agent_status": "queued",
         "agent_pause_requested": False,
         "agent_stop_requested": False,
@@ -104,19 +104,30 @@ async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypa
             "max_repeated_same_file_reads": 100,
         },
         "context_policy": {"context_reset_chars": 64_000},
+        "completion_policy": {"require_file_changes": False, "require_commit_on_success": False},
     }
-    tool_calls = 0
+    executed_reads = 0
+    advertised_tool_sets = []
 
     def mutate_task(_task_id, mutator):
         mutator(task)
         return task
 
     async def backend_call(req, backend, upstream_model, **kwargs):
+        names = []
+        for spec in req.tools or []:
+            if isinstance(spec, dict):
+                fn = spec.get("function")
+                if isinstance(fn, dict):
+                    names.append(str(fn.get("name") or ""))
+            elif getattr(spec, "function", None) is not None:
+                names.append(str(getattr(spec.function, "name", "") or ""))
+        advertised_tool_sets.append(names)
         return {}, backend, upstream_model
 
     def run_tool(_task_id, name, args, *, git_token_value):
-        nonlocal tool_calls
-        tool_calls += 1
+        nonlocal executed_reads
+        executed_reads += 1
         return {"ok": True, "path": args.get("path")}
 
     batch = [
@@ -124,7 +135,7 @@ async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypa
             "id": f"read-{index}",
             "function": {
                 "name": "coding_read_file_lines",
-                "arguments": json.dumps({"path": f"file-{index}.py", "start_line": 1}),
+                "arguments": json.dumps({"path": "services/gateway/app/coding_agent.py", "start_line": index + 1}),
             },
         }
         for index in range(3)
@@ -132,33 +143,21 @@ async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypa
     monkeypatch.setattr(coding_agent.cw, "load_task", lambda _task_id: task)
     monkeypatch.setattr(coding_agent.cw, "mutate_task", mutate_task)
     monkeypatch.setattr(coding_agent.cw, "save_task", lambda value: value)
-    monkeypatch.setattr(
-        coding_agent.cw,
-        "git_head",
-        lambda _task_id: {"ok": True, "commit": "abc123"},
-    )
-    monkeypatch.setattr(
-        coding_agent.cw,
-        "workspace_progress_fingerprint",
-        lambda _task_id: "unchanged",
-    )
+    monkeypatch.setattr(coding_agent.cw, "git_head", lambda _task_id: {"ok": True, "commit": "abc123"})
+    monkeypatch.setattr(coding_agent.cw, "workspace_progress_fingerprint", lambda _task_id: "unchanged")
     monkeypatch.setattr(coding_agent, "_settings_for_task_owner", lambda value: {})
     monkeypatch.setattr(coding_agent, "_mission_for_task", lambda value: mission)
     monkeypatch.setattr(coding_agent, "_system_prompt", lambda *args, **kwargs: "system")
     monkeypatch.setattr(coding_agent, "_task_context", lambda value: "task")
-    monkeypatch.setattr(coding_agent, "_tool_specs", lambda: [])
     monkeypatch.setattr(coding_agent, "_backend_supports_tool_calling", lambda backend: True)
     monkeypatch.setattr(coding_agent, "_max_completion_tokens_for_route", lambda *args: 64)
     monkeypatch.setattr(coding_agent, "_call_backend_chat_with_retry", backend_call)
-    monkeypatch.setattr(
-        coding_agent,
-        "_extract_assistant_message",
-        lambda response: coding_agent.ChatMessage(role="assistant", content=None, tool_calls=batch),
-    )
+    monkeypatch.setattr(coding_agent, "_extract_assistant_message", lambda response: coding_agent.ChatMessage(role="assistant", content=None, tool_calls=batch))
     monkeypatch.setattr(coding_agent, "_extract_assistant_thinking", lambda response: "")
     monkeypatch.setattr(coding_agent, "_extract_tool_calls", lambda response: batch)
     monkeypatch.setattr(coding_agent, "_run_tool", run_tool)
     monkeypatch.setattr(coding_agent, "_checkpoint_enabled", lambda: False)
+    monkeypatch.setattr(coding_agent, "_semantic_reroute_candidate", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         coding_agent,
         "decide_route",
@@ -177,28 +176,14 @@ async def test_real_agent_loop_grants_one_semantic_recovery_then_pauses(monkeypa
         context_reset_cycles=0,
     )
 
-    # The staged semantic checkpoint becomes controller guidance on the
-    # following cycle and earns exactly one reset. A fresh terminal-stage
-    # checkpoint then permits one final bounded action cycle. With no edit,
-    # validation, review, plan-state change, or finish transition afterward,
-    # the run still terminates deterministically on the next cycle.
-    checkpoint_cycle = coding_agent.coding_semantic_memory._stagnation_threshold(
-        {**task, "mission": mission}
-    )
-    expected_cycles = (
-        checkpoint_cycle
-        + 1
-        + int(mission["budget_policy"]["max_no_progress_cycles"])
-        + 1
-    )
-    assert tool_calls == expected_cycles * len(batch)
-    event_types = [str(item.get("type") or "") for item in task["agent_events"]]
-    assert event_types.count("investigation_checkpoint") == 1
-    assert event_types.count("no_progress_limit") == 1
+    rejected = [item for item in task["agent_events"] if item.get("type") == "forced_action_tool_rejected"]
+    assert len(rejected) >= 2
+    assert executed_reads < len(advertised_tool_sets) * len(batch)
+    assert "coding_read_file_lines" in advertised_tool_sets[0]
+    assert "coding_read_file_lines" not in advertised_tool_sets[-1]
     assert task["agent_status"] == "paused"
-    assert task["agent_stop_reason_code"] == "no_progress_limit"
-    assert task["agent_progress_state"]["stagnant_cycles"] == 9
-    assert task["agent_pause_requested"] is False
+    assert task["agent_stop_reason_code"] == "forced_action_noncompliance"
+    assert task["agent_forced_action"]["status"] == "active"
 
 
 def test_noop_write_fingerprint_is_not_progress(monkeypatch, tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from app.backends import backend_hostname, get_admission_controller, get_registr
 from app import coding_model_policy
 from app import context_budget
 from app import coding_semantic_memory
+from app import coding_forced_action as forced_action
 from app import coding_workspace as cw
 from app.coding_runtime_guardrails import (
     ProgressDecision,
@@ -319,6 +320,14 @@ def _repeated_state_read_decision(count: int, maximum: int) -> str:
     return "continue"
 
 
+def _tool_specs_for_task(task: Dict[str, Any]) -> List[ToolSpec]:
+    return forced_action.filter_tool_specs(_tool_specs(), task)
+
+
+def _forced_action_context(task: Dict[str, Any]) -> str:
+    return forced_action.prompt_context(task)
+
+
 def _cancelled_run_status(task: Dict[str, Any]) -> str:
     if bool(task.get("agent_pause_requested") or task.get("agent_stop_requested")):
         return "paused"
@@ -361,13 +370,26 @@ def finalize_successful_run(
             raise RuntimeError("final repository audit failed")
         change_counts = changes.get("counts") if isinstance(changes.get("counts"), dict) else {}
         has_uncommitted = int(change_counts.get("total") or 0) > 0
-        base_changes = diff.get("changes") if isinstance(diff.get("changes"), dict) else {}
-        base_counts = base_changes.get("counts") if isinstance(base_changes.get("counts"), dict) else {}
-        if completion.get("require_file_changes", True) and int(base_counts.get("total") or 0) <= 0:
-            raise RuntimeError("successful run has no meaningful delta versus the base branch")
-        if completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
+        latest = cw.load_task(task_id)
+        current_head = str(before.get("commit") or "")
+        start_head = str(latest.get("agent_start_head") or "")
+        checkpoint_for_run = str(latest.get("last_checkpoint_run_id") or "") == str(run_id or "")
+        committed_run_delta = bool(
+            (start_head and current_head and current_head != start_head)
+            or (
+                checkpoint_for_run
+                and current_head
+                and str(latest.get("last_checkpoint_commit") or "") == current_head
+            )
+        )
+        run_delta = has_uncommitted or committed_run_delta
+        require_file_changes = bool(completion.get("require_file_changes", True))
+        require_commit_on_success = bool(completion.get("require_commit_on_success", True)) or run_delta
+        if require_file_changes and not run_delta:
+            raise RuntimeError("successful run has no meaningful delta produced by this run")
+        if run_delta and completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
             raise RuntimeError("successful run lacks validation after the latest edit")
-        if completion.get("require_diff_review_after_edit", True) and not bool((snapshot.get("diff_review") or {}).get("diff_reviewed_after_latest_edit")):
+        if run_delta and completion.get("require_diff_review_after_edit", True) and not bool((snapshot.get("diff_review") or {}).get("diff_reviewed_after_latest_edit")):
             raise RuntimeError("successful run lacks diff review after the latest edit")
         if has_uncommitted:
             message = str(finish_summary or "Apply Nexus coding agent changes").strip().splitlines()[0][:160]
@@ -377,18 +399,12 @@ def finalize_successful_run(
             result["final_commit"] = str(commit.get("last_commit") or "")
             result["committed_at"] = time.time()
         else:
-            latest = cw.load_task(task_id)
-            after = cw.git_head(task_id)
-            candidate = str(after.get("commit") or latest.get("last_checkpoint_commit") or latest.get("last_commit") or "")
-            start_head = str(latest.get("agent_start_head") or "")
-            checkpoint_for_run = str(latest.get("last_checkpoint_run_id") or "") == str(run_id or "")
-            if completion.get("require_file_changes", True) and not candidate:
+            candidate = str(current_head or latest.get("last_checkpoint_commit") or latest.get("last_commit") or "")
+            if require_file_changes and not candidate:
                 raise RuntimeError("successful run has no branch commit")
-            if completion.get("require_file_changes", True) and start_head and candidate == start_head and not checkpoint_for_run:
-                raise RuntimeError("successful run produced no commit after run start")
             result["final_commit"] = candidate
             result["committed_at"] = float(latest.get("last_checkpoint_at") or latest.get("updated_at") or now)
-        if completion.get("require_commit_on_success", True) and not result["final_commit"]:
+        if require_commit_on_success and not result["final_commit"]:
             raise RuntimeError("successful run has no final commit")
         if publish.get("push") == "on_success" or publish.get("draft_pr") == "on_success":
             push = cw.push_task(task_id, remote=publish.get("remote") or "origin", git_token_value=git_token_value)
@@ -1854,24 +1870,33 @@ def _tool_specs() -> List[ToolSpec]:
     ]
 
 
-def coding_tool_manifest() -> Dict[str, Any]:
-    tools = [spec.model_dump(exclude_none=True) for spec in _tool_specs()]
-    guidance = [
-        "Use coding_tool_manifest when you need to inspect your workspace tool capabilities.",
-        "Commands run inside a Linux workspace shell. Use POSIX paths, forward slashes, and Linux command/env syntax such as ls, cat, grep, python3, VAR=value cmd, and $VAR.",
-        "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace.",
-        "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
-        "For work spanning several milestones, use coding_update_plan and keep milestone statuses current.",
-        "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
-        "Use coding_fetch_url for current public documentation or issue pages.",
-        "Do not invent imports, functions, methods, variables, or config keys; search and read definitions before using them.",
-        "Keep imports consolidated and avoid loading the same library multiple times.",
-        "If a service owns its own package root, run validation from that service directory, for example cwd=services/gateway for gateway tests that import app.",
-        "After editing, run a targeted validation command such as pytest, ruff check, python -m py_compile, node --check, npm test, or git diff --check.",
-        "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to make validation pass. Only add project-manifest or dependency files when the user explicitly asked for that scaffolding or the target service already uses it.",
-        "Placeholder handlers or comments like 'Add logic to ...' do not count as a fix.",
-        "After editing, inspect coding_git_diff before calling coding_finish.",
-    ]
+def coding_tool_manifest(task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    specs = _tool_specs_for_task(task) if isinstance(task, dict) else _tool_specs()
+    tools = [spec.model_dump(exclude_none=True) for spec in specs]
+    if isinstance(task, dict) and forced_action.active_state(task):
+        guidance = [
+            "Controller forced-action mode is active for the unchanged durable state.",
+            "Inspection, orientation, plan, and arbitrary shell tools are unavailable.",
+            "Make the required focused edit, or run a recognized targeted validation command.",
+            "After editing, call coding_git_diff and then coding_finish.",
+        ]
+    else:
+        guidance = [
+            "Use coding_tool_manifest when you need to inspect your workspace tool capabilities.",
+            "Commands run inside a Linux workspace shell. Use POSIX paths, forward slashes, and Linux command/env syntax such as ls, cat, grep, python3, VAR=value cmd, and $VAR.",
+            "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace.",
+            "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
+            "For work spanning several milestones, use coding_update_plan and keep milestone statuses current.",
+            "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
+            "Use coding_fetch_url for current public documentation or issue pages.",
+            "Do not invent imports, functions, methods, variables, or config keys; search and read definitions before using them.",
+            "Keep imports consolidated and avoid loading the same library multiple times.",
+            "If a service owns its own package root, run validation from that service directory, for example cwd=services/gateway for gateway tests that import app.",
+            "After editing, run a targeted validation command such as pytest, ruff check, python -m py_compile, node --check, npm test, or git diff --check.",
+            "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to make validation pass. Only add project-manifest or dependency files when the user explicitly asked for that scaffolding or the target service already uses it.",
+            "Placeholder handlers or comments like 'Add logic to ...' do not count as a fix.",
+            "After editing, inspect coding_git_diff before calling coding_finish.",
+        ]
     return {
         "tools": tools,
         "guidance": guidance,
@@ -1883,20 +1908,34 @@ def coding_tool_manifest() -> Dict[str, Any]:
     }
 
 
-def _text_tool_call_guidance() -> str:
+def _text_tool_call_guidance(task: Optional[Dict[str, Any]] = None) -> str:
     tools = []
-    for spec in _tool_specs():
+    specs = _tool_specs_for_task(task) if isinstance(task, dict) else _tool_specs()
+    for spec in specs:
         try:
             tools.append(str(spec.function.name))
         except Exception:
             continue
     names = ", ".join(tools)
+    if "coding_read_file_lines" in tools:
+        example = '<tool_call>{"name":"coding_read_file_lines","arguments":{"path":"README.md","start_line":1,"line_count":80}}</tool_call>. '
+    elif "coding_git_diff" in tools:
+        example = '<tool_call>{"name":"coding_git_diff","arguments":{}}</tool_call>. '
+    elif "coding_finish" in tools:
+        example = '<tool_call>{"name":"coding_finish","arguments":{"summary":"Blocked","success":false}}</tool_call>. '
+    else:
+        example = ""
+    manifest_hint = (
+        "Call coding_tool_manifest with include_parameters=true if you need exact parameter schemas. "
+        if "coding_tool_manifest" in tools
+        else ""
+    )
     return (
         "This selected backend does not receive native OpenAI tool definitions. "
         "Use text-form tool calls instead. To call a tool, respond with exactly one complete block and no prose: "
-        '<tool_call>{"name":"coding_read_file_lines","arguments":{"path":"README.md","start_line":1,"line_count":80}}</tool_call>. '
+        f"{example}"
         "Use JSON only inside the block. Do not wrap the block in Markdown fences. "
-        "Call coding_tool_manifest with include_parameters=true if you need exact parameter schemas. "
+        f"{manifest_hint}"
         f"Available tool names: {names}."
     )
 
@@ -2266,10 +2305,28 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
             "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
             "Do not stop at diagnosis alone when a focused fix is available. "
         )
+    forced_context = _forced_action_context(task)
+    if forced_context:
+        forced_request_bits = [f"Original user request:\n{original or '(none recorded)'}"]
+        if current and current != original:
+            forced_request_bits.append(f"Current run request:\n{current}")
+        text_call_guidance = f"{_text_tool_call_guidance(task)} " if text_tool_mode else ""
+        return (
+            "You are Nexus Coding Agent in controller-enforced forced-action mode. "
+            "Work by calling workspace tools, not by narrating. "
+            f"{text_call_guidance}"
+            "Do not inspect, orient, revise the project plan, or run arbitrary shell commands. "
+            "Use only a focused edit, a recognized targeted validation command, coding_git_diff, or coding_finish. "
+            "Do not push or open pull requests directly. Nexus performs successful finalization according to the mission contract. "
+            f"{forced_context} "
+            f"Allowed commands: {allowed or '(none)'}. "
+            f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
+            + "\n\n".join(forced_request_bits)
+        )
     if text_tool_mode:
         return (
             "You are Nexus Coding Agent in a constrained context window. Work by calling workspace tools, not by narrating. "
-            f"{_text_tool_call_guidance()} "
+            f"{_text_tool_call_guidance(task)} "
             "Use this loop: inspect files, make focused edits, run the requested validation, inspect coding_git_diff, then coding_finish. "
             "For multi-step work, create and maintain the durable project plan with coding_update_plan. "
             "Use small reads: coding_search_text first, then coding_read_file_lines with narrow ranges. "
@@ -2901,9 +2958,11 @@ async def _run_agent(
             ChatMessage(role="user", content=_text_tool_task_context(task) if initial_text_tool_mode else _task_context(task)),
         ]
         seen_guidance_count = len(_guidance_messages(task))
-        tools = _tool_specs()
+        tools = _tool_specs_for_task(task)
         no_tool_cycles = 0
         semantic_reroutes = 0
+        forced_action_rejections = 0
+        forced_action_rejection_state_key = ""
         semantic_failed_backends: set[str] = set()
         workspace_modified = False
         diff_reviewed_after_edit = False
@@ -3036,6 +3095,15 @@ async def _run_agent(
                             "summary": _clip_text(guidance_text, 1000),
                         },
                     )
+            latest_policy_task = await asyncio.to_thread(cw.load_task, task_id)
+            tools = _tool_specs_for_task(latest_policy_task)
+            forced_action_rejection_state_key, forced_action_rejections = (
+                forced_action.rejection_counter_for_state(
+                    forced_action_rejection_state_key,
+                    forced_action_rejections,
+                    latest_policy_task,
+                )
+            )
             context_chars = _messages_char_count(messages)
             request_text_tool_mode = not _backend_supports_tool_calling(backend)
             context_tokens = _messages_token_count(
@@ -3283,14 +3351,39 @@ async def _run_agent(
                     task_id,
                     {"type": "tool_started", "cycle": cycle, "tool_call_id": tool_call_id, "name": name, "args": _safe_args_preview(name, args)},
                 )
-                try:
-                    result = await asyncio.to_thread(_run_tool, task_id, name, args, git_token_value=git_token_value)
-                except HTTPException as exc:
-                    result = {"ok": False, "error": exc.detail}
-                except Exception as exc:
-                    result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                policy_task = await asyncio.to_thread(cw.load_task, task_id)
+                allowed_call, rejection = forced_action.evaluate_tool_call(
+                    policy_task,
+                    name=name,
+                    args=args,
+                    is_validation_command=_is_validation_command,
+                )
+                rejected_by_forced_action = not allowed_call
+                if rejected_by_forced_action:
+                    result = rejection
+                    forced_action_rejections += 1
+                    await asyncio.to_thread(
+                        _append_event,
+                        task_id,
+                        {
+                            "type": "forced_action_tool_rejected",
+                            "cycle": cycle,
+                            "name": name,
+                            "count": forced_action_rejections,
+                            "state_key": rejection.get("state_key"),
+                            "required_action": rejection.get("required_action"),
+                            "summary": rejection.get("message"),
+                        },
+                    )
+                else:
+                    try:
+                        result = await asyncio.to_thread(_run_tool, task_id, name, args, git_token_value=git_token_value)
+                    except HTTPException as exc:
+                        result = {"ok": False, "error": exc.detail}
+                    except Exception as exc:
+                        result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
-                state_read = _state_read_signature(name, args)
+                state_read = "" if rejected_by_forced_action else _state_read_signature(name, args)
                 repeated_state_reads = 0
                 if state_read:
                     repeated_state_reads = state_read_counts.get(state_read, 0) + 1
@@ -3393,6 +3486,63 @@ async def _run_agent(
                     messages.append(_text_tool_result_message(name=name, result=result))
                 else:
                     messages.append(_tool_message_for_result(tool_call_id=tool_call_id, result=result))
+
+                if rejected_by_forced_action and forced_action_rejections >= int((forced_action.active_state(policy_task) or {}).get("rejection_limit") or 2):
+                    fallback = None
+                    if not user_llm.is_user_model_id(model) and semantic_reroutes < _max_semantic_reroutes():
+                        fallback = _semantic_reroute_candidate(
+                            model,
+                            backend,
+                            upstream_model,
+                            excluded_backends=semantic_failed_backends | {backend},
+                        )
+                    if fallback is not None:
+                        previous_backend = backend
+                        previous_model = upstream_model
+                        semantic_failed_backends.add(previous_backend)
+                        backend = str(fallback.get("backend") or backend)
+                        upstream_model = str(fallback.get("upstream_model") or upstream_model)
+                        semantic_reroutes += 1
+                        forced_action_rejections = 0
+                        reroute_notice = (
+                            "The coding backend ignored enforced forced-action tool policy. "
+                            f"Rerouting from {previous_backend} to {backend}; inspection remains disabled."
+                        )
+                        await asyncio.to_thread(
+                            _append_event,
+                            task_id,
+                            {
+                                "type": "forced_action_reroute",
+                                "cycle": cycle,
+                                "previous_backend": previous_backend,
+                                "previous_upstream_model": previous_model,
+                                "backend": backend,
+                                "upstream_model": upstream_model,
+                                "summary": reroute_notice,
+                            },
+                        )
+                        messages.append(ChatMessage(role="user", content=reroute_notice))
+                        break
+                    failure = (
+                        "The coding model repeatedly requested inspection tools after the controller entered forced-action mode. "
+                        "The run was paused immediately instead of granting another inspection window. Resume with a different model "
+                        "or provide guidance that changes the required action."
+                    )
+                    await asyncio.to_thread(
+                        _append_event,
+                        task_id,
+                        {
+                            "type": "forced_action_noncompliance",
+                            "cycle": cycle,
+                            "count": forced_action_rejections,
+                            "summary": failure,
+                        },
+                    )
+                    raise _CodingAgentPaused(
+                        failure,
+                        reason_code="forced_action_noncompliance",
+                        details={"cycle": cycle, "rejections": forced_action_rejections},
+                    )
 
                 if name == "coding_finish" and bool(result.get("ok")):
                     finish_summary = str(result.get("summary") or args.get("summary") or "").strip()

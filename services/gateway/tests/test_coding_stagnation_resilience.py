@@ -358,7 +358,7 @@ def test_unchanged_observation_skips_task_mutation(monkeypatch):
     assert mutations["count"] == 1
 
 
-def test_no_progress_continuation_receives_one_state_keyed_recovery(monkeypatch):
+def test_no_progress_continuation_enters_forced_action_without_fresh_recovery(monkeypatch):
     task = _task(stagnant_cycles=8)
     key = resilience.durable_state_key(task)
     task["agent_stagnation_controller"] = {
@@ -369,40 +369,43 @@ def test_no_progress_continuation_receives_one_state_keyed_recovery(monkeypatch)
         "cycles": 8,
         "plan_revision": 1,
         "processed_event_count": len(resilience.current_run_events(task)),
-        "interventions": [
-            {
-                "id": resilience.intervention_id(key, "recovery"),
-                "kind": "recovery",
-                "run_id": "run-2",
-                "cycle": 8,
-            }
-        ],
+        "interventions": [],
     }
     task["agent_previous_status"] = "paused"
     task["agent_previous_summary"] = "Coding run paused after 8 cycles without a durable state transition."
+    task["agent_previous_stop_reason_code"] = "no_progress_limit"
     task["agent_run_id"] = "run-3"
     task["agent_cycle"] = 1
     task["agent_events"].append({"type": "started", "run_id": "run-3", "ts": 6})
     _install_workspace(monkeypatch, task)
 
     assert memory.process_task(task["id"]) is True
-    assert task["agent_stagnation_recovery_lease"]["kind"] == "continuation"
-    assert task["agent_stagnation_recovery_lease"]["remaining_transitions"] == 1
-    assert memory.process_task(task["id"]) is False
+    assert "agent_stagnation_recovery_lease" not in task
+    assert task["agent_forced_action"]["status"] == "active"
+    assert task["agent_forced_action"]["state_key"] == key
+    assert task["agent_forced_action"]["stage"] == "continuation"
 
+
+def test_granted_legacy_continuation_lease_is_retired_without_reset(monkeypatch):
+    task = _task(stagnant_cycles=8)
+    key = resilience.durable_state_key(task)
+    task["agent_stagnation_recovery_lease"] = {
+        "schema": "nexus_coding_recovery_lease.v1",
+        "id": f"{key}:legacy-continuation",
+        "state_key": key,
+        "kind": "continuation",
+        "run_id": "run-2",
+        "granted_cycle": 1,
+        "remaining_transitions": 1,
+        "status": "granted",
+    }
     task["agent_cycle"] = 2
-    task["agent_progress_state"]["stagnant_cycles"] = 9
-    assert memory.process_task(task["id"]) is False
-    assert task["agent_stagnation_recovery_lease"]["status"] == "consumed"
-    assert task["agent_progress_state"]["stagnant_cycles"] == 0
-    assert task["agent_stagnation_controller"]["cycles"] == 0
-    assert task["agent_stagnation_controller"]["stage"] == "observe"
+    _install_workspace(monkeypatch, task)
 
-    task["agent_cycle"] = 3
-    task["agent_progress_state"]["stagnant_cycles"] = 3
-    assert memory.process_task(task["id"]) is True
-    assert task["agent_stagnation_controller"]["last_intervention_kind"] == "assist"
-    assert task["agent_stagnation_controller"]["last_intervention_id"].endswith(":run-3")
+    assert memory._consume_recovery_lease(task["id"], task) is False
+    assert task["agent_progress_state"]["stagnant_cycles"] == 8
+    assert task["agent_stagnation_recovery_lease"]["status"] == "superseded"
+    assert task["agent_stagnation_recovery_lease"]["remaining_transitions"] == 0
 
 
 def test_guidance_interventions_are_scoped_to_run_but_recovery_credit_is_not():
@@ -422,10 +425,9 @@ def test_guidance_interventions_are_scoped_to_run_but_recovery_credit_is_not():
     )
 
 
-def test_legacy_consumed_continuation_repairs_controller_once(monkeypatch):
+def test_legacy_consumed_continuation_is_not_revived_by_process_task(monkeypatch):
     task = _task(stagnant_cycles=8)
     key = resilience.durable_state_key(task)
-    recovery_id = resilience.intervention_id(key, "recovery-continuation")
     task["agent_stagnation_controller"] = {
         "schema": resilience.SCHEMA,
         "state_key": key,
@@ -436,35 +438,17 @@ def test_legacy_consumed_continuation_repairs_controller_once(monkeypatch):
         "plan_revision": 1,
         "interventions": [],
     }
-    task["agent_stagnation_recovery_history"] = [recovery_id]
-    task["agent_stagnation_recovery_lease"] = {
-        "id": recovery_id,
-        "state_key": key,
-        "kind": "continuation",
-        "run_id": "run-2",
-        "status": "consumed",
-    }
     task["agent_previous_status"] = "paused"
-    task["agent_previous_summary"] = "Coding run paused after 8 cycles without a durable state transition."
+    task["agent_previous_stop_reason_code"] = "no_progress_limit"
     task["agent_run_id"] = "run-3"
     task["agent_cycle"] = 1
     task["agent_events"].append({"type": "started", "run_id": "run-3", "ts": 6})
     _install_workspace(monkeypatch, task)
 
     assert memory.process_task(task["id"]) is True
-    assert task["agent_progress_state"]["stagnant_cycles"] == 0
-    assert task["agent_stagnation_controller"]["cycles"] == 1
-    assert task["agent_stagnation_recovery_lease"]["status"] == "consumed"
-    assert task["agent_stagnation_recovery_lease"]["controller_reset_version"] == 2
-    assert task["agent_stagnation_recovery_history"] == [recovery_id]
-
-    assert memory.process_task(task["id"]) is False
-    repairs = [
-        item
-        for item in task["agent_events"]
-        if item.get("recovery_kind") == "continuation-compatibility-repair"
-    ]
-    assert len(repairs) == 1
+    assert task["agent_progress_state"]["stagnant_cycles"] == 8
+    assert task["agent_forced_action"]["status"] == "active"
+    assert "agent_stagnation_recovery_lease" not in task
 
 
 def test_context_manifest_records_compaction_provenance():
@@ -520,3 +504,37 @@ def test_new_durable_state_recomputes_directive_fields():
     assert working["unresolved_question"] != "Stale question"
     assert working["next_action"] != "Stale action"
     assert working["blocker"] == ""
+def test_retired_continuation_lease_updates_detached_task_sample(monkeypatch):
+    persisted = _task(stagnant_cycles=8)
+    key = resilience.durable_state_key(persisted)
+    persisted["agent_stagnation_recovery_lease"] = {
+        "schema": "nexus_coding_recovery_lease.v1",
+        "id": f"{key}:legacy-continuation",
+        "state_key": key,
+        "kind": "continuation",
+        "run_id": "run-2",
+        "granted_cycle": 1,
+        "remaining_transitions": 1,
+        "status": "granted",
+    }
+    persisted["agent_cycle"] = 2
+
+    def detached_load(_task_id):
+        import copy
+        return copy.deepcopy(persisted)
+
+    def detached_mutate(_task_id, mutator):
+        import copy
+        latest = copy.deepcopy(persisted)
+        mutator(latest)
+        persisted.clear()
+        persisted.update(copy.deepcopy(latest))
+        return copy.deepcopy(latest)
+
+    monkeypatch.setattr(memory.cw, "load_task", detached_load)
+    monkeypatch.setattr(memory.cw, "mutate_task", detached_mutate)
+    sample = detached_load(persisted["id"])
+
+    assert memory._consume_recovery_lease(persisted["id"], sample) is False
+    assert persisted["agent_stagnation_recovery_lease"]["status"] == "superseded"
+    assert sample["agent_stagnation_recovery_lease"]["status"] == "superseded"

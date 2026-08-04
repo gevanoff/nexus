@@ -353,6 +353,48 @@ def _recent_assistant_notes(events: Sequence[Mapping[str, Any]], *, limit: int =
     return notes
 
 
+_COMMITMENT_PATTERN = re.compile(
+    r"(?:\bI(?:'ll| will| need to| should)\b|\b(?:now )?let me\b|\bnext(?:,? I(?:'ll| will))?\b)"
+    r"(?:(?![.!?\n]).){0,180}?\b"
+    r"(add|write|implement|fix|edit|update|remove|create|patch|run|finish)\b\s+"
+    r"([^.!?\n]{3,260})",
+    re.IGNORECASE,
+)
+_GENERIC_ACTION_PREFIXES = (
+    "take one bounded action",
+    "stop broad inspection",
+    "convert the review finding",
+    "fix one concrete validation failure",
+    "stop revising notes",
+    "call one workspace tool",
+)
+
+
+def extract_concrete_commitment(events: Sequence[Mapping[str, Any]]) -> str:
+    for event in reversed(events):
+        if str(event.get("type") or "") != "assistant":
+            continue
+        text = " ".join(str(event.get("content") or "").split())
+        if not text:
+            continue
+        matches = list(_COMMITMENT_PATTERN.finditer(text))
+        if not matches:
+            continue
+        match = matches[-1]
+        verb = match.group(1).lower()
+        target = match.group(2).strip(" `:;- ")
+        target = re.split(r"\b(?:before|after|then)\b", target, maxsplit=1, flags=re.IGNORECASE)[0].strip(" ,;-")
+        if len(target) < 3:
+            continue
+        return clip(f"{verb.capitalize()} {target}.", 700)
+    return ""
+
+
+def generic_next_action(value: Any) -> bool:
+    normalized = " ".join(str(value or "").strip().lower().split())
+    return not normalized or any(normalized.startswith(prefix) for prefix in _GENERIC_ACTION_PREFIXES)
+
+
 def active_plan_summary(task: Mapping[str, Any]) -> str:
     plan = task.get("project_plan") if isinstance(task.get("project_plan"), dict) else {}
     items = plan.get("items") if isinstance(plan.get("items"), list) else []
@@ -391,12 +433,19 @@ def build_working_memory(
     }
     unresolved_default, next_default = defaults.get(classification, defaults["stagnant_execution"])
     previous_directives = previous if str(previous.get("state_key") or "") == state_key else {}
+    commitment = extract_concrete_commitment(events)
+    previous_action = clip(previous_directives.get("next_action"), 700)
+    next_action = commitment if commitment and generic_next_action(previous_action) else (previous_action or next_default)
+    action_source = "assistant_commitment" if commitment and next_action == commitment else "controller_default"
     unresolved = clip(previous_directives.get("unresolved_question") or unresolved_default, 700)
-    next_action = clip(previous_directives.get("next_action") or next_default, 700)
+    if action_source == "assistant_commitment" and generic_next_action(previous_directives.get("unresolved_question")):
+        unresolved = clip(f"What remains before executing this commitment: {commitment}", 700)
+    next_action = clip(next_action, 700)
     blocker = clip(previous_directives.get("blocker"), 700)
     content = {
         "state_key": state_key, "findings": findings, "inspected_targets": inspected,
         "unresolved_question": unresolved, "next_action": next_action,
+        "required_action_source": action_source,
         "blocker": blocker, "classification": classification,
     }
     content_fingerprint = stable_hash(content)
@@ -413,6 +462,7 @@ def build_working_memory(
         "inspected_targets": inspected,
         "unresolved_question": unresolved,
         "next_action": next_action,
+        "required_action_source": action_source,
         "blocker": blocker,
         "content_fingerprint": content_fingerprint,
         "provenance": {
