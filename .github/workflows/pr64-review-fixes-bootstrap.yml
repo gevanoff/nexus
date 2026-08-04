@@ -1,9 +1,9 @@
 name: PR 64 Review Fixes Bootstrap
 
 on:
-  push:
-    branches:
-      - agent/enforce-coding-forced-action
+  pull_request:
+    types:
+      - synchronize
 
 permissions:
   contents: read
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   apply-review-fixes:
-    if: github.repository == 'gevanoff/nexus'
+    if: github.repository == 'gevanoff/nexus' && github.event.pull_request.head.ref == 'agent/enforce-coding-forced-action'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
