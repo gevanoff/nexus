@@ -25,10 +25,13 @@ new = '''def replace_once(path: Path, old: str, new: str, label: str) -> None:
         raise RuntimeError(f"{label}: expected one anchor, found exact={count} normalized={len(matches)}")
     start = matches[0]
     end = start + len(wanted)
-    first = source[start].rstrip("\\r\\n")
-    indent = first[: len(first) - len(first.lstrip())]
+    source_first = source[start].rstrip("\\r\\n")
+    source_indent_width = len(source_first) - len(source_first.lstrip())
+    wanted_first = wanted[0]
+    wanted_indent_width = len(wanted_first) - len(wanted_first.lstrip())
+    base_indent = " " * max(0, source_indent_width - wanted_indent_width)
     replacement_lines = new.strip("\\n").splitlines()
-    replacement = "\\n".join((indent + line if line else line) for line in replacement_lines)
+    replacement = "\\n".join((base_indent + line if line else line) for line in replacement_lines)
     if source[end - 1].endswith("\\n"):
         replacement += "\\n"
     source[start:end] = [replacement]
