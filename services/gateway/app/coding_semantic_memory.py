@@ -463,7 +463,14 @@ def _consume_recovery_lease(task_id: str, task: Dict[str, Any]) -> bool:
             })
             latest["agent_stagnation_recovery_lease"] = current
 
-        cw.mutate_task(task_id, retire_legacy_continuation)
+        updated = cw.mutate_task(task_id, retire_legacy_continuation)
+        updated_lease = (
+            updated.get("agent_stagnation_recovery_lease")
+            if isinstance(updated.get("agent_stagnation_recovery_lease"), dict)
+            else {}
+        )
+        if str(updated_lease.get("id") or "") == str(lease.get("id") or ""):
+            task["agent_stagnation_recovery_lease"] = dict(updated_lease)
         return False
     if resilience.durable_state_key(task) != str(lease.get("state_key") or ""):
         return False

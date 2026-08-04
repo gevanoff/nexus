@@ -677,7 +677,7 @@ def load_task(task_id: str) -> Dict[str, Any]:
 
 
 _DIRECT_CHANGE_RE = re.compile(
-    r"\\b(fix|repair|resolve|implement|edit|modify|patch|add|remove|create|rewrite|change|update)\\b",
+    r"\b(fix|repair|resolve|implement|edit|modify|patch|add|remove|create|rewrite|change|update)\b",
     re.IGNORECASE,
 )
 _REVIEW_GOAL_MARKERS = (
@@ -773,10 +773,16 @@ def coding_mission_overrides(
     context_reset_cycles: Optional[int] = None,
 ) -> Dict[str, Any]:
     push = bool(push_on_success or draft_pr_on_success)
+    completion_policy: Dict[str, Any] = {
+        "commit_policy": str(commit_policy or "always_on_success"),
+    }
+    if push:
+        completion_policy.update({
+            "require_file_changes": True,
+            "require_commit_on_success": True,
+        })
     return {
-        "completion_policy": {
-            "commit_policy": str(commit_policy or "always_on_success"),
-        },
+        "completion_policy": completion_policy,
         "publish_policy": {
             "push": "on_success" if push else "never",
             "draft_pr": "on_success" if draft_pr_on_success else "never",

@@ -383,7 +383,7 @@ def extract_concrete_commitment(events: Sequence[Mapping[str, Any]]) -> str:
         match = matches[-1]
         verb = match.group(1).lower()
         target = match.group(2).strip(" `:;- ")
-        target = re.split(r"\\b(?:before|after|then)\\b", target, maxsplit=1, flags=re.IGNORECASE)[0].strip(" ,;-")
+        target = re.split(r"\b(?:before|after|then)\b", target, maxsplit=1, flags=re.IGNORECASE)[0].strip(" ,;-")
         if len(target) < 3:
             continue
         return clip(f"{verb.capitalize()} {target}.", 700)

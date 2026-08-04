@@ -504,3 +504,37 @@ def test_new_durable_state_recomputes_directive_fields():
     assert working["unresolved_question"] != "Stale question"
     assert working["next_action"] != "Stale action"
     assert working["blocker"] == ""
+def test_retired_continuation_lease_updates_detached_task_sample(monkeypatch):
+    persisted = _task(stagnant_cycles=8)
+    key = resilience.durable_state_key(persisted)
+    persisted["agent_stagnation_recovery_lease"] = {
+        "schema": "nexus_coding_recovery_lease.v1",
+        "id": f"{key}:legacy-continuation",
+        "state_key": key,
+        "kind": "continuation",
+        "run_id": "run-2",
+        "granted_cycle": 1,
+        "remaining_transitions": 1,
+        "status": "granted",
+    }
+    persisted["agent_cycle"] = 2
+
+    def detached_load(_task_id):
+        import copy
+        return copy.deepcopy(persisted)
+
+    def detached_mutate(_task_id, mutator):
+        import copy
+        latest = copy.deepcopy(persisted)
+        mutator(latest)
+        persisted.clear()
+        persisted.update(copy.deepcopy(latest))
+        return copy.deepcopy(latest)
+
+    monkeypatch.setattr(memory.cw, "load_task", detached_load)
+    monkeypatch.setattr(memory.cw, "mutate_task", detached_mutate)
+    sample = detached_load(persisted["id"])
+
+    assert memory._consume_recovery_lease(persisted["id"], sample) is False
+    assert persisted["agent_stagnation_recovery_lease"]["status"] == "superseded"
+    assert sample["agent_stagnation_recovery_lease"]["status"] == "superseded"

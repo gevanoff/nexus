@@ -347,7 +347,6 @@ def finalize_successful_run(
     contract = cw.normalize_coding_mission(task, mission)
     publish = contract["publish_policy"]
     completion = contract["completion_policy"]
-    expects_workspace_edits = _request_expects_workspace_edits(task)
     now = time.time()
     result: Dict[str, Any] = {
         "ok": False,
@@ -371,16 +370,26 @@ def finalize_successful_run(
             raise RuntimeError("final repository audit failed")
         change_counts = changes.get("counts") if isinstance(changes.get("counts"), dict) else {}
         has_uncommitted = int(change_counts.get("total") or 0) > 0
-        base_changes = diff.get("changes") if isinstance(diff.get("changes"), dict) else {}
-        base_counts = base_changes.get("counts") if isinstance(base_changes.get("counts"), dict) else {}
-        actual_delta = int(base_counts.get("total") or 0) > 0 or has_uncommitted
-        require_file_changes = bool(completion.get("require_file_changes", True)) and expects_workspace_edits
-        require_commit_on_success = bool(completion.get("require_commit_on_success", True)) or actual_delta
-        if require_file_changes and not actual_delta:
-            raise RuntimeError("successful run has no meaningful delta versus the base branch")
-        if actual_delta and completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
+        latest = cw.load_task(task_id)
+        current_head = str(before.get("commit") or "")
+        start_head = str(latest.get("agent_start_head") or "")
+        checkpoint_for_run = str(latest.get("last_checkpoint_run_id") or "") == str(run_id or "")
+        committed_run_delta = bool(
+            (start_head and current_head and current_head != start_head)
+            or (
+                checkpoint_for_run
+                and current_head
+                and str(latest.get("last_checkpoint_commit") or "") == current_head
+            )
+        )
+        run_delta = has_uncommitted or committed_run_delta
+        require_file_changes = bool(completion.get("require_file_changes", True))
+        require_commit_on_success = bool(completion.get("require_commit_on_success", True)) or run_delta
+        if require_file_changes and not run_delta:
+            raise RuntimeError("successful run has no meaningful delta produced by this run")
+        if run_delta and completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
             raise RuntimeError("successful run lacks validation after the latest edit")
-        if actual_delta and completion.get("require_diff_review_after_edit", True) and not bool((snapshot.get("diff_review") or {}).get("diff_reviewed_after_latest_edit")):
+        if run_delta and completion.get("require_diff_review_after_edit", True) and not bool((snapshot.get("diff_review") or {}).get("diff_reviewed_after_latest_edit")):
             raise RuntimeError("successful run lacks diff review after the latest edit")
         if has_uncommitted:
             message = str(finish_summary or "Apply Nexus coding agent changes").strip().splitlines()[0][:160]
@@ -390,15 +399,9 @@ def finalize_successful_run(
             result["final_commit"] = str(commit.get("last_commit") or "")
             result["committed_at"] = time.time()
         else:
-            latest = cw.load_task(task_id)
-            after = cw.git_head(task_id)
-            candidate = str(after.get("commit") or latest.get("last_checkpoint_commit") or latest.get("last_commit") or "")
-            start_head = str(latest.get("agent_start_head") or "")
-            checkpoint_for_run = str(latest.get("last_checkpoint_run_id") or "") == str(run_id or "")
+            candidate = str(current_head or latest.get("last_checkpoint_commit") or latest.get("last_commit") or "")
             if require_file_changes and not candidate:
                 raise RuntimeError("successful run has no branch commit")
-            if require_file_changes and start_head and candidate == start_head and not checkpoint_for_run:
-                raise RuntimeError("successful run produced no commit after run start")
             result["final_commit"] = candidate
             result["committed_at"] = float(latest.get("last_checkpoint_at") or latest.get("updated_at") or now)
         if require_commit_on_success and not result["final_commit"]:
@@ -1870,22 +1873,30 @@ def _tool_specs() -> List[ToolSpec]:
 def coding_tool_manifest(task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     specs = _tool_specs_for_task(task) if isinstance(task, dict) else _tool_specs()
     tools = [spec.model_dump(exclude_none=True) for spec in specs]
-    guidance = [
-        "Use coding_tool_manifest when you need to inspect your workspace tool capabilities.",
-        "Commands run inside a Linux workspace shell. Use POSIX paths, forward slashes, and Linux command/env syntax such as ls, cat, grep, python3, VAR=value cmd, and $VAR.",
-        "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace.",
-        "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
-        "For work spanning several milestones, use coding_update_plan and keep milestone statuses current.",
-        "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
-        "Use coding_fetch_url for current public documentation or issue pages.",
-        "Do not invent imports, functions, methods, variables, or config keys; search and read definitions before using them.",
-        "Keep imports consolidated and avoid loading the same library multiple times.",
-        "If a service owns its own package root, run validation from that service directory, for example cwd=services/gateway for gateway tests that import app.",
-        "After editing, run a targeted validation command such as pytest, ruff check, python -m py_compile, node --check, npm test, or git diff --check.",
-        "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to make validation pass. Only add project-manifest or dependency files when the user explicitly asked for that scaffolding or the target service already uses it.",
-        "Placeholder handlers or comments like 'Add logic to ...' do not count as a fix.",
-        "After editing, inspect coding_git_diff before calling coding_finish.",
-    ]
+    if isinstance(task, dict) and forced_action.active_state(task):
+        guidance = [
+            "Controller forced-action mode is active for the unchanged durable state.",
+            "Inspection, orientation, plan, and arbitrary shell tools are unavailable.",
+            "Make the required focused edit, or run a recognized targeted validation command.",
+            "After editing, call coding_git_diff and then coding_finish.",
+        ]
+    else:
+        guidance = [
+            "Use coding_tool_manifest when you need to inspect your workspace tool capabilities.",
+            "Commands run inside a Linux workspace shell. Use POSIX paths, forward slashes, and Linux command/env syntax such as ls, cat, grep, python3, VAR=value cmd, and $VAR.",
+            "Do not assume PowerShell, cmd.exe, drive letters, backslashes, %VAR%, or $env:VAR inside the workspace.",
+            "Use coding_list_tree, coding_search_text, and coding_read_file_lines before broad reads or edits.",
+            "For work spanning several milestones, use coding_update_plan and keep milestone statuses current.",
+            "Prefer coding_replace_text for exact focused edits and coding_apply_patch for multi-file diffs.",
+            "Use coding_fetch_url for current public documentation or issue pages.",
+            "Do not invent imports, functions, methods, variables, or config keys; search and read definitions before using them.",
+            "Keep imports consolidated and avoid loading the same library multiple times.",
+            "If a service owns its own package root, run validation from that service directory, for example cwd=services/gateway for gateway tests that import app.",
+            "After editing, run a targeted validation command such as pytest, ruff check, python -m py_compile, node --check, npm test, or git diff --check.",
+            "Do not invent package.json files, lockfiles, requirements files, or placeholder tests just to make validation pass. Only add project-manifest or dependency files when the user explicitly asked for that scaffolding or the target service already uses it.",
+            "Placeholder handlers or comments like 'Add logic to ...' do not count as a fix.",
+            "After editing, inspect coding_git_diff before calling coding_finish.",
+        ]
     return {
         "tools": tools,
         "guidance": guidance,
@@ -1906,12 +1917,25 @@ def _text_tool_call_guidance(task: Optional[Dict[str, Any]] = None) -> str:
         except Exception:
             continue
     names = ", ".join(tools)
+    if "coding_read_file_lines" in tools:
+        example = '<tool_call>{"name":"coding_read_file_lines","arguments":{"path":"README.md","start_line":1,"line_count":80}}</tool_call>. '
+    elif "coding_git_diff" in tools:
+        example = '<tool_call>{"name":"coding_git_diff","arguments":{}}</tool_call>. '
+    elif "coding_finish" in tools:
+        example = '<tool_call>{"name":"coding_finish","arguments":{"summary":"Blocked","success":false}}</tool_call>. '
+    else:
+        example = ""
+    manifest_hint = (
+        "Call coding_tool_manifest with include_parameters=true if you need exact parameter schemas. "
+        if "coding_tool_manifest" in tools
+        else ""
+    )
     return (
         "This selected backend does not receive native OpenAI tool definitions. "
         "Use text-form tool calls instead. To call a tool, respond with exactly one complete block and no prose: "
-        '<tool_call>{"name":"coding_read_file_lines","arguments":{"path":"README.md","start_line":1,"line_count":80}}</tool_call>. '
+        f"{example}"
         "Use JSON only inside the block. Do not wrap the block in Markdown fences. "
-        "Call coding_tool_manifest with include_parameters=true if you need exact parameter schemas. "
+        f"{manifest_hint}"
         f"Available tool names: {names}."
     )
 
@@ -2283,7 +2307,22 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
         )
     forced_context = _forced_action_context(task)
     if forced_context:
-        edit_expectation += forced_context + " "
+        forced_request_bits = [f"Original user request:\n{original or '(none recorded)'}"]
+        if current and current != original:
+            forced_request_bits.append(f"Current run request:\n{current}")
+        text_call_guidance = f"{_text_tool_call_guidance(task)} " if text_tool_mode else ""
+        return (
+            "You are Nexus Coding Agent in controller-enforced forced-action mode. "
+            "Work by calling workspace tools, not by narrating. "
+            f"{text_call_guidance}"
+            "Do not inspect, orient, revise the project plan, or run arbitrary shell commands. "
+            "Use only a focused edit, a recognized targeted validation command, coding_git_diff, or coding_finish. "
+            "Do not push or open pull requests directly. Nexus performs successful finalization according to the mission contract. "
+            f"{forced_context} "
+            f"Allowed commands: {allowed or '(none)'}. "
+            f"Workspace task id: {task.get('id')}. Base branch: {task.get('base_branch')}. Working branch: {task.get('branch_name')}.\n\n"
+            + "\n\n".join(forced_request_bits)
+        )
     if text_tool_mode:
         return (
             "You are Nexus Coding Agent in a constrained context window. Work by calling workspace tools, not by narrating. "

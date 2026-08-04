@@ -316,3 +316,57 @@ def test_scripted_coding_mission_finishes_with_real_branch_commit(tmp_path, monk
     assert result["final_commit"] != start_head
     assert run("status", "--porcelain").stdout == ""
     assert run("log", "-1", "--pretty=%s").stdout.strip() == "Update value"
+def test_finalization_preserves_explicit_required_change_contract(monkeypatch):
+    stored = _finalizer_mocks(monkeypatch, changed=False, base_delta=False)
+    stored["prompt"] = "Add a regression test."
+    stored["agent_start_head"] = "start"
+    stored["last_checkpoint_run_id"] = "run-0"
+    stored["last_checkpoint_commit"] = "start"
+    stored["mission"] = {
+        "completion_policy": {
+            "require_file_changes": True,
+            "require_commit_on_success": True,
+            "require_validation_after_edit": True,
+            "require_diff_review_after_edit": True,
+        }
+    }
+    monkeypatch.setattr(cw, "git_head", lambda *_a, **_k: {"ok": True, "commit": "start"})
+
+    result = ca.finalize_successful_run("task-1", finish_summary="Nothing changed.", run_id="run-1")
+
+    assert result["ok"] is False
+    assert "delta produced by this run" in result["finalization_error"]
+
+
+def test_review_finalization_ignores_preexisting_branch_delta(monkeypatch):
+    stored = _finalizer_mocks(monkeypatch, changed=False, base_delta=True)
+    stored["prompt"] = "Review this workspace for concrete findings and missing tests."
+    stored["agent_start_head"] = "review-head"
+    stored["last_checkpoint_run_id"] = "run-0"
+    stored["last_checkpoint_commit"] = "review-head"
+    stored["mission"] = {
+        "completion_policy": {
+            "require_file_changes": False,
+            "require_commit_on_success": False,
+            "require_validation_after_edit": True,
+            "require_diff_review_after_edit": True,
+        }
+    }
+    monkeypatch.setattr(cw, "git_head", lambda *_a, **_k: {"ok": True, "commit": "review-head"})
+    monkeypatch.setattr(
+        cw,
+        "coding_state_snapshot",
+        lambda *_a, **_k: {
+            "validation": {"validation_after_latest_edit": False},
+            "diff_review": {"diff_reviewed_after_latest_edit": False},
+        },
+    )
+
+    result = ca.finalize_successful_run(
+        "task-1",
+        finish_summary="No actionable defect found.",
+        run_id="run-1",
+    )
+
+    assert result["ok"] is True
+    assert result["finalization_status"] == "completed"
