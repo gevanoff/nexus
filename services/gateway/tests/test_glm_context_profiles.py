@@ -117,6 +117,17 @@ def test_coding_profile_controls_compaction_and_output(monkeypatch):
     assert coding_agent._messages_token_count([ChatMessage(role="user", content="x" * 3_000)]) >= 1_000
 
 
+def test_context_reset_does_not_exceed_alias_input_budget(monkeypatch):
+    chat_alias = _glm_alias(
+        context_window=32_768,
+        max_input_tokens=26_000,
+        coding_context_reset_tokens=None,
+    )
+    monkeypatch.setattr(coding_agent, "get_aliases", lambda: {"glm-chat": chat_alias})
+
+    assert coding_agent._context_reset_tokens(64_000, model="glm-chat") == 26_000
+
+
 def test_unprofiled_route_keeps_legacy_fallback(monkeypatch):
     monkeypatch.setattr(coding_agent, "get_aliases", lambda: {})
     monkeypatch.setattr(coding_agent.S, "CODING_AGENT_CONTEXT_RESET_CHARS", 64_000, raising=False)
@@ -164,9 +175,17 @@ def test_alias_thinking_policy_overrides_client_request(monkeypatch):
     assert routed.chat_template_kwargs["enable_thinking"] is False
 
 
-def test_raw_glm_model_does_not_inherit_long_alias_output_cap(monkeypatch):
+def test_raw_glm_model_uses_smallest_compatible_alias_output_cap(monkeypatch):
     model = "mlx-community/GLM-5.2-4bit"
+    chat_alias = _glm_alias(max_tokens_cap=4_096)
+    long_alias = _glm_alias(max_tokens_cap=24_576)
     monkeypatch.setattr(upstreams, "get_alias", lambda _name: None)
+    monkeypatch.setattr(
+        upstreams,
+        "get_aliases",
+        lambda: {"glm-chat": chat_alias, "long": long_alias},
+    )
+    monkeypatch.setattr(upstreams, "_alias_matches_backend", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         upstreams,
         "_resolve_backend_target",
@@ -177,11 +196,12 @@ def test_raw_glm_model_does_not_inherit_long_alias_output_cap(monkeypatch):
     request = ChatCompletionRequest(
         model=model,
         messages=[{"role": "user", "content": "hello"}],
+        max_tokens=30_000,
     )
 
     routed = upstreams.route_request_for_backend(request, "local_mlx", model)
 
-    assert routed.max_tokens is None
+    assert routed.max_tokens == 4_096
 
 
 def test_oversized_coder_request_uses_matching_long_policy(monkeypatch):

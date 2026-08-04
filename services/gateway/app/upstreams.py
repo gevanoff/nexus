@@ -481,7 +481,6 @@ def _alias_cap_value(alias: Any, *, backend_name: str) -> int | None:
 
 
 def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, model_name: str) -> int | None:
-    requested_name = str(req.model or "").strip()
     requested_alias = _request_alias_policy(
         req,
         backend_name=backend_name,
@@ -491,20 +490,20 @@ def _alias_max_tokens_cap(req: ChatCompletionRequest, *, backend_name: str, mode
     if cap is not None:
         return cap
 
-    if requested_name.lower() == str(model_name or "").strip().lower():
-        return None
-
     normalized_model = str(model_name or "").strip().lower()
-    selector_caps: list[int] = []
+    compatible_caps: list[int] = []
     for alias in get_aliases().values():
         if str(alias.upstream_model or "").strip().lower() != normalized_model:
             continue
         candidate_cap = _alias_cap_value(alias, backend_name=backend_name)
         if candidate_cap is not None:
-            selector_caps.append(candidate_cap)
-    if not selector_caps:
+            compatible_caps.append(candidate_cap)
+    if not compatible_caps:
         return None
-    return min(selector_caps)
+    # A raw upstream model ID has no profile of its own. Keep it from silently
+    # acquiring the largest alias allowance by applying the most conservative
+    # cap configured for the same backend/model pair.
+    return min(compatible_caps)
 
 
 def _bounded_max_tokens(

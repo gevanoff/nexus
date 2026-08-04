@@ -278,12 +278,20 @@ def _context_reset_tokens(
     upstream_model: str = "",
 ) -> int:
     alias = _resolved_alias_for_route(model, backend, upstream_model)
+    max_input_tokens = getattr(alias, "max_input_tokens", None) if alias is not None else None
+
+    def _bounded_reset(candidate: int) -> int:
+        reset_tokens = max(8_000, candidate)
+        if isinstance(max_input_tokens, int) and max_input_tokens > 0:
+            reset_tokens = min(reset_tokens, max_input_tokens)
+        return max(1, reset_tokens)
+
     alias_limit = getattr(alias, "coding_context_reset_tokens", None) if alias is not None else None
     if isinstance(alias_limit, int) and alias_limit > 0:
-        return max(8_000, alias_limit)
+        return _bounded_reset(alias_limit)
     context_window = getattr(alias, "context_window", None) if alias is not None else None
     if isinstance(context_window, int) and context_window > 0:
-        return max(8_000, int(context_window * 0.8))
+        return _bounded_reset(int(context_window * 0.8))
     return max(8_000, context_budget.estimate_char_budget_tokens(_context_reset_chars(value)))
 
 
