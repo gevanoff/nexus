@@ -105,3 +105,5 @@ jobs:
           git config user.email "nexus-review-bot@users.noreply.github.com"
           git commit -m "Refresh forced-action directives after completed actions"
           git push origin HEAD:agent/refresh-forced-action-directives
+
+# retrigger after PR creation
