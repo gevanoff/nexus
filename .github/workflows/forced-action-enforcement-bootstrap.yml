@@ -30,7 +30,10 @@ jobs:
             services/gateway/app/requirements.freeze.txt
             services/gateway/tests/requirements.freeze.txt
       - name: Apply implementation
-        run: python services/gateway/tools/apply_forced_action_enforcement.py
+        shell: bash
+        run: |
+          python services/gateway/tools/fix_forced_action_patcher.py
+          python services/gateway/tools/apply_forced_action_enforcement.py
       - name: Install Gateway dependencies
         shell: bash
         run: |
@@ -83,6 +86,7 @@ jobs:
         run: |
           rm -f \
             services/gateway/tools/apply_forced_action_enforcement.py \
+            services/gateway/tools/fix_forced_action_patcher.py \
             .github/workflows/forced-action-enforcement-bootstrap.yml
           git config user.name "Nexus Forced Action Bot"
           git config user.email "nexus-forced-action@users.noreply.github.com"
