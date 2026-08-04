@@ -390,13 +390,12 @@ def extract_concrete_commitment(events: Sequence[Mapping[str, Any]]) -> str:
     return ""
 
 
-
 def pending_concrete_commitment(events: Sequence[Mapping[str, Any]]) -> str:
     # A commitment is pending only until the model attempts a workspace tool.
     action_seen = False
     for event in reversed(events):
         event_type = str(event.get("type") or "")
-        if event_type == "tool_started":
+        if event_type in {"tool_started", "tool_finished"}:
             action_seen = True
             continue
         if event_type != "assistant":
@@ -427,6 +426,7 @@ def action_kind_for_required_action(value: Any) -> str:
     if normalized.startswith(("add ", "write ", "implement ", "fix ", "edit ", "update ", "remove ", "create ", "patch ")):
         return "edit"
     return "bounded"
+
 
 def generic_next_action(value: Any) -> bool:
     normalized = " ".join(str(value or "").strip().lower().split())
@@ -503,7 +503,6 @@ def build_working_memory(
         unresolved = clip(f"What remains before executing this commitment: {commitment}", 700)
     next_action = clip(next_action, 700)
     next_action_kind = action_kind_for_required_action(next_action)
-    blocker = clip(previous_directives.get("blocker"), 700)
     blocker = clip(previous_directives.get("blocker"), 700)
     content = {
         "state_key": state_key, "findings": findings, "inspected_targets": inspected,
