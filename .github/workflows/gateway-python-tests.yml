@@ -30,7 +30,10 @@ jobs:
             services/gateway/app/requirements.freeze.txt
             services/gateway/tests/requirements.freeze.txt
       - name: Apply review fixes
-        run: python services/gateway/tools/address_pr63_review.py
+        shell: bash
+        run: |
+          python services/gateway/tools/address_pr63_review.py
+          python services/gateway/tools/address_pr63_review_v2.py
       - name: Install Gateway dependencies
         shell: bash
         run: |
@@ -63,6 +66,7 @@ jobs:
           git checkout origin/main -- .github/workflows/gateway-python-tests.yml
           rm -f \
             services/gateway/tools/address_pr63_review.py \
+            services/gateway/tools/address_pr63_review_v2.py \
             .pr63-review-trigger
           git config user.name "Nexus Review Fix Bot"
           git config user.email "nexus-review-fix@users.noreply.github.com"
