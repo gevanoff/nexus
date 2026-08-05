@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
 
@@ -10,16 +11,6 @@ DISCOVERY = "discovery"
 DECISION = "decision"
 EXECUTION = "execution"
 _PHASES = {DISCOVERY, DECISION, EXECUTION}
-_EVIDENCE_TOOLS = {
-    "coding_search_text",
-    "coding_read_file",
-    "coding_read_file_lines",
-    "coding_list_tree",
-    "coding_git_status",
-    "coding_git_diff",
-    "coding_change_summary",
-    "coding_run_command",
-}
 _EDIT_TOOLS = {"coding_write_file", "coding_replace_text", "coding_apply_patch"}
 
 
@@ -90,6 +81,47 @@ def _has_edit(events: Sequence[Mapping[str, Any]]) -> bool:
     )
 
 
+def _python_validation_command(parts: Sequence[str]) -> bool:
+    if not parts:
+        return False
+    lowered = [item.lower() for item in parts]
+    if "-m" in lowered:
+        index = lowered.index("-m")
+        module = lowered[index + 1] if index + 1 < len(lowered) else ""
+        return module.split(".", 1)[0] in {"pytest", "unittest", "py_compile", "compileall", "ruff", "mypy"}
+    script = Path(parts[0]).name.lower()
+    return script.startswith("test_") and script.endswith(".py")
+
+
+def _is_validation_command(argv: Any) -> bool:
+    if not isinstance(argv, list) or not argv:
+        return False
+    parts = [str(item).strip() for item in argv if str(item).strip()]
+    if not parts:
+        return False
+    command = Path(parts[0]).name.lower()
+    lowered = [item.lower() for item in parts]
+    if command in {"pytest", "ruff", "mypy"}:
+        return True
+    if command in {"python", "python3"}:
+        return _python_validation_command(parts[1:])
+    if command == "node":
+        return any(item in {"--check", "--test"} for item in lowered[1:])
+    if command in {"npm", "pnpm", "yarn"}:
+        return any(marker in item for item in lowered[1:] for marker in ("test", "lint", "typecheck", "check", "build"))
+    if command == "uv":
+        meaningful = {item for item in lowered[1:] if not item.startswith("-")}
+        return bool(
+            meaningful.intersection({"pytest", "ruff", "mypy", "py_compile", "compileall", "unittest"})
+            or "--check" in lowered
+            or "--test" in lowered
+            or any(marker in item for item in meaningful for marker in ("test", "lint", "typecheck"))
+        )
+    if command == "git":
+        return lowered[1:] == ["diff", "--check"] or lowered[1:] == ["diff", "--cached", "--check"]
+    return False
+
+
 def advance_phase(
     task: Mapping[str, Any],
     *,
@@ -116,26 +148,37 @@ def advance_phase(
 def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     if current_phase(task) != DISCOVERY:
         return ""
+    pending: Dict[str, Dict[str, Any]] = {}
     signatures: set[str] = set()
-    for item in task.get("agent_inspection_ledger") if isinstance(task.get("agent_inspection_ledger"), list) else []:
-        if isinstance(item, dict) and str(item.get("signature") or "").strip():
-            signatures.add("ledger:" + str(item.get("signature")))
-    for event in _current_run_events(task):
+    for index, event in enumerate(_current_run_events(task)):
         event_type = str(event.get("type") or "")
         name = str(event.get("name") or "")
-        if event_type == "tool_started" and name in _EVIDENCE_TOOLS:
-            signatures.add("start:" + _stable_hash({"name": name, "args": event.get("args") or {}}))
-        if event_type == "tool_finished" and name == "coding_run_command":
-            result = event.get("result") if isinstance(event.get("result"), dict) else {}
-            evidence = {
-                "name": name,
-                "ok": result.get("ok"),
-                "returncode": result.get("returncode"),
-                "error": str(result.get("error") or "")[:500],
-                "stdout": str(result.get("stdout") or "")[:2000],
-                "stderr": str(result.get("stderr") or "")[:2000],
-            }
-            signatures.add("validation-result:" + _stable_hash(evidence))
+        call_id = str(event.get("tool_call_id") or f"event-{index}")
+        if event_type == "tool_started" and name == "coding_run_command":
+            args = event.get("args") if isinstance(event.get("args"), dict) else {}
+            if _is_validation_command(args.get("argv")):
+                pending[call_id] = dict(args)
+            continue
+        if event_type != "tool_finished" or name != "coding_run_command":
+            continue
+        args = pending.pop(call_id, None)
+        if args is None and len(pending) == 1:
+            _, args = pending.popitem()
+        if args is None:
+            continue
+        result = event.get("result") if isinstance(event.get("result"), dict) else {}
+        if str(result.get("error") or "") == "forced_action_tool_rejected":
+            continue
+        evidence = {
+            "argv": args.get("argv") or [],
+            "cwd": args.get("cwd") or "",
+            "ok": result.get("ok"),
+            "returncode": result.get("returncode"),
+            "error": str(result.get("error") or "")[:500],
+            "stdout": str(result.get("stdout") or "")[:2000],
+            "stderr": str(result.get("stderr") or "")[:2000],
+        }
+        signatures.add("validation-result:" + _stable_hash(evidence))
     return _stable_hash(sorted(signatures)) if signatures else ""
 
 
