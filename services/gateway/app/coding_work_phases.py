@@ -169,8 +169,6 @@ def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     The work phase is controller policy rather than output evidence, so a
     phase-only transition must not reset escalation or retire forced action.
     """
-    if current_phase(task) != DISCOVERY:
-        return ""
     pending: Dict[str, Dict[str, Any]] = {}
     signatures: set[str] = set()
     for index, event in enumerate(_current_run_events(task)):

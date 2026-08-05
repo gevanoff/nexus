@@ -2321,7 +2321,7 @@ def _mission_requires_workspace_edits(task: Dict[str, Any]) -> bool:
     completion = mission.get("completion_policy") if isinstance(mission.get("completion_policy"), dict) else {}
     if "require_file_changes" in completion:
         return bool(completion.get("require_file_changes"))
-    return _request_expects_workspace_edits(task)
+    return coding_work_phases.mission_requires_file_changes(task)
 
 
 def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str:

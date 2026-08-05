@@ -286,3 +286,35 @@ def test_report_only_mission_prompt_does_not_advertise_fix_expectation():
 
     assert "This request is fix-oriented" not in rendered
 
+def test_validation_fingerprint_survives_phase_transition():
+    task = _review_task()
+    task["agent_events"].extend(
+        [
+            {
+                "type": "tool_started",
+                "tool_call_id": "validation-stable",
+                "name": "coding_run_command",
+                "args": {"argv": ["python", "-m", "pytest", "tests/test_stable.py"]},
+            },
+            {
+                "type": "tool_finished",
+                "tool_call_id": "validation-stable",
+                "name": "coding_run_command",
+                "result": {"ok": False, "returncode": 1, "stderr": "stable failure"},
+            },
+        ]
+    )
+    discovery = phases.discovery_evidence_fingerprint(task)
+    task["agent_work_phase"] = phases.phase_state(task, phase=phases.DECISION, decision="report_only")
+
+    assert phases.discovery_evidence_fingerprint(task) == discovery
+
+
+def test_legacy_review_audit_uses_phase_mission_fallback():
+    task = {
+        "prompt": "Review this workspace for bugs and missing tests.",
+        "agent_run_prompt": "Fix them.",
+    }
+
+    assert coding_agent._mission_requires_workspace_edits(task) is False
+
