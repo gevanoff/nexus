@@ -40,13 +40,57 @@ def test_failed_validation_is_discovery_evidence():
     before = phases.discovery_evidence_fingerprint(task)
     task["agent_events"].extend(
         [
-            {"type": "tool_started", "name": "coding_run_command", "args": {"argv": ["python", "-m", "pytest", "tests/test_api.py"]}},
-            {"type": "tool_finished", "name": "coding_run_command", "result": {"ok": False, "returncode": 1, "stderr": "FAILED test_api.py::test_auth"}},
+            {
+                "type": "tool_started",
+                "tool_call_id": "validation-1",
+                "name": "coding_run_command",
+                "args": {"argv": ["python", "-m", "pytest", "tests/test_api.py"]},
+            },
+            {
+                "type": "tool_finished",
+                "tool_call_id": "validation-1",
+                "name": "coding_run_command",
+                "result": {"ok": False, "returncode": 1, "stderr": "FAILED test_api.py::test_auth"},
+            },
         ]
     )
     after = phases.discovery_evidence_fingerprint(task)
     assert after
     assert after != before
+
+
+def test_new_inspection_targets_do_not_reset_discovery_progress():
+    task = _review_task()
+    before = phases.discovery_evidence_fingerprint(task)
+    task["agent_events"].extend(
+        [
+            {
+                "type": "tool_started",
+                "tool_call_id": "read-1",
+                "name": "coding_read_file_lines",
+                "args": {"path": "services/gateway/app/auth.py", "start_line": 1, "line_count": 200},
+            },
+            {
+                "type": "tool_finished",
+                "tool_call_id": "read-1",
+                "name": "coding_read_file_lines",
+                "result": {"ok": True, "content": "new source text"},
+            },
+            {
+                "type": "tool_started",
+                "tool_call_id": "search-1",
+                "name": "coding_run_command",
+                "args": {"argv": ["rg", "Client IP not allowed", "services/gateway"]},
+            },
+            {
+                "type": "tool_finished",
+                "tool_call_id": "search-1",
+                "name": "coding_run_command",
+                "result": {"ok": True, "stdout": "services/gateway/app/auth.py:42"},
+            },
+        ]
+    )
+    assert phases.discovery_evidence_fingerprint(task) == before
 
 
 def test_discovery_evidence_resets_progress_but_execution_reads_do_not():
