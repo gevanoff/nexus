@@ -25,4 +25,9 @@ new = '''    derived_phase = work_phases.advance_phase(task, stage=stage, events
 '''
 if text.count(old) != 1:
     raise RuntimeError(f"expected one phase derivation target, found {text.count(old)}")
-path.write_text(text.replace(old, new, 1), encoding="utf-8")
+text = text.replace(old, new, 1)
+text = text.replace(
+    "report confirmed defects separately from environment/configuration blockers",
+    "report confirmed defects separately from environment or configuration blockers",
+)
+path.write_text(text, encoding="utf-8")
