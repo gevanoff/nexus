@@ -38,13 +38,32 @@ def _raw_active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     return dict(raw)
 
 
+def _event_timestamp(event: Mapping[str, Any]) -> float:
+    try:
+        return float(event.get("ts") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
-    start = max(0, int(state.get("activation_event_count") or 0))
-    if start > len(events):
-        start = 0
+    try:
+        activated_at = float(state.get("activated_at") or 0)
+    except (TypeError, ValueError):
+        activated_at = 0.0
+    legacy_start = max(0, min(int(state.get("activation_event_count") or 0), len(events)))
     count = 0
-    for event in events[start:]:
+    for index, event in enumerate(events):
+        event_ts = _event_timestamp(event)
+        if activated_at > 0:
+            # Persisted events carry timestamps, which remain stable when the
+            # capped event list rolls over and its list indices shift.
+            if event_ts <= 0 or event_ts < activated_at:
+                continue
+        elif index < legacy_start:
+            # Compatibility fallback for older forced-action state without an
+            # activation timestamp. It is intentionally conservative.
+            continue
         if str(event.get("type") or "") != "tool_finished":
             continue
         name = str(event.get("name") or "").strip()
@@ -88,12 +107,16 @@ def activate(
 ) -> Dict[str, Any]:
     previous = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
     normalized_action = str(required_action or "Take one edit, targeted validation, diff review, or terminal action.").strip()
-    normalized_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded")
+    requested_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded").strip()
+    normalized_kind = requested_kind if requested_kind in _ACTION_ALLOWED_TOOLS else "bounded"
+    previous_kind = str(previous.get("action_kind") or "bounded").strip()
+    if previous_kind not in _ACTION_ALLOWED_TOOLS:
+        previous_kind = "bounded"
     same_state = str(previous.get("state_key") or "") == state_key
     same_directive = (
         same_state
         and str(previous.get("required_action") or "") == normalized_action
-        and str(previous.get("action_kind") or "bounded") == normalized_kind
+        and previous_kind == normalized_kind
     )
     previous_run = str(previous.get("run_id") or "")
     activation_count = int(previous.get("activation_count") or 0) + (
@@ -104,7 +127,7 @@ def activate(
         resume_count += 1
     now = time.time()
     event_count = len([item for item in (task.get("agent_events") or []) if isinstance(item, dict)])
-    initial_allowed = _ACTION_ALLOWED_TOOLS.get(normalized_kind, _ACTION_ALLOWED_TOOLS["bounded"])
+    initial_allowed = _ACTION_ALLOWED_TOOLS[normalized_kind]
     return {
         "schema": SCHEMA,
         "status": "active",
