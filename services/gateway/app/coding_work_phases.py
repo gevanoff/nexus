@@ -166,8 +166,9 @@ def advance_phase(
 def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     """Fingerprint completed validation outcomes without rewarding inspection churn.
 
-    The work phase is controller policy rather than output evidence, so a
-    phase-only transition must not reset escalation or retire forced action.
+    The fingerprint is retained across phases. Runtime guardrails decide when
+    a changed fingerprint counts as progress, so phase-only transitions cannot
+    reset escalation or retire forced action.
     """
     pending: Dict[str, Dict[str, Any]] = {}
     signatures: set[str] = set()
