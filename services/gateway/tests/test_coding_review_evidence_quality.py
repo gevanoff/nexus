@@ -164,3 +164,38 @@ def test_validation_command_forms_cover_supported_runners_without_installs():
     assert not phases._is_validation_command(["yarn", "add", "check-deps"])
     assert not phases._is_validation_command(["uv", "add", "ruff"])
     assert not phases._is_validation_command(["git", "status"])
+
+
+def test_uv_run_options_with_values_preserve_the_nested_validation_command():
+    assert phases._is_validation_command(
+        ["uv", "run", "--project", "services/gateway", "pytest", "tests/test_api.py"]
+    )
+    assert phases._is_validation_command(
+        ["uv", "run", "--project=services/gateway", "pytest", "tests/test_api.py"]
+    )
+    assert phases._is_validation_command(
+        ["uv", "run", "--directory", "services/gateway", "git", "diff", "--check"]
+    )
+    assert phases._is_validation_command(
+        ["uv", "run", "--with", "ruff", "ruff", "check", "."]
+    )
+    assert phases._is_validation_command(
+        ["uv", "run", "-p", "3.11", "python", "-m", "pytest", "tests/test_api.py"]
+    )
+    assert phases._is_validation_command(
+        ["uv", "run", "-p3.11", "python", "-m", "pytest", "tests/test_api.py"]
+    )
+
+
+def test_uv_run_flag_options_and_separator_preserve_the_nested_command():
+    assert phases._is_validation_command(
+        ["uv", "run", "--no-sync", "--offline", "--", "git", "diff", "--cached", "--check"]
+    )
+
+
+def test_uv_run_option_values_cannot_be_mistaken_for_validation_commands():
+    assert not phases._is_validation_command(
+        ["uv", "run", "--project", "pytest", "python", "app.py"]
+    )
+    assert not phases._is_validation_command(["uv", "run", "--project"])
+    assert not phases._is_validation_command(["uv", "run", "--with", "ruff", "python", "app.py"])
