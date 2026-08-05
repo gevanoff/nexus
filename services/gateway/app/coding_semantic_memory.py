@@ -5,6 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from app import coding_stagnation_resilience as resilience
+from app import coding_work_phases as work_phases
 from app import coding_forced_action as forced_action
 from app import coding_workspace as cw
 from app.config import S, logger
@@ -138,6 +139,15 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
         resilience.event_fingerprint(events[-1]) if events else ""
     )
 
+    phase_state = work_phases.advance_phase(
+        task,
+        stage=str(controller.get("stage") or "observe"),
+        events=events,
+    )
+    controller["work_phase"] = phase_state["phase"]
+    controller["phase_decision"] = phase_state.get("decision") or ""
+    controller["phase_reason"] = phase_state.get("reason") or ""
+
     current_plan_revision = _as_int(resilience.progress_observation(task).get("plan_revision"))
     previous_plan_revision = _as_int(raw_controller.get("plan_revision"))
     kind = resilience.intervention_kind(task, controller)
@@ -214,6 +224,7 @@ def _prepare_checkpoint(task: Dict[str, Any]) -> Dict[str, Any]:
     ]
     return {
         "schema": "nexus_coding_investigation_checkpoint.v2",
+        "work_phase": phase_state,
         "run_id": run_id,
         "generated_at": time.time(),
         "cycle": cycle,
@@ -317,6 +328,7 @@ def _persist_observation(task_id: str, checkpoint: Dict[str, Any]) -> bool:
         task["agent_inspection_ledger"] = list(checkpoint.get("inspection_ledger") or [])[-32:]
         task["agent_working_memory"] = dict(checkpoint.get("working_memory") or {})
         task["agent_context_manifest"] = dict(checkpoint.get("context_manifest") or {})
+        task["agent_work_phase"] = dict(checkpoint.get("work_phase") or {})
         forced_action.retire_if_state_changed(task, state_key=state_key)
         persisted["value"] = True
 
@@ -363,6 +375,7 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
         task["agent_inspection_ledger"] = list(checkpoint.get("inspection_ledger") or [])[-32:]
         task["agent_working_memory"] = dict(checkpoint.get("working_memory") or {})
         task["agent_context_manifest"] = dict(checkpoint.get("context_manifest") or {})
+        task["agent_work_phase"] = dict(checkpoint.get("work_phase") or {})
         forced_action.retire_if_state_changed(task, state_key=state_key)
         if kind in {"interrupt", "recovery", "continuation"}:
             task["agent_forced_action"] = forced_action.activate(
