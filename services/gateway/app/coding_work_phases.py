@@ -110,6 +110,7 @@ def _is_validation_command(argv: Any) -> bool:
         return _python_validation_command(parts[1:])
     if command == "node":
         return any(item in {"--check", "--test"} for item in lowered[1:])
+    # Only explicit script/subcommand forms count; installs and adds must not mint progress.
     if command in {"npm", "pnpm", "yarn"}:
         arguments = [item for item in lowered[1:] if not item.startswith("-")]
         if not arguments:
