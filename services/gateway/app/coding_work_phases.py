@@ -146,6 +146,7 @@ def advance_phase(
 
 
 def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
+    """Fingerprint completed validation outcomes without rewarding inspection churn."""
     if current_phase(task) != DISCOVERY:
         return ""
     pending: Dict[str, Dict[str, Any]] = {}
