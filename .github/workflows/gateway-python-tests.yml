@@ -67,7 +67,8 @@ jobs:
           rm -f \
             .github/discovery-execution-phase-trigger \
             .github/workflows/discovery-execution-phase-bootstrap.yml \
-            services/gateway/tools/apply_discovery_execution_phases.py
+            services/gateway/tools/apply_discovery_execution_phases.py \
+            services/gateway/tools/discovery_execution_payload.part*
           git add -A
           git config user.name "nexus-review-bot"
           git config user.email "nexus-review-bot@users.noreply.github.com"
