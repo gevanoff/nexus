@@ -138,6 +138,8 @@ def durable_state_components(task: Mapping[str, Any]) -> Dict[str, Any]:
         "validation_revision": as_int(observation.get("validation_revision")),
         "diff_review_revision": as_int(observation.get("diff_review_revision")),
         "finish_state": str(observation.get("finish_state") or "running"),
+        "evidence_fingerprint": str(observation.get("evidence_fingerprint") or ""),
+        "work_phase": str(observation.get("work_phase") or "discovery"),
     }
 
 
@@ -315,8 +317,8 @@ def advance_controller(
     previous_run_id = str(raw.get("run_id") or "")
     previous_cycle = as_int(raw.get("last_cycle"))
     same_sample = previous_run_id == run_id and previous_cycle == cycle
-    if previous_state_key != state_key or progress_stagnant_cycles <= 0:
-        cycles = 0
+    if previous_state_key != state_key:
+        cycles = max(0, progress_stagnant_cycles)
     elif same_sample:
         cycles = max(as_int(raw.get("cycles")), progress_stagnant_cycles)
     else:

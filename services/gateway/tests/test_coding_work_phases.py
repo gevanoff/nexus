@@ -172,3 +172,25 @@ def test_review_decision_working_memory_finishes_without_forcing_edits():
     assert working["work_phase"] == "decision"
     assert working["next_action_kind"] == "finish"
     assert working["next_action"].startswith("Call coding_finish")
+
+def test_phase_and_validation_evidence_change_durable_state_key():
+    task = _review_task()
+    task["agent_progress_state"] = {
+        "observation": {
+            "workspace_fingerprint": "same",
+            "validation_revision": 0,
+            "diff_review_revision": 0,
+            "finish_state": "running",
+            "evidence_fingerprint": "validation-a",
+            "work_phase": "discovery",
+        }
+    }
+    initial = resilience.durable_state_key(task)
+
+    task["agent_progress_state"]["observation"]["evidence_fingerprint"] = "validation-b"
+    after_evidence = resilience.durable_state_key(task)
+    assert after_evidence != initial
+
+    task["agent_progress_state"]["observation"]["work_phase"] = "decision"
+    assert resilience.durable_state_key(task) != after_evidence
+
