@@ -74,18 +74,21 @@ def current_phase(task: Mapping[str, Any]) -> str:
 
 
 def _current_run_events(task: Mapping[str, Any]) -> list[Dict[str, Any]]:
+    """Return only the current run segment, never an unbounded historical fallback."""
     events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
     run_id = str(task.get("agent_run_id") or "").strip()
-    start = 0
+    if run_id:
+        for index in range(len(events) - 1, -1, -1):
+            event = events[index]
+            if str(event.get("type") or "") != "started":
+                continue
+            if str(event.get("run_id") or "").strip() == run_id:
+                return events[index:]
+        return []
     for index in range(len(events) - 1, -1, -1):
-        event = events[index]
-        if str(event.get("type") or "") != "started":
-            continue
-        event_run_id = str(event.get("run_id") or "").strip()
-        if event_run_id == run_id:
-            start = index
-            break
-    return events[start:]
+        if str(events[index].get("type") or "") == "started":
+            return events[index:]
+    return []
 
 
 def _has_edit(events: Sequence[Mapping[str, Any]]) -> bool:
@@ -136,8 +139,13 @@ def _is_validation_command(argv: Any) -> bool:
             and (arguments[1] in validation_scripts or arguments[1].split(":", 1)[0] in validation_scripts)
         )
     if command == "uv":
-        arguments = [item for item in parts[1:] if not item.startswith("-")]
-        if arguments and arguments[0].lower() == "run":
+        uv_arguments = parts[1:]
+        lowered_uv_arguments = [item.lower() for item in uv_arguments]
+        if "run" not in lowered_uv_arguments:
+            return False
+        run_index = lowered_uv_arguments.index("run")
+        arguments = uv_arguments[run_index + 1 :]
+        while arguments and arguments[0].startswith("-"):
             arguments = arguments[1:]
         if not arguments:
             return False
@@ -210,21 +218,26 @@ def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     counts as progress, so phase-only transitions cannot retire forced action.
     """
     pending: Dict[str, Dict[str, Any]] = {}
+    pending_without_id: list[Dict[str, Any]] = []
     signatures: set[str] = set()
-    for index, event in enumerate(_current_run_events(task)):
+    for event in _current_run_events(task):
         event_type = str(event.get("type") or "")
         name = str(event.get("name") or "")
-        call_id = str(event.get("tool_call_id") or f"event-{index}")
+        call_id = str(event.get("tool_call_id") or "").strip()
         if event_type == "tool_started" and name == "coding_run_command":
             args = event.get("args") if isinstance(event.get("args"), dict) else {}
             if _is_validation_command(args.get("argv")):
-                pending[call_id] = dict(args)
+                if call_id:
+                    pending[call_id] = dict(args)
+                else:
+                    pending_without_id.append(dict(args))
             continue
         if event_type != "tool_finished" or name != "coding_run_command":
             continue
-        args = pending.pop(call_id, None)
-        if args is None and len(pending) == 1:
-            _, args = pending.popitem()
+        if call_id:
+            args = pending.pop(call_id, None)
+        else:
+            args = pending_without_id.pop(0) if pending_without_id else None
         if args is None:
             continue
         result = event.get("result") if isinstance(event.get("result"), dict) else {}
@@ -245,19 +258,53 @@ def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     return _stored_evidence_fingerprint(task)
 
 
+def _review_scope_guidance() -> str:
+    return (
+        "Establish an authoritative review scope before broad inspection. First check whether the repository is shallow "
+        "with `git rev-parse --is-shallow-repository`. If parent history is missing and you intend to review HEAD or the "
+        "latest change, fetch enough history (for example `git fetch --deepen=1 origin`) before interpreting `git show`, "
+        "`HEAD^`, or commit statistics; a shallow tip can look like a repository-wide root commit. Prefer an explicit "
+        "base-to-head or parent-to-head changed-file list. If there is no branch delta and the mission is broader than one "
+        "commit, state a bounded subsystem scope instead of implying that the whole repository was reviewed."
+    )
+
+
+def _review_evidence_guidance() -> str:
+    return (
+        "Use strict evidence labels. A confirmed defect requires a reproducible failing check or trace, or a logically "
+        "complete source proof that includes the relevant call sites and contradicting paths. Source-reading concerns without "
+        "that support are hypotheses, not confirmed defects. A missing-test claim requires a repository-wide search for "
+        "semantically equivalent coverage, including adjacent and differently named test modules, and must name what was "
+        "searched. Keep environment/configuration blockers separate. Assistant notes and working-memory summaries are leads, "
+        "not evidence. When forced to finish before verification, downgrade the finding and state the one missing check."
+    )
+
+
 def phase_prompt(task: Mapping[str, Any]) -> str:
     state = phase_state(task)
     phase = str(state.get("phase") or DISCOVERY)
+    review_only = not mission_requires_file_changes(task)
     if phase == DISCOVERY:
-        return (
+        prompt = (
             "Controller work phase: discovery. Gather bounded repository evidence, run targeted validation, "
             "and narrow findings; edits are optional until an actionable defect is supported."
         )
+        if review_only:
+            prompt += " " + _review_scope_guidance() + " " + _review_evidence_guidance()
+        return prompt
     if phase == DECISION:
-        return (
+        prompt = (
             "Controller work phase: decision. Classify findings as confirmed actionable defects, one specified "
             "remaining check, environment/configuration blockers, or disproven; then report or remediate according to the mission."
         )
+        if review_only:
+            prompt += (
+                " Before coding_finish, label every reported item as confirmed defect, hypothesis, missing-test gap, "
+                "environment/configuration blocker, or disproven, and include the supporting command, trace, source proof, "
+                "or repository-wide coverage search. "
+                + _review_evidence_guidance()
+            )
+        return prompt
     return (
         "Controller work phase: execution. Make the smallest evidence-backed edit, run targeted validation, "
         "review the resulting diff, and finish; do not reopen broad repository exploration."
