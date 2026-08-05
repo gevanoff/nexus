@@ -13,6 +13,7 @@ from app.backends import backend_hostname, get_admission_controller, get_registr
 from app import coding_model_policy
 from app import context_budget
 from app import coding_semantic_memory
+from app import coding_work_phases
 from app import coding_forced_action as forced_action
 from app import coding_workspace as cw
 from app.coding_runtime_guardrails import (
@@ -1998,6 +1999,7 @@ def _progress_observation(
 ) -> ProgressObservation:
     task = cw.load_task(task_id)
     plan = task.get("project_plan") if isinstance(task.get("project_plan"), dict) else {}
+    phase = coding_work_phases.current_phase(task)
     return ProgressObservation(
         cycle=cycle,
         workspace_fingerprint=workspace_fingerprint or cw.workspace_progress_fingerprint(task_id),
@@ -2006,8 +2008,9 @@ def _progress_observation(
         diff_review_revision=max(0, int(diff_review_revision)),
         finish_state=str(finish_state or "running"),
         guidance_revision=float(task.get("last_guidance_at") or 0),
+        evidence_fingerprint=coding_work_phases.discovery_evidence_fingerprint(task),
+        work_phase=phase,
     )
-
 
 def _initialize_cycle_progress(
     task_id: str,
@@ -2313,14 +2316,24 @@ def _checkpoint_after_cycle(task_id: str, *, run_id: str, cycle: int) -> Dict[st
     return cw.checkpoint_task(task_id, message=msg, run_id=run_id, cycle=cycle)
 
 
+def _mission_requires_workspace_edits(task: Dict[str, Any]) -> bool:
+    mission = _mission_for_task(task)
+    completion = mission.get("completion_policy") if isinstance(mission.get("completion_policy"), dict) else {}
+    if "require_file_changes" in completion:
+        return bool(completion.get("require_file_changes"))
+    return coding_work_phases.mission_requires_file_changes(task)
+
+
 def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str:
     allowed = ", ".join(cw.allowed_commands())
     original = str(task.get("prompt") or "").strip()
     current = _effective_run_prompt(task)
     guidance = _guidance_context(task)
+    phase_guidance = coding_work_phases.phase_prompt(task)
     request_bits = [f"Original user request:\n{original or '(none recorded)'}"]
     if current and current != original:
         request_bits.append(f"Current run request:\n{current}")
+    request_bits.append(phase_guidance)
     if guidance:
         request_bits.append(guidance)
     request_bits.append(_project_plan_context(task))
@@ -2328,7 +2341,7 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
     if integration_context:
         request_bits.append(integration_context)
     edit_expectation = ""
-    if _request_expects_workspace_edits(task):
+    if _mission_requires_workspace_edits(task):
         edit_expectation = (
             "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
             "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
@@ -3684,7 +3697,7 @@ async def _run_agent(
             uncommitted_changes=uncommitted_changes,
             start_head=start_head,
             end_head=end_head,
-            expects_workspace_edits=_request_expects_workspace_edits(task),
+            expects_workspace_edits=_mission_requires_workspace_edits(task),
         )
         if audit_event is not None:
             await asyncio.to_thread(_append_event, task_id, audit_event)

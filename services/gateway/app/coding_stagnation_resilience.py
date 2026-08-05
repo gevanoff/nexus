@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
+from app import coding_work_phases as work_phases
+
 
 SCHEMA = "nexus_coding_stagnation_controller.v2"
 WORKING_MEMORY_SCHEMA = "nexus_coding_working_memory.v2"
@@ -136,6 +138,7 @@ def durable_state_components(task: Mapping[str, Any]) -> Dict[str, Any]:
         "validation_revision": as_int(observation.get("validation_revision")),
         "diff_review_revision": as_int(observation.get("diff_review_revision")),
         "finish_state": str(observation.get("finish_state") or "running"),
+        "evidence_fingerprint": str(observation.get("evidence_fingerprint") or ""),
     }
 
 
@@ -455,47 +458,70 @@ def build_working_memory(
     active_plan = active_plan_summary(task)
     if active_plan and active_plan not in findings:
         findings.append(active_plan)
-    for note in _recent_assistant_notes(events):
-        if note not in findings:
+    for note in _recent_assistant_notes(events, limit=6):
+        if note and note not in findings:
             findings.append(note)
     findings = findings[-6:]
     inspected = [clip(item.get("target"), 240) for item in ledger[-12:] if isinstance(item, dict)]
     classification = str(controller.get("classification") or "stagnant_execution")
     stage = str(controller.get("stage") or "observe")
-    review_only = not mission_requires_file_changes(task)
-    enforced_stage = stage in {"interrupt", "recovery", "continuation"}
-    defaults = {
-        "inspection_loop": ("Which already-established finding identifies the smallest viable edit or a concrete blocker?", "Stop broad inspection. Make the smallest evidence-backed edit, or finish with a concrete blocker."),
-        "review_loop": ("What unresolved defect remains after the repeated status/diff review?", "Convert the review finding into one edit or finish with a concrete blocker."),
-        "validation_loop": ("Which validation failure is actionable and not already explained by the current workspace state?", "Fix one concrete validation failure, then rerun only the targeted check."),
-        "plan_churn": ("Which plan statement corresponds to an observable repository transition?", "Stop revising notes. Execute the current plan item or finish with a blocker."),
-        "reasoning_loop": ("What concrete repository action follows from the current reasoning?", "Call one workspace tool that edits, validates, reviews an edit, or finishes with a blocker."),
-        "stagnant_execution": ("What concrete action will change workspace, validation, review, or terminal state?", "Take one bounded action that changes durable state, or finish with a concrete blocker."),
+    review_only = not work_phases.mission_requires_file_changes(task)
+    derived_phase = work_phases.advance_phase(task, stage=stage, events=events)
+    phase = str(controller.get("work_phase") or derived_phase.get("phase") or work_phases.DISCOVERY)
+    phase_decision = str(controller.get("phase_decision") or derived_phase.get("decision") or "")
+
+    discovery_defaults = {
+        "inspection_loop": (
+            "Which already-identified target can resolve one review hypothesis with a bounded follow-up?",
+            "Inspect one already-identified target or run one targeted validation, then classify the resulting evidence.",
+        ),
+        "review_loop": (
+            "Which review hypothesis remains unresolved after the existing status or diff evidence?",
+            "Perform one bounded follow-up on the unresolved review hypothesis, then classify it.",
+        ),
+        "validation_loop": (
+            "Which new validation result is a confirmed defect, a one-check hypothesis, or an environment/configuration blocker?",
+            "Inspect the directly implicated test or implementation target once, then classify the validation result.",
+        ),
+        "plan_churn": (
+            "Which plan item corresponds to one observable repository check?",
+            "Stop revising the plan and perform the current bounded discovery check.",
+        ),
+        "reasoning_loop": (
+            "Which repository check would resolve the current hypothesis?",
+            "Call one targeted inspection or validation tool and record the resulting evidence.",
+        ),
+        "stagnant_execution": (
+            "What bounded evidence is still required before deciding whether to report or remediate?",
+            "Gather one targeted piece of repository evidence, then move to a decision.",
+        ),
     }
-    if review_only and enforced_stage:
+    execution_defaults = {
+        "inspection_loop": ("Which established finding identifies the smallest viable edit?", "Make the smallest evidence-backed edit, or finish with a concrete blocker."),
+        "review_loop": ("What unresolved defect remains after the repeated status/diff review?", "Convert the confirmed finding into one edit or finish with a concrete blocker."),
+        "validation_loop": ("Which validation failure is actionable and not already explained by the workspace state?", "Fix one concrete validation failure, then rerun only the targeted check."),
+        "plan_churn": ("Which plan statement corresponds to an observable repository transition?", "Stop revising notes. Execute the current plan item or finish with a blocker."),
+        "reasoning_loop": ("What concrete repository action follows from the current reasoning?", "Call one tool that edits, validates, reviews the edit, or finishes with a blocker."),
+        "stagnant_execution": ("What concrete action will change workspace, validation, review, or terminal state?", "Take one bounded execution action, or finish with a concrete blocker."),
+    }
+
+    if phase == work_phases.DECISION and review_only:
         unresolved_default = (
-            "Which concrete findings or validation results are sufficiently supported to report, "
-            "and which remain environment-dependent?"
+            "Which findings are confirmed actionable defects, one-check hypotheses, environment/configuration blockers, or disproven?"
         )
         next_default = (
-            "Call coding_finish with the concrete review findings and validation evidence already collected, "
-            "clearly distinguishing confirmed defects from environment or configuration blockers; "
-            "if none are verified, state that no actionable defect was found."
+            "Call coding_finish with the classified review findings and validation evidence already collected; "
+            "report confirmed defects separately from environment or configuration blockers, and state clearly when no actionable defect was verified."
         )
-    elif review_only:
-        review_defaults = {
-            "inspection_loop": ("Which already-inspected target can resolve the review with one bounded follow-up?", "Inspect one already-identified target, or finish with the evidence already collected."),
-            "review_loop": ("Which concrete finding remains unresolved after the repeated review?", "Resolve one concrete finding, or finish the review."),
-            "validation_loop": ("Which validation result is most informative for the review conclusion?", "Perform one targeted follow-up on the most informative validation result, or finish with the evidence already collected."),
-            "plan_churn": ("Which review question can be resolved by one repository action?", "Stop revising notes. Perform one bounded review action or finish."),
-            "reasoning_loop": ("What concrete review action follows from the current reasoning?", "Perform one bounded review action or finish with a concrete conclusion."),
-            "stagnant_execution": ("What evidence remains necessary before concluding the review?", "Take one bounded review action or finish with the current findings."),
-        }
-        unresolved_default, next_default = review_defaults.get(classification, review_defaults["stagnant_execution"])
+    elif phase == work_phases.EXECUTION:
+        unresolved_default, next_default = execution_defaults.get(classification, execution_defaults["stagnant_execution"])
     else:
-        unresolved_default, next_default = defaults.get(classification, defaults["stagnant_execution"])
+        unresolved_default, next_default = discovery_defaults.get(classification, discovery_defaults["stagnant_execution"])
+
     previous_directives = previous if str(previous.get("state_key") or "") == state_key else {}
     commitment = pending_concrete_commitment(events)
+    if phase == work_phases.DECISION and review_only:
+        commitment = ""
     next_action = commitment or next_default
     action_source = "assistant_commitment" if commitment else "controller_default"
     unresolved = unresolved_default
@@ -505,22 +531,7 @@ def build_working_memory(
     next_action_kind = action_kind_for_required_action(next_action)
     blocker = clip(previous_directives.get("blocker"), 700)
     content = {
-        "state_key": state_key, "findings": findings, "inspected_targets": inspected,
-        "unresolved_question": unresolved, "next_action": next_action,
-        "next_action_kind": next_action_kind,
-        "required_action_source": action_source,
-        "blocker": blocker, "classification": classification,
-    }
-    content_fingerprint = stable_hash(content)
-    revision = as_int(previous.get("revision")) + (1 if content_fingerprint != str(previous.get("content_fingerprint") or "") else 0)
-    return {
-        "schema": WORKING_MEMORY_SCHEMA,
-        "revision": max(1, revision),
-        "run_id": str(task.get("agent_run_id") or ""),
-        "cycle": as_int(task.get("agent_cycle")),
         "state_key": state_key,
-        "classification": classification,
-        "stage": str(controller.get("stage") or "observe"),
         "findings": findings,
         "inspected_targets": inspected,
         "unresolved_question": unresolved,
@@ -528,15 +539,37 @@ def build_working_memory(
         "next_action_kind": next_action_kind,
         "required_action_source": action_source,
         "blocker": blocker,
+        "classification": classification,
+        "work_phase": phase,
+        "phase_decision": phase_decision,
+    }
+    content_fingerprint = stable_hash(content)
+    revision = as_int(previous.get("revision")) + (1 if content_fingerprint != str(previous.get("content_fingerprint") or "") else 0)
+    return {
+        "schema": WORKING_MEMORY_SCHEMA,
+        "revision": max(1, revision),
+        "state_key": state_key,
+        "run_id": str(controller.get("run_id") or task.get("agent_run_id") or ""),
+        "cycle": as_int(controller.get("last_cycle") or task.get("agent_cycle")),
+        "stage": stage,
+        "work_phase": phase,
+        "phase_decision": phase_decision,
+        "findings": findings,
+        "inspected_targets": inspected,
+        "unresolved_question": unresolved,
+        "next_action": next_action,
+        "next_action_kind": next_action_kind,
+        "required_action_source": action_source,
+        "blocker": blocker,
+        "classification": classification,
         "content_fingerprint": content_fingerprint,
         "provenance": {
             "findings": "project_plan and recent assistant notes; assistant notes remain unverified",
             "inspected_targets": "controller-normalized tool_started events across runs",
-            "state": "workspace, validation, diff-review, and finish observations",
+            "state": "workspace, discovery evidence, validation, diff-review, and finish observations",
         },
         "updated_at": time.time(),
     }
-
 
 def build_context_manifest(
     task: Mapping[str, Any], *, state_key: str, working_memory: Mapping[str, Any],

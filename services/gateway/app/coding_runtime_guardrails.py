@@ -25,6 +25,8 @@ class ProgressObservation:
     diff_review_revision: int
     finish_state: str
     guidance_revision: float
+    evidence_fingerprint: str = ""
+    work_phase: str = "discovery"
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,10 @@ def evaluate_cycle_progress(
             current.validation_revision > prior.validation_revision,
             current.diff_review_revision > prior.diff_review_revision,
             current.finish_state != prior.finish_state,
+            (
+                current.work_phase == "discovery"
+                and current.evidence_fingerprint != prior.evidence_fingerprint
+            ),
         )
     )
     # Cycle numbering restarts for every new agent run. The durable observation
@@ -92,6 +98,8 @@ def progress_state_from_dict(value: Any) -> ProgressState:
             diff_review_revision=_as_int(observation_raw.get("diff_review_revision")),
             finish_state=str(observation_raw.get("finish_state") or "running"),
             guidance_revision=_as_float(observation_raw.get("guidance_revision")),
+            evidence_fingerprint=str(observation_raw.get("evidence_fingerprint") or ""),
+            work_phase=str(observation_raw.get("work_phase") or "discovery"),
         )
     return ProgressState(
         observation=observation,
