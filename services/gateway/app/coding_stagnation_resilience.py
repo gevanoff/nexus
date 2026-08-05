@@ -139,7 +139,6 @@ def durable_state_components(task: Mapping[str, Any]) -> Dict[str, Any]:
         "diff_review_revision": as_int(observation.get("diff_review_revision")),
         "finish_state": str(observation.get("finish_state") or "running"),
         "evidence_fingerprint": str(observation.get("evidence_fingerprint") or ""),
-        "work_phase": str(observation.get("work_phase") or "discovery"),
     }
 
 

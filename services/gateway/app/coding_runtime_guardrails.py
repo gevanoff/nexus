@@ -59,7 +59,6 @@ def evaluate_cycle_progress(
             current.validation_revision > prior.validation_revision,
             current.diff_review_revision > prior.diff_review_revision,
             current.finish_state != prior.finish_state,
-            current.work_phase != prior.work_phase,
             (
                 current.work_phase == "discovery"
                 and current.evidence_fingerprint != prior.evidence_fingerprint

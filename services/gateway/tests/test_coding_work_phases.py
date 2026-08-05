@@ -173,7 +173,7 @@ def test_review_decision_working_memory_finishes_without_forcing_edits():
     assert working["next_action_kind"] == "finish"
     assert working["next_action"].startswith("Call coding_finish")
 
-def test_phase_and_validation_evidence_change_durable_state_key():
+def test_validation_evidence_changes_durable_state_key_but_phase_does_not():
     task = _review_task()
     task["agent_progress_state"] = {
         "observation": {
@@ -192,5 +192,38 @@ def test_phase_and_validation_evidence_change_durable_state_key():
     assert after_evidence != initial
 
     task["agent_progress_state"]["observation"]["work_phase"] = "decision"
-    assert resilience.durable_state_key(task) != after_evidence
+    assert resilience.durable_state_key(task) == after_evidence
+
+
+def test_phase_transition_does_not_mint_guardrail_progress():
+    previous = guardrails.ProgressState(
+        observation=guardrails.ProgressObservation(
+            cycle=5,
+            workspace_fingerprint="same",
+            plan_revision=0,
+            validation_revision=1,
+            diff_review_revision=0,
+            finish_state="running",
+            guidance_revision=0,
+            evidence_fingerprint="validation-a",
+            work_phase="discovery",
+        ),
+        stagnant_cycles=4,
+    )
+    current = guardrails.ProgressObservation(
+        cycle=6,
+        workspace_fingerprint="same",
+        plan_revision=0,
+        validation_revision=1,
+        diff_review_revision=0,
+        finish_state="running",
+        guidance_revision=0,
+        evidence_fingerprint="validation-a",
+        work_phase="decision",
+    )
+
+    decision = guardrails.evaluate_cycle_progress(previous, current, max_stagnant_cycles=8)
+
+    assert decision.progressed is False
+    assert decision.state.stagnant_cycles == 5
 
