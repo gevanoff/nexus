@@ -328,6 +328,35 @@ def _forced_action_context(task: Dict[str, Any]) -> str:
     return forced_action.prompt_context(task)
 
 
+
+def _no_tool_call_guidance(
+    task: Dict[str, Any],
+    *,
+    malformed_text_tool_call: bool,
+    no_tool_cycles: int,
+) -> str:
+    state = forced_action.active_state(task)
+    if state:
+        names = ", ".join(sorted(forced_action.allowed_tool_names(task)))
+        return (
+            "Your previous response did not produce an executable workspace tool call. "
+            f"Call exactly one currently available tool now: {names or 'coding_finish'}. "
+            "Do not narrate, inspect, revise the plan, or name unavailable tools. "
+            "For text-form tool calls, emit exactly one complete <tool_call>{...}</tool_call> block and nothing else."
+        )
+    if malformed_text_tool_call or no_tool_cycles >= 2:
+        return (
+            "Your previous response did not produce an executable workspace tool call. Continue the coding task now by calling one of the "
+            "provided tools, such as coding_list_tree, coding_read_file_lines, coding_replace_text, coding_apply_patch, "
+            "coding_git_diff, or coding_finish. Do not answer with a prose-only plan. "
+            "If you emit a text-form tool call, respond with exactly one complete <tool_call>{...}</tool_call> block and nothing else."
+        )
+    return (
+        "Your previous response did not call any workspace tool. Continue the coding task now by calling one of the "
+        "provided tools, such as coding_read_file_lines, coding_replace_text, coding_apply_patch, "
+        "coding_git_diff, or coding_finish. Do not answer with a prose-only plan."
+    )
+
 def _cancelled_run_status(task: Dict[str, Any]) -> str:
     if bool(task.get("agent_pause_requested") or task.get("agent_stop_requested")):
         return "paused"
@@ -2316,7 +2345,7 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
             "Work by calling workspace tools, not by narrating. "
             f"{text_call_guidance}"
             "Do not inspect, orient, revise the project plan, or run arbitrary shell commands. "
-            "Use only a focused edit, a recognized targeted validation command, coding_git_diff, or coding_finish. "
+            f"Use only the currently available tools: {', '.join(sorted(forced_action.allowed_tool_names(task))) or 'coding_finish'}. "
             "Do not push or open pull requests directly. Nexus performs successful finalization according to the mission contract. "
             f"{forced_context} "
             f"Allowed commands: {allowed or '(none)'}. "
@@ -3319,18 +3348,14 @@ async def _run_agent(
                         },
                     )
                     raise HTTPException(status_code=409, detail=failure_message)
+                policy_task = await asyncio.to_thread(cw.load_task, task_id)
                 messages.append(
                     ChatMessage(
                         role="user",
-                        content=(
-                            "Your previous response did not produce an executable workspace tool call. Continue the coding task now by calling one of the "
-                            "provided tools, such as coding_list_tree, coding_read_file_lines, coding_replace_text, coding_apply_patch, "
-                            "coding_git_diff, or coding_finish. Do not answer with a prose-only plan. "
-                            "If you emit a text-form tool call, respond with exactly one complete <tool_call>{...}</tool_call> block and nothing else."
-                            if malformed_text_tool_call or no_tool_cycles >= 2
-                            else "Your previous response did not call any workspace tool. Continue the coding task now by calling one of the "
-                            "provided tools, such as coding_read_file_lines, coding_replace_text, coding_apply_patch, "
-                            "coding_git_diff, or coding_finish. Do not answer with a prose-only plan."
+                        content=_no_tool_call_guidance(
+                            policy_task,
+                            malformed_text_tool_call=malformed_text_tool_call,
+                            no_tool_cycles=no_tool_cycles,
                         ),
                     )
                 )

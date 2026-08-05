@@ -372,6 +372,7 @@ def _claim_checkpoint(task_id: str, checkpoint: Dict[str, Any]) -> bool:
                 cycle=_as_int(checkpoint.get("cycle")),
                 stage=kind,
                 required_action=str((checkpoint.get("working_memory") or {}).get("next_action") or checkpoint.get("next_action") or ""),
+                action_kind=str((checkpoint.get("working_memory") or {}).get("next_action_kind") or ""),
             )
         task["agent_investigation_checkpoint"] = dict(checkpoint)
         task["agent_investigation_guidance_state_key"] = intervention
