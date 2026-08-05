@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
@@ -14,6 +15,17 @@ DECISION = "decision"
 EXECUTION = "execution"
 _PHASES = {DISCOVERY, DECISION, EXECUTION}
 _EDIT_TOOLS = {"coding_write_file", "coding_replace_text", "coding_apply_patch"}
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_TIMESTAMP_RE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"
+)
+_DURATION_RE = re.compile(r"(?<![\w.])\d+(?:\.\d+)?(?:ms|s)(?!\w)")
+_HEX_ADDRESS_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_PROGRESS_PERCENT_RE = re.compile(r"\[\s*\d{1,3}%\]")
+_TEMP_PATH_RE = re.compile(
+    r"(?:(?:/private)?/tmp|/var/folders/[^\s:]+|[A-Za-z]:\\(?:Users\\[^\\\s]+\\)?AppData\\Local\\Temp)"
+    r"(?:[/\\][^\s:]+)*"
+)
 
 
 def _stable_hash(value: Any) -> str:
@@ -134,7 +146,10 @@ def _is_validation_command(argv: Any) -> bool:
             return True
         if nested in {"python", "python3"}:
             return _python_validation_command(arguments[1:])
-        return nested == "git" and [item.lower() for item in arguments[1:]] in (["diff", "--check"], ["diff", "--cached", "--check"])
+        return nested == "git" and [item.lower() for item in arguments[1:]] in (
+            ["diff", "--check"],
+            ["diff", "--cached", "--check"],
+        )
     if command == "git":
         return lowered[1:] == ["diff", "--check"] or lowered[1:] == ["diff", "--cached", "--check"]
     return False
@@ -163,12 +178,36 @@ def advance_phase(
     return phase_state(task, phase=DISCOVERY, decision="", reason="collect bounded repository evidence")
 
 
+def _stored_evidence_fingerprint(task: Mapping[str, Any]) -> str:
+    progress = task.get("agent_progress_state") if isinstance(task.get("agent_progress_state"), dict) else {}
+    observation = progress.get("observation") if isinstance(progress.get("observation"), dict) else {}
+    return str(observation.get("evidence_fingerprint") or "")
+
+
+def _normalize_validation_output(value: Any) -> str:
+    text = _ANSI_ESCAPE_RE.sub("", str(value or "")).replace("\r\n", "\n").replace("\r", "\n")
+    normalized: list[str] = []
+    for raw_line in text.splitlines():
+        line = _TIMESTAMP_RE.sub("<timestamp>", raw_line)
+        line = _DURATION_RE.sub("<duration>", line)
+        line = _HEX_ADDRESS_RE.sub("<address>", line)
+        line = _PROGRESS_PERCENT_RE.sub("[<progress>]", line)
+        line = _TEMP_PATH_RE.sub("<temp-path>", line)
+        line = " ".join(line.split())
+        if line:
+            normalized.append(line)
+    normalized.sort()
+    return "\n".join(normalized)[:12000]
+
+
 def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     """Fingerprint completed validation outcomes without rewarding inspection churn.
 
-    The fingerprint is retained across phases. Runtime guardrails decide when
-    a changed fingerprint counts as progress, so phase-only transitions cannot
-    reset escalation or retire forced action.
+    The latest stored fingerprint seeds a resumed run until that run produces a
+    completed validation outcome. Output is normalized before hashing so
+    elapsed-time, ordering, temporary-path, and timestamp noise cannot create
+    artificial progress. Runtime guardrails decide when a changed fingerprint
+    counts as progress, so phase-only transitions cannot retire forced action.
     """
     pending: Dict[str, Dict[str, Any]] = {}
     signatures: set[str] = set()
@@ -196,12 +235,14 @@ def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
             "cwd": args.get("cwd") or "",
             "ok": result.get("ok"),
             "returncode": result.get("returncode"),
-            "error": str(result.get("error") or "")[:500],
-            "stdout": str(result.get("stdout") or "")[:2000],
-            "stderr": str(result.get("stderr") or "")[:2000],
+            "error": _normalize_validation_output(result.get("error")),
+            "stdout": _normalize_validation_output(result.get("stdout")),
+            "stderr": _normalize_validation_output(result.get("stderr")),
         }
         signatures.add("validation-result:" + _stable_hash(evidence))
-    return _stable_hash(sorted(signatures)) if signatures else ""
+    if signatures:
+        return _stable_hash(sorted(signatures))
+    return _stored_evidence_fingerprint(task)
 
 
 def phase_prompt(task: Mapping[str, Any]) -> str:
