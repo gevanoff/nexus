@@ -26,6 +26,46 @@ _TEMP_PATH_RE = re.compile(
     r"(?:(?:/private)?/tmp|/var/folders/[^\s:]+|[A-Za-z]:\\(?:Users\\[^\\\s]+\\)?AppData\\Local\\Temp)"
     r"(?:[/\\][^\s:]+)*"
 )
+_UV_RUN_LONG_OPTIONS_WITH_VALUES = {
+    "--cache-dir",
+    "--color",
+    "--config-file",
+    "--config-setting",
+    "--config-settings",
+    "--config-settings-package",
+    "--constraint",
+    "--default-index",
+    "--directory",
+    "--env-file",
+    "--exclude-newer",
+    "--exclude-newer-package",
+    "--extra",
+    "--extra-index-url",
+    "--find-links",
+    "--fork-strategy",
+    "--group",
+    "--index",
+    "--index-strategy",
+    "--index-url",
+    "--keyring-provider",
+    "--link-mode",
+    "--no-group",
+    "--only-group",
+    "--override",
+    "--package",
+    "--prerelease",
+    "--project",
+    "--python",
+    "--python-platform",
+    "--python-version",
+    "--refresh-package",
+    "--reinstall-package",
+    "--resolution",
+    "--with",
+    "--with-editable",
+    "--with-requirements",
+}
+_UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-c", "-C", "-f", "-p"}
 
 
 def _stable_hash(value: Any) -> str:
@@ -111,6 +151,41 @@ def _python_validation_command(parts: Sequence[str]) -> bool:
     return script.startswith("test_") and script.endswith(".py")
 
 
+def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
+    """Strip uv-run options without mistaking their values for the nested command."""
+    items = [str(item).strip() for item in arguments if str(item).strip()]
+    index = 0
+    while index < len(items):
+        token = items[index]
+        lowered = token.lower()
+        if token == "--":
+            return items[index + 1 :]
+        if not token.startswith("-") or token == "-":
+            return items[index:]
+        if "=" in token:
+            index += 1
+            continue
+        matched_short = next(
+            (option for option in _UV_RUN_SHORT_OPTIONS_WITH_VALUES if token == option or token.startswith(option)),
+            "",
+        )
+        if matched_short:
+            if token == matched_short:
+                if index + 1 >= len(items):
+                    return []
+                index += 2
+            else:
+                index += 1
+            continue
+        if lowered in _UV_RUN_LONG_OPTIONS_WITH_VALUES:
+            if index + 1 >= len(items):
+                return []
+            index += 2
+            continue
+        index += 1
+    return []
+
+
 def _is_validation_command(argv: Any) -> bool:
     if not isinstance(argv, list) or not argv:
         return False
@@ -139,14 +214,11 @@ def _is_validation_command(argv: Any) -> bool:
             and (arguments[1] in validation_scripts or arguments[1].split(":", 1)[0] in validation_scripts)
         )
     if command == "uv":
-        uv_arguments = parts[1:]
-        lowered_uv_arguments = [item.lower() for item in uv_arguments]
+        lowered_uv_arguments = [item.lower() for item in parts[1:]]
         if "run" not in lowered_uv_arguments:
             return False
         run_index = lowered_uv_arguments.index("run")
-        arguments = uv_arguments[run_index + 1 :]
-        while arguments and arguments[0].startswith("-"):
-            arguments = arguments[1:]
+        arguments = _uv_run_nested_arguments(parts[run_index + 2 :])
         if not arguments:
             return False
         nested = Path(arguments[0]).name.lower()
