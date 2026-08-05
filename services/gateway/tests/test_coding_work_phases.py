@@ -227,3 +227,62 @@ def test_phase_transition_does_not_mint_guardrail_progress():
     assert decision.progressed is False
     assert decision.state.stagnant_cycles == 5
 
+def test_legacy_review_task_derives_report_only_policy():
+    task = {
+        "prompt": "Review this workspace for bugs, behavioral regressions, risky assumptions, and missing tests.",
+        "agent_run_id": "run-legacy",
+        "agent_events": [{"type": "started", "run_id": "run-legacy"}],
+    }
+
+    assert phases.mission_requires_file_changes(task) is False
+    decision = phases.advance_phase(task, stage="interrupt")
+    assert decision["phase"] == phases.DECISION
+    assert decision["decision"] == "report_only"
+
+
+def test_package_manager_installs_are_not_validation_evidence():
+    assert phases._is_validation_command(["npm", "install", "lint-staged"]) is False
+    assert phases._is_validation_command(["yarn", "add", "check-deps"]) is False
+    assert phases._is_validation_command(["npm", "run", "test:unit"]) is True
+    assert phases._is_validation_command(["pnpm", "lint"]) is True
+
+
+def test_empty_started_event_does_not_hide_current_run_validation():
+    task = _review_task()
+    task["agent_events"].extend(
+        [
+            {
+                "type": "tool_started",
+                "tool_call_id": "validation-current",
+                "name": "coding_run_command",
+                "args": {"argv": ["python", "-m", "pytest", "tests/test_current.py"]},
+            },
+            {
+                "type": "tool_finished",
+                "tool_call_id": "validation-current",
+                "name": "coding_run_command",
+                "result": {"ok": False, "returncode": 1, "stderr": "current failure"},
+            },
+            {"type": "started", "run_id": ""},
+        ]
+    )
+
+    assert phases.discovery_evidence_fingerprint(task)
+
+
+def test_report_only_mission_prompt_does_not_advertise_fix_expectation():
+    task = _review_task()
+    task.update(
+        {
+            "id": "code_phase_prompt",
+            "base_branch": "main",
+            "branch_name": "review",
+            "agent_run_prompt": "Fix them.",
+            "project_plan": {"items": []},
+        }
+    )
+
+    rendered = coding_agent._system_prompt(task)
+
+    assert "This request is fix-oriented" not in rendered
+

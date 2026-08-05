@@ -2341,7 +2341,7 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
     if integration_context:
         request_bits.append(integration_context)
     edit_expectation = ""
-    if _request_expects_workspace_edits(task):
+    if _mission_requires_workspace_edits(task):
         edit_expectation = (
             "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
             "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "

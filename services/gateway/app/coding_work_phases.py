@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping, Sequence
 
+from app import coding_workspace as workspace
+
 
 SCHEMA = "nexus_coding_work_phase.v1"
 DISCOVERY = "discovery"
@@ -24,7 +26,8 @@ def mission_requires_file_changes(task: Mapping[str, Any]) -> bool:
     completion = mission.get("completion_policy") if isinstance(mission.get("completion_policy"), dict) else {}
     if "require_file_changes" in completion:
         return bool(completion.get("require_file_changes"))
-    return True
+    goal = str(mission.get("goal") or task.get("prompt") or task.get("agent_run_prompt") or "")
+    return workspace.goal_expects_file_changes(goal)
 
 
 def _stored_state(task: Mapping[str, Any]) -> Dict[str, Any]:
@@ -67,7 +70,7 @@ def _current_run_events(task: Mapping[str, Any]) -> list[Dict[str, Any]]:
         if str(event.get("type") or "") != "started":
             continue
         event_run_id = str(event.get("run_id") or "").strip()
-        if not run_id or not event_run_id or event_run_id == run_id:
+        if event_run_id == run_id:
             start = index
             break
     return events[start:]
@@ -108,15 +111,29 @@ def _is_validation_command(argv: Any) -> bool:
     if command == "node":
         return any(item in {"--check", "--test"} for item in lowered[1:])
     if command in {"npm", "pnpm", "yarn"}:
-        return any(marker in item for item in lowered[1:] for marker in ("test", "lint", "typecheck", "check", "build"))
-    if command == "uv":
-        meaningful = {item for item in lowered[1:] if not item.startswith("-")}
-        return bool(
-            meaningful.intersection({"pytest", "ruff", "mypy", "py_compile", "compileall", "unittest"})
-            or "--check" in lowered
-            or "--test" in lowered
-            or any(marker in item for item in meaningful for marker in ("test", "lint", "typecheck"))
+        arguments = [item for item in lowered[1:] if not item.startswith("-")]
+        if not arguments:
+            return False
+        validation_scripts = {"test", "lint", "typecheck", "check", "build"}
+        if arguments[0] in validation_scripts:
+            return True
+        return (
+            arguments[0] in {"run", "run-script"}
+            and len(arguments) > 1
+            and (arguments[1] in validation_scripts or arguments[1].split(":", 1)[0] in validation_scripts)
         )
+    if command == "uv":
+        arguments = [item for item in parts[1:] if not item.startswith("-")]
+        if arguments and arguments[0].lower() == "run":
+            arguments = arguments[1:]
+        if not arguments:
+            return False
+        nested = Path(arguments[0]).name.lower()
+        if nested in {"pytest", "ruff", "mypy"}:
+            return True
+        if nested in {"python", "python3"}:
+            return _python_validation_command(arguments[1:])
+        return nested == "git" and [item.lower() for item in arguments[1:]] in (["diff", "--check"], ["diff", "--cached", "--check"])
     if command == "git":
         return lowered[1:] == ["diff", "--check"] or lowered[1:] == ["diff", "--cached", "--check"]
     return False

@@ -465,7 +465,7 @@ def build_working_memory(
     inspected = [clip(item.get("target"), 240) for item in ledger[-12:] if isinstance(item, dict)]
     classification = str(controller.get("classification") or "stagnant_execution")
     stage = str(controller.get("stage") or "observe")
-    review_only = not mission_requires_file_changes(task)
+    review_only = not work_phases.mission_requires_file_changes(task)
     derived_phase = work_phases.advance_phase(task, stage=stage, events=events)
     phase = str(controller.get("work_phase") or derived_phase.get("phase") or work_phases.DISCOVERY)
     phase_decision = str(controller.get("phase_decision") or derived_phase.get("decision") or "")
