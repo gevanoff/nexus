@@ -55,14 +55,15 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     count = 0
     for index, event in enumerate(events):
         event_ts = _event_timestamp(event)
-        if activated_at > 0:
-            # Persisted events carry timestamps, which remain stable when the
-            # capped event list rolls over and its list indices shift.
-            if event_ts <= 0 or event_ts < activated_at:
+        if activated_at > 0 and event_ts > 0:
+            # Persisted event timestamps remain stable when the capped event
+            # list rolls over and its list indices shift.
+            if event_ts < activated_at:
                 continue
         elif index < legacy_start:
-            # Compatibility fallback for older forced-action state without an
-            # activation timestamp. It is intentionally conservative.
+            # Compatibility fallback for old or synthetic events without
+            # timestamps. If rollover makes the index ambiguous, undercounting
+            # is safer than prematurely exhausting the forced-action attempt.
             continue
         if str(event.get("type") or "") != "tool_finished":
             continue
