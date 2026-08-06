@@ -214,6 +214,9 @@ def test_uv_run_consumes_documented_value_taking_aliases():
     )
     assert phases._is_validation_command(["uv", "run", "-m", "pytest"])
     assert phases._is_validation_command(["uv", "run", "--script", "test_smoke.py"])
+    assert phases._is_validation_command(["uv", "run", "--module=pytest"])
+    assert phases._is_validation_command(["uv", "run", "--script=test_smoke.py"])
+    assert phases._is_validation_command(["uv", "run", "--gui-script=test_smoke.py"])
 
 
 def test_uv_run_option_alias_values_cannot_mint_validation_evidence():
@@ -227,6 +230,8 @@ def test_uv_run_option_alias_values_cannot_mint_validation_evidence():
     assert not phases._is_validation_command(
         ["uv", "run", "-i", "pytest", "python", "app.py"]
     )
+    assert not phases._is_validation_command(["uv", "run", "--module="])
+    assert not phases._is_validation_command(["uv", "run", "--script="])
 
 
 def test_uv_run_must_be_the_first_parsed_uv_subcommand():
