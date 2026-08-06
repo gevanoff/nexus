@@ -27,6 +27,7 @@ _TEMP_PATH_RE = re.compile(
     r"(?:[/\\][^\s:]+)*"
 )
 _UV_RUN_LONG_OPTIONS_WITH_VALUES = {
+    "--allow-insecure-host",
     "--cache-dir",
     "--color",
     "--config-file",
@@ -34,6 +35,7 @@ _UV_RUN_LONG_OPTIONS_WITH_VALUES = {
     "--config-settings",
     "--config-settings-package",
     "--constraint",
+    "--constraints",
     "--default-index",
     "--directory",
     "--env-file",
@@ -49,11 +51,19 @@ _UV_RUN_LONG_OPTIONS_WITH_VALUES = {
     "--index-url",
     "--keyring-provider",
     "--link-mode",
+    "--no-binary-package",
+    "--no-build-isolation-package",
+    "--no-build-package",
+    "--no-editable-package",
+    "--no-extra",
     "--no-group",
+    "--no-sources-package",
     "--only-group",
     "--override",
+    "--overrides",
     "--package",
     "--prerelease",
+    "--prerelease-package",
     "--project",
     "--python",
     "--python-platform",
@@ -61,41 +71,60 @@ _UV_RUN_LONG_OPTIONS_WITH_VALUES = {
     "--refresh-package",
     "--reinstall-package",
     "--resolution",
+    "--trusted-host",
+    "--upgrade-group",
+    "--upgrade-package",
     "--with",
     "--with-editable",
     "--with-requirements",
 }
-_UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-c", "-C", "-f", "-p"}
+_UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-C", "-P", "-f", "-i", "-p", "-w"}
 _UV_RUN_LONG_FLAG_OPTIONS = {
     "--active",
     "--all-extras",
     "--all-groups",
+    "--all-packages",
+    "--compile",
     "--compile-bytecode",
     "--exact",
+    "--force-reinstall",
     "--frozen",
+    "--help",
     "--inexact",
     "--isolated",
     "--locked",
     "--managed-python",
     "--native-tls",
+    "--no-binary",
+    "--no-build",
+    "--no-build-isolation",
     "--no-cache",
+    "--no-cache-dir",
     "--no-compile-bytecode",
     "--no-config",
     "--no-default-groups",
     "--no-dev",
     "--no-editable",
+    "--no-env-file",
+    "--no-index",
     "--no-managed-python",
     "--no-progress",
     "--no-project",
     "--no-python-downloads",
     "--no-sources",
     "--no-sync",
+    "--no-workspace",
+    "--no_workspace",
     "--offline",
     "--only-dev",
+    "--quiet",
     "--refresh",
     "--reinstall",
+    "--system-certs",
+    "--upgrade",
+    "--verbose",
 }
-_UV_RUN_SHORT_FLAG_OPTIONS = {"-q", "-v"}
+_UV_RUN_SHORT_FLAG_OPTIONS = {"-U", "-h", "-n", "-q", "-v"}
 
 
 def _stable_hash(value: Any) -> str:
@@ -192,11 +221,30 @@ def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
             return items[index + 1 :]
         if not token.startswith("-") or token == "-":
             return items[index:]
+        if lowered in {"--module", "-m"}:
+            if index + 1 >= len(items):
+                return []
+            return ["python", "-m", items[index + 1], *items[index + 2 :]]
+        if lowered in {"--script", "--gui-script", "-s"}:
+            if index + 1 >= len(items):
+                return []
+            return ["python", items[index + 1], *items[index + 2 :]]
+        if token.startswith("-m") and not token.startswith("--") and token != "-m":
+            return ["python", "-m", token[2:], *items[index + 1 :]]
+        if token.startswith("-s") and not token.startswith("--") and token != "-s":
+            return ["python", token[2:], *items[index + 1 :]]
         if "=" in token:
+            option, _value = token.split("=", 1)
+            if option.lower() not in _UV_RUN_LONG_OPTIONS_WITH_VALUES:
+                return []
             index += 1
             continue
         matched_short = next(
-            (option for option in _UV_RUN_SHORT_OPTIONS_WITH_VALUES if token == option or token.startswith(option)),
+            (
+                option
+                for option in _UV_RUN_SHORT_OPTIONS_WITH_VALUES
+                if token == option or (not token.startswith("--") and token.startswith(option))
+            ),
             "",
         )
         if matched_short:
