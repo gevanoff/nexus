@@ -227,3 +227,18 @@ def test_uv_run_option_alias_values_cannot_mint_validation_evidence():
     assert not phases._is_validation_command(
         ["uv", "run", "-i", "pytest", "python", "app.py"]
     )
+
+
+def test_uv_run_must_be_the_first_parsed_uv_subcommand():
+    assert phases._is_validation_command(
+        ["uv", "--project", "services/gateway", "run", "pytest", "tests/test_api.py"]
+    )
+    assert phases._is_validation_command(
+        ["uv", "--offline", "run", "git", "diff", "--check"]
+    )
+
+    assert not phases._is_validation_command(["uv", "tool", "run", "pytest"])
+    assert not phases._is_validation_command(["uv", "--project", "run", "pytest"])
+    assert not phases._is_validation_command(
+        ["uv", "--future-option=value", "run", "pytest"]
+    )
