@@ -199,3 +199,31 @@ def test_uv_run_option_values_cannot_be_mistaken_for_validation_commands():
     )
     assert not phases._is_validation_command(["uv", "run", "--project"])
     assert not phases._is_validation_command(["uv", "run", "--with", "ruff", "python", "app.py"])
+
+
+def test_uv_run_consumes_documented_value_taking_aliases():
+    assert phases._is_validation_command(["uv", "run", "-w", "dev", "pytest", "tests/test_api.py"])
+    assert phases._is_validation_command(
+        ["uv", "run", "--no-extra", "docs", "git", "diff", "--check"]
+    )
+    assert phases._is_validation_command(
+        ["uv", "run", "--allow-insecure-host", "localhost", "ruff", "check", "."]
+    )
+    assert phases._is_validation_command(
+        ["uv", "run", "-i", "https://pypi.org/simple", "python", "-m", "pytest"]
+    )
+    assert phases._is_validation_command(["uv", "run", "-m", "pytest"])
+    assert phases._is_validation_command(["uv", "run", "--script", "test_smoke.py"])
+
+
+def test_uv_run_option_alias_values_cannot_mint_validation_evidence():
+    assert not phases._is_validation_command(["uv", "run", "-w", "ruff", "python", "app.py"])
+    assert not phases._is_validation_command(
+        ["uv", "run", "--no-extra", "pytest", "python", "app.py"]
+    )
+    assert not phases._is_validation_command(
+        ["uv", "run", "--allow-insecure-host", "pytest", "python", "app.py"]
+    )
+    assert not phases._is_validation_command(
+        ["uv", "run", "-i", "pytest", "python", "app.py"]
+    )
