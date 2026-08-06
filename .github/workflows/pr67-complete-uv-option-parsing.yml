@@ -1,0 +1,237 @@
+name: PR67 Complete uv Option Parsing
+
+on:
+  push:
+    branches:
+      - agent/evidence-qualified-code-reviews
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/evidence-qualified-code-reviews
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Complete uv run option parsing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("services/gateway/app/coding_work_phases.py")
+          text = path.read_text(encoding="utf-8")
+
+          start = text.index("_UV_RUN_LONG_OPTIONS_WITH_VALUES = {")
+          end = text.index("\n\n\ndef _stable_hash", start)
+          replacement = '''_UV_RUN_LONG_OPTIONS_WITH_VALUES = {
+              "--allow-insecure-host",
+              "--cache-dir",
+              "--color",
+              "--config-file",
+              "--config-setting",
+              "--config-settings",
+              "--config-settings-package",
+              "--constraint",
+              "--constraints",
+              "--default-index",
+              "--directory",
+              "--env-file",
+              "--exclude-newer",
+              "--exclude-newer-package",
+              "--extra",
+              "--extra-index-url",
+              "--find-links",
+              "--fork-strategy",
+              "--group",
+              "--index",
+              "--index-strategy",
+              "--index-url",
+              "--keyring-provider",
+              "--link-mode",
+              "--no-binary-package",
+              "--no-build-isolation-package",
+              "--no-build-package",
+              "--no-editable-package",
+              "--no-extra",
+              "--no-group",
+              "--no-sources-package",
+              "--only-group",
+              "--override",
+              "--overrides",
+              "--package",
+              "--prerelease",
+              "--prerelease-package",
+              "--project",
+              "--python",
+              "--python-platform",
+              "--python-version",
+              "--refresh-package",
+              "--reinstall-package",
+              "--resolution",
+              "--trusted-host",
+              "--upgrade-group",
+              "--upgrade-package",
+              "--with",
+              "--with-editable",
+              "--with-requirements",
+          }
+          _UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-C", "-P", "-f", "-i", "-p", "-w"}
+          _UV_RUN_LONG_FLAG_OPTIONS = {
+              "--active",
+              "--all-extras",
+              "--all-groups",
+              "--all-packages",
+              "--compile",
+              "--compile-bytecode",
+              "--exact",
+              "--force-reinstall",
+              "--frozen",
+              "--help",
+              "--inexact",
+              "--isolated",
+              "--locked",
+              "--managed-python",
+              "--native-tls",
+              "--no-binary",
+              "--no-build",
+              "--no-build-isolation",
+              "--no-cache",
+              "--no-cache-dir",
+              "--no-compile-bytecode",
+              "--no-config",
+              "--no-default-groups",
+              "--no-dev",
+              "--no-editable",
+              "--no-env-file",
+              "--no-index",
+              "--no-managed-python",
+              "--no-progress",
+              "--no-project",
+              "--no-python-downloads",
+              "--no-sources",
+              "--no-sync",
+              "--no-workspace",
+              "--no_workspace",
+              "--offline",
+              "--only-dev",
+              "--quiet",
+              "--refresh",
+              "--reinstall",
+              "--system-certs",
+              "--upgrade",
+              "--verbose",
+          }
+          _UV_RUN_SHORT_FLAG_OPTIONS = {"-U", "-h", "-n", "-q", "-v"}'''
+          text = text[:start] + replacement + text[end:]
+
+          old = '''        if token == "--":
+              return items[index + 1 :]
+          if not token.startswith("-") or token == "-":
+              return items[index:]
+          if "=" in token:
+              index += 1
+              continue
+          matched_short = next(
+'''
+          new = '''        if token == "--":
+              return items[index + 1 :]
+          if not token.startswith("-") or token == "-":
+              return items[index:]
+          if lowered in {"--module", "-m"}:
+              if index + 1 >= len(items):
+                  return []
+              return ["python", "-m", items[index + 1], *items[index + 2 :]]
+          if lowered in {"--script", "--gui-script", "-s"}:
+              if index + 1 >= len(items):
+                  return []
+              return ["python", items[index + 1], *items[index + 2 :]]
+          if token.startswith("-m") and token != "-m":
+              return ["python", "-m", token[2:], *items[index + 1 :]]
+          if token.startswith("-s") and token != "-s":
+              return ["python", token[2:], *items[index + 1 :]]
+          if "=" in token:
+              option, _value = token.split("=", 1)
+              if option.lower() not in _UV_RUN_LONG_OPTIONS_WITH_VALUES:
+                  return []
+              index += 1
+              continue
+          matched_short = next(
+'''
+          if old not in text:
+              raise SystemExit("uv parser anchor not found")
+          text = text.replace(old, new, 1)
+          path.write_text(text, encoding="utf-8")
+
+          tests = Path("services/gateway/tests/test_coding_review_evidence_quality.py")
+          content = tests.read_text(encoding="utf-8")
+          addition = '''
+
+
+def test_uv_run_consumes_documented_value_taking_aliases():
+              assert phases._is_validation_command(["uv", "run", "-w", "dev", "pytest", "tests/test_api.py"])
+              assert phases._is_validation_command(
+                  ["uv", "run", "--no-extra", "docs", "git", "diff", "--check"]
+              )
+              assert phases._is_validation_command(
+                  ["uv", "run", "--allow-insecure-host", "localhost", "ruff", "check", "."]
+              )
+              assert phases._is_validation_command(
+                  ["uv", "run", "-i", "https://pypi.org/simple", "python", "-m", "pytest"]
+              )
+              assert phases._is_validation_command(["uv", "run", "-m", "pytest"])
+              assert phases._is_validation_command(["uv", "run", "--script", "test_smoke.py"])
+
+
+          def test_uv_run_option_alias_values_cannot_mint_validation_evidence():
+              assert not phases._is_validation_command(["uv", "run", "-w", "ruff", "python", "app.py"])
+              assert not phases._is_validation_command(
+                  ["uv", "run", "--no-extra", "pytest", "python", "app.py"]
+              )
+              assert not phases._is_validation_command(
+                  ["uv", "run", "--allow-insecure-host", "pytest", "python", "app.py"]
+              )
+              assert not phases._is_validation_command(
+                  ["uv", "run", "-i", "pytest", "python", "app.py"]
+              )
+          '''
+          if "test_uv_run_consumes_documented_value_taking_aliases" not in content:
+              content += addition
+          tests.write_text(content, encoding="utf-8")
+
+          shared = Path("services/gateway/tests/test_coding_validation_classifier_shared.py")
+          shared_content = shared.read_text(encoding="utf-8")
+          shared_content = shared_content.replace(
+              '        (["uv", "run", "--future-option", "pytest", "python", "app.py"], False),\n',
+              '        (["uv", "run", "--future-option", "pytest", "python", "app.py"], False),\n'
+              '        (["uv", "run", "-w", "dev", "pytest", "tests/test_api.py"], True),\n'
+              '        (["uv", "run", "-w", "ruff", "python", "app.py"], False),\n'
+              '        (["uv", "run", "--no-extra", "pytest", "python", "app.py"], False),\n',
+          )
+          shared.write_text(shared_content, encoding="utf-8")
+          PY
+
+          python -m py_compile services/gateway/app/coding_work_phases.py
+          PYTHONPATH=services/gateway GATEWAY_BEARER_TOKEN=test-token \
+            python -m pytest -q \
+              services/gateway/tests/test_coding_review_evidence_quality.py \
+              services/gateway/tests/test_coding_validation_classifier_shared.py
+
+          rm -f .github/workflows/pr67-complete-uv-option-parsing.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            services/gateway/app/coding_work_phases.py \
+            services/gateway/tests/test_coding_review_evidence_quality.py \
+            services/gateway/tests/test_coding_validation_classifier_shared.py \
+            .github/workflows/pr67-complete-uv-option-parsing.yml
+          git diff --cached --check
+          git commit -m "Complete uv run option parsing"
+          git push origin HEAD:agent/evidence-qualified-code-reviews
