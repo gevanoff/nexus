@@ -24,6 +24,8 @@ from app import coding_work_phases as phases
         (["uv", "run", "-w", "dev", "pytest", "tests/test_api.py"], True),
         (["uv", "run", "--no-extra", "docs", "git", "diff", "--check"], True),
         (["uv", "run", "-m", "pytest"], True),
+        (["uv", "--project", "services/gateway", "run", "pytest", "tests/test_api.py"], True),
+        (["uv", "--offline", "run", "git", "diff", "--check"], True),
         (["npm", "install", "lint-staged"], False),
         (["yarn", "add", "check-deps"], False),
         (["uv", "add", "ruff"], False),
@@ -31,6 +33,9 @@ from app import coding_work_phases as phases
         (["uv", "run", "--future-option", "pytest", "python", "app.py"], False),
         (["uv", "run", "-w", "ruff", "python", "app.py"], False),
         (["uv", "run", "--no-extra", "pytest", "python", "app.py"], False),
+        (["uv", "tool", "run", "pytest"], False),
+        (["uv", "--project", "run", "pytest"], False),
+        (["uv", "--future-option=value", "run", "pytest"], False),
         (["git", "status"], False),
     ],
 )
