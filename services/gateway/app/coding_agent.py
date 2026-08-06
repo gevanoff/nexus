@@ -1011,51 +1011,11 @@ def _tool_result_modified_workspace(name: str, args: Dict[str, Any], result: Dic
 
 
 def _is_python_validation_command(parts: List[str]) -> bool:
-    if not parts:
-        return False
-    lowered = [item.lower() for item in parts]
-    if "-m" in lowered:
-        index = lowered.index("-m")
-        module = lowered[index + 1] if index + 1 < len(lowered) else ""
-        root_module = module.split(".", 1)[0]
-        return root_module in {"pytest", "unittest", "py_compile", "compileall", "ruff", "mypy"}
-    script = Path(parts[0]).name.lower()
-    if script in {"pytest", "ruff", "mypy"}:
-        return True
-    return script.startswith("test_") and script.endswith(".py")
+    return coding_work_phases.is_python_validation_command(parts)
 
 
 def _is_validation_command(argv: Any) -> bool:
-    if not isinstance(argv, list) or not argv:
-        return False
-    parts = [str(item).strip() for item in argv if str(item).strip()]
-    if not parts:
-        return False
-    cmd = Path(parts[0]).name.lower()
-    lowered = [item.lower() for item in parts]
-    if cmd in {"pytest", "ruff", "mypy"}:
-        return True
-    if cmd in {"python", "python3"}:
-        return _is_python_validation_command(parts[1:])
-    if cmd == "node":
-        return any(item in {"--check", "--test"} for item in lowered[1:])
-    if cmd == "npm":
-        if len(lowered) >= 2 and lowered[1] in {"test", "t"}:
-            return True
-        if len(lowered) >= 3 and lowered[1] == "run":
-            script = lowered[2]
-            return any(marker in script for marker in ("test", "lint", "typecheck", "check", "build"))
-        return False
-    if cmd == "uv":
-        meaningful = {item for item in lowered[1:] if not item.startswith("-")}
-        if meaningful.intersection({"pytest", "ruff", "mypy", "py_compile", "compileall", "unittest"}):
-            return True
-        if "--check" in lowered or "--test" in lowered:
-            return True
-        return any(marker in item for item in meaningful for marker in ("test", "lint", "typecheck"))
-    if cmd == "git":
-        return len(lowered) >= 3 and lowered[1] == "diff" and "--check" in lowered[2:]
-    return False
+    return coding_work_phases.is_validation_command(argv)
 
 
 def _validation_command_failed_due_to_missing_tool(result: Dict[str, Any]) -> bool:

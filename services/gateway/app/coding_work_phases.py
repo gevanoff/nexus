@@ -66,6 +66,36 @@ _UV_RUN_LONG_OPTIONS_WITH_VALUES = {
     "--with-requirements",
 }
 _UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-c", "-C", "-f", "-p"}
+_UV_RUN_LONG_FLAG_OPTIONS = {
+    "--active",
+    "--all-extras",
+    "--all-groups",
+    "--compile-bytecode",
+    "--exact",
+    "--frozen",
+    "--inexact",
+    "--isolated",
+    "--locked",
+    "--managed-python",
+    "--native-tls",
+    "--no-cache",
+    "--no-compile-bytecode",
+    "--no-config",
+    "--no-default-groups",
+    "--no-dev",
+    "--no-editable",
+    "--no-managed-python",
+    "--no-progress",
+    "--no-project",
+    "--no-python-downloads",
+    "--no-sources",
+    "--no-sync",
+    "--offline",
+    "--only-dev",
+    "--refresh",
+    "--reinstall",
+}
+_UV_RUN_SHORT_FLAG_OPTIONS = {"-q", "-v"}
 
 
 def _stable_hash(value: Any) -> str:
@@ -139,7 +169,7 @@ def _has_edit(events: Sequence[Mapping[str, Any]]) -> bool:
     )
 
 
-def _python_validation_command(parts: Sequence[str]) -> bool:
+def is_python_validation_command(parts: Sequence[str]) -> bool:
     if not parts:
         return False
     lowered = [item.lower() for item in parts]
@@ -152,7 +182,7 @@ def _python_validation_command(parts: Sequence[str]) -> bool:
 
 
 def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
-    """Strip uv-run options without mistaking their values for the nested command."""
+    """Strip recognized uv-run options without mistaking option values for the nested command."""
     items = [str(item).strip() for item in arguments if str(item).strip()]
     index = 0
     while index < len(items):
@@ -182,11 +212,16 @@ def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
                 return []
             index += 2
             continue
-        index += 1
+        if lowered in _UV_RUN_LONG_FLAG_OPTIONS or token in _UV_RUN_SHORT_FLAG_OPTIONS:
+            index += 1
+            continue
+        # Unknown standalone options may consume the next token. Evidence classification
+        # must fail closed rather than treating a possible option value as the command.
+        return []
     return []
 
 
-def _is_validation_command(argv: Any) -> bool:
+def is_validation_command(argv: Any) -> bool:
     if not isinstance(argv, list) or not argv:
         return False
     parts = [str(item).strip() for item in argv if str(item).strip()]
@@ -197,7 +232,7 @@ def _is_validation_command(argv: Any) -> bool:
     if command in {"pytest", "ruff", "mypy"}:
         return True
     if command in {"python", "python3"}:
-        return _python_validation_command(parts[1:])
+        return is_python_validation_command(parts[1:])
     if command == "node":
         return any(item in {"--check", "--test"} for item in lowered[1:])
     # Only explicit script/subcommand forms count; installs and adds must not mint progress.
@@ -225,7 +260,7 @@ def _is_validation_command(argv: Any) -> bool:
         if nested in {"pytest", "ruff", "mypy"}:
             return True
         if nested in {"python", "python3"}:
-            return _python_validation_command(arguments[1:])
+            return is_python_validation_command(arguments[1:])
         return nested == "git" and [item.lower() for item in arguments[1:]] in (
             ["diff", "--check"],
             ["diff", "--cached", "--check"],
@@ -233,6 +268,11 @@ def _is_validation_command(argv: Any) -> bool:
     if command == "git":
         return lowered[1:] == ["diff", "--check"] or lowered[1:] == ["diff", "--cached", "--check"]
     return False
+
+
+# Backward-compatible private aliases for existing callers and tests.
+_python_validation_command = is_python_validation_command
+_is_validation_command = is_validation_command
 
 
 def advance_phase(
@@ -298,7 +338,7 @@ def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
         call_id = str(event.get("tool_call_id") or "").strip()
         if event_type == "tool_started" and name == "coding_run_command":
             args = event.get("args") if isinstance(event.get("args"), dict) else {}
-            if _is_validation_command(args.get("argv")):
+            if is_validation_command(args.get("argv")):
                 if call_id:
                     pending[call_id] = dict(args)
                 else:
