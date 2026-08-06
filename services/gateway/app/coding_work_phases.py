@@ -268,6 +268,12 @@ def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
             return items[index + 1 :]
         if not token.startswith("-") or token == "-":
             return items[index:]
+        if lowered.startswith("--module="):
+            module = token.split("=", 1)[1].strip()
+            return ["python", "-m", module, *items[index + 1 :]] if module else []
+        if lowered.startswith("--script=") or lowered.startswith("--gui-script="):
+            script = token.split("=", 1)[1].strip()
+            return ["python", script, *items[index + 1 :]] if script else []
         if lowered in {"--module", "-m"}:
             if index + 1 >= len(items):
                 return []
