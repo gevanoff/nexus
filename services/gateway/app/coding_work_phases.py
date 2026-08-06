@@ -210,6 +210,53 @@ def is_python_validation_command(parts: Sequence[str]) -> bool:
     return script.startswith("test_") and script.endswith(".py")
 
 
+def _matched_short_value_option(token: str) -> str:
+    if token.startswith("--"):
+        return ""
+    return next(
+        (option for option in _UV_RUN_SHORT_OPTIONS_WITH_VALUES if token == option or token.startswith(option)),
+        "",
+    )
+
+
+def _consume_uv_option(items: Sequence[str], index: int) -> int | None:
+    token = items[index]
+    lowered = token.lower()
+    if "=" in token:
+        option, _value = token.split("=", 1)
+        return index + 1 if option.lower() in _UV_RUN_LONG_OPTIONS_WITH_VALUES else None
+    matched_short = _matched_short_value_option(token)
+    if matched_short:
+        if token == matched_short:
+            return index + 2 if index + 1 < len(items) else None
+        return index + 1
+    if lowered in _UV_RUN_LONG_OPTIONS_WITH_VALUES:
+        return index + 2 if index + 1 < len(items) else None
+    if lowered in _UV_RUN_LONG_FLAG_OPTIONS or token in _UV_RUN_SHORT_FLAG_OPTIONS:
+        return index + 1
+    return None
+
+
+def _uv_run_subcommand_arguments(arguments: Sequence[str]) -> list[str]:
+    """Return arguments only when run is the parsed first uv subcommand."""
+    items = [str(item).strip() for item in arguments if str(item).strip()]
+    index = 0
+    while index < len(items):
+        token = items[index]
+        if token == "--":
+            index += 1
+            if index >= len(items):
+                return []
+            return items[index + 1 :] if items[index].lower() == "run" else []
+        if not token.startswith("-") or token == "-":
+            return items[index + 1 :] if token.lower() == "run" else []
+        next_index = _consume_uv_option(items, index)
+        if next_index is None:
+            return []
+        index = next_index
+    return []
+
+
 def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
     """Strip recognized uv-run options without mistaking option values for the nested command."""
     items = [str(item).strip() for item in arguments if str(item).strip()]
@@ -233,39 +280,12 @@ def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
             return ["python", "-m", token[2:], *items[index + 1 :]]
         if token.startswith("-s") and not token.startswith("--") and token != "-s":
             return ["python", token[2:], *items[index + 1 :]]
-        if "=" in token:
-            option, _value = token.split("=", 1)
-            if option.lower() not in _UV_RUN_LONG_OPTIONS_WITH_VALUES:
-                return []
-            index += 1
-            continue
-        matched_short = next(
-            (
-                option
-                for option in _UV_RUN_SHORT_OPTIONS_WITH_VALUES
-                if token == option or (not token.startswith("--") and token.startswith(option))
-            ),
-            "",
-        )
-        if matched_short:
-            if token == matched_short:
-                if index + 1 >= len(items):
-                    return []
-                index += 2
-            else:
-                index += 1
-            continue
-        if lowered in _UV_RUN_LONG_OPTIONS_WITH_VALUES:
-            if index + 1 >= len(items):
-                return []
-            index += 2
-            continue
-        if lowered in _UV_RUN_LONG_FLAG_OPTIONS or token in _UV_RUN_SHORT_FLAG_OPTIONS:
-            index += 1
-            continue
-        # Unknown standalone options may consume the next token. Evidence classification
-        # must fail closed rather than treating a possible option value as the command.
-        return []
+        next_index = _consume_uv_option(items, index)
+        if next_index is None:
+            # Unknown standalone options may consume the next token. Evidence classification
+            # must fail closed rather than treating a possible option value as the command.
+            return []
+        index = next_index
     return []
 
 
@@ -297,11 +317,10 @@ def is_validation_command(argv: Any) -> bool:
             and (arguments[1] in validation_scripts or arguments[1].split(":", 1)[0] in validation_scripts)
         )
     if command == "uv":
-        lowered_uv_arguments = [item.lower() for item in parts[1:]]
-        if "run" not in lowered_uv_arguments:
+        run_arguments = _uv_run_subcommand_arguments(parts[1:])
+        if not run_arguments:
             return False
-        run_index = lowered_uv_arguments.index("run")
-        arguments = _uv_run_nested_arguments(parts[run_index + 2 :])
+        arguments = _uv_run_nested_arguments(run_arguments)
         if not arguments:
             return False
         nested = Path(arguments[0]).name.lower()
