@@ -26,6 +26,105 @@ _TEMP_PATH_RE = re.compile(
     r"(?:(?:/private)?/tmp|/var/folders/[^\s:]+|[A-Za-z]:\\(?:Users\\[^\\\s]+\\)?AppData\\Local\\Temp)"
     r"(?:[/\\][^\s:]+)*"
 )
+_UV_RUN_LONG_OPTIONS_WITH_VALUES = {
+    "--allow-insecure-host",
+    "--cache-dir",
+    "--color",
+    "--config-file",
+    "--config-setting",
+    "--config-settings",
+    "--config-settings-package",
+    "--constraint",
+    "--constraints",
+    "--default-index",
+    "--directory",
+    "--env-file",
+    "--exclude-newer",
+    "--exclude-newer-package",
+    "--extra",
+    "--extra-index-url",
+    "--find-links",
+    "--fork-strategy",
+    "--group",
+    "--index",
+    "--index-strategy",
+    "--index-url",
+    "--keyring-provider",
+    "--link-mode",
+    "--no-binary-package",
+    "--no-build-isolation-package",
+    "--no-build-package",
+    "--no-editable-package",
+    "--no-extra",
+    "--no-group",
+    "--no-sources-package",
+    "--only-group",
+    "--override",
+    "--overrides",
+    "--package",
+    "--prerelease",
+    "--prerelease-package",
+    "--project",
+    "--python",
+    "--python-platform",
+    "--python-version",
+    "--refresh-package",
+    "--reinstall-package",
+    "--resolution",
+    "--trusted-host",
+    "--upgrade-group",
+    "--upgrade-package",
+    "--with",
+    "--with-editable",
+    "--with-requirements",
+}
+_UV_RUN_SHORT_OPTIONS_WITH_VALUES = {"-C", "-P", "-f", "-i", "-p", "-w"}
+_UV_RUN_LONG_FLAG_OPTIONS = {
+    "--active",
+    "--all-extras",
+    "--all-groups",
+    "--all-packages",
+    "--compile",
+    "--compile-bytecode",
+    "--exact",
+    "--force-reinstall",
+    "--frozen",
+    "--help",
+    "--inexact",
+    "--isolated",
+    "--locked",
+    "--managed-python",
+    "--native-tls",
+    "--no-binary",
+    "--no-build",
+    "--no-build-isolation",
+    "--no-cache",
+    "--no-cache-dir",
+    "--no-compile-bytecode",
+    "--no-config",
+    "--no-default-groups",
+    "--no-dev",
+    "--no-editable",
+    "--no-env-file",
+    "--no-index",
+    "--no-managed-python",
+    "--no-progress",
+    "--no-project",
+    "--no-python-downloads",
+    "--no-sources",
+    "--no-sync",
+    "--no-workspace",
+    "--no_workspace",
+    "--offline",
+    "--only-dev",
+    "--quiet",
+    "--refresh",
+    "--reinstall",
+    "--system-certs",
+    "--upgrade",
+    "--verbose",
+}
+_UV_RUN_SHORT_FLAG_OPTIONS = {"-U", "-h", "-n", "-q", "-v"}
 
 
 def _stable_hash(value: Any) -> str:
@@ -74,18 +173,21 @@ def current_phase(task: Mapping[str, Any]) -> str:
 
 
 def _current_run_events(task: Mapping[str, Any]) -> list[Dict[str, Any]]:
+    """Return only the current run segment, never an unbounded historical fallback."""
     events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
     run_id = str(task.get("agent_run_id") or "").strip()
-    start = 0
+    if run_id:
+        for index in range(len(events) - 1, -1, -1):
+            event = events[index]
+            if str(event.get("type") or "") != "started":
+                continue
+            if str(event.get("run_id") or "").strip() == run_id:
+                return events[index:]
+        return []
     for index in range(len(events) - 1, -1, -1):
-        event = events[index]
-        if str(event.get("type") or "") != "started":
-            continue
-        event_run_id = str(event.get("run_id") or "").strip()
-        if event_run_id == run_id:
-            start = index
-            break
-    return events[start:]
+        if str(events[index].get("type") or "") == "started":
+            return events[index:]
+    return []
 
 
 def _has_edit(events: Sequence[Mapping[str, Any]]) -> bool:
@@ -96,7 +198,7 @@ def _has_edit(events: Sequence[Mapping[str, Any]]) -> bool:
     )
 
 
-def _python_validation_command(parts: Sequence[str]) -> bool:
+def is_python_validation_command(parts: Sequence[str]) -> bool:
     if not parts:
         return False
     lowered = [item.lower() for item in parts]
@@ -108,7 +210,92 @@ def _python_validation_command(parts: Sequence[str]) -> bool:
     return script.startswith("test_") and script.endswith(".py")
 
 
-def _is_validation_command(argv: Any) -> bool:
+def _matched_short_value_option(token: str) -> str:
+    if token.startswith("--"):
+        return ""
+    return next(
+        (option for option in _UV_RUN_SHORT_OPTIONS_WITH_VALUES if token == option or token.startswith(option)),
+        "",
+    )
+
+
+def _consume_uv_option(items: Sequence[str], index: int) -> int | None:
+    token = items[index]
+    lowered = token.lower()
+    if "=" in token:
+        option, _value = token.split("=", 1)
+        return index + 1 if option.lower() in _UV_RUN_LONG_OPTIONS_WITH_VALUES else None
+    matched_short = _matched_short_value_option(token)
+    if matched_short:
+        if token == matched_short:
+            return index + 2 if index + 1 < len(items) else None
+        return index + 1
+    if lowered in _UV_RUN_LONG_OPTIONS_WITH_VALUES:
+        return index + 2 if index + 1 < len(items) else None
+    if lowered in _UV_RUN_LONG_FLAG_OPTIONS or token in _UV_RUN_SHORT_FLAG_OPTIONS:
+        return index + 1
+    return None
+
+
+def _uv_run_subcommand_arguments(arguments: Sequence[str]) -> list[str]:
+    """Return arguments only when run is the parsed first uv subcommand."""
+    items = [str(item).strip() for item in arguments if str(item).strip()]
+    index = 0
+    while index < len(items):
+        token = items[index]
+        if token == "--":
+            index += 1
+            if index >= len(items):
+                return []
+            return items[index + 1 :] if items[index].lower() == "run" else []
+        if not token.startswith("-") or token == "-":
+            return items[index + 1 :] if token.lower() == "run" else []
+        next_index = _consume_uv_option(items, index)
+        if next_index is None:
+            return []
+        index = next_index
+    return []
+
+
+def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
+    """Strip recognized uv-run options without mistaking option values for the nested command."""
+    items = [str(item).strip() for item in arguments if str(item).strip()]
+    index = 0
+    while index < len(items):
+        token = items[index]
+        lowered = token.lower()
+        if token == "--":
+            return items[index + 1 :]
+        if not token.startswith("-") or token == "-":
+            return items[index:]
+        if lowered.startswith("--module="):
+            module = token.split("=", 1)[1].strip()
+            return ["python", "-m", module, *items[index + 1 :]] if module else []
+        if lowered.startswith("--script=") or lowered.startswith("--gui-script="):
+            script = token.split("=", 1)[1].strip()
+            return ["python", script, *items[index + 1 :]] if script else []
+        if lowered in {"--module", "-m"}:
+            if index + 1 >= len(items):
+                return []
+            return ["python", "-m", items[index + 1], *items[index + 2 :]]
+        if lowered in {"--script", "--gui-script", "-s"}:
+            if index + 1 >= len(items):
+                return []
+            return ["python", items[index + 1], *items[index + 2 :]]
+        if token.startswith("-m") and not token.startswith("--") and token != "-m":
+            return ["python", "-m", token[2:], *items[index + 1 :]]
+        if token.startswith("-s") and not token.startswith("--") and token != "-s":
+            return ["python", token[2:], *items[index + 1 :]]
+        next_index = _consume_uv_option(items, index)
+        if next_index is None:
+            # Unknown standalone options may consume the next token. Evidence classification
+            # must fail closed rather than treating a possible option value as the command.
+            return []
+        index = next_index
+    return []
+
+
+def is_validation_command(argv: Any) -> bool:
     if not isinstance(argv, list) or not argv:
         return False
     parts = [str(item).strip() for item in argv if str(item).strip()]
@@ -119,7 +306,7 @@ def _is_validation_command(argv: Any) -> bool:
     if command in {"pytest", "ruff", "mypy"}:
         return True
     if command in {"python", "python3"}:
-        return _python_validation_command(parts[1:])
+        return is_python_validation_command(parts[1:])
     if command == "node":
         return any(item in {"--check", "--test"} for item in lowered[1:])
     # Only explicit script/subcommand forms count; installs and adds must not mint progress.
@@ -136,16 +323,17 @@ def _is_validation_command(argv: Any) -> bool:
             and (arguments[1] in validation_scripts or arguments[1].split(":", 1)[0] in validation_scripts)
         )
     if command == "uv":
-        arguments = [item for item in parts[1:] if not item.startswith("-")]
-        if arguments and arguments[0].lower() == "run":
-            arguments = arguments[1:]
+        run_arguments = _uv_run_subcommand_arguments(parts[1:])
+        if not run_arguments:
+            return False
+        arguments = _uv_run_nested_arguments(run_arguments)
         if not arguments:
             return False
         nested = Path(arguments[0]).name.lower()
         if nested in {"pytest", "ruff", "mypy"}:
             return True
         if nested in {"python", "python3"}:
-            return _python_validation_command(arguments[1:])
+            return is_python_validation_command(arguments[1:])
         return nested == "git" and [item.lower() for item in arguments[1:]] in (
             ["diff", "--check"],
             ["diff", "--cached", "--check"],
@@ -153,6 +341,11 @@ def _is_validation_command(argv: Any) -> bool:
     if command == "git":
         return lowered[1:] == ["diff", "--check"] or lowered[1:] == ["diff", "--cached", "--check"]
     return False
+
+
+# Backward-compatible private aliases for existing callers and tests.
+_python_validation_command = is_python_validation_command
+_is_validation_command = is_validation_command
 
 
 def advance_phase(
@@ -210,21 +403,26 @@ def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     counts as progress, so phase-only transitions cannot retire forced action.
     """
     pending: Dict[str, Dict[str, Any]] = {}
+    pending_without_id: list[Dict[str, Any]] = []
     signatures: set[str] = set()
-    for index, event in enumerate(_current_run_events(task)):
+    for event in _current_run_events(task):
         event_type = str(event.get("type") or "")
         name = str(event.get("name") or "")
-        call_id = str(event.get("tool_call_id") or f"event-{index}")
+        call_id = str(event.get("tool_call_id") or "").strip()
         if event_type == "tool_started" and name == "coding_run_command":
             args = event.get("args") if isinstance(event.get("args"), dict) else {}
-            if _is_validation_command(args.get("argv")):
-                pending[call_id] = dict(args)
+            if is_validation_command(args.get("argv")):
+                if call_id:
+                    pending[call_id] = dict(args)
+                else:
+                    pending_without_id.append(dict(args))
             continue
         if event_type != "tool_finished" or name != "coding_run_command":
             continue
-        args = pending.pop(call_id, None)
-        if args is None and len(pending) == 1:
-            _, args = pending.popitem()
+        if call_id:
+            args = pending.pop(call_id, None)
+        else:
+            args = pending_without_id.pop(0) if pending_without_id else None
         if args is None:
             continue
         result = event.get("result") if isinstance(event.get("result"), dict) else {}
@@ -245,19 +443,53 @@ def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
     return _stored_evidence_fingerprint(task)
 
 
+def _review_scope_guidance() -> str:
+    return (
+        "Establish an authoritative review scope before broad inspection. First check whether the repository is shallow "
+        "with `git rev-parse --is-shallow-repository`. If parent history is missing and you intend to review HEAD or the "
+        "latest change, fetch enough history (for example `git fetch --deepen=1 origin`) before interpreting `git show`, "
+        "`HEAD^`, or commit statistics; a shallow tip can look like a repository-wide root commit. Prefer an explicit "
+        "base-to-head or parent-to-head changed-file list. If there is no branch delta and the mission is broader than one "
+        "commit, state a bounded subsystem scope instead of implying that the whole repository was reviewed."
+    )
+
+
+def _review_evidence_guidance() -> str:
+    return (
+        "Use strict evidence labels. A confirmed defect requires a reproducible failing check or trace, or a logically "
+        "complete source proof that includes the relevant call sites and contradicting paths. Source-reading concerns without "
+        "that support are hypotheses, not confirmed defects. A missing-test claim requires a repository-wide search for "
+        "semantically equivalent coverage, including adjacent and differently named test modules, and must name what was "
+        "searched. Keep environment/configuration blockers separate. Assistant notes and working-memory summaries are leads, "
+        "not evidence. When forced to finish before verification, downgrade the finding and state the one missing check."
+    )
+
+
 def phase_prompt(task: Mapping[str, Any]) -> str:
     state = phase_state(task)
     phase = str(state.get("phase") or DISCOVERY)
+    review_only = not mission_requires_file_changes(task)
     if phase == DISCOVERY:
-        return (
+        prompt = (
             "Controller work phase: discovery. Gather bounded repository evidence, run targeted validation, "
             "and narrow findings; edits are optional until an actionable defect is supported."
         )
+        if review_only:
+            prompt += " " + _review_scope_guidance() + " " + _review_evidence_guidance()
+        return prompt
     if phase == DECISION:
-        return (
+        prompt = (
             "Controller work phase: decision. Classify findings as confirmed actionable defects, one specified "
             "remaining check, environment/configuration blockers, or disproven; then report or remediate according to the mission."
         )
+        if review_only:
+            prompt += (
+                " Before coding_finish, label every reported item as confirmed defect, hypothesis, missing-test gap, "
+                "environment/configuration blocker, or disproven, and include the supporting command, trace, source proof, "
+                "or repository-wide coverage search. "
+                + _review_evidence_guidance()
+            )
+        return prompt
     return (
         "Controller work phase: execution. Make the smallest evidence-backed edit, run targeted validation, "
         "review the resulting diff, and finish; do not reopen broad repository exploration."
