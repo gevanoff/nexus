@@ -112,6 +112,15 @@ def activate(
     previous = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
     normalized_action = str(required_action or "Take one edit, targeted validation, diff review, or terminal action.").strip()
     requested_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded").strip()
+    # The execution-loop default predates action-kind tagging and begins with
+    # "Make" rather than an edit verb recognized by the generic classifier.
+    # Treat that specific remediation directive as edit-only even when an older
+    # persisted working-memory record explicitly carries action_kind=bounded.
+    if (
+        requested_kind == "bounded"
+        and normalized_action.casefold().startswith("make the smallest evidence-backed edit")
+    ):
+        requested_kind = "edit"
     normalized_kind = requested_kind if requested_kind in _ACTION_ALLOWED_TOOLS else "bounded"
     previous_kind = str(previous.get("action_kind") or "bounded").strip()
     if previous_kind not in _ACTION_ALLOWED_TOOLS:
