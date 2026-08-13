@@ -77,14 +77,13 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     return count
 
 
-def _effective_allowed_tools(state: Mapping[str, Any], attempt_count: int) -> set[str]:
+def _effective_allowed_tools(state: Mapping[str, Any]) -> set[str]:
     # Forced-action mode is a tool-class restriction, not a single-tool lease.
     # Keep the required action class available until the durable state changes
     # or normal controller escalation terminates the run. Collapsing to
     # coding_finish after one tool call can deadlock unchanged resumes: the
     # workspace still requires an edit, while the only remaining action is a
     # finish call that the no-change audit must reject.
-    _ = attempt_count
     kind = str(state.get("action_kind") or "bounded")
     return set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
 
@@ -95,7 +94,7 @@ def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
         return {}
     attempts = _attempt_count(task, state)
     state["attempt_count"] = attempts
-    state["allowed_tools"] = sorted(_effective_allowed_tools(state, attempts))
+    state["allowed_tools"] = sorted(_effective_allowed_tools(state))
     return state
 
 
