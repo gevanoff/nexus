@@ -41,23 +41,22 @@ def _effective_timeout(
     )
 
 
-def _client_timeout_value(
-    requested: float | None,
-    effective: httpx.Timeout | None,
-    *,
-    connect_retries: int = 0,
-) -> float | httpx.Timeout | None:
-    """Keep the legacy scalar timeout shape when phase-specific limits are unnecessary."""
+def _client_timeout_value(requested: float | None) -> float | None:
+    """Preserve the shared client's legacy scalar timeout configuration."""
     if requested is None:
         return None
-    total = max(0.001, float(requested))
-    attempts = _connect_attempts(connect_retries)
-    connect_budget = min(total, _CONNECT_TIMEOUT_BUDGET_SEC)
-    connect_per_attempt = connect_budget / attempts
-    pool_limit = min(total, _POOL_TIMEOUT_CAP_SEC)
-    if connect_per_attempt == total and pool_limit == total:
-        return total
-    return effective
+    return max(0.001, float(requested))
+
+
+def _timeout_extension(timeout: httpx.Timeout | None) -> dict[str, float | None] | None:
+    if timeout is None:
+        return None
+    return {
+        "connect": timeout.connect,
+        "read": timeout.read,
+        "write": timeout.write,
+        "pool": timeout.pool,
+    }
 
 
 def _timeout_phase(exc: httpx.RequestError) -> str:
@@ -130,12 +129,20 @@ def _instrument_client_send(
     connect_attempts: int = 1,
     connect_budget_sec: float | None = None,
 ) -> None:
-    """Wrap a real AsyncClient send method without changing the returned client type."""
+    """Apply diagnostic phase timeouts without changing the returned client type."""
     original_send = getattr(client, "send", None)
     if not callable(original_send):
         return
+    timeout_extension = _timeout_extension(timeout)
 
     async def diagnostic_send(request: httpx.Request, *args: Any, **kwargs: Any) -> httpx.Response:
+        # AsyncClient.send populates the timeout extension only when it is
+        # absent. Set the phase-specific values first so transport-level retries
+        # share the aggregate connect budget, while retaining the scalar client
+        # timeout configuration expected by existing callers and tests. Respect
+        # an explicit per-request timeout extension supplied by a caller.
+        if timeout_extension is not None and "timeout" not in request.extensions:
+            request.extensions["timeout"] = dict(timeout_extension)
         try:
             return await original_send(request, *args, **kwargs)
         except httpx.RequestError as exc:
@@ -180,11 +187,7 @@ async def httpx_client(*, timeout: float | None = None):
 
     kwargs["transport"] = httpx.AsyncHTTPTransport(**transport_kwargs)
     effective_timeout = _effective_timeout(timeout, connect_retries=connect_retries)
-    client_timeout = _client_timeout_value(
-        timeout,
-        effective_timeout,
-        connect_retries=connect_retries,
-    )
+    client_timeout = _client_timeout_value(timeout)
     attempts = _connect_attempts(connect_retries)
 
     async with httpx.AsyncClient(timeout=client_timeout, **kwargs) as client:
