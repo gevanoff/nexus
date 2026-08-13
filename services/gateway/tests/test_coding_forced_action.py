@@ -237,7 +237,7 @@ def test_review_interrupt_resolves_to_finish_instead_of_stale_validation():
     assert "environment or configuration blockers" in working["next_action"]
 
 
-def test_forced_action_collapses_to_finish_after_one_allowed_attempt():
+def test_forced_action_remains_scoped_after_allowed_attempt_without_progress():
     task = _task()
     task["agent_events"] = []
     key = resilience.durable_state_key(task)
@@ -252,16 +252,75 @@ def test_forced_action_collapses_to_finish_after_one_allowed_attempt():
     )
     assert forced.allowed_tool_names(task) == {"coding_run_command", "coding_finish"}
     task["agent_events"].append({"type": "tool_finished", "name": "coding_run_command", "result": {"ok": False}})
-    assert forced.allowed_tool_names(task) == {"coding_finish"}
+    assert forced.active_state(task)["attempt_count"] == 1
+    assert forced.allowed_tool_names(task) == {"coding_run_command", "coding_finish"}
     allowed, rejection = forced.evaluate_tool_call(
         task,
         name="coding_run_command",
         args={"argv": ["python", "-m", "pytest", "-q"]},
         is_validation_command=coding_agent._is_validation_command,
     )
-    assert allowed is False
-    assert "one allowed attempt" in rejection["message"]
-    assert "coding_finish" in forced.prompt_context(task)
+    assert allowed is True
+    assert rejection == {}
+    assert "until durable progress" in forced.prompt_context(task)
+
+
+def test_legacy_exhausted_state_does_not_collapse_to_finish_only():
+    task = _task()
+    task["agent_events"] = []
+    key = resilience.durable_state_key(task)
+    legacy = forced.activate(
+        task,
+        state_key=key,
+        run_id="run-2",
+        cycle=6,
+        stage="interrupt",
+        required_action="Make the smallest evidence-backed edit, or finish with a concrete blocker.",
+        action_kind="bounded",
+    )
+    legacy["attempt_limit"] = 1
+    task["agent_forced_action"] = legacy
+    task["agent_events"].append({"type": "tool_finished", "name": "coding_run_command", "result": {"ok": False}})
+
+    assert forced.allowed_tool_names(task) == {
+        "coding_write_file",
+        "coding_replace_text",
+        "coding_apply_patch",
+        "coding_finish",
+    }
+
+
+def test_unchanged_resume_keeps_action_class_available_after_prior_attempt():
+    task = _task()
+    task["agent_events"] = []
+    key = resilience.durable_state_key(task)
+    first = forced.activate(
+        task,
+        state_key=key,
+        run_id="run-2",
+        cycle=6,
+        stage="interrupt",
+        required_action="Run the targeted test.",
+        action_kind="validate",
+    )
+    task["agent_forced_action"] = first
+    task["agent_events"].append({"type": "tool_finished", "name": "coding_run_command", "result": {"ok": False}})
+    task["agent_run_id"] = "run-3"
+    resumed = forced.activate(
+        task,
+        state_key=key,
+        run_id="run-3",
+        cycle=1,
+        stage="continuation",
+        required_action="Run the targeted test.",
+        action_kind="validate",
+    )
+    task["agent_forced_action"] = resumed
+
+    state = forced.active_state(task)
+    assert state["resume_count"] == 1
+    assert state["attempt_count"] == 1
+    assert set(state["allowed_tools"]) == {"coding_run_command", "coding_finish"}
 
 
 def test_pending_commitment_survives_until_a_tool_is_attempted():

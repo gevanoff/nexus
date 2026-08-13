@@ -57,7 +57,7 @@ def test_attempt_count_uses_timestamps_after_event_buffer_rollover():
 
     active = forced.active_state(task)
     assert active["attempt_count"] == 1
-    assert forced.allowed_tool_names(task) == {"coding_finish"}
+    assert forced.allowed_tool_names(task) == {"coding_run_command", "coding_finish"}
 
 
 def test_pre_activation_events_do_not_exhaust_attempt_after_rollover():

@@ -77,13 +77,31 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     return count
 
 
-def _effective_allowed_tools(state: Mapping[str, Any], attempt_count: int) -> set[str]:
+def _effective_allowed_tools(state: Mapping[str, Any]) -> set[str]:
+    # Forced-action mode is a tool-class restriction, not a single-tool lease.
+    # Keep the required action class available until the durable state changes
+    # or normal controller escalation terminates the run. Collapsing to
+    # coding_finish after one tool call can deadlock unchanged resumes: the
+    # workspace still requires an edit, while the only remaining action is a
+    # finish call that the no-change audit must reject.
     kind = str(state.get("action_kind") or "bounded")
-    allowed = set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
-    limit = max(1, int(state.get("attempt_limit") or 1))
-    if kind != "finish" and attempt_count >= limit:
-        return {"coding_finish"}
-    return allowed
+    return set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
+
+
+def _normalize_action_kind(required_action: str, action_kind: str) -> str:
+    kind = str(action_kind or "bounded").strip()
+    if kind not in _ACTION_ALLOWED_TOOLS:
+        kind = "bounded"
+    # The execution-loop default predates action-kind tagging and begins with
+    # "Make" rather than an edit verb recognized by the generic classifier.
+    # Normalize both newly requested and already-persisted legacy records so an
+    # unchanged resume remains the same directive instead of resetting history.
+    if (
+        kind == "bounded"
+        and str(required_action or "").casefold().startswith("make the smallest evidence-backed edit")
+    ):
+        return "edit"
+    return kind
 
 
 def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
@@ -92,7 +110,7 @@ def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
         return {}
     attempts = _attempt_count(task, state)
     state["attempt_count"] = attempts
-    state["allowed_tools"] = sorted(_effective_allowed_tools(state, attempts))
+    state["allowed_tools"] = sorted(_effective_allowed_tools(state))
     return state
 
 
@@ -109,14 +127,16 @@ def activate(
     previous = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
     normalized_action = str(required_action or "Take one edit, targeted validation, diff review, or terminal action.").strip()
     requested_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded").strip()
-    normalized_kind = requested_kind if requested_kind in _ACTION_ALLOWED_TOOLS else "bounded"
-    previous_kind = str(previous.get("action_kind") or "bounded").strip()
-    if previous_kind not in _ACTION_ALLOWED_TOOLS:
-        previous_kind = "bounded"
+    normalized_kind = _normalize_action_kind(normalized_action, requested_kind)
+    previous_action = str(previous.get("required_action") or "").strip()
+    previous_kind = _normalize_action_kind(
+        previous_action,
+        str(previous.get("action_kind") or "bounded"),
+    )
     same_state = str(previous.get("state_key") or "") == state_key
     same_directive = (
         same_state
-        and str(previous.get("required_action") or "") == normalized_action
+        and previous_action == normalized_action
         and previous_kind == normalized_kind
     )
     previous_run = str(previous.get("run_id") or "")
@@ -139,7 +159,9 @@ def activate(
         "required_action": normalized_action,
         "action_kind": normalized_kind,
         "allowed_tools": sorted(initial_allowed),
-        "attempt_limit": 1,
+        # Kept for backwards-compatible diagnostics. Zero means the action
+        # class remains available until durable progress or terminal escalation.
+        "attempt_limit": 0,
         "activation_event_count": (
             int(previous.get("activation_event_count") or 0)
             if same_directive
@@ -203,14 +225,10 @@ def evaluate_tool_call(
         return True, {}
     required_action = str(state.get("required_action") or "").strip()
     attempts = int(state.get("attempt_count") or 0)
-    limit = max(1, int(state.get("attempt_limit") or 1))
-    if attempts >= limit and str(state.get("action_kind") or "") != "finish":
-        policy = "The required forced action already had its one allowed attempt; only coding_finish remains available."
-    else:
-        policy = (
-            f"Only tools for the current {state.get('action_kind') or 'bounded'} action are enabled. "
-            "Inspection, unrelated validation, and plan churn are disabled."
-        )
+    policy = (
+        f"Only tools for the current {state.get('action_kind') or 'bounded'} action are enabled. "
+        "Inspection, unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
+    )
     message = (
         f"Forced-action mode rejected {tool_name or '(missing tool name)'}. "
         f"{policy} Required action: {required_action}"
@@ -222,7 +240,7 @@ def evaluate_tool_call(
         "required_action": required_action,
         "action_kind": state.get("action_kind"),
         "attempt_count": attempts,
-        "attempt_limit": limit,
+        "attempt_limit": 0,
         "allowed_tools": sorted(allowed_tools),
         "state_key": state.get("state_key"),
         "stage": state.get("stage"),
@@ -233,19 +251,11 @@ def prompt_context(task: Mapping[str, Any]) -> str:
     state = active_state(task)
     if not state:
         return ""
-    attempts = int(state.get("attempt_count") or 0)
-    limit = max(1, int(state.get("attempt_limit") or 1))
     allowed = ", ".join(state.get("allowed_tools") or [])
-    if attempts >= limit and str(state.get("action_kind") or "") != "finish":
-        return (
-            "Controller forced-action mode is ACTIVE for the unchanged durable state. "
-            "The required action has already been attempted once. "
-            f"Required action: {state.get('required_action') or ''} "
-            "Call coding_finish now with the result or a concrete blocker."
-        )
     return (
         "Controller forced-action mode is ACTIVE for the unchanged durable state. "
         "Inspection, repository orientation, plan churn, and unrelated commands are unavailable. "
+        "The required action class remains available until durable progress changes the state or terminal escalation ends the run. "
         f"Required action: {state.get('required_action') or ''} "
         f"Action kind: {state.get('action_kind') or 'bounded'}. "
         f"Available tools: {allowed or 'coding_finish'}."
