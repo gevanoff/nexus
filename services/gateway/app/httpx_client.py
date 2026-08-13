@@ -8,18 +8,35 @@ import httpx
 from app.config import S
 
 
-_CONNECT_TIMEOUT_CAP_SEC = 30.0
+_CONNECT_TIMEOUT_BUDGET_SEC = 30.0
 _POOL_TIMEOUT_CAP_SEC = 30.0
 
 
-def _effective_timeout(timeout: float | None) -> httpx.Timeout | None:
-    """Preserve long read/write budgets without allowing connection waits to inherit them."""
+def _connect_attempts(connect_retries: int) -> int:
+    return max(1, int(connect_retries or 0) + 1)
+
+
+def _connect_budget_sec(timeout: float | None) -> float | None:
     if timeout is None:
         return None
     total = max(0.001, float(timeout))
+    return min(total, _CONNECT_TIMEOUT_BUDGET_SEC)
+
+
+def _effective_timeout(
+    timeout: float | None,
+    *,
+    connect_retries: int = 0,
+) -> httpx.Timeout | None:
+    """Preserve read/write budgets while bounding total connection wait across retries."""
+    if timeout is None:
+        return None
+    total = max(0.001, float(timeout))
+    attempts = _connect_attempts(connect_retries)
+    connect_budget = min(total, _CONNECT_TIMEOUT_BUDGET_SEC)
     return httpx.Timeout(
         total,
-        connect=min(total, _CONNECT_TIMEOUT_CAP_SEC),
+        connect=connect_budget / attempts,
         pool=min(total, _POOL_TIMEOUT_CAP_SEC),
     )
 
@@ -27,12 +44,18 @@ def _effective_timeout(timeout: float | None) -> httpx.Timeout | None:
 def _client_timeout_value(
     requested: float | None,
     effective: httpx.Timeout | None,
+    *,
+    connect_retries: int = 0,
 ) -> float | httpx.Timeout | None:
-    """Keep the legacy scalar timeout shape when all phases have the same limit."""
+    """Keep the legacy scalar timeout shape when phase-specific limits are unnecessary."""
     if requested is None:
         return None
     total = max(0.001, float(requested))
-    if total <= min(_CONNECT_TIMEOUT_CAP_SEC, _POOL_TIMEOUT_CAP_SEC):
+    attempts = _connect_attempts(connect_retries)
+    connect_budget = min(total, _CONNECT_TIMEOUT_BUDGET_SEC)
+    connect_per_attempt = connect_budget / attempts
+    pool_limit = min(total, _POOL_TIMEOUT_CAP_SEC)
+    if connect_per_attempt == total and pool_limit == total:
         return total
     return effective
 
@@ -69,21 +92,29 @@ def _ensure_request_error_text(
     exc: httpx.RequestError,
     *,
     timeout: httpx.Timeout | None,
+    connect_attempts: int = 1,
+    connect_budget_sec: float | None = None,
 ) -> None:
-    """Ensure RequestError stringification never loses the failure class.
+    """Ensure blank RequestError messages retain useful diagnostic text.
 
     httpx timeout subclasses may stringify to an empty string when their
     underlying transport exception did not carry a message. Upstream adapters
     historically persisted ``str(exc)``, which turned these failures into
     ``error: ''`` in Coding Workspace debug reports. Keep non-empty upstream
-    messages untouched and synthesize only the missing diagnostic text.
+    messages untouched; for blank messages, synthesize the exception class and,
+    when available, the timeout phase and effective limit.
     """
     if str(exc).strip():
         return
     error_type = type(exc).__name__
     phase = _timeout_phase(exc)
     limit = _phase_timeout_sec(timeout, phase)
-    if phase and limit is not None:
+    if phase == "connect" and limit is not None and connect_attempts > 1 and connect_budget_sec is not None:
+        message = (
+            f"{error_type}: connect timeout after {_format_seconds(limit)}s per attempt "
+            f"({_format_seconds(connect_budget_sec)}s budget across {connect_attempts} attempts)"
+        )
+    elif phase and limit is not None:
         message = f"{error_type}: {phase} timeout after {_format_seconds(limit)}s"
     elif phase:
         message = f"{error_type}: {phase} timeout"
@@ -92,7 +123,13 @@ def _ensure_request_error_text(
     exc.args = (message,)
 
 
-def _instrument_client_send(client: Any, *, timeout: httpx.Timeout | None) -> None:
+def _instrument_client_send(
+    client: Any,
+    *,
+    timeout: httpx.Timeout | None,
+    connect_attempts: int = 1,
+    connect_budget_sec: float | None = None,
+) -> None:
     """Wrap a real AsyncClient send method without changing the returned client type."""
     original_send = getattr(client, "send", None)
     if not callable(original_send):
@@ -102,7 +139,12 @@ def _instrument_client_send(client: Any, *, timeout: httpx.Timeout | None) -> No
         try:
             return await original_send(request, *args, **kwargs)
         except httpx.RequestError as exc:
-            _ensure_request_error_text(exc, timeout=timeout)
+            _ensure_request_error_text(
+                exc,
+                timeout=timeout,
+                connect_attempts=connect_attempts,
+                connect_budget_sec=connect_budget_sec,
+            )
             raise
 
     client.send = diagnostic_send
@@ -113,14 +155,15 @@ async def httpx_client(*, timeout: float | None = None):
     """Create an httpx.AsyncClient configured by gateway backend TLS settings.
 
     Honors upstream TLS settings and retries connection establishment failures.
-    Long generation/read budgets are preserved, while connect and connection-
-    pool waits are capped so an unreachable backend cannot consume the full
-    generation timeout. Request errors are also guaranteed to retain a useful
-    exception class and timeout phase for downstream diagnostics.
+    Long generation/read budgets are preserved, while the aggregate connection
+    budget is divided across transport retry attempts and pool waits are capped.
+    Blank request-error messages are enriched with exception class and timeout
+    phase/limit details for downstream diagnostics; non-empty messages are kept.
     """
     kwargs: dict[str, object] = {}
+    connect_retries = max(0, int(getattr(S, "BACKEND_CONNECT_RETRIES", 2) or 0))
     transport_kwargs: dict[str, object] = {
-        "retries": max(0, int(getattr(S, "BACKEND_CONNECT_RETRIES", 2) or 0)),
+        "retries": connect_retries,
     }
     # verify can be True/False or a path to a CA bundle
     if S.BACKEND_CA_BUNDLE:
@@ -136,9 +179,19 @@ async def httpx_client(*, timeout: float | None = None):
             transport_kwargs["cert"] = (parts[0], parts[1])
 
     kwargs["transport"] = httpx.AsyncHTTPTransport(**transport_kwargs)
-    effective_timeout = _effective_timeout(timeout)
-    client_timeout = _client_timeout_value(timeout, effective_timeout)
+    effective_timeout = _effective_timeout(timeout, connect_retries=connect_retries)
+    client_timeout = _client_timeout_value(
+        timeout,
+        effective_timeout,
+        connect_retries=connect_retries,
+    )
+    attempts = _connect_attempts(connect_retries)
 
     async with httpx.AsyncClient(timeout=client_timeout, **kwargs) as client:
-        _instrument_client_send(client, timeout=effective_timeout)
+        _instrument_client_send(
+            client,
+            timeout=effective_timeout,
+            connect_attempts=attempts,
+            connect_budget_sec=_connect_budget_sec(timeout),
+        )
         yield client
