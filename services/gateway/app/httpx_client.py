@@ -17,10 +17,13 @@ def _connect_attempts(connect_retries: int) -> int:
 
 
 def _connect_budget_sec(timeout: float | None) -> float | None:
+    """Return the aggregate connect budget only when the long-timeout cap applies."""
     if timeout is None:
         return None
     total = max(0.001, float(timeout))
-    return min(total, _CONNECT_TIMEOUT_BUDGET_SEC)
+    if total <= _CONNECT_TIMEOUT_BUDGET_SEC:
+        return None
+    return _CONNECT_TIMEOUT_BUDGET_SEC
 
 
 def _effective_timeout(
@@ -28,15 +31,17 @@ def _effective_timeout(
     *,
     connect_retries: int = 0,
 ) -> httpx.Timeout | None:
-    """Preserve read/write budgets while bounding total connection wait across retries."""
+    """Preserve read/write budgets and cap long connection waits across retries."""
     if timeout is None:
         return None
     total = max(0.001, float(timeout))
-    attempts = _connect_attempts(connect_retries)
-    connect_budget = min(total, _CONNECT_TIMEOUT_BUDGET_SEC)
+    connect_limit = min(total, _CONNECT_TIMEOUT_BUDGET_SEC)
+    connect_budget = _connect_budget_sec(timeout)
+    if connect_budget is not None:
+        connect_limit = connect_budget / _connect_attempts(connect_retries)
     return httpx.Timeout(
         total,
-        connect=connect_budget / attempts,
+        connect=connect_limit,
         pool=min(total, _POOL_TIMEOUT_CAP_SEC),
     )
 
@@ -137,10 +142,10 @@ def _instrument_client_send(
 
     async def diagnostic_send(request: httpx.Request, *args: Any, **kwargs: Any) -> httpx.Response:
         # AsyncClient.send populates the timeout extension only when it is
-        # absent. Set the phase-specific values first so transport-level retries
-        # share the aggregate connect budget, while retaining the scalar client
-        # timeout configuration expected by existing callers and tests. Respect
-        # an explicit per-request timeout extension supplied by a caller.
+        # absent. Set the phase-specific values first so long-timeout transport
+        # retries share the capped aggregate connect budget, while retaining
+        # short-timeout behavior and the scalar client configuration expected by
+        # existing callers and tests. Respect explicit per-request overrides.
         if timeout_extension is not None and "timeout" not in request.extensions:
             request.extensions["timeout"] = dict(timeout_extension)
         try:
@@ -162,8 +167,9 @@ async def httpx_client(*, timeout: float | None = None):
     """Create an httpx.AsyncClient configured by gateway backend TLS settings.
 
     Honors upstream TLS settings and retries connection establishment failures.
-    Long generation/read budgets are preserved, while the aggregate connection
-    budget is divided across transport retry attempts and pool waits are capped.
+    Long generation/read budgets are preserved; when the 30-second connection
+    cap applies, that aggregate budget is divided across transport retry
+    attempts. Short timeout semantics are preserved, and pool waits are capped.
     Blank request-error messages are enriched with exception class and timeout
     phase/limit details for downstream diagnostics; non-empty messages are kept.
     """
