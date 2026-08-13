@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -22,6 +22,19 @@ def _effective_timeout(timeout: float | None) -> httpx.Timeout | None:
         connect=min(total, _CONNECT_TIMEOUT_CAP_SEC),
         pool=min(total, _POOL_TIMEOUT_CAP_SEC),
     )
+
+
+def _client_timeout_value(
+    requested: float | None,
+    effective: httpx.Timeout | None,
+) -> float | httpx.Timeout | None:
+    """Keep the legacy scalar timeout shape when all phases have the same limit."""
+    if requested is None:
+        return None
+    total = max(0.001, float(requested))
+    if total <= min(_CONNECT_TIMEOUT_CAP_SEC, _POOL_TIMEOUT_CAP_SEC):
+        return total
+    return effective
 
 
 def _timeout_phase(exc: httpx.RequestError) -> str:
@@ -79,22 +92,20 @@ def _ensure_request_error_text(
     exc.args = (message,)
 
 
-class _DiagnosticAsyncClient(httpx.AsyncClient):
-    def __init__(
-        self,
-        *args: Any,
-        nexus_timeout: httpx.Timeout | None,
-        **kwargs: Any,
-    ) -> None:
-        self._nexus_timeout = nexus_timeout
-        super().__init__(*args, **kwargs)
+def _instrument_client_send(client: Any, *, timeout: httpx.Timeout | None) -> None:
+    """Wrap a real AsyncClient send method without changing the returned client type."""
+    original_send = getattr(client, "send", None)
+    if not callable(original_send):
+        return
 
-    async def send(self, request: httpx.Request, *args: Any, **kwargs: Any) -> httpx.Response:
+    async def diagnostic_send(request: httpx.Request, *args: Any, **kwargs: Any) -> httpx.Response:
         try:
-            return await super().send(request, *args, **kwargs)
+            return await original_send(request, *args, **kwargs)
         except httpx.RequestError as exc:
-            _ensure_request_error_text(exc, timeout=self._nexus_timeout)
+            _ensure_request_error_text(exc, timeout=timeout)
             raise
+
+    client.send = diagnostic_send
 
 
 @asynccontextmanager
@@ -126,10 +137,8 @@ async def httpx_client(*, timeout: float | None = None):
 
     kwargs["transport"] = httpx.AsyncHTTPTransport(**transport_kwargs)
     effective_timeout = _effective_timeout(timeout)
+    client_timeout = _client_timeout_value(timeout, effective_timeout)
 
-    async with _DiagnosticAsyncClient(
-        timeout=effective_timeout,
-        nexus_timeout=effective_timeout,
-        **kwargs,
-    ) as client:
+    async with httpx.AsyncClient(timeout=client_timeout, **kwargs) as client:
+        _instrument_client_send(client, timeout=effective_timeout)
         yield client
