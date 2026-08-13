@@ -6,14 +6,21 @@ import pytest
 from app import httpx_client
 
 
-def test_long_backend_timeout_keeps_read_budget_but_caps_connect_and_pool_waits():
-    timeout = httpx_client._effective_timeout(600.0)
+def test_long_backend_timeout_keeps_read_budget_and_divides_connect_budget_across_retries():
+    timeout = httpx_client._effective_timeout(600.0, connect_retries=2)
 
     assert timeout is not None
     assert timeout.read == 600.0
     assert timeout.write == 600.0
-    assert timeout.connect == 30.0
+    assert timeout.connect == 10.0
     assert timeout.pool == 30.0
+
+
+def test_long_backend_timeout_without_transport_retries_allows_full_connect_budget():
+    timeout = httpx_client._effective_timeout(600.0, connect_retries=0)
+
+    assert timeout is not None
+    assert timeout.connect == 30.0
 
 
 def test_short_backend_timeout_is_not_extended_by_caps():
@@ -26,12 +33,22 @@ def test_short_backend_timeout_is_not_extended_by_caps():
     assert timeout.pool == 10.0
 
 
+def test_short_timeout_with_retries_still_respects_total_connect_budget():
+    timeout = httpx_client._effective_timeout(9.0, connect_retries=2)
+
+    assert timeout is not None
+    assert timeout.read == 9.0
+    assert timeout.connect == 3.0
+    assert httpx_client._connect_budget_sec(9.0) == 9.0
+
+
 def test_disabled_timeout_remains_disabled():
     assert httpx_client._effective_timeout(None) is None
+    assert httpx_client._connect_budget_sec(None) is None
 
 
 def test_blank_read_timeout_gains_phase_and_limit():
-    timeout = httpx_client._effective_timeout(600.0)
+    timeout = httpx_client._effective_timeout(600.0, connect_retries=2)
     exc = httpx.ReadTimeout("", request=httpx.Request("POST", "http://backend/v1/chat/completions"))
 
     httpx_client._ensure_request_error_text(exc, timeout=timeout)
@@ -39,7 +56,21 @@ def test_blank_read_timeout_gains_phase_and_limit():
     assert str(exc) == "ReadTimeout: read timeout after 600s"
 
 
-def test_blank_connect_timeout_reports_capped_connect_limit():
+def test_blank_connect_timeout_reports_per_attempt_and_aggregate_budget():
+    timeout = httpx_client._effective_timeout(600.0, connect_retries=2)
+    exc = httpx.ConnectTimeout("", request=httpx.Request("POST", "http://backend/v1/chat/completions"))
+
+    httpx_client._ensure_request_error_text(
+        exc,
+        timeout=timeout,
+        connect_attempts=3,
+        connect_budget_sec=30.0,
+    )
+
+    assert str(exc) == "ConnectTimeout: connect timeout after 10s per attempt (30s budget across 3 attempts)"
+
+
+def test_blank_connect_timeout_without_retries_reports_single_limit():
     timeout = httpx_client._effective_timeout(600.0)
     exc = httpx.ConnectTimeout("", request=httpx.Request("POST", "http://backend/v1/chat/completions"))
 
@@ -75,8 +106,13 @@ async def test_instrumented_send_enriches_blank_timeout_before_caller_sees_it():
             raise httpx.ReadTimeout("", request=request)
 
     client = Client()
-    timeout = httpx_client._effective_timeout(600.0)
-    httpx_client._instrument_client_send(client, timeout=timeout)
+    timeout = httpx_client._effective_timeout(600.0, connect_retries=2)
+    httpx_client._instrument_client_send(
+        client,
+        timeout=timeout,
+        connect_attempts=3,
+        connect_budget_sec=30.0,
+    )
 
     with pytest.raises(httpx.ReadTimeout) as exc:
         await client.send(request)
