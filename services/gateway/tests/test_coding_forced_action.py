@@ -282,13 +282,12 @@ def test_legacy_exhausted_state_does_not_collapse_to_finish_only():
     task["agent_forced_action"] = legacy
     task["agent_events"].append({"type": "tool_finished", "name": "coding_run_command", "result": {"ok": False}})
 
-    allowed = forced.allowed_tool_names(task)
-    assert "coding_write_file" in allowed
-    assert "coding_replace_text" in allowed
-    assert "coding_apply_patch" in allowed
-    assert "coding_run_command" in allowed
-    assert "coding_git_diff" in allowed
-    assert "coding_finish" in allowed
+    assert forced.allowed_tool_names(task) == {
+        "coding_write_file",
+        "coding_replace_text",
+        "coding_apply_patch",
+        "coding_finish",
+    }
 
 
 def test_unchanged_resume_keeps_action_class_available_after_prior_attempt():
