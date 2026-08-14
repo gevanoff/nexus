@@ -213,9 +213,9 @@ def successful_source_evidence_targets(events: Sequence[Mapping[str, Any]]) -> s
     """Return distinct successful source-evidence targets from this run.
 
     Inspection churn is not evidence merely because a tool was requested. A
-    target counts only after the corresponding read/search completes without a
-    forced-action rejection or explicit failure. This intentionally ignores
-    tree/status orientation and rewards direct implementation evidence.
+    target counts only after the corresponding read/search completes with an
+    explicit successful result. This intentionally ignores tree/status
+    orientation and rewards direct implementation evidence.
     """
     pending: Dict[str, tuple[str, Dict[str, Any]]] = {}
     pending_without_id: list[tuple[str, Dict[str, Any]]] = []
@@ -241,9 +241,7 @@ def successful_source_evidence_targets(events: Sequence[Mapping[str, Any]]) -> s
         if item is None:
             continue
         result = event.get("result") if isinstance(event.get("result"), dict) else {}
-        if str(result.get("error") or "") == "forced_action_tool_rejected":
-            continue
-        if result.get("ok") is False:
+        if result.get("ok") is not True:
             continue
         signature = _source_evidence_signature(item[0], item[1])
         if signature:
@@ -358,8 +356,6 @@ def _uv_run_nested_arguments(arguments: Sequence[str]) -> list[str]:
             return ["python", token[2:], *items[index + 1 :]]
         next_index = _consume_uv_option(items, index)
         if next_index is None:
-            # Unknown standalone options may consume the next token. Evidence classification
-            # must fail closed rather than treating a possible option value as the command.
             return []
         index = next_index
     return []
@@ -379,7 +375,6 @@ def is_validation_command(argv: Any) -> bool:
         return is_python_validation_command(parts[1:])
     if command == "node":
         return any(item in {"--check", "--test"} for item in lowered[1:])
-    # Only explicit script/subcommand forms count; installs and adds must not mint progress.
     if command in {"npm", "pnpm", "yarn"}:
         arguments = [item for item in lowered[1:] if not item.startswith("-")]
         if not arguments:
@@ -413,7 +408,6 @@ def is_validation_command(argv: Any) -> bool:
     return False
 
 
-# Backward-compatible private aliases for existing callers and tests.
 _python_validation_command = is_python_validation_command
 _is_validation_command = is_validation_command
 
@@ -488,14 +482,6 @@ def _normalize_validation_output(value: Any) -> str:
 
 
 def discovery_evidence_fingerprint(task: Mapping[str, Any]) -> str:
-    """Fingerprint completed validation outcomes without rewarding inspection churn.
-
-    The latest stored fingerprint seeds a resumed run until that run produces a
-    completed validation outcome. Output is normalized before hashing so
-    elapsed-time, ordering, temporary-path, and timestamp noise cannot create
-    artificial progress. Runtime guardrails decide when a changed fingerprint
-    counts as progress, so phase-only transitions cannot retire forced action.
-    """
     pending: Dict[str, Dict[str, Any]] = {}
     pending_without_id: list[Dict[str, Any]] = []
     signatures: set[str] = set()
