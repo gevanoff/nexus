@@ -212,7 +212,9 @@ def test_completed_commitment_is_not_reused_as_required_action():
         events=events,
     )
     assert working["next_action"] != "Run with the correct relative path."
-    assert working["next_action_kind"] == "edit"
+    # Without an explicit evidence-qualified execution phase, the controller
+    # must not infer a fresh edit merely because a prior validation completed.
+    assert working["next_action_kind"] == "bounded"
     assert working["required_action_source"] == "controller_default"
 
 
