@@ -41,6 +41,9 @@ _HYPOTHESIS_FIELDS = (
     "Competing explanation checked",
     "Expected result",
 )
+_HYPOTHESIS_FIELD_RE = re.compile(
+    rf"(?is)(?:^|[\n;])\s*({'|'.join(re.escape(label) for label in _HYPOTHESIS_FIELDS)})\s*:\s*"
+)
 _MAX_TARGETED_EVIDENCE_ACTIONS = 2
 
 
@@ -112,7 +115,7 @@ def _targeted_evidence_count(task: Mapping[str, Any], state: Mapping[str, Any]) 
         if str(event.get("name") or "").strip() not in _TARGETED_EVIDENCE_TOOLS:
             continue
         result = event.get("result") if isinstance(event.get("result"), dict) else {}
-        if result.get("ok") is False or str(result.get("error") or "") == "forced_action_tool_rejected":
+        if str(result.get("error") or "") == "forced_action_tool_rejected" or result.get("ok") is not True:
             continue
         count += 1
     return count
@@ -152,19 +155,24 @@ def _structured_hypothesis(task: Mapping[str, Any], state: Mapping[str, Any]) ->
     if current_revision <= activation_revision:
         return False, {}
     text = _project_plan_text(task)
+    matches = list(_HYPOTHESIS_FIELD_RE.finditer(text))
+    if not matches:
+        return False, {}
     fields: Dict[str, str] = {}
-    for index, label in enumerate(_HYPOTHESIS_FIELDS):
-        next_label = _HYPOTHESIS_FIELDS[index + 1] if index + 1 < len(_HYPOTHESIS_FIELDS) else ""
-        if next_label:
-            pattern = rf"(?is){re.escape(label)}\s*:\s*(.+?)(?=\n\s*{re.escape(next_label)}\s*:|$)"
-        else:
-            pattern = rf"(?is){re.escape(label)}\s*:\s*(.+?)\s*$"
-        match = re.search(pattern, text)
-        value = str(match.group(1) if match else "").strip()
+    for index, match in enumerate(matches):
+        raw_label = str(match.group(1) or "").strip()
+        label = next(
+            (candidate for candidate in _HYPOTHESIS_FIELDS if candidate.casefold() == raw_label.casefold()),
+            "",
+        )
+        if not label or label in fields:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        value = text[match.end():end].strip(" \t\r\n;")
         if len(value) < 8:
             return False, fields
         fields[label] = value
-    return True, fields
+    return all(label in fields for label in _HYPOTHESIS_FIELDS), fields
 
 
 def _canonical_required_action(state: Mapping[str, Any]) -> str:
@@ -237,7 +245,7 @@ def _normalize_action_kind(required_action: str, action_kind: str) -> str:
     if kind not in _ACTION_ALLOWED_TOOLS:
         kind = "bounded"
     # The execution-loop defaults predate action-kind tagging and begin with
-    # generic prose rather than edit verbs recognized by the classifier.
+    # generic prose rather than edit verbs recognized by the generic classifier.
     # Normalize both newly requested and already-persisted records. Generic
     # remediation subsequently passes through the evidence/hypothesis gate.
     action = _normalize_required_action(required_action).casefold()
