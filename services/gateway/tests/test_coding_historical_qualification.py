@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app import coding_agent
 from app import coding_debug_report
+from app import coding_forced_action as forced_action
 from app import coding_semantic_acceptance
+from app import coding_stagnation_resilience as resilience
 
 
 GATEWAY_ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +81,48 @@ def test_debug_report_makes_effective_context_and_evidence_gate_visible() -> Non
     assert "Forced action: `evidence` / canonical `edit`" in report
     assert "Evidence / hypothesis: `1` / `no`" in report
     assert "coding_update_plan" in report
+
+
+def test_evidence_mode_prompt_explicitly_overrides_legacy_forced_prohibition() -> None:
+    task = {
+        "id": "code_qualification_prompt",
+        "prompt": "Fix the image management-link regression.",
+        "agent_run_id": "run-qualification",
+        "agent_cycle": 6,
+        "base_branch": "main",
+        "branch_name": "qualification",
+        "project_plan": {"revision": 0, "goal": "repair", "items": [], "note": ""},
+        "agent_progress_state": {
+            "stagnant_cycles": 6,
+            "observation": {
+                "workspace_fingerprint": "same",
+                "validation_revision": 0,
+                "diff_review_revision": 0,
+                "finish_state": "running",
+            },
+        },
+    }
+    task["agent_forced_action"] = forced_action.activate(
+        task,
+        state_key=resilience.durable_state_key(task),
+        run_id="run-qualification",
+        cycle=6,
+        stage="interrupt",
+        required_action="Take one bounded execution action, or finish with a concrete blocker.",
+        action_kind="bounded",
+    )
+
+    prompt = coding_agent._system_prompt(task)
+
+    legacy = "Do not inspect, orient, revise the project plan, or run arbitrary shell commands."
+    override = "The generic forced-mode prohibition on inspection/plan revision is superseded for this bounded evidence checkpoint."
+    assert legacy in prompt
+    assert override in prompt
+    assert prompt.index(override) > prompt.index(legacy)
+    assert "coding_search_text" in prompt
+    assert "coding_read_file_lines" in prompt
+    assert "coding_update_plan" in prompt
+    assert "editing is not yet authorized" in prompt
 
 
 def test_historical_pr71_case_is_inside_semantic_acceptance_contract() -> None:
