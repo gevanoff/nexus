@@ -154,7 +154,9 @@ def test_deployment_admin_preserves_form_panel_and_submission_state() -> None:
     assert 'id="jobsByHost"' in html
     assert "host-job-panel" in html
     assert "tbody tr.selected" in html
-    assert "/static/admin_deployments.js?v=3" in html
+    assert "/static/auth_client.js?v=3" in html
+    assert "/static/admin_deployments.js?v=4" in html
+    assert html.index("auth_client.js") < html.index("admin_deployments.js")
     assert "captureFormState()" in js
     assert "state.form.components" in js
     assert "state.hostScroll" in js
