@@ -167,10 +167,22 @@ def _structured_hypothesis(task: Mapping[str, Any], state: Mapping[str, Any]) ->
     return True, fields
 
 
+def _canonical_required_action(state: Mapping[str, Any]) -> str:
+    return _normalize_required_action(state.get("canonical_required_action") or state.get("required_action"))
+
+
+def _canonical_action_kind(state: Mapping[str, Any]) -> str:
+    action = _canonical_required_action(state)
+    return _normalize_action_kind(
+        action,
+        str(state.get("canonical_action_kind") or state.get("action_kind") or "bounded"),
+    )
+
+
 def _generic_edit_requires_hypothesis(state: Mapping[str, Any]) -> bool:
     if state.get("requires_hypothesis") is True:
         return True
-    return _normalize_required_action(state.get("required_action")).casefold() == _EDIT_EXECUTION_DIRECTIVE.casefold()
+    return _canonical_required_action(state).casefold() == _EDIT_EXECUTION_DIRECTIVE.casefold()
 
 
 def _apply_hypothesis_gate(task: Mapping[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
@@ -238,12 +250,12 @@ def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     state = _raw_active_state(task)
     if not state:
         return {}
-    normalized_action = _normalize_required_action(state.get("required_action"))
-    state["required_action"] = normalized_action
-    state["action_kind"] = _normalize_action_kind(
-        normalized_action,
-        str(state.get("action_kind") or "bounded"),
-    )
+    canonical_action = _canonical_required_action(state)
+    canonical_kind = _canonical_action_kind(state)
+    state["canonical_required_action"] = canonical_action
+    state["canonical_action_kind"] = canonical_kind
+    state["required_action"] = canonical_action
+    state["action_kind"] = canonical_kind
     state = _apply_hypothesis_gate(task, state)
     attempts = _attempt_count(task, state)
     state["attempt_count"] = attempts
@@ -268,11 +280,8 @@ def activate(
     )
     requested_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded").strip()
     normalized_kind = _normalize_action_kind(normalized_action, requested_kind)
-    previous_action = _normalize_required_action(previous.get("required_action"))
-    previous_kind = _normalize_action_kind(
-        previous_action,
-        str(previous.get("action_kind") or "bounded"),
-    )
+    previous_action = _canonical_required_action(previous) if previous else ""
+    previous_kind = _canonical_action_kind(previous) if previous else "bounded"
     same_state = str(previous.get("state_key") or "") == state_key
     same_directive = (
         same_state
@@ -296,6 +305,8 @@ def activate(
         "run_id": run_id,
         "cycle": int(cycle or 0),
         "stage": str(stage or "interrupt"),
+        "canonical_required_action": normalized_action,
+        "canonical_action_kind": normalized_kind,
         "required_action": normalized_action,
         "action_kind": normalized_kind,
         "requires_hypothesis": requires_hypothesis,
@@ -394,7 +405,9 @@ def evaluate_tool_call(
         "error": "forced_action_tool_rejected",
         "message": message,
         "required_action": required_action,
+        "canonical_required_action": state.get("canonical_required_action"),
         "action_kind": kind,
+        "canonical_action_kind": state.get("canonical_action_kind"),
         "attempt_count": attempts,
         "attempt_limit": 0,
         "allowed_tools": sorted(allowed_tools),
