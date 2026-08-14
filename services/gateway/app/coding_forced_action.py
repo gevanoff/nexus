@@ -27,6 +27,8 @@ _ACTION_ALLOWED_TOOLS = {
     "finish": {"coding_finish"},
     "bounded": set(_BASE_ALLOWED_TOOLS),
 }
+_GENERIC_EXECUTION_DIRECTIVE = "take one bounded execution action, or finish with a concrete blocker."
+_EDIT_EXECUTION_DIRECTIVE = "Make the smallest evidence-backed edit, or finish with a concrete blocker."
 
 
 def _raw_active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
@@ -88,18 +90,23 @@ def _effective_allowed_tools(state: Mapping[str, Any]) -> set[str]:
     return set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
 
 
+def _normalize_required_action(required_action: Any) -> str:
+    normalized = str(required_action or "").strip()
+    if normalized.casefold() == _GENERIC_EXECUTION_DIRECTIVE:
+        return _EDIT_EXECUTION_DIRECTIVE
+    return normalized
+
+
 def _normalize_action_kind(required_action: str, action_kind: str) -> str:
     kind = str(action_kind or "bounded").strip()
     if kind not in _ACTION_ALLOWED_TOOLS:
         kind = "bounded"
-    # The execution-loop default predates action-kind tagging and begins with
-    # "Make" rather than an edit verb recognized by the generic classifier.
-    # Normalize both newly requested and already-persisted legacy records so an
-    # unchanged resume remains the same directive instead of resetting history.
-    if (
-        kind == "bounded"
-        and str(required_action or "").casefold().startswith("make the smallest evidence-backed edit")
-    ):
+    # The execution-loop defaults predate action-kind tagging and begin with
+    # generic prose rather than edit verbs recognized by the classifier.
+    # Normalize both newly requested and already-persisted records so an
+    # unchanged resume exposes the concrete edit class immediately.
+    action = _normalize_required_action(required_action).casefold()
+    if kind == "bounded" and action.startswith("make the smallest evidence-backed edit"):
         return "edit"
     return kind
 
@@ -108,6 +115,12 @@ def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     state = _raw_active_state(task)
     if not state:
         return {}
+    normalized_action = _normalize_required_action(state.get("required_action"))
+    state["required_action"] = normalized_action
+    state["action_kind"] = _normalize_action_kind(
+        normalized_action,
+        str(state.get("action_kind") or "bounded"),
+    )
     attempts = _attempt_count(task, state)
     state["attempt_count"] = attempts
     state["allowed_tools"] = sorted(_effective_allowed_tools(state))
@@ -125,10 +138,12 @@ def activate(
     action_kind: str = "",
 ) -> Dict[str, Any]:
     previous = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
-    normalized_action = str(required_action or "Take one edit, targeted validation, diff review, or terminal action.").strip()
+    normalized_action = _normalize_required_action(
+        required_action or "Take one edit, targeted validation, diff review, or terminal action."
+    )
     requested_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded").strip()
     normalized_kind = _normalize_action_kind(normalized_action, requested_kind)
-    previous_action = str(previous.get("required_action") or "").strip()
+    previous_action = _normalize_required_action(previous.get("required_action"))
     previous_kind = _normalize_action_kind(
         previous_action,
         str(previous.get("action_kind") or "bounded"),

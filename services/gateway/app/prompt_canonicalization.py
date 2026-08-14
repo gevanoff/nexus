@@ -41,8 +41,35 @@ def stable_sort_tools(tools: Any) -> Any:
     return sorted(normalized, key=lambda tool: (_tool_name(tool), deterministic_json_dumps(tool)))
 
 
+def _bridge_tool_to_user_turns(messages: Any) -> Any:
+    """Insert an assistant boundary before a new user turn after tool output.
+
+    Some OpenAI-compatible strict chat templates reject ``tool -> user`` even
+    though Nexus can legitimately append controller/reroute guidance after a
+    completed tool result. Preserve every original message and insert only the
+    empty assistant turn needed to close the tool exchange before that new user
+    instruction.
+    """
+    if not isinstance(messages, list):
+        return messages
+    out: List[Any] = []
+    for message in messages:
+        if (
+            isinstance(message, dict)
+            and str(message.get("role") or "").strip().lower() == "user"
+            and out
+            and isinstance(out[-1], dict)
+            and str(out[-1].get("role") or "").strip().lower() == "tool"
+        ):
+            out.append({"role": "assistant", "content": ""})
+        out.append(message)
+    return out
+
+
 def canonicalize_chat_payload(payload: MutableMapping[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = canonicalize_json_value(dict(payload))
+    if isinstance(out.get("messages"), list):
+        out["messages"] = _bridge_tool_to_user_turns(out.get("messages"))
     if isinstance(out.get("tools"), list):
         out["tools"] = stable_sort_tools(out.get("tools"))
     return out
