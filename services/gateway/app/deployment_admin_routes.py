@@ -174,7 +174,12 @@ async def _controller_call(
 
 @router.get("/ui/admin/deployments", include_in_schema=False)
 async def deployment_admin_page(req: Request) -> FileResponse:
-    _admin(req)
+    # The HTML shell must be reachable before a saved browser API key has been
+    # converted into a session cookie. auth_client.js performs that bootstrap
+    # and attaches the key to same-origin /ui/api/ requests. Keep the shell
+    # behind the UI network allowlist, while every deployment API below remains
+    # admin-authenticated.
+    _require_ui_access(req)
     return FileResponse(_STATIC_DIR / "admin_deployments.html")
 
 
