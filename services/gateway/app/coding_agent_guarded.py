@@ -93,26 +93,30 @@ async def _acquire_backend_excluding(
                 if int(getattr(exc, "status_code", 0) or 0) == 429:
                     continue
                 raise
-            if attempt > 0 or str(candidate.get("backend") or "") != preferred_backend:
-                await asyncio.to_thread(
-                    _agent._append_event,
-                    task_id,
-                    {
-                        "type": "backend_selected",
-                        "cycle": cycle,
-                        "attempt": attempt + 1,
-                        "backend": candidate.get("backend"),
-                        "upstream_model": candidate.get("upstream_model"),
-                        "host": candidate.get("host"),
-                        "preferred_backend": preferred_backend,
-                        "preferred_upstream_model": preferred_upstream_model,
-                        "excluded_backends": sorted(excluded_backends),
-                        "summary": (
-                            f"selected {candidate.get('backend')} on {candidate.get('host')} "
-                            f"(preferred {preferred_backend})"
-                        ),
-                    },
-                )
+            try:
+                if attempt > 0 or str(candidate.get("backend") or "") != preferred_backend:
+                    await asyncio.to_thread(
+                        _agent._append_event,
+                        task_id,
+                        {
+                            "type": "backend_selected",
+                            "cycle": cycle,
+                            "attempt": attempt + 1,
+                            "backend": candidate.get("backend"),
+                            "upstream_model": candidate.get("upstream_model"),
+                            "host": candidate.get("host"),
+                            "preferred_backend": preferred_backend,
+                            "preferred_upstream_model": preferred_upstream_model,
+                            "excluded_backends": sorted(excluded_backends),
+                            "summary": (
+                                f"selected {candidate.get('backend')} on {candidate.get('host')} "
+                                f"(preferred {preferred_backend})"
+                            ),
+                        },
+                    )
+            except BaseException:
+                admission.release(str(candidate["backend"]), "chat")
+                raise
             return candidate
 
         remaining = deadline - time.monotonic()
