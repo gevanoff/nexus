@@ -199,8 +199,16 @@ def _has_edit(events: Sequence[Mapping[str, Any]]) -> bool:
     )
 
 
+def _canonical_evidence_path(value: Any) -> str:
+    path = str(value or "").strip().replace("\\", "/")
+    path = re.sub(r"/+", "/", path)
+    while path.startswith("./"):
+        path = path[2:]
+    return path.rstrip("/")
+
+
 def _source_evidence_signature(name: str, args: Mapping[str, Any]) -> str:
-    path = str(args.get("path") or "").strip().replace("\\", "/")
+    path = _canonical_evidence_path(args.get("path"))
     if name == "coding_search_text":
         query = " ".join(str(args.get("query") or "").strip().casefold().split())
         return f"search:{path}:{query}" if path or query else ""
