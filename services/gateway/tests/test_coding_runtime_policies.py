@@ -51,6 +51,21 @@ def test_semantic_acceptance_requires_all_independent_checks():
     assert incomplete["accepted"] is False
 
 
+def test_semantic_acceptance_recovers_first_valid_object_from_wrapped_prose():
+    review = acceptance.parse_review(
+        'Reviewer preface with a stray {not-json} example.\n'
+        '{"accepted":false,"reason":"Existing mechanism was not checked.",'
+        '"causal_alignment":true,"existing_mechanism_checked":false,'
+        '"acceptance_criteria_checked":true}\n'
+        'Trailing note with another {brace}.'
+    )
+
+    assert review["parse_error"] is False
+    assert review["accepted"] is False
+    assert review["existing_mechanism_checked"] is False
+    assert review["reason"] == "Existing mechanism was not checked."
+
+
 def test_semantic_acceptance_prompt_is_author_independent_and_diff_grounded():
     system, user = acceptance.build_review_messages(
         original_request="Restore the management link.",
