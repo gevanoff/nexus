@@ -15,6 +15,7 @@ DECISION = "decision"
 EXECUTION = "execution"
 _PHASES = {DISCOVERY, DECISION, EXECUTION}
 _EDIT_TOOLS = {"coding_write_file", "coding_replace_text", "coding_apply_patch"}
+_SOURCE_EVIDENCE_TOOLS = {"coding_read_file", "coding_read_file_lines", "coding_search_text"}
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _TIMESTAMP_RE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"
@@ -198,6 +199,75 @@ def _has_edit(events: Sequence[Mapping[str, Any]]) -> bool:
     )
 
 
+def _source_evidence_signature(name: str, args: Mapping[str, Any]) -> str:
+    path = str(args.get("path") or "").strip().replace("\\", "/")
+    if name == "coding_search_text":
+        query = " ".join(str(args.get("query") or "").strip().casefold().split())
+        return f"search:{path}:{query}" if path or query else ""
+    if name in {"coding_read_file", "coding_read_file_lines"}:
+        return f"read:{path}" if path else ""
+    return ""
+
+
+def successful_source_evidence_targets(events: Sequence[Mapping[str, Any]]) -> set[str]:
+    """Return distinct successful source-evidence targets from this run.
+
+    Inspection churn is not evidence merely because a tool was requested. A
+    target counts only after the corresponding read/search completes without a
+    forced-action rejection or explicit failure. This intentionally ignores
+    tree/status orientation and rewards direct implementation evidence.
+    """
+    pending: Dict[str, tuple[str, Dict[str, Any]]] = {}
+    pending_without_id: list[tuple[str, Dict[str, Any]]] = []
+    targets: set[str] = set()
+    for event in events:
+        event_type = str(event.get("type") or "")
+        name = str(event.get("name") or "")
+        call_id = str(event.get("tool_call_id") or "").strip()
+        if event_type == "tool_started" and name in _SOURCE_EVIDENCE_TOOLS:
+            args = event.get("args") if isinstance(event.get("args"), dict) else {}
+            item = (name, dict(args))
+            if call_id:
+                pending[call_id] = item
+            else:
+                pending_without_id.append(item)
+            continue
+        if event_type != "tool_finished" or name not in _SOURCE_EVIDENCE_TOOLS:
+            continue
+        if call_id:
+            item = pending.pop(call_id, None)
+        else:
+            item = pending_without_id.pop(0) if pending_without_id else None
+        if item is None:
+            continue
+        result = event.get("result") if isinstance(event.get("result"), dict) else {}
+        if str(result.get("error") or "") == "forced_action_tool_rejected":
+            continue
+        if result.get("ok") is False:
+            continue
+        signature = _source_evidence_signature(item[0], item[1])
+        if signature:
+            targets.add(signature)
+    return targets
+
+
+def decision_evidence_ready(task: Mapping[str, Any], events: Sequence[Mapping[str, Any]] | None = None) -> bool:
+    """Require bounded causal evidence before a file-changing mission may edit.
+
+    A validation outcome is sufficient on its own. Otherwise require two
+    distinct successful source evidence targets and at least one direct file
+    read. The latter prevents directory/search orientation from being mistaken
+    for a causal remediation decision—the failure mode demonstrated by the
+    InvokeAI-link run that edited image.html before reading the existing
+    model-management renderer.
+    """
+    if discovery_evidence_fingerprint(task):
+        return True
+    event_list = list(events) if events is not None else _current_run_events(task)
+    targets = successful_source_evidence_targets(event_list)
+    return len(targets) >= 2 and any(target.startswith("read:") for target in targets)
+
+
 def is_python_validation_command(parts: Sequence[str]) -> bool:
     if not parts:
         return False
@@ -361,12 +431,36 @@ def advance_phase(
         return phase_state(task, phase=EXECUTION, decision="remediate", reason="workspace execution has begun")
     enforced = str(stage or "observe") in {"interrupt", "recovery", "continuation"}
     if phase == DECISION:
-        if mission_requires_file_changes(task):
-            return phase_state(task, phase=EXECUTION, decision="remediate", reason="mission requires repository changes")
-        return phase_state(task, phase=DECISION, decision="report_only", reason="review mission may complete without changes")
+        if not mission_requires_file_changes(task):
+            return phase_state(task, phase=DECISION, decision="report_only", reason="review mission may complete without changes")
+        if not enforced:
+            return phase_state(
+                task,
+                phase=DECISION,
+                decision="evaluate_remediation",
+                reason="form an evidence-backed remediation hypothesis before editing",
+            )
+        if decision_evidence_ready(task, event_list):
+            return phase_state(
+                task,
+                phase=EXECUTION,
+                decision="remediate",
+                reason="bounded repository evidence supports entering execution",
+            )
+        return phase_state(
+            task,
+            phase=DECISION,
+            decision="evidence_required",
+            reason="execution remains locked until bounded causal repository evidence is established",
+        )
     if enforced:
         if mission_requires_file_changes(task):
-            return phase_state(task, phase=EXECUTION, decision="remediate", reason="discovery produced a bounded remediation decision")
+            return phase_state(
+                task,
+                phase=DECISION,
+                decision="evaluate_remediation",
+                reason="stagnant discovery must pass an evidence gate before execution",
+            )
         return phase_state(task, phase=DECISION, decision="report_only", reason="discovery produced a bounded review decision")
     return phase_state(task, phase=DISCOVERY, decision="", reason="collect bounded repository evidence")
 
@@ -479,8 +573,11 @@ def phase_prompt(task: Mapping[str, Any]) -> str:
         return prompt
     if phase == DECISION:
         prompt = (
-            "Controller work phase: decision. Classify findings as confirmed actionable defects, one specified "
-            "remaining check, environment/configuration blockers, or disproven; then report or remediate according to the mission."
+            "Controller work phase: decision. Do not edit yet. Establish a remediation hypothesis with five explicit parts: "
+            "(1) observed incorrect behavior, (2) implementation location, (3) causal mechanism, "
+            "(4) the strongest competing explanation checked against repository evidence, and "
+            "(5) the observable result expected from the smallest fix. If any part is unsupported, gather only the targeted "
+            "repository evidence needed to resolve it. Existing assistant notes are leads, not proof."
         )
         if review_only:
             prompt += (
@@ -491,6 +588,8 @@ def phase_prompt(task: Mapping[str, Any]) -> str:
             )
         return prompt
     return (
-        "Controller work phase: execution. Make the smallest evidence-backed edit, run targeted validation, "
-        "review the resulting diff, and finish; do not reopen broad repository exploration."
+        "Controller work phase: execution. Make the smallest evidence-backed edit consistent with the established causal "
+        "hypothesis, run targeted validation, then perform an adversarial diff review against the original request. "
+        "Specifically check whether the patch duplicates or bypasses an existing mechanism, hardcodes environment-specific "
+        "values, or fixes a symptom rather than the cause before coding_finish. Do not reopen broad repository exploration."
     )
