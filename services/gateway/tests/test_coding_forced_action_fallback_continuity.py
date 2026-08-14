@@ -45,6 +45,20 @@ def _qualify_hypothesis(task: dict) -> None:
     }
 
 
+def _activate_generic_gate(task: dict) -> dict:
+    key = resilience.durable_state_key(task)
+    task["agent_forced_action"] = forced.activate(
+        task,
+        state_key=key,
+        run_id="run-2",
+        cycle=6,
+        stage="interrupt",
+        required_action="Take one bounded execution action, or finish with a concrete blocker.",
+        action_kind="bounded",
+    )
+    return forced.active_state(task)
+
+
 def test_generic_execution_interrupt_enters_evidence_gate_before_edit_scope():
     task = _task()
     state = forced.activate(
@@ -73,16 +87,7 @@ def test_generic_execution_interrupt_enters_evidence_gate_before_edit_scope():
 
 def test_evidence_and_new_structured_hypothesis_unlock_edit_scope():
     task = _task()
-    key = resilience.durable_state_key(task)
-    task["agent_forced_action"] = forced.activate(
-        task,
-        state_key=key,
-        run_id="run-2",
-        cycle=6,
-        stage="interrupt",
-        required_action="Take one bounded execution action, or finish with a concrete blocker.",
-        action_kind="bounded",
-    )
+    _activate_generic_gate(task)
 
     _qualify_hypothesis(task)
     active = forced.active_state(task)
@@ -96,6 +101,92 @@ def test_evidence_and_new_structured_hypothesis_unlock_edit_scope():
         "coding_apply_patch",
         "coding_finish",
     }
+
+
+def test_evidence_without_explicit_success_does_not_count():
+    task = _task()
+    state = _activate_generic_gate(task)
+    activated = float(state.get("activated_at") or 0)
+    task["agent_events"] = [
+        {
+            "type": "tool_finished",
+            "name": "coding_search_text",
+            "result": {"matches": ["example.py:1"]},
+            "ts": activated + 1,
+        },
+        {
+            "type": "tool_finished",
+            "name": "coding_read_file_lines",
+            "result": {"ok": False, "error": "read failed"},
+            "ts": activated + 2,
+        },
+    ]
+
+    active = forced.active_state(task)
+
+    assert active["targeted_evidence_count"] == 0
+    assert active["action_kind"] == "evidence"
+
+
+def test_semicolon_hypothesis_format_unlocks_edit_scope():
+    task = _task()
+    state = _activate_generic_gate(task)
+    activated = float(state.get("activated_at") or 0)
+    task["agent_events"] = [
+        {
+            "type": "tool_finished",
+            "name": "coding_search_text",
+            "result": {"ok": True},
+            "ts": activated + 1,
+        }
+    ]
+    task["project_plan"] = {
+        "revision": int(state.get("activation_plan_revision") or 0) + 1,
+        "goal": "repair",
+        "items": [],
+        "note": (
+            "Root cause: configured management URL is not reaching the renderer; "
+            "Repository evidence: image_catalog_ui.js renders model_management.ui_url; "
+            "Competing explanation checked: image.html still has the modelManagement container; "
+            "Expected result: the configured management link renders without hard-coded localhost"
+        ),
+    }
+
+    active = forced.active_state(task)
+
+    assert active["hypothesis_ready"] is True
+    assert active["action_kind"] == "edit"
+
+
+def test_expected_result_allows_trailing_plan_notes():
+    task = _task()
+    state = _activate_generic_gate(task)
+    activated = float(state.get("activated_at") or 0)
+    task["agent_events"] = [
+        {
+            "type": "tool_finished",
+            "name": "coding_read_file_lines",
+            "result": {"ok": True},
+            "ts": activated + 1,
+        }
+    ]
+    task["project_plan"] = {
+        "revision": int(state.get("activation_plan_revision") or 0) + 1,
+        "goal": "repair",
+        "items": [],
+        "note": (
+            "Root cause: configured management URL is not reaching the renderer.\n"
+            "Repository evidence: image_catalog_ui.js renders model_management.ui_url.\n"
+            "Competing explanation checked: image.html still has the modelManagement container.\n"
+            "Expected result: configured management link renders for remote operators.\n"
+            "Plan note: keep the fix focused and avoid changing backend selection."
+        ),
+    }
+
+    active = forced.active_state(task)
+
+    assert active["hypothesis_ready"] is True
+    assert active["action_kind"] == "edit"
 
 
 def test_stale_structured_plan_cannot_unlock_new_forced_action():
@@ -140,17 +231,7 @@ def test_stale_structured_plan_cannot_unlock_new_forced_action():
 
 def test_targeted_evidence_is_bounded_until_hypothesis_is_recorded():
     task = _task()
-    key = resilience.durable_state_key(task)
-    task["agent_forced_action"] = forced.activate(
-        task,
-        state_key=key,
-        run_id="run-2",
-        cycle=6,
-        stage="interrupt",
-        required_action="Take one bounded execution action, or finish with a concrete blocker.",
-        action_kind="bounded",
-    )
-    state = forced.active_state(task)
+    state = _activate_generic_gate(task)
     activated = float(state.get("activated_at") or 0)
     task["agent_events"] = [
         {"type": "tool_finished", "name": "coding_search_text", "result": {"ok": True}, "ts": activated + 1},
