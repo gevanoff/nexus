@@ -27,7 +27,7 @@ async def test_deployment_admin_shell_allows_auth_client_to_bootstrap(monkeypatc
 
     response = await deployment_admin_routes.deployment_admin_page(object())
 
-    assert response.path.endswith("admin_deployments.html")
+    assert Path(response.path).name == "admin_deployments.html"
     assert calls == ["ui_access"]
 
 
