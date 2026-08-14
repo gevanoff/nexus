@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Mapping
 
 
@@ -33,6 +32,20 @@ def build_review_messages(
     return system, user
 
 
+def _first_json_object(text: str) -> Mapping[str, Any] | None:
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def parse_review(content: Any) -> dict[str, Any]:
     text = str(content or "").strip()
     if not text:
@@ -42,15 +55,8 @@ def parse_review(content: Any) -> dict[str, Any]:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
             payload = parsed
-    except Exception:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group(0))
-                if isinstance(parsed, dict):
-                    payload = parsed
-            except Exception:
-                payload = None
+    except json.JSONDecodeError:
+        payload = _first_json_object(text)
     if payload is None:
         return {
             "accepted": False,
