@@ -58,6 +58,31 @@ def test_capture_baseline_snapshots_preexisting_untracked_as_git_blobs() -> None
     assert cw.saved["agent_semantic_baseline"] == baseline
 
 
+def test_errored_same_run_baseline_is_retried() -> None:
+    cw = FakeWorkspace()
+    cw.task["agent_semantic_baseline"] = {
+        "schema": coding_run_delta.SCHEMA,
+        "run_id": "run-1",
+        "tree_commit": "",
+        "untracked_blobs": {},
+        "error": "transient git failure",
+    }
+    cw.responses[("git", "stash", "create", "nexus-semantic-acceptance-baseline")] = {
+        "ok": True,
+        "stdout": "baseline456\n",
+    }
+    cw.responses[("git", "ls-files", "--others", "--exclude-standard")] = {
+        "ok": True,
+        "stdout": "",
+    }
+
+    baseline = coding_run_delta.ensure_baseline(cw, "code_test", cw.task)
+
+    assert baseline["error"] == ""
+    assert baseline["tree_commit"] == "baseline456"
+    assert ["git", "stash", "create", "nexus-semantic-acceptance-baseline"] in cw.commands
+
+
 def test_run_delta_excludes_preexisting_workspace_changes_and_includes_new_untracked() -> None:
     cw = FakeWorkspace()
     task = {
