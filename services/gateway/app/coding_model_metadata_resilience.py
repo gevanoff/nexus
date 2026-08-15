@@ -11,7 +11,7 @@ from app import coding_network_resilience as network
 _RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
 
-def _exception_kind(exc: BaseException) -> str:
+def _exception_kind(exc: Exception) -> str:
     if isinstance(exc, urlerror.HTTPError):
         try:
             if int(exc.code) in _RETRYABLE_HTTP_STATUSES:
@@ -38,12 +38,12 @@ def fetch_metadata_with_retry(
 ) -> Dict[str, Any]:
     max_attempts = network.retry_attempts() if attempts is None else max(1, int(attempts))
     base_delay = network.retry_base_delay_sec() if base_delay_sec is None else max(0.0, float(base_delay_sec))
-    last_exc: BaseException | None = None
+    last_exc: Exception | None = None
 
     for index in range(max_attempts):
         try:
             return original(model_id, timeout_sec=timeout_sec)
-        except BaseException as exc:
+        except Exception as exc:
             last_exc = exc
             kind = _exception_kind(exc)
             if not kind or index + 1 >= max_attempts:
