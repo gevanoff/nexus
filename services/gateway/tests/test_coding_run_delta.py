@@ -83,6 +83,20 @@ def test_errored_same_run_baseline_is_retried() -> None:
     assert ["git", "stash", "create", "nexus-semantic-acceptance-baseline"] in cw.commands
 
 
+def test_text_diff_preserves_existing_empty_file_identity() -> None:
+    rendered = coding_run_delta._text_diff(
+        "existing.txt",
+        "",
+        "now populated\n",
+        before_exists=True,
+        after_exists=True,
+    )
+
+    assert "--- a/existing.txt" in rendered
+    assert "+++ b/existing.txt" in rendered
+    assert "/dev/null" not in rendered
+
+
 def test_run_delta_excludes_preexisting_workspace_changes_and_includes_new_untracked() -> None:
     cw = FakeWorkspace()
     task = {
