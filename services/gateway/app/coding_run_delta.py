@@ -124,13 +124,20 @@ def _current_hash(cw: Any, task_id: str, path: str) -> str:
     return _stdout(result) if bool(result.get("ok")) else ""
 
 
-def _text_diff(path: str, before: str, after: str) -> str:
+def _text_diff(
+    path: str,
+    before: str,
+    after: str,
+    *,
+    before_exists: bool,
+    after_exists: bool,
+) -> str:
     return "".join(
         difflib.unified_diff(
             before.splitlines(keepends=True),
             after.splitlines(keepends=True),
-            fromfile=f"a/{path}" if before else "/dev/null",
-            tofile=f"b/{path}" if after else "/dev/null",
+            fromfile=f"a/{path}" if before_exists else "/dev/null",
+            tofile=f"b/{path}" if after_exists else "/dev/null",
         )
     ).strip()
 
@@ -178,7 +185,13 @@ def run_delta_diff(cw: Any, agent: Any, task_id: str, task: Dict[str, Any]) -> s
         before, ok = _blob_text(cw, task_id, old_sha)
         if not ok:
             return ""
-        rendered = _text_diff(path, before, current if exists else "")
+        rendered = _text_diff(
+            path,
+            before,
+            current if exists else "",
+            before_exists=True,
+            after_exists=exists,
+        )
         if rendered:
             pieces.append(rendered)
 
@@ -186,7 +199,13 @@ def run_delta_diff(cw: Any, agent: Any, task_id: str, task: Dict[str, Any]) -> s
         current, exists = _read_current(cw, task_id, path)
         if not exists:
             continue
-        rendered = _text_diff(path, "", current)
+        rendered = _text_diff(
+            path,
+            "",
+            current,
+            before_exists=False,
+            after_exists=True,
+        )
         if rendered:
             pieces.append(rendered)
 
