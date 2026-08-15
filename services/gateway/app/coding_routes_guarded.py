@@ -20,6 +20,24 @@ from app import coding_workspace as cw
 # Existing route handlers resolve these module-level controllers at call time.
 coding_network_resilience.install(cw, guarded_agent)
 coding_model_metadata_resilience.install(cw.miw)
+_resilient_agent_start = guarded_agent.start_agent_run
+_guarded_agent_start = guarded_agent._network_resilience_original_start_agent_run
+
+
+async def _start_agent_run_with_initialization_recovery(task_id: str, *args, **kwargs):
+    task = await routes._to_thread(cw.load_task, task_id)
+    status = str(task.get("status") or "").strip().lower()
+    repo_path = Path(str(task.get("repo_path") or "")).resolve()
+    # Only a persisted initialization error with no usable Git repository is a
+    # candidate for destructive reclone recovery. All normal, legacy, mocked,
+    # reconciled, or manually repaired workspaces preserve the existing guarded
+    # start semantics unchanged.
+    if status == "error" and not repo_path.joinpath(".git").exists():
+        return await _resilient_agent_start(task_id, *args, **kwargs)
+    return await _guarded_agent_start(task_id, *args, **kwargs)
+
+
+guarded_agent.start_agent_run = _start_agent_run_with_initialization_recovery
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
