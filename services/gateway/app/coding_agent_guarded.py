@@ -441,7 +441,17 @@ def _run_tool_with_semantic_acceptance(
     before_fingerprint = ""
     if mutation_capable:
         before_edit = cw.load_task(task_id)
-        coding_run_delta.ensure_baseline(cw, task_id, before_edit)
+        baseline = coding_run_delta.ensure_baseline(cw, task_id, before_edit)
+        baseline_error = str(baseline.get("error") or "").strip()
+        if baseline_error:
+            return {
+                "ok": False,
+                "error": "semantic_baseline_unavailable",
+                "message": (
+                    "Cannot safely execute a mutation-capable coding tool until the current-run semantic baseline is captured: "
+                    f"{baseline_error}"
+                ),
+            }
         if name == "coding_run_command":
             before_fingerprint = _workspace_progress_fingerprint(task_id)
 
