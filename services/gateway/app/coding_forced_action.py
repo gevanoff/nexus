@@ -19,7 +19,6 @@ _BASE_ALLOWED_TOOLS = {
     "coding_run_command",
     "coding_git_diff",
     "coding_finish",
-    *_SOURCE_EVIDENCE_TOOLS,
 }
 _ACTION_ALLOWED_TOOLS = {
     "evidence": {*_SOURCE_EVIDENCE_TOOLS, "coding_finish"},
@@ -65,6 +64,7 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     except (TypeError, ValueError):
         activated_at = 0.0
     legacy_start = max(0, min(int(state.get("activation_event_count") or 0), len(events)))
+    countable_tools = _BASE_ALLOWED_TOOLS | _SOURCE_EVIDENCE_TOOLS
     count = 0
     for index, event in enumerate(events):
         event_ts = _event_timestamp(event)
@@ -76,7 +76,7 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
         if str(event.get("type") or "") != "tool_finished":
             continue
         name = str(event.get("name") or "").strip()
-        if name == "coding_finish" or name not in _BASE_ALLOWED_TOOLS:
+        if name == "coding_finish" or name not in countable_tools:
             continue
         result = event.get("result") if isinstance(event.get("result"), dict) else {}
         if str(result.get("error") or "") == "forced_action_tool_rejected":
