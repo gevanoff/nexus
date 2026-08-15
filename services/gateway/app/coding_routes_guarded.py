@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app import coding_agent_guarded as guarded_agent
 from app import coding_debug_report
+from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_routes as routes
 from app import coding_workspace as cw
@@ -18,6 +19,7 @@ from app import coding_workspace as cw
 # Install bounded retry/recovery before any Coding Workspace route is invoked.
 # Existing route handlers resolve these module-level controllers at call time.
 coding_network_resilience.install(cw, guarded_agent)
+coding_model_metadata_resilience.install(cw.miw)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
