@@ -25,6 +25,11 @@ _ORIGINAL_RUN_TOOL = getattr(
     "_guarded_original_run_tool",
     _agent._run_tool,
 )
+_ORIGINAL_TOOL_RESULT_MODIFIED_WORKSPACE = getattr(
+    _agent,
+    "_guarded_original_tool_result_modified_workspace",
+    _agent._tool_result_modified_workspace,
+)
 
 
 def _candidate_summary(candidate: Dict[str, Any]) -> Dict[str, Any]:
@@ -262,7 +267,7 @@ async def _call_backend_chat_with_failover(
     )
 
 
-def _current_run_has_successful_edit(task: Dict[str, Any]) -> bool:
+def _current_run_has_recorded_mutation(task: Dict[str, Any]) -> bool:
     run_id = str(task.get("agent_run_id") or "").strip()
     events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
     start_index = 0
@@ -279,10 +284,11 @@ def _current_run_has_successful_edit(task: Dict[str, Any]) -> bool:
     for event in events[start_index:]:
         if str(event.get("type") or "") != "tool_finished":
             continue
-        if str(event.get("name") or "") not in edit_tools:
-            continue
+        name = str(event.get("name") or "")
         result = event.get("result") if isinstance(event.get("result"), dict) else {}
-        if result.get("ok") is True:
+        if name in edit_tools and result.get("ok") is True:
+            return True
+        if name == "coding_run_command" and result.get("workspace_modified") is True:
             return True
     return False
 
@@ -402,6 +408,23 @@ async def _semantic_acceptance_review(
         }
 
 
+def _workspace_progress_fingerprint(task_id: str) -> str:
+    try:
+        return str(cw.workspace_progress_fingerprint(task_id) or "")
+    except Exception:
+        return ""
+
+
+def _tool_result_modified_workspace(
+    name: str,
+    args: Dict[str, Any],
+    result: Dict[str, Any],
+) -> bool:
+    if result.get("workspace_modified") is True:
+        return True
+    return _ORIGINAL_TOOL_RESULT_MODIFIED_WORKSPACE(name, args, result)
+
+
 def _run_tool_with_semantic_acceptance(
     task_id: str,
     name: str,
@@ -409,9 +432,18 @@ def _run_tool_with_semantic_acceptance(
     *,
     git_token_value: Optional[str],
 ) -> Dict[str, Any]:
-    if name in {"coding_write_file", "coding_replace_text", "coding_apply_patch"}:
+    mutation_capable = name in {
+        "coding_write_file",
+        "coding_replace_text",
+        "coding_apply_patch",
+        "coding_run_command",
+    }
+    before_fingerprint = ""
+    if mutation_capable:
         before_edit = cw.load_task(task_id)
         coding_run_delta.ensure_baseline(cw, task_id, before_edit)
+        if name == "coding_run_command":
+            before_fingerprint = _workspace_progress_fingerprint(task_id)
 
     result = _ORIGINAL_RUN_TOOL(
         task_id,
@@ -419,27 +451,32 @@ def _run_tool_with_semantic_acceptance(
         args,
         git_token_value=git_token_value,
     )
+    if name == "coding_run_command" and before_fingerprint:
+        after_fingerprint = _workspace_progress_fingerprint(task_id)
+        if after_fingerprint and after_fingerprint != before_fingerprint:
+            result = dict(result)
+            result["workspace_modified"] = True
+
     if name != "coding_finish" or not bool(result.get("success", args.get("success", True))):
         return result
 
     task = cw.load_task(task_id)
-    if not _current_run_has_successful_edit(task):
+    diff_text = _run_delta_diff(task_id, task)
+    if not diff_text:
+        if _current_run_has_recorded_mutation(task):
+            return {
+                "ok": False,
+                "success": False,
+                "error": "semantic_acceptance_missing_diff",
+                "summary": (
+                    "Independent acceptance review could not reconstruct the actual "
+                    "run delta. Inspect coding_git_diff and preserve a reviewable diff "
+                    "before finishing."
+                ),
+            }
         return result
     if not _deterministic_acceptance_ready(task_id):
         return result
-
-    diff_text = _run_delta_diff(task_id, task)
-    if not diff_text:
-        return {
-            "ok": False,
-            "success": False,
-            "error": "semantic_acceptance_missing_diff",
-            "summary": (
-                "Independent acceptance review could not reconstruct the actual "
-                "run delta. Inspect coding_git_diff and preserve a reviewable diff "
-                "before finishing."
-            ),
-        }
 
     review = asyncio.run(
         _semantic_acceptance_review(
@@ -491,8 +528,12 @@ def _install_runtime_policies() -> None:
         _ORIGINAL_CALL_BACKEND_CHAT_WITH_RETRY
     )
     _agent._guarded_original_run_tool = _ORIGINAL_RUN_TOOL
+    _agent._guarded_original_tool_result_modified_workspace = (
+        _ORIGINAL_TOOL_RESULT_MODIFIED_WORKSPACE
+    )
     _agent._call_backend_chat_with_retry = _call_backend_chat_with_failover
     _agent._run_tool = _run_tool_with_semantic_acceptance
+    _agent._tool_result_modified_workspace = _tool_result_modified_workspace
     _agent._guarded_runtime_policies_installed = True
 
 
