@@ -457,7 +457,11 @@ def _run_tool_with_semantic_acceptance(
             result = dict(result)
             result["workspace_modified"] = True
 
-    if name != "coding_finish" or not bool(result.get("success", args.get("success", True))):
+    if (
+        name != "coding_finish"
+        or result.get("ok") is not True
+        or result.get("success") is not True
+    ):
         return result
 
     task = cw.load_task(task_id)
