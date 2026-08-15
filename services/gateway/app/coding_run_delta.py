@@ -86,9 +86,17 @@ def capture_baseline(cw: Any, task_id: str, task: Dict[str, Any]) -> Dict[str, A
 def ensure_baseline(cw: Any, task_id: str, task: Dict[str, Any]) -> Dict[str, Any]:
     run_id = str(task.get("agent_run_id") or "").strip()
     existing = task.get("agent_semantic_baseline") if isinstance(task.get("agent_semantic_baseline"), dict) else {}
-    if str(existing.get("schema") or "") == SCHEMA and str(existing.get("run_id") or "") == run_id:
+    same_run = (
+        str(existing.get("schema") or "") == SCHEMA
+        and str(existing.get("run_id") or "") == run_id
+    )
+    if same_run and not str(existing.get("error") or "").strip():
         return dict(existing)
 
+    # An errored baseline is retryable only because callers fail closed and do
+    # not execute a mutation until this returns a clean snapshot. Re-capturing
+    # after a mutation would hide part of the run delta, so callers must honor
+    # the error before invoking the mutation-capable tool.
     baseline = capture_baseline(cw, task_id, task)
     latest = cw.load_task(task_id)
     latest["agent_semantic_baseline"] = baseline
