@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from app import coding_agent as _agent
 from app import coding_backend_failover
+from app import coding_run_delta
 from app import coding_semantic_acceptance
 from app import coding_workspace as cw
 from app.coding_workspace_reconciliation import reconcile_before_run
@@ -301,30 +302,7 @@ def _project_hypothesis_text(task: Dict[str, Any]) -> str:
 
 
 def _run_delta_diff(task_id: str, task: Dict[str, Any]) -> str:
-    pieces: list[str] = []
-    uncommitted = cw.git_diff(task_id)
-    if uncommitted.get("ok"):
-        diff = uncommitted.get("diff") if isinstance(uncommitted.get("diff"), dict) else {}
-        text = str(diff.get("stdout") or "").strip()
-        if text:
-            pieces.append(text)
-
-    start_head = str(task.get("agent_start_head") or "").strip()
-    current = cw.git_head(task_id)
-    current_head = str(current.get("commit") or "").strip()
-    if start_head and current_head and start_head != current_head:
-        committed = cw.run_task_command(
-            task_id,
-            argv=["git", "diff", "--no-ext-diff", f"{start_head}..{current_head}"],
-            timeout_sec=30,
-        )
-        if committed.get("ok"):
-            text = str(committed.get("stdout") or "").strip()
-            if text:
-                pieces.append(text)
-
-    combined = "\n\n".join(pieces).strip()
-    return _agent._clip_text(combined, 20_000)
+    return coding_run_delta.run_delta_diff(cw, _agent, task_id, task)
 
 
 def _deterministic_acceptance_ready(task_id: str) -> bool:
@@ -431,6 +409,10 @@ def _run_tool_with_semantic_acceptance(
     *,
     git_token_value: Optional[str],
 ) -> Dict[str, Any]:
+    if name in {"coding_write_file", "coding_replace_text", "coding_apply_patch"}:
+        before_edit = cw.load_task(task_id)
+        coding_run_delta.ensure_baseline(cw, task_id, before_edit)
+
     result = _ORIGINAL_RUN_TOOL(
         task_id,
         name,
@@ -444,7 +426,6 @@ def _run_tool_with_semantic_acceptance(
     if not _current_run_has_successful_edit(task):
         return result
     if not _deterministic_acceptance_ready(task_id):
-        # The core finish gate will require validation and a post-edit diff first.
         return result
 
     diff_text = _run_delta_diff(task_id, task)
