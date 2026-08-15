@@ -93,20 +93,24 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     return count
 
 
-def _targeted_evidence_result_succeeded(result: Mapping[str, Any]) -> bool:
-    """Honor the existing source-tool contracts without accepting malformed success flags.
+def _targeted_evidence_result_succeeded(name: str, result: Mapping[str, Any]) -> bool:
+    """Honor each targeted source tool's real success contract.
 
-    coding_search_text reports boolean ``ok``. coding_read_file_lines returns a
-    non-empty read payload on success and raises on failure, so its successful
-    tool_finished result does not contain an ``ok`` field. Explicit success
-    markers must still be literal True; explicit errors/rejections never count.
+    ``coding_search_text`` always returns a boolean ``ok`` and therefore must
+    report literal ``True``. ``coding_read_file_lines`` returns a structured
+    read payload without ``ok`` on success and raises on failure; for that tool
+    a non-empty path/content payload is the success signal when ``ok`` is absent.
+    Explicit errors, rejections, false values, and malformed success values never
+    count as evidence.
     """
     error = str(result.get("error") or "").strip()
     if error:
         return False
     if "ok" in result:
         return result.get("ok") is True
-    return bool(result)
+    if str(name or "").strip() != "coding_read_file_lines":
+        return False
+    return bool(str(result.get("path") or "").strip()) and "content" in result
 
 
 def _targeted_evidence_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
@@ -126,10 +130,11 @@ def _targeted_evidence_count(task: Mapping[str, Any], state: Mapping[str, Any]) 
             continue
         if str(event.get("type") or "") != "tool_finished":
             continue
-        if str(event.get("name") or "").strip() not in _TARGETED_EVIDENCE_TOOLS:
+        name = str(event.get("name") or "").strip()
+        if name not in _TARGETED_EVIDENCE_TOOLS:
             continue
         result = event.get("result") if isinstance(event.get("result"), dict) else {}
-        if not _targeted_evidence_result_succeeded(result):
+        if not _targeted_evidence_result_succeeded(name, result):
             continue
         count += 1
     return count
