@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from urllib import error as urlerror
 
 import pytest
 from fastapi import HTTPException
@@ -51,6 +52,26 @@ def test_metadata_retry_does_not_capture_base_exceptions():
         raise KeyboardInterrupt("stop now")
 
     with pytest.raises(KeyboardInterrupt):
+        metadata_resilience.fetch_metadata_with_retry(
+            original,
+            "example/model",
+            sleep_fn=lambda _: None,
+            attempts=4,
+            base_delay_sec=0,
+        )
+
+    assert calls == 1
+
+
+def test_metadata_retry_does_not_retry_unclassified_urlerror():
+    calls = 0
+
+    def original(model_id: str, *, timeout_sec: float = 10.0):
+        nonlocal calls
+        calls += 1
+        raise urlerror.URLError("unsupported local request composition")
+
+    with pytest.raises(urlerror.URLError):
         metadata_resilience.fetch_metadata_with_retry(
             original,
             "example/model",
