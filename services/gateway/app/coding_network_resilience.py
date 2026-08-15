@@ -26,8 +26,6 @@ _DNS_MARKERS = (
 _TIMEOUT_MARKERS = (
     "connection timed out",
     "operation timed out",
-    "timed out",
-    "timeout",
 )
 _CONNECT_MARKERS = (
     "failed to connect",
@@ -388,6 +386,14 @@ def retry_failed_initialization(
             status_code=409,
             detail=f"coding workspace is not ready for an agent run (status={status or 'unknown'})",
         )
+    if _valid_git_repo(repo_path):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "coding workspace now contains valid Git metadata; automatic reclone is "
+                "disabled to preserve repaired or modified repository state"
+            ),
+        )
     if str(task.get("kind") or "") == "model_integration":
         raise HTTPException(
             status_code=409,
@@ -397,14 +403,6 @@ def retry_failed_initialization(
             ),
         )
     if not failure_kind:
-        if _valid_git_repo(repo_path):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "coding workspace initialization failed after a repository was created; "
-                    "automatic reclone is disabled to avoid discarding repository state"
-                ),
-            )
         raise HTTPException(
             status_code=409,
             detail=(
@@ -413,17 +411,43 @@ def retry_failed_initialization(
             ),
         )
 
+    workspace_root = Path(cw.workspace_root()).resolve()
+    expected_repo_path = workspace_path.joinpath("repo").resolve()
     try:
-        repo_path.relative_to(workspace_path)
-        workspace_path.relative_to(Path(cw.workspace_root()).resolve())
+        relative_workspace = workspace_path.relative_to(workspace_root)
     except Exception as exc:
         raise HTTPException(status_code=409, detail="coding workspace paths are not safe to reinitialize") from exc
+    if (
+        workspace_path.name != task_id
+        or relative_workspace.parts != (task_id,)
+        or repo_path != expected_repo_path
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="coding workspace paths do not match the controller-owned <task>/repo layout",
+        )
 
-    # A clone command that returned failure never established a usable workspace,
-    # even if Git happened to leave a partial .git directory behind. This is the
-    # only case where automatic deletion/reclone is allowed.
+    # A recorded transient clone failure never established a usable workspace.
+    # This exact controller-owned repo target is the only path automatic recovery
+    # is permitted to delete.
     if repo_path.exists():
-        shutil.rmtree(repo_path)
+        try:
+            shutil.rmtree(repo_path)
+        except Exception as exc:
+            task["initialization_recovery"] = {
+                "recovered": False,
+                "reason": failure_kind,
+                "attempted_at": time.time(),
+                "cleanup_error": f"{type(exc).__name__}: {exc}",
+            }
+            cw.save_task(task)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "coding workspace initialization retry could not safely remove the partial "
+                    f"clone: {type(exc).__name__}: {exc}"
+                ),
+            ) from exc
     workspace_path.mkdir(parents=True, exist_ok=True)
 
     repo_url = str(task.get("repo_url") or "").strip()
@@ -548,7 +572,11 @@ def install(cw: Any, guarded_agent: Any = None) -> None:
         task = await asyncio.to_thread(cw.load_task, task_id)
         repo_path = Path(str(task.get("repo_path") or "")).resolve()
         status = str(task.get("status") or "").strip().lower()
-        if status != "ready" or not _valid_git_repo(repo_path):
+        if (
+            status == "error"
+            and not _valid_git_repo(repo_path)
+            and bool(_latest_transient_clone_failure(task))
+        ):
             await asyncio.to_thread(
                 retry_failed_initialization,
                 cw,
