@@ -147,14 +147,16 @@ def test_video_ui_profiles_match_backend_contract_and_duration_limits() -> None:
     assert 'backendEl?.addEventListener("change", renderResolutionOptions)' in js
 
 
-def test_deployment_admin_preserves_form_panel_and_submission_state() -> None:
+def test_deployment_admin_preserves_form_panel_submission_and_auth_state() -> None:
     html = (STATIC_ROOT / "admin_deployments.html").read_text(encoding="utf-8")
     js = (STATIC_ROOT / "admin_deployments.js").read_text(encoding="utf-8")
 
     assert 'id="jobsByHost"' in html
     assert "host-job-panel" in html
     assert "tbody tr.selected" in html
-    assert "/static/admin_deployments.js?v=3" in html
+    assert "/static/auth_client.js?v=3" in html
+    assert html.index("/static/auth_client.js?v=3") < html.index("/static/admin_deployments.js?v=4")
+    assert "/static/admin_deployments.js?v=4" in html
     assert "captureFormState()" in js
     assert "state.form.components" in js
     assert "state.hostScroll" in js
@@ -165,6 +167,16 @@ def test_deployment_admin_preserves_form_panel_and_submission_state() -> None:
     assert "submitButton.disabled = !state.canSubmit" in js
     assert "grouped.entries()" in js
     assert 'jobsByHost.querySelectorAll("tr[data-job-id]")' in js
+
+
+def test_deployment_admin_page_does_not_require_session_before_auth_client_runs() -> None:
+    source = (Path(__file__).resolve().parents[1] / "app" / "deployment_admin_routes.py").read_text(encoding="utf-8")
+    page_block = source.split('@router.get("/ui/admin/deployments"', 1)[1].split('@router.get("/ui/api/admin/deployments/status"', 1)[0]
+    api_block = source.split('@router.get("/ui/api/admin/deployments/status"', 1)[1].split('@router.get("/ui/api/admin/deployments"', 1)[0]
+
+    assert "_require_ui_access(req)" in page_block
+    assert "_admin(req)" not in page_block
+    assert "_admin(req)" in api_block
 
 
 def test_resources_use_topology_host_while_preserving_endpoint_host(

@@ -174,7 +174,12 @@ async def _controller_call(
 
 @router.get("/ui/admin/deployments", include_in_schema=False)
 async def deployment_admin_page(req: Request) -> FileResponse:
-    _admin(req)
+    # Match the other Nexus admin frontends: navigation itself only requires
+    # UI network access. The browser auth client can then attach a saved API
+    # key / establish its session, while every admin API remains protected by
+    # _admin(). Requiring a session cookie on this HTML GET made Deployment
+    # Admin uniquely fail with a bare 401 when an API-key user's cookie lapsed.
+    _require_ui_access(req)
     return FileResponse(_STATIC_DIR / "admin_deployments.html")
 
 

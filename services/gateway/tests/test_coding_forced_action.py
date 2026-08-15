@@ -265,9 +265,10 @@ def test_forced_action_remains_scoped_after_allowed_attempt_without_progress():
     assert "until durable progress" in forced.prompt_context(task)
 
 
-def test_legacy_exhausted_state_does_not_collapse_to_finish_only():
+def test_legacy_exhausted_generic_state_enters_evidence_gate_not_finish_only():
     task = _task()
     task["agent_events"] = []
+    task["project_plan"] = {"revision": 0, "items": [], "note": ""}
     key = resilience.durable_state_key(task)
     legacy = forced.activate(
         task,
@@ -283,9 +284,9 @@ def test_legacy_exhausted_state_does_not_collapse_to_finish_only():
     task["agent_events"].append({"type": "tool_finished", "name": "coding_run_command", "result": {"ok": False}})
 
     assert forced.allowed_tool_names(task) == {
-        "coding_write_file",
-        "coding_replace_text",
-        "coding_apply_patch",
+        "coding_search_text",
+        "coding_read_file_lines",
+        "coding_update_plan",
         "coding_finish",
     }
 

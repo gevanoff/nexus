@@ -9,6 +9,7 @@ def _task() -> dict:
         "agent_run_id": "run-2",
         "agent_cycle": 6,
         "agent_events": [],
+        "project_plan": {"revision": 0, "items": [], "note": ""},
         "agent_progress_state": {
             "stagnant_cycles": 6,
             "observation": {
@@ -21,7 +22,7 @@ def _task() -> dict:
     }
 
 
-def test_execution_default_edit_directive_is_not_left_bounded():
+def test_execution_default_edit_directive_is_evidence_gated_not_broadly_bounded():
     task = _task()
     state = forced.activate(
         task,
@@ -34,10 +35,11 @@ def test_execution_default_edit_directive_is_not_left_bounded():
     )
     task["agent_forced_action"] = state
 
-    assert state["action_kind"] == "edit"
+    assert state["canonical_action_kind"] == "edit"
+    assert state["action_kind"] == "evidence"
     assert forced.allowed_tool_names(task) == {
-        "coding_write_file",
-        "coding_replace_text",
-        "coding_apply_patch",
+        "coding_search_text",
+        "coding_read_file_lines",
+        "coding_update_plan",
         "coding_finish",
     }

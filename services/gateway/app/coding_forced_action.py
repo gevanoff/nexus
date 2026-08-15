@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Callable, Dict, Mapping, Sequence
 
@@ -15,7 +16,9 @@ _BASE_ALLOWED_TOOLS = {
     "coding_git_diff",
     "coding_finish",
 }
+_TARGETED_EVIDENCE_TOOLS = {"coding_search_text", "coding_read_file_lines"}
 _ACTION_ALLOWED_TOOLS = {
+    "evidence": {*_TARGETED_EVIDENCE_TOOLS, "coding_update_plan", "coding_finish"},
     "edit": {
         "coding_write_file",
         "coding_replace_text",
@@ -29,6 +32,22 @@ _ACTION_ALLOWED_TOOLS = {
 }
 _GENERIC_EXECUTION_DIRECTIVE = "take one bounded execution action, or finish with a concrete blocker."
 _EDIT_EXECUTION_DIRECTIVE = "Make the smallest evidence-backed edit, or finish with a concrete blocker."
+_EVIDENCE_EXECUTION_DIRECTIVE = (
+    "Establish a remediation hypothesis before editing: gather targeted repository evidence, then record the hypothesis with coding_update_plan."
+)
+_HYPOTHESIS_FIELDS = (
+    "Root cause",
+    "Repository evidence",
+    "Competing explanation checked",
+    "Expected result",
+)
+_HYPOTHESIS_FIELD_RE = re.compile(
+    rf"(?is)(?:^|[\n;])\s*({'|'.join(re.escape(label) for label in _HYPOTHESIS_FIELDS)})\s*:\s*"
+)
+_TRAILING_PLAN_SECTION_RE = re.compile(
+    r"(?im)(?:\n|;)\s*[A-Za-z][A-Za-z0-9 _-]{1,40}\s*:\s*"
+)
+_MAX_TARGETED_EVIDENCE_ACTIONS = 2
 
 
 def _raw_active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
@@ -58,14 +77,9 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     for index, event in enumerate(events):
         event_ts = _event_timestamp(event)
         if activated_at > 0 and event_ts > 0:
-            # Persisted event timestamps remain stable when the capped event
-            # list rolls over and its list indices shift.
             if event_ts < activated_at:
                 continue
         elif index < legacy_start:
-            # Compatibility fallback for old or synthetic events without
-            # timestamps. If rollover makes the index ambiguous, undercounting
-            # is safer than prematurely exhausting the forced-action attempt.
             continue
         if str(event.get("type") or "") != "tool_finished":
             continue
@@ -79,15 +93,178 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     return count
 
 
+def _targeted_evidence_result_succeeded(name: str, result: Mapping[str, Any]) -> bool:
+    """Honor each targeted source tool's real success contract.
+
+    ``coding_search_text`` always returns a boolean ``ok`` and therefore must
+    report literal ``True``. ``coding_read_file_lines`` returns a structured
+    read payload without ``ok`` on success and raises on failure; for that tool
+    a non-empty path/content payload is the success signal when ``ok`` is absent.
+    Explicit errors, rejections, false values, and malformed success values never
+    count as evidence.
+    """
+    error = str(result.get("error") or "").strip()
+    if error:
+        return False
+    if "ok" in result:
+        return result.get("ok") is True
+    if str(name or "").strip() != "coding_read_file_lines":
+        return False
+    return bool(str(result.get("path") or "").strip()) and "content" in result
+
+
+def _targeted_evidence_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
+    events = [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
+    try:
+        activated_at = float(state.get("activated_at") or 0)
+    except (TypeError, ValueError):
+        activated_at = 0.0
+    legacy_start = max(0, min(int(state.get("activation_event_count") or 0), len(events)))
+    count = 0
+    for index, event in enumerate(events):
+        event_ts = _event_timestamp(event)
+        if activated_at > 0 and event_ts > 0:
+            if event_ts < activated_at:
+                continue
+        elif index < legacy_start:
+            continue
+        if str(event.get("type") or "") != "tool_finished":
+            continue
+        name = str(event.get("name") or "").strip()
+        if name not in _TARGETED_EVIDENCE_TOOLS:
+            continue
+        result = event.get("result") if isinstance(event.get("result"), dict) else {}
+        if not _targeted_evidence_result_succeeded(name, result):
+            continue
+        count += 1
+    return count
+
+
+def _plan_revision(task: Mapping[str, Any]) -> int:
+    plan = task.get("project_plan") if isinstance(task.get("project_plan"), dict) else {}
+    try:
+        return max(0, int(plan.get("revision") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _project_plan_text(task: Mapping[str, Any]) -> str:
+    plan = task.get("project_plan") if isinstance(task.get("project_plan"), dict) else {}
+    parts = [str(plan.get("goal") or ""), str(plan.get("note") or "")]
+    items = plan.get("items") if isinstance(plan.get("items"), list) else []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        parts.extend(
+            [
+                str(item.get("id") or ""),
+                str(item.get("title") or ""),
+                str(item.get("summary") or ""),
+            ]
+        )
+    return "\n".join(part for part in parts if part)
+
+
+def _structured_hypothesis(task: Mapping[str, Any], state: Mapping[str, Any]) -> tuple[bool, Dict[str, str]]:
+    current_revision = _plan_revision(task)
+    try:
+        activation_revision = int(state.get("activation_plan_revision", -1))
+    except (TypeError, ValueError):
+        activation_revision = -1
+    if current_revision <= activation_revision:
+        return False, {}
+    text = _project_plan_text(task)
+    matches = list(_HYPOTHESIS_FIELD_RE.finditer(text))
+    if not matches:
+        return False, {}
+    fields: Dict[str, str] = {}
+    for index, match in enumerate(matches):
+        raw_label = str(match.group(1) or "").strip()
+        label = next(
+            (
+                candidate
+                for candidate in _HYPOTHESIS_FIELDS
+                if candidate.casefold() == raw_label.casefold()
+            ),
+            "",
+        )
+        if not label or label in fields:
+            continue
+        if index + 1 < len(matches):
+            end = matches[index + 1].start()
+        else:
+            trailing = _TRAILING_PLAN_SECTION_RE.search(text, match.end())
+            end = trailing.start() if trailing else len(text)
+        value = text[match.end() : end].strip(" \t\r\n;")
+        if len(value) < 8:
+            return False, fields
+        fields[label] = value
+    return all(label in fields for label in _HYPOTHESIS_FIELDS), fields
+
+
+def _canonical_required_action(state: Mapping[str, Any]) -> str:
+    return _normalize_required_action(
+        state.get("canonical_required_action") or state.get("required_action")
+    )
+
+
+def _canonical_action_kind(state: Mapping[str, Any]) -> str:
+    action = _canonical_required_action(state)
+    return _normalize_action_kind(
+        action,
+        str(
+            state.get("canonical_action_kind")
+            or state.get("action_kind")
+            or "bounded"
+        ),
+    )
+
+
+def _generic_edit_requires_hypothesis(state: Mapping[str, Any]) -> bool:
+    if state.get("requires_hypothesis") is True:
+        return True
+    return (
+        _canonical_required_action(state).casefold()
+        == _EDIT_EXECUTION_DIRECTIVE.casefold()
+    )
+
+
+def _apply_hypothesis_gate(task: Mapping[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    if not _generic_edit_requires_hypothesis(state):
+        return state
+    evidence_count = _targeted_evidence_count(task, state)
+    hypothesis_ready, fields = _structured_hypothesis(task, state)
+    gate_ready = evidence_count > 0 and hypothesis_ready
+    state["requires_hypothesis"] = True
+    state["targeted_evidence_count"] = evidence_count
+    state["targeted_evidence_limit"] = _MAX_TARGETED_EVIDENCE_ACTIONS
+    state["hypothesis_ready"] = hypothesis_ready
+    state["hypothesis_fields"] = sorted(fields)
+    state["hypothesis_plan_revision"] = _plan_revision(task) if hypothesis_ready else None
+    if gate_ready:
+        state["required_action"] = _EDIT_EXECUTION_DIRECTIVE
+        state["action_kind"] = "edit"
+        state["allowed_tools"] = sorted(_ACTION_ALLOWED_TOOLS["edit"])
+        return state
+    state["required_action"] = _EVIDENCE_EXECUTION_DIRECTIVE
+    state["action_kind"] = "evidence"
+    evidence_tools = set(_ACTION_ALLOWED_TOOLS["evidence"])
+    if evidence_count >= _MAX_TARGETED_EVIDENCE_ACTIONS:
+        evidence_tools -= _TARGETED_EVIDENCE_TOOLS
+    state["allowed_tools"] = sorted(evidence_tools)
+    return state
+
+
 def _effective_allowed_tools(state: Mapping[str, Any]) -> set[str]:
-    # Forced-action mode is a tool-class restriction, not a single-tool lease.
-    # Keep the required action class available until the durable state changes
-    # or normal controller escalation terminates the run. Collapsing to
-    # coding_finish after one tool call can deadlock unchanged resumes: the
-    # workspace still requires an edit, while the only remaining action is a
-    # finish call that the no-change audit must reject.
     kind = str(state.get("action_kind") or "bounded")
-    return set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
+    allowed = set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
+    if (
+        kind == "evidence"
+        and int(state.get("targeted_evidence_count") or 0)
+        >= _MAX_TARGETED_EVIDENCE_ACTIONS
+    ):
+        allowed -= _TARGETED_EVIDENCE_TOOLS
+    return allowed
 
 
 def _normalize_required_action(required_action: Any) -> str:
@@ -101,10 +278,6 @@ def _normalize_action_kind(required_action: str, action_kind: str) -> str:
     kind = str(action_kind or "bounded").strip()
     if kind not in _ACTION_ALLOWED_TOOLS:
         kind = "bounded"
-    # The execution-loop defaults predate action-kind tagging and begin with
-    # generic prose rather than edit verbs recognized by the classifier.
-    # Normalize both newly requested and already-persisted records so an
-    # unchanged resume exposes the concrete edit class immediately.
     action = _normalize_required_action(required_action).casefold()
     if kind == "bounded" and action.startswith("make the smallest evidence-backed edit"):
         return "edit"
@@ -115,15 +288,16 @@ def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     state = _raw_active_state(task)
     if not state:
         return {}
-    normalized_action = _normalize_required_action(state.get("required_action"))
-    state["required_action"] = normalized_action
-    state["action_kind"] = _normalize_action_kind(
-        normalized_action,
-        str(state.get("action_kind") or "bounded"),
-    )
-    attempts = _attempt_count(task, state)
-    state["attempt_count"] = attempts
-    state["allowed_tools"] = sorted(_effective_allowed_tools(state))
+    canonical_action = _canonical_required_action(state)
+    canonical_kind = _canonical_action_kind(state)
+    state["canonical_required_action"] = canonical_action
+    state["canonical_action_kind"] = canonical_kind
+    state["required_action"] = canonical_action
+    state["action_kind"] = canonical_kind
+    state = _apply_hypothesis_gate(task, state)
+    state["attempt_count"] = _attempt_count(task, state)
+    if "allowed_tools" not in state:
+        state["allowed_tools"] = sorted(_effective_allowed_tools(state))
     return state
 
 
@@ -139,15 +313,17 @@ def activate(
 ) -> Dict[str, Any]:
     previous = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
     normalized_action = _normalize_required_action(
-        required_action or "Take one edit, targeted validation, diff review, or terminal action."
+        required_action
+        or "Take one edit, targeted validation, diff review, or terminal action."
     )
-    requested_kind = str(action_kind or resilience.action_kind_for_required_action(normalized_action) or "bounded").strip()
+    requested_kind = str(
+        action_kind
+        or resilience.action_kind_for_required_action(normalized_action)
+        or "bounded"
+    ).strip()
     normalized_kind = _normalize_action_kind(normalized_action, requested_kind)
-    previous_action = _normalize_required_action(previous.get("required_action"))
-    previous_kind = _normalize_action_kind(
-        previous_action,
-        str(previous.get("action_kind") or "bounded"),
-    )
+    previous_action = _canonical_required_action(previous) if previous else ""
+    previous_kind = _canonical_action_kind(previous) if previous else "bounded"
     same_state = str(previous.get("state_key") or "") == state_key
     same_directive = (
         same_state
@@ -162,20 +338,28 @@ def activate(
     if same_directive and previous_run and previous_run != run_id:
         resume_count += 1
     now = time.time()
-    event_count = len([item for item in (task.get("agent_events") or []) if isinstance(item, dict)])
-    initial_allowed = _ACTION_ALLOWED_TOOLS[normalized_kind]
-    return {
+    event_count = len(
+        [item for item in (task.get("agent_events") or []) if isinstance(item, dict)]
+    )
+    state = {
         "schema": SCHEMA,
         "status": "active",
         "state_key": state_key,
         "run_id": run_id,
         "cycle": int(cycle or 0),
         "stage": str(stage or "interrupt"),
+        "canonical_required_action": normalized_action,
+        "canonical_action_kind": normalized_kind,
         "required_action": normalized_action,
         "action_kind": normalized_kind,
-        "allowed_tools": sorted(initial_allowed),
-        # Kept for backwards-compatible diagnostics. Zero means the action
-        # class remains available until durable progress or terminal escalation.
+        "requires_hypothesis": (
+            normalized_action.casefold() == _EDIT_EXECUTION_DIRECTIVE.casefold()
+        ),
+        "activation_plan_revision": (
+            int(previous.get("activation_plan_revision", _plan_revision(task)))
+            if same_directive
+            else _plan_revision(task)
+        ),
         "attempt_limit": 0,
         "activation_event_count": (
             int(previous.get("activation_event_count") or 0)
@@ -185,20 +369,37 @@ def activate(
         "activation_count": max(1, activation_count),
         "resume_count": resume_count,
         "rejection_limit": 2,
-        "activated_at": float(previous.get("activated_at") or now) if same_directive else now,
+        "activated_at": (
+            float(previous.get("activated_at") or now) if same_directive else now
+        ),
         "updated_at": now,
     }
+    state = _apply_hypothesis_gate(task, state)
+    if "allowed_tools" not in state:
+        state["allowed_tools"] = sorted(_effective_allowed_tools(state))
+    return state
 
 
 def retire_if_state_changed(task: Dict[str, Any], *, state_key: str) -> bool:
     current = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
-    if str(current.get("status") or "") != "active":
+    if (
+        str(current.get("status") or "") != "active"
+        or str(current.get("state_key") or "") == state_key
+    ):
         return False
-    if str(current.get("state_key") or "") == state_key:
-        return False
-    history = [item for item in (task.get("agent_forced_action_history") or []) if isinstance(item, dict)]
+    history = [
+        item
+        for item in (task.get("agent_forced_action_history") or [])
+        if isinstance(item, dict)
+    ]
     retired = dict(current)
-    retired.update({"status": "superseded", "superseded_by_state_key": state_key, "retired_at": time.time()})
+    retired.update(
+        {
+            "status": "superseded",
+            "superseded_by_state_key": state_key,
+            "retired_at": time.time(),
+        }
+    )
     history.append(retired)
     task["agent_forced_action_history"] = history[-16:]
     task["agent_forced_action"] = retired
@@ -240,9 +441,14 @@ def evaluate_tool_call(
         return True, {}
     required_action = str(state.get("required_action") or "").strip()
     attempts = int(state.get("attempt_count") or 0)
+    kind = str(state.get("action_kind") or "bounded")
     policy = (
-        f"Only tools for the current {state.get('action_kind') or 'bounded'} action are enabled. "
-        "Inspection, unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
+        "Only bounded evidence and remediation-hypothesis tools are enabled. Editing is disabled until targeted repository evidence and a structured hypothesis are recorded."
+        if kind == "evidence"
+        else (
+            f"Only tools for the current {kind} action are enabled. Inspection, "
+            "unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
+        )
     )
     message = (
         f"Forced-action mode rejected {tool_name or '(missing tool name)'}. "
@@ -253,12 +459,16 @@ def evaluate_tool_call(
         "error": "forced_action_tool_rejected",
         "message": message,
         "required_action": required_action,
-        "action_kind": state.get("action_kind"),
+        "canonical_required_action": state.get("canonical_required_action"),
+        "action_kind": kind,
+        "canonical_action_kind": state.get("canonical_action_kind"),
         "attempt_count": attempts,
         "attempt_limit": 0,
         "allowed_tools": sorted(allowed_tools),
         "state_key": state.get("state_key"),
         "stage": state.get("stage"),
+        "hypothesis_ready": state.get("hypothesis_ready"),
+        "targeted_evidence_count": state.get("targeted_evidence_count"),
     }
 
 
@@ -267,13 +477,37 @@ def prompt_context(task: Mapping[str, Any]) -> str:
     if not state:
         return ""
     allowed = ", ".join(state.get("allowed_tools") or [])
+    kind = str(state.get("action_kind") or "bounded")
+    if kind == "evidence":
+        fields = "; ".join(
+            f"{label}: <specific finding>" for label in _HYPOTHESIS_FIELDS
+        )
+        remaining = max(
+            0,
+            _MAX_TARGETED_EVIDENCE_ACTIONS
+            - int(state.get("targeted_evidence_count") or 0),
+        )
+        return (
+            "Controller forced-action mode is ACTIVE for the unchanged durable state, but editing is not yet authorized. "
+            "The generic forced-mode prohibition on inspection/plan revision is superseded for this bounded evidence checkpoint. "
+            f"Use at most {remaining} additional targeted evidence action(s) via coding_search_text or coding_read_file_lines. "
+            "Then call coding_update_plan and record a remediation hypothesis in the plan note or milestone summary using these exact fields: "
+            f"{fields}. Each field must contain concrete content. "
+            "The Repository evidence field should identify the file/symbol/behavior that supports the causal claim; the competing explanation field should state what plausible alternative was checked. "
+            "Do not edit merely because a likely file was found. Editing unlocks only after at least one successful targeted evidence action and a newly revised structured hypothesis. "
+            f"Available tools: {allowed or 'coding_finish'}."
+        )
+    hypothesis_note = (
+        "The evidence-qualified remediation gate is satisfied for this durable state; perform only the smallest edit that tests the recorded causal hypothesis. "
+        if state.get("requires_hypothesis")
+        else ""
+    )
     return (
         "Controller forced-action mode is ACTIVE for the unchanged durable state. "
         "Inspection, repository orientation, plan churn, and unrelated commands are unavailable. "
         "The required action class remains available until durable progress changes the state or terminal escalation ends the run. "
-        f"Required action: {state.get('required_action') or ''} "
-        f"Action kind: {state.get('action_kind') or 'bounded'}. "
-        f"Available tools: {allowed or 'coding_finish'}."
+        f"{hypothesis_note}Required action: {state.get('required_action') or ''} "
+        f"Action kind: {kind}. Available tools: {allowed or 'coding_finish'}."
     )
 
 

@@ -5,8 +5,10 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
+from app import coding_forced_action as forced_action
 from app import coding_workspace as cw
 from app.config import S
+from app.model_aliases import get_aliases
 
 
 _REPORT_SCHEMA = "nexus_coding_debug_report.v1"
@@ -268,12 +270,62 @@ def _runtime_snapshot() -> Dict[str, Any]:
         "CODING_AGENT_MAX_CYCLES_PER_RUN",
         "CODING_AGENT_MAX_RUNTIME_SEC",
         "CODING_AGENT_CONTEXT_RESET_CYCLES",
+        "CODING_AGENT_CONTEXT_RESET_CHARS",
+        "CODING_AGENT_MAX_TOKENS",
+        "CODING_AGENT_TEXT_TOOL_MAX_TOKENS",
         "CODING_AGENT_MAX_NO_PROGRESS_CYCLES",
+        "CODING_AGENT_BACKEND_RETRIES",
+        "CODING_AGENT_BACKEND_RETRY_BASE_DELAY_SEC",
+        "CODING_AGENT_BACKEND_RETRY_MAX_DELAY_SEC",
         "CODING_SEMANTIC_MEMORY_POLL_SEC",
         "CODING_SEMANTIC_MEMORY_STAGNANT_CYCLES",
         "CODING_COMMAND_TIMEOUT_SEC",
     )
     return {name: _sanitize(getattr(S, name, None), key=name) for name in names}
+
+
+def _model_runtime_view(task: Dict[str, Any]) -> Dict[str, Any]:
+    requested = str(task.get("agent_model") or task.get("coding_model") or "").strip()
+    backend = str(task.get("agent_backend") or "").strip()
+    upstream = str(task.get("agent_upstream_model") or "").strip()
+    aliases = get_aliases()
+    alias_name = requested.lower()
+    alias = aliases.get(alias_name)
+
+    def _matches(candidate: Any) -> bool:
+        if candidate is None:
+            return False
+        candidate_backend = str(getattr(candidate, "backend", "") or "").strip()
+        candidate_upstream = str(getattr(candidate, "upstream_model", "") or "").strip()
+        if backend and candidate_backend and candidate_backend != backend:
+            return False
+        if upstream and candidate_upstream and candidate_upstream.lower() != upstream.lower():
+            return False
+        return bool(candidate_backend or candidate_upstream)
+
+    if not _matches(alias) and (backend or upstream):
+        for name, candidate in aliases.items():
+            if getattr(candidate, "coding", None) is True and _matches(candidate):
+                alias_name = str(name)
+                alias = candidate
+                break
+
+    return {
+        "requested_model": requested,
+        "resolved_alias": alias_name if alias is not None else "",
+        "backend": backend,
+        "upstream_model": upstream,
+        "alias_backend": str(getattr(alias, "backend", "") or "") if alias is not None else "",
+        "alias_upstream_model": str(getattr(alias, "upstream_model", "") or "") if alias is not None else "",
+        "context_window": getattr(alias, "context_window", None) if alias is not None else None,
+        "max_input_tokens": getattr(alias, "max_input_tokens", None) if alias is not None else None,
+        "max_tokens_cap": getattr(alias, "max_tokens_cap", None) if alias is not None else None,
+        "coding_context_reset_tokens": getattr(alias, "coding_context_reset_tokens", None) if alias is not None else None,
+        "effective_context_reset_tokens": task.get("agent_context_reset_tokens"),
+        "context_reset_chars_fallback": task.get("agent_context_reset_chars_fallback"),
+        "context_token_estimator": str(task.get("agent_context_token_estimator") or ""),
+        "context_reset_route": _sanitize(task.get("agent_context_reset_route") if isinstance(task.get("agent_context_reset_route"), dict) else {}),
+    }
 
 
 def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None) -> Dict[str, Any]:
@@ -285,6 +337,8 @@ def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None
     terminal = task.get("terminal_result") if isinstance(task.get("terminal_result"), dict) else {}
     plan = cw.normalize_project_plan(task.get("project_plan"), fallback_goal=str(task.get("prompt") or ""))
     mission = cw.normalize_coding_mission(task)
+    normalized_forced_action = forced_action.active_state(task)
+    persisted_forced_action = task.get("agent_forced_action") if isinstance(task.get("agent_forced_action"), dict) else {}
     repo_url = str(task.get("repo_url") or "")
     try:
         repo_url = cw.redact_repo_url(repo_url)
@@ -308,6 +362,7 @@ def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None
             "coding_model": str(task.get("coding_model") or ""),
             "created_at": task.get("created_at"),
             "updated_at": task.get("updated_at"),
+            "run_start_head": str(task.get("agent_start_head") or ""),
             "last_commit": str(task.get("last_commit") or ""),
             "last_checkpoint_commit": str(task.get("last_checkpoint_commit") or ""),
             "last_checkpoint_cycle": task.get("last_checkpoint_cycle"),
@@ -337,11 +392,14 @@ def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None
         },
         "controller": {
             "progress_state": _sanitize(task.get("agent_progress_state") if isinstance(task.get("agent_progress_state"), dict) else {}),
+            "forced_action": _sanitize(normalized_forced_action),
+            "forced_action_persisted": _sanitize(persisted_forced_action),
             "investigation_checkpoint": _sanitize(task.get("agent_investigation_checkpoint") if isinstance(task.get("agent_investigation_checkpoint"), dict) else {}),
             "investigation_checkpoint_error": redact_text(task.get("agent_investigation_checkpoint_error"), limit=1600),
             "integration_reconciliation": _sanitize(task.get("integration_reconciliation") if isinstance(task.get("integration_reconciliation"), dict) else {}),
             "metadata_error": _sanitize(task.get("metadata_error") if isinstance(task.get("metadata_error"), dict) else {}),
         },
+        "model_runtime": _sanitize(_model_runtime_view(task)),
         "project_plan": _sanitize(plan),
         "mission": _sanitize(mission),
         "terminal_result": _terminal_view(terminal),
@@ -380,6 +438,8 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
     workspace = snapshot.get("workspace") if isinstance(snapshot.get("workspace"), dict) else {}
     agent = snapshot.get("agent") if isinstance(snapshot.get("agent"), dict) else {}
     controller = snapshot.get("controller") if isinstance(snapshot.get("controller"), dict) else {}
+    model_runtime = snapshot.get("model_runtime") if isinstance(snapshot.get("model_runtime"), dict) else {}
+    forced = controller.get("forced_action") if isinstance(controller.get("forced_action"), dict) else {}
     git = snapshot.get("git") if isinstance(snapshot.get("git"), dict) else {}
     changes = git.get("changes") if isinstance(git.get("changes"), dict) else {}
     counts = changes.get("counts") if isinstance(changes.get("counts"), dict) else {}
@@ -403,6 +463,7 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
         f"- Repository: `{_format_value(workspace.get('repo_url'))}`",
         f"- Base / branch: `{_format_value(workspace.get('base_branch'))}` → `{_format_value(workspace.get('branch_name'))}`",
         f"- Model: `{_format_value(workspace.get('coding_model'))}`",
+        f"- Run start head: `{_format_value(workspace.get('run_start_head'))}`",
         f"- Last commit: `{_format_value(workspace.get('last_commit') or workspace.get('last_checkpoint_commit'))}`",
         "",
         "## Agent and controller",
@@ -411,9 +472,15 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
         f"- Live runner present: `{_format_value(agent.get('active_runner'))}`",
         f"- Run / cycle: `{_format_value(agent.get('run_id'))}` / `{_format_value(agent.get('cycle'))}`",
         f"- Backend / upstream model: `{_format_value(agent.get('backend'))}` / `{_format_value(agent.get('upstream_model'))}`",
+        f"- Effective alias: `{_format_value(model_runtime.get('resolved_alias'))}`",
+        f"- Context window / max input / output cap: `{_format_value(model_runtime.get('context_window'))}` / `{_format_value(model_runtime.get('max_input_tokens'))}` / `{_format_value(model_runtime.get('max_tokens_cap'))}`",
+        f"- Effective context reset tokens: `{_format_value(model_runtime.get('effective_context_reset_tokens'))}`",
         f"- Stop reason: `{_format_value(agent.get('stop_reason_code'))}`",
         f"- Stagnant cycles: `{_format_value(progress.get('stagnant_cycles'))}`",
         f"- Investigation checkpoint cycle: `{_format_value(checkpoint.get('cycle'))}`",
+        f"- Forced action: `{_format_value(forced.get('action_kind'))}` / canonical `{_format_value(forced.get('canonical_action_kind'))}`",
+        f"- Forced tools: `{', '.join(str(item) for item in (forced.get('allowed_tools') or [])) or '-'}`",
+        f"- Evidence / hypothesis: `{_format_value(forced.get('targeted_evidence_count'))}` / `{_format_value(forced.get('hypothesis_ready'))}`",
         "",
         "### Summary",
         "",
