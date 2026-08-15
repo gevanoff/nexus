@@ -36,6 +36,33 @@ def test_run_command_snapshots_baseline_and_marks_workspace_mutation(monkeypatch
     assert result["workspace_modified"] is True
 
 
+def test_mutation_is_blocked_when_semantic_baseline_is_unavailable(monkeypatch) -> None:
+    task = {"agent_run_id": "run-1", "agent_events": []}
+    tool_calls: list[str] = []
+    monkeypatch.setattr(guarded.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(
+        guarded.coding_run_delta,
+        "ensure_baseline",
+        lambda *_args, **_kwargs: {"error": "transient git failure"},
+    )
+    monkeypatch.setattr(
+        guarded,
+        "_ORIGINAL_RUN_TOOL",
+        lambda _task_id, name, _args, *, git_token_value: tool_calls.append(name) or {"ok": True},
+    )
+
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code_test",
+        "coding_replace_text",
+        {"path": "x.py", "old_text": "x", "new_text": "y"},
+        git_token_value=None,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "semantic_baseline_unavailable"
+    assert tool_calls == []
+
+
 def test_run_command_mutation_participates_in_existing_edit_gates() -> None:
     assert guarded._tool_result_modified_workspace(
         "coding_run_command",
