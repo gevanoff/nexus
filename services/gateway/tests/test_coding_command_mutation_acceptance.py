@@ -126,3 +126,26 @@ def test_finish_fails_closed_when_recorded_command_mutation_loses_delta(monkeypa
 
     assert result["success"] is False
     assert result["error"] == "semantic_acceptance_missing_diff"
+
+
+def test_rejected_finish_result_is_returned_without_semantic_review(monkeypatch) -> None:
+    rejection = {"ok": False, "error": "forced_action_tool_rejected", "message": "finish rejected"}
+    monkeypatch.setattr(
+        guarded,
+        "_ORIGINAL_RUN_TOOL",
+        lambda _task_id, _name, _args, *, git_token_value: dict(rejection),
+    )
+    monkeypatch.setattr(
+        guarded,
+        "_run_delta_diff",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("semantic review must not start")),
+    )
+
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code_test",
+        "coding_finish",
+        {"success": True},
+        git_token_value=None,
+    )
+
+    assert result == rejection
