@@ -7,6 +7,11 @@ from app import coding_stagnation_resilience as resilience
 
 
 SCHEMA = "nexus_coding_forced_action.v1"
+_SOURCE_EVIDENCE_TOOLS = {
+    "coding_read_file",
+    "coding_read_file_lines",
+    "coding_search_text",
+}
 _BASE_ALLOWED_TOOLS = {
     "coding_write_file",
     "coding_replace_text",
@@ -14,8 +19,10 @@ _BASE_ALLOWED_TOOLS = {
     "coding_run_command",
     "coding_git_diff",
     "coding_finish",
+    *_SOURCE_EVIDENCE_TOOLS,
 }
 _ACTION_ALLOWED_TOOLS = {
+    "evidence": {*_SOURCE_EVIDENCE_TOOLS, "coding_finish"},
     "edit": {
         "coding_write_file",
         "coding_replace_text",
@@ -29,6 +36,10 @@ _ACTION_ALLOWED_TOOLS = {
 }
 _GENERIC_EXECUTION_DIRECTIVE = "take one bounded execution action, or finish with a concrete blocker."
 _EDIT_EXECUTION_DIRECTIVE = "Make the smallest evidence-backed edit, or finish with a concrete blocker."
+_EVIDENCE_DIRECTIVE_PREFIXES = (
+    "gather one targeted piece of repository evidence",
+    "establish bounded causal repository evidence",
+)
 
 
 def _raw_active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
@@ -58,14 +69,9 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
     for index, event in enumerate(events):
         event_ts = _event_timestamp(event)
         if activated_at > 0 and event_ts > 0:
-            # Persisted event timestamps remain stable when the capped event
-            # list rolls over and its list indices shift.
             if event_ts < activated_at:
                 continue
         elif index < legacy_start:
-            # Compatibility fallback for old or synthetic events without
-            # timestamps. If rollover makes the index ambiguous, undercounting
-            # is safer than prematurely exhausting the forced-action attempt.
             continue
         if str(event.get("type") or "") != "tool_finished":
             continue
@@ -80,12 +86,6 @@ def _attempt_count(task: Mapping[str, Any], state: Mapping[str, Any]) -> int:
 
 
 def _effective_allowed_tools(state: Mapping[str, Any]) -> set[str]:
-    # Forced-action mode is a tool-class restriction, not a single-tool lease.
-    # Keep the required action class available until the durable state changes
-    # or normal controller escalation terminates the run. Collapsing to
-    # coding_finish after one tool call can deadlock unchanged resumes: the
-    # workspace still requires an edit, while the only remaining action is a
-    # finish call that the no-change audit must reject.
     kind = str(state.get("action_kind") or "bounded")
     return set(_ACTION_ALLOWED_TOOLS.get(kind, _ACTION_ALLOWED_TOOLS["bounded"]))
 
@@ -101,11 +101,9 @@ def _normalize_action_kind(required_action: str, action_kind: str) -> str:
     kind = str(action_kind or "bounded").strip()
     if kind not in _ACTION_ALLOWED_TOOLS:
         kind = "bounded"
-    # The execution-loop defaults predate action-kind tagging and begin with
-    # generic prose rather than edit verbs recognized by the classifier.
-    # Normalize both newly requested and already-persisted records so an
-    # unchanged resume exposes the concrete edit class immediately.
     action = _normalize_required_action(required_action).casefold()
+    if any(action.startswith(prefix) for prefix in _EVIDENCE_DIRECTIVE_PREFIXES):
+        return "evidence"
     if kind == "bounded" and action.startswith("make the smallest evidence-backed edit"):
         return "edit"
     return kind
@@ -174,8 +172,6 @@ def activate(
         "required_action": normalized_action,
         "action_kind": normalized_kind,
         "allowed_tools": sorted(initial_allowed),
-        # Kept for backwards-compatible diagnostics. Zero means the action
-        # class remains available until durable progress or terminal escalation.
         "attempt_limit": 0,
         "activation_event_count": (
             int(previous.get("activation_event_count") or 0)
@@ -240,10 +236,17 @@ def evaluate_tool_call(
         return True, {}
     required_action = str(state.get("required_action") or "").strip()
     attempts = int(state.get("attempt_count") or 0)
-    policy = (
-        f"Only tools for the current {state.get('action_kind') or 'bounded'} action are enabled. "
-        "Inspection, unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
-    )
+    action_kind = str(state.get("action_kind") or "bounded")
+    if action_kind == "evidence":
+        policy = (
+            "Only targeted source-evidence reads/searches and coding_finish are enabled. "
+            "Edits, broad orientation, validation, diff review, and plan churn remain disabled until the evidence gate succeeds."
+        )
+    else:
+        policy = (
+            f"Only tools for the current {action_kind} action are enabled. "
+            "Inspection, unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
+        )
     message = (
         f"Forced-action mode rejected {tool_name or '(missing tool name)'}. "
         f"{policy} Required action: {required_action}"
@@ -267,9 +270,18 @@ def prompt_context(task: Mapping[str, Any]) -> str:
     if not state:
         return ""
     allowed = ", ".join(state.get("allowed_tools") or [])
+    if str(state.get("action_kind") or "") == "evidence":
+        availability = (
+            "Targeted repository source reads/searches are available for this evidence action; "
+            "editing and unrelated actions are unavailable until the evidence gate succeeds. "
+        )
+    else:
+        availability = (
+            "Inspection, repository orientation, plan churn, and unrelated commands are unavailable. "
+        )
     return (
         "Controller forced-action mode is ACTIVE for the unchanged durable state. "
-        "Inspection, repository orientation, plan churn, and unrelated commands are unavailable. "
+        f"{availability}"
         "The required action class remains available until durable progress changes the state or terminal escalation ends the run. "
         f"Required action: {state.get('required_action') or ''} "
         f"Action kind: {state.get('action_kind') or 'bounded'}. "
