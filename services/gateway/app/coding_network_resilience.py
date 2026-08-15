@@ -17,6 +17,7 @@ _RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 _DNS_MARKERS = (
     "could not resolve host",
     "could not resolve hostname",
+    "could not resolve proxy",
     "temporary failure in name resolution",
     "name or service not known",
     "nodename nor servname provided",
@@ -180,8 +181,10 @@ def _with_retry_metadata(result: Dict[str, Any], history: list[Dict[str, Any]]) 
     out["network_retry_count"] = max(0, len(history) - 1)
     out["network_retry_recovered"] = bool(out.get("ok")) and len(history) > 1
     out["network_retry_history"] = history
-    if history:
-        out["network_error_kind"] = str(history[-1].get("kind") or "")
+    out["network_error_kind"] = next(
+        (str(item.get("kind") or "") for item in reversed(history) if item.get("kind")),
+        "",
+    )
     return out
 
 
@@ -222,7 +225,17 @@ def run_process_with_retry(
         # git clone can leave a partial destination. Only remove the controller-owned
         # code_<id>/repo target created during workspace initialization.
         if clone_destination is not None and clone_destination.exists():
-            shutil.rmtree(clone_destination)
+            try:
+                shutil.rmtree(clone_destination)
+            except Exception as exc:
+                failed = dict(result)
+                failed["stderr"] = (
+                    f"{failed.get('stderr') or ''}\n"
+                    f"network retry aborted: failed to remove partial clone destination: "
+                    f"{type(exc).__name__}: {exc}"
+                ).strip()
+                history[-1]["cleanup_error"] = f"{type(exc).__name__}: {exc}"
+                return _with_retry_metadata(failed, history)
 
         delay = _retry_delay(index, base_delay)
         if delay > 0:
@@ -366,18 +379,10 @@ def retry_failed_initialization(
     repo_path = Path(str(task.get("repo_path") or "")).resolve()
     workspace_path = Path(str(task.get("workspace_path") or "")).resolve()
     status = str(task.get("status") or "").strip().lower()
+    failure_kind = _latest_transient_clone_failure(task)
 
-    if _valid_git_repo(repo_path):
-        if status == "ready":
-            return task
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "coding workspace initialization failed after a repository was created; "
-                "automatic reclone is disabled to avoid discarding repository state"
-            ),
-        )
-
+    if status == "ready" and _valid_git_repo(repo_path):
+        return task
     if status != "error":
         raise HTTPException(
             status_code=409,
@@ -391,9 +396,15 @@ def retry_failed_initialization(
                 "workspace so repository provisioning and scaffolding can run as one transaction"
             ),
         )
-
-    failure_kind = _latest_transient_clone_failure(task)
     if not failure_kind:
+        if _valid_git_repo(repo_path):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "coding workspace initialization failed after a repository was created; "
+                    "automatic reclone is disabled to avoid discarding repository state"
+                ),
+            )
         raise HTTPException(
             status_code=409,
             detail=(
@@ -408,6 +419,9 @@ def retry_failed_initialization(
     except Exception as exc:
         raise HTTPException(status_code=409, detail="coding workspace paths are not safe to reinitialize") from exc
 
+    # A clone command that returned failure never established a usable workspace,
+    # even if Git happened to leave a partial .git directory behind. This is the
+    # only case where automatic deletion/reclone is allowed.
     if repo_path.exists():
         shutil.rmtree(repo_path)
     workspace_path.mkdir(parents=True, exist_ok=True)
@@ -533,7 +547,8 @@ def install(cw: Any, guarded_agent: Any = None) -> None:
     async def resilient_start_agent_run(task_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         task = await asyncio.to_thread(cw.load_task, task_id)
         repo_path = Path(str(task.get("repo_path") or "")).resolve()
-        if not _valid_git_repo(repo_path):
+        status = str(task.get("status") or "").strip().lower()
+        if status != "ready" or not _valid_git_repo(repo_path):
             await asyncio.to_thread(
                 retry_failed_initialization,
                 cw,
