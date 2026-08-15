@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import time
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
@@ -19,10 +20,31 @@ def _exception_kind(exc: Exception) -> str:
         except Exception:
             return ""
         return ""
+
     kind = network.classify_transient_text(f"{type(exc).__name__}: {exc}")
     if kind:
         return kind
-    if isinstance(exc, (urlerror.URLError, TimeoutError, ConnectionError)):
+
+    if isinstance(exc, urlerror.URLError):
+        reason = getattr(exc, "reason", None)
+        reason_kind = network.classify_transient_text(
+            f"{type(reason).__name__}: {reason}"
+        )
+        if reason_kind:
+            return reason_kind
+        if isinstance(reason, socket.gaierror):
+            return "dns"
+        if isinstance(reason, TimeoutError):
+            return "timeout"
+        if isinstance(reason, ConnectionError):
+            return "connect"
+        return ""
+
+    if isinstance(exc, socket.gaierror):
+        return "dns"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    if isinstance(exc, ConnectionError):
         return "connect"
     return ""
 
