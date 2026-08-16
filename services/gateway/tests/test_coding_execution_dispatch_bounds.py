@@ -51,7 +51,11 @@ def test_text_failover_clips_large_native_tool_results() -> None:
 
     converted = [message for message in normalized if message.role == "user"]
     assert len(converted) == 1
-    assert len(str(converted[0].content or "")) < 1_100
-    assert str(converted[0].content or "").endswith("…")
+    content = str(converted[0].content or "")
+    assert len(content) < 1_100
+    assert "…\n\nContinue the coding task" in content
+    assert content.endswith(
+        "or call coding_finish when the task is complete or blocked."
+    )
     assert diagnostics["converted_tool_results"] == 1
     assert diagnostics["clipped_tool_results"] == 1
