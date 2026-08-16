@@ -253,8 +253,9 @@ def _provenance_prompt_context(base: Any, state: Mapping[str, Any]) -> str:
         )
     return (
         "Controller forced-action mode is ACTIVE for the unchanged durable state, "
-        "but editing is not yet authorized. The execution policy applies an explicit "
-        "causal-evidence provenance gate. "
+        "but editing is not yet authorized. "
+        "The generic forced-mode prohibition on inspection/plan revision is superseded for this bounded evidence checkpoint. "
+        "The execution policy applies an explicit causal-evidence provenance gate. "
         f"{next_step} Then record the remediation hypothesis using these exact fields: "
         f"{fields}. Available tools: {allowed or 'coding_finish'}."
     )
