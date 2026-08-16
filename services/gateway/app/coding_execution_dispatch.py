@@ -184,7 +184,11 @@ def _normalize_messages(
             normalized.append(
                 agent.ChatMessage(
                     role="user",
-                    content=f"Tool result for {name}:\n{safe_content}",
+                    content=(
+                        f"Tool result for {name}:\n{safe_content}\n\n"
+                        "Continue the coding task with exactly one complete <tool_call>{...}</tool_call> block, "
+                        "or call coding_finish when the task is complete or blocked."
+                    ),
                 )
             )
             converted_tool_results += 1
@@ -269,6 +273,9 @@ def materialize_request(
             backend,
             upstream_model,
         )
+        x_nexus = dict(getattr(req, "x_nexus", None) or {})
+        x_nexus["coding_execution_policy"] = snapshot.as_dict()
+        updates["x_nexus"] = x_nexus
     else:
         route_cap = agent._max_completion_tokens_for_route(
             req.model,
@@ -281,10 +288,6 @@ def materialize_request(
             if isinstance(current_cap, int) and current_cap > 0
             else route_cap
         )
-
-    x_nexus = dict(getattr(req, "x_nexus", None) or {})
-    x_nexus["coding_execution_policy"] = snapshot.as_dict()
-    updates["x_nexus"] = x_nexus
 
     return _copy_request(req, **updates), snapshot, diagnostics
 
@@ -299,6 +302,8 @@ async def _record_policy_transition(
     diagnostics: Mapping[str, Any],
     cycle: int,
 ) -> None:
+    if not bool(diagnostics.get("coding_request")):
+        return
     previous = (
         task.get("agent_execution_policy")
         if isinstance(task.get("agent_execution_policy"), Mapping)
