@@ -340,6 +340,17 @@ component_selected() {
   return 1
 }
 
+gateway_cloudflared_overlay="false"
+if [[ "${TOPOLOGY_HOST:-}" == "ai2" ]] && component_selected gateway && ! component_selected cloudflared; then
+  cloudflared_overlay_file="docker-compose.cloudflared.yml"
+  if [[ ! -f "$ROOT_DIR/$cloudflared_overlay_file" ]]; then
+    ns_print_error "Gateway on ai2 requires ${cloudflared_overlay_file} so the tunnel-origin network is preserved."
+    exit 1
+  fi
+  append_compose_file_unique "$cloudflared_overlay_file"
+  gateway_cloudflared_overlay="true"
+fi
+
 prepare_cloudflared_runtime() {
   local env_file="$1"
   local host_runtime_root="$2"
@@ -575,17 +586,27 @@ for compose_file in "${compose_files[@]}"; do
 done
 
 ns_print_header "Selected components"
+printf 'Requested components: %s\n' "${SELECTED_COMPONENTS[*]}"
 printf 'Compose files: %s\n' "${compose_files[*]}"
+if [[ "$gateway_cloudflared_overlay" == "true" ]]; then
+  ns_print_ok "Gateway Cloudflare overlay enabled; cloudflared remains running unless explicitly selected."
+fi
 
 up_args=(up -d --build)
+service_targets=()
 if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   up_args+=(--force-recreate)
   if [[ "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then
     ns_print_warn "Skipping --remove-orphans for an explicit component-scoped topology deploy."
+    for component in "${SELECTED_COMPONENTS[@]:-}"; do
+      service_name="$(component_service_name "$component")"
+      [[ -n "${service_name:-}" ]] || continue
+      service_targets+=("$service_name")
+    done
   else
     up_args+=(--remove-orphans)
   fi
 fi
 
-GATEWAY_ENV_FILE="$GATEWAY_ENV_FILE" NEXUS_RUNTIME_ROOT="$NEXUS_RUNTIME_ROOT" ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}"
+GATEWAY_ENV_FILE="$GATEWAY_ENV_FILE" NEXUS_RUNTIME_ROOT="$NEXUS_RUNTIME_ROOT" ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}" "${service_targets[@]}"
 ensure_topology_essential_components "$env_file"
