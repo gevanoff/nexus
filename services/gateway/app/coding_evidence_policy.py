@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Sequence
 
 
 _ACCEPTANCE_PARTS = {"tests", "test", "fixtures", "fixture", "examples", "example"}
@@ -36,7 +36,15 @@ def _path_class(path: str) -> str:
     parsed = PurePosixPath(normalized)
     parts = {part.casefold() for part in parsed.parts}
     name = parsed.name.casefold()
-    if parts & _ACCEPTANCE_PARTS or name.startswith("test_") or name.endswith("_test.py"):
+    stem = parsed.stem.casefold()
+    conventional_test_name = (
+        name.startswith("test_")
+        or ".test." in name
+        or ".spec." in name
+        or stem.endswith("_test")
+        or stem.endswith("_spec")
+    )
+    if parts & _ACCEPTANCE_PARTS or conventional_test_name:
         return "acceptance"
     if parsed.suffix.casefold() in _CONTEXT_SUFFIXES or "docs" in parts:
         return "context"
@@ -55,9 +63,15 @@ def _path_from_result(result: Mapping[str, Any]) -> str:
         if not text:
             continue
         candidate = text.split(":", 1)[0].strip()
-        if "/" in candidate or candidate.endswith(('.py', '.js', '.ts', '.html', '.yaml', '.yml', '.json')):
+        if "/" in candidate or candidate.endswith(
+            (".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".html", ".yaml", ".yml", ".json")
+        ):
             return candidate
     return ""
+
+
+def _base_policy(forced_action: Any) -> Any:
+    return getattr(forced_action, "_execution_provenance_base", forced_action)
 
 
 def _evidence_records(
@@ -65,6 +79,7 @@ def _evidence_records(
     task: Mapping[str, Any],
     state: Mapping[str, Any],
 ) -> list[dict[str, str]]:
+    base = _base_policy(forced_action)
     events = [
         item for item in (task.get("agent_events") or []) if isinstance(item, Mapping)
     ]
@@ -78,17 +93,17 @@ def _evidence_records(
         tool_call_id = str(event.get("tool_call_id") or "")
         if event_type == "tool_started":
             name = str(event.get("name") or "")
-            if name in forced_action._TARGETED_EVIDENCE_TOOLS:
+            if name in base._TARGETED_EVIDENCE_TOOLS:
                 started[tool_call_id or f"index:{index}"] = event
                 last_started_by_name[name] = event
             continue
         if event_type != "tool_finished":
             continue
         name = str(event.get("name") or "")
-        if name not in forced_action._TARGETED_EVIDENCE_TOOLS:
+        if name not in base._TARGETED_EVIDENCE_TOOLS:
             continue
         result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
-        if not forced_action._targeted_evidence_result_succeeded(name, result):
+        if not base._targeted_evidence_result_succeeded(name, result):
             continue
         source = started.get(tool_call_id) or last_started_by_name.get(name)
         args = (
@@ -124,11 +139,12 @@ def apply_provenance_gate(
     task: Mapping[str, Any],
     state: Dict[str, Any],
 ) -> Dict[str, Any]:
+    base = _base_policy(forced_action)
     state = dict(state)
-    if not state or not forced_action._generic_edit_requires_hypothesis(state):
+    if not state or not base._generic_edit_requires_hypothesis(state):
         return state
 
-    records = _evidence_records(forced_action, task, state)
+    records = _evidence_records(base, task, state)
     causal_targets = sorted(
         {
             record["path"]
@@ -150,7 +166,7 @@ def apply_provenance_gate(
             if record.get("class") == "context" and record.get("path")
         }
     )
-    hypothesis_ready, fields = forced_action._structured_hypothesis(task, state)
+    hypothesis_ready, fields = base._structured_hypothesis(task, state)
     repository_evidence = str(fields.get("Repository evidence") or "")
     linked_targets = [
         target
@@ -178,27 +194,33 @@ def apply_provenance_gate(
         "criteria but do not by themselves establish root cause. Record Repository "
         "evidence that explicitly cites at least one inspected causal target."
     )
-    evidence_tools = set(forced_action._ACTION_ALLOWED_TOOLS["evidence"])
+    evidence_tools = set(base._ACTION_ALLOWED_TOOLS["evidence"])
     if causal_targets:
         # Causal evidence exists; force hypothesis revision rather than another
         # inspection cycle. If only acceptance/context evidence exists, restore
         # one deterministic causal-evidence path even if the legacy read budget
         # has already been consumed.
-        evidence_tools -= forced_action._TARGETED_EVIDENCE_TOOLS
+        evidence_tools -= base._TARGETED_EVIDENCE_TOOLS
     state["allowed_tools"] = sorted(evidence_tools)
     state["hypothesis_ready"] = hypothesis_ready
     state["hypothesis_fields"] = sorted(fields)
     state["hypothesis_plan_revision"] = (
-        forced_action._plan_revision(task) if hypothesis_ready else None
+        base._plan_revision(task) if hypothesis_ready else None
     )
     return state
 
 
 def effective_state(forced_action: Any, task: Mapping[str, Any]) -> Dict[str, Any]:
-    base = forced_action.active_state(task)
-    if not base:
+    base = _base_policy(forced_action)
+    override = task.get(_OVERRIDE_KEY) if isinstance(task, Mapping) else None
+    if isinstance(override, Mapping):
+        state = dict(override)
+        state["attempt_count"] = base._attempt_count(task, state)
+        return state
+    current = base.active_state(task)
+    if not current:
         return {}
-    return apply_provenance_gate(forced_action, task, base)
+    return apply_provenance_gate(base, task, current)
 
 
 def execution_task(forced_action: Any, task: Mapping[str, Any]) -> dict[str, Any]:
@@ -210,64 +232,152 @@ def execution_task(forced_action: Any, task: Mapping[str, Any]) -> dict[str, Any
     return out
 
 
-def install_execution_override_seam(forced_action: Any) -> None:
-    """Let ephemeral execution copies supply a stricter effective forced state.
+def _provenance_prompt_context(base: Any, state: Mapping[str, Any]) -> str:
+    allowed = ", ".join(state.get("allowed_tools") or [])
+    causal_targets = list(state.get("causal_evidence_targets") or [])
+    fields = "; ".join(
+        f"{label}: <specific finding>" for label in base._HYPOTHESIS_FIELDS
+    )
+    if not causal_targets:
+        next_step = (
+            "Use one targeted coding_search_text or coding_read_file_lines action "
+            "against an implementation or configuration target. Tests, fixtures, "
+            "examples, and documentation may define acceptance criteria but do not "
+            "establish root cause."
+        )
+    else:
+        next_step = (
+            "Causal implementation/configuration evidence is already available. "
+            "Do not spend the next action on more inspection; call coding_update_plan "
+            "and explicitly cite at least one causal target in Repository evidence."
+        )
+    return (
+        "Controller forced-action mode is ACTIVE for the unchanged durable state, "
+        "but editing is not yet authorized. The execution policy applies an explicit "
+        "causal-evidence provenance gate. "
+        f"{next_step} Then record the remediation hypothesis using these exact fields: "
+        f"{fields}. Available tools: {allowed or 'coding_finish'}."
+    )
 
-    Ordinary durable tasks continue through the original controller contract.
-    This keeps policy refinement explicit at dispatch time instead of globally
-    changing `active_state()` semantics for every importer/test in the process.
+
+class ExecutionForcedActionFacade:
+    """Coding-Agent-local view of forced-action policy.
+
+    The durable controller module remains unchanged for other importers. The
+    Coding Agent gets one provenance-qualified state for prompt construction,
+    advertised tools, and execution-time authorization so an unadvertised tool
+    call cannot bypass the effective policy.
     """
-    if bool(getattr(forced_action, "_execution_override_seam_installed", False)):
-        return
 
-    original_active_state = forced_action.active_state
-    original_prompt_context = forced_action.prompt_context
+    def __init__(self, base: Any) -> None:
+        self._execution_provenance_base = _base_policy(base)
 
-    def active_state(task: Mapping[str, Any]) -> Dict[str, Any]:
-        override = task.get(_OVERRIDE_KEY) if isinstance(task, Mapping) else None
-        if isinstance(override, Mapping):
-            state = dict(override)
-            state["attempt_count"] = forced_action._attempt_count(task, state)
-            return state
-        return original_active_state(task)
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._execution_provenance_base, name)
 
-    def prompt_context(task: Mapping[str, Any]) -> str:
-        override = task.get(_OVERRIDE_KEY) if isinstance(task, Mapping) else None
-        if not isinstance(override, Mapping):
-            return original_prompt_context(task)
-        state = active_state(task)
+    def active_state(self, task: Mapping[str, Any]) -> Dict[str, Any]:
+        return effective_state(self._execution_provenance_base, task)
+
+    def allowed_tool_names(self, task: Mapping[str, Any]) -> set[str]:
+        state = self.active_state(task)
+        return set(state.get("allowed_tools") or []) if state else set()
+
+    def filter_tool_specs(
+        self,
+        specs: Sequence[Any],
+        task: Mapping[str, Any],
+    ) -> list[Any]:
+        state = self.active_state(task)
+        if not state:
+            return list(specs)
+        allowed = set(state.get("allowed_tools") or [])
+        out = []
+        for spec in specs:
+            try:
+                name = str(spec.function.name)
+            except Exception:
+                continue
+            if name in allowed:
+                out.append(spec)
+        return out
+
+    def prompt_context(self, task: Mapping[str, Any]) -> str:
+        state = self.active_state(task)
+        if not state:
+            return ""
         if (
-            str(state.get("action_kind") or "") != "evidence"
-            or not state.get("evidence_provenance_enforced")
+            str(state.get("action_kind") or "") == "evidence"
+            and state.get("evidence_provenance_enforced")
         ):
-            return original_prompt_context(task)
+            return _provenance_prompt_context(self._execution_provenance_base, state)
+        return self._execution_provenance_base.prompt_context(task)
 
-        allowed = ", ".join(state.get("allowed_tools") or [])
-        causal_targets = list(state.get("causal_evidence_targets") or [])
-        fields = "; ".join(
-            f"{label}: <specific finding>" for label in forced_action._HYPOTHESIS_FIELDS
-        )
-        if not causal_targets:
-            next_step = (
-                "Use one targeted coding_search_text or coding_read_file_lines action "
-                "against an implementation or configuration target. Tests, fixtures, "
-                "examples, and documentation may define acceptance criteria but do not "
-                "establish root cause."
-            )
-        else:
-            next_step = (
-                "Causal implementation/configuration evidence is already available. "
-                "Do not spend the next action on more inspection; call coding_update_plan "
-                "and explicitly cite at least one causal target in Repository evidence."
-            )
-        return (
-            "Controller forced-action mode is ACTIVE for the unchanged durable state, "
-            "but editing is not yet authorized. The execution policy applies an explicit "
-            "causal-evidence provenance gate. "
-            f"{next_step} Then record the remediation hypothesis using these exact fields: "
-            f"{fields}. Available tools: {allowed or 'coding_finish'}."
-        )
+    def evaluate_tool_call(
+        self,
+        task: Mapping[str, Any],
+        *,
+        name: str,
+        args: Mapping[str, Any],
+        is_validation_command: Any,
+    ) -> tuple[bool, Dict[str, Any]]:
+        state = self.active_state(task)
+        if not state:
+            return True, {}
+        tool_name = str(name or "").strip()
+        allowed_tools = set(state.get("allowed_tools") or [])
+        allowed = tool_name in allowed_tools
+        if tool_name == "coding_run_command" and allowed:
+            allowed = bool(is_validation_command(args.get("argv")))
+        if allowed:
+            return True, {}
 
-    forced_action.active_state = active_state
-    forced_action.prompt_context = prompt_context
-    forced_action._execution_override_seam_installed = True
+        required_action = str(state.get("required_action") or "").strip()
+        attempts = int(state.get("attempt_count") or 0)
+        kind = str(state.get("action_kind") or "bounded")
+        policy = (
+            "Only causal-evidence and remediation-hypothesis tools are enabled. Editing is disabled until implementation/configuration evidence is explicitly linked to the structured hypothesis."
+            if state.get("evidence_provenance_enforced") and kind == "evidence"
+            else (
+                "Only bounded evidence and remediation-hypothesis tools are enabled. Editing is disabled until targeted repository evidence and a structured hypothesis are recorded."
+                if kind == "evidence"
+                else (
+                    f"Only tools for the current {kind} action are enabled. Inspection, "
+                    "unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
+                )
+            )
+        )
+        message = (
+            f"Forced-action mode rejected {tool_name or '(missing tool name)'}. "
+            f"{policy} Required action: {required_action}"
+        )
+        return False, {
+            "ok": False,
+            "error": "forced_action_tool_rejected",
+            "message": message,
+            "required_action": required_action,
+            "canonical_required_action": state.get("canonical_required_action"),
+            "action_kind": kind,
+            "canonical_action_kind": state.get("canonical_action_kind"),
+            "attempt_count": attempts,
+            "attempt_limit": 0,
+            "allowed_tools": sorted(allowed_tools),
+            "state_key": state.get("state_key"),
+            "stage": state.get("stage"),
+            "hypothesis_ready": state.get("hypothesis_ready"),
+            "targeted_evidence_count": state.get("targeted_evidence_count"),
+            "causal_evidence_targets": list(state.get("causal_evidence_targets") or []),
+            "acceptance_evidence_targets": list(
+                state.get("acceptance_evidence_targets") or []
+            ),
+            "hypothesis_causal_evidence_linked": bool(
+                state.get("hypothesis_causal_evidence_linked")
+            ),
+        }
+
+
+def install_execution_override_seam(agent: Any) -> None:
+    """Install a Coding-Agent-local provenance-qualified policy facade."""
+    if bool(getattr(agent, "_execution_forced_action_facade_installed", False)):
+        return
+    agent.forced_action = ExecutionForcedActionFacade(agent.forced_action)
+    agent._execution_forced_action_facade_installed = True
