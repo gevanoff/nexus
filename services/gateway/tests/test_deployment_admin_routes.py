@@ -60,7 +60,7 @@ def test_topology_components_include_optional_components(
     }
 
 
-def test_gateway_deployment_expands_cloudflared_dependency(
+def test_gateway_cloudflared_integration_is_reported_as_non_restarting_overlay(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -72,15 +72,20 @@ def test_gateway_deployment_expands_cloudflared_dependency(
         encoding="utf-8",
     )
     monkeypatch.setenv("NEXUS_DEPLOYMENT_TOPOLOGY_FILE", str(topology))
-    body = deployment_admin_routes.AdminDeploymentRequest(
-        host="ai2",
-        components=["gateway"],
-    )
-    expanded = deployment_admin_routes._expand_component_dependencies(body)
-    assert expanded.components == ["gateway", "cloudflared"]
+
+    overlays = deployment_admin_routes._component_overlays()
+    gateway_overlay = overlays["ai2"]["gateway"][0]
+    assert gateway_overlay["component"] == "cloudflared"
+    assert gateway_overlay["mode"] == "compose_overlay"
+    assert gateway_overlay["restarts_component"] is False
+    assert "not restarted unless explicitly selected" in gateway_overlay["description"]
+
+    capabilities = deployment_admin_routes._enrich_capabilities({"allowed_hosts": ["ai2"]})
+    assert capabilities["component_overlays"] == overlays
+    assert "component_dependencies" not in capabilities
 
 
-def test_gateway_dependency_is_not_added_on_other_hosts(
+def test_gateway_cloudflared_overlay_is_not_advertised_when_unassigned(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -89,16 +94,15 @@ def test_gateway_dependency_is_not_added_on_other_hosts(
         json.dumps(
             {
                 "hosts": {
-                    "ai2": {"components": ["gateway", "cloudflared"]},
-                    "dev": {"components": ["gateway"]},
+                    "ai2": {"components": ["gateway"]},
+                    "dev": {"components": ["gateway", "cloudflared"]},
                 }
             }
         ),
         encoding="utf-8",
     )
     monkeypatch.setenv("NEXUS_DEPLOYMENT_TOPOLOGY_FILE", str(topology))
-    body = deployment_admin_routes.AdminDeploymentRequest(host="dev", components=["gateway"])
-    assert deployment_admin_routes._expand_component_dependencies(body).components == ["gateway"]
+    assert deployment_admin_routes._component_overlays() == {}
 
 
 def test_topology_request_rejects_misplaced_component(
