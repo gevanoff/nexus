@@ -66,6 +66,14 @@ def test_ai2_gateway_uses_cloudflare_overlay_without_selecting_cloudflared_servi
         in text
     )
 
+    explicit_scope = text.split(
+        'if [[ "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then', 1
+    )[1].split("  else\n    up_args+=(--remove-orphans)", 1)[0]
+    assert 'if [[ "$gateway_cloudflared_overlay" == "true" ]]; then' in explicit_scope
+    assert explicit_scope.index('if [[ "$gateway_cloudflared_overlay" == "true" ]]; then') < explicit_scope.index(
+        'service_targets+=("$service_name")'
+    )
+
 
 def test_deployment_control_client_keeps_requested_components_component_scoped():
     module = runpy.run_path(str(ROOT / "deploy/scripts/deployment-control-client.py"))
