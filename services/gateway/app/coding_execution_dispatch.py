@@ -33,18 +33,26 @@ def _message_tool_calls(message: Any) -> list[Any]:
 
 
 def _copy_message(message: Any, **updates: Any) -> Any:
+    if isinstance(message, Mapping):
+        payload = dict(message)
+        payload.update(updates)
+        return payload
     copier = getattr(message, "model_copy", None)
     if callable(copier):
         return copier(update=updates)
     copier = getattr(message, "copy", None)
     if callable(copier):
         return copier(update=updates)
-    payload = dict(message) if isinstance(message, Mapping) else dict(vars(message))
+    payload = dict(vars(message))
     payload.update(updates)
     return type(message)(**payload)
 
 
 def _copy_request(req: Any, **updates: Any) -> Any:
+    if isinstance(req, Mapping):
+        payload = dict(req)
+        payload.update(updates)
+        return payload
     copier = getattr(req, "model_copy", None)
     if callable(copier):
         return copier(update=updates)
