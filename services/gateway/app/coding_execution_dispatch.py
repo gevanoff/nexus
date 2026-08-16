@@ -10,6 +10,13 @@ from app import coding_backend_failover
 from app import coding_execution_policy
 
 
+_TEXT_TOOL_RESULT_MESSAGE_LIMIT = 1090
+_TEXT_TOOL_CONTINUATION = (
+    "Continue the coding task with exactly one complete <tool_call>{...}</tool_call> block, "
+    "or call coding_finish when the task is complete or blocked."
+)
+
+
 def _message_role(message: Any) -> str:
     if isinstance(message, Mapping):
         return str(message.get("role") or "").strip()
@@ -81,7 +88,8 @@ def _tool_call_parts(call: Any) -> tuple[str, str, Any]:
 
 
 def _is_coding_execution_request(req: Any) -> bool:
-    for message in list(getattr(req, "messages", None) or [])[:3]:
+    messages = req.get("messages") if isinstance(req, Mapping) else getattr(req, "messages", None)
+    for message in list(messages or [])[:3]:
         if _message_role(message) != "system":
             continue
         if "You are Nexus Coding Agent" in _message_content(message):
@@ -89,14 +97,19 @@ def _is_coding_execution_request(req: Any) -> bool:
     return False
 
 
-def _clip_text_tool_result(agent: Any, content: str) -> tuple[str, bool]:
-    limit = 1000
+def _clip_text_tool_result(
+    agent: Any,
+    content: str,
+    *,
+    overhead_chars: int = 0,
+) -> tuple[str, bool]:
+    limit = max(128, _TEXT_TOOL_RESULT_MESSAGE_LIMIT - max(0, int(overhead_chars)))
     configured_limit = getattr(agent, "_tool_context_char_limit", None)
     if callable(configured_limit):
         try:
             limit = min(limit, max(128, int(configured_limit())))
         except Exception:
-            limit = 1000
+            pass
     clip = getattr(agent, "_clip_text", None)
     if callable(clip):
         clipped = str(clip(content, limit))
@@ -180,15 +193,17 @@ def _normalize_messages(
                 else str(getattr(message, "tool_call_id", "") or "").strip()
             )
             name = tool_names.get(tool_call_id, "workspace_tool")
-            safe_content, was_clipped = _clip_text_tool_result(agent, content)
+            prefix = f"Tool result for {name}:\n"
+            suffix = f"\n\n{_TEXT_TOOL_CONTINUATION}"
+            safe_content, was_clipped = _clip_text_tool_result(
+                agent,
+                content,
+                overhead_chars=len(prefix) + len(suffix),
+            )
             normalized.append(
                 agent.ChatMessage(
                     role="user",
-                    content=(
-                        f"Tool result for {name}:\n{safe_content}\n\n"
-                        "Continue the coding task with exactly one complete <tool_call>{...}</tool_call> block, "
-                        "or call coding_finish when the task is complete or blocked."
-                    ),
+                    content=f"{prefix}{safe_content}{suffix}",
                 )
             )
             converted_tool_results += 1
@@ -209,6 +224,12 @@ def _normalize_messages(
     }
 
 
+def _request_value(req: Any, name: str, default: Any = None) -> Any:
+    if isinstance(req, Mapping):
+        return req.get(name, default)
+    return getattr(req, name, default)
+
+
 def materialize_request(
     agent: Any,
     req: Any,
@@ -226,7 +247,8 @@ def materialize_request(
         upstream_model=upstream_model,
     )
     coding_request = _is_coding_execution_request(req)
-    messages = list(getattr(req, "messages", None) or [])
+    messages = list(_request_value(req, "messages", None) or [])
+    request_model = str(_request_value(req, "model", "") or "")
     diagnostics: dict[str, Any] = {
         "source_backend": str(source_backend or ""),
         "backend": snapshot.backend,
@@ -266,23 +288,23 @@ def materialize_request(
         updates["parallel_tool_calls"] = (
             None
             if snapshot.text_tool_mode
-            else getattr(req, "parallel_tool_calls", None)
+            else _request_value(req, "parallel_tool_calls", None)
         )
         updates["max_tokens"] = agent._max_completion_tokens_for_route(
-            req.model,
+            request_model,
             backend,
             upstream_model,
         )
-        x_nexus = dict(getattr(req, "x_nexus", None) or {})
+        x_nexus = dict(_request_value(req, "x_nexus", None) or {})
         x_nexus["coding_execution_policy"] = snapshot.as_dict()
         updates["x_nexus"] = x_nexus
     else:
         route_cap = agent._max_completion_tokens_for_route(
-            req.model,
+            request_model,
             backend,
             upstream_model,
         )
-        current_cap = getattr(req, "max_tokens", None)
+        current_cap = _request_value(req, "max_tokens", None)
         updates["max_tokens"] = (
             min(int(current_cap), route_cap)
             if isinstance(current_cap, int) and current_cap > 0
@@ -378,7 +400,8 @@ def build_failover_call(cw: Any, guarded: Any):
         cycle: int,
         user_settings: Optional[Dict[str, Any]] = None,
     ) -> tuple[Dict[str, Any], str, str]:
-        if agent.user_llm.is_user_model_id(req.model):
+        request_model = str(_request_value(req, "model", "") or "")
+        if agent.user_llm.is_user_model_id(request_model):
             return await guarded._ORIGINAL_CALL_BACKEND_CHAT_WITH_RETRY(
                 req,
                 backend,
@@ -394,7 +417,7 @@ def build_failover_call(cw: Any, guarded: Any):
 
         for attempt in range(max_retries + 1):
             selected = await guarded._acquire_backend_excluding(
-                req.model,
+                request_model,
                 backend,
                 upstream_model,
                 task_id=task_id,
