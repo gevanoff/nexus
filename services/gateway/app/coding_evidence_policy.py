@@ -126,12 +126,14 @@ def _repository_evidence_links_target(
     repository_evidence: str,
     target: str,
 ) -> bool:
-    evidence = str(repository_evidence or "").casefold()
-    normalized = str(target or "").strip().replace("\\", "/")
+    evidence = str(repository_evidence or "").casefold().replace("\\", "/")
+    normalized = str(target or "").strip().replace("\\", "/").strip("/").casefold()
     if not evidence or not normalized:
         return False
-    basename = PurePosixPath(normalized).name.casefold()
-    return normalized.casefold() in evidence or (basename and basename in evidence)
+    # Require the inspected repository-relative target itself. Basename-only
+    # matching is unsafe when common filenames such as config.py exist in more
+    # than one service and could unlock editing against the wrong evidence.
+    return normalized in evidence
 
 
 def apply_provenance_gate(
