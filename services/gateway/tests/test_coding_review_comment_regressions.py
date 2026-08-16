@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app import coding_evidence_policy as provenance
@@ -71,6 +73,96 @@ def test_mapping_copy_helpers_do_not_call_dict_copy_with_update_keyword():
 
     assert copied_request == {"model": "coder", "max_tokens": 64}
     assert request == {"model": "coder", "max_tokens": 128}
+
+
+def test_converted_tool_result_keeps_text_tool_continuation_instruction():
+    class Message:
+        def __init__(
+            self,
+            *,
+            role: str,
+            content: str | None = None,
+            tool_calls=None,
+            tool_call_id: str | None = None,
+        ) -> None:
+            self.role = role
+            self.content = content
+            self.tool_calls = tool_calls
+            self.tool_call_id = tool_call_id
+
+    class Agent:
+        ChatMessage = Message
+
+        @staticmethod
+        def _tool_context_char_limit() -> int:
+            return 4000
+
+        @staticmethod
+        def _clip_text(value: str, limit: int) -> str:
+            return value if len(value) <= limit else value[: limit - 1] + "…"
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "function": {
+                        "name": "coding_read_file_lines",
+                        "arguments": "{}",
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "content": "read result",
+        },
+    ]
+
+    normalized, diagnostics = dispatch._normalize_messages(
+        Agent(),
+        messages,
+        text_tool_mode=True,
+        fresh_system="system",
+    )
+
+    user_messages = [
+        item.content
+        for item in normalized
+        if getattr(item, "role", "") == "user"
+    ]
+    assert diagnostics["converted_tool_results"] == 1
+    assert any(
+        "Continue the coding task with exactly one complete <tool_call>{...}</tool_call> block"
+        in str(content)
+        for content in user_messages
+    )
+
+
+def test_non_coding_dispatch_does_not_record_execution_policy_transition():
+    class Agent:
+        @staticmethod
+        def _mutate_task(*_args, **_kwargs):
+            raise AssertionError("non-coding dispatch must not mutate execution policy")
+
+        @staticmethod
+        def _append_event(*_args, **_kwargs):
+            raise AssertionError("non-coding dispatch must not append policy events")
+
+    asyncio.run(
+        dispatch._record_policy_transition(
+            Agent(),
+            object(),
+            "code_review",
+            task={},
+            snapshot=None,
+            diagnostics={"coding_request": False},
+            cycle=1,
+        )
+    )
 
 
 @pytest.mark.parametrize(
