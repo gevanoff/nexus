@@ -598,11 +598,13 @@ if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   up_args+=(--force-recreate)
   if [[ "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then
     ns_print_warn "Skipping --remove-orphans for an explicit component-scoped topology deploy."
-    for component in "${SELECTED_COMPONENTS[@]:-}"; do
-      service_name="$(component_service_name "$component")"
-      [[ -n "${service_name:-}" ]] || continue
-      service_targets+=("$service_name")
-    done
+    if [[ "$gateway_cloudflared_overlay" == "true" ]]; then
+      for component in "${SELECTED_COMPONENTS[@]:-}"; do
+        service_name="$(component_service_name "$component")"
+        [[ -n "${service_name:-}" ]] || continue
+        service_targets+=("$service_name")
+      done
+    fi
   else
     up_args+=(--remove-orphans)
   fi
