@@ -155,8 +155,8 @@ def test_deployment_admin_preserves_form_panel_submission_and_auth_state() -> No
     assert "host-job-panel" in html
     assert "tbody tr.selected" in html
     assert "/static/auth_client.js?v=3" in html
-    assert html.index("/static/auth_client.js?v=3") < html.index("/static/admin_deployments.js?v=4")
-    assert "/static/admin_deployments.js?v=4" in html
+    assert html.index("/static/auth_client.js?v=3") < html.index("/static/admin_deployments.js?v=5")
+    assert "/static/admin_deployments.js?v=5" in html
     assert "captureFormState()" in js
     assert "state.form.components" in js
     assert "state.hostScroll" in js

@@ -90,6 +90,8 @@
       .component-option { display: flex; align-items: center; gap: 8px; padding: 7px; border-radius: 7px; color: var(--text); font-size: 12px; }
       .component-option:hover { background: rgba(111, 184, 255, 0.07); }
       .component-option input { width: auto; }
+      .deployment-effects { margin-top: 8px; padding: 9px 10px; border: 1px solid rgba(111, 184, 255, 0.28); border-radius: 9px; background: rgba(111, 184, 255, 0.06); color: #cfe8ff; font-size: 12px; line-height: 1.45; }
+      .deployment-effects strong { color: var(--text); }
       .banner { margin-bottom: 14px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; background: rgba(111, 184, 255, 0.07); }
       .banner.error { background: rgba(255, 80, 80, 0.08); border-color: rgba(255, 139, 139, 0.35); color: #ffd1d1; }
       .banner.success { background: rgba(76, 196, 142, 0.08); border-color: rgba(119, 223, 178, 0.35); color: #c7ffe5; }
@@ -168,6 +170,7 @@
               <div class="full">
                 <label>Components assigned to target</label>
                 <div id="componentList" class="component-list"><div class="muted">Select a host.</div></div>
+                <div id="deploymentEffects" class="deployment-effects" hidden></div>
               </div>
               <div class="full">
                 <label for="reasonInput">Reason</label>
@@ -203,6 +206,6 @@
     </main>
     <script src="/static/focused_nav.js" defer></script>
     <script src="/static/auth_client.js?v=3" defer></script>
-    <script src="/static/admin_deployments.js?v=4" defer></script>
+    <script src="/static/admin_deployments.js?v=5" defer></script>
   </body>
 </html>

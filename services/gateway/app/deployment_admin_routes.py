@@ -88,6 +88,27 @@ def _topology_components() -> dict[str, list[str]]:
     return result
 
 
+def _component_overlays() -> dict[str, dict[str, list[dict[str, Any]]]]:
+    assigned = _topology_components().get("ai2", [])
+    if "gateway" not in assigned or "cloudflared" not in assigned:
+        return {}
+    return {
+        "ai2": {
+            "gateway": [
+                {
+                    "component": "cloudflared",
+                    "mode": "compose_overlay",
+                    "restarts_component": False,
+                    "description": (
+                        "Applies the Cloudflare tunnel network and UI allowlist to Gateway; "
+                        "the existing cloudflared connector is not restarted unless explicitly selected."
+                    ),
+                }
+            ]
+        }
+    }
+
+
 def _enrich_capabilities(capabilities: Any) -> Any:
     if not isinstance(capabilities, dict):
         return capabilities
@@ -95,21 +116,8 @@ def _enrich_capabilities(capabilities: Any) -> Any:
         **capabilities,
         "topology_components": _topology_components(),
         "topology_file": str(_topology_file()),
-        "component_dependencies": {"ai2": {"gateway": ["cloudflared"]}},
+        "component_overlays": _component_overlays(),
     }
-
-
-def _expand_component_dependencies(body: AdminDeploymentRequest) -> AdminDeploymentRequest:
-    components = list(body.components)
-    assigned = _topology_components().get(body.host, [])
-    if (
-        body.host == "ai2"
-        and "gateway" in components
-        and "cloudflared" in assigned
-        and "cloudflared" not in components
-    ):
-        components.append("cloudflared")
-    return body.model_copy(update={"components": components})
 
 
 def _validate_topology_request(body: AdminDeploymentRequest) -> None:
@@ -257,9 +265,8 @@ async def deployment_admin_create(
     body: AdminDeploymentRequest,
 ) -> JSONResponse:
     admin = _admin(req)
-    expanded = _expand_component_dependencies(body)
-    _validate_topology_request(expanded)
-    payload = expanded.model_dump()
+    _validate_topology_request(body)
+    payload = body.model_dump()
     payload["requested_by"] = _admin_actor(admin)
     result = await _controller_call("POST", "/v1/deployments", payload=payload)
     return JSONResponse(status_code=202, content=result)

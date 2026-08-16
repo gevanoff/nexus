@@ -23,6 +23,7 @@
   const hostSelect = el("hostSelect");
   const branchSelect = el("branchSelect");
   const componentList = el("componentList");
+  const deploymentEffects = el("deploymentEffects");
   const reasonInput = el("reasonInput");
   const deploymentForm = el("deploymentForm");
   const submitButton = el("submitButton");
@@ -105,9 +106,47 @@
     return state.capabilities?.allowed_components || [];
   }
 
+  function componentOverlayEffects(host, components) {
+    const hostOverlays = state.capabilities?.component_overlays?.[host];
+    if (!hostOverlays || typeof hostOverlays !== "object") return [];
+    const effects = [];
+    for (const component of components) {
+      const overlays = Array.isArray(hostOverlays[component]) ? hostOverlays[component] : [];
+      for (const overlay of overlays) {
+        if (!overlay || typeof overlay !== "object") continue;
+        effects.push({
+          component,
+          supportingComponent: String(overlay.component || "supporting configuration"),
+          description: String(overlay.description || "Supporting deployment configuration will be applied."),
+          restartsComponent: overlay.restarts_component === true,
+        });
+      }
+    }
+    return effects;
+  }
+
   function selectedComponents() {
     return Array.from(componentList.querySelectorAll('input[name="component"]:checked'))
       .map((input) => input.value);
+  }
+
+  function renderDeploymentEffects() {
+    const host = String(hostSelect.value || "");
+    const effects = componentOverlayEffects(host, Array.from(state.form.components));
+    if (!effects.length) {
+      deploymentEffects.hidden = true;
+      deploymentEffects.innerHTML = "";
+      return;
+    }
+    deploymentEffects.hidden = false;
+    deploymentEffects.innerHTML = effects
+      .map((effect) => {
+        const behavior = effect.restartsComponent
+          ? `${effect.supportingComponent} will also be restarted.`
+          : `${effect.supportingComponent} supplies configuration only and will not be restarted unless explicitly selected.`;
+        return `<strong>${escapeHtml(effect.component)} supporting overlay:</strong> ${escapeHtml(effect.description)} ${escapeHtml(behavior)}`;
+      })
+      .join("<br />");
   }
 
   function captureFormState() {
@@ -167,11 +206,13 @@
     if (!host) {
       state.form.components.clear();
       componentList.innerHTML = '<div class="muted">Select a host.</div>';
+      renderDeploymentEffects();
       return;
     }
     if (!components.length) {
       state.form.components.clear();
       componentList.innerHTML = '<div class="muted">No deployable components are assigned to this host.</div>';
+      renderDeploymentEffects();
       return;
     }
 
@@ -190,8 +231,10 @@
       input.addEventListener("change", () => {
         if (input.checked) state.form.components.add(input.value);
         else state.form.components.delete(input.value);
+        renderDeploymentEffects();
       });
     });
+    renderDeploymentEffects();
   }
 
   function renderJobs() {
@@ -348,8 +391,16 @@
     if (!components.length) return showBanner("Select at least one component.", "error");
     if (!state.canSubmit) return showBanner("Deployment Control is not currently reachable.", "error");
 
-    const summary = `Deploy ${components.join(", ")} to ${host} from ${branch}?`;
-    if (!window.confirm(summary)) return;
+    const effects = componentOverlayEffects(host, components);
+    const confirmationLines = [`Deploy ${components.join(", ")} to ${host} from ${branch}?`];
+    for (const effect of effects) {
+      confirmationLines.push(
+        effect.restartsComponent
+          ? `${effect.supportingComponent} will also be restarted.`
+          : `${effect.supportingComponent} configuration will be applied without restarting that component.`,
+      );
+    }
+    if (!window.confirm(confirmationLines.join("\n\n"))) return;
 
     submitButton.disabled = true;
     showBanner("Submitting deployment…");
