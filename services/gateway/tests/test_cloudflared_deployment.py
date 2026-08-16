@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 import subprocess
 from pathlib import Path
 
@@ -46,6 +47,33 @@ def test_canonical_deploy_engine_owns_cloudflared_orchestration():
     assert 'chmod 700 "$token_dir"' in text
     assert 'chmod 444 "$token_tmp"' in text
     assert "unset tunnel_token token_tmp" in text
+
+
+def test_ai2_gateway_uses_cloudflare_overlay_without_selecting_cloudflared_service():
+    script = ROOT / "deploy/scripts/deploy.sh"
+    text = script.read_text(encoding="utf-8")
+
+    assert (
+        'if [[ "${TOPOLOGY_HOST:-}" == "ai2" ]] && component_selected gateway '
+        '&& ! component_selected cloudflared; then'
+    ) in text
+    assert 'cloudflared_overlay_file="docker-compose.cloudflared.yml"' in text
+    assert 'append_compose_file_unique "$cloudflared_overlay_file"' in text
+    assert 'service_targets+=("$service_name")' in text
+    assert '"${up_args[@]}" "${service_targets[@]}"' in text
+    assert (
+        "Gateway Cloudflare overlay enabled; cloudflared remains running unless explicitly selected."
+        in text
+    )
+
+
+def test_deployment_control_client_keeps_requested_components_component_scoped():
+    module = runpy.run_path(str(ROOT / "deploy/scripts/deployment-control-client.py"))
+    normalize_components = module["normalize_components"]
+
+    assert normalize_components(["gateway", " gateway ", ""]) == ["gateway"]
+    assert normalize_components(["gateway"]) == ["gateway"]
+    assert "expand_component_dependencies" not in module
 
 
 def test_cloudflared_compatibility_script_delegates_to_deploy_engine():
