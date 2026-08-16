@@ -185,9 +185,10 @@ def materialize_request(
     backend: str,
     upstream_model: str,
 ) -> tuple[Any, coding_execution_policy.ExecutionPolicySnapshot, dict[str, Any]]:
+    effective_task = coding_execution_policy.execution_task(agent, task)
     snapshot = coding_execution_policy.capture(
         agent,
-        task,
+        effective_task,
         backend=backend,
         upstream_model=upstream_model,
     )
@@ -205,7 +206,7 @@ def materialize_request(
     updates: dict[str, Any] = {}
     if coding_request:
         fresh_system = agent._system_prompt(
-            dict(task),
+            effective_task,
             text_tool_mode=snapshot.text_tool_mode,
         )
         messages, conversion = _normalize_messages(
@@ -215,13 +216,24 @@ def materialize_request(
             fresh_system=fresh_system,
         )
         diagnostics.update(conversion)
+        before_compaction = len(messages)
+        if snapshot.text_tool_mode:
+            compact = getattr(agent, "_compact_text_tool_messages", None)
+            if callable(compact):
+                messages = list(compact(messages))
+        diagnostics["history_messages_before_compaction"] = before_compaction
+        diagnostics["history_messages_after_compaction"] = len(messages)
         updates["messages"] = messages
         updates["tools"] = (
-            None if snapshot.text_tool_mode else agent._tool_specs_for_task(dict(task))
+            None
+            if snapshot.text_tool_mode
+            else agent._tool_specs_for_task(effective_task)
         )
         updates["tool_choice"] = None if snapshot.text_tool_mode else "auto"
-        updates["parallel_tool_calls"] = None if snapshot.text_tool_mode else getattr(
-            req, "parallel_tool_calls", None
+        updates["parallel_tool_calls"] = (
+            None
+            if snapshot.text_tool_mode
+            else getattr(req, "parallel_tool_calls", None)
         )
         updates["max_tokens"] = agent._max_completion_tokens_for_route(
             req.model,
@@ -289,12 +301,25 @@ async def _record_policy_transition(
             "upstream_model": snapshot.upstream_model,
             "text_tool_mode": snapshot.text_tool_mode,
             "allowed_tools": list(snapshot.allowed_tools),
+            "causal_evidence_targets": list(snapshot.causal_evidence_targets),
+            "acceptance_evidence_targets": list(
+                snapshot.acceptance_evidence_targets
+            ),
+            "hypothesis_causal_evidence_linked": (
+                snapshot.hypothesis_causal_evidence_linked
+            ),
             "removed_empty_assistant_messages": int(
                 diagnostics.get("removed_empty_assistant_messages") or 0
             ),
             "converted_tool_calls": int(diagnostics.get("converted_tool_calls") or 0),
             "converted_tool_results": int(
                 diagnostics.get("converted_tool_results") or 0
+            ),
+            "history_messages_before_compaction": int(
+                diagnostics.get("history_messages_before_compaction") or 0
+            ),
+            "history_messages_after_compaction": int(
+                diagnostics.get("history_messages_after_compaction") or 0
             ),
             "summary": (
                 "Rematerialized the coding request for the current controller policy "
