@@ -5,6 +5,7 @@ import pytest
 from app import coding_evidence_policy as provenance
 from app import coding_execution_dispatch as dispatch
 from app import coding_forced_action as forced
+from app import coding_stagnation_resilience as resilience
 
 
 def _structured_plan(repository_evidence: str) -> dict:
@@ -30,7 +31,7 @@ def _activate_acceptance_only_task(path: str) -> dict:
     }
     task["agent_forced_action"] = forced.activate(
         task,
-        state_key="unchanged-state",
+        state_key=resilience.durable_state_key(task),
         run_id="run-review",
         cycle=6,
         stage="interrupt",
