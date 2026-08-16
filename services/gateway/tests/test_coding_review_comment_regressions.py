@@ -87,6 +87,23 @@ def test_conventional_colocated_test_names_are_acceptance_evidence(path: str):
     assert provenance._path_class(path) == "acceptance"
 
 
+def test_causal_evidence_link_requires_repository_relative_target_not_basename_only():
+    target = "services/gateway/app/config.py"
+
+    assert provenance._repository_evidence_links_target(
+        "services/gateway/app/config.py contains the failing route configuration",
+        target,
+    )
+    assert not provenance._repository_evidence_links_target(
+        "config.py contains the failing route configuration",
+        target,
+    )
+    assert not provenance._repository_evidence_links_target(
+        "services/images/app/config.py contains an unrelated configuration",
+        target,
+    )
+
+
 def test_execution_authorization_enforces_provenance_without_mutating_base_controller():
     path = "services/telegram-bot/healthcheck.test.js"
     task = _activate_acceptance_only_task(path)
