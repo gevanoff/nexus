@@ -22,7 +22,7 @@ from app import coding_workspace as cw
 # Existing route handlers resolve this module-level controller at call time.
 coding_network_resilience.install(cw, guarded_agent)
 coding_model_metadata_resilience.install(cw.miw)
-coding_evidence_policy.install_execution_override_seam(guarded_agent._agent.forced_action)
+coding_evidence_policy.install_execution_override_seam(guarded_agent._agent)
 coding_execution_dispatch.install(cw, guarded_agent)
 routes.ca = guarded_agent
 router = APIRouter()
