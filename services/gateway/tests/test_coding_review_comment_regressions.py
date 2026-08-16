@@ -75,6 +75,23 @@ def test_mapping_copy_helpers_do_not_call_dict_copy_with_update_keyword():
     assert request == {"model": "coder", "max_tokens": 128}
 
 
+def test_fully_mapping_shaped_coding_request_is_detected_and_copied():
+    request = {
+        "model": "coder",
+        "messages": [
+            {"role": "system", "content": "You are Nexus Coding Agent."},
+            {"role": "user", "content": "Continue."},
+        ],
+        "max_tokens": 128,
+    }
+
+    assert dispatch._is_coding_execution_request(request) is True
+    assert dispatch._request_value(request, "model") == "coder"
+    copied = dispatch._copy_request(request, max_tokens=64)
+    assert copied["messages"] == request["messages"]
+    assert copied["max_tokens"] == 64
+
+
 def test_converted_tool_result_keeps_text_tool_continuation_instruction():
     class Message:
         def __init__(
