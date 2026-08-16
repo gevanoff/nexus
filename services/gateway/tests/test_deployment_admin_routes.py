@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -103,6 +104,66 @@ def test_gateway_cloudflared_overlay_is_not_advertised_when_unassigned(
     )
     monkeypatch.setenv("NEXUS_DEPLOYMENT_TOPOLOGY_FILE", str(topology))
     assert deployment_admin_routes._component_overlays() == {}
+
+
+def test_gateway_submission_preserves_user_selected_components(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    topology = tmp_path / "production.json"
+    topology.write_text(
+        json.dumps(
+            {"hosts": {"ai2": {"components": ["gateway", "cloudflared"]}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NEXUS_DEPLOYMENT_TOPOLOGY_FILE", str(topology))
+
+    class Admin:
+        id = 42
+        username = "operator"
+        email = "operator@example.com"
+
+    captured: dict[str, object] = {}
+
+    async def fake_controller_call(
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, object] | None = None,
+        authenticated: bool = True,
+    ) -> dict[str, object]:
+        captured.update(payload or {})
+        return {
+            "id": "job-1",
+            "status": "queued",
+            "host": "ai2",
+            "components": list((payload or {}).get("components") or []),
+        }
+
+    monkeypatch.setattr(deployment_admin_routes, "_admin", lambda _req: Admin())
+    monkeypatch.setattr(deployment_admin_routes, "_controller_call", fake_controller_call)
+
+    body = deployment_admin_routes.AdminDeploymentRequest(
+        host="ai2",
+        components=["gateway"],
+    )
+    response = asyncio.run(deployment_admin_routes.deployment_admin_create(object(), body))
+
+    assert response.status_code == 202
+    assert captured["components"] == ["gateway"]
+    assert captured["requested_by"] == "nexus-admin:operator"
+
+
+def test_deployment_admin_ui_explains_supporting_overlay_without_implied_restart() -> None:
+    root = Path(__file__).resolve().parents[3]
+    html = (root / "services/gateway/app/static/admin_deployments.html").read_text(encoding="utf-8")
+    script = (root / "services/gateway/app/static/admin_deployments.js").read_text(encoding="utf-8")
+
+    assert 'id="deploymentEffects"' in html
+    assert "component_overlays" in script
+    assert "configuration will be applied without restarting that component" in script
+    assert "will not be restarted unless explicitly selected" in script
 
 
 def test_topology_request_rejects_misplaced_component(
