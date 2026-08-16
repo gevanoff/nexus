@@ -81,6 +81,22 @@ def _is_coding_execution_request(req: Any) -> bool:
     return False
 
 
+def _clip_text_tool_result(agent: Any, content: str) -> tuple[str, bool]:
+    limit = 1000
+    configured_limit = getattr(agent, "_tool_context_char_limit", None)
+    if callable(configured_limit):
+        try:
+            limit = min(limit, max(128, int(configured_limit())))
+        except Exception:
+            limit = 1000
+    clip = getattr(agent, "_clip_text", None)
+    if callable(clip):
+        clipped = str(clip(content, limit))
+    else:
+        clipped = content if len(content) <= limit else content[: max(0, limit - 1)] + "…"
+    return clipped, clipped != content
+
+
 def _normalize_messages(
     agent: Any,
     messages: list[Any],
@@ -94,6 +110,7 @@ def _normalize_messages(
     removed_empty_assistant = 0
     converted_tool_calls = 0
     converted_tool_results = 0
+    clipped_tool_results = 0
 
     for message in messages:
         role = _message_role(message)
@@ -155,13 +172,16 @@ def _normalize_messages(
                 else str(getattr(message, "tool_call_id", "") or "").strip()
             )
             name = tool_names.get(tool_call_id, "workspace_tool")
+            safe_content, was_clipped = _clip_text_tool_result(agent, content)
             normalized.append(
                 agent.ChatMessage(
                     role="user",
-                    content=f"Tool result for {name}:\n{content}",
+                    content=f"Tool result for {name}:\n{safe_content}",
                 )
             )
             converted_tool_results += 1
+            if was_clipped:
+                clipped_tool_results += 1
             continue
 
         normalized.append(message)
@@ -173,6 +193,7 @@ def _normalize_messages(
         "removed_empty_assistant_messages": removed_empty_assistant,
         "converted_tool_calls": converted_tool_calls,
         "converted_tool_results": converted_tool_results,
+        "clipped_tool_results": clipped_tool_results,
     }
 
 
@@ -314,6 +335,9 @@ async def _record_policy_transition(
             "converted_tool_calls": int(diagnostics.get("converted_tool_calls") or 0),
             "converted_tool_results": int(
                 diagnostics.get("converted_tool_results") or 0
+            ),
+            "clipped_tool_results": int(
+                diagnostics.get("clipped_tool_results") or 0
             ),
             "history_messages_before_compaction": int(
                 diagnostics.get("history_messages_before_compaction") or 0
