@@ -66,13 +66,37 @@ def test_ai2_gateway_uses_cloudflare_overlay_without_selecting_cloudflared_servi
         in text
     )
 
-    explicit_scope = text.split(
-        'if [[ "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then', 1
-    )[1].split("  else\n    up_args+=(--remove-orphans)", 1)[0]
-    assert 'if [[ "$gateway_cloudflared_overlay" == "true" ]]; then' in explicit_scope
-    assert explicit_scope.index('if [[ "$gateway_cloudflared_overlay" == "true" ]]; then') < explicit_scope.index(
-        'service_targets+=("$service_name")'
+    targeted_condition = (
+        'if [[ "$gateway_cloudflared_overlay" == "true" '
+        '&& "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then'
     )
+    assert targeted_condition in text
+    targeted_branch = text.split(targeted_condition, 1)[1].split("\nelse\n", 1)[0]
+    assert "service_targets=()" in targeted_branch
+    assert 'service_targets+=("$service_name")' in targeted_branch
+    assert '"${service_targets[@]}"' in targeted_branch
+
+
+def test_non_overlay_deploy_does_not_expand_empty_service_target_array_under_nounset():
+    script = ROOT / "deploy/scripts/deploy.sh"
+    text = script.read_text(encoding="utf-8")
+
+    # Older Bash releases can treat an empty indexed-array expansion as an
+    # unbound variable under `set -u`. Keep the service-target array scoped to
+    # the Gateway/Cloudflare overlay branch, where Gateway guarantees at least
+    # one target, and invoke Compose without that expansion on every other path.
+    assert text.count('"${service_targets[@]}"') == 1
+    assert text.index("service_targets=()") < text.index('"${service_targets[@]}"')
+
+    targeted_condition = (
+        'if [[ "$gateway_cloudflared_overlay" == "true" '
+        '&& "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then'
+    )
+    tail = text.split(targeted_condition, 1)[1]
+    targeted_branch, non_targeted_branch = tail.split("\nelse\n", 1)
+    assert '"${service_targets[@]}"' in targeted_branch
+    assert '"${service_targets[@]}"' not in non_targeted_branch
+    assert 'ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}"' in non_targeted_branch
 
 
 def test_deployment_control_client_keeps_requested_components_component_scoped():

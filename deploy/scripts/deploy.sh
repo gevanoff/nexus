@@ -593,22 +593,24 @@ if [[ "$gateway_cloudflared_overlay" == "true" ]]; then
 fi
 
 up_args=(up -d --build)
-service_targets=()
 if [[ -n "${TOPOLOGY_HOST:-}" ]]; then
   up_args+=(--force-recreate)
   if [[ "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then
     ns_print_warn "Skipping --remove-orphans for an explicit component-scoped topology deploy."
-    if [[ "$gateway_cloudflared_overlay" == "true" ]]; then
-      for component in "${SELECTED_COMPONENTS[@]:-}"; do
-        service_name="$(component_service_name "$component")"
-        [[ -n "${service_name:-}" ]] || continue
-        service_targets+=("$service_name")
-      done
-    fi
   else
     up_args+=(--remove-orphans)
   fi
 fi
 
-GATEWAY_ENV_FILE="$GATEWAY_ENV_FILE" NEXUS_RUNTIME_ROOT="$NEXUS_RUNTIME_ROOT" ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}" "${service_targets[@]}"
+if [[ "$gateway_cloudflared_overlay" == "true" && "$EXPLICIT_COMPONENTS_SET" == "true" ]]; then
+  service_targets=()
+  for component in "${SELECTED_COMPONENTS[@]:-}"; do
+    service_name="$(component_service_name "$component")"
+    [[ -n "${service_name:-}" ]] || continue
+    service_targets+=("$service_name")
+  done
+  GATEWAY_ENV_FILE="$GATEWAY_ENV_FILE" NEXUS_RUNTIME_ROOT="$NEXUS_RUNTIME_ROOT" ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}" "${service_targets[@]}"
+else
+  GATEWAY_ENV_FILE="$GATEWAY_ENV_FILE" NEXUS_RUNTIME_ROOT="$NEXUS_RUNTIME_ROOT" ns_compose --env-file "$env_file" "${compose_args[@]}" "${up_args[@]}"
+fi
 ensure_topology_essential_components "$env_file"
