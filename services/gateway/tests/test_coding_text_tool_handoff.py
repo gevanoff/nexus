@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from app import coding_text_tool_handoff as handoff
-from app.models import ToolFunction, ToolSpec
+from app import upstreams
+from app.models import ChatCompletionRequest, ChatMessage, ToolFunction, ToolSpec
 
 
 def _tool(name: str, properties: dict) -> ToolSpec:
@@ -100,6 +101,26 @@ def test_native_route_keeps_original_completion_budget():
     handoff.install(agent)
 
     assert agent._max_completion_tokens_for_route("coder", "local_mlx", "glm") == 64
+
+
+def test_transport_cap_override_requires_coding_execution_marker():
+    agent = _Agent()
+    handoff.install(agent)
+    upstream_model = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
+    ordinary_chat = ChatCompletionRequest(
+        model="coder",
+        messages=[ChatMessage(role="user", content="ordinary chat using coder alias")],
+        max_tokens=2048,
+    )
+
+    routed = upstreams.route_request_for_backend(
+        ordinary_chat,
+        "local_vllm_fast",
+        upstream_model,
+    )
+
+    # Generic alias policy remains authoritative for non-Coding-Workspace chat.
+    assert routed.max_tokens == 768
 
 
 def test_text_tool_handoff_install_is_idempotent():
