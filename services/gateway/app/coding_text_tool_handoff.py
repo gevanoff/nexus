@@ -119,14 +119,22 @@ def _is_vllm_text_handoff(model: str, backend: str, agent: Any) -> bool:
     )
 
 
+def _has_coding_execution_marker(req: Any) -> bool:
+    x_nexus = getattr(req, "x_nexus", None)
+    if not isinstance(x_nexus, Mapping):
+        return False
+    return isinstance(x_nexus.get("coding_execution_policy"), Mapping)
+
+
 def _install_transport_cap_override() -> None:
     """Preserve the Coding Workspace handoff cap through generic alias routing.
 
     The generic OpenAI router intentionally applies the most conservative cap
     shared by aliases for a raw backend/model pair. That is correct for ordinary
     chat but can shrink a rematerialized Coding Workspace turn after dispatch has
-    already selected a larger bounded text-tool cap. Restore only the requested
-    `coder`/`long` vLLM handoff cap, never more than 2048 tokens.
+    already selected a larger bounded text-tool cap. Restore only requests that
+    carry the Coding Workspace execution-policy marker, never ordinary chat that
+    happens to use the same logical model alias.
     """
     from app import upstreams
 
@@ -137,7 +145,7 @@ def _install_transport_cap_override() -> None:
     def route_request_for_backend(req: Any, backend_name: str, model_name: str):
         routed = original_route(req, backend_name, model_name)
         logical_model = str(getattr(req, "model", "") or "").strip().casefold()
-        if logical_model not in _CODING_LOGICAL_MODELS:
+        if logical_model not in _CODING_LOGICAL_MODELS or not _has_coding_execution_marker(req):
             return routed
         if not str(backend_name or "").strip().startswith("local_vllm"):
             return routed
