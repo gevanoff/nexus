@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Tuple
 
 
+_TOOL_USER_BRIDGE_CONTENT = "Tool result received."
+
+
 def deterministic_json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str)
 
@@ -41,14 +44,49 @@ def stable_sort_tools(tools: Any) -> Any:
     return sorted(normalized, key=lambda tool: (_tool_name(tool), deterministic_json_dumps(tool)))
 
 
+def _assistant_message_has_payload(message: Any) -> bool:
+    if not isinstance(message, dict):
+        return True
+    if str(message.get("role") or "").strip().lower() != "assistant":
+        return True
+    content = message.get("content")
+    if isinstance(content, str):
+        if content.strip():
+            return True
+    elif content not in (None, [], {}):
+        return True
+    tool_calls = message.get("tool_calls")
+    if tool_calls is None:
+        tool_calls = message.get("toolCalls")
+    if isinstance(tool_calls, list) and tool_calls:
+        return True
+    function_call = message.get("function_call")
+    if function_call is None:
+        function_call = message.get("functionCall")
+    return bool(function_call)
+
+
+def _drop_structurally_empty_assistant_turns(messages: Any) -> Any:
+    """Remove assistant turns that contain neither content nor a tool call.
+
+    Some OpenAI-compatible backends reject an assistant message whose normalized
+    content is empty and whose tool call is absent. Enforce that invariant at the
+    final canonicalization boundary so a downstream compatibility shim cannot
+    recreate an invalid turn after higher-level request materialization.
+    """
+    if not isinstance(messages, list):
+        return messages
+    return [message for message in messages if _assistant_message_has_payload(message)]
+
+
 def _bridge_tool_to_user_turns(messages: Any) -> Any:
-    """Insert an assistant boundary before a new user turn after tool output.
+    """Insert a valid assistant boundary before a new user turn after tool output.
 
     Some OpenAI-compatible strict chat templates reject ``tool -> user`` even
     though Nexus can legitimately append controller/reroute guidance after a
-    completed tool result. Preserve every original message and insert only the
-    empty assistant turn needed to close the tool exchange before that new user
-    instruction.
+    completed tool result. Preserve every original message and insert a minimal
+    non-empty assistant acknowledgement. Never insert an empty assistant turn:
+    strict vLLM templates such as Devstral reject that shape before generation.
     """
     if not isinstance(messages, list):
         return messages
@@ -61,7 +99,7 @@ def _bridge_tool_to_user_turns(messages: Any) -> Any:
             and isinstance(out[-1], dict)
             and str(out[-1].get("role") or "").strip().lower() == "tool"
         ):
-            out.append({"role": "assistant", "content": ""})
+            out.append({"role": "assistant", "content": _TOOL_USER_BRIDGE_CONTENT})
         out.append(message)
     return out
 
@@ -69,7 +107,8 @@ def _bridge_tool_to_user_turns(messages: Any) -> Any:
 def canonicalize_chat_payload(payload: MutableMapping[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = canonicalize_json_value(dict(payload))
     if isinstance(out.get("messages"), list):
-        out["messages"] = _bridge_tool_to_user_turns(out.get("messages"))
+        messages = _drop_structurally_empty_assistant_turns(out.get("messages"))
+        out["messages"] = _bridge_tool_to_user_turns(messages)
     if isinstance(out.get("tools"), list):
         out["tools"] = stable_sort_tools(out.get("tools"))
     return out
