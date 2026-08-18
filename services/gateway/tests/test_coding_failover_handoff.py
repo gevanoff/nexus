@@ -131,6 +131,7 @@ def test_mlx_to_devstral_handoff_is_executable_at_final_transport_boundary():
         "allowed_tools": ["coding_apply_patch", "coding_finish"],
         "project_plan": {"revision": 2},
     }
+    upstream_model = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
 
     adapted, snapshot, diagnostics = dispatch.materialize_request(
         agent,
@@ -138,13 +139,21 @@ def test_mlx_to_devstral_handoff_is_executable_at_final_transport_boundary():
         task,
         source_backend="local_mlx",
         backend="local_vllm_fast",
-        upstream_model="cyankiwi/Devstral-Small-2507-AWQ-4bit",
+        upstream_model=upstream_model,
     )
-    payload = _final_openai_payload(adapted)
+    # Exercise the same generic route cap that runs immediately before the
+    # OpenAI-compatible payload serializer. The Coding handoff must survive it.
+    routed = upstreams.route_request_for_backend(
+        adapted,
+        "local_vllm_fast",
+        upstream_model,
+    )
+    payload = _final_openai_payload(routed)
 
     assert snapshot.text_tool_mode is True
     assert snapshot.action_kind == "edit"
     assert adapted.max_tokens == 2048
+    assert routed.max_tokens == 2048
     assert diagnostics["converted_tool_calls"] == 1
     assert diagnostics["converted_tool_results"] == 1
     assert diagnostics["removed_empty_assistant_messages"] == 1
