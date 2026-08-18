@@ -115,13 +115,12 @@ def test_evidence_mode_prompt_explicitly_overrides_legacy_forced_prohibition() -
     prompt = coding_agent._system_prompt(task)
 
     legacy = "Do not inspect, orient, revise the project plan, or run arbitrary shell commands."
-    override = "The generic forced-mode prohibition on inspection/plan revision is superseded for this bounded evidence checkpoint."
+    override = "The execution policy applies an explicit causal-evidence provenance gate."
     assert legacy in prompt
     assert override in prompt
     assert prompt.index(override) > prompt.index(legacy)
     assert "coding_search_text" in prompt
     assert "coding_read_file_lines" in prompt
-    assert "coding_update_plan" in prompt
     assert "editing is not yet authorized" in prompt
 
 
