@@ -43,15 +43,41 @@ def _event_timestamp(event: Mapping[str, Any]) -> float:
 
 
 def _evidence_window_start(events: list[Mapping[str, Any]], state: Mapping[str, Any]) -> int:
-    """Keep evidence from the run that caused forced-action activation.
+    """Anchor evidence to the run that *produced* forced-action activation.
 
-    The controller normally activates forced-action mode only after useful
-    investigation has already happened. Restricting provenance to events after
-    ``activated_at`` discards exactly those causal reads and forces redundant
-    inspection after a pause/resume. Prefer the start event for the persisted
-    forced-action run; fall back to the legacy activation cursor when that run
-    marker is unavailable.
+    A resumed forced action keeps its original ``activation_event_count`` and
+    ``activated_at`` but updates ``run_id`` to the new runner. Using the current
+    run id therefore loses the causal reads that triggered the controller in the
+    previous run. Walk backward from the preserved activation cursor to the
+    nearest run start first; this identifies the originating run even after a
+    pause/resume. Timestamp and current-run fallbacks cover legacy states that
+    lack a reliable activation cursor.
     """
+    try:
+        activation_cursor = int(state.get("activation_event_count") or 0)
+    except (TypeError, ValueError):
+        activation_cursor = 0
+    activation_cursor = max(0, min(activation_cursor, len(events)))
+    if activation_cursor > 0:
+        for index in range(activation_cursor - 1, -1, -1):
+            if str(events[index].get("type") or "") == "started":
+                return index
+
+    try:
+        activated_at = float(state.get("activated_at") or 0)
+    except (TypeError, ValueError):
+        activated_at = 0.0
+    if activated_at > 0:
+        candidate: int | None = None
+        for index, event in enumerate(events):
+            event_ts = _event_timestamp(event)
+            if event_ts > activated_at and event_ts > 0:
+                break
+            if str(event.get("type") or "") == "started":
+                candidate = index
+        if candidate is not None:
+            return candidate
+
     state_run_id = str(state.get("run_id") or "").strip()
     if state_run_id:
         for index, event in enumerate(events):
@@ -60,11 +86,7 @@ def _evidence_window_start(events: list[Mapping[str, Any]], state: Mapping[str, 
                 and str(event.get("run_id") or "").strip() == state_run_id
             ):
                 return index
-    try:
-        legacy_start = int(state.get("activation_event_count") or 0)
-    except (TypeError, ValueError):
-        legacy_start = 0
-    return max(0, min(legacy_start, len(events)))
+    return activation_cursor
 
 
 def _path_class(path: str) -> str:
