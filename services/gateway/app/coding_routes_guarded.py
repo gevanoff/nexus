@@ -14,6 +14,7 @@ from app import coding_evidence_policy
 from app import coding_execution_dispatch
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
+from app import coding_text_tool_handoff
 from app import coding_routes as routes
 from app import coding_workspace as cw
 
@@ -23,6 +24,7 @@ from app import coding_workspace as cw
 coding_network_resilience.install(cw, guarded_agent)
 coding_model_metadata_resilience.install(cw.miw)
 coding_evidence_policy.install_execution_override_seam(guarded_agent._agent)
+coding_text_tool_handoff.install(guarded_agent._agent)
 coding_execution_dispatch.install(cw, guarded_agent)
 routes.ca = guarded_agent
 router = APIRouter()
