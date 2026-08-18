@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
+import pytest
+
 from app import coding_execution_dispatch as dispatch
 from app import coding_text_tool_handoff as handoff
 from app import upstreams
@@ -115,6 +119,31 @@ def _native_request() -> ChatCompletionRequest:
     )
 
 
+def _materialize_devstral_handoff() -> tuple[ChatCompletionRequest, object, dict]:
+    agent = _Agent()
+    handoff.install(agent)
+    task = {
+        "forced": {"state_key": "state-1", "action_kind": "edit"},
+        "allowed_tools": ["coding_apply_patch", "coding_finish"],
+        "project_plan": {"revision": 2},
+    }
+    upstream_model = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
+    adapted, snapshot, diagnostics = dispatch.materialize_request(
+        agent,
+        _native_request(),
+        task,
+        source_backend="local_mlx",
+        backend="local_vllm_fast",
+        upstream_model=upstream_model,
+    )
+    routed = upstreams.route_request_for_backend(
+        adapted,
+        "local_vllm_fast",
+        upstream_model,
+    )
+    return routed, snapshot, diagnostics
+
+
 def _final_openai_payload(req: ChatCompletionRequest) -> dict:
     payload = req.model_dump(exclude_none=True)
     payload.pop("x_nexus", None)
@@ -124,35 +153,11 @@ def _final_openai_payload(req: ChatCompletionRequest) -> dict:
 
 
 def test_mlx_to_devstral_handoff_is_executable_at_final_transport_boundary():
-    agent = _Agent()
-    handoff.install(agent)
-    task = {
-        "forced": {"state_key": "state-1", "action_kind": "edit"},
-        "allowed_tools": ["coding_apply_patch", "coding_finish"],
-        "project_plan": {"revision": 2},
-    }
-    upstream_model = "cyankiwi/Devstral-Small-2507-AWQ-4bit"
-
-    adapted, snapshot, diagnostics = dispatch.materialize_request(
-        agent,
-        _native_request(),
-        task,
-        source_backend="local_mlx",
-        backend="local_vllm_fast",
-        upstream_model=upstream_model,
-    )
-    # Exercise the same generic route cap that runs immediately before the
-    # OpenAI-compatible payload serializer. The Coding handoff must survive it.
-    routed = upstreams.route_request_for_backend(
-        adapted,
-        "local_vllm_fast",
-        upstream_model,
-    )
+    routed, snapshot, diagnostics = _materialize_devstral_handoff()
     payload = _final_openai_payload(routed)
 
     assert snapshot.text_tool_mode is True
     assert snapshot.action_kind == "edit"
-    assert adapted.max_tokens == 2048
     assert routed.max_tokens == 2048
     assert diagnostics["converted_tool_calls"] == 1
     assert diagnostics["converted_tool_results"] == 1
@@ -184,6 +189,65 @@ def test_mlx_to_devstral_handoff_is_executable_at_final_transport_boundary():
     assert '"patch":{"type":"string"}' in system
     assert '"name":"coding_finish"' in system
     assert "coding_read_file_lines" not in system.split("Contracts JSON:", 1)[1]
+
+
+@pytest.mark.asyncio
+async def test_devstral_http_post_receives_only_transport_safe_coding_payload(monkeypatch):
+    routed, _snapshot, _diagnostics = _materialize_devstral_handoff()
+    captured: dict[str, object] = {}
+
+    class Response:
+        status_code = 200
+        text = '{"choices":[{"message":{"role":"assistant","content":"ok"}}]}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+    class Client:
+        async def post(self, url, *, json):
+            captured["url"] = url
+            captured["payload"] = json
+            return Response()
+
+    @asynccontextmanager
+    async def fake_client(*, timeout=None):
+        captured["timeout"] = timeout
+        yield Client()
+
+    monkeypatch.setattr(upstreams, "_httpx_client", fake_client)
+
+    response = await upstreams.call_openai_chat(
+        routed,
+        base_url="http://vllm.test/v1",
+        backend_name="local_vllm_fast",
+        request_id="coding-handoff-test",
+    )
+
+    assert response["choices"][0]["message"]["content"] == "ok"
+    assert captured["url"] == "http://vllm.test/v1/chat/completions"
+    assert captured["timeout"] == 600
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["max_tokens"] == 2048
+    assert "x_nexus" not in payload
+    assert "tools" not in payload
+    assert not any(message.get("role") == "tool" for message in payload["messages"])
+    assert not any(
+        message.get("role") == "assistant"
+        and not str(message.get("content") or "").strip()
+        and not message.get("tool_calls")
+        for message in payload["messages"]
+    )
+    system = next(
+        message["content"]
+        for message in payload["messages"]
+        if message.get("role") == "system"
+    )
+    assert "Text-tool workspace contracts" in system
+    assert '"name":"coding_apply_patch"' in system
 
 
 def test_final_transport_keeps_real_native_tool_call_but_never_empty_assistant_bridge():
