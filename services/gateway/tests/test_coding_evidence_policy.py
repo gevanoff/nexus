@@ -31,11 +31,11 @@ def _plan(repository_evidence: str) -> dict:
     }
 
 
-def _started() -> dict:
+def _started(*, run_id: str = "run-1", ts: float = 1.0) -> dict:
     return {
-        "ts": 1.0,
+        "ts": ts,
         "type": "started",
-        "run_id": "run-1",
+        "run_id": run_id,
         "backend": "local_mlx",
     }
 
@@ -170,6 +170,35 @@ def test_preactivation_read_from_forced_action_run_remains_verified_after_resume
 
     effective = provenance.apply_provenance_gate(forced, task, state)
 
+    assert effective["causal_evidence_targets"] == [causal]
+    assert effective["action_kind"] == "edit"
+    assert "coding_apply_patch" in effective["allowed_tools"]
+
+
+def test_resumed_run_id_does_not_move_evidence_window_past_originating_run():
+    causal = "services/gateway/app/static/image.js"
+    first_run = [_started(run_id="run-1", ts=1.0), *_read_events(causal, ts=4.0)]
+    events = [
+        *first_run,
+        _started(run_id="run-2", ts=20.0),
+        {
+            "ts": 21.0,
+            "type": "cycle_started",
+            "cycle": 1,
+        },
+    ]
+    task = {
+        "agent_events": events,
+        "project_plan": _plan(causal),
+    }
+    state = _state(action_kind="evidence", activation_event_count=len(first_run))
+    # coding_forced_action.activate() updates run_id on resume while preserving
+    # activation_event_count/activated_at from the original forced action.
+    state["run_id"] = "run-2"
+
+    effective = provenance.apply_provenance_gate(forced, task, state)
+
+    assert provenance._evidence_window_start(events, state) == 0
     assert effective["causal_evidence_targets"] == [causal]
     assert effective["action_kind"] == "edit"
     assert "coding_apply_patch" in effective["allowed_tools"]
