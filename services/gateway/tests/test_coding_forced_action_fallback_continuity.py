@@ -375,7 +375,9 @@ def test_canonicalization_bridges_tool_result_before_reroute_user_turn():
     roles = [message["role"] for message in out["messages"]]
 
     assert roles == ["system", "user", "assistant", "tool", "assistant", "user"]
-    assert out["messages"][-2] == {"content": "", "role": "assistant"}
+    bridge = out["messages"][-2]
+    assert bridge["role"] == "assistant"
+    assert bridge["content"].strip()
     assert payload["messages"][-2]["role"] == "tool"
 
 
