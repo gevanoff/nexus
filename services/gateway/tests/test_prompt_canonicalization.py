@@ -35,6 +35,78 @@ def test_canonicalize_chat_payload_sorts_tools_without_mutating_input():
     assert list(out["tools"][0]["function"]["parameters"]["properties"].keys()) == ["c", "d"]
 
 
+def test_canonicalize_chat_payload_drops_structurally_empty_assistant_turns():
+    payload = {
+        "model": "devstral",
+        "messages": [
+            {"role": "system", "content": "system"},
+            {"role": "assistant", "content": None},
+            {"role": "assistant", "content": "   ", "tool_calls": None},
+            {"role": "user", "content": "continue"},
+        ],
+    }
+
+    out = canonicalize_chat_payload(payload)
+
+    assert out["messages"] == [
+        {"content": "system", "role": "system"},
+        {"content": "continue", "role": "user"},
+    ]
+
+
+def test_canonicalize_chat_payload_preserves_tool_call_assistant_without_content():
+    payload = {
+        "model": "devstral",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"},
+                    }
+                ],
+            }
+        ],
+    }
+
+    out = canonicalize_chat_payload(payload)
+
+    assert len(out["messages"]) == 1
+    assert out["messages"][0]["role"] == "assistant"
+    assert out["messages"][0]["tool_calls"][0]["id"] == "call-1"
+
+
+def test_tool_to_user_bridge_is_nonempty_for_strict_openai_templates():
+    payload = {
+        "model": "devstral",
+        "messages": [
+            {"role": "assistant", "content": None, "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "call-1", "content": "result"},
+            {"role": "user", "content": "controller guidance"},
+        ],
+    }
+
+    out = canonicalize_chat_payload(payload)
+
+    assert [message["role"] for message in out["messages"]] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    bridge = out["messages"][2]
+    assert bridge["content"].strip()
+    assert not any(
+        message.get("role") == "assistant"
+        and not str(message.get("content") or "").strip()
+        and not message.get("tool_calls")
+        for message in out["messages"]
+    )
+
+
 def test_prompt_prefix_fingerprint_stable_for_semantically_equivalent_payloads():
     base_messages = [
         {"role": "system", "content": "stable"},
