@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app import coding_agent_guarded as guarded_agent
 from app import coding_contract_hardening
+from app import coding_contract_path_safety
 from app import coding_debug_report
 from app import coding_evidence_freshness
 from app import coding_evidence_policy
@@ -33,6 +34,7 @@ coding_contract_hardening.install(
     coding_evidence_policy,
     coding_debug_report,
 )
+coding_contract_path_safety.install(coding_contract_hardening)
 coding_evidence_freshness.install(coding_evidence_policy)
 routes.ca = guarded_agent
 router = APIRouter()
