@@ -97,6 +97,7 @@ def _fake_agent(*, promote_after_write: bool = True):
             "note": str(args.get("note") or ""),
         }
         if promote_after_write:
+            forced_action.state.pop("hypothesis_evidence_postdates_plan", None)
             forced_action.state.update(
                 {
                     "action_kind": "edit",
@@ -215,6 +216,60 @@ def test_valid_hypothesis_is_canonicalized_persisted_and_unlocks_edit_state():
     assert persisted.splitlines()[2].startswith("Competing explanation checked:")
     assert persisted.splitlines()[3].startswith("Expected result:")
     assert forced_action.state["hypothesis_causal_evidence_linked"] is True
+
+
+def test_stale_linked_hypothesis_still_requires_note_only_revision():
+    agent, _, forced_action, workspace, calls = _fake_agent()
+    forced_action.state.update(
+        {
+            "hypothesis_ready": True,
+            "hypothesis_causal_evidence_linked": True,
+            "hypothesis_evidence_postdates_plan": True,
+            "required_action": "Revise the hypothesis after newer verified evidence.",
+        }
+    )
+    before = dict(workspace.task["project_plan"])
+
+    specs = agent._tool_specs_for_task({})
+    update = next(spec for spec in specs if spec.function.name == "coding_update_plan")
+    assert update.function.parameters["required"] == ["note"]
+    assert set(update.function.parameters["properties"]) == {"note"}
+
+    result = agent._run_tool(
+        "code_test",
+        "coding_update_plan",
+        {"goal": "rewrite milestone instead of revising hypothesis"},
+        git_token_value=None,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == persistence._ERROR_REQUIRED
+    assert workspace.task["project_plan"] == before
+    assert calls == []
+
+
+def test_valid_revision_clears_stale_hypothesis_transition_and_unlocks_edit():
+    agent, _, forced_action, _, calls = _fake_agent()
+    forced_action.state.update(
+        {
+            "hypothesis_ready": True,
+            "hypothesis_causal_evidence_linked": True,
+            "hypothesis_evidence_postdates_plan": True,
+        }
+    )
+
+    result = agent._run_tool(
+        "code_test",
+        "coding_update_plan",
+        {"note": _valid_note()},
+        git_token_value=None,
+    )
+
+    assert result["ok"] is True
+    assert result["hypothesis_persisted"] is True
+    assert result["next_action_kind"] == "edit"
+    assert "hypothesis_evidence_postdates_plan" not in forced_action.state
+    assert len(calls) == 1
 
 
 def test_tool_reports_failure_when_durable_re_read_does_not_recognize_hypothesis():
