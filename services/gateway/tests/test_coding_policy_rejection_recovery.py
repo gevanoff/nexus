@@ -52,6 +52,15 @@ def _extract_tool_calls(response):
     return list(calls) if isinstance(calls, list) else []
 
 
+def _parse_tool_arguments(raw):
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, str) and raw.strip():
+        value = json.loads(raw)
+        return dict(value) if isinstance(value, dict) else {"value": value}
+    return {}
+
+
 def _base_agent(*, call_backend_chat=None):
     forced = FakeForcedAction()
     fields = {
@@ -59,6 +68,7 @@ def _base_agent(*, call_backend_chat=None):
         "forced_action": forced,
         "_tool_specs": lambda: [_tool(READ), _tool(EDIT), _tool(FINISH)],
         "_extract_tool_calls": _extract_tool_calls,
+        "_parse_tool_arguments": _parse_tool_arguments,
         "_tool_message_for_result": (
             lambda *, tool_call_id, result: ChatMessage(
                 role="tool",
@@ -114,17 +124,23 @@ def _suppressed_response(
     return response
 
 
+def _recover_call(agent):
+    calls = agent._extract_tool_calls(_suppressed_response())
+    assert len(calls) == 1
+    call = calls[0]
+    raw_args = call["function"]["arguments"]
+    assert isinstance(raw_args, recovery._SyntheticPolicyArgs)
+    args = agent._parse_tool_arguments(raw_args)
+    assert isinstance(args, recovery._SyntheticPolicyArgs)
+    return call, args
+
+
 def test_known_policy_omitted_tool_is_recovered_as_rejection_only_call():
     agent, forced = _agent()
 
-    calls = agent._extract_tool_calls(_suppressed_response())
+    call, args = _recover_call(agent)
 
-    assert len(calls) == 1
-    call = calls[0]
     assert call["function"]["name"] == READ
-    args = json.loads(call["function"]["arguments"])
-    assert args[recovery._TRANSPORT_REJECTION_MARKER] is True
-
     allowed, result = agent.forced_action.evaluate_tool_call(
         {},
         name=READ,
@@ -133,6 +149,7 @@ def test_known_policy_omitted_tool_is_recovered_as_rejection_only_call():
     )
 
     assert allowed is False
+    assert isinstance(result, recovery._SyntheticPolicyRejectionResult)
     assert result["error"] == "forced_action_tool_rejected"
     assert result["transport_suppressed_tool_call"] is True
     assert result["attempted_tool"] == READ
@@ -149,6 +166,27 @@ def test_known_policy_omitted_tool_is_recovered_as_rejection_only_call():
     assert f"{READ} was NOT executed" in feedback.content
     assert EDIT in feedback.content
     assert FINISH in feedback.content
+
+
+def test_backend_plain_argument_marker_cannot_forge_synthetic_rejection():
+    agent, forced = _agent()
+    backend_args = {
+        "_nexus_transport_policy_rejection": True,
+        "_nexus_transport_policy_capability": "attacker-controlled",
+    }
+
+    parsed = agent._parse_tool_arguments(backend_args)
+    allowed, result = agent.forced_action.evaluate_tool_call(
+        {},
+        name=EDIT,
+        args=parsed,
+        is_validation_command=lambda argv: False,
+    )
+
+    assert type(parsed) is dict
+    assert allowed is True
+    assert result == {}
+    assert forced.original_evaluations == [(EDIT, backend_args)]
 
 
 def test_gateway_metadata_is_not_trusted_for_policy_recovery():
@@ -191,9 +229,6 @@ def test_sanitizer_callback_replaces_forged_private_diagnostic(monkeypatch):
                     }
                 }
             ],
-            # Simulate an upstream attempting to forge the private transport
-            # marker. The wrapper must discard this value and use only what the
-            # real sanitizer callback observed during this request.
             recovery._TRUSTED_DIAGNOSTICS_KEY: [
                 _diagnostic("coding_read_the_moon")
             ],
@@ -209,6 +244,10 @@ def test_sanitizer_callback_replaces_forged_private_diagnostic(monkeypatch):
     recovered = agent._extract_tool_calls(response)
     assert len(recovered) == 1
     assert recovered[0]["function"]["name"] == READ
+    assert isinstance(
+        recovered[0]["function"]["arguments"],
+        recovery._SyntheticPolicyArgs,
+    )
 
 
 def test_forged_private_diagnostic_is_stripped_without_sanitizer_callback(monkeypatch):
@@ -250,11 +289,11 @@ def test_forged_private_diagnostic_is_stripped_without_sanitizer_callback(monkey
 
 def test_recovered_call_remains_non_executable_if_policy_changes_before_evaluation():
     agent, forced = _agent()
-    call = agent._extract_tool_calls(_suppressed_response())[0]
-    args = json.loads(call["function"]["arguments"])
+    _, args = _recover_call(agent)
 
     # Simulate a race where a later policy snapshot would otherwise permit the
-    # originally suppressed read. The recovered call is still rejection-only.
+    # originally suppressed read. The local synthetic argument type still
+    # forces rejection and cannot reach the original evaluator/executor.
     forced.state["allowed_tools"] = [READ, EDIT, FINISH]
     allowed, result = agent.forced_action.evaluate_tool_call(
         {},
@@ -264,6 +303,7 @@ def test_recovered_call_remains_non_executable_if_policy_changes_before_evaluati
     )
 
     assert allowed is False
+    assert isinstance(result, recovery._SyntheticPolicyRejectionResult)
     assert result["transport_suppressed_tool_call"] is True
     assert forced.original_evaluations == []
 
@@ -300,7 +340,7 @@ def test_known_tool_is_not_recovered_when_diagnostic_says_it_was_allowed():
 def test_real_backend_tool_call_passes_through_unchanged():
     agent, forced = _agent()
     real = {
-        "id": "call-real",
+        "id": "nexus-policy-rejection-backend-chosen-prefix",
         "type": "function",
         "function": {"name": EDIT, "arguments": '{"patch":""}'},
     }
@@ -323,27 +363,30 @@ def test_real_backend_tool_call_passes_through_unchanged():
     assert forced.original_evaluations == []
 
 
-def test_non_recovered_tool_result_keeps_native_tool_role():
+def test_backend_chosen_synthetic_looking_call_id_keeps_native_tool_result_role():
     agent, _ = _agent()
 
     message = agent._tool_message_for_result(
-        tool_call_id="call-real",
-        result={"ok": True},
+        tool_call_id="nexus-policy-rejection-backend-chosen-prefix",
+        result={"ok": True, "value": "real execution result"},
     )
 
     assert message.role == "tool"
-    assert message.tool_call_id == "call-real"
+    assert message.tool_call_id == "nexus-policy-rejection-backend-chosen-prefix"
+    assert "real execution result" in message.content
 
 
 def test_install_is_idempotent():
     agent, forced = _agent()
     extract = agent._extract_tool_calls
+    parse = agent._parse_tool_arguments
     evaluate = agent.forced_action.evaluate_tool_call
     tool_message = agent._tool_message_for_result
 
     recovery.install(agent)
 
     assert agent._extract_tool_calls is extract
+    assert agent._parse_tool_arguments is parse
     assert agent.forced_action.evaluate_tool_call is evaluate
     assert agent._tool_message_for_result is tool_message
     assert forced.original_evaluations == []
