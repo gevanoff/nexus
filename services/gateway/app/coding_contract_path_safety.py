@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, Mapping
 
 
 _ACCEPTANCE_PARTS = {"tests", "test", "fixtures", "fixture", "examples", "example"}
@@ -11,6 +11,7 @@ _EXPLICIT_BARE_RE = re.compile(
     r"(?:`([A-Za-z0-9_.-]+)`|'([A-Za-z0-9_.-]+)'|\"([A-Za-z0-9_.-]+)\")"
 )
 _LEADING_CONVENTIONAL_BARE_RE = re.compile(r"^\s*([A-Z][A-Z0-9_-]{1,})\b")
+_ROOT_SUFFIXLESS_RE = re.compile(r"^[A-Z][A-Z0-9_-]{1,}$")
 
 
 def _has_standalone_occurrence(text: str, name: str) -> bool:
@@ -93,6 +94,15 @@ def _explicit_suffixless_basenames(text: str) -> list[str]:
     return out
 
 
+def _explicit_root_suffixless_basenames(text: str) -> list[str]:
+    """Return conventional suffixless names that explicitly denote repo-root files."""
+    return [
+        name
+        for name in _explicit_suffixless_basenames(text)
+        if _ROOT_SUFFIXLESS_RE.fullmatch(name)
+    ]
+
+
 def install(hardening: Any) -> None:
     """Install repository-path safety and suffixless-file recovery refinements."""
     if bool(getattr(hardening, "_coding_contract_path_safety_installed", False)):
@@ -130,4 +140,37 @@ def install(hardening: Any) -> None:
         return out
 
     hardening._repository_basenames = repository_basenames_with_boundaries
+
+    original_resolve = hardening._resolve_asserted_targets
+
+    def resolve_asserted_targets_with_root_lock(
+        repository_evidence: str,
+        state: Mapping[str, Any],
+    ) -> list[str]:
+        targets = list(original_resolve(repository_evidence, state))
+        explicit_roots = _explicit_root_suffixless_basenames(repository_evidence)
+        if not explicit_roots:
+            return targets
+        # A conventional all-caps suffixless citation such as BUILD or WORKSPACE
+        # denotes the repository-root file. Do not let a same-basename candidate
+        # elsewhere in the tree reinterpret that explicit root citation.
+        for root in explicit_roots:
+            targets = [
+                target
+                for target in targets
+                if PurePosixPath(str(target or "")).name != root
+            ]
+            targets.append(root)
+        return targets
+
+    hardening._resolve_asserted_targets = resolve_asserted_targets_with_root_lock
+
+    original_read_matches_target = hardening._read_matches_target
+
+    def read_matches_target_with_root_lock(requested: str, target: str) -> bool:
+        if "/" not in str(target or "") and _ROOT_SUFFIXLESS_RE.fullmatch(str(target or "")):
+            return str(requested or "") == str(target or "")
+        return original_read_matches_target(requested, target)
+
+    hardening._read_matches_target = read_matches_target_with_root_lock
     hardening._coding_contract_path_safety_installed = True
