@@ -76,11 +76,12 @@ def _diagnostics(response: Any) -> list[Mapping[str, Any]]:
     return [item for item in raw if isinstance(item, Mapping)]
 
 
-def _recoverable_policy_diagnostic(
+def _recoverable_policy_diagnostics(
     response: Any,
     *,
     known_tools: set[str],
-) -> Mapping[str, Any] | None:
+) -> list[Mapping[str, Any]]:
+    recovered: list[Mapping[str, Any]] = []
     for item in _diagnostics(response):
         reason = str(item.get("reason") or "").strip()
         name = str(item.get("name") or "").strip()
@@ -103,8 +104,8 @@ def _recoverable_policy_diagnostic(
             and allowed
             and name not in allowed
         ):
-            return item
-    return None
+            recovered.append(item)
+    return recovered
 
 
 def _synthetic_rejection_call(name: str) -> dict[str, Any]:
@@ -271,17 +272,22 @@ def install(agent: Any) -> None:
     original_parse = agent._parse_tool_arguments
 
     def extract_with_policy_recovery(response: Any) -> list[dict[str, Any]]:
-        calls = original_extract(response)
-        if calls:
-            return calls
-        diagnostic = _recoverable_policy_diagnostic(
+        calls = list(original_extract(response))
+        diagnostics = _recoverable_policy_diagnostics(
             response,
             known_tools=known_tools,
         )
-        if diagnostic is None:
-            return []
-        name = str(diagnostic.get("name") or "").strip()
-        return [_synthetic_rejection_call(name)]
+        if not diagnostics:
+            return calls
+        # Preserve any genuine advertised calls that survived sanitization while
+        # also surfacing the backend's policy-disabled companions to the normal
+        # forced-action rejection/noncompliance path. Synthetic provenance stays
+        # local even in mixed batches; the real calls remain byte-for-byte intact.
+        calls.extend(
+            _synthetic_rejection_call(str(item.get("name") or "").strip())
+            for item in diagnostics
+        )
+        return calls
 
     def parse_with_policy_recovery(raw: Any) -> dict[str, Any]:
         if isinstance(raw, _SyntheticPolicyArgs):
