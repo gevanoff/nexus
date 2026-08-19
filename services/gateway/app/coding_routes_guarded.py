@@ -16,6 +16,7 @@ from app import coding_edit_evidence_continuity
 from app import coding_evidence_freshness
 from app import coding_evidence_policy
 from app import coding_execution_dispatch
+from app import coding_failed_edit_recovery
 from app import coding_hypothesis_persistence
 from app import coding_inspection_ledger_integrity
 from app import coding_model_metadata_resilience
@@ -43,6 +44,10 @@ coding_contract_hardening.install(
 )
 coding_contract_path_safety.install(coding_contract_hardening)
 coding_evidence_freshness.install(coding_evidence_policy)
+coding_failed_edit_recovery.install(
+    guarded_agent._agent,
+    coding_evidence_policy,
+)
 coding_hypothesis_persistence.install(
     guarded_agent._agent,
     coding_evidence_policy,
