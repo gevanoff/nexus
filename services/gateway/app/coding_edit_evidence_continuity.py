@@ -69,9 +69,10 @@ def _line_aligned_slice(text: str, start: int, end: int) -> str:
 
 
 def _line_aware_clip(value: Any, limit: int = _MAX_PATH_CHARS) -> tuple[str, bool]:
-    text = str(value or "").strip()
-    if limit <= 0 or not text:
-        return "", bool(text)
+    text = str(value or "")
+    has_content = bool(text.strip())
+    if limit <= 0 or not has_content:
+        return "", has_content
     if len(text) <= limit:
         return text, False
 
@@ -87,7 +88,7 @@ def _line_aware_clip(value: Any, limit: int = _MAX_PATH_CHARS) -> tuple[str, boo
         min(len(text), middle_center + part // 2),
     )
     tail = _line_aligned_slice(text, max(0, len(text) - part), len(text))
-    clipped = f"{head.rstrip()}{marker_one}{middle.strip()}{marker_two}{tail.lstrip()}"
+    clipped = f"{head}{marker_one}{middle}{marker_two}{tail}"
     if len(clipped) > limit:
         clipped = clipped[:limit]
     return clipped, True
@@ -135,8 +136,8 @@ def verified_evidence_bundle(
         content = result.get("content")
         if not isinstance(content, str) or not content.strip():
             continue
-        excerpts[path] = content.strip()
-        source_chars[path] = len(content.strip())
+        excerpts[path] = content
+        source_chars[path] = len(content)
 
     if not excerpts:
         return "", []
