@@ -51,6 +51,7 @@ class FakeWorkspace:
                 "goal": "Restore the InvokeAI link",
                 "items": [],
                 "note": "",
+                "updated_at": 90.0,
             },
         }
 
@@ -102,17 +103,23 @@ def _fake_agent(
         workspace.task["project_plan"] = {
             **workspace.task["project_plan"],
             "revision": 1,
+            "updated_at": 100.0,
             "note": (
                 str(args.get("note") or "")
                 if persist_note_after_write
                 else current_note
             ),
         }
+        if persist_note_after_write:
+            workspace.task[persistence._NOTE_STATE_KEY] = persistence._note_marker_for_plan(
+                workspace.task["project_plan"]
+            )
         if promote_after_write:
             forced_action.state.pop("hypothesis_evidence_postdates_plan", None)
             forced_action.state.update(
                 {
                     "action_kind": "edit",
+                    "canonical_action_kind": "edit",
                     "hypothesis_ready": True,
                     "hypothesis_causal_evidence_linked": True,
                     "hypothesis_fields": list(forced._HYPOTHESIS_FIELDS),
@@ -228,6 +235,7 @@ def test_valid_hypothesis_is_canonicalized_persisted_and_unlocks_edit_state():
     assert persisted.splitlines()[2].startswith("Competing explanation checked:")
     assert persisted.splitlines()[3].startswith("Expected result:")
     assert forced_action.state["hypothesis_causal_evidence_linked"] is True
+    assert workspace.task[persistence._NOTE_STATE_KEY]["revision"] == 1
 
 
 def test_stale_linked_hypothesis_still_requires_note_only_revision():
@@ -321,6 +329,7 @@ def test_hypothesis_prompt_replays_verified_read_content_after_context_compactio
         {
             "type": "tool_finished",
             "name": "coding_read_file_lines",
+            "ts": 95.0,
             "result": {
                 "ok": True,
                 "path": TARGET,
@@ -352,6 +361,7 @@ def test_hypothesis_prompt_does_not_replay_failed_or_unverified_read_content():
         {
             "type": "tool_finished",
             "name": "coding_read_file_lines",
+            "ts": 95.0,
             "result": {
                 "ok": False,
                 "path": TARGET,
@@ -361,6 +371,7 @@ def test_hypothesis_prompt_does_not_replay_failed_or_unverified_read_content():
         {
             "type": "tool_finished",
             "name": "coding_read_file_lines",
+            "ts": 96.0,
             "result": {
                 "ok": True,
                 "path": "services/gateway/app/static/unverified.js",
