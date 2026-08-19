@@ -17,6 +17,8 @@ _REPOSITORY_SUFFIXES = {
     ".c", ".cc", ".cpp", ".h", ".hpp", ".html", ".css", ".scss",
     ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".sh",
 }
+_ACCEPTANCE_PARTS = {"tests", "test", "fixtures", "fixture", "examples", "example"}
+_CONTEXT_SUFFIXES = {".md", ".rst", ".txt"}
 _INVALID_TOOL_NOTICE = (
     "Nexus suppressed an invalid backend tool call. Retry with a validated tool-calling model."
 )
@@ -63,11 +65,15 @@ def structured_hypothesis(
         )
         if not label or label in fields:
             continue
-        if index + 1 < len(matches):
-            end = matches[index + 1].start()
-        else:
-            trailing = base._TRAILING_PLAN_SECTION_RE.search(text, match.end())
-            end = trailing.start() if trailing else len(text)
+        end = (
+            matches[index + 1].start()
+            if index + 1 < len(matches)
+            else (
+                trailing.start()
+                if (trailing := base._TRAILING_PLAN_SECTION_RE.search(text, match.end()))
+                else len(text)
+            )
+        )
         value = text[match.end() : end].strip(" \t\r\n;.")
         if len(value) < 8:
             return False, fields
@@ -85,6 +91,28 @@ def _normalized_path(value: Any) -> str:
     return "/".join(part for part in parsed.parts if part not in {"", "."})
 
 
+def _target_is_causal(target: str) -> bool:
+    normalized = _normalized_path(target) if "/" in str(target or "") else str(target or "").strip()
+    if not normalized:
+        return False
+    path = PurePosixPath(normalized)
+    parts = {part.casefold() for part in path.parts}
+    name = path.name.casefold()
+    stem = path.stem.casefold()
+    conventional_test = (
+        name.startswith("test_")
+        or ".test." in name
+        or ".spec." in name
+        or stem.endswith("_test")
+        or stem.endswith("_spec")
+    )
+    if parts & _ACCEPTANCE_PARTS or conventional_test:
+        return False
+    if path.suffix.casefold() in _CONTEXT_SUFFIXES or "docs" in parts:
+        return False
+    return path.suffix.casefold() in _REPOSITORY_SUFFIXES
+
+
 def _repository_paths(text: str) -> list[str]:
     out: list[str] = []
     for match in _PATH_RE.finditer(str(text or "")):
@@ -98,9 +126,7 @@ def _repository_basenames(text: str) -> list[str]:
     out: list[str] = []
     for match in _FILENAME_RE.finditer(str(text or "")):
         name = str(match.group(1) or "").strip()
-        if not name or "/" in name:
-            continue
-        if PurePosixPath(name).suffix.casefold() not in _REPOSITORY_SUFFIXES:
+        if not name or "/" in name or not _target_is_causal(name):
             continue
         if name not in out:
             out.append(name)
@@ -111,14 +137,7 @@ def _resolve_asserted_targets(
     repository_evidence: str,
     state: Mapping[str, Any],
 ) -> list[str]:
-    """Resolve hypothesis evidence while preserving full-path edit provenance.
-
-    A full repository-relative path can be verified directly. A bare filename is
-    promoted to a full path only when the controller already knows one unique
-    candidate/verified path with that basename. Otherwise the bare filename is
-    retained solely as a one-read corrective target; it never satisfies the
-    provenance link that unlocks editing.
-    """
+    """Resolve hypothesis evidence while preserving full-path edit provenance."""
     verified = [
         _normalized_path(item)
         for item in (state.get("causal_evidence_targets") or [])
@@ -130,7 +149,9 @@ def _resolve_asserted_targets(
         if _normalized_path(item)
     ]
     pool = [*verified, *candidates]
-    asserted = _repository_paths(repository_evidence)
+    asserted = [
+        path for path in _repository_paths(repository_evidence) if _target_is_causal(path)
+    ]
 
     for basename in _repository_basenames(repository_evidence):
         matches = sorted({path for path in pool if PurePosixPath(path).name == basename})
@@ -146,11 +167,12 @@ def refine_provenance_state(
     task: Mapping[str, Any],
     state: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    """Open exactly one corrective read when a structured hypothesis cites new evidence."""
+    """Open one corrective read only when the normal evidence transition is otherwise closed."""
     out = dict(state)
     if (
         str(out.get("action_kind") or "") != "evidence"
         or not out.get("evidence_provenance_enforced")
+        or "coding_read_file_lines" in set(out.get("allowed_tools") or [])
     ):
         return out
 
@@ -162,28 +184,24 @@ def refine_provenance_state(
         for item in (out.get("causal_evidence_targets") or [])
         if _normalized_path(item)
     }
-    linked = bool(out.get("hypothesis_causal_evidence_linked"))
-    if not hypothesis_ready or linked:
+    if not hypothesis_ready or bool(out.get("hypothesis_causal_evidence_linked")):
         return out
 
     asserted = _resolve_asserted_targets(repository_evidence, out)
     unverified: list[str] = []
     for target in asserted:
-        if not target:
-            continue
         if "/" in target:
             if target not in verified:
                 unverified.append(target)
-            continue
-        if not any(PurePosixPath(path).name == target for path in verified):
+        elif not any(PurePosixPath(path).name == target for path in verified):
             unverified.append(target)
     if not unverified:
         return out
 
     out["hypothesis_unverified_targets"] = unverified
     out["required_action"] = (
-        "The structured hypothesis cites implementation/configuration evidence that has not "
-        "been verified: "
+        "The structured hypothesis cites causal implementation/configuration evidence that has "
+        "not been verified: "
         + ", ".join(unverified)
         + ". Read exactly one cited target with coding_read_file_lines, or revise Repository "
         "evidence to cite one of the already verified causal targets."
@@ -507,9 +525,7 @@ def install(agent: Any, evidence_policy: Any, debug_report: Any) -> None:
             "state_key": state.get("state_key"),
         }
 
-    evidence_policy.ExecutionForcedActionFacade.evaluate_tool_call = (
-        evaluate_with_target_lock
-    )
+    evidence_policy.ExecutionForcedActionFacade.evaluate_tool_call = evaluate_with_target_lock
 
     _install_invalid_tool_diagnostics(agent)
     _install_blocked_finish_audit(agent)
