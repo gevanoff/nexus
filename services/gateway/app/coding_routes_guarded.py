@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app import coding_agent_guarded as guarded_agent
 from app import coding_contract_hardening
 from app import coding_debug_report
+from app import coding_evidence_freshness
 from app import coding_evidence_policy
 from app import coding_execution_dispatch
 from app import coding_model_metadata_resilience
@@ -32,6 +33,7 @@ coding_contract_hardening.install(
     coding_evidence_policy,
     coding_debug_report,
 )
+coding_evidence_freshness.install(coding_evidence_policy)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
