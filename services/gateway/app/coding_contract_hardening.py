@@ -7,15 +7,25 @@ from typing import Any, Dict, Mapping
 
 
 _PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9_.-]+)"
+    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)(?![A-Za-z0-9_.-])"
 )
 _FILENAME_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)(?![A-Za-z0-9_.-])"
 )
-_REPOSITORY_SUFFIXES = {
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt",
-    ".c", ".cc", ".cpp", ".h", ".hpp", ".html", ".css", ".scss",
-    ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".sh",
+_SUFFIXLESS_FILENAME_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])(Dockerfile|Containerfile|Makefile|Procfile|Jenkinsfile)(?![A-Za-z0-9_.-])",
+    re.IGNORECASE,
+)
+_HIDDEN_CONFIG_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])(\.(?:env|gitignore|dockerignore|editorconfig|npmrc|prettierrc|eslintrc))(?![A-Za-z0-9_.-])",
+    re.IGNORECASE,
+)
+_KNOWN_SUFFIXLESS = {
+    "dockerfile",
+    "containerfile",
+    "makefile",
+    "procfile",
+    "jenkinsfile",
 }
 _ACCEPTANCE_PARTS = {"tests", "test", "fixtures", "fixture", "examples", "example"}
 _CONTEXT_SUFFIXES = {".md", ".rst", ".txt"}
@@ -92,7 +102,8 @@ def _normalized_path(value: Any) -> str:
 
 
 def _target_is_causal(target: str) -> bool:
-    normalized = _normalized_path(target) if "/" in str(target or "") else str(target or "").strip()
+    raw = str(target or "").strip()
+    normalized = _normalized_path(raw) if "/" in raw else raw
     if not normalized:
         return False
     path = PurePosixPath(normalized)
@@ -110,26 +121,47 @@ def _target_is_causal(target: str) -> bool:
         return False
     if path.suffix.casefold() in _CONTEXT_SUFFIXES or "docs" in parts:
         return False
-    return path.suffix.casefold() in _REPOSITORY_SUFFIXES
+
+    # Mirror coding_evidence_policy._path_class: any remaining repository file
+    # may carry causal implementation/configuration evidence. For a bare token,
+    # require file-like syntax so ordinary prose containing a slash cannot open
+    # a corrective read.
+    if "/" not in normalized:
+        return (
+            "." in name
+            or name in _KNOWN_SUFFIXLESS
+            or name.startswith(".")
+        )
+    if normalized.count("/") >= 2:
+        return True
+    return "." in name or name in _KNOWN_SUFFIXLESS or name.startswith(".")
 
 
 def _repository_paths(text: str) -> list[str]:
+    raw_text = str(text or "")
     out: list[str] = []
-    for match in _PATH_RE.finditer(str(text or "")):
+    for match in _PATH_RE.finditer(raw_text):
+        # If the regex had to start immediately after a slash/backslash, the
+        # original token was absolute, URL-like, or a drive-path fragment. Do
+        # not reinterpret it as a repository-relative path.
+        if match.start() > 0 and raw_text[match.start() - 1] in {"/", "\\"}:
+            continue
         path = _normalized_path(match.group(1))
-        if path and path not in out:
+        if path and _target_is_causal(path) and path not in out:
             out.append(path)
     return out
 
 
 def _repository_basenames(text: str) -> list[str]:
+    raw_text = str(text or "")
     out: list[str] = []
-    for match in _FILENAME_RE.finditer(str(text or "")):
-        name = str(match.group(1) or "").strip()
-        if not name or "/" in name or not _target_is_causal(name):
-            continue
-        if name not in out:
-            out.append(name)
+    for pattern in (_FILENAME_RE, _SUFFIXLESS_FILENAME_RE, _HIDDEN_CONFIG_RE):
+        for match in pattern.finditer(raw_text):
+            name = str(match.group(1) or "").strip()
+            if not name or "/" in name or not _target_is_causal(name):
+                continue
+            if name not in out:
+                out.append(name)
     return out
 
 
@@ -149,11 +181,12 @@ def _resolve_asserted_targets(
         if _normalized_path(item)
     ]
     pool = [*verified, *candidates]
-    asserted = [
-        path for path in _repository_paths(repository_evidence) if _target_is_causal(path)
-    ]
+    asserted = _repository_paths(repository_evidence)
+    represented_basenames = {PurePosixPath(path).name.casefold() for path in asserted}
 
     for basename in _repository_basenames(repository_evidence):
+        if basename.casefold() in represented_basenames:
+            continue
         matches = sorted({path for path in pool if PurePosixPath(path).name == basename})
         target = matches[0] if len(matches) == 1 else basename
         if target not in asserted:
@@ -344,6 +377,17 @@ def diagnostic_notice(item: Mapping[str, Any]) -> str:
     )
 
 
+def _content_with_diagnostic(content: Any, notice: str) -> str:
+    current = str(content or "").strip()
+    if current == _INVALID_TOOL_NOTICE:
+        return notice
+    if not current:
+        return notice
+    if notice in current:
+        return current
+    return f"{current}\n\n{notice}"
+
+
 def _install_invalid_tool_diagnostics(agent: Any) -> None:
     from app import upstreams
 
@@ -388,6 +432,7 @@ def _install_invalid_tool_diagnostics(agent: Any) -> None:
         choices = output.get("choices")
         if isinstance(choices, list):
             copied_choices: list[Any] = []
+            notice = diagnostic_notice(diagnostics[0])
             for choice in choices:
                 if not isinstance(choice, dict):
                     copied_choices.append(choice)
@@ -396,11 +441,10 @@ def _install_invalid_tool_diagnostics(agent: Any) -> None:
                 message = copied.get("message")
                 if isinstance(message, dict):
                     copied_message = dict(message)
-                    if (
-                        str(copied_message.get("content") or "").strip()
-                        == _INVALID_TOOL_NOTICE
-                    ):
-                        copied_message["content"] = diagnostic_notice(diagnostics[0])
+                    copied_message["content"] = _content_with_diagnostic(
+                        copied_message.get("content"),
+                        notice,
+                    )
                     copied["message"] = copied_message
                 copied_choices.append(copied)
             output["choices"] = copied_choices
