@@ -15,6 +15,7 @@ def _started(
     cycle: int,
     path: str,
     ts: float,
+    call_id: str,
     start_line: int = 10,
 ):
     args = {"path": path}
@@ -25,8 +26,19 @@ def _started(
     return {
         "type": "tool_started",
         "cycle": cycle,
+        "tool_call_id": call_id,
         "name": name,
         "args": args,
+        "ts": ts,
+    }
+
+
+def _finished(name: str, *, cycle: int, ts: float, call_id: str):
+    return {
+        "type": "tool_finished",
+        "cycle": cycle,
+        "tool_call_id": call_id,
+        "name": name,
         "ts": ts,
     }
 
@@ -55,342 +67,377 @@ def _target(event):
     return f"search {path}: {args.get('query') or ''}".rstrip()
 
 
-def _resilience(*, new_events_since, update_inspection_ledger):
+def _ledger_update(existing, events, *, run_id, cycle, limit=32):
+    ledger = {
+        str(item.get("signature") or ""): dict(item)
+        for item in existing
+        if isinstance(item, dict) and str(item.get("signature") or "")
+    }
+    order = list(ledger)
+    for event in events:
+        if str(event.get("type") or "") != "tool_started":
+            continue
+        signature = _signature(event)
+        if not signature:
+            continue
+        entry = ledger.get(signature, {"signature": signature, "count": 0})
+        entry.update(
+            {
+                "target": _target(event),
+                "count": int(entry.get("count") or 0) + 1,
+                "last_run_id": run_id,
+                "last_cycle": cycle,
+                "last_seen_at": float(event.get("ts") or 0),
+            }
+        )
+        ledger[signature] = entry
+        if signature in order:
+            order.remove(signature)
+        order.append(signature)
+    return [ledger[key] for key in order[-limit:]]
+
+
+def _resilience(*, new_events_since):
     return SimpleNamespace(
         new_events_since=new_events_since,
-        update_inspection_ledger=update_inspection_ledger,
+        update_inspection_ledger=_ledger_update,
         inspection_signature=_signature,
         inspection_target=_target,
     )
 
 
-def test_rejected_read_start_is_removed_from_ledger_input():
-    started = _started(
-        READ,
-        cycle=9,
-        path="services/gateway/app/static/image.js",
-        ts=1,
-    )
-    events = [
-        started,
-        _rejected(READ, cycle=9, ts=2),
-        {"type": "tool_finished", "cycle": 9, "name": READ, "ts": 3},
-    ]
-
-    filtered, rejected_starts = integrity.filter_rejected_inspection_attempts(events)
-
-    assert rejected_starts == [started]
-    assert not any(event.get("type") == "tool_started" for event in filtered)
-    assert any(event.get("type") == "forced_action_tool_rejected" for event in filtered)
-    assert any(event.get("type") == "tool_finished" for event in filtered)
-
-
-def test_nearest_same_name_start_is_paired_when_one_call_succeeds_then_one_is_rejected():
-    successful = _started(
-        READ,
-        cycle=9,
-        path="services/gateway/app/ui_routes.py",
-        ts=1,
-    )
-    rejected = _started(
-        READ,
-        cycle=9,
-        path="services/gateway/app/static/image.js",
-        ts=3,
-    )
-    events = [
-        successful,
-        {"type": "tool_finished", "cycle": 9, "name": READ, "ts": 2},
-        rejected,
-        _rejected(READ, cycle=9, ts=4),
-        {"type": "tool_finished", "cycle": 9, "name": READ, "ts": 5},
-    ]
-
-    filtered, rejected_starts = integrity.filter_rejected_inspection_attempts(events)
-    starts = [event for event in filtered if event.get("type") == "tool_started"]
-
-    assert rejected_starts == [rejected]
-    assert starts == [successful]
-
-
-def test_rejection_does_not_pair_with_prior_cycle_start():
-    prior = _started(
-        READ,
-        cycle=8,
-        path="services/gateway/app/ui_routes.py",
-        ts=1,
-    )
-    events = [prior, _rejected(READ, cycle=9, ts=2)]
-
-    filtered, rejected_starts = integrity.filter_rejected_inspection_attempts(events)
-
-    assert rejected_starts == []
-    assert prior in filtered
-
-
-def test_different_tool_rejection_does_not_remove_valid_start():
-    read = _started(
-        READ,
-        cycle=9,
-        path="services/gateway/app/ui_routes.py",
-        ts=1,
-    )
-    events = [read, _rejected(SEARCH, cycle=9, ts=2)]
-
-    filtered, rejected_starts = integrity.filter_rejected_inspection_attempts(events)
-
-    assert rejected_starts == []
-    assert read in filtered
-
-
-def test_split_poll_rejection_removes_already_persisted_false_inspection_fact():
-    seen = {}
-    started = _started(
-        READ,
-        cycle=9,
-        path="services/gateway/app/static/image.js",
-        ts=1,
-    )
-    rejection = _rejected(READ, cycle=9, ts=2)
-    finished = {"type": "tool_finished", "cycle": 9, "name": READ, "ts": 3}
-    full_events = [started, rejection, finished]
-
-    def new_events_since(events, controller, *, run_id, rollover_window=64):
-        return list(events[1:])
-
-    def update(existing, events, *, run_id, cycle, limit=32):
-        seen["existing"] = list(existing)
-        seen["events"] = list(events)
-        return list(existing)
-
-    resilience = _resilience(
-        new_events_since=new_events_since,
-        update_inspection_ledger=update,
-    )
+def _install(new_events_since):
+    resilience = _resilience(new_events_since=new_events_since)
     integrity.install(resilience)
-    existing = [
-        {
-            "signature": _signature(started),
-            "target": _target(started),
-            "count": 1,
-            "last_run_id": "run-1",
-            "last_cycle": 9,
-            "last_seen_at": 1.0,
-        }
-    ]
+    return resilience
 
-    new_events = resilience.new_events_since(
-        full_events,
-        {"processed_event_cursor": "after-start"},
-        run_id="run-1",
-    )
-    result = resilience.update_inspection_ledger(
-        existing,
-        new_events,
-        run_id="run-1",
+
+def test_pending_start_is_not_persisted_before_tool_finishes():
+    start = _started(
+        READ,
         cycle=9,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        call_id="call-1",
+    )
+    resilience = _install(
+        lambda events, controller, *, run_id, rollover_window=64: list(events)
+    )
+
+    new_events = resilience.new_events_since([start], {}, run_id="run-1")
+    result = resilience.update_inspection_ledger(
+        [], new_events, run_id="run-1", cycle=9
     )
 
     assert result == []
-    assert seen["existing"] == []
-    assert seen["events"] == [rejection, finished]
 
 
-def test_split_poll_rejection_preserves_prior_valid_same_signature():
-    seen = {}
-    valid = _started(
+def test_same_poll_success_is_persisted_after_completion():
+    start = _started(
         READ,
-        cycle=8,
+        cycle=9,
         path="services/gateway/app/ui_routes.py",
         ts=1,
-        start_line=100,
+        call_id="call-1",
     )
-    rejected = _started(
-        READ,
-        cycle=9,
-        path="services/gateway/app/ui_routes.py",
-        ts=3,
-        start_line=200,
+    finish = _finished(READ, cycle=9, ts=2, call_id="call-1")
+    events = [start, finish]
+    resilience = _install(
+        lambda current, controller, *, run_id, rollover_window=64: list(current)
     )
-    rejection = _rejected(READ, cycle=9, ts=4)
-    finished = {"type": "tool_finished", "cycle": 9, "name": READ, "ts": 5}
-    full_events = [
-        valid,
-        {"type": "tool_finished", "cycle": 8, "name": READ, "ts": 2},
-        rejected,
-        rejection,
-        finished,
-    ]
 
-    def new_events_since(events, controller, *, run_id, rollover_window=64):
-        # Prior poll already persisted both starts; this poll sees only the
-        # rejection outcome for the second occurrence.
-        return list(events[3:])
-
-    def update(existing, events, *, run_id, cycle, limit=32):
-        seen["existing"] = [dict(item) for item in existing]
-        seen["events"] = list(events)
-        return [dict(item) for item in existing]
-
-    resilience = _resilience(
-        new_events_since=new_events_since,
-        update_inspection_ledger=update,
-    )
-    integrity.install(resilience)
-    existing = [
-        {
-            "signature": _signature(rejected),
-            "target": _target(rejected),
-            "count": 2,
-            "last_run_id": "run-1",
-            "last_cycle": 9,
-            "last_seen_at": 3.0,
-        }
-    ]
-
-    new_events = resilience.new_events_since(full_events, {}, run_id="run-1")
+    new_events = resilience.new_events_since(events, {}, run_id="run-1")
     result = resilience.update_inspection_ledger(
-        existing,
-        new_events,
-        run_id="run-1",
-        cycle=9,
+        [], new_events, run_id="run-1", cycle=9
     )
 
     assert len(result) == 1
-    restored = result[0]
-    assert restored["count"] == 1
-    assert restored["target"] == _target(valid)
-    assert restored["last_cycle"] == 8
-    assert restored["last_seen_at"] == 1.0
-    assert seen["existing"] == [restored]
-    assert seen["events"] == [rejection, finished]
+    assert result[0]["count"] == 1
+    assert result[0]["target"] == _target(start)
+    assert result[0][integrity._OCCURRENCE_KEYS_FIELD] == ["id:call-1"]
 
 
-def test_same_poll_rejected_same_signature_does_not_decrement_prior_existing_fact():
-    seen = {}
-    prior = _started(
+def test_same_poll_rejected_start_never_becomes_inspection_fact():
+    start = _started(
         READ,
-        cycle=8,
-        path="services/gateway/app/ui_routes.py",
+        cycle=9,
+        path="services/gateway/app/static/image.js",
         ts=1,
-        start_line=100,
+        call_id="call-rejected",
     )
-    rejected = _started(
+    rejection = _rejected(READ, cycle=9, ts=2)
+    finish = _finished(READ, cycle=9, ts=3, call_id="call-rejected")
+    events = [start, rejection, finish]
+    resilience = _install(
+        lambda current, controller, *, run_id, rollover_window=64: list(current)
+    )
+
+    new_events = resilience.new_events_since(events, {}, run_id="run-1")
+    result = resilience.update_inspection_ledger(
+        [], new_events, run_id="run-1", cycle=9
+    )
+
+    assert result == []
+    assert rejection in new_events
+
+
+def test_split_poll_success_is_added_when_finish_arrives():
+    start = _started(
         READ,
         cycle=9,
         path="services/gateway/app/ui_routes.py",
-        ts=3,
+        ts=1,
+        call_id="call-split-success",
+    )
+    finish = _finished(READ, cycle=9, ts=2, call_id="call-split-success")
+    full_events = [start, finish]
+    resilience = _install(
+        lambda events, controller, *, run_id, rollover_window=64: [events[-1]]
+    )
+
+    new_events = resilience.new_events_since(full_events, {}, run_id="run-1")
+    result = resilience.update_inspection_ledger(
+        [], new_events, run_id="run-1", cycle=9
+    )
+
+    assert new_events == [finish]
+    assert len(result) == 1
+    assert result[0]["target"] == _target(start)
+    assert result[0][integrity._OCCURRENCE_KEYS_FIELD] == [
+        "id:call-split-success"
+    ]
+
+
+def test_cross_run_prior_metadata_survives_rejected_same_signature_attempt():
+    prior = _started(
+        READ,
+        cycle=4,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        call_id="old-success",
+        start_line=100,
+    )
+    existing = [
+        {
+            "signature": _signature(prior),
+            "target": _target(prior),
+            "count": 1,
+            "last_run_id": "run-old",
+            "last_cycle": 4,
+            "last_seen_at": 1.0,
+            integrity._OCCURRENCE_KEYS_FIELD: ["id:old-success"],
+        }
+    ]
+    rejected = _started(
+        READ,
+        cycle=2,
+        path="services/gateway/app/ui_routes.py",
+        ts=10,
+        call_id="new-rejected",
         start_line=200,
     )
-    rejection = _rejected(READ, cycle=9, ts=4)
-    full_events = [prior, rejected, rejection]
-
-    def new_events_since(events, controller, *, run_id, rollover_window=64):
-        return list(events[1:])
-
-    def update(existing, events, *, run_id, cycle, limit=32):
-        seen["existing"] = [dict(item) for item in existing]
-        seen["events"] = list(events)
-        return [dict(item) for item in existing]
-
-    resilience = _resilience(
-        new_events_since=new_events_since,
-        update_inspection_ledger=update,
+    rejection = _rejected(READ, cycle=2, ts=11)
+    finish = _finished(READ, cycle=2, ts=12, call_id="new-rejected")
+    current_run_events = [rejected, rejection, finish]
+    resilience = _install(
+        lambda events, controller, *, run_id, rollover_window=64: list(events[1:])
     )
-    integrity.install(resilience)
+
+    new_events = resilience.new_events_since(
+        current_run_events, {}, run_id="run-new"
+    )
+    result = resilience.update_inspection_ledger(
+        existing, new_events, run_id="run-new", cycle=2
+    )
+
+    assert result == existing
+    assert result[0]["last_run_id"] == "run-old"
+    assert result[0]["last_cycle"] == 4
+    assert result[0]["last_seen_at"] == 1.0
+    assert result[0]["target"] == _target(prior)
+
+
+def test_rollover_replay_rejection_does_not_decrement_unseen_start():
+    prior = _started(
+        READ,
+        cycle=1,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        call_id="persisted-success",
+        start_line=100,
+    )
     existing = [
         {
             "signature": _signature(prior),
             "target": _target(prior),
             "count": 1,
             "last_run_id": "run-1",
-            "last_cycle": 8,
+            "last_cycle": 1,
             "last_seen_at": 1.0,
+            integrity._OCCURRENCE_KEYS_FIELD: ["id:persisted-success"],
         }
     ]
+    rejected = _started(
+        READ,
+        cycle=9,
+        path="services/gateway/app/ui_routes.py",
+        ts=100,
+        call_id="never-persisted",
+        start_line=300,
+    )
+    filler = [
+        {"type": "assistant", "cycle": 9, "ts": 101 + index, "content": "x"}
+        for index in range(70)
+    ]
+    rejection = _rejected(READ, cycle=9, ts=200)
+    finish = _finished(READ, cycle=9, ts=201, call_id="never-persisted")
+    full_events = [rejected, *filler, rejection, finish]
+    replay_tail = full_events[-64:]
+    resilience = _install(
+        lambda events, controller, *, run_id, rollover_window=64: replay_tail
+    )
 
     new_events = resilience.new_events_since(full_events, {}, run_id="run-1")
     result = resilience.update_inspection_ledger(
-        existing,
-        new_events,
-        run_id="run-1",
-        cycle=9,
+        existing, new_events, run_id="run-1", cycle=9
     )
 
+    assert rejected not in new_events
+    assert rejection in new_events
     assert result == existing
-    assert seen["existing"] == existing
-    assert seen["events"] == [rejection]
 
 
-def test_same_poll_filter_preserves_rejection_for_noncompliance_observation():
-    seen = {}
-
-    def new_events_since(events, controller, *, run_id, rollover_window=64):
-        return list(events)
-
-    def update(existing, events, *, run_id, cycle, limit=32):
-        seen["events"] = list(events)
-        seen["run_id"] = run_id
-        seen["cycle"] = cycle
-        seen["limit"] = limit
-        return [{"target": "ok"}]
-
-    resilience = _resilience(
-        new_events_since=new_events_since,
-        update_inspection_ledger=update,
+def test_replayed_completed_success_is_idempotent_by_occurrence_key():
+    start = _started(
+        READ,
+        cycle=9,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        call_id="call-once",
     )
-    integrity.install(resilience)
+    finish = _finished(READ, cycle=9, ts=2, call_id="call-once")
+    full_events = [start, finish]
+    resilience = _install(
+        lambda events, controller, *, run_id, rollover_window=64: list(events)
+    )
+
+    first_new = resilience.new_events_since(full_events, {}, run_id="run-1")
+    first = resilience.update_inspection_ledger(
+        [], first_new, run_id="run-1", cycle=9
+    )
+    replay_new = resilience.new_events_since(full_events, {}, run_id="run-1")
+    replayed = resilience.update_inspection_ledger(
+        first, replay_new, run_id="run-1", cycle=9
+    )
+
+    assert first[0]["count"] == 1
+    assert replayed[0]["count"] == 1
+    assert replayed[0][integrity._OCCURRENCE_KEYS_FIELD] == ["id:call-once"]
+
+
+def test_two_completed_successes_with_same_signature_count_separately():
+    first = _started(
+        READ,
+        cycle=8,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        call_id="call-a",
+        start_line=100,
+    )
+    second = _started(
+        READ,
+        cycle=9,
+        path="services/gateway/app/ui_routes.py",
+        ts=3,
+        call_id="call-b",
+        start_line=200,
+    )
     events = [
-        _started(READ, cycle=9, path="services/gateway/app/static/image.js", ts=1),
-        _rejected(READ, cycle=9, ts=2),
-        {"type": "tool_finished", "cycle": 9, "name": READ, "ts": 3},
+        first,
+        _finished(READ, cycle=8, ts=2, call_id="call-a"),
+        second,
+        _finished(READ, cycle=9, ts=4, call_id="call-b"),
     ]
+    resilience = _install(
+        lambda current, controller, *, run_id, rollover_window=64: list(current)
+    )
 
     new_events = resilience.new_events_since(events, {}, run_id="run-1")
     result = resilience.update_inspection_ledger(
-        [],
-        new_events,
-        run_id="run-1",
-        cycle=9,
-        limit=12,
+        [], new_events, run_id="run-1", cycle=9
     )
 
-    assert result == [{"target": "ok"}]
-    assert not any(event.get("type") == "tool_started" for event in seen["events"])
-    assert any(
-        event.get("type") == "forced_action_tool_rejected"
-        for event in seen["events"]
-    )
-    assert seen["run_id"] == "run-1"
-    assert seen["cycle"] == 9
-    assert seen["limit"] == 12
-
-
-def test_full_event_context_does_not_change_new_event_return_or_cursor_semantics():
-    events = [
-        _started(READ, cycle=9, path="a.py", ts=1),
-        _rejected(READ, cycle=9, ts=2),
+    assert len(result) == 1
+    assert result[0]["count"] == 2
+    assert result[0]["target"] == _target(second)
+    assert result[0][integrity._OCCURRENCE_KEYS_FIELD] == [
+        "id:call-a",
+        "id:call-b",
     ]
-    expected = [events[1]]
 
-    resilience = _resilience(
-        new_events_since=(
-            lambda current, controller, *, run_id, rollover_window=64: expected
-        ),
-        update_inspection_ledger=(lambda *args, **kwargs: []),
+
+def test_success_and_rejection_same_tool_cycle_are_distinguished_by_completion_order():
+    successful = _started(
+        READ,
+        cycle=9,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        call_id="call-good",
     )
-    integrity.install(resilience)
+    rejected = _started(
+        READ,
+        cycle=9,
+        path="services/gateway/app/static/image.js",
+        ts=3,
+        call_id="call-bad",
+    )
+    rejection = _rejected(READ, cycle=9, ts=4)
+    events = [
+        successful,
+        _finished(READ, cycle=9, ts=2, call_id="call-good"),
+        rejected,
+        rejection,
+        _finished(READ, cycle=9, ts=5, call_id="call-bad"),
+    ]
+    resilience = _install(
+        lambda current, controller, *, run_id, rollover_window=64: list(current)
+    )
+
+    new_events = resilience.new_events_since(events, {}, run_id="run-1")
+    result = resilience.update_inspection_ledger(
+        [], new_events, run_id="run-1", cycle=9
+    )
+
+    assert len(result) == 1
+    assert result[0]["target"] == _target(successful)
+    assert result[0]["count"] == 1
+    assert rejection in new_events
+
+
+def test_full_event_context_does_not_change_new_event_return_semantics():
+    start = _started(
+        READ,
+        cycle=9,
+        path="a.py",
+        ts=1,
+        call_id="call-1",
+    )
+    finish = _finished(READ, cycle=9, ts=2, call_id="call-1")
+    events = [start, finish]
+    expected = [finish]
+    resilience = _install(
+        lambda current, controller, *, run_id, rollover_window=64: expected
+    )
 
     actual = resilience.new_events_since(events, {}, run_id="run-1")
 
     assert actual is expected
-    assert len(actual) == 1
+    assert actual == [finish]
 
 
 def test_install_is_idempotent():
     resilience = _resilience(
         new_events_since=lambda *args, **kwargs: [],
-        update_inspection_ledger=lambda *args, **kwargs: [],
     )
     integrity.install(resilience)
     installed_new = resilience.new_events_since
