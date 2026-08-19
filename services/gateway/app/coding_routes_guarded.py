@@ -19,6 +19,7 @@ from app import coding_hypothesis_persistence
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_text_tool_handoff
+from app import coding_verified_evidence_handoff
 from app import coding_routes as routes
 from app import coding_workspace as cw
 
@@ -41,6 +42,11 @@ coding_hypothesis_persistence.install(
     guarded_agent._agent,
     coding_evidence_policy,
     guarded_agent,
+)
+coding_verified_evidence_handoff.install(
+    guarded_agent._agent,
+    coding_execution_dispatch,
+    coding_hypothesis_persistence,
 )
 routes.ca = guarded_agent
 router = APIRouter()
