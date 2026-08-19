@@ -45,10 +45,18 @@ def _known_coding_tools(agent: Any) -> set[str]:
 
 
 def _safe_diagnostics(items: Any) -> tuple[dict[str, Any], ...]:
+    """Copy every sanitizer diagnostic while bounding each scalar field.
+
+    The sanitizer already produced this list from one backend response. Do not
+    truncate the *number* of entries here: a qualifying Coding Workspace policy
+    rejection can legitimately follow several malformed or hallucinated calls,
+    and dropping that later entry would erase the controller signal. Individual
+    strings remain clipped so diagnostics cannot amplify response content.
+    """
     if not isinstance(items, list):
         return ()
     out: list[dict[str, Any]] = []
-    for item in items[:5]:
+    for item in items:
         if not isinstance(item, Mapping):
             continue
         allowed_raw = item.get("allowed_tool_names")
@@ -61,7 +69,7 @@ def _safe_diagnostics(items: Any) -> tuple[dict[str, Any], ...]:
             {
                 "reason": str(item.get("reason") or "").strip()[:120],
                 "name": str(item.get("name") or "").strip()[:160],
-                "allowed_tool_names": allowed[:20],
+                "allowed_tool_names": allowed,
             }
         )
     return tuple(out)
