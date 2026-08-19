@@ -6,6 +6,8 @@ from typing import Any, Dict, Mapping, Sequence
 _ERROR_REQUIRED = "coding_update_plan_hypothesis_required"
 _ERROR_UNLINKED = "coding_update_plan_hypothesis_unlinked"
 _ERROR_NOT_PERSISTED = "coding_update_plan_hypothesis_not_persisted"
+_EVIDENCE_EXCERPT_CHARS = 3_000
+_EVIDENCE_DIGEST_CHARS = 10_000
 
 
 def _base_policy(agent: Any) -> Any:
@@ -56,14 +58,86 @@ def _canonical_note(base: Any, fields: Mapping[str, str]) -> str:
     )
 
 
+def _normalized_path(value: Any) -> str:
+    return str(value or "").strip().replace("\\", "/").strip("/")
+
+
 def _verified_targets(state: Mapping[str, Any]) -> list[str]:
     return sorted(
         {
-            str(target).strip().replace("\\", "/").strip("/")
+            _normalized_path(target)
             for target in (state.get("causal_evidence_targets") or [])
-            if str(target).strip()
+            if _normalized_path(target)
         }
     )
+
+
+def _clip_evidence_excerpt(value: Any, limit: int = _EVIDENCE_EXCERPT_CHARS) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    half = max(400, limit // 2)
+    omitted = max(0, len(text) - (half * 2))
+    return f"{text[:half]}\n[... {omitted} verified chars omitted ...]\n{text[-half:]}"
+
+
+def _verified_evidence_digest(
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> str:
+    """Replay bounded successful read evidence after context compaction/handoff.
+
+    Provenance targets alone tell a fallback model *where* evidence was found but
+    not what the verified implementation actually demonstrated. The durable
+    event ledger already retains bounded tool results, so reuse the latest
+    successful read for each verified target instead of trusting assistant
+    summaries or reopening inspection.
+    """
+    targets = set(_verified_targets(state))
+    if not targets:
+        return ""
+    excerpts: Dict[str, str] = {}
+    events = [
+        event
+        for event in (task.get("agent_events") or [])
+        if isinstance(event, Mapping)
+    ]
+    for event in reversed(events):
+        if len(excerpts) >= len(targets):
+            break
+        if (
+            str(event.get("type") or "") != "tool_finished"
+            or str(event.get("name") or "") != "coding_read_file_lines"
+        ):
+            continue
+        result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
+        if result.get("ok") is False or str(result.get("error") or "").strip():
+            continue
+        path = _normalized_path(result.get("path"))
+        if not path or path not in targets or path in excerpts:
+            continue
+        content = result.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        excerpts[path] = _clip_evidence_excerpt(content)
+
+    if not excerpts:
+        return ""
+    blocks: list[str] = []
+    total = 0
+    for path in _verified_targets(state):
+        excerpt = excerpts.get(path)
+        if not excerpt:
+            continue
+        block = f"Verified read: {path}\n{excerpt}"
+        remaining = _EVIDENCE_DIGEST_CHARS - total
+        if remaining <= 0:
+            break
+        if len(block) > remaining:
+            block = _clip_evidence_excerpt(block, remaining)
+        blocks.append(block)
+        total += len(block)
+    return "\n\n".join(blocks)
 
 
 def _linked_targets(
@@ -180,6 +254,27 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
         return _augment_prompt(original_prompt_context(base, state), base, state)
 
     evidence_policy._provenance_prompt_context = prompt_context_with_persistence
+
+    original_forced_prompt = agent.forced_action.prompt_context
+
+    def forced_prompt_with_verified_evidence(task: Mapping[str, Any]) -> str:
+        prompt = original_forced_prompt(task)
+        state = agent.forced_action.active_state(task)
+        if not _contract_required(state):
+            return prompt
+        digest = _verified_evidence_digest(task, state)
+        if not digest:
+            return prompt
+        return (
+            str(prompt or "").rstrip()
+            + "\nDurable verified repository evidence excerpts from successful reads follow. "
+            "These excerpts are authoritative repository observations; base the hypothesis on them rather "
+            "than assistant memory, commit-name coincidence, or unsupported inference. Do not reopen these "
+            "files merely to recover content already shown here.\n"
+            + digest
+        )
+
+    agent.forced_action.prompt_context = forced_prompt_with_verified_evidence
 
     original_run_tool = agent._run_tool
 
