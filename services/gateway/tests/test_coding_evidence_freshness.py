@@ -138,10 +138,11 @@ def test_freshness_prompt_requires_revision_without_more_inspection():
             "Expected result",
         )
 
-    captured = {}
-
     class Policy:
         _provenance_prompt_context = staticmethod(lambda base, state: "original")
+        apply_provenance_gate = staticmethod(
+            lambda forced_action, task, state: dict(state)
+        )
 
     freshness.install(Policy)
     prompt = Policy._provenance_prompt_context(
