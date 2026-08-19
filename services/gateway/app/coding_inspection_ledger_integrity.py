@@ -37,26 +37,19 @@ def _find_event_index(
             return index
     key = _event_key(event)
     for index in range(len(full_events) - 1, -1, -1):
-        if _event_key(full_events[index]) == key:
+        if _event_key(full_events[index]) == key and full_events[index] == event:
             return index
     return -1
 
 
 def _matching_rejected_starts(
-    new_events: Sequence[Mapping[str, Any]],
+    rejection_events: Sequence[Mapping[str, Any]],
     full_events: Sequence[Mapping[str, Any]],
 ) -> list[Mapping[str, Any]]:
-    """Return the exact starts paired with newly observed forced rejections.
-
-    `new_events` can begin after the matching `tool_started` when semantic memory
-    polls between start and rejection. Search the complete durable event window
-    for each newly observed rejection, then choose the nearest preceding
-    same-name start in the same cycle. This stays precise when multiple calls to
-    the same tool occur in one cycle.
-    """
+    """Return exact starts paired with the supplied forced-action rejections."""
     matched_full_indexes: set[int] = set()
     starts: list[Mapping[str, Any]] = []
-    for rejection in new_events:
+    for rejection in rejection_events:
         if str(rejection.get("type") or "") != "forced_action_tool_rejected":
             continue
         name = str(rejection.get("name") or "").strip()
@@ -89,6 +82,24 @@ def _matching_rejected_starts(
     return starts
 
 
+def _all_rejected_starts(
+    full_events: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    rejections = [
+        event
+        for event in full_events
+        if str(event.get("type") or "") == "forced_action_tool_rejected"
+    ]
+    return _matching_rejected_starts(rejections, full_events)
+
+
+def _event_is_in_batch(
+    event: Mapping[str, Any],
+    batch: Sequence[Mapping[str, Any]],
+) -> bool:
+    return any(candidate is event or candidate == event for candidate in batch)
+
+
 def filter_rejected_inspection_attempts(
     events: Sequence[Mapping[str, Any]],
     *,
@@ -96,35 +107,131 @@ def filter_rejected_inspection_attempts(
 ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
     full = list(full_events or events)
     starts = _matching_rejected_starts(events, full)
-    rejected_ids = {id(event) for event in starts}
+    rejected_ids = {
+        id(event)
+        for event in starts
+        if _event_is_in_batch(event, events)
+    }
     if not rejected_ids:
-        return list(events), []
+        return list(events), starts
     filtered = [event for event in events if id(event) not in rejected_ids]
     return filtered, starts
 
 
-def _remove_existing_signatures(
+def _as_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _latest_prior_valid_start(
+    resilience: Any,
+    full_events: Sequence[Mapping[str, Any]],
+    rejected_start: Mapping[str, Any],
+    *,
+    signature: str,
+    all_rejected_ids: set[int],
+) -> Mapping[str, Any] | None:
+    rejected_index = _find_event_index(full_events, rejected_start)
+    if rejected_index < 0:
+        return None
+    for index in range(rejected_index - 1, -1, -1):
+        candidate = full_events[index]
+        if id(candidate) in all_rejected_ids:
+            continue
+        if str(candidate.get("type") or "") != "tool_started":
+            continue
+        candidate_signature = str(
+            resilience.inspection_signature(candidate) or ""
+        ).strip()
+        if candidate_signature == signature:
+            return candidate
+    return None
+
+
+def _reconcile_existing_occurrences(
     resilience: Any,
     existing: Any,
     rejected_starts: Sequence[Mapping[str, Any]],
+    *,
+    current_events: Sequence[Mapping[str, Any]],
+    full_events: Sequence[Mapping[str, Any]],
+    run_id: str,
 ) -> Any:
+    """Remove only rejected occurrences that a prior poll already persisted.
+
+    A same-poll rejected start is filtered before the original ledger updater and
+    therefore must not decrement existing state. A split-poll rejected start is
+    already represented in `existing`; decrement exactly that occurrence. If a
+    legitimate earlier occurrence of the same signature remains, restore the
+    entry's latest target/timestamp metadata to that prior valid start rather
+    than erasing the whole inspection fact.
+    """
     if not isinstance(existing, list) or not rejected_starts:
         return existing
-    rejected_signatures = {
-        str(resilience.inspection_signature(event) or "").strip()
-        for event in rejected_starts
-    }
-    rejected_signatures.discard("")
-    if not rejected_signatures:
-        return existing
-    return [
-        item
-        for item in existing
-        if not (
-            isinstance(item, Mapping)
-            and str(item.get("signature") or "").strip() in rejected_signatures
-        )
+
+    split_rejected = [
+        start
+        for start in rejected_starts
+        if not _event_is_in_batch(start, current_events)
     ]
+    if not split_rejected:
+        return existing
+
+    all_rejected_ids = {id(event) for event in _all_rejected_starts(full_events)}
+    by_signature: dict[str, list[Mapping[str, Any]]] = {}
+    for start in split_rejected:
+        signature = str(resilience.inspection_signature(start) or "").strip()
+        if signature:
+            by_signature.setdefault(signature, []).append(start)
+
+    output: list[Any] = []
+    for raw in existing:
+        if not isinstance(raw, Mapping):
+            output.append(raw)
+            continue
+        signature = str(raw.get("signature") or "").strip()
+        rejected_for_signature = by_signature.get(signature)
+        if not rejected_for_signature:
+            output.append(dict(raw))
+            continue
+
+        entry = dict(raw)
+        remaining_count = max(
+            0,
+            _as_int(entry.get("count")) - len(rejected_for_signature),
+        )
+        if remaining_count <= 0:
+            continue
+
+        latest_rejected = max(
+            rejected_for_signature,
+            key=lambda event: _find_event_index(full_events, event),
+        )
+        prior = _latest_prior_valid_start(
+            resilience,
+            full_events,
+            latest_rejected,
+            signature=signature,
+            all_rejected_ids=all_rejected_ids,
+        )
+        entry["count"] = remaining_count
+        if prior is not None:
+            target = str(resilience.inspection_target(prior) or "").strip()
+            if target:
+                entry["target"] = target
+            entry["last_run_id"] = run_id
+            try:
+                entry["last_cycle"] = int(prior.get("cycle") or 0)
+            except (TypeError, ValueError):
+                entry["last_cycle"] = 0
+            try:
+                entry["last_seen_at"] = float(prior.get("ts") or 0)
+            except (TypeError, ValueError):
+                entry["last_seen_at"] = 0.0
+        output.append(entry)
+    return output
 
 
 def install(resilience: Any) -> None:
@@ -137,8 +244,8 @@ def install(resilience: Any) -> None:
 
     The full event window is captured alongside `new_events_since` without
     changing its return value, cursor accounting, or processed-event totals.
-    This lets a later rejection remove a false ledger fact even when semantic
-    memory polled after `tool_started` but before the rejection was emitted.
+    This lets a later rejection repair a false ledger occurrence even when
+    semantic memory polled after `tool_started` but before rejection was emitted.
     """
     if bool(getattr(resilience, "_coding_inspection_ledger_integrity_installed", False)):
         return
@@ -175,10 +282,13 @@ def install(resilience: Any) -> None:
                 events,
                 full_events=full_events,
             )
-            reconciled_existing = _remove_existing_signatures(
+            reconciled_existing = _reconcile_existing_occurrences(
                 resilience,
                 existing,
                 rejected_starts,
+                current_events=events,
+                full_events=full_events,
+                run_id=run_id,
             )
             return original_update(
                 reconciled_existing,
