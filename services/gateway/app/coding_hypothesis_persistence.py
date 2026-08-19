@@ -14,11 +14,16 @@ def _base_policy(agent: Any) -> Any:
 
 
 def _contract_required(state: Mapping[str, Any]) -> bool:
+    needs_hypothesis_write = bool(
+        not state.get("hypothesis_ready")
+        or not state.get("hypothesis_causal_evidence_linked")
+        or state.get("hypothesis_evidence_postdates_plan")
+    )
     return bool(
         str(state.get("action_kind") or "") == "evidence"
         and state.get("evidence_provenance_enforced")
         and state.get("causal_evidence_targets")
-        and not state.get("hypothesis_causal_evidence_linked")
+        and needs_hypothesis_write
         and "coding_update_plan" in set(state.get("allowed_tools") or [])
     )
 
@@ -254,6 +259,7 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
         persisted = bool(
             after_state.get("hypothesis_ready")
             and after_state.get("hypothesis_causal_evidence_linked")
+            and not after_state.get("hypothesis_evidence_postdates_plan")
         )
         if not persisted:
             failed = dict(result)
@@ -262,8 +268,8 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
                     error=_ERROR_NOT_PERSISTED,
                     message=(
                         "The project-plan write completed, but the controller could not re-read the durable "
-                        "plan as a verified structured hypothesis. Revise coding_update_plan.note using the "
-                        "exact labelled contract before attempting an edit."
+                        "plan as a current verified structured hypothesis. Revise coding_update_plan.note using "
+                        "the exact labelled contract before attempting an edit."
                     ),
                     base=base,
                     state=after_state or state,
