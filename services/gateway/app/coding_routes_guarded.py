@@ -37,7 +37,11 @@ coding_contract_hardening.install(
 )
 coding_contract_path_safety.install(coding_contract_hardening)
 coding_evidence_freshness.install(coding_evidence_policy)
-coding_hypothesis_persistence.install(guarded_agent._agent, coding_evidence_policy)
+coding_hypothesis_persistence.install(
+    guarded_agent._agent,
+    coding_evidence_policy,
+    guarded_agent,
+)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
