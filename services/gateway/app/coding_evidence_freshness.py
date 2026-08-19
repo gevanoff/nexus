@@ -14,12 +14,22 @@ def _event_timestamp(event: Mapping[str, Any]) -> float:
         return 0.0
 
 
+def _plan(task: Mapping[str, Any]) -> Mapping[str, Any]:
+    return task.get("project_plan") if isinstance(task.get("project_plan"), Mapping) else {}
+
+
 def _plan_updated_at(task: Mapping[str, Any]) -> float:
-    plan = task.get("project_plan") if isinstance(task.get("project_plan"), Mapping) else {}
     try:
-        return float(plan.get("updated_at") or 0)
+        return float(_plan(task).get("updated_at") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _plan_revision(task: Mapping[str, Any]) -> int:
+    try:
+        return max(0, int(_plan(task).get("revision") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _events(task: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -41,16 +51,27 @@ def _successful_tool_result(event: Mapping[str, Any], *, read: bool = False) -> 
     return result.get("ok") is True
 
 
-def _latest_plan_update_index(events: list[Mapping[str, Any]]) -> int:
-    latest = -1
+def _event_plan_revision(event: Mapping[str, Any]) -> int:
+    result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
+    plan = result.get("plan") if isinstance(result.get("plan"), Mapping) else {}
+    try:
+        return max(0, int(plan.get("revision") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _latest_plan_update(events: list[Mapping[str, Any]]) -> tuple[int, int]:
+    latest_index = -1
+    latest_revision = 0
     for index, event in enumerate(events):
         if (
             str(event.get("type") or "") == "tool_finished"
             and str(event.get("name") or "") == "coding_update_plan"
             and _successful_tool_result(event)
         ):
-            latest = index
-    return latest
+            latest_index = index
+            latest_revision = _event_plan_revision(event)
+    return latest_index, latest_revision
 
 
 def _latest_linked_read(
@@ -82,33 +103,53 @@ def _hypothesis_is_stale(
     *,
     latest_read_index: int,
     latest_read_ts: float,
-) -> tuple[bool, int, float, str]:
+) -> tuple[bool, int, int, float, str]:
     """Return whether linked evidence demonstrably postdates the current plan.
 
-    Event order is authoritative when both tool events survive in the bounded
-    event ring. If the plan-update event has been compacted away, the durable
-    project-plan ``updated_at`` timestamp preserves ordering. Legacy fixtures or
-    old workspaces with neither marker are left unchanged rather than inventing
-    staleness and deadlocking a previously qualified edit state.
+    A surviving ``coding_update_plan`` event is authoritative only when it can
+    be shown to represent the *current* durable plan revision. The UI and v1
+    plan endpoints update ``project_plan`` directly and therefore may advance
+    revision/``updated_at`` without emitting a tool event. When that happens,
+    compare the current durable plan timestamp with the linked read timestamp.
+
+    Legacy fixtures or compacted states without enough ordering information are
+    left unchanged rather than inventing staleness and deadlocking a previously
+    qualified edit state.
     """
-    latest_plan_index = _latest_plan_update_index(events)
+    latest_plan_index, event_plan_revision = _latest_plan_update(events)
+    current_plan_revision = _plan_revision(task)
     plan_updated_at = _plan_updated_at(task)
 
-    if latest_plan_index >= 0:
+    event_represents_current_plan = latest_plan_index >= 0 and (
+        current_plan_revision <= 0
+        or event_plan_revision <= 0
+        or event_plan_revision == current_plan_revision
+    )
+    if event_represents_current_plan:
         return (
             latest_plan_index < latest_read_index,
             latest_plan_index,
+            event_plan_revision,
             plan_updated_at,
             "event_order",
         )
+
     if plan_updated_at > 0 and latest_read_ts > 0:
         return (
             latest_read_ts > plan_updated_at,
             latest_plan_index,
+            event_plan_revision,
             plan_updated_at,
-            "plan_timestamp",
+            "current_plan_timestamp",
         )
-    return False, latest_plan_index, plan_updated_at, "legacy_unknown"
+
+    return (
+        False,
+        latest_plan_index,
+        event_plan_revision,
+        plan_updated_at,
+        "legacy_unknown",
+    )
 
 
 def refine_state(task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -120,8 +161,9 @@ def refine_state(task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str,
 
         read linked evidence -> update hypothesis -> edit
 
-    Event order is used when available, with the durable project-plan timestamp
-    as the compaction-safe fallback.
+    Event order is used only when the surviving plan event represents the
+    current plan revision. Otherwise the durable current-plan timestamp is the
+    compaction/API-update-safe ordering source.
     """
     out = dict(state)
     if str(out.get("action_kind") or "") != "edit":
@@ -140,7 +182,7 @@ def refine_state(task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str,
     if latest_read_index < 0:
         return out
 
-    stale, latest_plan_index, plan_updated_at, source = _hypothesis_is_stale(
+    stale, latest_plan_index, event_plan_revision, plan_updated_at, source = _hypothesis_is_stale(
         task,
         events,
         latest_read_index=latest_read_index,
@@ -156,6 +198,7 @@ def refine_state(task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str,
     out["latest_linked_evidence_event_index"] = latest_read_index
     out["latest_linked_evidence_at"] = latest_read_ts
     out["latest_hypothesis_plan_event_index"] = latest_plan_index
+    out["latest_hypothesis_plan_event_revision"] = event_plan_revision
     out["latest_hypothesis_plan_updated_at"] = plan_updated_at
     out["required_action"] = (
         "Verified causal evidence was gathered after the current structured hypothesis. "
@@ -195,7 +238,7 @@ def install(evidence_policy: Any) -> None:
         allowed = ", ".join(state.get("allowed_tools") or [])
         return (
             "Controller forced-action mode is ACTIVE. The current hypothesis is stale because "
-            "verified causal evidence was read after the most recent coding_update_plan. Do not "
+            "verified causal evidence was read after the current durable plan revision. Do not "
             "edit or inspect further. Revise the structured hypothesis now so its claims account "
             "for that newer evidence. Verified causal targets: "
             f"{verified or '(none)'}. Use these exact labelled fields:\n{fields}\n"
