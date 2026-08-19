@@ -6,27 +6,87 @@ from typing import Any, Dict, Mapping, Sequence
 
 _ACCEPTANCE_PARTS = {"tests", "test", "fixtures", "fixture", "examples", "example"}
 _CONTEXT_SUFFIXES = {".md", ".rst", ".txt"}
+_CODE_SUFFIXES = {
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".html",
+    ".css",
+    ".scss",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".sh",
+}
 _OVERRIDE_KEY = "_execution_forced_action_override"
 
 
-def _event_after_activation(
-    event: Mapping[str, Any],
-    *,
-    index: int,
-    state: Mapping[str, Any],
-) -> bool:
+def _event_timestamp(event: Mapping[str, Any]) -> float:
+    try:
+        return float(event.get("ts") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _evidence_window_start(events: list[Mapping[str, Any]], state: Mapping[str, Any]) -> int:
+    """Anchor evidence to the run that *produced* forced-action activation.
+
+    A resumed forced action keeps its original ``activation_event_count`` and
+    ``activated_at`` but updates ``run_id`` to the new runner. Using the current
+    run id therefore loses the causal reads that triggered the controller in the
+    previous run. Walk backward from the preserved activation cursor to the
+    nearest run start first; this identifies the originating run even after a
+    pause/resume. Timestamp and current-run fallbacks cover legacy states that
+    lack a reliable activation cursor.
+    """
+    try:
+        activation_cursor = int(state.get("activation_event_count") or 0)
+    except (TypeError, ValueError):
+        activation_cursor = 0
+    activation_cursor = max(0, min(activation_cursor, len(events)))
+    if activation_cursor > 0:
+        for index in range(activation_cursor - 1, -1, -1):
+            if str(events[index].get("type") or "") == "started":
+                return index
+
     try:
         activated_at = float(state.get("activated_at") or 0)
     except (TypeError, ValueError):
         activated_at = 0.0
-    try:
-        event_ts = float(event.get("ts") or 0)
-    except (TypeError, ValueError):
-        event_ts = 0.0
-    if activated_at > 0 and event_ts > 0:
-        return event_ts >= activated_at
-    legacy_start = max(0, int(state.get("activation_event_count") or 0))
-    return index >= legacy_start
+    if activated_at > 0:
+        candidate: int | None = None
+        for index, event in enumerate(events):
+            event_ts = _event_timestamp(event)
+            if event_ts > activated_at and event_ts > 0:
+                break
+            if str(event.get("type") or "") == "started":
+                candidate = index
+        if candidate is not None:
+            return candidate
+
+    state_run_id = str(state.get("run_id") or "").strip()
+    if state_run_id:
+        for index, event in enumerate(events):
+            if (
+                str(event.get("type") or "") == "started"
+                and str(event.get("run_id") or "").strip() == state_run_id
+            ):
+                return index
+    return activation_cursor
 
 
 def _path_class(path: str) -> str:
@@ -51,23 +111,45 @@ def _path_class(path: str) -> str:
     return "causal"
 
 
-def _path_from_result(result: Mapping[str, Any]) -> str:
-    explicit = str(result.get("path") or "").strip()
-    if explicit:
-        return explicit
+def _looks_like_repository_file(path: str) -> bool:
+    normalized = str(path or "").strip().replace("\\", "/").strip("/")
+    if not normalized:
+        return False
+    parsed = PurePosixPath(normalized)
+    return parsed.suffix.casefold() in _CODE_SUFFIXES or bool(parsed.suffix)
+
+
+def _paths_from_result(result: Mapping[str, Any]) -> list[str]:
+    out: list[str] = []
+
+    def append(value: Any) -> None:
+        path = str(value or "").strip().replace("\\", "/").strip("/")
+        if path and path not in out:
+            out.append(path)
+
+    explicit = result.get("path")
+    if isinstance(explicit, str) and explicit.strip():
+        append(explicit)
+
     matches = result.get("matches")
     if not isinstance(matches, list):
-        return ""
+        return out
     for item in matches:
+        if isinstance(item, Mapping):
+            candidate = item.get("path") or item.get("file") or item.get("filename")
+            if isinstance(candidate, str) and candidate.strip():
+                append(candidate)
+            continue
         text = str(item or "").strip()
         if not text:
             continue
+        # Common search output is repository/path.ext:LINE:TEXT. Do not turn a
+        # directory-scoped search argument into causal evidence when the result
+        # itself did not identify a concrete file.
         candidate = text.split(":", 1)[0].strip()
-        if "/" in candidate or candidate.endswith(
-            (".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".html", ".yaml", ".yml", ".json")
-        ):
-            return candidate
-    return ""
+        if _looks_like_repository_file(candidate):
+            append(candidate)
+    return out
 
 
 def _base_policy(forced_action: Any) -> Any:
@@ -83,11 +165,12 @@ def _evidence_records(
     events = [
         item for item in (task.get("agent_events") or []) if isinstance(item, Mapping)
     ]
+    window_start = _evidence_window_start(events, state)
     started: dict[str, Mapping[str, Any]] = {}
     last_started_by_name: dict[str, Mapping[str, Any]] = {}
     records: list[dict[str, str]] = []
     for index, event in enumerate(events):
-        if not _event_after_activation(event, index=index, state=state):
+        if index < window_start:
             continue
         event_type = str(event.get("type") or "")
         tool_call_id = str(event.get("tool_call_id") or "")
@@ -111,14 +194,21 @@ def _evidence_records(
             if isinstance(source, Mapping) and isinstance(source.get("args"), Mapping)
             else {}
         )
-        path = str(_path_from_result(result) or args.get("path") or "").strip()
-        records.append(
-            {
-                "tool": name,
-                "path": path,
-                "class": _path_class(path),
-            }
-        )
+        paths = _paths_from_result(result)
+        if name == "coding_read_file_lines" and not paths:
+            read_path = str(args.get("path") or "").strip()
+            if read_path:
+                paths = [read_path]
+        strength = "verified" if name == "coding_read_file_lines" else "candidate"
+        for path in paths:
+            records.append(
+                {
+                    "tool": name,
+                    "path": path,
+                    "class": _path_class(path),
+                    "strength": strength,
+                }
+            )
     return records
 
 
@@ -147,11 +237,22 @@ def apply_provenance_gate(
         return state
 
     records = _evidence_records(base, task, state)
+    candidate_causal_targets = sorted(
+        {
+            record["path"]
+            for record in records
+            if record.get("class") == "causal"
+            and record.get("strength") == "candidate"
+            and record.get("path")
+        }
+    )
     causal_targets = sorted(
         {
             record["path"]
             for record in records
-            if record.get("class") == "causal" and record.get("path")
+            if record.get("class") == "causal"
+            and record.get("strength") == "verified"
+            and record.get("path")
         }
     )
     acceptance_targets = sorted(
@@ -175,40 +276,62 @@ def apply_provenance_gate(
         for target in causal_targets
         if _repository_evidence_links_target(repository_evidence, target)
     ]
-    provenance_ready = bool(linked_targets)
+    provenance_ready = bool(hypothesis_ready and linked_targets)
 
     state["evidence_provenance_enforced"] = True
     state["raw_targeted_evidence_count"] = int(state.get("targeted_evidence_count") or 0)
+    state["candidate_causal_evidence_targets"] = candidate_causal_targets
     state["causal_evidence_count"] = len(causal_targets)
     state["causal_evidence_targets"] = causal_targets
     state["acceptance_evidence_targets"] = acceptance_targets
     state["context_evidence_targets"] = context_targets
-    state["hypothesis_causal_evidence_linked"] = provenance_ready
+    state["hypothesis_causal_evidence_linked"] = bool(linked_targets)
     state["hypothesis_causal_targets"] = linked_targets
-
-    if state.get("action_kind") == "edit" and provenance_ready:
-        return state
-
-    state["action_kind"] = "evidence"
-    state["required_action"] = (
-        "Establish a remediation hypothesis from causal implementation/configuration "
-        "evidence. Tests, fixtures, examples, and documentation may define acceptance "
-        "criteria but do not by themselves establish root cause. Record Repository "
-        "evidence that explicitly cites at least one inspected causal target."
-    )
-    evidence_tools = set(base._ACTION_ALLOWED_TOOLS["evidence"])
-    if causal_targets:
-        # Causal evidence exists; force hypothesis revision rather than another
-        # inspection cycle. If only acceptance/context evidence exists, restore
-        # one deterministic causal-evidence path even if the legacy read budget
-        # has already been consumed.
-        evidence_tools -= base._TARGETED_EVIDENCE_TOOLS
-    state["allowed_tools"] = sorted(evidence_tools)
     state["hypothesis_ready"] = hypothesis_ready
     state["hypothesis_fields"] = sorted(fields)
     state["hypothesis_plan_revision"] = (
         base._plan_revision(task) if hypothesis_ready else None
     )
+
+    if provenance_ready:
+        # Provenance is the final execution-policy refinement. Do not wait for a
+        # second, independently recomputed legacy gate to happen to promote the
+        # same durable task: the next model turn must atomically receive edit
+        # tools once its structured hypothesis cites verified causal evidence.
+        state["required_action"] = str(
+            state.get("canonical_required_action")
+            or "Make the smallest evidence-backed edit, or finish with a concrete blocker."
+        )
+        state["action_kind"] = "edit"
+        state["allowed_tools"] = sorted(base._ACTION_ALLOWED_TOOLS["edit"])
+        return state
+
+    state["action_kind"] = "evidence"
+    evidence_tools: set[str]
+    if causal_targets:
+        state["required_action"] = (
+            "Record a remediation hypothesis that explicitly cites verified causal "
+            "implementation/configuration evidence, then proceed to the smallest edit."
+        )
+        evidence_tools = {"coding_update_plan", "coding_finish"}
+    elif candidate_causal_targets:
+        state["required_action"] = (
+            "Verify the candidate causal implementation/configuration target with one "
+            "bounded coding_read_file_lines action before recording a remediation hypothesis."
+        )
+        evidence_tools = {"coding_read_file_lines", "coding_finish"}
+    else:
+        state["required_action"] = (
+            "Gather one bounded piece of causal implementation/configuration evidence. "
+            "Search may identify a candidate target; read implementation/configuration "
+            "content before treating that target as verified root-cause evidence."
+        )
+        evidence_tools = {
+            "coding_search_text",
+            "coding_read_file_lines",
+            "coding_finish",
+        }
+    state["allowed_tools"] = sorted(evidence_tools)
     return state
 
 
@@ -236,30 +359,35 @@ def execution_task(forced_action: Any, task: Mapping[str, Any]) -> dict[str, Any
 
 def _provenance_prompt_context(base: Any, state: Mapping[str, Any]) -> str:
     allowed = ", ".join(state.get("allowed_tools") or [])
+    candidates = list(state.get("candidate_causal_evidence_targets") or [])
     causal_targets = list(state.get("causal_evidence_targets") or [])
     fields = "; ".join(
         f"{label}: <specific finding>" for label in base._HYPOTHESIS_FIELDS
     )
-    if not causal_targets:
+    if causal_targets:
         next_step = (
-            "Use one targeted coding_search_text or coding_read_file_lines action "
-            "against an implementation or configuration target. Tests, fixtures, "
-            "examples, and documentation may define acceptance criteria but do not "
-            "establish root cause."
+            "Verified causal implementation/configuration evidence is available. "
+            "Do not inspect further; call coding_update_plan and explicitly cite at "
+            "least one verified repository-relative causal target in Repository evidence."
+        )
+    elif candidates:
+        next_step = (
+            "Search has identified a candidate causal target, but search location alone "
+            "does not establish root cause. Read the candidate implementation/configuration "
+            "with one bounded coding_read_file_lines action before forming the hypothesis."
         )
     else:
         next_step = (
-            "Causal implementation/configuration evidence is already available. "
-            "Do not spend the next action on more inspection; call coding_update_plan "
-            "and explicitly cite at least one causal target in Repository evidence."
+            "Use one bounded coding_search_text or coding_read_file_lines action against "
+            "implementation/configuration. Tests, fixtures, examples, and documentation "
+            "may define acceptance criteria but do not establish root cause."
         )
     return (
         "Controller forced-action mode is ACTIVE for the unchanged durable state, "
-        "but editing is not yet authorized. "
-        "The generic forced-mode prohibition on inspection/plan revision is superseded for this bounded evidence checkpoint. "
-        "The execution policy applies an explicit causal-evidence provenance gate. "
-        f"{next_step} Then record the remediation hypothesis using these exact fields: "
-        f"{fields}. Available tools: {allowed or 'coding_finish'}."
+        "but editing is not yet authorized. The execution policy applies an explicit "
+        "causal-evidence provenance gate. "
+        f"{next_step} When verified evidence exists, record the remediation hypothesis "
+        f"using these exact fields: {fields}. Available tools: {allowed or 'coding_finish'}."
     )
 
 
@@ -338,15 +466,13 @@ class ExecutionForcedActionFacade:
         attempts = int(state.get("attempt_count") or 0)
         kind = str(state.get("action_kind") or "bounded")
         policy = (
-            "Only causal-evidence and remediation-hypothesis tools are enabled. Editing is disabled until implementation/configuration evidence is explicitly linked to the structured hypothesis."
+            "Only the tools for the current evidence-strength transition are enabled. "
+            "Editing is disabled until verified implementation/configuration evidence "
+            "is explicitly linked to the structured hypothesis."
             if state.get("evidence_provenance_enforced") and kind == "evidence"
             else (
-                "Only bounded evidence and remediation-hypothesis tools are enabled. Editing is disabled until targeted repository evidence and a structured hypothesis are recorded."
-                if kind == "evidence"
-                else (
-                    f"Only tools for the current {kind} action are enabled. Inspection, "
-                    "unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
-                )
+                f"Only tools for the current {kind} action are enabled. Inspection, "
+                "unrelated validation, and plan churn are disabled until durable progress or terminal escalation."
             )
         )
         message = (
@@ -368,6 +494,9 @@ class ExecutionForcedActionFacade:
             "stage": state.get("stage"),
             "hypothesis_ready": state.get("hypothesis_ready"),
             "targeted_evidence_count": state.get("targeted_evidence_count"),
+            "candidate_causal_evidence_targets": list(
+                state.get("candidate_causal_evidence_targets") or []
+            ),
             "causal_evidence_targets": list(state.get("causal_evidence_targets") or []),
             "acceptance_evidence_targets": list(
                 state.get("acceptance_evidence_targets") or []
