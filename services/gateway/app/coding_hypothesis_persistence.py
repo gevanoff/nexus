@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 from typing import Any, Dict, Mapping, Sequence
 
 
@@ -154,7 +153,7 @@ def _augment_prompt(original: str, base: Any, state: Mapping[str, Any]) -> str:
     )
 
 
-def install(agent: Any, evidence_policy: Any) -> None:
+def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None:
     """Install a durable, machine-verifiable hypothesis handoff for Coding Workspace."""
     if bool(getattr(agent, "_coding_hypothesis_persistence_installed", False)):
         return
@@ -292,4 +291,13 @@ def install(agent: Any, evidence_policy: Any) -> None:
         return enriched
 
     agent._run_tool = run_tool_with_hypothesis_persistence
+    # coding_agent_guarded intentionally exports its installed _run_tool seam and
+    # historical qualification asserts identity with the agent hook. Preserve
+    # that invariant while composing this wrapper around semantic acceptance.
+    if (
+        guarded_agent is not None
+        and getattr(guarded_agent, "_run_tool_with_semantic_acceptance", None)
+        is original_run_tool
+    ):
+        guarded_agent._run_tool_with_semantic_acceptance = run_tool_with_hypothesis_persistence
     agent._coding_hypothesis_persistence_installed = True
