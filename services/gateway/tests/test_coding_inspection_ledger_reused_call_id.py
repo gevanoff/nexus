@@ -9,10 +9,10 @@ READ = "coding_read_file_lines"
 PATH = "services/gateway/app/ui_routes.py"
 
 
-def _start(*, cycle: int, ts: float, start_line: int) -> dict:
+def _start(*, start_line: int) -> dict:
     return {
         "type": "tool_started",
-        "cycle": cycle,
+        "cycle": 9,
         "tool_call_id": "call_1",
         "name": READ,
         "args": {
@@ -20,17 +20,15 @@ def _start(*, cycle: int, ts: float, start_line: int) -> dict:
             "start_line": start_line,
             "line_count": 20,
         },
-        "ts": ts,
     }
 
 
-def _finish(*, cycle: int, ts: float) -> dict:
+def _finish() -> dict:
     return {
         "type": "tool_finished",
-        "cycle": cycle,
+        "cycle": 9,
         "tool_call_id": "call_1",
         "name": READ,
-        "ts": ts,
     }
 
 
@@ -66,15 +64,17 @@ def _ledger_update(existing, events, *, run_id, cycle, limit=32):
     return [ledger[key] for key in order[-limit:]]
 
 
-def test_reused_backend_call_id_in_later_cycle_is_distinct_occurrence():
-    first = _start(cycle=8, ts=100.0, start_line=100)
-    second = _start(cycle=9, ts=200.0, start_line=200)
-    events = [
-        first,
-        _finish(cycle=8, ts=101.0),
-        second,
-        _finish(cycle=9, ts=201.0),
-    ]
+def test_same_cycle_same_second_reused_backend_call_id_is_distinct_occurrence():
+    persisted: list[dict] = []
+
+    # Model the real _append_event boundary: the wrapper must provide uniqueness
+    # before the original appender stamps its one-second-resolution timestamp.
+    def append_event(_task_id: str, event: dict) -> dict:
+        stored = {"ts": 100, **event}
+        persisted.append(stored)
+        return stored
+
+    agent = SimpleNamespace(_append_event=append_event)
     resilience = SimpleNamespace(
         new_events_since=(
             lambda current, controller, *, run_id, rollover_window=64: list(current)
@@ -83,9 +83,19 @@ def test_reused_backend_call_id_in_later_cycle_is_distinct_occurrence():
         inspection_signature=_signature,
         inspection_target=_target,
     )
-    integrity.install(resilience)
+    integrity.install(resilience, agent)
 
-    new_events = resilience.new_events_since(events, {}, run_id="run-1")
+    first = agent._append_event("task-1", _start(start_line=100))
+    agent._append_event("task-1", _finish())
+    second = agent._append_event("task-1", _start(start_line=200))
+    agent._append_event("task-1", _finish())
+
+    assert first["tool_call_id"] == second["tool_call_id"] == "call_1"
+    assert first["cycle"] == second["cycle"] == 9
+    assert first["ts"] == second["ts"] == 100
+    assert first[integrity._EVENT_ID_FIELD] != second[integrity._EVENT_ID_FIELD]
+
+    new_events = resilience.new_events_since(persisted, {}, run_id="run-1")
     ledger = resilience.update_inspection_ledger(
         [],
         new_events,
@@ -97,12 +107,12 @@ def test_reused_backend_call_id_in_later_cycle_is_distinct_occurrence():
     entry = ledger[0]
     assert entry["count"] == 2
     assert entry["target"] == _target(second)
-    # The backend correlation text can repeat; replay identity cannot.
+    # The backend correlation text can repeat; Gateway replay identity cannot.
     assert entry[integrity._OCCURRENCE_KEYS_FIELD] == ["id:call_1", "id:call_1"]
     identities = entry[integrity._OCCURRENCE_IDENTITIES_FIELD]
-    assert len(identities) == 2
-    assert len(set(identities)) == 2
     assert identities == [
         integrity._occurrence_key(first),
         integrity._occurrence_key(second),
     ]
+    assert len(set(identities)) == 2
+    assert all(value.startswith("event-id:") for value in identities)
