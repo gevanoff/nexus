@@ -54,7 +54,10 @@ coding_verified_evidence_handoff.install(
     coding_hypothesis_persistence,
 )
 coding_policy_rejection_recovery.install(guarded_agent._agent)
-coding_inspection_ledger_integrity.install(coding_stagnation_resilience)
+coding_inspection_ledger_integrity.install(
+    coding_stagnation_resilience,
+    guarded_agent._agent,
+)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
