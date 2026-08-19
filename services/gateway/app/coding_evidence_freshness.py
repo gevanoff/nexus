@@ -135,12 +135,13 @@ def _hypothesis_is_stale(
         )
 
     if plan_updated_at > 0 and latest_read_ts > 0:
+        source = "plan_timestamp" if latest_plan_index < 0 else "current_plan_timestamp"
         return (
             latest_read_ts > plan_updated_at,
             latest_plan_index,
             event_plan_revision,
             plan_updated_at,
-            "current_plan_timestamp",
+            source,
         )
 
     return (
