@@ -7,6 +7,21 @@ def _normalized_path(value: Any) -> str:
     return str(value or "").strip().replace("\\", "/").strip("/")
 
 
+def _event_timestamp(event: Mapping[str, Any]) -> float:
+    try:
+        return float(event.get("ts") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _plan_updated_at(task: Mapping[str, Any]) -> float:
+    plan = task.get("project_plan") if isinstance(task.get("project_plan"), Mapping) else {}
+    try:
+        return float(plan.get("updated_at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _events(task: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [
         item
@@ -38,13 +53,14 @@ def _latest_plan_update_index(events: list[Mapping[str, Any]]) -> int:
     return latest
 
 
-def _latest_linked_read_index(
+def _latest_linked_read(
     events: list[Mapping[str, Any]],
     linked_targets: set[str],
-) -> int:
-    latest = -1
+) -> tuple[int, float]:
+    latest_index = -1
+    latest_ts = 0.0
     if not linked_targets:
-        return latest
+        return latest_index, latest_ts
     for index, event in enumerate(events):
         if (
             str(event.get("type") or "") != "tool_finished"
@@ -55,8 +71,44 @@ def _latest_linked_read_index(
         result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
         path = _normalized_path(result.get("path"))
         if path in linked_targets:
-            latest = index
-    return latest
+            latest_index = index
+            latest_ts = _event_timestamp(event)
+    return latest_index, latest_ts
+
+
+def _hypothesis_is_stale(
+    task: Mapping[str, Any],
+    events: list[Mapping[str, Any]],
+    *,
+    latest_read_index: int,
+    latest_read_ts: float,
+) -> tuple[bool, int, float, str]:
+    """Return whether linked evidence demonstrably postdates the current plan.
+
+    Event order is authoritative when both tool events survive in the bounded
+    event ring. If the plan-update event has been compacted away, the durable
+    project-plan ``updated_at`` timestamp preserves ordering. Legacy fixtures or
+    old workspaces with neither marker are left unchanged rather than inventing
+    staleness and deadlocking a previously qualified edit state.
+    """
+    latest_plan_index = _latest_plan_update_index(events)
+    plan_updated_at = _plan_updated_at(task)
+
+    if latest_plan_index >= 0:
+        return (
+            latest_plan_index < latest_read_index,
+            latest_plan_index,
+            plan_updated_at,
+            "event_order",
+        )
+    if plan_updated_at > 0 and latest_read_ts > 0:
+        return (
+            latest_read_ts > plan_updated_at,
+            latest_plan_index,
+            plan_updated_at,
+            "plan_timestamp",
+        )
+    return False, latest_plan_index, plan_updated_at, "legacy_unknown"
 
 
 def refine_state(task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -64,13 +116,12 @@ def refine_state(task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str,
 
     A corrective evidence read may validate or falsify the hypothesis that
     requested it. Merely making that path verified must never unlock editing on
-    the unchanged hypothesis. Event order gives us a durable, replayable
-    invariant without introducing another persisted controller cursor:
+    the unchanged hypothesis. The intended transition is:
 
         read linked evidence -> update hypothesis -> edit
 
-    If the latest linked read is newer than the latest successful plan update,
-    editing is demoted until coding_update_plan records a revised hypothesis.
+    Event order is used when available, with the durable project-plan timestamp
+    as the compaction-safe fallback.
     """
     out = dict(state)
     if str(out.get("action_kind") or "") != "edit":
@@ -85,18 +136,27 @@ def refine_state(task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str,
         return out
 
     events = _events(task)
-    latest_read = _latest_linked_read_index(events, linked_targets)
-    if latest_read < 0:
+    latest_read_index, latest_read_ts = _latest_linked_read(events, linked_targets)
+    if latest_read_index < 0:
         return out
-    latest_plan = _latest_plan_update_index(events)
-    if latest_plan > latest_read:
+
+    stale, latest_plan_index, plan_updated_at, source = _hypothesis_is_stale(
+        task,
+        events,
+        latest_read_index=latest_read_index,
+        latest_read_ts=latest_read_ts,
+    )
+    if not stale:
         return out
 
     out["action_kind"] = "evidence"
     out["allowed_tools"] = ["coding_finish", "coding_update_plan"]
     out["hypothesis_evidence_postdates_plan"] = True
-    out["latest_linked_evidence_event_index"] = latest_read
-    out["latest_hypothesis_plan_event_index"] = latest_plan
+    out["hypothesis_freshness_source"] = source
+    out["latest_linked_evidence_event_index"] = latest_read_index
+    out["latest_linked_evidence_at"] = latest_read_ts
+    out["latest_hypothesis_plan_event_index"] = latest_plan_index
+    out["latest_hypothesis_plan_updated_at"] = plan_updated_at
     out["required_action"] = (
         "Verified causal evidence was gathered after the current structured hypothesis. "
         "Revise the remediation hypothesis with coding_update_plan so it explicitly accounts "
