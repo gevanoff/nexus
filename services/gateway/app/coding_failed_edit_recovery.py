@@ -6,6 +6,7 @@ from typing import Any, Dict, Mapping, Sequence
 
 
 _CONTEXT_EDIT_TOOLS = {"coding_replace_text", "coding_apply_patch"}
+_MUTATION_TOOLS = {"coding_write_file", "coding_replace_text", "coding_apply_patch"}
 
 
 def _normalized_path(value: Any) -> str:
@@ -102,6 +103,15 @@ def _patch_paths(args: Mapping[str, Any], result: Mapping[str, Any]) -> list[str
     return paths
 
 
+def _edit_paths(name: str, args: Mapping[str, Any], result: Mapping[str, Any]) -> list[str]:
+    if name in {"coding_write_file", "coding_replace_text"}:
+        path = _normalized_path(args.get("path") or result.get("path"))
+        return [path] if path else []
+    if name == "coding_apply_patch":
+        return _patch_paths(args, result)
+    return []
+
+
 def _failed_context_edit(
     agent: Any,
     events: Sequence[Mapping[str, Any]],
@@ -179,6 +189,31 @@ def _successful_read_after(
     return False
 
 
+def _successful_mutation_after(
+    agent: Any,
+    events: Sequence[Mapping[str, Any]],
+    *,
+    index: int,
+    path: str,
+) -> bool:
+    predicate = getattr(agent, "_tool_result_modified_workspace", None)
+    if not callable(predicate):
+        return False
+    for later_index, event in enumerate(events[index + 1 :], start=index + 1):
+        name = str(event.get("name") or "").strip()
+        if str(event.get("type") or "") != "tool_finished" or name not in _MUTATION_TOOLS:
+            continue
+        result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
+        args = _matching_started_args(events, later_index, event)
+        try:
+            mutated = bool(predicate(name, args, dict(result)))
+        except Exception:
+            mutated = False
+        if mutated and path in _edit_paths(name, args, result):
+            return True
+    return False
+
+
 def _latest_failed_edit_needing_refresh(
     agent: Any,
     task: Mapping[str, Any],
@@ -201,8 +236,22 @@ def _latest_failed_edit_needing_refresh(
         path = str(attempt["path"])
         if _successful_read_after(events, index=index, path=path):
             return None
+        if _successful_mutation_after(agent, events, index=index, path=path):
+            return None
         return attempt
     return None
+
+
+def _clear_recovery_fields(out: Dict[str, Any]) -> None:
+    for key in (
+        "failed_edit_refresh_required",
+        "failed_edit_refresh_target",
+        "failed_edit_refresh_tool",
+        "failed_edit_refresh_error",
+        "failed_edit_refresh_event_index",
+        "failed_edit_refresh_at",
+    ):
+        out.pop(key, None)
 
 
 def refine_state(
@@ -226,6 +275,7 @@ def refine_state(
 
     attempt = _latest_failed_edit_needing_refresh(agent, task, out)
     if not attempt:
+        _clear_recovery_fields(out)
         return out
 
     target = str(attempt["path"])
@@ -247,10 +297,14 @@ def refine_state(
 
 
 def install(agent: Any, evidence_policy: Any) -> None:
-    """Install failed-edit recovery after provenance and freshness refinements."""
+    """Install failed-edit recovery hooks around provenance and runtime authorization."""
     if bool(getattr(evidence_policy, "_coding_failed_edit_recovery_installed", False)):
         return
 
+    # Keep an inner refinement so request materialization paths that explicitly
+    # call evidence_policy.apply_provenance_gate observe the recovery state. The
+    # final execution-state wrapper installed after durable hypothesis
+    # persistence reapplies this refinement authoritatively.
     original_apply = evidence_policy.apply_provenance_gate
 
     def apply_with_failed_edit_recovery(
