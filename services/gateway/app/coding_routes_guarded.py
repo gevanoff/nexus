@@ -15,9 +15,12 @@ from app import coding_debug_report
 from app import coding_evidence_freshness
 from app import coding_evidence_policy
 from app import coding_execution_dispatch
+from app import coding_hypothesis_persistence
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
+from app import coding_plan_edit_serialization
 from app import coding_text_tool_handoff
+from app import coding_verified_evidence_handoff
 from app import coding_routes as routes
 from app import coding_workspace as cw
 
@@ -36,6 +39,17 @@ coding_contract_hardening.install(
 )
 coding_contract_path_safety.install(coding_contract_hardening)
 coding_evidence_freshness.install(coding_evidence_policy)
+coding_hypothesis_persistence.install(
+    guarded_agent._agent,
+    coding_evidence_policy,
+    guarded_agent,
+)
+coding_plan_edit_serialization.install(guarded_agent._agent, guarded_agent)
+coding_verified_evidence_handoff.install(
+    guarded_agent._agent,
+    coding_execution_dispatch,
+    coding_hypothesis_persistence,
+)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
