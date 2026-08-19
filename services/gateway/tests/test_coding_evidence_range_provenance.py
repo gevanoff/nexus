@@ -18,6 +18,16 @@ def _state() -> dict:
         "activation_event_count": 0,
         "activated_at": 10.0,
         "run_id": "run-1",
+        "allowed_tools": [
+            "coding_apply_patch",
+            "coding_finish",
+            "coding_replace_text",
+            "coding_write_file",
+        ],
+        "causal_evidence_targets": [TARGET],
+        "hypothesis_causal_targets": [TARGET],
+        "hypothesis_causal_evidence_linked": True,
+        "evidence_provenance_enforced": True,
     }
 
 
@@ -70,14 +80,14 @@ def _plan(repository_evidence: str) -> dict:
 
 
 def _base_effective(repository_evidence: str, *, ranged: bool = True) -> tuple[dict, dict]:
+    # Start from the state produced by the existing path-level provenance gate.
+    # Do not call the globally monkey-patched gate here: other integration tests
+    # may already have installed this range overlay during collection.
     task = {
         "agent_events": [_started(), *_read(ranged=ranged)],
         "project_plan": _plan(repository_evidence),
     }
-    state = provenance.apply_provenance_gate(forced, task, _state())
-    assert state["action_kind"] == "edit"
-    assert state["hypothesis_causal_evidence_linked"] is True
-    return task, state
+    return task, _state()
 
 
 def test_modern_bounded_read_requires_line_range_in_repository_evidence():
