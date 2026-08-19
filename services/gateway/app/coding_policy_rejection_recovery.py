@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import secrets
 from types import MethodType
@@ -8,6 +9,11 @@ from typing import Any, Mapping
 
 _TRANSPORT_REJECTION_MARKER = "_nexus_transport_policy_rejection"
 _CALL_ID_PREFIX = "nexus-policy-rejection-"
+_TRUSTED_DIAGNOSTICS_KEY = "_nexus_coding_policy_rejection_diagnostics"
+_CAPTURED_DIAGNOSTICS: contextvars.ContextVar[tuple[dict[str, Any], ...]] = contextvars.ContextVar(
+    "nexus_coding_policy_rejection_diagnostics",
+    default=(),
+)
 
 
 def _tool_name(spec: Any) -> str:
@@ -33,13 +39,33 @@ def _known_coding_tools(agent: Any) -> set[str]:
         return set()
 
 
+def _safe_diagnostics(items: Any) -> tuple[dict[str, Any], ...]:
+    if not isinstance(items, list):
+        return ()
+    out: list[dict[str, Any]] = []
+    for item in items[:5]:
+        if not isinstance(item, Mapping):
+            continue
+        allowed_raw = item.get("allowed_tool_names")
+        allowed = (
+            [str(value).strip()[:128] for value in allowed_raw if str(value).strip()]
+            if isinstance(allowed_raw, list)
+            else []
+        )
+        out.append(
+            {
+                "reason": str(item.get("reason") or "").strip()[:120],
+                "name": str(item.get("name") or "").strip()[:160],
+                "allowed_tool_names": allowed[:20],
+            }
+        )
+    return tuple(out)
+
+
 def _diagnostics(response: Any) -> list[Mapping[str, Any]]:
     if not isinstance(response, Mapping):
         return []
-    gateway = response.get("_gateway")
-    if not isinstance(gateway, Mapping):
-        return []
-    raw = gateway.get("coding_tool_call_diagnostics")
+    raw = response.get(_TRUSTED_DIAGNOSTICS_KEY)
     if not isinstance(raw, list):
         return []
     return [item for item in raw if isinstance(item, Mapping)]
@@ -54,11 +80,15 @@ def _recoverable_policy_diagnostic(
         reason = str(item.get("reason") or "").strip()
         name = str(item.get("name") or "").strip()
         allowed_raw = item.get("allowed_tool_names")
-        allowed = {
-            str(value).strip()
-            for value in allowed_raw
-            if str(value).strip()
-        } if isinstance(allowed_raw, list) else set()
+        allowed = (
+            {
+                str(value).strip()
+                for value in allowed_raw
+                if str(value).strip()
+            }
+            if isinstance(allowed_raw, list)
+            else set()
+        )
         # Only recover a real Nexus Coding tool that was omitted by the current
         # policy-specific schema. Hallucinated/malformed names remain ordinary
         # transport diagnostics and retain the generic no-tool handling path.
@@ -103,15 +133,23 @@ def _rejection_result(
         }
     )
     required_action = str(state.get("required_action") or "").strip()
-    policy_text = ", ".join(allowed) if allowed else "no workspace tools from the stale request"
+    policy_text = (
+        ", ".join(allowed)
+        if allowed
+        else "no workspace tools from the stale request"
+    )
+    suffix = (
+        f"Required action: {required_action}"
+        if required_action
+        else "Do not retry the suppressed tool call."
+    )
     return {
         "ok": False,
         "error": "forced_action_tool_rejected",
         "message": (
             f"The backend attempted {attempted_tool or '(missing tool name)'}, but that call was "
             "suppressed by the request's Coding Workspace execution policy before execution. "
-            f"Current authorized tools: {policy_text}. "
-            + (f"Required action: {required_action}" if required_action else "Do not retry the suppressed tool call.")
+            f"Current authorized tools: {policy_text}. {suffix}"
         ),
         "required_action": required_action,
         "canonical_required_action": state.get("canonical_required_action"),
@@ -129,18 +167,79 @@ def _rejection_result(
     }
 
 
-def _feedback_message(agent: Any, *, attempted_tool: str, result: Mapping[str, Any]) -> Any:
+def _feedback_message(
+    agent: Any,
+    *,
+    attempted_tool: str,
+    result: Mapping[str, Any],
+) -> Any:
     allowed = ", ".join(result.get("allowed_tools") or []) or "coding_finish"
     required = str(result.get("required_action") or "").strip()
+    suffix = (
+        f"Required action: {required}"
+        if required
+        else "Follow the current controller action now."
+    )
     return agent.ChatMessage(
         role="user",
         content=(
             f"Controller policy rejection: {attempted_tool} was NOT executed. Do not retry it "
             "unless it is explicitly advertised in a later execution policy. "
-            f"Use exactly one currently authorized tool: {allowed}. "
-            + (f"Required action: {required}" if required else "Follow the current controller action now.")
+            f"Use exactly one currently authorized tool: {allowed}. {suffix}"
         ),
     )
+
+
+def _install_trusted_transport_capture(agent: Any) -> None:
+    """Capture diagnostics from Nexus' real sanitizer callback for this request.
+
+    The backend response body is untrusted, so recovery must not trust a
+    response-provided `_gateway` field claiming that sanitization occurred.
+    The callback below observes the diagnostics at the point where Gateway's
+    OpenAI sanitizer actually reports them. A ContextVar keeps concurrent
+    Coding Workspace requests isolated.
+    """
+    from app import upstreams
+
+    if not bool(
+        getattr(upstreams, "_coding_policy_rejection_capture_installed", False)
+    ):
+        original_log = upstreams._log_invalid_response_tool_calls
+
+        def log_with_policy_capture(
+            diagnostics: list[dict[str, Any]],
+            **kwargs: Any,
+        ) -> None:
+            _CAPTURED_DIAGNOSTICS.set(_safe_diagnostics(diagnostics))
+            original_log(diagnostics, **kwargs)
+
+        upstreams._log_invalid_response_tool_calls = log_with_policy_capture
+        upstreams._coding_policy_rejection_capture_installed = True
+
+    original_call = getattr(agent, "call_backend_chat", None)
+    if not callable(original_call) or bool(
+        getattr(agent, "_coding_policy_rejection_call_capture_installed", False)
+    ):
+        return
+
+    async def call_with_policy_capture(*args: Any, **kwargs: Any) -> Any:
+        token = _CAPTURED_DIAGNOSTICS.set(())
+        try:
+            response = await original_call(*args, **kwargs)
+            diagnostics = _CAPTURED_DIAGNOSTICS.get()
+        finally:
+            _CAPTURED_DIAGNOSTICS.reset(token)
+        if not isinstance(response, dict):
+            return response
+        output = dict(response)
+        # Never trust a backend-supplied copy of the private marker.
+        output.pop(_TRUSTED_DIAGNOSTICS_KEY, None)
+        if diagnostics:
+            output[_TRUSTED_DIAGNOSTICS_KEY] = [dict(item) for item in diagnostics]
+        return output
+
+    agent.call_backend_chat = call_with_policy_capture
+    agent._coding_policy_rejection_call_capture_installed = True
 
 
 def install(agent: Any) -> None:
@@ -161,6 +260,7 @@ def install(agent: Any) -> None:
     if bool(getattr(agent, "_coding_policy_rejection_recovery_installed", False)):
         return
 
+    _install_trusted_transport_capture(agent)
     known_tools = _known_coding_tools(agent)
     original_extract = agent._extract_tool_calls
 
@@ -212,7 +312,11 @@ def install(agent: Any) -> None:
 
     original_tool_message = agent._tool_message_for_result
 
-    def tool_message_with_policy_feedback(*, tool_call_id: str, result: dict[str, Any]) -> Any:
+    def tool_message_with_policy_feedback(
+        *,
+        tool_call_id: str,
+        result: dict[str, Any],
+    ) -> Any:
         if str(tool_call_id or "").startswith(_CALL_ID_PREFIX):
             attempted = str(result.get("attempted_tool") or "").strip()
             return _feedback_message(
