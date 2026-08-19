@@ -337,10 +337,33 @@ def test_known_tool_is_not_recovered_when_diagnostic_says_it_was_allowed():
     assert calls == []
 
 
-def test_real_backend_tool_call_passes_through_unchanged():
+def test_real_backend_tool_call_passes_through_unchanged_without_rejection_diagnostic():
     agent, forced = _agent()
     real = {
         "id": "nexus-policy-rejection-backend-chosen-prefix",
+        "type": "function",
+        "function": {"name": EDIT, "arguments": '{"patch":""}'},
+    }
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [real],
+                }
+            }
+        ],
+    }
+
+    assert agent._extract_tool_calls(response) == [real]
+    assert forced.original_evaluations == []
+
+
+def test_mixed_valid_and_policy_disabled_batch_preserves_both_behaviors():
+    agent, forced = _agent()
+    real = {
+        "id": "call-real-edit",
         "type": "function",
         "function": {"name": EDIT, "arguments": '{"patch":""}'},
     }
@@ -359,8 +382,56 @@ def test_real_backend_tool_call_passes_through_unchanged():
         ],
     }
 
-    assert agent._extract_tool_calls(response) == [real]
-    assert forced.original_evaluations == []
+    calls = agent._extract_tool_calls(response)
+
+    assert len(calls) == 2
+    assert calls[0] is real
+    assert calls[0]["function"]["name"] == EDIT
+    assert calls[0]["function"]["arguments"] == '{"patch":""}'
+    assert calls[1]["function"]["name"] == READ
+    assert isinstance(calls[1]["function"]["arguments"], recovery._SyntheticPolicyArgs)
+
+    real_args = agent._parse_tool_arguments(calls[0]["function"]["arguments"])
+    real_allowed, real_result = agent.forced_action.evaluate_tool_call(
+        {},
+        name=EDIT,
+        args=real_args,
+        is_validation_command=lambda argv: False,
+    )
+    rejected_args = agent._parse_tool_arguments(calls[1]["function"]["arguments"])
+    rejected_allowed, rejected_result = agent.forced_action.evaluate_tool_call(
+        {},
+        name=READ,
+        args=rejected_args,
+        is_validation_command=lambda argv: False,
+    )
+
+    assert real_allowed is True
+    assert real_result == {}
+    assert forced.original_evaluations == [(EDIT, {"patch": ""})]
+    assert rejected_allowed is False
+    assert isinstance(rejected_result, recovery._SyntheticPolicyRejectionResult)
+    assert rejected_result["attempted_tool"] == READ
+
+
+def test_multiple_policy_disabled_companions_are_all_recovered_in_order():
+    agent, _ = _agent()
+    response = {
+        "choices": [{"message": {"role": "assistant", "content": "suppressed"}}],
+        recovery._TRUSTED_DIAGNOSTICS_KEY: [
+            _diagnostic(READ, allowed=[EDIT, FINISH]),
+            _diagnostic(READ, allowed=[EDIT, FINISH]),
+        ],
+    }
+
+    calls = agent._extract_tool_calls(response)
+
+    assert len(calls) == 2
+    assert [call["function"]["name"] for call in calls] == [READ, READ]
+    assert all(
+        isinstance(call["function"]["arguments"], recovery._SyntheticPolicyArgs)
+        for call in calls
+    )
 
 
 def test_backend_chosen_synthetic_looking_call_id_keeps_native_tool_result_role():
