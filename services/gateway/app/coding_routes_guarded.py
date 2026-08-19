@@ -16,10 +16,12 @@ from app import coding_evidence_freshness
 from app import coding_evidence_policy
 from app import coding_execution_dispatch
 from app import coding_hypothesis_persistence
+from app import coding_inspection_ledger_integrity
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
 from app import coding_policy_rejection_recovery
+from app import coding_stagnation_resilience
 from app import coding_text_tool_handoff
 from app import coding_verified_evidence_handoff
 from app import coding_routes as routes
@@ -52,6 +54,7 @@ coding_verified_evidence_handoff.install(
     coding_hypothesis_persistence,
 )
 coding_policy_rejection_recovery.install(guarded_agent._agent)
+coding_inspection_ledger_integrity.install(coding_stagnation_resilience)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
