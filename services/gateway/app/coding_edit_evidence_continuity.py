@@ -188,32 +188,83 @@ def _edit_authorization_time(state: Mapping[str, Any]) -> float:
     return max(values or [0.0])
 
 
+def _matching_started_args(
+    events: Sequence[Mapping[str, Any]],
+    finish_index: int,
+    finish: Mapping[str, Any],
+) -> Dict[str, Any]:
+    name = str(finish.get("name") or "").strip()
+    call_id = str(finish.get("tool_call_id") or "").strip()
+    cycle = finish.get("cycle")
+    for event in reversed(events[:finish_index]):
+        if str(event.get("type") or "") != "tool_started":
+            continue
+        if str(event.get("name") or "").strip() != name:
+            continue
+        event_call_id = str(event.get("tool_call_id") or "").strip()
+        if call_id:
+            if event_call_id != call_id:
+                continue
+        elif cycle not in (None, "") and event.get("cycle") != cycle:
+            continue
+        return dict(event.get("args")) if isinstance(event.get("args"), Mapping) else {}
+    return {}
+
+
+def _mutation_predicate(agent: Any):
+    predicate = getattr(agent, "_tool_result_modified_workspace", None)
+    if callable(predicate):
+        return predicate
+    try:
+        from app import coding_agent as base_agent
+    except Exception:
+        return None
+    predicate = getattr(base_agent, "_tool_result_modified_workspace", None)
+    return predicate if callable(predicate) else None
+
+
 def _successful_edit_after_authorization(
+    agent: Any,
     task: Mapping[str, Any],
     state: Mapping[str, Any],
 ) -> bool:
     threshold = _edit_authorization_time(state)
-    for event in (task.get("agent_events") or []):
-        if not isinstance(event, Mapping):
-            continue
+    predicate = _mutation_predicate(agent)
+    if predicate is None:
+        # Evidence continuity is safety-oriented: if Nexus cannot prove a real
+        # workspace mutation, retain the verified source rather than dropping it.
+        return False
+    events = [item for item in (task.get("agent_events") or []) if isinstance(item, Mapping)]
+    for index, event in enumerate(events):
+        name = str(event.get("name") or "").strip()
         if (
             str(event.get("type") or "") != "tool_finished"
-            or str(event.get("name") or "") not in _EDIT_TOOLS
+            or name not in _EDIT_TOOLS
             or _event_timestamp(event) < threshold
         ):
             continue
-        if _successful_result(event):
-            return True
+        result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
+        args = _matching_started_args(events, index, event)
+        try:
+            if bool(predicate(name, args, dict(result))):
+                return True
+        except Exception:
+            # A malformed historical event must never terminate evidence replay.
+            continue
     return False
 
 
-def _edit_replay_required(task: Mapping[str, Any], state: Mapping[str, Any]) -> bool:
+def _edit_replay_required(
+    agent: Any,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> bool:
     return bool(
         str(state.get("action_kind") or "") == "edit"
         and state.get("evidence_provenance_enforced")
         and state.get("hypothesis_causal_evidence_linked")
         and state.get("causal_evidence_targets")
-        and not _successful_edit_after_authorization(task, state)
+        and not _successful_edit_after_authorization(agent, task, state)
     )
 
 
@@ -285,7 +336,7 @@ def _install_materialization(
             enriched = _replay_metadata(diagnostics, metadata, phase="hypothesis")
             return materialized, snapshot, enriched
 
-        if not _edit_replay_required(effective_task, state):
+        if not _edit_replay_required(current_agent, effective_task, state):
             return materialized, snapshot, diagnostics
 
         messages = list(execution_dispatch._request_value(materialized, "messages", None) or [])
