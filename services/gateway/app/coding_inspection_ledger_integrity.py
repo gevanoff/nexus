@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextvars
+import secrets
 from typing import Any, Mapping, Sequence
 
 
@@ -8,6 +9,7 @@ _FULL_EVENTS: contextvars.ContextVar[tuple[Mapping[str, Any], ...]] = contextvar
     "nexus_coding_inspection_ledger_full_events",
     default=(),
 )
+_EVENT_ID_FIELD = "_nexus_event_id"
 _OCCURRENCE_KEYS_FIELD = "_nexus_completed_occurrences"
 _OCCURRENCE_IDENTITIES_FIELD = "_nexus_completed_occurrence_identities"
 _MAX_OCCURRENCE_KEYS = 128
@@ -27,13 +29,14 @@ def _as_float(value: Any) -> float:
         return 0.0
 
 
-def _event_key(event: Mapping[str, Any]) -> tuple[str, str, int, float, str]:
+def _event_key(event: Mapping[str, Any]) -> tuple[str, str, int, float, str, str]:
     return (
         str(event.get("type") or ""),
         str(event.get("name") or "").strip(),
         _as_int(event.get("cycle")),
         _as_float(event.get("ts")),
         str(event.get("tool_call_id") or "").strip(),
+        str(event.get(_EVENT_ID_FIELD) or "").strip(),
     )
 
 
@@ -47,17 +50,19 @@ def _event_is_in_batch(
 def _occurrence_key(event: Mapping[str, Any]) -> str:
     """Return a durable identity for one Gateway-observed tool occurrence.
 
-    Backend tool-call IDs are correlation hints, not unique identities: local
-    models can reuse values such as ``call_1`` on later responses. Scope that
-    untrusted value with Gateway-owned event coordinates so a later real call is
-    not mistaken for replay of an earlier occurrence. The key intentionally
-    excludes raw arguments, which can contain sensitive material.
+    New Coding events carry a Gateway-generated event ID, which is authoritative
+    for replay identity even if a backend reuses a tool-call ID multiple times in
+    one cycle/second. The fallback preserves compatibility for historical events
+    created before this overlay existed and intentionally excludes raw arguments.
     """
+    event_id = str(event.get(_EVENT_ID_FIELD) or "").strip()
+    if event_id:
+        return f"event-id:{event_id}"
     name = str(event.get("name") or "").strip()
     cycle = _as_int(event.get("cycle"))
     ts = _as_float(event.get("ts"))
     call_id = str(event.get("tool_call_id") or "").strip()
-    return f"event:{name}:{cycle}:{ts:.9f}:{call_id}"
+    return f"legacy-event:{name}:{cycle}:{ts:.9f}:{call_id}"
 
 
 def _display_occurrence_key(event: Mapping[str, Any]) -> str:
@@ -212,16 +217,35 @@ def _annotate_occurrences(
     return output
 
 
-def install(resilience: Any) -> None:
+def _install_event_ids(agent: Any) -> None:
+    if agent is None or bool(
+        getattr(agent, "_coding_inspection_event_ids_installed", False)
+    ):
+        return
+    original_append = getattr(agent, "_append_event", None)
+    if not callable(original_append):
+        return
+
+    def append_with_event_id(task_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(event)
+        payload.setdefault(_EVENT_ID_FIELD, secrets.token_hex(16))
+        return original_append(task_id, payload)
+
+    agent._append_event = append_with_event_id
+    agent._coding_inspection_event_ids_installed = True
+
+
+def install(resilience: Any, agent: Any = None) -> None:
     """Persist modern inspection facts only after execution actually completes.
 
     Rejected attempts remain in the full event stream, so stagnation and
-    noncompliance logic still observe them. ID-bearing inspection starts are
-    committed only after a successful completion; Gateway-scoped occurrence
-    identities make rollover replay idempotent even if a backend reuses call
-    IDs. Compact backend IDs are retained only as diagnostic correlation text.
-    ID-less legacy events retain prior behavior.
+    noncompliance logic still observe them. New Gateway events receive a unique
+    in-process occurrence ID before persistence. ID-bearing inspection starts are
+    committed only after successful completion, and those Gateway IDs make
+    rollover replay idempotent independently of backend call-ID behavior.
+    ID-less historical events retain prior behavior.
     """
+    _install_event_ids(agent)
     if bool(getattr(resilience, "_coding_inspection_ledger_integrity_installed", False)):
         return
 
