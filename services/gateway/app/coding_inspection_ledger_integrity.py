@@ -36,20 +36,6 @@ def _event_key(event: Mapping[str, Any]) -> tuple[str, str, int, float, str]:
     )
 
 
-def _find_event_index(
-    full_events: Sequence[Mapping[str, Any]],
-    event: Mapping[str, Any],
-) -> int:
-    for index in range(len(full_events) - 1, -1, -1):
-        if full_events[index] is event:
-            return index
-    key = _event_key(event)
-    for index in range(len(full_events) - 1, -1, -1):
-        if _event_key(full_events[index]) == key and full_events[index] == event:
-            return index
-    return -1
-
-
 def _event_is_in_batch(
     event: Mapping[str, Any],
     batch: Sequence[Mapping[str, Any]],
@@ -73,25 +59,13 @@ def _matching_finish_index(
 ) -> int:
     start = full_events[start_index]
     call_id = str(start.get("tool_call_id") or "").strip()
-    name = str(start.get("name") or "").strip()
-    cycle = _as_int(start.get("cycle"))
+    if not call_id:
+        return -1
     for index in range(start_index + 1, len(full_events)):
         event = full_events[index]
-        event_type = str(event.get("type") or "")
-        if event_type != "tool_finished":
-            if not call_id:
-                event_cycle = _as_int(event.get("cycle"))
-                if cycle and event_cycle and event_cycle != cycle:
-                    break
+        if str(event.get("type") or "") != "tool_finished":
             continue
-        if call_id:
-            if str(event.get("tool_call_id") or "").strip() == call_id:
-                return index
-            continue
-        if (
-            str(event.get("name") or "").strip() == name
-            and _as_int(event.get("cycle")) == cycle
-        ):
+        if str(event.get("tool_call_id") or "").strip() == call_id:
             return index
     return -1
 
@@ -122,11 +96,14 @@ def _completed_valid_starts(
 ) -> list[Mapping[str, Any]]:
     """Return newly observable successful ledger-relevant tool occurrences.
 
-    A `tool_started` event is never a durable inspection fact by itself. We wait
-    until its matching `tool_finished` is present and confirm that no forced
-    rejection occurred between start and finish. This removes the need to undo a
-    speculative ledger write later, so continuation-run metadata and rollover
-    replay cannot be corrupted by a rejected attempt that was never executed.
+    Modern Coding Agent `tool_started` events always carry a `tool_call_id`.
+    Those events are not durable inspection facts until their matching
+    `tool_finished` exists and no forced rejection occurred in between.
+
+    Historical/stored fixtures can predate tool-call IDs. Preserve their legacy
+    immediate-ledger semantics so existing durable state and semantic-memory
+    behavior remain backward compatible; the production rejection race is
+    closed on the ID-bearing event stream emitted by the current agent.
     """
     current_indexes = {
         index
@@ -140,11 +117,14 @@ def _completed_valid_starts(
         signature = str(resilience.inspection_signature(start) or "").strip()
         if not signature:
             continue
+        call_id = str(start.get("tool_call_id") or "").strip()
+        if not call_id:
+            if start_index in current_indexes:
+                starts.append(start)
+            continue
         finish_index = _matching_finish_index(full_events, start_index)
         if finish_index < 0:
             continue
-        # Emit this occurrence only when either the start or its successful
-        # completion became newly visible in this semantic-memory sample.
         if start_index not in current_indexes and finish_index not in current_indexes:
             continue
         if _rejected_between(full_events, start_index, finish_index):
@@ -198,13 +178,12 @@ def _annotate_occurrences(
 
 
 def install(resilience: Any) -> None:
-    """Persist inspection facts only after tool execution actually completes.
+    """Persist modern inspection facts only after execution actually completes.
 
     Rejected attempts remain in the full event stream, so stagnation and
-    noncompliance logic still observe them. The inspection ledger receives only
-    completed, non-rejected, ledger-relevant starts. Opaque occurrence keys make
-    replay idempotent without treating a missing cursor as evidence that a start
-    was previously persisted.
+    noncompliance logic still observe them. ID-bearing inspection starts are
+    committed only after a successful completion; opaque occurrence keys make
+    rollover replay idempotent. ID-less legacy events retain prior behavior.
     """
     if bool(getattr(resilience, "_coding_inspection_ledger_integrity_installed", False)):
         return
