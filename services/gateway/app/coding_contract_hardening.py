@@ -41,7 +41,7 @@ def structured_hypothesis(
     task: Mapping[str, Any],
     state: Mapping[str, Any],
 ) -> tuple[bool, Dict[str, str]]:
-    """Parse the labelled hypothesis contract without depending on punctuation style."""
+    """Reference parser for the labelled hypothesis contract used by regression tests."""
     current_revision = base._plan_revision(task)
     try:
         activation_revision = int(state.get("activation_plan_revision", -1))
@@ -297,6 +297,38 @@ def _safe_tool_diagnostics(items: Any) -> tuple[dict[str, Any], ...]:
     return tuple(out)
 
 
+def _request_policy_allowed_tools(request: Any) -> list[str]:
+    x_nexus = (
+        request.get("x_nexus")
+        if isinstance(request, Mapping)
+        else getattr(request, "x_nexus", None)
+    )
+    if not isinstance(x_nexus, Mapping):
+        return []
+    policy = x_nexus.get("coding_execution_policy")
+    if not isinstance(policy, Mapping):
+        return []
+    raw = policy.get("allowed_tools")
+    if not isinstance(raw, (list, tuple, set)):
+        return []
+    return sorted({str(name).strip() for name in raw if str(name).strip()})[:20]
+
+
+def _diagnostics_with_policy_tools(
+    diagnostics: tuple[dict[str, Any], ...],
+    request: Any,
+) -> tuple[dict[str, Any], ...]:
+    authorized = _request_policy_allowed_tools(request)
+    if not authorized:
+        return diagnostics
+    out: list[dict[str, Any]] = []
+    for item in diagnostics:
+        enriched = dict(item)
+        enriched["allowed_tool_names"] = authorized
+        out.append(enriched)
+    return tuple(out)
+
+
 def diagnostic_notice(item: Mapping[str, Any]) -> str:
     name = str(item.get("name") or "(missing tool name)").strip()[:160]
     reason = str(item.get("reason") or "invalid tool call").strip()[:120]
@@ -305,10 +337,10 @@ def diagnostic_notice(item: Mapping[str, Any]) -> str:
         for value in (item.get("allowed_tool_names") or [])
         if str(value).strip()
     ]
-    suffix = ", ".join(allowed) if allowed else "none"
+    suffix = ", ".join(allowed) if allowed else "not available in transport diagnostic"
     return (
         f"Nexus suppressed backend tool call {name!r}: {reason}. "
-        f"Currently authorized tools: {suffix}."
+        f"Currently authorized Coding Workspace tools: {suffix}."
     )
 
 
@@ -333,12 +365,17 @@ def _install_invalid_tool_diagnostics(agent: Any) -> None:
     original_call = agent.call_backend_chat
 
     async def call_with_diagnostics(*args: Any, **kwargs: Any) -> Any:
-        _TOOL_DIAGNOSTICS.set(())
-        response = await original_call(*args, **kwargs)
-        diagnostics = _TOOL_DIAGNOSTICS.get()
+        token = _TOOL_DIAGNOSTICS.set(())
+        try:
+            response = await original_call(*args, **kwargs)
+            diagnostics = _TOOL_DIAGNOSTICS.get()
+        finally:
+            _TOOL_DIAGNOSTICS.reset(token)
         if not diagnostics or not isinstance(response, dict):
             return response
 
+        request = args[0] if args else kwargs.get("req")
+        diagnostics = _diagnostics_with_policy_tools(diagnostics, request)
         output = dict(response)
         gateway = (
             dict(output.get("_gateway") or {})
@@ -458,10 +495,8 @@ def install(agent: Any, evidence_policy: Any, debug_report: Any) -> None:
         return
 
     base = evidence_policy._base_policy(agent.forced_action)
-    base._structured_hypothesis = lambda task, state: structured_hypothesis(
-        base,
-        task,
-        state,
+    base._HYPOTHESIS_FIELD_RE = _hypothesis_pattern(
+        tuple(str(label) for label in base._HYPOTHESIS_FIELDS)
     )
 
     original_apply = evidence_policy.apply_provenance_gate
