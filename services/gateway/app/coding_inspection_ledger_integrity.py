@@ -44,13 +44,19 @@ def _event_is_in_batch(
 
 
 def _occurrence_key(event: Mapping[str, Any]) -> str:
-    call_id = str(event.get("tool_call_id") or "").strip()
-    if call_id:
-        return f"id:{call_id}"
+    """Return a durable identity for one Gateway-observed tool occurrence.
+
+    Backend tool-call IDs are correlation hints, not unique identities: local
+    models can reuse values such as ``call_1`` on later responses. Scope that
+    untrusted value with Gateway-owned event coordinates so a later real call is
+    not mistaken for replay of an earlier occurrence. The key intentionally
+    excludes raw arguments, which can contain sensitive material.
+    """
     name = str(event.get("name") or "").strip()
     cycle = _as_int(event.get("cycle"))
     ts = _as_float(event.get("ts"))
-    return f"event:{name}:{cycle}:{ts:.9f}"
+    call_id = str(event.get("tool_call_id") or "").strip()
+    return f"event:{name}:{cycle}:{ts:.9f}:{call_id}"
 
 
 def _matching_finish_index(
@@ -182,8 +188,9 @@ def install(resilience: Any) -> None:
 
     Rejected attempts remain in the full event stream, so stagnation and
     noncompliance logic still observe them. ID-bearing inspection starts are
-    committed only after a successful completion; opaque occurrence keys make
-    rollover replay idempotent. ID-less legacy events retain prior behavior.
+    committed only after a successful completion; Gateway-scoped occurrence
+    keys make rollover replay idempotent even if a backend reuses call IDs.
+    ID-less legacy events retain prior behavior.
     """
     if bool(getattr(resilience, "_coding_inspection_ledger_integrity_installed", False)):
         return
