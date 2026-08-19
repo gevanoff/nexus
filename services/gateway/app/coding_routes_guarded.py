@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app import coding_agent_guarded as guarded_agent
+from app import coding_contract_hardening
 from app import coding_debug_report
 from app import coding_evidence_policy
 from app import coding_execution_dispatch
@@ -26,6 +27,11 @@ coding_model_metadata_resilience.install(cw.miw)
 coding_evidence_policy.install_execution_override_seam(guarded_agent._agent)
 coding_text_tool_handoff.install(guarded_agent._agent)
 coding_execution_dispatch.install(cw, guarded_agent)
+coding_contract_hardening.install(
+    guarded_agent._agent,
+    coding_evidence_policy,
+    coding_debug_report,
+)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
