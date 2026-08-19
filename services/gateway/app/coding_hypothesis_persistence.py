@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Sequence
+import hashlib
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 
 _ERROR_REQUIRED = "coding_update_plan_hypothesis_required"
@@ -9,6 +10,8 @@ _ERROR_NOT_PERSISTED = "coding_update_plan_hypothesis_not_persisted"
 _EVIDENCE_EXCERPT_CHARS = 3_000
 _EVIDENCE_DIGEST_CHARS = 10_000
 _PLAN_NOTE_MAX_CHARS = 2_000
+_NOTE_STATE_KEY = "project_plan_note_state"
+_NOTE_STATE_SCHEMA = "nexus_coding_project_plan_note_state.v1"
 
 
 def _base_policy(agent: Any) -> Any:
@@ -28,6 +31,128 @@ def _verified_targets(state: Mapping[str, Any]) -> list[str]:
             if _normalized_path(target)
         }
     )
+
+
+def _note_fingerprint(note: Any) -> str:
+    return hashlib.sha256(str(note or "").strip().encode("utf-8")).hexdigest()
+
+
+def _plan_revision(plan: Mapping[str, Any]) -> int:
+    try:
+        return max(0, int(plan.get("revision") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _plan_updated_at(plan: Mapping[str, Any]) -> float:
+    try:
+        return max(0.0, float(plan.get("updated_at") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _note_marker_for_plan(plan: Mapping[str, Any]) -> Dict[str, Any]:
+    note = str(plan.get("note") or "").strip()
+    return {
+        "schema": _NOTE_STATE_SCHEMA,
+        "revision": _plan_revision(plan),
+        "updated_at": _plan_updated_at(plan),
+        "fingerprint": _note_fingerprint(note),
+    }
+
+
+def _valid_note_marker(task: Mapping[str, Any], note: str) -> Dict[str, Any]:
+    marker = task.get(_NOTE_STATE_KEY) if isinstance(task.get(_NOTE_STATE_KEY), Mapping) else {}
+    if str(marker.get("schema") or "") != _NOTE_STATE_SCHEMA:
+        return {}
+    if str(marker.get("fingerprint") or "") != _note_fingerprint(note):
+        return {}
+    try:
+        revision = max(0, int(marker.get("revision") or 0))
+        updated_at = max(0.0, float(marker.get("updated_at") or 0))
+    except (TypeError, ValueError):
+        return {}
+    if updated_at <= 0:
+        return {}
+    return {
+        "schema": _NOTE_STATE_SCHEMA,
+        "revision": revision,
+        "updated_at": updated_at,
+        "fingerprint": str(marker.get("fingerprint") or ""),
+        "source": "durable_note_marker",
+    }
+
+
+def _successful_event_result(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
+    if result.get("ok") is False or str(result.get("error") or "").strip():
+        return {}
+    return result
+
+
+def _event_timestamp(event: Mapping[str, Any]) -> float:
+    try:
+        return max(0.0, float(event.get("ts") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _legacy_note_event_marker(task: Mapping[str, Any], note: str) -> Dict[str, Any]:
+    """Recover note provenance from an older agent event when no marker exists.
+
+    This preserves pre-overlay agent workspaces where the successful
+    coding_update_plan event still carries the same durable note. Direct UI/API
+    notes created before this overlay have no trustworthy note-specific time and
+    must be reaffirmed once instead of borrowing whole-plan timestamps.
+    """
+    fingerprint = _note_fingerprint(note)
+    events = [event for event in (task.get("agent_events") or []) if isinstance(event, Mapping)]
+    for event in reversed(events):
+        if (
+            str(event.get("type") or "") != "tool_finished"
+            or str(event.get("name") or "") != "coding_update_plan"
+        ):
+            continue
+        result = _successful_event_result(event)
+        plan = result.get("plan") if isinstance(result.get("plan"), Mapping) else {}
+        event_note = str(plan.get("note") or "").strip()
+        if not event_note or _note_fingerprint(event_note) != fingerprint:
+            continue
+        updated_at = _event_timestamp(event) or _plan_updated_at(plan)
+        if updated_at <= 0:
+            continue
+        return {
+            "schema": _NOTE_STATE_SCHEMA,
+            "revision": _plan_revision(plan),
+            "updated_at": updated_at,
+            "fingerprint": fingerprint,
+            "source": "matching_plan_event",
+        }
+    return {}
+
+
+def _note_origin(task: Mapping[str, Any], note: str) -> Dict[str, Any]:
+    return _valid_note_marker(task, note) or _legacy_note_event_marker(task, note)
+
+
+def _latest_linked_read_at(task: Mapping[str, Any], targets: Sequence[str]) -> float:
+    target_set = {_normalized_path(target) for target in targets if _normalized_path(target)}
+    if not target_set:
+        return 0.0
+    latest = 0.0
+    for event in (task.get("agent_events") or []):
+        if not isinstance(event, Mapping):
+            continue
+        if (
+            str(event.get("type") or "") != "tool_finished"
+            or str(event.get("name") or "") != "coding_read_file_lines"
+        ):
+            continue
+        result = _successful_event_result(event)
+        path = _normalized_path(result.get("path"))
+        if path in target_set and isinstance(result.get("content"), str):
+            latest = max(latest, _event_timestamp(event))
+    return latest
 
 
 def _parse_hypothesis_note(base: Any, note: str) -> tuple[Dict[str, str], list[str]]:
@@ -79,12 +204,7 @@ def _durable_note_state(
     task: Mapping[str, Any],
     state: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    """Make the durable note authoritative for hypothesis-based edit readiness.
-
-    The legacy parser intentionally scans the whole project plan. That remains
-    useful for general plan introspection, but it must not authorize edits when
-    labels happen to appear only in goal/item text written through the UI/API.
-    """
+    """Make the durable note and its own write time authoritative for edits."""
     out = dict(state)
     if not out.get("evidence_provenance_enforced") or not _verified_targets(out):
         return out
@@ -95,23 +215,27 @@ def _durable_note_state(
     fields, missing = _parse_hypothesis_note(base, note)
     repository_evidence = str(fields.get("Repository evidence") or "")
     linked = _linked_targets(evidence_policy, repository_evidence, out) if not missing else []
+    origin = _note_origin(task, note) if note else {}
     try:
         activation_revision = int(out.get("activation_plan_revision", -1))
     except (TypeError, ValueError):
         activation_revision = -1
-    try:
-        current_revision = int(plan.get("revision") or 0)
-    except (TypeError, ValueError):
-        current_revision = 0
-    revision_ready = current_revision > activation_revision
-    ready = bool(not missing and linked and revision_ready)
+    note_revision = int(origin.get("revision") or 0) if origin else 0
+    note_updated_at = float(origin.get("updated_at") or 0) if origin else 0.0
+    revision_ready = bool(origin and note_revision > activation_revision)
+    latest_read_at = _latest_linked_read_at(task, linked)
+    note_stale = bool(linked and latest_read_at > 0 and note_updated_at > 0 and latest_read_at > note_updated_at)
+    ready = bool(not missing and linked and revision_ready and not note_stale)
 
     out["durable_hypothesis_note_ready"] = ready
     out["durable_hypothesis_note_fields"] = sorted(fields)
     out["durable_hypothesis_note_missing_fields"] = list(missing)
     out["durable_hypothesis_note_causal_targets"] = list(linked)
     out["durable_hypothesis_note_revision_ready"] = revision_ready
-    out["durable_hypothesis_note_plan_revision"] = current_revision if ready else None
+    out["durable_hypothesis_note_plan_revision"] = note_revision if origin else None
+    out["durable_hypothesis_note_updated_at"] = note_updated_at if origin else None
+    out["durable_hypothesis_note_origin"] = str(origin.get("source") or "") if origin else "unknown"
+    out["latest_linked_evidence_at"] = latest_read_at or out.get("latest_linked_evidence_at")
 
     # These are the effective execution-policy fields consumed by dispatch,
     # prompt construction, debug traces, and execution-time authorization.
@@ -119,9 +243,17 @@ def _durable_note_state(
     out["hypothesis_fields"] = sorted(fields)
     out["hypothesis_causal_evidence_linked"] = ready
     out["hypothesis_causal_targets"] = list(linked) if ready else []
-    out["hypothesis_plan_revision"] = current_revision if ready else None
+    out["hypothesis_plan_revision"] = note_revision if ready else None
 
     if ready:
+        out.pop("hypothesis_evidence_postdates_plan", None)
+        if str(out.get("action_kind") or "") == "evidence" and str(out.get("canonical_action_kind") or "") == "edit":
+            out["action_kind"] = "edit"
+            out["allowed_tools"] = sorted(base._ACTION_ALLOWED_TOOLS["edit"])
+            out["required_action"] = str(
+                out.get("canonical_required_action")
+                or "Make the smallest evidence-backed edit, or finish with a concrete blocker."
+            )
         return out
 
     out["action_kind"] = "evidence"
@@ -132,14 +264,18 @@ def _durable_note_state(
     }
     allowed.update({"coding_update_plan", "coding_finish"})
     out["allowed_tools"] = sorted(allowed)
-    if not note:
+    if note_stale:
+        out["hypothesis_evidence_postdates_plan"] = True
+        out["hypothesis_freshness_source"] = "durable_note_timestamp"
+        reason = "Verified causal evidence was read after the durable hypothesis note was last written."
+    elif not note:
         reason = "The durable project_plan.note is empty."
     elif missing:
         reason = "The durable project_plan.note is missing or underspecifies: " + ", ".join(missing) + "."
     elif not linked:
-        reason = (
-            "The durable project_plan.note does not cite an exact verified repository-relative causal target."
-        )
+        reason = "The durable project_plan.note does not cite an exact verified repository-relative causal target."
+    elif not origin:
+        reason = "The durable hypothesis note has no trustworthy note-specific write marker and must be reaffirmed once."
     else:
         reason = "The durable hypothesis note predates forced-action activation and must be reaffirmed."
     out["required_action"] = (
@@ -150,15 +286,11 @@ def _durable_note_state(
 
 
 def _contract_required(state: Mapping[str, Any]) -> bool:
-    needs_hypothesis_write = bool(
-        not state.get("durable_hypothesis_note_ready")
-        or state.get("hypothesis_evidence_postdates_plan")
-    )
     return bool(
         str(state.get("action_kind") or "") == "evidence"
         and state.get("evidence_provenance_enforced")
         and state.get("causal_evidence_targets")
-        and needs_hypothesis_write
+        and not state.get("durable_hypothesis_note_ready")
         and "coding_update_plan" in set(state.get("allowed_tools") or [])
     )
 
@@ -178,20 +310,12 @@ def _clip_evidence_excerpt(value: Any, limit: int = _EVIDENCE_EXCERPT_CHARS) -> 
     return f"{text[:left]}{marker}{text[-right:]}"
 
 
-def _verified_evidence_digest(
-    task: Mapping[str, Any],
-    state: Mapping[str, Any],
-) -> str:
-    """Replay bounded successful read evidence after context compaction/handoff."""
+def _verified_evidence_digest(task: Mapping[str, Any], state: Mapping[str, Any]) -> str:
     targets = set(_verified_targets(state))
     if not targets:
         return ""
     excerpts: Dict[str, str] = {}
-    events = [
-        event
-        for event in (task.get("agent_events") or [])
-        if isinstance(event, Mapping)
-    ]
+    events = [event for event in (task.get("agent_events") or []) if isinstance(event, Mapping)]
     for event in reversed(events):
         if len(excerpts) >= len(targets):
             break
@@ -200,9 +324,7 @@ def _verified_evidence_digest(
             or str(event.get("name") or "") != "coding_read_file_lines"
         ):
             continue
-        result = event.get("result") if isinstance(event.get("result"), Mapping) else {}
-        if result.get("ok") is False or str(result.get("error") or "").strip():
-            continue
+        result = _successful_event_result(event)
         path = _normalized_path(result.get("path"))
         if not path or path not in targets or path in excerpts:
             continue
@@ -235,12 +357,7 @@ def _verified_evidence_digest(
 
 
 def _contract_error(
-    *,
-    error: str,
-    message: str,
-    base: Any,
-    state: Mapping[str, Any],
-    missing_fields: Sequence[str] = (),
+    *, error: str, message: str, base: Any, state: Mapping[str, Any], missing_fields: Sequence[str] = ()
 ) -> Dict[str, Any]:
     return {
         "ok": False,
@@ -259,7 +376,6 @@ def _contract_tool_spec(agent: Any, spec: Any, state: Mapping[str, Any]) -> Any:
             return spec
     except Exception:
         return spec
-
     base = _base_policy(agent)
     targets = _verified_targets(state)
     labels = [str(label) for label in base._HYPOTHESIS_FIELDS]
@@ -289,13 +405,7 @@ def _contract_tool_spec(agent: Any, spec: Any, state: Mapping[str, Any]) -> Any:
             }
         },
     }
-    return agent.ToolSpec(
-        function=agent.ToolFunction(
-            name="coding_update_plan",
-            description=description,
-            parameters=parameters,
-        )
-    )
+    return agent.ToolSpec(function=agent.ToolFunction(name="coding_update_plan", description=description, parameters=parameters))
 
 
 def _augment_prompt(original: str, base: Any, state: Mapping[str, Any]) -> str:
@@ -313,11 +423,52 @@ def _augment_prompt(original: str, base: Any, state: Mapping[str, Any]) -> str:
     )
 
 
+def _install_note_marker(agent: Any) -> None:
+    workspace = getattr(agent, "cw", None)
+    original = getattr(workspace, "update_project_plan", None)
+    mutate = getattr(workspace, "mutate_task", None)
+    if not callable(original) or not callable(mutate):
+        return
+    if bool(getattr(workspace, "_coding_project_plan_note_marker_installed", False)):
+        return
+
+    def update_project_plan_with_note_marker(
+        task_id: str,
+        *,
+        goal: Optional[str] = None,
+        items: Optional[list[Dict[str, Any]]] = None,
+        note: Optional[str] = None,
+        actor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        result = original(task_id, goal=goal, items=items, note=note, actor=actor)
+        if note is None or not bool(result.get("ok")):
+            return result
+        plan = result.get("plan") if isinstance(result.get("plan"), Mapping) else {}
+        marker = _note_marker_for_plan(plan)
+        expected_revision = int(marker.get("revision") or 0)
+        expected_fingerprint = str(marker.get("fingerprint") or "")
+
+        def apply(task: Dict[str, Any]) -> None:
+            current = task.get("project_plan") if isinstance(task.get("project_plan"), Mapping) else {}
+            if _plan_revision(current) != expected_revision:
+                return
+            if _note_fingerprint(current.get("note")) != expected_fingerprint:
+                return
+            task[_NOTE_STATE_KEY] = dict(marker)
+
+        mutate(task_id, apply)
+        return result
+
+    workspace.update_project_plan = update_project_plan_with_note_marker
+    workspace._coding_project_plan_note_marker_installed = True
+    workspace._update_project_plan_before_note_marker = original
+
+
 def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None:
-    """Install a durable, machine-verifiable hypothesis handoff for Coding Workspace."""
     if bool(getattr(agent, "_coding_hypothesis_persistence_installed", False)):
         return
 
+    _install_note_marker(agent)
     original_active_state = agent.forced_action.active_state
 
     def active_state_with_durable_note(task: Mapping[str, Any]) -> Dict[str, Any]:
@@ -369,33 +520,18 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
         )
 
     agent.forced_action.prompt_context = forced_prompt_with_verified_evidence
-
     original_run_tool = agent._run_tool
 
     def run_tool_with_hypothesis_persistence(
-        task_id: str,
-        name: str,
-        args: Dict[str, Any],
-        *,
-        git_token_value: Any,
+        task_id: str, name: str, args: Dict[str, Any], *, git_token_value: Any
     ) -> Dict[str, Any]:
         if str(name or "") != "coding_update_plan":
-            return original_run_tool(
-                task_id,
-                name,
-                args,
-                git_token_value=git_token_value,
-            )
+            return original_run_tool(task_id, name, args, git_token_value=git_token_value)
 
         task = agent.cw.load_task(task_id)
         state = agent.forced_action.active_state(task)
         if not _contract_required(state):
-            return original_run_tool(
-                task_id,
-                name,
-                args,
-                git_token_value=git_token_value,
-            )
+            return original_run_tool(task_id, name, args, git_token_value=git_token_value)
 
         base = _base_policy(agent)
         unexpected = sorted(key for key in args if key != "note")
@@ -412,8 +548,7 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
                 message=(
                     "The forced-action hypothesis transition requires coding_update_plan to persist the "
                     "four-field hypothesis in the note argument. Assistant prose, goal/items updates, and "
-                    "milestone summaries do not satisfy the contract."
-                    + detail
+                    "milestone summaries do not satisfy the contract." + detail
                 ),
                 base=base,
                 state=state,
@@ -446,12 +581,7 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
                 state=state,
             )
 
-        result = original_run_tool(
-            task_id,
-            name,
-            {"note": canonical_note},
-            git_token_value=git_token_value,
-        )
+        result = original_run_tool(task_id, name, {"note": canonical_note}, git_token_value=git_token_value)
         if not bool(result.get("ok")):
             return result
 
@@ -475,9 +605,7 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
                     ),
                     base=base,
                     state=after_state or state,
-                    missing_fields=list(
-                        (after_state or {}).get("durable_hypothesis_note_missing_fields") or []
-                    ),
+                    missing_fields=list((after_state or {}).get("durable_hypothesis_note_missing_fields") or []),
                 )
             )
             return failed
@@ -497,13 +625,9 @@ def install(agent: Any, evidence_policy: Any, guarded_agent: Any = None) -> None
         return enriched
 
     agent._run_tool = run_tool_with_hypothesis_persistence
-    # coding_agent_guarded intentionally exports its installed _run_tool seam and
-    # historical qualification asserts identity with the agent hook. Preserve
-    # that invariant while composing this wrapper around semantic acceptance.
     if (
         guarded_agent is not None
-        and getattr(guarded_agent, "_run_tool_with_semantic_acceptance", None)
-        is original_run_tool
+        and getattr(guarded_agent, "_run_tool_with_semantic_acceptance", None) is original_run_tool
     ):
         guarded_agent._run_tool_with_semantic_acceptance = run_tool_with_hypothesis_persistence
     agent._coding_hypothesis_persistence_installed = True
