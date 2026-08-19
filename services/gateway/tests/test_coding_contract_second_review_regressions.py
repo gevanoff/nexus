@@ -79,6 +79,38 @@ def test_explicit_root_suffixless_repository_file_can_open_corrective_read():
     assert conventional == ["BUILD"]
 
 
+def test_explicit_root_suffixless_target_is_locked_to_repository_root():
+    assert hardening._read_matches_target("BUILD", "BUILD")
+    assert not hardening._read_matches_target("subdir/BUILD", "BUILD")
+
+
+def test_explicit_root_suffixless_target_is_not_reinterpreted_by_unique_candidate():
+    targets = hardening._resolve_asserted_targets(
+        "`BUILD` defines the generated service target",
+        {
+            "causal_evidence_targets": [],
+            "candidate_causal_evidence_targets": ["subdir/BUILD"],
+        },
+    )
+
+    assert targets == ["BUILD"]
+    assert not hardening._read_matches_target("subdir/BUILD", targets[0])
+
+
+def test_explicit_nested_suffixless_path_remains_exactly_path_locked():
+    targets = hardening._resolve_asserted_targets(
+        "subdir/BUILD defines the nested generated target",
+        {
+            "causal_evidence_targets": [],
+            "candidate_causal_evidence_targets": [],
+        },
+    )
+
+    assert targets == ["subdir/BUILD"]
+    assert hardening._read_matches_target("subdir/BUILD", targets[0])
+    assert not hardening._read_matches_target("BUILD", targets[0])
+
+
 def test_suffixless_recovery_keeps_test_and_docs_exclusions():
     targets = hardening._resolve_asserted_targets(
         "tests/server and docs/BUILD describe acceptance behavior",
