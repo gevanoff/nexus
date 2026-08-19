@@ -12,6 +12,7 @@ from app import coding_agent_guarded as guarded_agent
 from app import coding_contract_hardening
 from app import coding_contract_path_safety
 from app import coding_debug_report
+from app import coding_edit_evidence_continuity
 from app import coding_evidence_freshness
 from app import coding_evidence_policy
 from app import coding_execution_dispatch
@@ -52,6 +53,13 @@ coding_verified_evidence_handoff.install(
     guarded_agent._agent,
     coding_execution_dispatch,
     coding_hypothesis_persistence,
+)
+coding_edit_evidence_continuity.install(
+    guarded_agent._agent,
+    coding_execution_dispatch,
+    coding_hypothesis_persistence,
+    coding_debug_report,
+    cw,
 )
 coding_policy_rejection_recovery.install(guarded_agent._agent)
 coding_inspection_ledger_integrity.install(
