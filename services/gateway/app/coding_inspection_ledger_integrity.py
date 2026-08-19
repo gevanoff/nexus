@@ -9,6 +9,7 @@ _FULL_EVENTS: contextvars.ContextVar[tuple[Mapping[str, Any], ...]] = contextvar
     default=(),
 )
 _OCCURRENCE_KEYS_FIELD = "_nexus_completed_occurrences"
+_OCCURRENCE_IDENTITIES_FIELD = "_nexus_completed_occurrence_identities"
 _MAX_OCCURRENCE_KEYS = 128
 
 
@@ -57,6 +58,14 @@ def _occurrence_key(event: Mapping[str, Any]) -> str:
     ts = _as_float(event.get("ts"))
     call_id = str(event.get("tool_call_id") or "").strip()
     return f"event:{name}:{cycle}:{ts:.9f}:{call_id}"
+
+
+def _display_occurrence_key(event: Mapping[str, Any]) -> str:
+    """Return compact diagnostic correlation text; never use it for identity."""
+    call_id = str(event.get("tool_call_id") or "").strip()
+    if call_id:
+        return f"id:{call_id}"
+    return _occurrence_key(event)
 
 
 def _matching_finish_index(
@@ -139,18 +148,18 @@ def _completed_valid_starts(
     return starts
 
 
-def _existing_occurrence_keys(existing: Any) -> set[str]:
-    keys: set[str] = set()
+def _existing_occurrence_identities(existing: Any) -> set[str]:
+    identities: set[str] = set()
     if not isinstance(existing, list):
-        return keys
+        return identities
     for item in existing:
         if not isinstance(item, Mapping):
             continue
-        raw = item.get(_OCCURRENCE_KEYS_FIELD)
+        raw = item.get(_OCCURRENCE_IDENTITIES_FIELD)
         if not isinstance(raw, list):
             continue
-        keys.update(str(value).strip() for value in raw if str(value).strip())
-    return keys
+        identities.update(str(value).strip() for value in raw if str(value).strip())
+    return identities
 
 
 def _annotate_occurrences(
@@ -158,27 +167,47 @@ def _annotate_occurrences(
     ledger: list[dict[str, Any]],
     starts: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    by_signature: dict[str, list[str]] = {}
+    display_by_signature: dict[str, list[str]] = {}
+    identities_by_signature: dict[str, list[str]] = {}
     for start in starts:
         signature = str(resilience.inspection_signature(start) or "").strip()
         if signature:
-            by_signature.setdefault(signature, []).append(_occurrence_key(start))
+            display_by_signature.setdefault(signature, []).append(
+                _display_occurrence_key(start)
+            )
+            identities_by_signature.setdefault(signature, []).append(
+                _occurrence_key(start)
+            )
 
     output: list[dict[str, Any]] = []
     for raw in ledger:
         entry = dict(raw)
         signature = str(entry.get("signature") or "").strip()
-        previous = entry.get(_OCCURRENCE_KEYS_FIELD)
-        keys = (
-            [str(value).strip() for value in previous if str(value).strip()]
-            if isinstance(previous, list)
+        previous_display = entry.get(_OCCURRENCE_KEYS_FIELD)
+        display_keys = (
+            [str(value).strip() for value in previous_display if str(value).strip()]
+            if isinstance(previous_display, list)
             else []
         )
-        for key in by_signature.get(signature, []):
-            if key not in keys:
-                keys.append(key)
-        if keys:
-            entry[_OCCURRENCE_KEYS_FIELD] = keys[-_MAX_OCCURRENCE_KEYS:]
+        previous_identities = entry.get(_OCCURRENCE_IDENTITIES_FIELD)
+        identities = (
+            [
+                str(value).strip()
+                for value in previous_identities
+                if str(value).strip()
+            ]
+            if isinstance(previous_identities, list)
+            else []
+        )
+        for key in display_by_signature.get(signature, []):
+            display_keys.append(key)
+        for identity in identities_by_signature.get(signature, []):
+            if identity not in identities:
+                identities.append(identity)
+        if display_keys:
+            entry[_OCCURRENCE_KEYS_FIELD] = display_keys[-_MAX_OCCURRENCE_KEYS:]
+        if identities:
+            entry[_OCCURRENCE_IDENTITIES_FIELD] = identities[-_MAX_OCCURRENCE_KEYS:]
         output.append(entry)
     return output
 
@@ -189,7 +218,8 @@ def install(resilience: Any) -> None:
     Rejected attempts remain in the full event stream, so stagnation and
     noncompliance logic still observe them. ID-bearing inspection starts are
     committed only after a successful completion; Gateway-scoped occurrence
-    keys make rollover replay idempotent even if a backend reuses call IDs.
+    identities make rollover replay idempotent even if a backend reuses call
+    IDs. Compact backend IDs are retained only as diagnostic correlation text.
     ID-less legacy events retain prior behavior.
     """
     if bool(getattr(resilience, "_coding_inspection_ledger_integrity_installed", False)):
@@ -228,7 +258,7 @@ def install(resilience: Any) -> None:
                 events,
                 full_events,
             )
-            seen = _existing_occurrence_keys(existing)
+            seen = _existing_occurrence_identities(existing)
             fresh = [
                 start
                 for start in completed
