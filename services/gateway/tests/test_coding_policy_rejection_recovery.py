@@ -70,8 +70,22 @@ def _agent():
     return agent, forced
 
 
-def _suppressed_response(name: str = READ, *, allowed=None, reason: str = "unknown tool name"):
+def _diagnostic(name: str = READ, *, allowed=None, reason: str = "unknown tool name"):
     return {
+        "reason": reason,
+        "name": name,
+        "allowed_tool_names": list(allowed or [EDIT, FINISH]),
+    }
+
+
+def _suppressed_response(
+    name: str = READ,
+    *,
+    allowed=None,
+    reason: str = "unknown tool name",
+    trusted: bool = True,
+):
+    response = {
         "choices": [
             {
                 "message": {
@@ -83,16 +97,13 @@ def _suppressed_response(name: str = READ, *, allowed=None, reason: str = "unkno
                 "finish_reason": "stop",
             }
         ],
-        "_gateway": {
-            "coding_tool_call_diagnostics": [
-                {
-                    "reason": reason,
-                    "name": name,
-                    "allowed_tool_names": list(allowed or [EDIT, FINISH]),
-                }
-            ]
-        },
     }
+    diagnostic = _diagnostic(name, allowed=allowed, reason=reason)
+    if trusted:
+        response[recovery._TRUSTED_DIAGNOSTICS_KEY] = [diagnostic]
+    else:
+        response["_gateway"] = {"coding_tool_call_diagnostics": [diagnostic]}
+    return response
 
 
 def test_known_policy_omitted_tool_is_recovered_as_rejection_only_call():
@@ -130,6 +141,15 @@ def test_known_policy_omitted_tool_is_recovered_as_rejection_only_call():
     assert f"{READ} was NOT executed" in feedback.content
     assert EDIT in feedback.content
     assert FINISH in feedback.content
+
+
+def test_gateway_metadata_is_not_trusted_for_policy_recovery():
+    agent, forced = _agent()
+
+    calls = agent._extract_tool_calls(_suppressed_response(trusted=False))
+
+    assert calls == []
+    assert forced.original_evaluations == []
 
 
 def test_recovered_call_remains_non_executable_if_policy_changes_before_evaluation():
@@ -198,15 +218,9 @@ def test_real_backend_tool_call_passes_through_unchanged():
                 }
             }
         ],
-        "_gateway": {
-            "coding_tool_call_diagnostics": [
-                {
-                    "reason": "unknown tool name",
-                    "name": READ,
-                    "allowed_tool_names": [EDIT, FINISH],
-                }
-            ]
-        },
+        recovery._TRUSTED_DIAGNOSTICS_KEY: [
+            _diagnostic(READ, allowed=[EDIT, FINISH])
+        ],
     }
 
     assert agent._extract_tool_calls(response) == [real]
