@@ -38,6 +38,9 @@ class FakeForcedAction:
     def active_state(self, task):
         return dict(self.state)
 
+    def prompt_context(self, task):
+        return "base forced prompt"
+
 
 class FakeWorkspace:
     def __init__(self):
@@ -298,6 +301,66 @@ def test_prompt_explicitly_distinguishes_assistant_prose_from_durable_note():
     assert "ONLY its note argument" in prompt
     assert TARGET in prompt
     assert "Do not update goal, items, or milestone summaries" in prompt
+
+
+def test_hypothesis_prompt_replays_verified_read_content_after_context_compaction():
+    agent, _, _, workspace, _ = _fake_agent()
+    workspace.task["agent_events"] = [
+        {
+            "type": "tool_finished",
+            "name": "coding_read_file_lines",
+            "result": {
+                "ok": True,
+                "path": TARGET,
+                "content": (
+                    "if last_error:\n"
+                    "    return entry\n"
+                    "ui_url = _invokeai_ui_url()\n"
+                    "management['ui_url'] = ui_url\n"
+                ),
+            },
+        }
+    ]
+
+    prompt = agent.forced_action.prompt_context(workspace.task)
+
+    assert "Durable verified repository evidence excerpts" in prompt
+    assert f"Verified read: {TARGET}" in prompt
+    assert "if last_error:" in prompt
+    assert "return entry" in prompt
+    assert "ui_url = _invokeai_ui_url()" in prompt
+    assert "assistant memory, commit-name coincidence, or unsupported inference" in prompt
+
+
+def test_hypothesis_prompt_does_not_replay_failed_or_unverified_read_content():
+    agent, _, forced_action, workspace, _ = _fake_agent()
+    workspace.task["agent_events"] = [
+        {
+            "type": "tool_finished",
+            "name": "coding_read_file_lines",
+            "result": {
+                "ok": False,
+                "path": TARGET,
+                "content": "failed verified content should not appear",
+            },
+        },
+        {
+            "type": "tool_finished",
+            "name": "coding_read_file_lines",
+            "result": {
+                "ok": True,
+                "path": "services/gateway/app/static/unverified.js",
+                "content": "unverified content should not appear",
+            },
+        },
+    ]
+
+    prompt = agent.forced_action.prompt_context(workspace.task)
+
+    assert "Durable verified repository evidence excerpts" not in prompt
+    assert "failed verified content" not in prompt
+    assert "unverified content" not in prompt
+    assert forced_action.state["causal_evidence_targets"] == [TARGET]
 
 
 def test_normal_plan_editing_schema_and_runtime_are_unchanged_without_contract_state():
