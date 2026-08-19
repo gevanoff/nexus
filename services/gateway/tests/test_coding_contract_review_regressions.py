@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from app import coding_contract_hardening as hardening
+from app import coding_contract_path_safety as path_safety
+
+
+path_safety.install(hardening)
 
 
 def test_full_path_hypothesis_does_not_add_same_basename_escape_hatch():
@@ -64,6 +68,18 @@ def test_absolute_and_url_paths_are_not_reinterpreted_as_repository_paths():
     )
 
     assert targets == []
+
+
+def test_plain_filename_still_opens_the_intended_corrective_path():
+    targets = hardening._resolve_asserted_targets(
+        "config.py contains the failing configuration gate",
+        {
+            "causal_evidence_targets": [],
+            "candidate_causal_evidence_targets": [],
+        },
+    )
+
+    assert targets == ["config.py"]
 
 
 def test_invalid_tool_diagnostic_is_appended_when_backend_also_returns_text():
