@@ -41,6 +41,14 @@ def _line_range(result: Mapping[str, Any]) -> tuple[int, int] | None:
     return start, end
 
 
+def _causal_targets(state: Mapping[str, Any]) -> set[str]:
+    return {
+        _normalized_path(item)
+        for item in (state.get("causal_evidence_targets") or [])
+        if _normalized_path(item)
+    }
+
+
 def _verified_ranges(
     evidence_policy: Any,
     forced_action: Any,
@@ -53,6 +61,9 @@ def _verified_ranges(
     except Exception:
         window_start = 0
     window_start = max(0, min(window_start, len(events)))
+    causal = _causal_targets(state)
+    if not causal:
+        return {}, set()
 
     ranges: dict[str, list[tuple[int, int]]] = {}
     legacy_paths: set[str] = set()
@@ -61,7 +72,10 @@ def _verified_ranges(
         if not result:
             continue
         path = _normalized_path(result.get("path"))
-        if not path:
+        # Only expose ranges the existing provenance gate has independently
+        # classified as verified causal evidence. Acceptance fixtures, docs,
+        # and incidental context reads must never appear as root-cause spans.
+        if not path or path not in causal:
             continue
         span = _line_range(result)
         if span is None:
@@ -134,6 +148,11 @@ def _range_metadata(ranges: Mapping[str, Sequence[tuple[int, int]]]) -> list[dic
     return out
 
 
+def _clear_range_requirement(out: Dict[str, Any]) -> None:
+    out.pop("hypothesis_evidence_range_required", None)
+    out.pop("hypothesis_evidence_range_targets", None)
+
+
 def refine_state(
     evidence_policy: Any,
     forced_action: Any,
@@ -153,6 +172,8 @@ def refine_state(
     ranges, legacy_paths = _verified_ranges(evidence_policy, forced_action, task, out)
     if ranges:
         out["causal_evidence_ranges"] = _range_metadata(ranges)
+    else:
+        out.pop("causal_evidence_ranges", None)
 
     if str(out.get("action_kind") or "") != "edit":
         return out
@@ -191,19 +212,24 @@ def refine_state(
             missing_range_targets.append(target)
 
     if matched_targets:
+        _clear_range_requirement(out)
         out["hypothesis_causal_targets"] = matched_targets
         out["hypothesis_causal_evidence_linked"] = True
         if matched_ranges:
             out["hypothesis_causal_evidence_ranges"] = matched_ranges
+        else:
+            out.pop("hypothesis_causal_evidence_ranges", None)
         return out
 
     if not missing_range_targets:
+        _clear_range_requirement(out)
         return out
 
     out["action_kind"] = "evidence"
     out["allowed_tools"] = ["coding_finish", "coding_update_plan"]
     out["hypothesis_causal_targets"] = []
     out["hypothesis_causal_evidence_linked"] = False
+    out.pop("hypothesis_causal_evidence_ranges", None)
     out["hypothesis_evidence_range_required"] = True
     out["hypothesis_evidence_range_targets"] = missing_range_targets
     out["required_action"] = (
