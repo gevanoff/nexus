@@ -9,8 +9,17 @@ from typing import Any, Dict, Mapping
 _PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z0-9_.-]+)"
 )
-_FILENAME_RE = re.compile(r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)(?![A-Za-z0-9_.-])")
-_INVALID_TOOL_NOTICE = "Nexus suppressed an invalid backend tool call. Retry with a validated tool-calling model."
+_FILENAME_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+)(?![A-Za-z0-9_.-])"
+)
+_REPOSITORY_SUFFIXES = {
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt",
+    ".c", ".cc", ".cpp", ".h", ".hpp", ".html", ".css", ".scss",
+    ".yaml", ".yml", ".json", ".toml", ".ini", ".cfg", ".sh",
+}
+_INVALID_TOOL_NOTICE = (
+    "Nexus suppressed an invalid backend tool call. Retry with a validated tool-calling model."
+)
 _TOOL_DIAGNOSTICS: contextvars.ContextVar[tuple[dict[str, Any], ...]] = contextvars.ContextVar(
     "nexus_coding_tool_diagnostics",
     default=(),
@@ -20,18 +29,17 @@ _TOOL_DIAGNOSTICS: contextvars.ContextVar[tuple[dict[str, Any], ...]] = contextv
 def _hypothesis_pattern(labels: tuple[str, ...]) -> re.Pattern[str]:
     label_expr = "|".join(re.escape(label) for label in labels)
     return re.compile(
-        rf"(?is)(?:^|[\n;]|(?<=[.!?])\s+)\s*(?:[-*]\s*)?(?:\*\*)?({label_expr})(?:\*\*)?\s*:\s*"
+        rf"(?is)(?:^|[\n;]|(?<=[.!?])\s+)\s*(?:[-*]\s*)?(?:\*\*)?"
+        rf"({label_expr})(?:\*\*)?\s*:\s*"
     )
 
 
-def structured_hypothesis(base: Any, task: Mapping[str, Any], state: Mapping[str, Any]) -> tuple[bool, Dict[str, str]]:
-    """Parse the controller hypothesis contract without depending on punctuation style.
-
-    Text-tool fallback models frequently emit all four labelled fields on one
-    paragraph separated by sentences. The durable contract is the field labels
-    and contents, not whether the model chose a newline or semicolon between
-    them.
-    """
+def structured_hypothesis(
+    base: Any,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> tuple[bool, Dict[str, str]]:
+    """Parse the labelled hypothesis contract without depending on punctuation style."""
     current_revision = base._plan_revision(task)
     try:
         activation_revision = int(state.get("activation_plan_revision", -1))
@@ -68,7 +76,13 @@ def structured_hypothesis(base: Any, task: Mapping[str, Any], state: Mapping[str
 
 
 def _normalized_path(value: Any) -> str:
-    return str(value or "").strip().replace("\\", "/").strip("/")
+    raw = str(value or "").strip().replace("\\", "/")
+    if not raw or raw.startswith("/") or "://" in raw or re.match(r"^[A-Za-z]:/", raw):
+        return ""
+    parsed = PurePosixPath(raw)
+    if ".." in parsed.parts:
+        return ""
+    return "/".join(part for part in parsed.parts if part not in {"", "."})
 
 
 def _repository_paths(text: str) -> list[str]:
@@ -80,96 +94,164 @@ def _repository_paths(text: str) -> list[str]:
     return out
 
 
-def _resolve_asserted_targets(repository_evidence: str, state: Mapping[str, Any]) -> list[str]:
-    """Resolve explicit hypothesis targets without weakening full-path provenance.
+def _repository_basenames(text: str) -> list[str]:
+    out: list[str] = []
+    for match in _FILENAME_RE.finditer(str(text or "")):
+        name = str(match.group(1) or "").strip()
+        if not name or "/" in name:
+            continue
+        if PurePosixPath(name).suffix.casefold() not in _REPOSITORY_SUFFIXES:
+            continue
+        if name not in out:
+            out.append(name)
+    return out
 
-    Full repository-relative paths may be read directly. Basenames are resolved
-    only when they uniquely identify a target the controller already discovered
-    through candidate or verified evidence. A basename still does not satisfy
-    the provenance link itself; after the read the plan must cite the full path.
+
+def _resolve_asserted_targets(
+    repository_evidence: str,
+    state: Mapping[str, Any],
+) -> list[str]:
+    """Resolve hypothesis evidence while preserving full-path edit provenance.
+
+    A full repository-relative path can be verified directly. A bare filename is
+    promoted to a full path only when the controller already knows one unique
+    candidate/verified path with that basename. Otherwise the bare filename is
+    retained solely as a one-read corrective target; it never satisfies the
+    provenance link that unlocks editing.
     """
-    verified = [_normalized_path(item) for item in (state.get("causal_evidence_targets") or [])]
-    candidates = [_normalized_path(item) for item in (state.get("candidate_causal_evidence_targets") or [])]
-    pool = [item for item in [*verified, *candidates] if item]
+    verified = [
+        _normalized_path(item)
+        for item in (state.get("causal_evidence_targets") or [])
+        if _normalized_path(item)
+    ]
+    candidates = [
+        _normalized_path(item)
+        for item in (state.get("candidate_causal_evidence_targets") or [])
+        if _normalized_path(item)
+    ]
+    pool = [*verified, *candidates]
     asserted = _repository_paths(repository_evidence)
 
-    for match in _FILENAME_RE.finditer(str(repository_evidence or "")):
-        basename = str(match.group(1) or "").strip()
-        if not basename or "/" in basename:
-            continue
-        matches = [path for path in pool if PurePosixPath(path).name == basename]
-        if len(set(matches)) == 1:
-            resolved = matches[0]
-            if resolved not in asserted:
-                asserted.append(resolved)
+    for basename in _repository_basenames(repository_evidence):
+        matches = sorted({path for path in pool if PurePosixPath(path).name == basename})
+        target = matches[0] if len(matches) == 1 else basename
+        if target not in asserted:
+            asserted.append(target)
     return asserted
 
 
-def refine_provenance_state(policy: Any, forced_action: Any, task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, Any]:
-    """Add one narrow recovery path when a structured hypothesis cites new evidence."""
+def refine_provenance_state(
+    policy: Any,
+    forced_action: Any,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Open exactly one corrective read when a structured hypothesis cites new evidence."""
     out = dict(state)
-    if str(out.get("action_kind") or "") != "evidence" or not out.get("evidence_provenance_enforced"):
+    if (
+        str(out.get("action_kind") or "") != "evidence"
+        or not out.get("evidence_provenance_enforced")
+    ):
         return out
 
     base = policy._base_policy(forced_action)
     hypothesis_ready, fields = base._structured_hypothesis(task, out)
     repository_evidence = str(fields.get("Repository evidence") or "")
-    verified = {_normalized_path(item) for item in (out.get("causal_evidence_targets") or []) if _normalized_path(item)}
+    verified = {
+        _normalized_path(item)
+        for item in (out.get("causal_evidence_targets") or [])
+        if _normalized_path(item)
+    }
     linked = bool(out.get("hypothesis_causal_evidence_linked"))
-
     if not hypothesis_ready or linked:
         return out
 
     asserted = _resolve_asserted_targets(repository_evidence, out)
-    unverified = [path for path in asserted if path and path not in verified]
+    unverified: list[str] = []
+    for target in asserted:
+        if not target:
+            continue
+        if "/" in target:
+            if target not in verified:
+                unverified.append(target)
+            continue
+        if not any(PurePosixPath(path).name == target for path in verified):
+            unverified.append(target)
     if not unverified:
         return out
 
     out["hypothesis_unverified_targets"] = unverified
     out["required_action"] = (
-        "The structured hypothesis cites implementation/configuration evidence that has not been verified: "
+        "The structured hypothesis cites implementation/configuration evidence that has not "
+        "been verified: "
         + ", ".join(unverified)
-        + ". Read exactly one cited target with coding_read_file_lines, or revise Repository evidence to cite one of the already verified causal targets."
+        + ". Read exactly one cited target with coding_read_file_lines, or revise Repository "
+        "evidence to cite one of the already verified causal targets."
     )
-    out["allowed_tools"] = sorted({"coding_read_file_lines", "coding_update_plan", "coding_finish"})
+    out["allowed_tools"] = sorted(
+        {"coding_read_file_lines", "coding_update_plan", "coding_finish"}
+    )
     return out
 
 
 def provenance_prompt_context(base: Any, state: Mapping[str, Any]) -> str:
     allowed = ", ".join(state.get("allowed_tools") or [])
-    candidates = [_normalized_path(item) for item in (state.get("candidate_causal_evidence_targets") or [])]
-    verified = [_normalized_path(item) for item in (state.get("causal_evidence_targets") or [])]
-    unverified = [_normalized_path(item) for item in (state.get("hypothesis_unverified_targets") or [])]
-    fields = "\n".join(f"{label}: <specific finding>" for label in base._HYPOTHESIS_FIELDS)
+    candidates = [
+        _normalized_path(item)
+        for item in (state.get("candidate_causal_evidence_targets") or [])
+        if _normalized_path(item)
+    ]
+    verified = [
+        _normalized_path(item)
+        for item in (state.get("causal_evidence_targets") or [])
+        if _normalized_path(item)
+    ]
+    unverified = [
+        str(item)
+        for item in (state.get("hypothesis_unverified_targets") or [])
+        if str(item).strip()
+    ]
+    fields = "\n".join(
+        f"{label}: <specific finding>" for label in base._HYPOTHESIS_FIELDS
+    )
 
     if unverified:
         next_step = (
-            "The current hypothesis cites an unverified causal target. Read exactly one of these cited targets and no other file: "
+            "The current hypothesis cites an unverified causal target. Read exactly one of "
+            "these cited targets and no unrelated file: "
             + ", ".join(unverified)
-            + ". After that read, revise the plan so Repository evidence cites the full verified repository-relative path."
+            + ". After that read, revise the plan if needed so Repository evidence cites the "
+            "full verified repository-relative path."
         )
     elif verified:
         next_step = (
             "Verified causal implementation/configuration targets are: "
             + ", ".join(verified)
-            + ". Do not reconstruct or infer a different target from compacted model notes. Call coding_update_plan and make Repository evidence cite at least one of those exact full paths."
+            + ". Do not reconstruct or infer a different target from compacted model notes. "
+            "Call coding_update_plan and make Repository evidence cite at least one of those "
+            "exact full paths."
         )
     elif candidates:
         next_step = (
             "Candidate causal targets are: "
             + ", ".join(candidates)
-            + ". Search location alone does not establish root cause. Read exactly one candidate with coding_read_file_lines before forming the hypothesis."
+            + ". Search location alone does not establish root cause. Read exactly one "
+            "candidate with coding_read_file_lines before forming the hypothesis."
         )
     else:
         next_step = (
-            "Use one bounded coding_search_text or coding_read_file_lines action against implementation/configuration. Tests, fixtures, examples, and documentation may define acceptance criteria but do not establish root cause."
+            "Use one bounded coding_search_text or coding_read_file_lines action against "
+            "implementation/configuration. Tests, fixtures, examples, and documentation may "
+            "define acceptance criteria but do not establish root cause."
         )
 
     return (
-        "Controller forced-action mode is ACTIVE for the unchanged durable state, but editing is not yet authorized. "
-        "The execution policy applies an explicit causal-evidence provenance gate. "
+        "Controller forced-action mode is ACTIVE for the unchanged durable state, but editing "
+        "is not yet authorized. The execution policy applies an explicit causal-evidence "
+        "provenance gate. "
         + next_step
-        + " When recording the remediation hypothesis, put each contract field on its own labelled line (equivalent sentence-separated labels are also accepted):\n"
+        + " When recording the remediation hypothesis, put each contract field on its own "
+        "labelled line (equivalent sentence-separated labels are also accepted):\n"
         + fields
         + f"\nAvailable tools: {allowed or 'coding_finish'}."
     )
@@ -182,7 +264,11 @@ def _safe_tool_diagnostics(items: Any) -> tuple[dict[str, Any], ...]:
     for item in items[:5]:
         if not isinstance(item, Mapping):
             continue
-        allowed = item.get("allowed_tool_names") if isinstance(item.get("allowed_tool_names"), list) else []
+        allowed = (
+            item.get("allowed_tool_names")
+            if isinstance(item.get("allowed_tool_names"), list)
+            else []
+        )
         out.append(
             {
                 "reason": str(item.get("reason") or "")[:120],
@@ -196,9 +282,16 @@ def _safe_tool_diagnostics(items: Any) -> tuple[dict[str, Any], ...]:
 def diagnostic_notice(item: Mapping[str, Any]) -> str:
     name = str(item.get("name") or "(missing tool name)").strip()[:160]
     reason = str(item.get("reason") or "invalid tool call").strip()[:120]
-    allowed = [str(value) for value in (item.get("allowed_tool_names") or []) if str(value).strip()]
+    allowed = [
+        str(value)
+        for value in (item.get("allowed_tool_names") or [])
+        if str(value).strip()
+    ]
     suffix = ", ".join(allowed) if allowed else "none"
-    return f"Nexus suppressed backend tool call {name!r}: {reason}. Currently authorized tools: {suffix}."
+    return (
+        f"Nexus suppressed backend tool call {name!r}: {reason}. "
+        f"Currently authorized tools: {suffix}."
+    )
 
 
 def _install_invalid_tool_diagnostics(agent: Any) -> None:
@@ -207,7 +300,10 @@ def _install_invalid_tool_diagnostics(agent: Any) -> None:
     if not bool(getattr(upstreams, "_coding_contract_tool_diagnostics_installed", False)):
         original_log = upstreams._log_invalid_response_tool_calls
 
-        def log_with_capture(diagnostics: list[dict[str, Any]], **kwargs: Any) -> None:
+        def log_with_capture(
+            diagnostics: list[dict[str, Any]],
+            **kwargs: Any,
+        ) -> None:
             _TOOL_DIAGNOSTICS.set(_safe_tool_diagnostics(diagnostics))
             original_log(diagnostics, **kwargs)
 
@@ -226,7 +322,11 @@ def _install_invalid_tool_diagnostics(agent: Any) -> None:
             return response
 
         output = dict(response)
-        gateway = dict(output.get("_gateway") or {}) if isinstance(output.get("_gateway"), dict) else {}
+        gateway = (
+            dict(output.get("_gateway") or {})
+            if isinstance(output.get("_gateway"), dict)
+            else {}
+        )
         gateway["coding_tool_call_diagnostics"] = [dict(item) for item in diagnostics]
         output["_gateway"] = gateway
 
@@ -241,7 +341,10 @@ def _install_invalid_tool_diagnostics(agent: Any) -> None:
                 message = copied.get("message")
                 if isinstance(message, dict):
                     copied_message = dict(message)
-                    if str(copied_message.get("content") or "").strip() == _INVALID_TOOL_NOTICE:
+                    if (
+                        str(copied_message.get("content") or "").strip()
+                        == _INVALID_TOOL_NOTICE
+                    ):
                         copied_message["content"] = diagnostic_notice(diagnostics[0])
                     copied["message"] = copied_message
                 copied_choices.append(copied)
@@ -264,7 +367,10 @@ def _install_blocked_finish_audit(agent: Any) -> None:
         uncommitted = bool(kwargs.get("uncommitted_changes"))
         if finish_called and not finish_success and not committed and not uncommitted:
             finish_summary = str(kwargs.get("finish_summary") or "").strip()
-            summary = finish_summary or "The coding agent reported a concrete blocker without modifying the workspace."
+            summary = (
+                finish_summary
+                or "The coding agent reported a concrete blocker without modifying the workspace."
+            )
             return (
                 False,
                 summary,
@@ -272,8 +378,9 @@ def _install_blocked_finish_audit(agent: Any) -> None:
                     "type": "blocked_finish",
                     "ok": False,
                     "summary": (
-                        "The coding agent explicitly called coding_finish with success=false and no workspace changes. "
-                        "Preserving the reported blocker instead of relabeling the run as a successful no-op."
+                        "The coding agent explicitly called coding_finish with success=false "
+                        "and no workspace changes. Preserving the reported blocker instead of "
+                        "relabeling the run as a successful no-op."
                     ),
                     "start_commit": str(kwargs.get("start_head") or ""),
                     "end_commit": str(kwargs.get("end_head") or ""),
@@ -319,17 +426,33 @@ def _install_debug_event_view(debug_report: Any) -> None:
     debug_report._coding_contract_event_view_installed = True
 
 
+def _read_matches_target(requested: str, target: str) -> bool:
+    if not requested or not target:
+        return False
+    if "/" in target:
+        return requested == target
+    return PurePosixPath(requested).name == target
+
+
 def install(agent: Any, evidence_policy: Any, debug_report: Any) -> None:
     """Install Coding-Workspace-only contract hardening after the existing overlays."""
     if bool(getattr(agent, "_coding_contract_hardening_installed", False)):
         return
 
     base = evidence_policy._base_policy(agent.forced_action)
-    base._structured_hypothesis = lambda task, state: structured_hypothesis(base, task, state)
+    base._structured_hypothesis = lambda task, state: structured_hypothesis(
+        base,
+        task,
+        state,
+    )
 
     original_apply = evidence_policy.apply_provenance_gate
 
-    def apply_with_recovery(forced_action: Any, task: Mapping[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    def apply_with_recovery(
+        forced_action: Any,
+        task: Mapping[str, Any],
+        state: Dict[str, Any],
+    ) -> Dict[str, Any]:
         result = original_apply(forced_action, task, state)
         return refine_provenance_state(evidence_policy, forced_action, task, result)
 
@@ -355,19 +478,27 @@ def install(agent: Any, evidence_policy: Any, debug_report: Any) -> None:
         )
         if not allowed or str(name or "") != "coding_read_file_lines":
             return allowed, details
+
         state = self.active_state(task)
-        targets = {_normalized_path(item) for item in (state.get("hypothesis_unverified_targets") or []) if _normalized_path(item)}
+        targets = [
+            str(item)
+            for item in (state.get("hypothesis_unverified_targets") or [])
+            if str(item).strip()
+        ]
         if not targets:
             return allowed, details
+
         requested = _normalized_path(args.get("path"))
-        if requested in targets:
+        if requested and any(_read_matches_target(requested, target) for target in targets):
             return True, {}
         return False, {
             "ok": False,
             "error": "forced_action_tool_rejected",
             "message": (
-                "Forced-action mode permits one corrective evidence read only for the target cited by the structured hypothesis. "
-                f"Requested {requested or '(missing path)'}; permitted targets: {', '.join(sorted(targets))}."
+                "Forced-action mode permits one corrective evidence read only for the target "
+                "cited by the structured hypothesis. "
+                f"Requested {requested or '(unsafe or missing path)'}; permitted targets: "
+                f"{', '.join(sorted(targets))}."
             ),
             "required_action": state.get("required_action"),
             "action_kind": state.get("action_kind"),
@@ -376,7 +507,9 @@ def install(agent: Any, evidence_policy: Any, debug_report: Any) -> None:
             "state_key": state.get("state_key"),
         }
 
-    evidence_policy.ExecutionForcedActionFacade.evaluate_tool_call = evaluate_with_target_lock
+    evidence_policy.ExecutionForcedActionFacade.evaluate_tool_call = (
+        evaluate_with_target_lock
+    )
 
     _install_invalid_tool_diagnostics(agent)
     _install_blocked_finish_audit(agent)
