@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import contextvars
-import json
 import secrets
 from types import MethodType
 from typing import Any, Mapping
 
 
-_TRANSPORT_REJECTION_MARKER = "_nexus_transport_policy_rejection"
-_CALL_ID_PREFIX = "nexus-policy-rejection-"
 _TRUSTED_DIAGNOSTICS_KEY = "_nexus_coding_policy_rejection_diagnostics"
 _CAPTURED_DIAGNOSTICS: contextvars.ContextVar[tuple[dict[str, Any], ...]] = contextvars.ContextVar(
     "nexus_coding_policy_rejection_diagnostics",
     default=(),
 )
+
+
+class _SyntheticPolicyArgs(dict[str, Any]):
+    """In-process capability proving that Nexus, not the backend, made this call."""
+
+
+class _SyntheticPolicyRejectionResult(dict[str, Any]):
+    """In-process result type used only for a recovered policy rejection."""
 
 
 def _tool_name(spec: Any) -> str:
@@ -103,16 +108,15 @@ def _recoverable_policy_diagnostic(
 
 
 def _synthetic_rejection_call(name: str) -> dict[str, Any]:
+    # The call id is only for event correlation. Synthetic provenance is carried
+    # by the Python-only `_SyntheticPolicyArgs` type, never by backend-controlled
+    # strings, ids, argument keys, or values.
     return {
-        "id": f"{_CALL_ID_PREFIX}{secrets.token_hex(8)}",
+        "id": f"nexus-policy-rejection-{secrets.token_hex(8)}",
         "type": "function",
         "function": {
             "name": name,
-            "arguments": json.dumps(
-                {_TRANSPORT_REJECTION_MARKER: True},
-                separators=(",", ":"),
-                sort_keys=True,
-            ),
+            "arguments": _SyntheticPolicyArgs(),
         },
     }
 
@@ -122,7 +126,7 @@ def _rejection_result(
     task: Mapping[str, Any],
     *,
     attempted_tool: str,
-) -> dict[str, Any]:
+) -> _SyntheticPolicyRejectionResult:
     state = forced_action.active_state(task)
     state = state if isinstance(state, Mapping) else {}
     allowed = sorted(
@@ -143,28 +147,30 @@ def _rejection_result(
         if required_action
         else "Do not retry the suppressed tool call."
     )
-    return {
-        "ok": False,
-        "error": "forced_action_tool_rejected",
-        "message": (
-            f"The backend attempted {attempted_tool or '(missing tool name)'}, but that call was "
-            "suppressed by the request's Coding Workspace execution policy before execution. "
-            f"Current authorized tools: {policy_text}. {suffix}"
-        ),
-        "required_action": required_action,
-        "canonical_required_action": state.get("canonical_required_action"),
-        "action_kind": state.get("action_kind"),
-        "canonical_action_kind": state.get("canonical_action_kind"),
-        "allowed_tools": allowed,
-        "state_key": state.get("state_key"),
-        "stage": state.get("stage"),
-        "hypothesis_ready": state.get("hypothesis_ready"),
-        "hypothesis_causal_evidence_linked": bool(
-            state.get("hypothesis_causal_evidence_linked")
-        ),
-        "transport_suppressed_tool_call": True,
-        "attempted_tool": attempted_tool,
-    }
+    return _SyntheticPolicyRejectionResult(
+        {
+            "ok": False,
+            "error": "forced_action_tool_rejected",
+            "message": (
+                f"The backend attempted {attempted_tool or '(missing tool name)'}, but that call was "
+                "suppressed by the request's Coding Workspace execution policy before execution. "
+                f"Current authorized tools: {policy_text}. {suffix}"
+            ),
+            "required_action": required_action,
+            "canonical_required_action": state.get("canonical_required_action"),
+            "action_kind": state.get("action_kind"),
+            "canonical_action_kind": state.get("canonical_action_kind"),
+            "allowed_tools": allowed,
+            "state_key": state.get("state_key"),
+            "stage": state.get("stage"),
+            "hypothesis_ready": state.get("hypothesis_ready"),
+            "hypothesis_causal_evidence_linked": bool(
+                state.get("hypothesis_causal_evidence_linked")
+            ),
+            "transport_suppressed_tool_call": True,
+            "attempted_tool": attempted_tool,
+        }
+    )
 
 
 def _feedback_message(
@@ -232,7 +238,7 @@ def _install_trusted_transport_capture(agent: Any) -> None:
         if not isinstance(response, dict):
             return response
         output = dict(response)
-        # Never trust a backend-supplied copy of the private marker.
+        # Never trust a backend-supplied copy of the private transport field.
         output.pop(_TRUSTED_DIAGNOSTICS_KEY, None)
         if diagnostics:
             output[_TRUSTED_DIAGNOSTICS_KEY] = [dict(item) for item in diagnostics]
@@ -251,11 +257,10 @@ def install(agent: Any) -> None:
     disabled it*. Converting that attempt into prose loses the policy-rejection
     semantic and trips the generic prose-only failure loop.
 
-    This overlay reconstructs only that narrow case as a rejection-only call.
-    A private marker forces rejection before workspace execution even if policy
-    changes between response parsing and tool evaluation. The resulting feedback
-    is returned as user-role controller data rather than an orphan tool message,
-    so strict native-tool backends never receive history for an unadvertised tool.
+    Recovery uses two separate trust boundaries: sanitizer diagnostics must be
+    observed in-process, and reconstructed calls carry Python-only argument and
+    result types. A backend can imitate their serialized shape, argument keys,
+    or call-id text, but cannot manufacture those local object types.
     """
     if bool(getattr(agent, "_coding_policy_rejection_recovery_installed", False)):
         return
@@ -263,6 +268,7 @@ def install(agent: Any) -> None:
     _install_trusted_transport_capture(agent)
     known_tools = _known_coding_tools(agent)
     original_extract = agent._extract_tool_calls
+    original_parse = agent._parse_tool_arguments
 
     def extract_with_policy_recovery(response: Any) -> list[dict[str, Any]]:
         calls = original_extract(response)
@@ -277,7 +283,13 @@ def install(agent: Any) -> None:
         name = str(diagnostic.get("name") or "").strip()
         return [_synthetic_rejection_call(name)]
 
+    def parse_with_policy_recovery(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, _SyntheticPolicyArgs):
+            return raw
+        return original_parse(raw)
+
     agent._extract_tool_calls = extract_with_policy_recovery
+    agent._parse_tool_arguments = parse_with_policy_recovery
 
     forced_action = agent.forced_action
     original_evaluate = forced_action.evaluate_tool_call
@@ -290,9 +302,9 @@ def install(agent: Any) -> None:
         args: Mapping[str, Any],
         is_validation_command: Any,
     ) -> tuple[bool, dict[str, Any]]:
-        if bool(args.get(_TRANSPORT_REJECTION_MARKER)):
-            # Fail closed. This recovered call exists only to preserve the
-            # controller rejection semantic and must never reach _run_tool.
+        if isinstance(args, _SyntheticPolicyArgs):
+            # Fail closed. Only Nexus can create this in-process argument type;
+            # JSON/tool arguments from a backend always parse to an ordinary dict.
             return False, _rejection_result(
                 self,
                 task,
@@ -317,7 +329,7 @@ def install(agent: Any) -> None:
         tool_call_id: str,
         result: dict[str, Any],
     ) -> Any:
-        if str(tool_call_id or "").startswith(_CALL_ID_PREFIX):
+        if isinstance(result, _SyntheticPolicyRejectionResult):
             attempted = str(result.get("attempted_tool") or "").strip()
             return _feedback_message(
                 agent,
