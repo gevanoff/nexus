@@ -9,10 +9,17 @@ READ = "coding_read_file_lines"
 SEARCH = "coding_search_text"
 
 
-def _started(name: str, *, cycle: int, path: str, ts: float):
+def _started(
+    name: str,
+    *,
+    cycle: int,
+    path: str,
+    ts: float,
+    start_line: int = 10,
+):
     args = {"path": path}
     if name == READ:
-        args.update({"start_line": 10, "line_count": 20})
+        args.update({"start_line": start_line, "line_count": 20})
     else:
         args["query"] = "needle"
     return {
@@ -36,6 +43,25 @@ def _rejected(name: str, *, cycle: int, ts: float):
 def _signature(event):
     path = str((event.get("args") or {}).get("path") or "")
     return f"{event.get('name')}:{path}" if path else ""
+
+
+def _target(event):
+    args = event.get("args") or {}
+    path = str(args.get("path") or "")
+    if event.get("name") == READ:
+        start = int(args.get("start_line") or 0)
+        count = int(args.get("line_count") or 0)
+        return f"read {path} lines {start}-{start + count - 1}"
+    return f"search {path}: {args.get('query') or ''}".rstrip()
+
+
+def _resilience(*, new_events_since, update_inspection_ledger):
+    return SimpleNamespace(
+        new_events_since=new_events_since,
+        update_inspection_ledger=update_inspection_ledger,
+        inspection_signature=_signature,
+        inspection_target=_target,
+    )
 
 
 def test_rejected_read_start_is_removed_from_ledger_input():
@@ -130,8 +156,6 @@ def test_split_poll_rejection_removes_already_persisted_false_inspection_fact():
     full_events = [started, rejection, finished]
 
     def new_events_since(events, controller, *, run_id, rollover_window=64):
-        # Simulate a prior semantic-memory poll whose cursor landed immediately
-        # after tool_started. Only rejection + finish are new this time.
         return list(events[1:])
 
     def update(existing, events, *, run_id, cycle, limit=32):
@@ -139,17 +163,19 @@ def test_split_poll_rejection_removes_already_persisted_false_inspection_fact():
         seen["events"] = list(events)
         return list(existing)
 
-    resilience = SimpleNamespace(
+    resilience = _resilience(
         new_events_since=new_events_since,
         update_inspection_ledger=update,
-        inspection_signature=_signature,
     )
     integrity.install(resilience)
     existing = [
         {
             "signature": _signature(started),
-            "target": "read services/gateway/app/static/image.js lines 10-29",
+            "target": _target(started),
             "count": 1,
+            "last_run_id": "run-1",
+            "last_cycle": 9,
+            "last_seen_at": 1.0,
         }
     ]
 
@@ -170,6 +196,132 @@ def test_split_poll_rejection_removes_already_persisted_false_inspection_fact():
     assert seen["events"] == [rejection, finished]
 
 
+def test_split_poll_rejection_preserves_prior_valid_same_signature():
+    seen = {}
+    valid = _started(
+        READ,
+        cycle=8,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        start_line=100,
+    )
+    rejected = _started(
+        READ,
+        cycle=9,
+        path="services/gateway/app/ui_routes.py",
+        ts=3,
+        start_line=200,
+    )
+    rejection = _rejected(READ, cycle=9, ts=4)
+    finished = {"type": "tool_finished", "cycle": 9, "name": READ, "ts": 5}
+    full_events = [
+        valid,
+        {"type": "tool_finished", "cycle": 8, "name": READ, "ts": 2},
+        rejected,
+        rejection,
+        finished,
+    ]
+
+    def new_events_since(events, controller, *, run_id, rollover_window=64):
+        # Prior poll already persisted both starts; this poll sees only the
+        # rejection outcome for the second occurrence.
+        return list(events[3:])
+
+    def update(existing, events, *, run_id, cycle, limit=32):
+        seen["existing"] = [dict(item) for item in existing]
+        seen["events"] = list(events)
+        return [dict(item) for item in existing]
+
+    resilience = _resilience(
+        new_events_since=new_events_since,
+        update_inspection_ledger=update,
+    )
+    integrity.install(resilience)
+    existing = [
+        {
+            "signature": _signature(rejected),
+            "target": _target(rejected),
+            "count": 2,
+            "last_run_id": "run-1",
+            "last_cycle": 9,
+            "last_seen_at": 3.0,
+        }
+    ]
+
+    new_events = resilience.new_events_since(full_events, {}, run_id="run-1")
+    result = resilience.update_inspection_ledger(
+        existing,
+        new_events,
+        run_id="run-1",
+        cycle=9,
+    )
+
+    assert len(result) == 1
+    restored = result[0]
+    assert restored["count"] == 1
+    assert restored["target"] == _target(valid)
+    assert restored["last_cycle"] == 8
+    assert restored["last_seen_at"] == 1.0
+    assert seen["existing"] == [restored]
+    assert seen["events"] == [rejection, finished]
+
+
+def test_same_poll_rejected_same_signature_does_not_decrement_prior_existing_fact():
+    seen = {}
+    prior = _started(
+        READ,
+        cycle=8,
+        path="services/gateway/app/ui_routes.py",
+        ts=1,
+        start_line=100,
+    )
+    rejected = _started(
+        READ,
+        cycle=9,
+        path="services/gateway/app/ui_routes.py",
+        ts=3,
+        start_line=200,
+    )
+    rejection = _rejected(READ, cycle=9, ts=4)
+    full_events = [prior, rejected, rejection]
+
+    def new_events_since(events, controller, *, run_id, rollover_window=64):
+        return list(events[1:])
+
+    def update(existing, events, *, run_id, cycle, limit=32):
+        seen["existing"] = [dict(item) for item in existing]
+        seen["events"] = list(events)
+        return [dict(item) for item in existing]
+
+    resilience = _resilience(
+        new_events_since=new_events_since,
+        update_inspection_ledger=update,
+    )
+    integrity.install(resilience)
+    existing = [
+        {
+            "signature": _signature(prior),
+            "target": _target(prior),
+            "count": 1,
+            "last_run_id": "run-1",
+            "last_cycle": 8,
+            "last_seen_at": 1.0,
+        }
+    ]
+
+    new_events = resilience.new_events_since(full_events, {}, run_id="run-1")
+    result = resilience.update_inspection_ledger(
+        existing,
+        new_events,
+        run_id="run-1",
+        cycle=9,
+    )
+
+    assert result == existing
+    assert seen["existing"] == existing
+    assert seen["events"] == [rejection]
+
+
 def test_same_poll_filter_preserves_rejection_for_noncompliance_observation():
     seen = {}
 
@@ -183,10 +335,9 @@ def test_same_poll_filter_preserves_rejection_for_noncompliance_observation():
         seen["limit"] = limit
         return [{"target": "ok"}]
 
-    resilience = SimpleNamespace(
+    resilience = _resilience(
         new_events_since=new_events_since,
         update_inspection_ledger=update,
-        inspection_signature=_signature,
     )
     integrity.install(resilience)
     events = [
@@ -222,12 +373,11 @@ def test_full_event_context_does_not_change_new_event_return_or_cursor_semantics
     ]
     expected = [events[1]]
 
-    resilience = SimpleNamespace(
+    resilience = _resilience(
         new_events_since=(
             lambda current, controller, *, run_id, rollover_window=64: expected
         ),
         update_inspection_ledger=(lambda *args, **kwargs: []),
-        inspection_signature=_signature,
     )
     integrity.install(resilience)
 
@@ -238,10 +388,9 @@ def test_full_event_context_does_not_change_new_event_return_or_cursor_semantics
 
 
 def test_install_is_idempotent():
-    resilience = SimpleNamespace(
+    resilience = _resilience(
         new_events_since=lambda *args, **kwargs: [],
         update_inspection_ledger=lambda *args, **kwargs: [],
-        inspection_signature=_signature,
     )
     integrity.install(resilience)
     installed_new = resilience.new_events_since
