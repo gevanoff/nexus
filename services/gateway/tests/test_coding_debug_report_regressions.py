@@ -10,6 +10,9 @@ from app import coding_hypothesis_range_contract as contract
 from app.models import ToolFunction, ToolSpec
 
 
+# Regression fixture distilled from code_16892442752b (2026-08-20): the
+# completed image.html read ended at EOF line 314, while the durable note cited
+# 200-319 alongside a second valid ui_routes.py citation.
 IMAGE = "services/gateway/app/static/image.html"
 ROUTES = "services/gateway/app/ui_routes.py"
 
