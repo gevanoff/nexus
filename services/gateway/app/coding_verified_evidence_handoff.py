@@ -33,6 +33,28 @@ def _copy_request(dispatch: Any, req: Any, *, messages: list[Any]) -> Any:
     raise TypeError("unable to copy coding request for verified evidence handoff")
 
 
+def _verified_range_digest(state: Mapping[str, Any]) -> str:
+    spans: list[str] = []
+    for item in state.get("causal_evidence_ranges") or []:
+        if not isinstance(item, Mapping):
+            continue
+        path = str(item.get("path") or "").strip()
+        try:
+            start = int(item.get("start_line"))
+            end = int(item.get("end_line"))
+        except (TypeError, ValueError):
+            continue
+        if path and start > 0 and end >= start:
+            spans.append(f"Verified repository span: {path}:{start}-{end}")
+    if not spans:
+        return ""
+    return (
+        "Authoritative completed read spans (use these actual bounds in Repository evidence; "
+        "requested read bounds may be wider when EOF is reached):\n"
+        + "\n".join(spans)
+    )
+
+
 def install(agent: Any, execution_dispatch: Any, persistence: Any) -> None:
     """Replay verified repository excerpts as user-role data, never system text."""
     if bool(getattr(execution_dispatch, "_coding_verified_evidence_handoff_installed", False)):
@@ -68,21 +90,24 @@ def install(agent: Any, execution_dispatch: Any, persistence: Any) -> None:
         if not persistence._contract_required(state):
             return materialized, snapshot, diagnostics
         digest = persistence._verified_evidence_digest(effective_task, state)
-        if not digest:
+        range_digest = _verified_range_digest(state)
+        evidence_data = "\n\n".join(part for part in (range_digest, digest) if part)
+        if not evidence_data:
             return materialized, snapshot, diagnostics
 
         messages = list(execution_dispatch._request_value(materialized, "messages", None) or [])
         messages.append(
             current_agent.ChatMessage(
                 role="user",
-                content=f"{_DATA_PREFIX}{digest}{_DATA_SUFFIX}",
+                content=f"{_DATA_PREFIX}{evidence_data}{_DATA_SUFFIX}",
             )
         )
         updated = _copy_request(execution_dispatch, materialized, messages=messages)
         enriched = dict(diagnostics)
         enriched["verified_evidence_replay_messages"] = 1
-        enriched["verified_evidence_replay_chars"] = len(digest)
+        enriched["verified_evidence_replay_chars"] = len(evidence_data)
         enriched["verified_evidence_replay_role"] = "user"
+        enriched["verified_evidence_replay_ranges"] = len(state.get("causal_evidence_ranges") or [])
         return updated, snapshot, enriched
 
     execution_dispatch.materialize_request = materialize_with_verified_evidence
