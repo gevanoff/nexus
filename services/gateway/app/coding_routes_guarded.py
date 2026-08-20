@@ -15,7 +15,10 @@ from app import coding_debug_report
 from app import coding_edit_evidence_continuity
 from app import coding_evidence_freshness
 from app import coding_evidence_policy
+from app import coding_evidence_range_provenance
 from app import coding_execution_dispatch
+from app import coding_execution_state_finalizer
+from app import coding_failed_edit_recovery
 from app import coding_hypothesis_persistence
 from app import coding_inspection_ledger_integrity
 from app import coding_model_metadata_resilience
@@ -43,10 +46,21 @@ coding_contract_hardening.install(
 )
 coding_contract_path_safety.install(coding_contract_hardening)
 coding_evidence_freshness.install(coding_evidence_policy)
+coding_evidence_range_provenance.install(coding_evidence_policy)
+coding_failed_edit_recovery.install(
+    guarded_agent._agent,
+    coding_evidence_policy,
+)
 coding_hypothesis_persistence.install(
     guarded_agent._agent,
     coding_evidence_policy,
     guarded_agent,
+)
+coding_execution_state_finalizer.install(
+    guarded_agent._agent,
+    coding_evidence_policy,
+    coding_evidence_range_provenance,
+    coding_failed_edit_recovery,
 )
 coding_plan_edit_serialization.install(guarded_agent._agent, guarded_agent)
 coding_verified_evidence_handoff.install(
