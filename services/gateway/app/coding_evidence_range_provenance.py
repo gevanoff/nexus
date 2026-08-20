@@ -186,6 +186,62 @@ def _range_metadata(ranges: Mapping[str, Sequence[tuple[int, int]]]) -> list[dic
     return out
 
 
+def validate_repository_evidence(
+    evidence_policy: Any,
+    forced_action: Any,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+    repository_evidence: str,
+    *,
+    targets: Sequence[str] | None = None,
+) -> Dict[str, Any]:
+    """Validate cited spans against the actual completed bounded reads.
+
+    This is the single range validator used by both the durable-hypothesis
+    preflight contract and the final execution-state gate. Requested read bounds
+    are never authoritative; only ``tool_finished.result.start_line/end_line``
+    are accepted, so EOF-shortened reads cannot accidentally authorize a wider
+    citation.
+    """
+    ranges, legacy_paths = _verified_ranges(evidence_policy, forced_action, task, state)
+    candidate_targets = [
+        _normalized_path(item)
+        for item in (targets if targets is not None else state.get("hypothesis_causal_targets") or [])
+        if _normalized_path(item)
+    ]
+    matched_targets: list[str] = []
+    matched_ranges: list[dict[str, Any]] = []
+    missing_range_targets: list[str] = []
+
+    for target in candidate_targets:
+        verified = ranges.get(target) or []
+        if not verified:
+            # Old durable events and synthetic fixtures may not carry line
+            # metadata. Preserve their established path-only semantics.
+            if target in legacy_paths or target not in ranges:
+                matched_targets.append(target)
+            continue
+        cited = _cited_ranges_for_path(repository_evidence, target)
+        verified_citations = [span for span in cited if _span_is_verified(span, verified)]
+        if verified_citations:
+            matched_targets.append(target)
+            for start, end in verified_citations:
+                matched_ranges.append(
+                    {"path": target, "start_line": start, "end_line": end}
+                )
+        else:
+            missing_range_targets.append(target)
+
+    return {
+        "ok": bool(matched_targets) or not missing_range_targets,
+        "matched_targets": matched_targets,
+        "matched_ranges": matched_ranges,
+        "missing_range_targets": missing_range_targets,
+        "verified_ranges": _range_metadata(ranges),
+        "legacy_paths": sorted(legacy_paths),
+    }
+
+
 def _clear_range_requirement(out: Dict[str, Any]) -> None:
     out.pop("hypothesis_evidence_range_required", None)
     out.pop("hypothesis_evidence_range_targets", None)
@@ -197,17 +253,9 @@ def refine_state(
     task: Mapping[str, Any],
     state: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    """Require modern bounded reads to be cited at their verified line range.
-
-    The original provenance gate proves that a file was read, but a path-only
-    claim can otherwise treat a tiny bounded read as verification of unrelated
-    code elsewhere in a large file. Modern ``coding_read_file_lines`` results
-    already persist start/end lines, so bind the structured hypothesis to those
-    spans. Legacy persisted reads without range metadata retain path-only
-    behavior for compatibility.
-    """
+    """Require modern bounded reads to be cited at their verified line range."""
     out = dict(state)
-    ranges, legacy_paths = _verified_ranges(evidence_policy, forced_action, task, out)
+    ranges, _ = _verified_ranges(evidence_policy, forced_action, task, out)
     if ranges:
         out["causal_evidence_ranges"] = _range_metadata(ranges)
     else:
@@ -227,27 +275,17 @@ def refine_state(
         return out
 
     repository_evidence = _repository_evidence(forced_action, task, out)
-    matched_targets: list[str] = []
-    matched_ranges: list[dict[str, Any]] = []
-    missing_range_targets: list[str] = []
-    for target in linked_targets:
-        verified = ranges.get(target) or []
-        if not verified:
-            # Old durable events and synthetic test fixtures may not carry line
-            # metadata. Preserve their established path-only semantics.
-            if target in legacy_paths or target not in ranges:
-                matched_targets.append(target)
-            continue
-        cited = _cited_ranges_for_path(repository_evidence, target)
-        verified_citations = [span for span in cited if _span_is_verified(span, verified)]
-        if verified_citations:
-            matched_targets.append(target)
-            for start, end in verified_citations:
-                matched_ranges.append(
-                    {"path": target, "start_line": start, "end_line": end}
-                )
-        else:
-            missing_range_targets.append(target)
+    validation = validate_repository_evidence(
+        evidence_policy,
+        forced_action,
+        task,
+        out,
+        repository_evidence,
+        targets=linked_targets,
+    )
+    matched_targets = list(validation.get("matched_targets") or [])
+    matched_ranges = list(validation.get("matched_ranges") or [])
+    missing_range_targets = list(validation.get("missing_range_targets") or [])
 
     if matched_targets:
         _clear_range_requirement(out)
