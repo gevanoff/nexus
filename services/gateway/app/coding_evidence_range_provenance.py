@@ -89,17 +89,55 @@ def _verified_ranges(
     return ranges, legacy_paths
 
 
+def _hypothesis_note_fields(base: Any, note: str) -> Dict[str, str]:
+    labels = tuple(str(label) for label in getattr(base, "_HYPOTHESIS_FIELDS", ()))
+    field_re = getattr(base, "_HYPOTHESIS_FIELD_RE", None)
+    text = str(note or "").strip()
+    if not labels or field_re is None or not text:
+        return {}
+
+    matches = list(field_re.finditer(text))
+    fields: Dict[str, str] = {}
+    for index, match in enumerate(matches):
+        raw_label = str(match.group(1) or "").strip()
+        label = next(
+            (
+                candidate
+                for candidate in labels
+                if candidate.casefold() == raw_label.casefold()
+            ),
+            "",
+        )
+        if not label or label in fields:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        value = text[match.end() : end].strip(" \t\r\n;.")
+        if len(value) >= 8:
+            fields[label] = value
+
+    if any(label not in fields for label in labels):
+        return {}
+    return fields
+
+
 def _repository_evidence(forced_action: Any, task: Mapping[str, Any], state: Mapping[str, Any]) -> str:
+    """Read evidence only from the current durable hypothesis note.
+
+    The general structured-hypothesis parser also scans goal/items for legacy
+    compatibility. Those fields may retain an older four-field hypothesis after
+    project_plan.note has been reconciled, so they cannot be authoritative for
+    range qualification. The persistence layer owns note freshness/revision
+    validation; when it has explicitly rejected the durable note, do not accept
+    any range citation from it here.
+    """
+    if "durable_hypothesis_note_ready" in state and not bool(
+        state.get("durable_hypothesis_note_ready")
+    ):
+        return ""
+
     base = getattr(forced_action, "_execution_provenance_base", forced_action)
-    parser = getattr(base, "_structured_hypothesis", None)
-    if not callable(parser):
-        return ""
-    try:
-        ready, fields = parser(task, state)
-    except Exception:
-        return ""
-    if not ready or not isinstance(fields, Mapping):
-        return ""
+    plan = task.get("project_plan") if isinstance(task.get("project_plan"), Mapping) else {}
+    fields = _hypothesis_note_fields(base, str(plan.get("note") or ""))
     return str(fields.get("Repository evidence") or "")
 
 
