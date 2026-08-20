@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from types import SimpleNamespace
 
 from app import coding_agent
