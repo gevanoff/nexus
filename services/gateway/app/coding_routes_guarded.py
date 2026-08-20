@@ -68,6 +68,7 @@ coding_hypothesis_range_contract.install(
     coding_evidence_policy,
     coding_evidence_range_provenance,
     coding_hypothesis_persistence,
+    guarded_agent,
 )
 coding_plan_edit_serialization.install(guarded_agent._agent, guarded_agent)
 coding_verified_evidence_handoff.install(
