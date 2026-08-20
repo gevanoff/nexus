@@ -173,8 +173,6 @@ def _failed_context_edit(
     # A successful check-only patch is an intentional non-mutation and must not
     # trigger recovery. A failed patch application/check against one repository
     # path does need fresh exact context before another patch attempt.
-    if bool(args.get("check_only")) or bool(result.get("check_only")):
-        return None
     if result.get("ok") is not False and not error:
         return None
     paths = _patch_paths(args, result)
