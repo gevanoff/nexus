@@ -87,6 +87,7 @@ def install(
     evidence_policy: Any,
     range_provenance: Any,
     persistence: Any,
+    guarded_agent: Any = None,
 ) -> None:
     """Close the bounded-evidence contract before a hypothesis note is persisted."""
     if bool(getattr(agent, "_coding_hypothesis_range_contract_installed", False)):
@@ -150,5 +151,10 @@ def install(
         return original_run_tool(task_id, name, args, git_token_value=git_token_value)
 
     agent._run_tool = run_tool_with_range_contract
+    if (
+        guarded_agent is not None
+        and getattr(guarded_agent, "_run_tool_with_semantic_acceptance", None) is original_run_tool
+    ):
+        guarded_agent._run_tool_with_semantic_acceptance = run_tool_with_range_contract
     agent._coding_hypothesis_range_contract_installed = True
     agent._run_tool_before_hypothesis_range_contract = original_run_tool
