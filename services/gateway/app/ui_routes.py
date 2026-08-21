@@ -1663,7 +1663,7 @@ async def _fetch_image_backend_catalog_entry(client: httpx.AsyncClient, *, backe
         return entry
 
     models, management = _normalize_image_models_payload(payload)
-    if backend_class == "gpu_heavy":
+    # Removed backend_class restriction to restore InvokeAI backend link for all backends
         ui_url = _invokeai_ui_url()
         if ui_url:
             management = dict(management)
