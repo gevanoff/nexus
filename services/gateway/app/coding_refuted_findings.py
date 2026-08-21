@@ -35,11 +35,15 @@ def _epoch(lifecycle: Mapping[str, Any]) -> str:
     )
 
 
-def _after_boundary(event: Mapping[str, Any], consumed_at: float) -> bool:
+def _as_float(value: Any) -> float:
     try:
-        return float(event.get("ts") or 0.0) > consumed_at
+        return float(value or 0.0)
     except (TypeError, ValueError):
-        return False
+        return 0.0
+
+
+def _after_boundary(event: Mapping[str, Any], boundary_at: float) -> bool:
+    return _as_float(event.get("ts")) > boundary_at
 
 
 def _dedupe(values: Sequence[Any], *, limit: int = 24) -> list[str]:
@@ -84,7 +88,15 @@ def install(resilience: Any, hardening: Any) -> None:
         epoch = _epoch(lifecycle)
         previous = _mapping(task.get("agent_working_memory"))
         prior_epoch = str(previous.get("findings_epoch") or "")
-        consumed_at = float(lifecycle.get("consumed_at") or 0.0)
+        consumed_at = _as_float(lifecycle.get("consumed_at"))
+        same_consumed_note = bool(hardening._matching_consumed_lifecycle(task))
+        plan = _mapping(task.get("project_plan"))
+        plan_updated_at = _as_float(plan.get("updated_at"))
+        event_boundary = consumed_at
+        if not same_consumed_note and plan_updated_at > consumed_at:
+            # A fresh plan revision is the revalidation epoch. Do not resurrect
+            # assistant notes produced after the old edit but before that plan.
+            event_boundary = plan_updated_at
 
         historical_findings = list(previous.get("superseded_findings") or [])
         historical_blockers = list(previous.get("superseded_blockers") or [])
@@ -98,13 +110,21 @@ def install(resilience: Any, hardening: Any) -> None:
             sanitized_previous["blocker"] = ""
             sanitized_previous["unresolved_question"] = ""
             sanitized_previous["next_action"] = ""
+        elif not same_consumed_note:
+            # The lifecycle marker is useful while a hypothesis is consumed but
+            # must not become a permanent finding after a fresh plan revision.
+            sanitized_previous["findings"] = [
+                value
+                for value in (sanitized_previous.get("findings") or [])
+                if str(value or "").strip() != _ACTIVE_MARKER
+            ]
 
         sanitized_task = dict(task)
         sanitized_task["agent_working_memory"] = sanitized_previous
         post_boundary_events = [
             event
             for event in events
-            if isinstance(event, Mapping) and _after_boundary(event, consumed_at)
+            if isinstance(event, Mapping) and _after_boundary(event, event_boundary)
         ]
         memory = original_build(
             sanitized_task,
@@ -124,7 +144,7 @@ def install(resilience: Any, hardening: Any) -> None:
         # While the same consumed note is still the current plan revision, do not
         # promote new assistant prose into established findings. A fresh plan
         # revision is the explicit boundary that allows current findings again.
-        if hardening._matching_consumed_lifecycle(task):
+        if same_consumed_note:
             memory["findings"] = [_ACTIVE_MARKER]
             memory["blocker"] = ""
         return memory
