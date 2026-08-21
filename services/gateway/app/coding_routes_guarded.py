@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app import coding_agent_guarded as guarded_agent
+from app import coding_completion_state_hardening
 from app import coding_contract_hardening
 from app import coding_contract_path_safety
 from app import coding_debug_report
@@ -26,6 +27,7 @@ from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
 from app import coding_policy_rejection_recovery
+from app import coding_semantic_acceptance
 from app import coding_stagnation_resilience
 from app import coding_text_tool_handoff
 from app import coding_verified_evidence_handoff
@@ -87,6 +89,16 @@ coding_policy_rejection_recovery.install(guarded_agent._agent)
 coding_inspection_ledger_integrity.install(
     coding_stagnation_resilience,
     guarded_agent._agent,
+)
+# Install this final lifecycle/transport invariant after all request/tool overlays so
+# it observes the actual request and tool chain that will reach the backend.
+coding_completion_state_hardening.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_execution_dispatch,
+    coding_hypothesis_persistence,
+    coding_semantic_acceptance,
 )
 routes.ca = guarded_agent
 router = APIRouter()
