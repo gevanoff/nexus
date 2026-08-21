@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app import coding_agent_guarded as guarded_agent
+from app import coding_completion_state_dispatch
 from app import coding_completion_state_hardening
 from app import coding_contract_hardening
 from app import coding_contract_path_safety
@@ -90,8 +91,8 @@ coding_inspection_ledger_integrity.install(
     coding_stagnation_resilience,
     guarded_agent._agent,
 )
-# Install this final lifecycle/transport invariant after all request/tool overlays so
-# it observes the actual request and tool chain that will reach the backend.
+# Install lifecycle/transport hardening after all request/tool overlays so it
+# observes the final request and established semantic tool chain.
 coding_completion_state_hardening.install(
     guarded_agent._agent,
     guarded_agent,
@@ -99,6 +100,14 @@ coding_completion_state_hardening.install(
     coding_execution_dispatch,
     coding_hypothesis_persistence,
     coding_semantic_acceptance,
+)
+# Preserve the established public guarded-dispatch identity while routing the
+# first hypothesis-consuming mutation through completion-state lifecycle logic.
+coding_completion_state_dispatch.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_completion_state_hardening,
 )
 routes.ca = guarded_agent
 router = APIRouter()
