@@ -1663,6 +1663,8 @@ async def _fetch_image_backend_catalog_entry(client: httpx.AsyncClient, *, backe
         return entry
 
     models, management = _normalize_image_models_payload(payload)
+    # Expose the InvokeAI backend UI link for all backend types so users can
+    # download and configure models directly, not just for "gpu_heavy" backends.
     ui_url = _invokeai_ui_url()
     if ui_url:
         management = dict(management)
