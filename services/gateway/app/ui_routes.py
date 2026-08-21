@@ -1663,14 +1663,13 @@ async def _fetch_image_backend_catalog_entry(client: httpx.AsyncClient, *, backe
         return entry
 
     models, management = _normalize_image_models_payload(payload)
-    # Removed backend_class restriction to restore InvokeAI backend link for all backends
-        ui_url = _invokeai_ui_url()
-        if ui_url:
-            management = dict(management)
-            management["supported"] = True
-            management["ui_url"] = ui_url
-            management["ui_label"] = "Open InvokeAI"
-            management["message"] = "Use the InvokeAI interface to install, remove, and organize image models."
+    ui_url = _invokeai_ui_url()
+    if ui_url:
+        management = dict(management)
+        management["supported"] = True
+        management["ui_url"] = ui_url
+        management["ui_label"] = "Open InvokeAI"
+        management["message"] = "Use the InvokeAI interface to install, remove, and organize image models."
     entry["models"] = models
     entry["model_management"] = management
     return entry
