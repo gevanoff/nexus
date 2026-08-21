@@ -6,6 +6,8 @@ from typing import Any, Dict, Mapping, Optional
 
 from fastapi import HTTPException
 
+from app import coding_work_phases
+
 
 _LIFECYCLE_KEY = "agent_hypothesis_lifecycle"
 _CONSUMED_STATUS = "consumed"
@@ -16,6 +18,15 @@ _MUTATION_TOOLS = {
     "coding_run_command",
 }
 _PROTOCOL_ERROR = "coding_backend_protocol_invariant"
+_MISSING_TOOL_MARKERS = (
+    "command not found:",
+    "no module named pytest",
+    "no module named ruff",
+    "no module named mypy",
+    "modulenotfounderror: no module named",
+    "executable file not found",
+    "not recognized as an internal or external command",
+)
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -97,6 +108,14 @@ def _protocol_role(message: Any) -> str:
     return str(getattr(message, "role", "") or "").strip()
 
 
+def _protocol_content(message: Any) -> str:
+    if isinstance(message, Mapping):
+        value = message.get("content")
+    else:
+        value = getattr(message, "content", None)
+    return value if isinstance(value, str) else ""
+
+
 def _protocol_tool_calls(message: Any) -> list[Any]:
     if isinstance(message, Mapping):
         calls = message.get("tool_calls")
@@ -128,8 +147,16 @@ def _repair_text_tool_transport(
     task: Mapping[str, Any],
 ) -> tuple[Any, Dict[str, int]]:
     messages = list(dispatch._request_value(req, "messages", None) or [])
-    effective_task = dispatch.coding_execution_policy.execution_task(agent, task)
-    fresh_system = agent._system_prompt(effective_task, text_tool_mode=True)
+    fresh_system = next(
+        (
+            _protocol_content(message)
+            for message in messages
+            if _protocol_role(message) == "system" and _protocol_content(message).strip()
+        ),
+        "",
+    )
+    if not fresh_system:
+        fresh_system = agent._system_prompt(task, text_tool_mode=True)
     normalized, diagnostics = dispatch._normalize_messages(
         agent,
         messages,
@@ -144,6 +171,146 @@ def _repair_text_tool_transport(
         parallel_tool_calls=None,
     )
     return repaired, diagnostics
+
+
+def _current_run_events(task: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    events = [event for event in (task.get("agent_events") or []) if isinstance(event, Mapping)]
+    run_id = str(task.get("agent_run_id") or "").strip()
+    if run_id:
+        for index in range(len(events) - 1, -1, -1):
+            event = events[index]
+            if (
+                str(event.get("type") or "") == "started"
+                and str(event.get("run_id") or "").strip() == run_id
+            ):
+                return events[index:]
+        return []
+    for index in range(len(events) - 1, -1, -1):
+        if str(events[index].get("type") or "") == "started":
+            return events[index:]
+    return events
+
+
+def _tool_pairs(task: Mapping[str, Any]) -> list[tuple[int, Mapping[str, Any], Mapping[str, Any]]]:
+    events = _current_run_events(task)
+    pending_by_id: dict[str, tuple[int, Mapping[str, Any]]] = {}
+    pending_by_name: dict[str, list[tuple[int, Mapping[str, Any]]]] = {}
+    pairs: list[tuple[int, Mapping[str, Any], Mapping[str, Any]]] = []
+    for index, event in enumerate(events):
+        event_type = str(event.get("type") or "")
+        name = str(event.get("name") or "")
+        call_id = str(event.get("tool_call_id") or "")
+        if event_type == "tool_started":
+            if call_id:
+                pending_by_id[call_id] = (index, event)
+            else:
+                pending_by_name.setdefault(name, []).append((index, event))
+            continue
+        if event_type != "tool_finished":
+            continue
+        started: Optional[tuple[int, Mapping[str, Any]]] = None
+        if call_id:
+            started = pending_by_id.pop(call_id, None)
+        if started is None:
+            candidates = pending_by_name.get(name) or []
+            if candidates:
+                started = candidates.pop()
+        if started is not None:
+            pairs.append((index, started[1], event))
+    return pairs
+
+
+def _result_ok(event: Mapping[str, Any]) -> bool:
+    result = _mapping(event.get("result"))
+    return result.get("ok") is True
+
+
+def _result_missing_tool(event: Mapping[str, Any]) -> bool:
+    result = _mapping(event.get("result"))
+    if result.get("ok") is True:
+        return False
+    text = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}".lower()
+    return any(marker in text for marker in _MISSING_TOOL_MARKERS)
+
+
+def _event_modified_workspace(
+    started: Mapping[str, Any],
+    finished: Mapping[str, Any],
+) -> bool:
+    name = str(started.get("name") or "")
+    args = _mapping(started.get("args"))
+    result = _mapping(finished.get("result"))
+    if result.get("ok") is not True:
+        return False
+    if name == "coding_write_file":
+        return True
+    if name == "coding_replace_text":
+        try:
+            return int(result.get("replacements") or 0) > 0
+        except Exception:
+            return True
+    if name == "coding_apply_patch":
+        if bool(args.get("check_only")) or bool(result.get("check_only")):
+            return False
+        apply_result = _mapping(result.get("apply"))
+        return apply_result.get("ok") is True if apply_result else True
+    if name == "coding_run_command":
+        return result.get("workspace_modified") is True
+    return False
+
+
+def _validation_signature(argv: Any) -> tuple[str, ...]:
+    if not isinstance(argv, list):
+        return ()
+    return tuple(str(item).strip() for item in argv if str(item).strip())
+
+
+def _validation_recovery_state(task: Mapping[str, Any]) -> tuple[bool, bool]:
+    """Return (successful_after_latest_edit, all_substantive_failures_superseded).
+
+    A failed validation is superseded only by a later successful invocation of the
+    same validation argv after the latest repository mutation. This deliberately
+    does not allow a weak checker such as ``git diff --check`` to erase a failed
+    pytest/py_compile/lint invocation.
+    """
+
+    pairs = _tool_pairs(task)
+    latest_mutation_index = -1
+    for finished_index, started, finished in pairs:
+        if _event_modified_workspace(started, finished):
+            latest_mutation_index = max(latest_mutation_index, finished_index)
+
+    validations: list[tuple[int, tuple[str, ...], bool]] = []
+    for finished_index, started, finished in pairs:
+        if finished_index <= latest_mutation_index:
+            continue
+        if str(started.get("name") or "") != "coding_run_command":
+            continue
+        args = _mapping(started.get("args"))
+        argv = args.get("argv")
+        if not coding_work_phases.is_validation_command(argv):
+            continue
+        if _result_missing_tool(finished):
+            continue
+        signature = _validation_signature(argv)
+        if not signature:
+            continue
+        validations.append((finished_index, signature, _result_ok(finished)))
+
+    successes = [record for record in validations if record[2]]
+    failures = [record for record in validations if not record[2]]
+    if not successes:
+        return False, False
+    if not failures:
+        return True, True
+    all_superseded = all(
+        any(
+            success_index > failure_index and success_signature == failure_signature
+            for success_index, success_signature, _ok in successes
+        )
+        for failure_index, failure_signature, _ok in failures
+    )
+    return True, all_superseded
 
 
 def _durable_acceptance_state(cw: Any, task: Mapping[str, Any]) -> tuple[bool, bool]:
@@ -163,19 +330,42 @@ def _durable_acceptance_state(cw: Any, task: Mapping[str, Any]) -> tuple[bool, b
     return validation_ready, review_ready
 
 
+def _latest_task(cw: Any, task: Mapping[str, Any]) -> Mapping[str, Any]:
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return task
+    try:
+        latest = cw.load_task(task_id)
+    except Exception:
+        return task
+    return latest if isinstance(latest, Mapping) else task
+
+
 def _finish_gate_overrides(
     cw: Any,
     task: Mapping[str, Any],
     kwargs: Mapping[str, Any],
 ) -> Dict[str, Any]:
     updated = dict(kwargs)
-    durable_validation, durable_review = _durable_acceptance_state(cw, task)
+    latest_task = _latest_task(cw, task)
+    durable_validation, durable_review = _durable_acceptance_state(cw, latest_task)
     validation_run = bool(updated.get("validation_run_after_edit"))
     validation_ok = updated.get("validation_ok_after_edit")
-    if (validation_run and validation_ok is True) or durable_validation:
+    validation_failed = bool(updated.get("validation_failed_after_edit"))
+
+    successful_after_edit, failures_superseded = _validation_recovery_state(latest_task)
+    if validation_failed:
+        if failures_superseded and (
+            successful_after_edit
+            and (durable_validation or (validation_run and validation_ok is True))
+        ):
+            updated["validation_run_after_edit"] = True
+            updated["validation_ok_after_edit"] = True
+            updated["validation_failed_after_edit"] = False
+    elif durable_validation:
         updated["validation_run_after_edit"] = True
         updated["validation_ok_after_edit"] = True
-        updated["validation_failed_after_edit"] = False
+
     if durable_review:
         updated["diff_reviewed_after_edit"] = True
     return updated
@@ -312,8 +502,6 @@ def install(
         return result
 
     agent._run_tool = run_tool_with_hypothesis_lifecycle
-    if getattr(guarded, "_run_tool_with_semantic_acceptance", None) is original_run_tool:
-        guarded._run_tool_with_semantic_acceptance = run_tool_with_hypothesis_lifecycle
 
     original_task_context = getattr(agent, "_task_context", None)
     if callable(original_task_context):
