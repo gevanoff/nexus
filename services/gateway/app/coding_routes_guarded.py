@@ -28,6 +28,7 @@ from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
 from app import coding_policy_rejection_recovery
+from app import coding_refuted_findings
 from app import coding_semantic_acceptance
 from app import coding_stagnation_resilience
 from app import coding_text_tool_handoff
@@ -100,6 +101,12 @@ coding_completion_state_hardening.install(
     coding_execution_dispatch,
     coding_hypothesis_persistence,
     coding_semantic_acceptance,
+)
+# Durable assistant-derived findings that predate the first consuming mutation
+# become auditable superseded history instead of active controller guidance.
+coding_refuted_findings.install(
+    coding_stagnation_resilience,
+    coding_completion_state_hardening,
 )
 # Preserve the established public guarded-dispatch identity while routing the
 # first hypothesis-consuming mutation through completion-state lifecycle logic.
