@@ -13,6 +13,7 @@ NOTE = (
     "Competing explanation checked: frontend rendering exists.\n"
     "Expected result: restore the backend management link."
 )
+PY_COMPILE = ["python3", "-m", "py_compile", "services/gateway/app/ui_routes.py"]
 
 
 def _tool(name: str) -> ToolSpec:
@@ -23,6 +24,64 @@ def _tool(name: str) -> ToolSpec:
             parameters={"type": "object", "properties": {}},
         )
     )
+
+
+def _validation_task(*, recovery: str = "same") -> dict:
+    """Production-shaped edit -> failed validation -> later validation sequence."""
+    success_argv = PY_COMPILE if recovery == "same" else ["git", "diff", "--check"]
+    return {
+        "id": "code-test",
+        "agent_run_id": "coderun-test",
+        "project_plan": {"revision": 2, "note": NOTE, "items": []},
+        "agent_events": [
+            {"type": "started", "run_id": "coderun-test"},
+            {
+                "type": "tool_started",
+                "cycle": 4,
+                "tool_call_id": "edit-1",
+                "name": "coding_replace_text",
+                "args": {"path": "services/gateway/app/ui_routes.py"},
+            },
+            {
+                "type": "tool_finished",
+                "cycle": 4,
+                "tool_call_id": "edit-1",
+                "name": "coding_replace_text",
+                "result": {"ok": True, "replacements": 1},
+            },
+            {
+                "type": "tool_started",
+                "cycle": 5,
+                "tool_call_id": "validate-1",
+                "name": "coding_run_command",
+                "args": {"argv": PY_COMPILE, "cwd": "services/gateway"},
+            },
+            {
+                "type": "tool_finished",
+                "cycle": 5,
+                "tool_call_id": "validate-1",
+                "name": "coding_run_command",
+                "result": {
+                    "ok": False,
+                    "stderr": "can't open file services/gateway/app/ui_routes.py",
+                },
+            },
+            {
+                "type": "tool_started",
+                "cycle": 6,
+                "tool_call_id": "validate-2",
+                "name": "coding_run_command",
+                "args": {"argv": success_argv},
+            },
+            {
+                "type": "tool_finished",
+                "cycle": 6,
+                "tool_call_id": "validate-2",
+                "name": "coding_run_command",
+                "result": {"ok": True, "stdout": "", "stderr": ""},
+            },
+        ],
+    }
 
 
 class _CW:
@@ -49,11 +108,15 @@ class _CW:
         return self.tasks[task_id]
 
 
-def test_later_successful_validation_supersedes_earlier_failure():
+def test_same_validation_rerun_supersedes_earlier_invocation_failure():
     cw = _CW()
+    task = _validation_task()
+    cw.tasks["code-test"] = task
+
+    assert hardening._validation_recovery_state(task) == (True, True)
     updated = hardening._finish_gate_overrides(
         cw,
-        {"id": "code-test"},
+        task,
         {
             "validation_run_after_edit": True,
             "validation_ok_after_edit": True,
@@ -67,11 +130,33 @@ def test_later_successful_validation_supersedes_earlier_failure():
     assert updated["validation_ok_after_edit"] is True
 
 
-def test_durable_current_state_can_reconcile_stale_run_local_finish_flags():
-    cw = _CW(validation_ready=True, review_ready=True)
+def test_later_weak_check_does_not_supersede_stronger_failed_validation():
+    cw = _CW()
+    task = _validation_task(recovery="weak")
+    cw.tasks["code-test"] = task
+
+    assert hardening._validation_recovery_state(task) == (True, False)
     updated = hardening._finish_gate_overrides(
         cw,
-        {"id": "code-test"},
+        task,
+        {
+            "validation_run_after_edit": True,
+            "validation_ok_after_edit": True,
+            "validation_failed_after_edit": True,
+            "diff_reviewed_after_edit": True,
+        },
+    )
+
+    assert updated["validation_failed_after_edit"] is True
+
+
+def test_durable_current_state_reconciles_stale_local_flags_after_exact_rerun():
+    cw = _CW(validation_ready=True, review_ready=True)
+    task = _validation_task()
+    cw.tasks["code-test"] = task
+    updated = hardening._finish_gate_overrides(
+        cw,
+        task,
         {
             "validation_run_after_edit": False,
             "validation_ok_after_edit": None,
@@ -196,7 +281,7 @@ def _native_history_request() -> ChatCompletionRequest:
     return ChatCompletionRequest(
         model="coder",
         messages=[
-            ChatMessage(role="system", content="stale system"),
+            ChatMessage(role="system", content="fresh text-backend system"),
             ChatMessage(role="user", content="perform the edit"),
             ChatMessage(
                 role="assistant",
@@ -244,6 +329,7 @@ def test_text_backend_transport_repair_removes_native_tool_protocol():
     assert repaired.tools is None
     assert repaired.tool_choice is None
     assert not any(message.role == "tool" for message in repaired.messages)
+    assert repaired.messages[0].content == "fresh text-backend system"
     assistant_text = "\n".join(
         str(message.content or "")
         for message in repaired.messages
@@ -341,7 +427,9 @@ class _Dispatch:
 
 def test_install_closes_finish_transport_and_hypothesis_lifecycle_loops():
     cw = _CW(validation_ready=True, review_ready=True)
-    task = _consumed_task()
+    task = _validation_task()
+    lifecycle = _consumed_task()[hardening._LIFECYCLE_KEY]
+    task[hardening._LIFECYCLE_KEY] = lifecycle
     task["forced"] = {
         "causal_evidence_targets": ["services/gateway/app/ui_routes.py"],
         "causal_evidence_ranges": [
@@ -382,7 +470,8 @@ def test_install_closes_finish_transport_and_hypothesis_lifecycle_loops():
     assert "HISTORICAL CONSUMED" in agent._task_context(task)
     review_context = guarded._project_hypothesis_text(task)
     assert "Hypothesis lifecycle: consumed" in review_context
-    assert "Verified repository evidence" in review_context
+    assert "Verified pre-edit repository evidence snapshot" in review_context
+    assert "backends_config.yaml:70-95" in review_context
     system, _user = semantic.build_review_messages()
     assert "Missing evidence is not evidence of absence" in system
 
