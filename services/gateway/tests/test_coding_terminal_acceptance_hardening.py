@@ -187,7 +187,12 @@ def test_nonvalidation_command_cannot_mint_post_edit_validation():
 
 
 def test_terminal_status_watch_has_bounded_recovery_grace_polling():
-    source = Path("app/static/coding_terminal_status_watch.js").read_text(encoding="utf-8")
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "static"
+        / "coding_terminal_status_watch.js"
+    ).read_text(encoding="utf-8")
 
     assert "GRACE_MS = 30000" in source
     assert "POLL_MS = 4000" in source
