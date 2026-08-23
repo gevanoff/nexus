@@ -6,6 +6,9 @@ from app import coding_routes_guarded
 from app import coding_terminal_acceptance_hardening as hardening
 
 
+PY_COMPILE = ["python3", "-m", "py_compile", "app.py"]
+
+
 class _Agent:
     def __init__(self, cw):
         self.cw = cw
@@ -21,6 +24,7 @@ class _Agent:
 class _CW:
     def __init__(self, task):
         self.tasks = {task["id"]: task}
+        self.command_ts = 20.0
         self.coding_state_snapshot = lambda _task_id: {
             "changes": {"last_edit_at": 10.0},
             "validation": {
@@ -29,10 +33,46 @@ class _CW:
                 "last_validation_at": 20.0,
                 "validation_after_latest_edit": True,
             },
+            "progress": {
+                "current_phase": "finalizing",
+                "next_recommended_action": "finish the mission",
+            },
+            "diff_review": {
+                "last_diff_review_at": 20.0,
+                "diff_reviewed_after_latest_edit": True,
+            },
         }
 
     def load_task(self, task_id):
         return self.tasks[task_id]
+
+    def save_task(self, task):
+        self.tasks[task["id"]] = task
+        return task
+
+    def run_task_command(self, task_id, *, argv, cwd=None, timeout_sec=None, git_token_value=None):
+        del timeout_sec, git_token_value
+        self.command_ts += 1.0
+        result = {
+            "ok": True,
+            "argv": list(argv),
+            "cwd": str(cwd or ""),
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+        }
+        task = self.tasks[task_id]
+        commands = list(task.get("commands") or [])
+        commands.append(
+            {
+                "label": "command",
+                "ts": self.command_ts,
+                "argv": list(argv),
+                "ok": True,
+            }
+        )
+        task["commands"] = commands[-30:]
+        return result
 
 
 class _Guarded:
@@ -65,8 +105,8 @@ class _Guarded:
 class _WorkPhases:
     @staticmethod
     def is_validation_command(argv):
-        return argv in (
-            ["python3", "-m", "py_compile", "app.py"],
+        return list(argv or []) in (
+            PY_COMPILE,
             ["pytest", "-q"],
         )
 
@@ -74,6 +114,7 @@ class _WorkPhases:
 def _task():
     return {
         "id": "code-test",
+        "agent_run_id": "coderun-test",
         "agent_cycle": 12,
         "project_plan": {
             "revision": 2,
@@ -131,7 +172,7 @@ def test_validation_provenance_ignores_later_git_inspection_command():
         {
             "label": "agent-command",
             "ts": 11.0,
-            "argv": ["python3", "-m", "py_compile", "app.py"],
+            "argv": PY_COMPILE,
             "ok": True,
         },
         {
@@ -157,10 +198,11 @@ def test_validation_provenance_ignores_later_git_inspection_command():
         is_validation_command=_WorkPhases.is_validation_command,
     )
 
-    assert validation["last_validation_command"] == ["python3", "-m", "py_compile", "app.py"]
+    assert validation["last_validation_command"] == PY_COMPILE
     assert validation["last_validation_at"] == 11.0
     assert validation["last_validation_ok"] is True
     assert validation["validation_after_latest_edit"] is True
+    assert validation["provenance_source"] == "command_ledger"
 
 
 def test_nonvalidation_command_cannot_mint_post_edit_validation():
@@ -184,6 +226,102 @@ def test_nonvalidation_command_cannot_mint_post_edit_validation():
     assert validation["last_validation_command"] == []
     assert validation["last_validation_ok"] is None
     assert validation["validation_after_latest_edit"] is False
+    assert validation["provenance_source"] == "none"
+
+
+def test_validation_provenance_survives_truncated_command_ledger():
+    task = _task()
+    cw = _CW(task)
+    agent = _Agent(cw)
+    guarded = _Guarded()
+    hardening.install(agent, guarded, cw, _WorkPhases)
+
+    result = cw.run_task_command("code-test", argv=PY_COMPILE, cwd="")
+    assert result["ok"] is True
+    durable = task[hardening._VALIDATION_KEY]
+    assert durable["schema"] == hardening._VALIDATION_SCHEMA
+    assert durable["argv"] == PY_COMPILE
+    assert durable["ok"] is True
+
+    # Simulate the production 30-entry command ring buffer evicting the
+    # validation while subsequent inspection commands continue to accumulate.
+    task["commands"] = [
+        {
+            "label": "command",
+            "ts": durable["ts"] + index + 1,
+            "argv": ["git", "log", "--oneline", str(index)],
+            "ok": True,
+        }
+        for index in range(30)
+    ]
+
+    snapshot = cw.coding_state_snapshot("code-test")
+    assert snapshot["validation"]["last_validation_command"] == PY_COMPILE
+    assert snapshot["validation"]["last_validation_ok"] is True
+    assert snapshot["validation"]["validation_after_latest_edit"] is True
+    assert snapshot["validation"]["provenance_source"] == "durable_provenance"
+
+
+def test_reconciled_progress_does_not_finish_when_validation_is_missing():
+    snapshot = {
+        "changes": {
+            "last_edit_at": 10.0,
+            "changed_files": [{"path": "app.py", "status": " M"}],
+        },
+        "validation": {
+            "last_validation_command": ["git", "log", "--oneline"],
+            "last_validation_ok": True,
+            "last_validation_at": 20.0,
+            "validation_after_latest_edit": True,
+        },
+        "diff_review": {
+            "last_diff_review_at": 20.0,
+            "diff_reviewed_after_latest_edit": True,
+        },
+        "progress": {
+            "current_phase": "finalizing",
+            "next_recommended_action": "finish the mission",
+        },
+    }
+    validation = {
+        "last_validation_command": [],
+        "last_validation_ok": None,
+        "last_validation_at": 0.0,
+        "validation_after_latest_edit": False,
+    }
+
+    progress = hardening._reconciled_progress_state(snapshot, validation)
+
+    assert progress["current_phase"] == "editing"
+    assert progress["next_recommended_action"] == "validate changes"
+
+
+def test_reconciled_progress_requires_failed_validation_remediation():
+    snapshot = {
+        "changes": {
+            "last_edit_at": 10.0,
+            "changed_files": [{"path": "app.py", "status": " M"}],
+        },
+        "diff_review": {
+            "last_diff_review_at": 20.0,
+            "diff_reviewed_after_latest_edit": True,
+        },
+        "progress": {
+            "current_phase": "finalizing",
+            "next_recommended_action": "finish the mission",
+        },
+    }
+    validation = {
+        "last_validation_command": ["pytest", "-q"],
+        "last_validation_ok": False,
+        "last_validation_at": 20.0,
+        "validation_after_latest_edit": True,
+    }
+
+    progress = hardening._reconciled_progress_state(snapshot, validation)
+
+    assert progress["current_phase"] == "editing"
+    assert progress["next_recommended_action"] == "resolve failed validation"
 
 
 def test_terminal_status_watch_tracks_sentinel_recoverable_states():
