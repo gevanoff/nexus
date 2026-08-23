@@ -31,8 +31,10 @@ from app import coding_policy_rejection_recovery
 from app import coding_refuted_findings
 from app import coding_semantic_acceptance
 from app import coding_stagnation_resilience
+from app import coding_terminal_acceptance_hardening
 from app import coding_text_tool_handoff
 from app import coding_verified_evidence_handoff
+from app import coding_work_phases
 from app import coding_routes as routes
 from app import coding_workspace as cw
 
@@ -116,9 +118,19 @@ coding_completion_state_dispatch.install(
     cw,
     coding_completion_state_hardening,
 )
+# Close the remaining production acceptance gaps after the established semantic
+# dispatch chain is finalized: duplicate semantic-review retries and durable
+# validation provenance must both observe the final controller implementation.
+coding_terminal_acceptance_hardening.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_work_phases,
+)
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
+_TERMINAL_WATCH_SCRIPT_TAG = '<script src="/static/coding_terminal_status_watch.js?v=1"></script>'
 _CODING_SCRIPT_RE = re.compile(r'<script\s+src="/static/coding\.js(?:\?v=[^"]*)?"\s*></script>')
 
 
@@ -134,12 +146,18 @@ def _integrated_reason(task: dict) -> str:
 
 
 def _inject_debug_report_script(html: str) -> str:
-    if _DEBUG_SCRIPT_TAG in html:
+    missing = [
+        tag
+        for tag in (_DEBUG_SCRIPT_TAG, _TERMINAL_WATCH_SCRIPT_TAG)
+        if tag not in html
+    ]
+    if not missing:
         return html
+    injected = "\n    ".join(missing)
     match = _CODING_SCRIPT_RE.search(html)
     if match:
-        return f"{html[:match.start()]}{_DEBUG_SCRIPT_TAG}\n    {html[match.start():]}"
-    return html.replace("</body>", f"  {_DEBUG_SCRIPT_TAG}\n  </body>", 1)
+        return f"{html[:match.start()]}{injected}\n    {html[match.start():]}"
+    return html.replace("</body>", f"  {injected}\n  </body>", 1)
 
 
 async def _coding_page(req: Request) -> HTMLResponse:
