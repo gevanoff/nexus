@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app import coding_routes_guarded
 from app import coding_terminal_acceptance_hardening as hardening
 
 
@@ -108,6 +109,7 @@ def test_duplicate_semantic_rejection_is_blocked_until_acceptance_state_changes(
     assert first["error"] == "semantic_acceptance_rejected"
     assert second["error"] == "semantic_acceptance_state_unchanged"
     assert guarded.calls == 1
+    assert agent._run_tool is guarded._run_tool_with_semantic_acceptance
     assert any(event["type"] == "semantic_acceptance_repeat_blocked" for event in agent.events)
 
     task["project_plan"] = {
@@ -194,3 +196,14 @@ def test_terminal_status_watch_has_bounded_recovery_grace_polling():
     assert "MutationObserver" in source
     assert "refreshBtn.click()" in source
     assert "document.visibilityState" in source
+
+
+def test_terminal_status_watch_is_injected_once_before_main_coding_script():
+    html = '<body><script src="/static/coding.js?v=15"></script></body>'
+
+    once = coding_routes_guarded._inject_debug_report_script(html)
+    twice = coding_routes_guarded._inject_debug_report_script(once)
+
+    assert once == twice
+    assert once.count("coding_terminal_status_watch.js") == 1
+    assert once.index("coding_terminal_status_watch.js") < once.index("coding.js?v=15")
