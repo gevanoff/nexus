@@ -24,17 +24,20 @@ from app import coding_failed_edit_recovery
 from app import coding_hypothesis_persistence
 from app import coding_hypothesis_range_contract
 from app import coding_inspection_ledger_integrity
+from app import coding_mission_acceptance_continuity
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
 from app import coding_policy_rejection_recovery
 from app import coding_refuted_findings
+from app import coding_run_delta
 from app import coding_semantic_acceptance
 from app import coding_stagnation_resilience
 from app import coding_terminal_acceptance_hardening
 from app import coding_text_tool_handoff
 from app import coding_verified_evidence_handoff
 from app import coding_work_phases
+from app import coding_forced_action
 from app import coding_routes as routes
 from app import coding_workspace as cw
 
@@ -126,6 +129,17 @@ coding_terminal_acceptance_hardening.install(
     guarded_agent,
     cw,
     coding_work_phases,
+)
+# Acceptance is mission/workspace scoped, not individual-run scoped. Failed
+# checkpoint commits must remain in the semantic-review delta after Sentinel or
+# manual resume, and a refuted edit hypothesis needs a bounded route back to
+# evidence rather than forcing a guessed edit or false finish.
+coding_mission_acceptance_continuity.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_run_delta,
+    coding_forced_action,
 )
 routes.ca = guarded_agent
 router = APIRouter()
