@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import difflib
 import hashlib
-import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
@@ -13,7 +12,7 @@ SCHEMA = "nexus_coding_mission_acceptance_epoch.v1"
 KEY = "coding_mission_acceptance_epoch"
 REFUTATION_SCHEMA = "nexus_coding_hypothesis_refutation.v1"
 REFUTATION_KEY = "coding_hypothesis_refutation"
-_REFUTATION_RE = re.compile(r"(?im)(?:^|\n)\s*Hypothesis status\s*:\s*refuted\b")
+REFUTATION_TOOL = "coding_refute_hypothesis"
 _MAX_UNTRACKED = 200
 _MAX_UNTRACKED_BYTES = 100_000
 _MAX_REVIEW_DIFF_CHARS = 40_000
@@ -35,6 +34,15 @@ def _int(value: Any) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _mutate_task(cw: Any, task_id: str, apply: Any) -> Dict[str, Any]:
+    mutate = getattr(cw, "mutate_task", None)
+    if callable(mutate):
+        return mutate(task_id, apply)
+    task = cw.load_task(task_id)
+    apply(task)
+    return cw.save_task(task)
 
 
 def _repo_path(cw: Any, task: Mapping[str, Any]) -> Path:
@@ -102,43 +110,62 @@ def ensure_epoch(
 ) -> Dict[str, Any]:
     task = dict(task or cw.load_task(task_id))
     current = _mapping(task.get(KEY))
-    if str(current.get("schema") or "") == SCHEMA and str(current.get("base_head") or "").strip():
-        epoch = dict(current)
-        if observed_last_edit_at and not _float(epoch.get("last_mutation_at")):
-            epoch["last_mutation_at"] = float(observed_last_edit_at)
-            task[KEY] = epoch
-            cw.save_task(task)
-        return epoch
+    valid_current = (
+        str(current.get("schema") or "") == SCHEMA
+        and bool(str(current.get("base_head") or "").strip())
+    )
+    if valid_current and (not observed_last_edit_at or _float(current.get("last_mutation_at"))):
+        return dict(current)
 
-    base_head = _resolve_acceptance_base(cw, task_id, task)
-    if not base_head:
-        return {
+    if valid_current:
+        proposed = dict(current)
+    else:
+        base_head = _resolve_acceptance_base(cw, task_id, task)
+        if not base_head:
+            return {
+                "schema": SCHEMA,
+                "status": "error",
+                "base_head": "",
+                "error": "unable to establish mission acceptance base",
+            }
+        now = time.time()
+        proposed = {
             "schema": SCHEMA,
-            "status": "error",
-            "base_head": "",
-            "error": "unable to establish mission acceptance base",
+            "status": "pending",
+            "base_head": base_head,
+            "base_branch": str(task.get("base_branch") or "main").strip() or "main",
+            "created_at": now,
+            "updated_at": now,
+            "last_mutation_at": 0.0,
+            "last_mutation_run_id": "",
+            "accepted_at": 0.0,
+            "accepted_head": "",
+            "accepted_run_id": "",
+            "accepted_fingerprint": "",
+            "accepted_diff_sha256": "",
+            "finalized_at": 0.0,
+            "finalized_head": "",
         }
-    now = time.time()
-    epoch = {
-        "schema": SCHEMA,
-        "status": "pending",
-        "base_head": base_head,
-        "base_branch": str(task.get("base_branch") or "main").strip() or "main",
-        "created_at": now,
-        "updated_at": now,
-        "last_mutation_at": float(observed_last_edit_at or 0.0),
-        "last_mutation_run_id": "",
-        "accepted_at": 0.0,
-        "accepted_head": "",
-        "accepted_run_id": "",
-        "accepted_fingerprint": "",
-        "accepted_diff_sha256": "",
-        "finalized_at": 0.0,
-        "finalized_head": "",
-    }
-    task[KEY] = epoch
-    cw.save_task(task)
-    return dict(epoch)
+    if observed_last_edit_at and not _float(proposed.get("last_mutation_at")):
+        proposed["last_mutation_at"] = float(observed_last_edit_at)
+        proposed["updated_at"] = time.time()
+
+    def apply(latest: Dict[str, Any]) -> None:
+        existing = _mapping(latest.get(KEY))
+        if (
+            str(existing.get("schema") or "") == SCHEMA
+            and str(existing.get("base_head") or "").strip()
+        ):
+            if observed_last_edit_at and not _float(existing.get("last_mutation_at")):
+                updated = dict(existing)
+                updated["last_mutation_at"] = float(observed_last_edit_at)
+                updated["updated_at"] = time.time()
+                latest[KEY] = updated
+            return
+        latest[KEY] = dict(proposed)
+
+    stored = _mutate_task(cw, task_id, apply)
+    return dict(_mapping(stored.get(KEY)) or proposed)
 
 
 def _safe_untracked_diff(cw: Any, task: Mapping[str, Any], *, repo: Path) -> tuple[str, str]:
@@ -340,62 +367,84 @@ def _record_semantic_acceptance(
     )
     if not fingerprint:
         return
-    epoch = dict(ensure_epoch(cw, task_id, task))
-    epoch.update(
-        {
-            "status": "semantic_accepted",
-            "accepted_at": time.time(),
-            "accepted_head": str(state.get("current_head") or ""),
-            "accepted_run_id": str(task.get("agent_run_id") or ""),
-            "accepted_fingerprint": fingerprint,
-            "accepted_diff_sha256": str(state.get("diff_sha256") or ""),
-            "updated_at": time.time(),
-        }
-    )
-    task = cw.load_task(task_id)
-    task[KEY] = epoch
-    cw.save_task(task)
+    now = time.time()
+    base_head = str(state.get("base_head") or "")
+    current_head = str(state.get("current_head") or "")
+    run_id = str(task.get("agent_run_id") or "")
+    diff_sha = str(state.get("diff_sha256") or "")
+
+    def apply(latest: Dict[str, Any]) -> None:
+        current = dict(_mapping(latest.get(KEY)))
+        if str(current.get("base_head") or "") != base_head:
+            return
+        current.update(
+            {
+                "status": "semantic_accepted",
+                "accepted_at": now,
+                "accepted_head": current_head,
+                "accepted_run_id": run_id,
+                "accepted_fingerprint": fingerprint,
+                "accepted_diff_sha256": diff_sha,
+                "updated_at": now,
+            }
+        )
+        latest[KEY] = current
+
+    _mutate_task(cw, task_id, apply)
 
 
 def _record_mutation(cw: Any, task_id: str) -> None:
     task = cw.load_task(task_id)
     epoch = dict(ensure_epoch(cw, task_id, task))
     now = time.time()
-    epoch.update(
-        {
-            "status": "pending",
-            "last_mutation_at": now,
-            "last_mutation_run_id": str(task.get("agent_run_id") or ""),
-            "accepted_at": 0.0,
-            "accepted_head": "",
-            "accepted_run_id": "",
-            "accepted_fingerprint": "",
-            "accepted_diff_sha256": "",
-            "updated_at": now,
-        }
-    )
-    refutation = _mapping(task.get(REFUTATION_KEY))
-    if str(refutation.get("schema") or "") == REFUTATION_SCHEMA and str(refutation.get("status") or "") == "active":
-        consumed = dict(refutation)
-        consumed.update(
+    run_id = str(task.get("agent_run_id") or "")
+    base_head = str(epoch.get("base_head") or "")
+
+    def apply(latest: Dict[str, Any]) -> None:
+        current = dict(_mapping(latest.get(KEY)))
+        if str(current.get("base_head") or "") != base_head:
+            return
+        current.update(
             {
-                "status": "consumed",
-                "consumed_at": now,
-                "consumed_run_id": str(task.get("agent_run_id") or ""),
+                "status": "pending",
+                "last_mutation_at": now,
+                "last_mutation_run_id": run_id,
+                "accepted_at": 0.0,
+                "accepted_head": "",
+                "accepted_run_id": "",
+                "accepted_fingerprint": "",
+                "accepted_diff_sha256": "",
+                "updated_at": now,
             }
         )
-        task[REFUTATION_KEY] = consumed
-    task[KEY] = epoch
-    cw.save_task(task)
+        latest[KEY] = current
+        refutation = _mapping(latest.get(REFUTATION_KEY))
+        if (
+            str(refutation.get("schema") or "") == REFUTATION_SCHEMA
+            and str(refutation.get("status") or "") == "active"
+        ):
+            consumed = dict(refutation)
+            consumed.update(
+                {
+                    "status": "consumed",
+                    "consumed_at": now,
+                    "consumed_run_id": run_id,
+                }
+            )
+            latest[REFUTATION_KEY] = consumed
 
-
-def _note_refutes_hypothesis(note: Any) -> bool:
-    return bool(_REFUTATION_RE.search(str(note or "")))
+    _mutate_task(cw, task_id, apply)
 
 
 def _evidence_count_since(forced_action: Any, task: Mapping[str, Any], since: float) -> int:
     count = 0
-    targeted = set(getattr(forced_action, "_TARGETED_EVIDENCE_TOOLS", {"coding_search_text", "coding_read_file_lines"}))
+    targeted = set(
+        getattr(
+            forced_action,
+            "_TARGETED_EVIDENCE_TOOLS",
+            {"coding_search_text", "coding_read_file_lines"},
+        )
+    )
     succeeded = getattr(forced_action, "_targeted_evidence_result_succeeded", None)
     for raw in task.get("agent_events") or []:
         event = _mapping(raw)
@@ -432,12 +481,12 @@ def _refutation_overlay_state(
         state = dict(original_state)
         if state and str(state.get("action_kind") or "") == "edit":
             state["allowed_tools"] = sorted(
-                set(state.get("allowed_tools") or []) | {"coding_update_plan"}
+                set(state.get("allowed_tools") or []) | {REFUTATION_TOOL}
             )
             state["required_action"] = (
                 f"{str(state.get('required_action') or '').strip()} "
-                "If verified evidence contradicts the remediation hypothesis, call coding_update_plan with "
-                "a note containing 'Hypothesis status: refuted' to reopen one bounded evidence pass."
+                "If verified repository evidence contradicts the remediation hypothesis, call "
+                "coding_refute_hypothesis to suspend editing and open one bounded fresh-evidence pass."
             ).strip()
         return state
 
@@ -447,7 +496,9 @@ def _refutation_overlay_state(
     state = dict(original_state or raw_forced)
     if not state:
         state = {
-            "schema": str(getattr(forced_action, "SCHEMA", "nexus_coding_forced_action.v1")),
+            "schema": str(
+                getattr(forced_action, "SCHEMA", "nexus_coding_forced_action.v1")
+            ),
             "status": "active",
         }
     since = _float(refutation.get("refuted_at"))
@@ -459,7 +510,7 @@ def _refutation_overlay_state(
     hypothesis_ready = False
     fields: Dict[str, str] = {}
     structured = getattr(forced_action, "_structured_hypothesis", None)
-    if plan_revision > refutation_revision and not _note_refutes_hypothesis(plan.get("note")) and callable(structured):
+    if plan_revision > refutation_revision and callable(structured):
         try:
             hypothesis_ready, fields = structured(
                 task,
@@ -482,14 +533,14 @@ def _refutation_overlay_state(
         state["required_action"] = (
             "The prior remediation hypothesis was explicitly refuted and replaced with fresh evidence. "
             "Make the smallest evidence-backed edit, or finish with a concrete blocker. "
-            "If the replacement hypothesis is also contradicted, coding_update_plan may explicitly refute it once more."
+            "If the replacement hypothesis is also contradicted, coding_refute_hypothesis may reopen one more bounded evidence pass."
         )
         state["allowed_tools"] = sorted(
             {
                 "coding_write_file",
                 "coding_replace_text",
                 "coding_apply_patch",
-                "coding_update_plan",
+                REFUTATION_TOOL,
                 "coding_finish",
             }
         )
@@ -501,17 +552,29 @@ def _refutation_overlay_state(
     state["action_kind"] = "evidence"
     state["required_action"] = (
         "The current remediation hypothesis was explicitly refuted. Gather at most two targeted repository evidence actions, "
-        "then replace it with a fresh four-field hypothesis before editing."
+        "then replace it with a fresh four-field hypothesis using coding_update_plan before editing."
     )
     state["allowed_tools"] = sorted(allowed)
     return state
 
 
-def _record_refutation(agent: Any, cw: Any, task_id: str, *, note: str, forced_state: Mapping[str, Any]) -> None:
+def _record_refutation(
+    agent: Any,
+    cw: Any,
+    task_id: str,
+    *,
+    reason: str,
+    contradicting_evidence: str,
+    forced_state: Mapping[str, Any],
+) -> Dict[str, Any]:
     task = cw.load_task(task_id)
     plan = _mapping(task.get("project_plan"))
     previous = _mapping(task.get(REFUTATION_KEY))
-    previous_count = _int(previous.get("count")) if str(previous.get("status") or "") == "active" else 0
+    previous_count = (
+        _int(previous.get("count"))
+        if str(previous.get("status") or "") == "active"
+        else 0
+    )
     now = time.time()
     refutation = {
         "schema": REFUTATION_SCHEMA,
@@ -522,25 +585,31 @@ def _record_refutation(agent: Any, cw: Any, task_id: str, *, note: str, forced_s
         "run_id": str(task.get("agent_run_id") or ""),
         "cycle": _int(task.get("agent_cycle")),
         "state_key": str(forced_state.get("state_key") or ""),
-        "note": str(note or "").strip()[:4000],
+        "reason": str(reason or "").strip()[:4000],
+        "contradicting_evidence": str(contradicting_evidence or "").strip()[:6000],
     }
-    task[REFUTATION_KEY] = refutation
-    cw.save_task(task)
+
+    def apply(latest: Dict[str, Any]) -> None:
+        latest[REFUTATION_KEY] = dict(refutation)
+
+    _mutate_task(cw, task_id, apply)
     append = getattr(agent, "_append_event", None)
     if callable(append):
         append(
             task_id,
             {
                 "type": "hypothesis_refuted",
-                "cycle": _int(task.get("agent_cycle")),
+                "cycle": refutation["cycle"],
                 "plan_revision": refutation["plan_revision"],
                 "refutation_count": refutation["count"],
+                "reason": refutation["reason"],
                 "summary": (
                     "The agent explicitly refuted the current remediation hypothesis. "
                     "Editing is suspended until a bounded fresh-evidence pass supports a replacement hypothesis."
                 ),
             },
         )
+    return refutation
 
 
 def _snapshot_ready(snapshot: Mapping[str, Any]) -> bool:
@@ -571,7 +640,10 @@ def _reconcile_snapshot(
         observed_last_edit_at=observed_last_edit,
     )
     epoch = _mapping(state.get("epoch"))
-    mission_last_mutation = max(observed_last_edit, _float(epoch.get("last_mutation_at")))
+    mission_last_mutation = max(
+        observed_last_edit,
+        _float(epoch.get("last_mutation_at")),
+    )
     if mission_last_mutation:
         changes["last_edit_at"] = mission_last_mutation
         output["changes"] = changes
@@ -635,6 +707,32 @@ def _reconcile_snapshot(
     return output
 
 
+def _refutation_tool_spec(agent: Any) -> Any:
+    return agent.ToolSpec(
+        function=agent.ToolFunction(
+            name=REFUTATION_TOOL,
+            description=(
+                "Explicitly suspend forced edit mode when verified repository evidence contradicts the current remediation hypothesis. "
+                "This opens one bounded evidence pass; it does not edit files or revise the project plan by itself."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the current remediation hypothesis is contradicted by verified repository evidence.",
+                    },
+                    "contradicting_evidence": {
+                        "type": "string",
+                        "description": "Concise repository evidence that contradicts the current hypothesis.",
+                    },
+                },
+                "required": ["reason"],
+            },
+        )
+    )
+
+
 def install(
     agent: Any,
     guarded: Any,
@@ -653,13 +751,28 @@ def install(
     original_finalize = agent.finalize_successful_run
     original_snapshot = cw.coding_state_snapshot
     original_active_state = forced_action.active_state
+    original_tool_specs = agent._tool_specs
 
     edit_allowed = getattr(forced_action, "_ACTION_ALLOWED_TOOLS", {}).get("edit")
     if isinstance(edit_allowed, set):
-        edit_allowed.add("coding_update_plan")
+        edit_allowed.add(REFUTATION_TOOL)
+
+    def tool_specs_with_refutation() -> list[Any]:
+        specs = list(original_tool_specs())
+        if not any(
+            str(getattr(getattr(item, "function", None), "name", "")) == REFUTATION_TOOL
+            for item in specs
+        ):
+            specs.append(_refutation_tool_spec(agent))
+        return specs
+
+    agent._tool_specs = tool_specs_with_refutation
 
     def mission_delta_diff(task_id: str, task: Dict[str, Any]) -> str:
-        rendered = mission_review_diff(cw, agent, task_id, task)
+        try:
+            rendered = mission_review_diff(cw, agent, task_id, task)
+        except Exception:
+            rendered = ""
         if rendered:
             return rendered
         return original_run_delta_diff(task_id, task)
@@ -679,22 +792,37 @@ def install(
         *,
         git_token_value: Any,
     ) -> Dict[str, Any]:
-        before_task = cw.load_task(task_id)
+        try:
+            before_task = cw.load_task(task_id)
+        except Exception:
+            return original_run_tool(
+                task_id,
+                name,
+                args,
+                git_token_value=git_token_value,
+            )
+
         forced_state = forced_action.active_state(before_task)
-        if name == "coding_update_plan" and str(forced_state.get("action_kind") or "") == "edit":
-            note = str(args.get("note") or "")
-            if not _note_refutes_hypothesis(note):
+        if name == REFUTATION_TOOL:
+            if str(forced_state.get("action_kind") or "") != "edit":
                 return {
                     "ok": False,
-                    "error": "forced_action_plan_update_rejected",
-                    "required_action": (
-                        "Make the evidence-backed edit, or explicitly refute the hypothesis by calling coding_update_plan "
-                        "with a note containing 'Hypothesis status: refuted'."
-                    ),
-                    "summary": "Plan churn is blocked during forced edit mode unless the current remediation hypothesis is explicitly refuted.",
+                    "error": "hypothesis_refutation_not_available",
+                    "summary": "coding_refute_hypothesis is available only while forced edit mode is active.",
+                }
+            reason = str(args.get("reason") or "").strip()
+            if len(reason) < 8:
+                return {
+                    "ok": False,
+                    "error": "hypothesis_refutation_reason_required",
+                    "summary": "Provide a concrete reason grounded in verified repository evidence.",
                 }
             previous = _mapping(before_task.get(REFUTATION_KEY))
-            count = _int(previous.get("count")) if str(previous.get("status") or "") == "active" else 0
+            count = (
+                _int(previous.get("count"))
+                if str(previous.get("status") or "") == "active"
+                else 0
+            )
             if count >= 2:
                 return {
                     "ok": False,
@@ -702,6 +830,23 @@ def install(
                     "required_action": "Make the evidence-backed edit or finish with a concrete blocker.",
                     "summary": "The bounded hypothesis-refutation escape has already been used twice without a consuming mutation.",
                 }
+            refutation = _record_refutation(
+                agent,
+                cw,
+                task_id,
+                reason=reason,
+                contradicting_evidence=str(args.get("contradicting_evidence") or ""),
+                forced_state=forced_state,
+            )
+            return {
+                "ok": True,
+                "refuted": True,
+                "refutation_count": refutation["count"],
+                "required_action": (
+                    "Gather at most two targeted repository evidence actions, then record a fresh four-field remediation hypothesis with coding_update_plan."
+                ),
+                "summary": "The current remediation hypothesis was explicitly refuted; forced edit mode is suspended for one bounded evidence pass.",
+            }
 
         result = original_run_tool(
             task_id,
@@ -710,39 +855,40 @@ def install(
             git_token_value=git_token_value,
         )
 
-        if name == "coding_update_plan" and result.get("ok") is True and _note_refutes_hypothesis(args.get("note")):
-            _record_refutation(
-                agent,
-                cw,
-                task_id,
-                note=str(args.get("note") or ""),
-                forced_state=forced_state,
-            )
-
         mutation = bool(result.get("workspace_modified")) or (
             name in {"coding_write_file", "coding_replace_text", "coding_apply_patch"}
             and result.get("ok") is True
         )
         if mutation:
-            _record_mutation(cw, task_id)
+            try:
+                _record_mutation(cw, task_id)
+            except Exception:
+                pass
 
         if name == "coding_finish" and result.get("ok") is True and result.get("success") is True:
-            state = mission_delta_state(cw, task_id)
+            try:
+                state = mission_delta_state(cw, task_id)
+            except Exception:
+                state = {}
             if state.get("ok") and state.get("has_delta"):
-                _record_semantic_acceptance(
-                    terminal_hardening,
-                    cw,
-                    agent,
-                    task_id,
-                )
-                latest = cw.load_task(task_id)
-                if not _epoch_accepted_for_current(
-                    terminal_hardening,
-                    cw,
-                    agent,
-                    task_id,
-                    latest,
-                ):
+                try:
+                    _record_semantic_acceptance(
+                        terminal_hardening,
+                        cw,
+                        agent,
+                        task_id,
+                    )
+                    latest = cw.load_task(task_id)
+                    accepted = _epoch_accepted_for_current(
+                        terminal_hardening,
+                        cw,
+                        agent,
+                        task_id,
+                        latest,
+                    )
+                except Exception:
+                    accepted = False
+                if not accepted:
                     return {
                         "ok": False,
                         "success": False,
@@ -788,8 +934,8 @@ def install(
         finish_summary: str = "",
         run_id: str = "",
     ) -> Dict[str, Any]:
-        task = cw.load_task(task_id)
         try:
+            task = cw.load_task(task_id)
             state = mission_delta_state(cw, task_id, task)
             snapshot = cw.coding_state_snapshot(task_id)
             accepted = _epoch_accepted_for_current(
@@ -800,7 +946,7 @@ def install(
                 task,
             )
         except Exception:
-            state, snapshot, accepted = {}, {}, False
+            task, state, snapshot, accepted = {}, {}, {}, False
         if state.get("ok") and state.get("has_delta") and accepted and _snapshot_ready(snapshot):
             contract = cw.normalize_coding_mission(task, mission)
             patched = dict(contract)
@@ -815,18 +961,26 @@ def install(
                 run_id=run_id,
             )
             if result.get("ok") is True:
-                latest = cw.load_task(task_id)
-                epoch = dict(ensure_epoch(cw, task_id, latest))
-                epoch.update(
-                    {
-                        "status": "finalized",
-                        "finalized_at": time.time(),
-                        "finalized_head": str(state.get("current_head") or ""),
-                        "updated_at": time.time(),
-                    }
-                )
-                latest[KEY] = epoch
-                cw.save_task(latest)
+                now = time.time()
+                final_head = str(state.get("current_head") or "")
+
+                def apply(latest: Dict[str, Any]) -> None:
+                    current = dict(_mapping(latest.get(KEY)))
+                    if current.get("accepted_fingerprint"):
+                        current.update(
+                            {
+                                "status": "finalized",
+                                "finalized_at": now,
+                                "finalized_head": final_head,
+                                "updated_at": now,
+                            }
+                        )
+                        latest[KEY] = current
+
+                try:
+                    _mutate_task(cw, task_id, apply)
+                except Exception:
+                    pass
             return result
         return original_finalize(
             task_id,
@@ -840,15 +994,18 @@ def install(
 
     def snapshot_with_mission_acceptance(task_id: str) -> Dict[str, Any]:
         snapshot = original_snapshot(task_id)
-        task = cw.load_task(task_id)
-        return _reconcile_snapshot(
-            terminal_hardening,
-            cw,
-            agent,
-            task_id,
-            task,
-            snapshot,
-        )
+        try:
+            task = cw.load_task(task_id)
+            return _reconcile_snapshot(
+                terminal_hardening,
+                cw,
+                agent,
+                task_id,
+                task,
+                snapshot,
+            )
+        except Exception:
+            return snapshot
 
     cw.coding_state_snapshot = snapshot_with_mission_acceptance
     guarded._mission_acceptance_epoch_installed = True
