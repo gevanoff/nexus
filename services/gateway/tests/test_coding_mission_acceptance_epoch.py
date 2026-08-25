@@ -2,11 +2,26 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 from app import coding_mission_acceptance_epoch as epoch
 
 
+class _ToolFunction:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+class _ToolSpec:
+    def __init__(self, *, function):
+        self.function = function
+
+
 class _Agent:
+    ToolFunction = _ToolFunction
+    ToolSpec = _ToolSpec
+
     def __init__(self, cw):
         self.cw = cw
         self._run_tool = None
@@ -16,10 +31,16 @@ class _Agent:
     def _clip_text(text, limit):
         return str(text or "")[:limit]
 
+    @staticmethod
+    def _tool_specs():
+        return []
+
     def _append_event(self, task_id, event):
+        del task_id
         self.cw.task.setdefault("agent_events", []).append(dict(event))
 
     async def start_agent_run(self, task_id, *args, **kwargs):
+        del args, kwargs
         return {"id": task_id, "status": "queued"}
 
     @staticmethod
@@ -287,37 +308,40 @@ def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
     assert original_mission["completion_policy"]["require_file_changes"] is True
 
 
-def test_explicit_hypothesis_refutation_reopens_only_bounded_evidence():
-    forced = _ForcedAction()
-    task = {
-        "project_plan": {
-            "revision": 5,
-            "note": "Hypothesis status: refuted\nReason: verified frontend evidence contradicts the backend-only hypothesis.",
-        },
-        "agent_forced_action": {
-            "schema": forced.SCHEMA,
-            "status": "active",
-            "state_key": "state-a",
-            "action_kind": "edit",
-            "required_action": "Make the smallest evidence-backed edit.",
-            "allowed_tools": ["coding_apply_patch", "coding_finish"],
-        },
-        epoch.REFUTATION_KEY: {
-            "schema": epoch.REFUTATION_SCHEMA,
-            "status": "active",
-            "count": 1,
-            "plan_revision": 5,
-            "refuted_at": 100.0,
-            "state_key": "state-a",
-        },
-        "agent_events": [],
+def test_refutation_tool_suspends_edit_and_reopens_only_bounded_evidence():
+    cw = _CW()
+    cw.task["agent_forced_action"] = {
+        "schema": _ForcedAction.SCHEMA,
+        "status": "active",
+        "state_key": "state-a",
+        "action_kind": "edit",
+        "required_action": "Make the smallest evidence-backed edit.",
+        "allowed_tools": ["coding_apply_patch", "coding_finish"],
     }
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    forced = _ForcedAction()
+    terminal = _TerminalHardening()
+    epoch.install(agent, guarded, cw, forced, terminal)
 
-    evidence_state = epoch._refutation_overlay_state(
-        forced,
-        task,
-        task["agent_forced_action"],
+    edit_state = forced.active_state(cw.task)
+    assert edit_state["action_kind"] == "edit"
+    assert epoch.REFUTATION_TOOL in edit_state["allowed_tools"]
+    assert "coding_update_plan" not in edit_state["allowed_tools"]
+
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test",
+        epoch.REFUTATION_TOOL,
+        {
+            "reason": "Verified frontend evidence contradicts the backend-only hypothesis.",
+            "contradicting_evidence": "image_catalog_ui.js already renders management.ui_url.",
+        },
+        git_token_value=None,
     )
+    assert result["ok"] is True
+    assert result["refuted"] is True
+
+    evidence_state = forced.active_state(cw.task)
     assert evidence_state["action_kind"] == "evidence"
     assert set(evidence_state["allowed_tools"]) == {
         "coding_search_text",
@@ -326,16 +350,17 @@ def test_explicit_hypothesis_refutation_reopens_only_bounded_evidence():
         "coding_finish",
     }
 
-    task["agent_events"].append(
+    refuted_at = float(cw.task[epoch.REFUTATION_KEY]["refuted_at"])
+    cw.task["agent_events"].append(
         {
             "type": "tool_finished",
-            "ts": 101.0,
+            "ts": refuted_at + 1.0,
             "name": "coding_read_file_lines",
             "result": {"path": "app.py", "content": "verified", "ok": True},
         }
     )
-    task["project_plan"] = {
-        "revision": 6,
+    cw.task["project_plan"] = {
+        "revision": 3,
         "note": (
             "Root cause: replacement cause\n"
             "Repository evidence: app.py lines 1-20\n"
@@ -344,11 +369,21 @@ def test_explicit_hypothesis_refutation_reopens_only_bounded_evidence():
         ),
     }
 
-    edit_state = epoch._refutation_overlay_state(
-        forced,
-        task,
-        task["agent_forced_action"],
-    )
-    assert edit_state["action_kind"] == "edit"
-    assert "coding_update_plan" in edit_state["allowed_tools"]
-    assert edit_state["hypothesis_ready"] is True
+    replacement_edit = forced.active_state(cw.task)
+    assert replacement_edit["action_kind"] == "edit"
+    assert epoch.REFUTATION_TOOL in replacement_edit["allowed_tools"]
+    assert "coding_update_plan" not in replacement_edit["allowed_tools"]
+    assert replacement_edit["hypothesis_ready"] is True
+
+
+def test_refutation_tool_is_advertised_as_a_distinct_capability():
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    forced = _ForcedAction()
+    epoch.install(agent, guarded, cw, forced, _TerminalHardening())
+
+    names = [item.function.name for item in agent._tool_specs()]
+    assert names.count(epoch.REFUTATION_TOOL) == 1
+    spec = next(item for item in agent._tool_specs() if item.function.name == epoch.REFUTATION_TOOL)
+    assert spec.function.parameters["required"] == ["reason"]
