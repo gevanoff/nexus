@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from app import coding_mission_acceptance_continuity as continuity
 
@@ -20,7 +21,6 @@ class _CW:
             "project_plan": {"items": []},
         }
         self.saved = []
-        self.baselines = []
         self.coding_state_snapshot = lambda _task_id: {
             "changes": {"changed_files": [], "last_edit_at": 10.0},
             "validation": {
@@ -124,6 +124,15 @@ class _ForcedAction:
     def prompt_context(_task):
         return "forced action context"
 
+    def filter_tool_specs(self, specs, _task):
+        allowed = self._ACTION_ALLOWED_TOOLS["edit"]
+        return [spec for spec in specs if spec.function.name in allowed]
+
+
+def _install_initialized(cw, run_delta, agent, guarded, forced):
+    continuity.ensure_acceptance_epoch(cw, "code-test")
+    continuity.install(agent, guarded, cw, run_delta, forced)
+
 
 def test_acceptance_epoch_uses_base_merge_base_not_checkpoint_head():
     cw = _CW()
@@ -139,6 +148,7 @@ def test_mission_delta_keeps_same_base_across_resumed_run_ids():
     cw = _CW()
     run_delta = _RunDelta()
     agent = _Agent(cw)
+    continuity.ensure_acceptance_epoch(cw, "code-test")
 
     first = continuity.mission_delta_diff(cw, agent, run_delta, "code-test", cw.task)
     cw.task["agent_run_id"] = "run-b"
@@ -149,14 +159,29 @@ def test_mission_delta_keeps_same_base_across_resumed_run_ids():
     assert [item["run_id"] for item in run_delta.baselines] == ["run-a", "run-b"]
 
 
+def test_uninitialized_legacy_delta_preserves_per_run_baseline_behavior():
+    cw = _CW()
+    run_delta = _RunDelta()
+    agent = _Agent(cw)
+    cw.task["agent_semantic_baseline"] = {
+        "schema": run_delta.SCHEMA,
+        "run_id": "run-a",
+        "tree_commit": "checkpoint",
+        "untracked_blobs": {},
+        "error": "",
+    }
+
+    assert continuity.mission_delta_diff(cw, agent, run_delta, "code-test", cw.task) == cw.diff_text
+    assert run_delta.baselines[-1]["tree_commit"] == "checkpoint"
+
+
 def test_resumed_checkpoint_can_finish_after_mission_level_acceptance():
     cw = _CW()
     run_delta = _RunDelta()
     agent = _Agent(cw)
     guarded = _Guarded()
     forced = _ForcedAction()
-
-    continuity.install(agent, guarded, cw, run_delta, forced)
+    _install_initialized(cw, run_delta, agent, guarded, forced)
 
     # This is the debug-report failure mode: the resumed run starts at the
     # checkpoint commit, so there is no run-local commit delta, but the mission
@@ -180,11 +205,23 @@ def test_same_run_changes_still_require_normal_edit_contract():
     agent = _Agent(cw)
     guarded = _Guarded()
     forced = _ForcedAction()
-    continuity.install(agent, guarded, cw, run_delta, forced)
+    _install_initialized(cw, run_delta, agent, guarded, forced)
 
     cw.current_head = "new-checkpoint"
 
     assert agent._mission_requires_workspace_edits(cw.task) is True
+
+
+def test_uninitialized_synthetic_task_preserves_original_edit_expectation():
+    cw = _CW()
+    run_delta = _RunDelta()
+    agent = _Agent(cw)
+    guarded = _Guarded()
+    forced = _ForcedAction()
+    continuity.install(agent, guarded, cw, run_delta, forced)
+
+    synthetic = {"id": "not-persisted", "prompt": "Fix it."}
+    assert agent._mission_requires_workspace_edits(synthetic) is True
 
 
 def test_snapshot_reports_inherited_mission_delta_as_finalizable():
@@ -193,7 +230,7 @@ def test_snapshot_reports_inherited_mission_delta_as_finalizable():
     agent = _Agent(cw)
     guarded = _Guarded()
     forced = _ForcedAction()
-    continuity.install(agent, guarded, cw, run_delta, forced)
+    _install_initialized(cw, run_delta, agent, guarded, forced)
 
     snapshot = cw.coding_state_snapshot("code-test")
 
@@ -211,7 +248,7 @@ def test_empty_plan_without_mission_delta_does_not_recommend_nonexistent_milesto
     agent = _Agent(cw)
     guarded = _Guarded()
     forced = _ForcedAction()
-    continuity.install(agent, guarded, cw, run_delta, forced)
+    _install_initialized(cw, run_delta, agent, guarded, forced)
 
     snapshot = cw.coding_state_snapshot("code-test")
 
@@ -221,7 +258,7 @@ def test_empty_plan_without_mission_delta_does_not_recommend_nonexistent_milesto
     )
 
 
-def test_forced_edit_mode_only_allows_plan_update_for_explicit_refutation():
+def test_forced_edit_mode_exposes_plan_spec_without_changing_canonical_allowed_set():
     cw = _CW()
     run_delta = _RunDelta()
     agent = _Agent(cw)
@@ -229,7 +266,23 @@ def test_forced_edit_mode_only_allows_plan_update_for_explicit_refutation():
     forced = _ForcedAction()
     continuity.install(agent, guarded, cw, run_delta, forced)
 
-    assert "coding_update_plan" in forced._ACTION_ALLOWED_TOOLS["edit"]
+    assert forced._ACTION_ALLOWED_TOOLS["edit"] == {"coding_write_file", "coding_finish"}
+    specs = [
+        SimpleNamespace(function=SimpleNamespace(name="coding_write_file")),
+        SimpleNamespace(function=SimpleNamespace(name="coding_update_plan")),
+        SimpleNamespace(function=SimpleNamespace(name="coding_search_text")),
+    ]
+    exposed = forced.filter_tool_specs(specs, cw.task)
+    assert [spec.function.name for spec in exposed] == ["coding_write_file", "coding_update_plan"]
+
+
+def test_forced_edit_mode_only_allows_plan_update_for_explicit_refutation():
+    cw = _CW()
+    run_delta = _RunDelta()
+    agent = _Agent(cw)
+    guarded = _Guarded()
+    forced = _ForcedAction()
+    continuity.install(agent, guarded, cw, run_delta, forced)
 
     allowed, rejection = forced.evaluate_tool_call(
         cw.task,
