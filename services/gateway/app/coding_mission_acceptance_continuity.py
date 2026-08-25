@@ -48,8 +48,18 @@ def _current_head(cw: Any, task_id: str, task: Mapping[str, Any] | None = None) 
     ).strip()
 
 
-def _resolve_acceptance_base(cw: Any, task_id: str, task: Mapping[str, Any]) -> str:
-    current = _current_head(cw, task_id, task)
+def _has_prior_agent_history(task: Mapping[str, Any]) -> bool:
+    runs = task.get("agent_runs") if isinstance(task.get("agent_runs"), list) else []
+    if runs:
+        return True
+    return bool(
+        task.get("agent_finished_at")
+        or task.get("agent_run_id")
+        or task.get("last_checkpoint_run_id")
+    )
+
+
+def _legacy_merge_base(cw: Any, task_id: str, task: Mapping[str, Any], current: str) -> str:
     base_branch = str(task.get("base_branch") or "main").strip() or "main"
     refs = [f"refs/remotes/origin/{base_branch}", f"origin/{base_branch}", base_branch]
     for ref in refs:
@@ -66,7 +76,28 @@ def _resolve_acceptance_base(cw: Any, task_id: str, task: Mapping[str, Any]) -> 
         base = _stdout(result)
         if bool(result.get("ok")) and base:
             return base.splitlines()[0].strip()
-    return str(task.get("agent_start_head") or current).strip()
+    return ""
+
+
+def _resolve_acceptance_base(
+    cw: Any,
+    task_id: str,
+    task: Mapping[str, Any],
+) -> tuple[str, str]:
+    current = _current_head(cw, task_id, task)
+    if current and not _has_prior_agent_history(task):
+        # The authoritative mission baseline is the exact workspace tree before
+        # the first agent run. This preserves setup/scaffold commits as baseline
+        # rather than incorrectly treating them as agent-produced changes.
+        return current, "initial_workspace_head"
+
+    # Migration path for workspaces created before acceptance epochs existed:
+    # prior failed/checkpointed runs may already have moved HEAD, so current HEAD
+    # cannot safely become accepted baseline truth. Recover the branch fork point.
+    legacy = _legacy_merge_base(cw, task_id, task, current)
+    if legacy:
+        return legacy, "legacy_base_branch_merge_base"
+    return str(task.get("agent_start_head") or current).strip(), "legacy_agent_start_head"
 
 
 def ensure_acceptance_epoch(cw: Any, task_id: str) -> Dict[str, Any]:
@@ -76,7 +107,7 @@ def ensure_acceptance_epoch(cw: Any, task_id: str) -> Dict[str, Any]:
     if existing:
         return existing
 
-    base_head = _resolve_acceptance_base(cw, task_id, task)
+    base_head, source = _resolve_acceptance_base(cw, task_id, task)
     if not base_head:
         raise RuntimeError("unable to resolve coding mission acceptance base head")
     now = time.time()
@@ -87,7 +118,7 @@ def ensure_acceptance_epoch(cw: Any, task_id: str) -> Dict[str, Any]:
         "accepted_head": "",
         "created_at": now,
         "accepted_at": 0.0,
-        "source": "base_branch_merge_base",
+        "source": source,
     }
     latest = cw.load_task(task_id)
     latest[KEY] = epoch
