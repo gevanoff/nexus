@@ -25,6 +25,7 @@ from app import coding_hypothesis_persistence
 from app import coding_hypothesis_range_contract
 from app import coding_inspection_ledger_integrity
 from app import coding_mission_acceptance_continuity
+from app import coding_mission_finalization_continuity
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
@@ -140,6 +141,15 @@ coding_mission_acceptance_continuity.install(
     cw,
     coding_run_delta,
     coding_forced_action,
+)
+# Inherited mission deltas finalize without rewriting the persisted current-run
+# start head, preserving accurate run provenance throughout slow push/PR work.
+coding_mission_finalization_continuity.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_run_delta,
+    coding_mission_acceptance_continuity,
 )
 routes.ca = guarded_agent
 router = APIRouter()
