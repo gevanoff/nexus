@@ -139,12 +139,32 @@ def _install_initialized(cw, run_delta, agent, guarded, forced):
     continuity.install(agent, guarded, cw, run_delta, forced)
 
 
-def test_acceptance_epoch_uses_base_merge_base_not_checkpoint_head():
+def test_fresh_workspace_epoch_uses_exact_pre_agent_head():
+    cw = _CW()
+    cw.current_head = "scaffold-commit"
+    cw.task.update(
+        {
+            "agent_run_id": "",
+            "agent_start_head": "",
+            "last_commit": "scaffold-commit",
+            "agent_runs": [],
+        }
+    )
+
+    epoch = continuity.ensure_acceptance_epoch(cw, "code-test")
+
+    assert epoch["base_head"] == "scaffold-commit"
+    assert epoch["source"] == "initial_workspace_head"
+    assert epoch["base_head"] != cw.base_head
+
+
+def test_legacy_workspace_epoch_uses_merge_base_not_checkpoint_head():
     cw = _CW()
 
     epoch = continuity.ensure_acceptance_epoch(cw, "code-test")
 
     assert epoch["base_head"] == "base"
+    assert epoch["source"] == "legacy_base_branch_merge_base"
     assert epoch["base_head"] != cw.current_head
     assert cw.task[continuity.KEY]["status"] == "pending"
 
@@ -339,8 +359,17 @@ def test_qualified_edit_mode_only_allows_plan_update_for_explicit_refutation():
     assert "Hypothesis refutation escape hatch" in forced.prompt_context(cw.task)
 
 
-def test_start_agent_run_initializes_acceptance_epoch_before_execution():
+def test_start_agent_run_initializes_fresh_acceptance_epoch_before_execution():
     cw = _CW()
+    cw.current_head = "scaffold-commit"
+    cw.task.update(
+        {
+            "agent_run_id": "",
+            "agent_start_head": "",
+            "last_commit": "scaffold-commit",
+            "agent_runs": [],
+        }
+    )
     cw.task.pop(continuity.KEY, None)
     run_delta = _RunDelta()
     agent = _Agent(cw)
@@ -352,4 +381,5 @@ def test_start_agent_run_initializes_acceptance_epoch_before_execution():
 
     assert result["ok"] is True
     assert agent.start_calls == 1
-    assert cw.task[continuity.KEY]["base_head"] == "base"
+    assert cw.task[continuity.KEY]["base_head"] == "scaffold-commit"
+    assert cw.task[continuity.KEY]["source"] == "initial_workspace_head"
