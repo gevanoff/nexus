@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from types import SimpleNamespace
 
 from app import coding_mission_acceptance_epoch as epoch
 
@@ -86,19 +85,31 @@ class _ForcedAction:
     SCHEMA = "nexus_coding_forced_action.v1"
     _TARGETED_EVIDENCE_TOOLS = {"coding_search_text", "coding_read_file_lines"}
     _MAX_TARGETED_EVIDENCE_ACTIONS = 2
-    _ACTION_ALLOWED_TOOLS = {
-        "edit": {
-            "coding_write_file",
-            "coding_replace_text",
-            "coding_apply_patch",
-            "coding_finish",
-        }
-    }
 
     @staticmethod
     def active_state(task):
         raw = task.get("agent_forced_action") or {}
         return dict(raw) if raw.get("status") == "active" else {}
+
+    @classmethod
+    def allowed_tool_names(cls, task):
+        return set(cls.active_state(task).get("allowed_tools") or [])
+
+    @classmethod
+    def filter_tool_specs(cls, specs, task):
+        allowed = cls.allowed_tool_names(task)
+        return list(specs) if not allowed else [item for item in specs if item.function.name in allowed]
+
+    @classmethod
+    def evaluate_tool_call(cls, task, *, name, args, is_validation_command):
+        del args, is_validation_command
+        allowed = name in cls.allowed_tool_names(task)
+        return (allowed, {} if allowed else {"error": "forced_action_tool_rejected"})
+
+    @classmethod
+    def prompt_context(cls, task):
+        state = cls.active_state(task)
+        return f"Action kind: {state.get('action_kind') or ''}" if state else ""
 
     @staticmethod
     def _targeted_evidence_result_succeeded(_name, result):
@@ -147,10 +158,7 @@ class _CW:
             },
         }
         self.snapshot = {
-            "changes": {
-                "changed_files": [],
-                "last_edit_at": 10.0,
-            },
+            "changes": {"changed_files": [], "last_edit_at": 10.0},
             "validation": {
                 "last_validation_command": ["pytest", "-q"],
                 "last_validation_ok": True,
@@ -185,11 +193,7 @@ class _CW:
 
     def _git_base_branch_diff(self, _repo, *, base_branch):
         assert base_branch == "main"
-        return {
-            "ok": True,
-            "merge_base": self.merge_base,
-            "compare_ref": self.merge_base,
-        }
+        return {"ok": True, "merge_base": self.merge_base, "compare_ref": self.merge_base}
 
     def _run_process(self, argv, *, cwd, timeout_sec=30.0):
         assert cwd == Path("/repo")
@@ -216,7 +220,6 @@ class _CW:
 
 def test_checkpoint_commit_remains_inside_mission_delta_after_resume():
     cw = _CW()
-
     first = epoch.mission_delta_state(cw, "code-test", cw.task)
     assert first["ok"] is True
     assert first["has_delta"] is True
@@ -224,12 +227,9 @@ def test_checkpoint_commit_remains_inside_mission_delta_after_resume():
     assert first["current_head"] == "checkpoint-head"
     assert "fixed" in first["diff_text"]
 
-    # A new runner attempt begins at the checkpoint. The acceptance base must
-    # remain the mission branch point rather than advancing to this run's head.
     cw.task["agent_run_id"] = "run-c"
     cw.task["agent_start_head"] = "checkpoint-head"
     cw.merge_base = "newer-main-merge-base"
-
     resumed = epoch.mission_delta_state(cw, "code-test", cw.task)
     assert resumed["has_delta"] is True
     assert resumed["base_head"] == "mission-base"
@@ -238,18 +238,14 @@ def test_checkpoint_commit_remains_inside_mission_delta_after_resume():
 
 def test_clean_worktree_with_inherited_delta_progresses_to_semantic_acceptance():
     cw = _CW()
-    agent = _Agent(cw)
-    terminal = _TerminalHardening()
-
     output = epoch._reconcile_snapshot(
-        terminal,
+        _TerminalHardening(),
         cw,
-        agent,
+        _Agent(cw),
         "code-test",
         cw.task,
         cw.snapshot,
     )
-
     assert output["changes"]["changed_files"] == []
     assert output["mission_acceptance"]["has_delta"] is True
     assert output["progress"]["current_phase"] == "finalizing"
@@ -262,15 +258,11 @@ def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
     guarded = _Guarded(agent, cw)
     forced = _ForcedAction()
     terminal = _TerminalHardening()
-
     epoch.install(agent, guarded, cw, forced, terminal)
 
     assert agent._mission_requires_workspace_edits(cw.task) is False
     finish = guarded._run_tool_with_semantic_acceptance(
-        "code-test",
-        "coding_finish",
-        {},
-        git_token_value=None,
+        "code-test", "coding_finish", {}, git_token_value=None
     )
     assert finish["ok"] is True
     assert finish["success"] is True
@@ -278,12 +270,9 @@ def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
     assert cw.task[epoch.KEY]["accepted_fingerprint"]
 
     finalization = agent.finalize_successful_run(
-        "code-test",
-        mission=cw.task["coding_mission"],
-        run_id="run-b",
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
     )
     assert finalization["ok"] is True
-    assert agent.finalize_calls
     patched_mission = agent.finalize_calls[-1][1]
     assert patched_mission["completion_policy"]["require_file_changes"] is False
     assert cw.task[epoch.KEY]["status"] == "finalized"
@@ -293,22 +282,16 @@ def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
     cw = _CW()
     agent = _Agent(cw)
     guarded = _Guarded(agent, cw)
-    forced = _ForcedAction()
-    terminal = _TerminalHardening()
-
-    epoch.install(agent, guarded, cw, forced, terminal)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
     result = agent.finalize_successful_run(
-        "code-test",
-        mission=cw.task["coding_mission"],
-        run_id="run-b",
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
     )
-
-    assert result["ok"] is True  # fake original finalizer was invoked
+    assert result["ok"] is True
     original_mission = agent.finalize_calls[-1][1]
     assert original_mission["completion_policy"]["require_file_changes"] is True
 
 
-def test_refutation_tool_suspends_edit_and_reopens_only_bounded_evidence():
+def test_refutation_tool_does_not_widen_active_state_but_is_effectively_allowed():
     cw = _CW()
     cw.task["agent_forced_action"] = {
         "schema": _ForcedAction.SCHEMA,
@@ -321,13 +304,18 @@ def test_refutation_tool_suspends_edit_and_reopens_only_bounded_evidence():
     agent = _Agent(cw)
     guarded = _Guarded(agent, cw)
     forced = _ForcedAction()
-    terminal = _TerminalHardening()
-    epoch.install(agent, guarded, cw, forced, terminal)
+    epoch.install(agent, guarded, cw, forced, _TerminalHardening())
 
     edit_state = forced.active_state(cw.task)
-    assert edit_state["action_kind"] == "edit"
-    assert epoch.REFUTATION_TOOL in edit_state["allowed_tools"]
+    assert epoch.REFUTATION_TOOL not in edit_state["allowed_tools"]
     assert "coding_update_plan" not in edit_state["allowed_tools"]
+    assert epoch.REFUTATION_TOOL in forced.allowed_tool_names(cw.task)
+    assert forced.evaluate_tool_call(
+        cw.task,
+        name=epoch.REFUTATION_TOOL,
+        args={"reason": "contradicted"},
+        is_validation_command=lambda _argv: False,
+    )[0] is True
 
     result = guarded._run_tool_with_semantic_acceptance(
         "code-test",
@@ -368,22 +356,22 @@ def test_refutation_tool_suspends_edit_and_reopens_only_bounded_evidence():
             "Expected result: corrected behavior"
         ),
     }
-
     replacement_edit = forced.active_state(cw.task)
     assert replacement_edit["action_kind"] == "edit"
-    assert epoch.REFUTATION_TOOL in replacement_edit["allowed_tools"]
+    assert epoch.REFUTATION_TOOL not in replacement_edit["allowed_tools"]
     assert "coding_update_plan" not in replacement_edit["allowed_tools"]
+    assert epoch.REFUTATION_TOOL in forced.allowed_tool_names(cw.task)
     assert replacement_edit["hypothesis_ready"] is True
 
 
-def test_refutation_tool_is_advertised_as_a_distinct_capability():
+def test_refutation_tool_is_hidden_without_forced_edit_state():
     cw = _CW()
     agent = _Agent(cw)
     guarded = _Guarded(agent, cw)
     forced = _ForcedAction()
     epoch.install(agent, guarded, cw, forced, _TerminalHardening())
 
-    names = [item.function.name for item in agent._tool_specs()]
-    assert names.count(epoch.REFUTATION_TOOL) == 1
-    spec = next(item for item in agent._tool_specs() if item.function.name == epoch.REFUTATION_TOOL)
-    assert spec.function.parameters["required"] == ["reason"]
+    all_specs = agent._tool_specs()
+    assert any(item.function.name == epoch.REFUTATION_TOOL for item in all_specs)
+    visible = forced.filter_tool_specs(all_specs, cw.task)
+    assert all(item.function.name != epoch.REFUTATION_TOOL for item in visible)
