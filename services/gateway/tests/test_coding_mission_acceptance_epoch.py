@@ -1,0 +1,354 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+from app import coding_mission_acceptance_epoch as epoch
+
+
+class _Agent:
+    def __init__(self, cw):
+        self.cw = cw
+        self._run_tool = None
+        self.finalize_calls = []
+
+    @staticmethod
+    def _clip_text(text, limit):
+        return str(text or "")[:limit]
+
+    def _append_event(self, task_id, event):
+        self.cw.task.setdefault("agent_events", []).append(dict(event))
+
+    async def start_agent_run(self, task_id, *args, **kwargs):
+        return {"id": task_id, "status": "queued"}
+
+    @staticmethod
+    def _mission_requires_workspace_edits(_task):
+        return True
+
+    def finalize_successful_run(self, task_id, *, mission=None, **kwargs):
+        self.finalize_calls.append((task_id, mission, kwargs))
+        return {"ok": True, "final_commit": self.cw.current_head}
+
+
+class _Guarded:
+    def __init__(self, agent, cw):
+        self._agent = agent
+        self.cw = cw
+        self._mission_acceptance_epoch_installed = False
+        self._run_delta_diff = lambda _task_id, _task: "run-local-diff"
+        self._run_tool_with_semantic_acceptance = self._run
+
+    def _run(self, task_id, name, args, *, git_token_value):
+        del args, git_token_value
+        if name == "coding_finish":
+            self._agent._append_event(
+                task_id,
+                {
+                    "type": "semantic_acceptance_review",
+                    "cycle": int(self.cw.task.get("agent_cycle") or 0),
+                    "accepted": True,
+                },
+            )
+            return {"ok": True, "success": True}
+        return {"ok": True}
+
+
+class _TerminalHardening:
+    @staticmethod
+    def semantic_acceptance_fingerprint(task, *, diff_text):
+        note = str((task.get("project_plan") or {}).get("note") or "")
+        return hashlib.sha256(f"{diff_text}\n{note}".encode("utf-8")).hexdigest()
+
+
+class _ForcedAction:
+    SCHEMA = "nexus_coding_forced_action.v1"
+    _TARGETED_EVIDENCE_TOOLS = {"coding_search_text", "coding_read_file_lines"}
+    _MAX_TARGETED_EVIDENCE_ACTIONS = 2
+    _ACTION_ALLOWED_TOOLS = {
+        "edit": {
+            "coding_write_file",
+            "coding_replace_text",
+            "coding_apply_patch",
+            "coding_finish",
+        }
+    }
+
+    @staticmethod
+    def active_state(task):
+        raw = task.get("agent_forced_action") or {}
+        return dict(raw) if raw.get("status") == "active" else {}
+
+    @staticmethod
+    def _targeted_evidence_result_succeeded(_name, result):
+        return not result.get("error") and result.get("ok") is not False
+
+    @staticmethod
+    def _structured_hypothesis(task, state):
+        revision = int((task.get("project_plan") or {}).get("revision") or 0)
+        if revision <= int(state.get("activation_plan_revision") or 0):
+            return False, {}
+        return True, {
+            "Root cause": "new cause",
+            "Repository evidence": "new evidence",
+            "Competing explanation checked": "checked",
+            "Expected result": "fixed behavior",
+        }
+
+
+class _CW:
+    def __init__(self, *, tracked_diff="diff --git a/app.py b/app.py\n+fixed\n"):
+        self.current_head = "checkpoint-head"
+        self.merge_base = "mission-base"
+        self.tracked_diff = tracked_diff
+        self.task = {
+            "id": "code-test",
+            "repo_path": "/repo",
+            "base_branch": "main",
+            "branch_name": "nexus-coder/code-test",
+            "agent_run_id": "run-b",
+            "agent_start_head": "checkpoint-head",
+            "agent_cycle": 9,
+            "agent_events": [],
+            "project_plan": {
+                "revision": 2,
+                "note": "Root cause: inherited checkpoint still needs acceptance.",
+                "items": [],
+            },
+            "coding_mission": {
+                "completion_policy": {
+                    "require_file_changes": True,
+                    "require_commit_on_success": True,
+                    "require_validation_after_edit": True,
+                    "require_diff_review_after_edit": True,
+                },
+                "publish_policy": {},
+            },
+        }
+        self.snapshot = {
+            "changes": {
+                "changed_files": [],
+                "last_edit_at": 10.0,
+            },
+            "validation": {
+                "last_validation_command": ["pytest", "-q"],
+                "last_validation_ok": True,
+                "last_validation_at": 20.0,
+                "validation_after_latest_edit": True,
+            },
+            "diff_review": {
+                "last_diff_review_at": 21.0,
+                "diff_reviewed_after_latest_edit": True,
+            },
+            "progress": {
+                "current_phase": "editing",
+                "next_recommended_action": "continue the current project-plan milestone",
+            },
+        }
+        self.coding_state_snapshot = lambda _task_id: dict(self.snapshot)
+
+    def load_task(self, _task_id):
+        return self.task
+
+    def save_task(self, task):
+        self.task = task
+        return task
+
+    def mutate_task(self, _task_id, apply):
+        apply(self.task)
+        return self.task
+
+    @staticmethod
+    def _repo_path(_task):
+        return Path("/repo")
+
+    def _git_base_branch_diff(self, _repo, *, base_branch):
+        assert base_branch == "main"
+        return {
+            "ok": True,
+            "merge_base": self.merge_base,
+            "compare_ref": self.merge_base,
+        }
+
+    def _run_process(self, argv, *, cwd, timeout_sec=30.0):
+        assert cwd == Path("/repo")
+        del timeout_sec
+        if argv[:2] == ["git", "rev-parse"]:
+            candidate = argv[-1]
+            if candidate == "HEAD":
+                candidate = self.current_head
+            return {"ok": True, "stdout": f"{candidate}\n", "stderr": ""}
+        if argv[:2] == ["git", "diff"]:
+            return {"ok": True, "stdout": self.tracked_diff, "stderr": ""}
+        if argv[:3] == ["git", "ls-files", "--others"]:
+            return {"ok": True, "stdout": "", "stderr": ""}
+        return {"ok": False, "stdout": "", "stderr": f"unexpected argv: {argv}"}
+
+    def git_head(self, _task_id):
+        return {"ok": True, "commit": self.current_head}
+
+    def normalize_coding_mission(self, task, mission=None):
+        if mission is not None:
+            return dict(mission)
+        return dict(task.get("coding_mission") or {})
+
+
+def test_checkpoint_commit_remains_inside_mission_delta_after_resume():
+    cw = _CW()
+
+    first = epoch.mission_delta_state(cw, "code-test", cw.task)
+    assert first["ok"] is True
+    assert first["has_delta"] is True
+    assert first["base_head"] == "mission-base"
+    assert first["current_head"] == "checkpoint-head"
+    assert "fixed" in first["diff_text"]
+
+    # A new runner attempt begins at the checkpoint. The acceptance base must
+    # remain the mission branch point rather than advancing to this run's head.
+    cw.task["agent_run_id"] = "run-c"
+    cw.task["agent_start_head"] = "checkpoint-head"
+    cw.merge_base = "newer-main-merge-base"
+
+    resumed = epoch.mission_delta_state(cw, "code-test", cw.task)
+    assert resumed["has_delta"] is True
+    assert resumed["base_head"] == "mission-base"
+    assert cw.task[epoch.KEY]["base_head"] == "mission-base"
+
+
+def test_clean_worktree_with_inherited_delta_progresses_to_semantic_acceptance():
+    cw = _CW()
+    agent = _Agent(cw)
+    terminal = _TerminalHardening()
+
+    output = epoch._reconcile_snapshot(
+        terminal,
+        cw,
+        agent,
+        "code-test",
+        cw.task,
+        cw.snapshot,
+    )
+
+    assert output["changes"]["changed_files"] == []
+    assert output["mission_acceptance"]["has_delta"] is True
+    assert output["progress"]["current_phase"] == "finalizing"
+    assert output["progress"]["next_recommended_action"] == "finish the mission for semantic acceptance"
+
+
+def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    forced = _ForcedAction()
+    terminal = _TerminalHardening()
+
+    epoch.install(agent, guarded, cw, forced, terminal)
+
+    assert agent._mission_requires_workspace_edits(cw.task) is False
+    finish = guarded._run_tool_with_semantic_acceptance(
+        "code-test",
+        "coding_finish",
+        {},
+        git_token_value=None,
+    )
+    assert finish["ok"] is True
+    assert finish["success"] is True
+    assert cw.task[epoch.KEY]["status"] == "semantic_accepted"
+    assert cw.task[epoch.KEY]["accepted_fingerprint"]
+
+    finalization = agent.finalize_successful_run(
+        "code-test",
+        mission=cw.task["coding_mission"],
+        run_id="run-b",
+    )
+    assert finalization["ok"] is True
+    assert agent.finalize_calls
+    patched_mission = agent.finalize_calls[-1][1]
+    assert patched_mission["completion_policy"]["require_file_changes"] is False
+    assert cw.task[epoch.KEY]["status"] == "finalized"
+
+
+def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    forced = _ForcedAction()
+    terminal = _TerminalHardening()
+
+    epoch.install(agent, guarded, cw, forced, terminal)
+    result = agent.finalize_successful_run(
+        "code-test",
+        mission=cw.task["coding_mission"],
+        run_id="run-b",
+    )
+
+    assert result["ok"] is True  # fake original finalizer was invoked
+    original_mission = agent.finalize_calls[-1][1]
+    assert original_mission["completion_policy"]["require_file_changes"] is True
+
+
+def test_explicit_hypothesis_refutation_reopens_only_bounded_evidence():
+    forced = _ForcedAction()
+    task = {
+        "project_plan": {
+            "revision": 5,
+            "note": "Hypothesis status: refuted\nReason: verified frontend evidence contradicts the backend-only hypothesis.",
+        },
+        "agent_forced_action": {
+            "schema": forced.SCHEMA,
+            "status": "active",
+            "state_key": "state-a",
+            "action_kind": "edit",
+            "required_action": "Make the smallest evidence-backed edit.",
+            "allowed_tools": ["coding_apply_patch", "coding_finish"],
+        },
+        epoch.REFUTATION_KEY: {
+            "schema": epoch.REFUTATION_SCHEMA,
+            "status": "active",
+            "count": 1,
+            "plan_revision": 5,
+            "refuted_at": 100.0,
+            "state_key": "state-a",
+        },
+        "agent_events": [],
+    }
+
+    evidence_state = epoch._refutation_overlay_state(
+        forced,
+        task,
+        task["agent_forced_action"],
+    )
+    assert evidence_state["action_kind"] == "evidence"
+    assert set(evidence_state["allowed_tools"]) == {
+        "coding_search_text",
+        "coding_read_file_lines",
+        "coding_update_plan",
+        "coding_finish",
+    }
+
+    task["agent_events"].append(
+        {
+            "type": "tool_finished",
+            "ts": 101.0,
+            "name": "coding_read_file_lines",
+            "result": {"path": "app.py", "content": "verified", "ok": True},
+        }
+    )
+    task["project_plan"] = {
+        "revision": 6,
+        "note": (
+            "Root cause: replacement cause\n"
+            "Repository evidence: app.py lines 1-20\n"
+            "Competing explanation checked: old cause contradicted\n"
+            "Expected result: corrected behavior"
+        ),
+    }
+
+    edit_state = epoch._refutation_overlay_state(
+        forced,
+        task,
+        task["agent_forced_action"],
+    )
+    assert edit_state["action_kind"] == "edit"
+    assert "coding_update_plan" in edit_state["allowed_tools"]
+    assert edit_state["hypothesis_ready"] is True
