@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Sequence
 
 
 SCHEMA = "nexus_coding_acceptance_epoch.v1"
@@ -19,6 +19,15 @@ def _stdout(result: Any) -> str:
     if not isinstance(result, Mapping):
         return ""
     return str(result.get("stdout") or "").strip()
+
+
+def _existing_epoch(task: Mapping[str, Any]) -> Dict[str, Any]:
+    epoch = _mapping(task.get(KEY))
+    if str(epoch.get("schema") or "") != SCHEMA:
+        return {}
+    if not str(epoch.get("base_head") or "").strip():
+        return {}
+    return dict(epoch)
 
 
 def _current_head(cw: Any, task_id: str, task: Mapping[str, Any] | None = None) -> str:
@@ -61,12 +70,15 @@ def _resolve_acceptance_base(cw: Any, task_id: str, task: Mapping[str, Any]) -> 
 
 
 def ensure_acceptance_epoch(cw: Any, task_id: str) -> Dict[str, Any]:
+    """Initialize the mission epoch for a real persisted workspace before a run."""
     task = cw.load_task(task_id)
-    existing = _mapping(task.get(KEY))
-    if str(existing.get("schema") or "") == SCHEMA and str(existing.get("base_head") or "").strip():
-        return dict(existing)
+    existing = _existing_epoch(task)
+    if existing:
+        return existing
 
     base_head = _resolve_acceptance_base(cw, task_id, task)
+    if not base_head:
+        raise RuntimeError("unable to resolve coding mission acceptance base head")
     now = time.time()
     epoch = {
         "schema": SCHEMA,
@@ -91,11 +103,13 @@ def mission_delta_diff(
     task: Mapping[str, Any] | None = None,
 ) -> str:
     current_task = dict(task) if isinstance(task, Mapping) else cw.load_task(task_id)
-    epoch = ensure_acceptance_epoch(cw, task_id)
+    epoch = _existing_epoch(current_task)
+    if not epoch:
+        # Legacy/synthetic callers retain the established per-run behavior. Real
+        # agent starts initialize the mission epoch before execution.
+        return coding_run_delta.run_delta_diff(cw, agent, task_id, current_task)
     base_head = str(epoch.get("base_head") or "").strip()
     run_id = str(current_task.get("agent_run_id") or "mission").strip() or "mission"
-    if not base_head:
-        return ""
     synthetic = dict(current_task)
     synthetic["agent_semantic_baseline"] = {
         "schema": coding_run_delta.SCHEMA,
@@ -115,7 +129,18 @@ def mission_acceptance_state(
     task: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     current_task = dict(task) if isinstance(task, Mapping) else cw.load_task(task_id)
-    epoch = ensure_acceptance_epoch(cw, task_id)
+    epoch = _existing_epoch(current_task)
+    current_head = _current_head(cw, task_id, current_task)
+    if not epoch:
+        return {
+            "schema": SCHEMA,
+            "status": "uninitialized",
+            "base_head": "",
+            "current_head": current_head,
+            "accepted_head": "",
+            "has_delta": False,
+            "delta_sha256": "",
+        }
     diff_text = mission_delta_diff(
         cw,
         agent,
@@ -123,7 +148,6 @@ def mission_acceptance_state(
         task_id,
         current_task,
     )
-    current_head = _current_head(cw, task_id, current_task)
     return {
         "schema": SCHEMA,
         "status": str(epoch.get("status") or "pending"),
@@ -152,13 +176,11 @@ def _run_local_delta(cw: Any, task_id: str, task: Mapping[str, Any]) -> bool:
 
 def _mark_epoch_accepted(cw: Any, task_id: str, final_commit: str) -> None:
     latest = cw.load_task(task_id)
-    epoch = dict(_mapping(latest.get(KEY)))
-    if str(epoch.get("schema") or "") != SCHEMA:
-        epoch = ensure_acceptance_epoch(cw, task_id)
-        latest = cw.load_task(task_id)
+    epoch = _existing_epoch(latest)
+    if not epoch:
+        return
     epoch.update(
         {
-            "schema": SCHEMA,
             "status": "accepted",
             "accepted_head": str(final_commit or _current_head(cw, task_id, latest)).strip(),
             "accepted_at": time.time(),
@@ -190,15 +212,33 @@ def _is_explicit_refutation(args: Mapping[str, Any]) -> bool:
     return text.startswith(_REFUTATION_PREFIX) and len(text) >= len(_REFUTATION_PREFIX) + 12
 
 
+def _tool_name(spec: Any) -> str:
+    try:
+        return str(spec.function.name)
+    except Exception:
+        return ""
+
+
 def _install_refutation_escape_hatch(forced_action: Any) -> None:
     if bool(getattr(forced_action, "_mission_refutation_escape_installed", False)):
         return
-    edit_tools = forced_action._ACTION_ALLOWED_TOOLS.get("edit")
-    if isinstance(edit_tools, set):
-        edit_tools.add("coding_update_plan")
 
     original_evaluate = forced_action.evaluate_tool_call
     original_prompt_context = forced_action.prompt_context
+    original_filter = forced_action.filter_tool_specs
+
+    def filter_tool_specs(specs: Sequence[Any], task: Mapping[str, Any]) -> list[Any]:
+        filtered = list(original_filter(specs, task))
+        state = forced_action.active_state(task)
+        if not state or str(state.get("action_kind") or "") != "edit":
+            return filtered
+        if any(_tool_name(spec) == "coding_update_plan" for spec in filtered):
+            return filtered
+        for spec in specs:
+            if _tool_name(spec) == "coding_update_plan":
+                filtered.append(spec)
+                break
+        return filtered
 
     def evaluate_tool_call(
         task: Mapping[str, Any],
@@ -237,10 +277,11 @@ def _install_refutation_escape_hatch(forced_action: Any) -> None:
             text += (
                 "\nHypothesis refutation escape hatch: if newly verified repository evidence contradicts the current remediation hypothesis, "
                 "call coding_update_plan with a note beginning exactly 'Hypothesis refuted:' and explain what evidence refuted it. "
-                "That returns the controller to bounded evidence mode; do not use plan updates for ordinary narration or churn."
+                "This exceptional tool is exposed only for refutation; ordinary plan churn remains rejected."
             )
         return text
 
+    forced_action.filter_tool_specs = filter_tool_specs
     forced_action.evaluate_tool_call = evaluate_tool_call
     forced_action.prompt_context = prompt_context
     forced_action._mission_refutation_escape_installed = True
@@ -276,8 +317,11 @@ def install(
 
     def mission_requires_workspace_edits(task: Dict[str, Any]) -> bool:
         required = bool(original_requires_edits(task))
+        if not required:
+            return False
+        epoch = _existing_epoch(task)
         task_id = str(task.get("id") or "").strip()
-        if not required or not task_id:
+        if not epoch or not task_id:
             return required
         if _run_local_delta(cw, task_id, task):
             return True
@@ -290,6 +334,8 @@ def install(
 
     def finalize_successful_run_with_epoch(task_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         task = cw.load_task(task_id)
+        if not _existing_epoch(task):
+            return original_finalize(task_id, *args, **kwargs)
         state = mission_acceptance_state(cw, agent, coding_run_delta, task_id, task)
         original_start_head = str(task.get("agent_start_head") or "")
         substituted = bool(state.get("has_delta")) and not _run_local_delta(cw, task_id, task)
@@ -314,6 +360,9 @@ def install(
     def snapshot_with_mission_acceptance(task_id: str) -> Dict[str, Any]:
         snapshot = original_snapshot(task_id)
         task = cw.load_task(task_id)
+        epoch = _existing_epoch(task)
+        if not epoch:
+            return snapshot
         state = mission_acceptance_state(cw, agent, coding_run_delta, task_id, task)
         output = dict(snapshot)
         output["mission_acceptance"] = state
