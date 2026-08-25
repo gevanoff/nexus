@@ -5,7 +5,7 @@ import difflib
 import hashlib
 import time
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 
 SCHEMA = "nexus_coding_mission_acceptance_epoch.v1"
@@ -168,7 +168,7 @@ def ensure_epoch(
     return dict(_mapping(stored.get(KEY)) or proposed)
 
 
-def _safe_untracked_diff(cw: Any, task: Mapping[str, Any], *, repo: Path) -> tuple[str, str]:
+def _safe_untracked_diff(cw: Any, *, repo: Path) -> tuple[str, str]:
     result = _run_process(cw, ["git", "ls-files", "--others", "--exclude-standard"], cwd=repo)
     if not bool(result.get("ok")):
         return "", str(result.get("stderr") or result.get("error") or "git ls-files failed")
@@ -256,7 +256,7 @@ def mission_delta_state(
             "error": str(tracked.get("stderr") or tracked.get("error") or "git diff failed"),
             "epoch": epoch,
         }
-    untracked, untracked_error = _safe_untracked_diff(cw, task, repo=repo)
+    untracked, untracked_error = _safe_untracked_diff(cw, repo=repo)
     if untracked_error:
         return {
             "ok": False,
@@ -320,9 +320,7 @@ def _latest_accepted_review(task: Mapping[str, Any]) -> Mapping[str, Any]:
             continue
         if _int(event.get("cycle")) != cycle:
             continue
-        if event.get("accepted") is True:
-            return event
-        return {}
+        return event if event.get("accepted") is True else {}
     return {}
 
 
@@ -478,29 +476,12 @@ def _refutation_overlay_state(
         str(refutation.get("schema") or "") != REFUTATION_SCHEMA
         or str(refutation.get("status") or "") != "active"
     ):
-        state = dict(original_state)
-        if state and str(state.get("action_kind") or "") == "edit":
-            state["allowed_tools"] = sorted(
-                set(state.get("allowed_tools") or []) | {REFUTATION_TOOL}
-            )
-            state["required_action"] = (
-                f"{str(state.get('required_action') or '').strip()} "
-                "If verified repository evidence contradicts the remediation hypothesis, call "
-                "coding_refute_hypothesis to suspend editing and open one bounded fresh-evidence pass."
-            ).strip()
-        return state
+        return dict(original_state)
 
     raw_forced = _mapping(task.get("agent_forced_action"))
     if not original_state and str(raw_forced.get("status") or "") != "active":
         return {}
     state = dict(original_state or raw_forced)
-    if not state:
-        state = {
-            "schema": str(
-                getattr(forced_action, "SCHEMA", "nexus_coding_forced_action.v1")
-            ),
-            "status": "active",
-        }
     since = _float(refutation.get("refuted_at"))
     evidence_count = _evidence_count_since(forced_action, task, since)
     limit = _int(getattr(forced_action, "_MAX_TARGETED_EVIDENCE_ACTIONS", 2)) or 2
@@ -532,15 +513,13 @@ def _refutation_overlay_state(
         state["action_kind"] = "edit"
         state["required_action"] = (
             "The prior remediation hypothesis was explicitly refuted and replaced with fresh evidence. "
-            "Make the smallest evidence-backed edit, or finish with a concrete blocker. "
-            "If the replacement hypothesis is also contradicted, coding_refute_hypothesis may reopen one more bounded evidence pass."
+            "Make the smallest evidence-backed edit, or finish with a concrete blocker."
         )
         state["allowed_tools"] = sorted(
             {
                 "coding_write_file",
                 "coding_replace_text",
                 "coding_apply_patch",
-                REFUTATION_TOOL,
                 "coding_finish",
             }
         )
@@ -712,19 +691,19 @@ def _refutation_tool_spec(agent: Any) -> Any:
         function=agent.ToolFunction(
             name=REFUTATION_TOOL,
             description=(
-                "Explicitly suspend forced edit mode when verified repository evidence contradicts the current remediation hypothesis. "
-                "This opens one bounded evidence pass; it does not edit files or revise the project plan by itself."
+                "Suspend forced edit mode only when verified repository evidence contradicts the current remediation hypothesis. "
+                "This opens one bounded evidence pass and does not revise the project plan by itself."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "reason": {
                         "type": "string",
-                        "description": "Why the current remediation hypothesis is contradicted by verified repository evidence.",
+                        "description": "Why verified repository evidence contradicts the current remediation hypothesis.",
                     },
                     "contradicting_evidence": {
                         "type": "string",
-                        "description": "Concise repository evidence that contradicts the current hypothesis.",
+                        "description": "Concise repository evidence supporting the refutation.",
                     },
                 },
                 "required": ["reason"],
@@ -752,10 +731,10 @@ def install(
     original_snapshot = cw.coding_state_snapshot
     original_active_state = forced_action.active_state
     original_tool_specs = agent._tool_specs
-
-    edit_allowed = getattr(forced_action, "_ACTION_ALLOWED_TOOLS", {}).get("edit")
-    if isinstance(edit_allowed, set):
-        edit_allowed.add(REFUTATION_TOOL)
+    original_allowed_tool_names = getattr(forced_action, "allowed_tool_names", None)
+    original_filter_tool_specs = getattr(forced_action, "filter_tool_specs", None)
+    original_evaluate_tool_call = getattr(forced_action, "evaluate_tool_call", None)
+    original_prompt_context = getattr(forced_action, "prompt_context", None)
 
     def tool_specs_with_refutation() -> list[Any]:
         specs = list(original_tool_specs())
@@ -784,6 +763,72 @@ def install(
         return _refutation_overlay_state(forced_action, task, original)
 
     forced_action.active_state = active_state_with_refutation
+
+    if callable(original_allowed_tool_names):
+        def allowed_tool_names_with_refutation(task: Mapping[str, Any]) -> set[str]:
+            names = set(original_allowed_tool_names(task))
+            state = forced_action.active_state(task)
+            if state and str(state.get("action_kind") or "") == "edit":
+                names.add(REFUTATION_TOOL)
+            return names
+
+        forced_action.allowed_tool_names = allowed_tool_names_with_refutation
+
+    if callable(original_filter_tool_specs):
+        def filter_tool_specs_with_refutation(specs: Sequence[Any], task: Mapping[str, Any]) -> list[Any]:
+            state = forced_action.active_state(task)
+            if not state:
+                return [
+                    item
+                    for item in specs
+                    if str(getattr(getattr(item, "function", None), "name", "")) != REFUTATION_TOOL
+                ]
+            allowed = (
+                forced_action.allowed_tool_names(task)
+                if callable(getattr(forced_action, "allowed_tool_names", None))
+                else set(state.get("allowed_tools") or [])
+            )
+            return [
+                item
+                for item in specs
+                if str(getattr(getattr(item, "function", None), "name", "")) in allowed
+            ]
+
+        forced_action.filter_tool_specs = filter_tool_specs_with_refutation
+
+    if callable(original_evaluate_tool_call):
+        def evaluate_tool_call_with_refutation(
+            task: Mapping[str, Any],
+            *,
+            name: str,
+            args: Mapping[str, Any],
+            is_validation_command: Any,
+        ) -> tuple[bool, Dict[str, Any]]:
+            if str(name or "") == REFUTATION_TOOL:
+                state = forced_action.active_state(task)
+                if state and str(state.get("action_kind") or "") == "edit":
+                    return True, {}
+            return original_evaluate_tool_call(
+                task,
+                name=name,
+                args=args,
+                is_validation_command=is_validation_command,
+            )
+
+        forced_action.evaluate_tool_call = evaluate_tool_call_with_refutation
+
+    if callable(original_prompt_context):
+        def prompt_context_with_refutation(task: Mapping[str, Any]) -> str:
+            rendered = str(original_prompt_context(task) or "")
+            state = forced_action.active_state(task)
+            if state and str(state.get("action_kind") or "") == "edit":
+                rendered = (
+                    f"{rendered} If verified repository evidence contradicts the current remediation hypothesis, "
+                    "coding_refute_hypothesis is the only authorized escape back to evidence gathering; generic plan churn remains disabled."
+                ).strip()
+            return rendered
+
+        forced_action.prompt_context = prompt_context_with_refutation
 
     def run_tool_with_mission_acceptance(
         task_id: str,
