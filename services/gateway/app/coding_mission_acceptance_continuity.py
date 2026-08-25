@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from typing import Any, Dict, Mapping, Sequence
+from typing import Any, Dict, Mapping
 
 
 SCHEMA = "nexus_coding_acceptance_epoch.v1"
@@ -212,33 +212,28 @@ def _is_explicit_refutation(args: Mapping[str, Any]) -> bool:
     return text.startswith(_REFUTATION_PREFIX) and len(text) >= len(_REFUTATION_PREFIX) + 12
 
 
-def _tool_name(spec: Any) -> str:
-    try:
-        return str(spec.function.name)
-    except Exception:
-        return ""
+def _refutation_available(state: Mapping[str, Any]) -> bool:
+    return (
+        str(state.get("action_kind") or "") == "edit"
+        and state.get("requires_hypothesis") is True
+        and bool(state.get("hypothesis_ready"))
+    )
 
 
 def _install_refutation_escape_hatch(forced_action: Any) -> None:
     if bool(getattr(forced_action, "_mission_refutation_escape_installed", False)):
         return
 
+    original_allowed_names = forced_action.allowed_tool_names
     original_evaluate = forced_action.evaluate_tool_call
     original_prompt_context = forced_action.prompt_context
-    original_filter = forced_action.filter_tool_specs
 
-    def filter_tool_specs(specs: Sequence[Any], task: Mapping[str, Any]) -> list[Any]:
-        filtered = list(original_filter(specs, task))
+    def allowed_tool_names(task: Mapping[str, Any]) -> set[str]:
+        allowed = set(original_allowed_names(task))
         state = forced_action.active_state(task)
-        if not state or str(state.get("action_kind") or "") != "edit":
-            return filtered
-        if any(_tool_name(spec) == "coding_update_plan" for spec in filtered):
-            return filtered
-        for spec in specs:
-            if _tool_name(spec) == "coding_update_plan":
-                filtered.append(spec)
-                break
-        return filtered
+        if _refutation_available(state):
+            allowed.add("coding_update_plan")
+        return allowed
 
     def evaluate_tool_call(
         task: Mapping[str, Any],
@@ -248,7 +243,7 @@ def _install_refutation_escape_hatch(forced_action: Any) -> None:
         is_validation_command: Any,
     ) -> tuple[bool, Dict[str, Any]]:
         state = forced_action.active_state(task)
-        if state and str(state.get("action_kind") or "") == "edit" and name == "coding_update_plan":
+        if _refutation_available(state) and name == "coding_update_plan":
             if _is_explicit_refutation(args):
                 return True, {}
             required = str(state.get("required_action") or "").strip()
@@ -258,7 +253,7 @@ def _install_refutation_escape_hatch(forced_action: Any) -> None:
                 "state_key": str(state.get("state_key") or ""),
                 "required_action": required,
                 "message": (
-                    "Forced edit mode permits coding_update_plan only as an explicit hypothesis-refutation escape hatch. "
+                    "Forced hypothesis-qualified edit mode permits coding_update_plan only as an explicit hypothesis-refutation escape hatch. "
                     "If newly verified evidence contradicts the current hypothesis, rewrite the plan note beginning "
                     "'Hypothesis refuted:' and explain the contradictory repository evidence. Otherwise make the evidence-backed edit or finish with a concrete blocker."
                 ),
@@ -273,7 +268,7 @@ def _install_refutation_escape_hatch(forced_action: Any) -> None:
     def prompt_context(task: Mapping[str, Any]) -> str:
         text = str(original_prompt_context(task) or "")
         state = forced_action.active_state(task)
-        if state and str(state.get("action_kind") or "") == "edit":
+        if _refutation_available(state):
             text += (
                 "\nHypothesis refutation escape hatch: if newly verified repository evidence contradicts the current remediation hypothesis, "
                 "call coding_update_plan with a note beginning exactly 'Hypothesis refuted:' and explain what evidence refuted it. "
@@ -281,7 +276,7 @@ def _install_refutation_escape_hatch(forced_action: Any) -> None:
             )
         return text
 
-    forced_action.filter_tool_specs = filter_tool_specs
+    forced_action.allowed_tool_names = allowed_tool_names
     forced_action.evaluate_tool_call = evaluate_tool_call
     forced_action.prompt_context = prompt_context
     forced_action._mission_refutation_escape_installed = True
