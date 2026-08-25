@@ -110,10 +110,15 @@ class _ForcedAction:
             "action_kind": "edit",
             "state_key": "state-1",
             "required_action": "Make the smallest evidence-backed edit, or finish with a concrete blocker.",
+            "requires_hypothesis": True,
+            "hypothesis_ready": True,
         }
 
     def active_state(self, _task):
         return dict(self.state)
+
+    def allowed_tool_names(self, _task):
+        return set(self._ACTION_ALLOWED_TOOLS["edit"])
 
     @staticmethod
     def evaluate_tool_call(_task, *, name, args, is_validation_command):
@@ -124,8 +129,8 @@ class _ForcedAction:
     def prompt_context(_task):
         return "forced action context"
 
-    def filter_tool_specs(self, specs, _task):
-        allowed = self._ACTION_ALLOWED_TOOLS["edit"]
+    def filter_tool_specs(self, specs, task):
+        allowed = self.allowed_tool_names(task)
         return [spec for spec in specs if spec.function.name in allowed]
 
 
@@ -258,7 +263,7 @@ def test_empty_plan_without_mission_delta_does_not_recommend_nonexistent_milesto
     )
 
 
-def test_forced_edit_mode_exposes_plan_spec_without_changing_canonical_allowed_set():
+def test_qualified_edit_mode_exposes_plan_spec_without_changing_canonical_state():
     cw = _CW()
     run_delta = _RunDelta()
     agent = _Agent(cw)
@@ -274,9 +279,33 @@ def test_forced_edit_mode_exposes_plan_spec_without_changing_canonical_allowed_s
     ]
     exposed = forced.filter_tool_specs(specs, cw.task)
     assert [spec.function.name for spec in exposed] == ["coding_write_file", "coding_update_plan"]
+    assert forced.allowed_tool_names(cw.task) == {
+        "coding_write_file",
+        "coding_finish",
+        "coding_update_plan",
+    }
 
 
-def test_forced_edit_mode_only_allows_plan_update_for_explicit_refutation():
+def test_concrete_edit_without_hypothesis_gate_does_not_expose_refutation():
+    cw = _CW()
+    run_delta = _RunDelta()
+    agent = _Agent(cw)
+    guarded = _Guarded()
+    forced = _ForcedAction()
+    forced.state["requires_hypothesis"] = False
+    continuity.install(agent, guarded, cw, run_delta, forced)
+
+    specs = [
+        SimpleNamespace(function=SimpleNamespace(name="coding_write_file")),
+        SimpleNamespace(function=SimpleNamespace(name="coding_update_plan")),
+    ]
+    exposed = forced.filter_tool_specs(specs, cw.task)
+
+    assert [spec.function.name for spec in exposed] == ["coding_write_file"]
+    assert "coding_update_plan" not in forced.prompt_context(cw.task)
+
+
+def test_qualified_edit_mode_only_allows_plan_update_for_explicit_refutation():
     cw = _CW()
     run_delta = _RunDelta()
     agent = _Agent(cw)
