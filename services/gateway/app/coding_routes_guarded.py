@@ -21,9 +21,11 @@ from app import coding_evidence_range_provenance
 from app import coding_execution_dispatch
 from app import coding_execution_state_finalizer
 from app import coding_failed_edit_recovery
+from app import coding_forced_action
 from app import coding_hypothesis_persistence
 from app import coding_hypothesis_range_contract
 from app import coding_inspection_ledger_integrity
+from app import coding_mission_acceptance_epoch
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
@@ -126,6 +128,16 @@ coding_terminal_acceptance_hardening.install(
     guarded_agent,
     cw,
     coding_work_phases,
+)
+# A Coding Workspace is one durable mission even when Sentinel or the operator
+# starts multiple runner attempts. Checkpoint commits remain inside the pending
+# acceptance epoch until the complete branch delta passes semantic acceptance.
+coding_mission_acceptance_epoch.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_forced_action,
+    coding_terminal_acceptance_hardening,
 )
 routes.ca = guarded_agent
 router = APIRouter()
