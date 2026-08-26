@@ -21,9 +21,12 @@ from app import coding_evidence_range_provenance
 from app import coding_execution_dispatch
 from app import coding_execution_state_finalizer
 from app import coding_failed_edit_recovery
+from app import coding_forced_action
 from app import coding_hypothesis_persistence
 from app import coding_hypothesis_range_contract
 from app import coding_inspection_ledger_integrity
+from app import coding_mission_acceptance_epoch
+from app import coding_mission_acceptance_integrity
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
@@ -127,6 +130,41 @@ coding_terminal_acceptance_hardening.install(
     cw,
     coding_work_phases,
 )
+# A Coding Workspace is one durable mission even when Sentinel or the operator
+# starts multiple runner attempts. Checkpoint commits remain inside the pending
+# acceptance epoch until the complete branch delta passes semantic acceptance.
+coding_mission_acceptance_epoch.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_forced_action,
+    coding_terminal_acceptance_hardening,
+)
+# Bind semantic identity to exact untracked bytes, preserve the exact pre-agent
+# baseline for fresh workspaces, and make inherited-only publication fail closed
+# if repository state changes after acceptance.
+coding_mission_acceptance_integrity.install(
+    coding_mission_acceptance_epoch,
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_terminal_acceptance_hardening,
+)
+
+
+def _mission_tool_specs_for_task(task: dict):
+    """Resolve the canonical post-overlay tool set for manifests and live runs."""
+    return coding_forced_action.filter_tool_specs(
+        guarded_agent._agent._tool_specs(),
+        task,
+    )
+
+
+# The mission-acceptance overlay adds a dedicated hypothesis-refutation tool.
+# Rebind the task-specific spec resolver after all overlays so the same effective
+# tool set is used by coding_tool_manifest, text-tool guidance, and live requests.
+guarded_agent._agent._tool_specs_for_task = _mission_tool_specs_for_task
+
 routes.ca = guarded_agent
 router = APIRouter()
 _DEBUG_SCRIPT_TAG = '<script src="/static/coding_debug_report.js?v=1"></script>'
