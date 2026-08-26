@@ -4,6 +4,8 @@ import hashlib
 from types import SimpleNamespace
 
 from app import coding_acceptance_convergence_hardening as hardening
+from app import coding_completion_state_hardening as completion
+from app import coding_terminal_acceptance_hardening as terminal
 
 
 HYPOTHESIS_A = (
@@ -40,6 +42,9 @@ class CW:
 
     def load_task(self, _task_id):
         return self.task
+
+    def workspace_progress_fingerprint(self, _task_id):
+        return "workspace-after-edit"
 
 
 class MissionEpoch:
@@ -86,6 +91,7 @@ class SemanticAcceptance:
 def terminal_ready_task():
     return {
         "id": "code-terminal",
+        "agent_run_id": "run-terminal",
         "project_plan": {
             "revision": 2,
             "updated_at": 5.0,
@@ -98,10 +104,12 @@ def terminal_ready_task():
             "last_mutation_at": 10.0,
         },
         "agent_hypothesis_lifecycle": {
+            "schema": "nexus_coding_hypothesis_lifecycle.v1",
             "status": "consumed",
             "consumed_at": 10.0,
             "plan_revision": 2,
             "note_fingerprint": hashlib.sha256(HYPOTHESIS_A.encode("utf-8")).hexdigest(),
+            "verified_evidence_digest": "Verified repository evidence: app.py:10-20",
         },
         "coding_validation_provenance": {
             "schema": "nexus_coding_validation_provenance.v1",
@@ -122,16 +130,28 @@ def terminal_ready_task():
 def install_hardening(task, state=None):
     policy = Policy(state)
     calls = []
+    cw = CW(task)
+    events = []
+
+    def mutate(_task_id, updates):
+        cw.task.update(dict(updates))
+
+    def append(_task_id, event):
+        recorded = dict(event)
+        events.append(recorded)
+        cw.task.setdefault("agent_events", []).append(recorded)
+
     agent = SimpleNamespace(
         forced_action=policy,
-        events=[],
+        events=events,
+        _mutate_task=mutate,
+        _append_event=append,
         _run_tool=lambda task_id, name, args, *, git_token_value: (
             calls.append((task_id, name, args, git_token_value))
             or {"ok": False, "error": "stale_handler_called"}
         ),
     )
     guarded = SimpleNamespace(_run_tool_with_semantic_acceptance=agent._run_tool)
-    cw = CW(task)
     semantic = SemanticAcceptance()
     hardening.install(agent, guarded, cw, MissionEpoch, semantic)
     return agent, guarded, cw, semantic, calls
@@ -206,6 +226,17 @@ def test_status_only_plan_update_does_not_invalidate_terminal_readiness():
     assert hardening._readiness_threshold(task, MissionEpoch) == 10.0
 
 
+def test_whitespace_only_note_update_matches_legacy_lifecycle_fingerprint():
+    task = terminal_ready_task()
+    task["project_plan"]["revision"] = 3
+    task["project_plan"]["updated_at"] = 30.0
+    task["project_plan"]["note"] = f"  {HYPOTHESIS_A}\n"
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    assert hardening._readiness_threshold(task, MissionEpoch) == 10.0
+    assert agent.forced_action.active_state(task)["action_kind"] == "finish"
+
+
 def test_generic_progress_note_does_not_invalidate_terminal_readiness():
     task = terminal_ready_task()
     task["project_plan"]["revision"] = 3
@@ -220,13 +251,80 @@ def test_generic_progress_note_does_not_invalidate_terminal_readiness():
     assert hardening._readiness_threshold(task, MissionEpoch) == 10.0
 
 
-def test_semantic_rejection_reopens_execution_until_acceptance_state_changes():
+def test_trailing_status_section_does_not_change_structured_hypothesis_identity():
+    task = terminal_ready_task()
+    lifecycle = task["agent_hypothesis_lifecycle"]
+    lifecycle["structured_hypothesis_fingerprint"] = (
+        hardening._structured_hypothesis_fingerprint_from_note(HYPOTHESIS_A)
+    )
+    task["project_plan"]["revision"] = 3
+    task["project_plan"]["updated_at"] = 30.0
+    task["project_plan"]["note"] = HYPOTHESIS_A + "\nStatus: validation and review complete"
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    assert hardening._readiness_threshold(task, MissionEpoch) == 10.0
+    assert agent.forced_action.active_state(task)["action_kind"] == "finish"
+
+
+def test_consumed_evidence_survives_status_only_plan_revision():
+    task = terminal_ready_task()
+    _agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+    task["project_plan"]["revision"] = 3
+    task["project_plan"]["updated_at"] = 30.0
+
+    context = completion._lifecycle_context(task)
+
+    assert "consumed by a repository mutation" in context
+    assert "Verified repository evidence: app.py:10-20" in context
+    assert "Consumed remediation hypothesis:" in context
+    assert HYPOTHESIS_A in context
+
+
+class _Persistence:
+    @staticmethod
+    def _verified_evidence_digest(_task, _state):
+        return "Verified repository evidence: app.py:10-20"
+
+
+def test_new_mutation_persists_consumed_hypothesis_for_later_plan_rewrites():
+    task = terminal_ready_task()
+    task.pop("agent_hypothesis_lifecycle")
+    agent, _guarded, cw, _semantic, _calls = install_hardening(task)
+
+    completion._record_consumed_hypothesis(
+        agent,
+        cw,
+        _Persistence,
+        task_id=task["id"],
+        before_task=task,
+        before_state={"causal_evidence_targets": ["app.py"]},
+        tool_name="coding_replace_text",
+    )
+    lifecycle = task["agent_hypothesis_lifecycle"]
+    assert lifecycle["consumed_hypothesis_note"] == HYPOTHESIS_A
+    assert lifecycle["structured_hypothesis_fingerprint"] == (
+        hardening._structured_hypothesis_fingerprint_from_note(HYPOTHESIS_A)
+    )
+
+    task["project_plan"] = {
+        "revision": 3,
+        "updated_at": 30.0,
+        "note": "Progress: waiting for semantic acceptance.",
+        "items": [],
+    }
+    context = completion._lifecycle_context(task)
+    assert HYPOTHESIS_A in context
+    assert "Verified repository evidence: app.py:10-20" in context
+
+
+def test_decisive_semantic_rejection_reopens_execution():
     task = terminal_ready_task()
     task["agent_events"].append(
         {
-            "type": "semantic_acceptance_review",
+            "type": "semantic_acceptance_state",
             "ts": 22.0,
             "accepted": False,
+            "review_error": False,
             "reason": "Patch leaves the causal early-return path untouched.",
         }
     )
@@ -236,13 +334,74 @@ def test_semantic_rejection_reopens_execution_until_acceptance_state_changes():
     assert agent.forced_action.prompt_context(task) == "BASE POLICY PROMPT"
 
 
-def test_replacement_hypothesis_after_rejection_must_be_revalidated_and_rereviewed():
+def test_accepted_review_without_durable_epoch_stays_finish_only_for_retry():
     task = terminal_ready_task()
     task["agent_events"].append(
         {
             "type": "semantic_acceptance_review",
             "ts": 22.0,
+            "accepted": True,
+            "reason": "Patch is aligned.",
+        }
+    )
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    state = agent.forced_action.active_state(task)
+    assert state["action_kind"] == "finish"
+    assert state["allowed_tools"] == ["coding_finish"]
+
+
+def test_reviewer_failure_stays_finish_only_instead_of_reopening_coding():
+    task = terminal_ready_task()
+    task["agent_events"].append(
+        {
+            "type": "semantic_acceptance_state",
+            "ts": 22.0,
             "accepted": False,
+            "review_error": True,
+            "reason": "semantic reviewer failed upstream",
+        }
+    )
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    state = agent.forced_action.active_state(task)
+    assert state["action_kind"] == "finish"
+    assert state["allowed_tools"] == ["coding_finish"]
+
+
+def test_parse_failure_is_recorded_as_retryable_reviewer_error():
+    task = terminal_ready_task()
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+    fingerprint = "acceptance-fingerprint"
+
+    terminal._record_rejection(
+        agent,
+        task["id"],
+        task,
+        fingerprint=fingerprint,
+        result={
+            "semantic_review": {
+                "accepted": False,
+                "reason": "semantic reviewer did not return parseable JSON",
+                "parse_error": True,
+            }
+        },
+    )
+
+    event = task["agent_events"][-1]
+    assert event["type"] == "semantic_acceptance_state"
+    assert event["review_error"] is True
+    assert terminal._prior_rejection(task, fingerprint) == {}
+
+
+def test_replacement_hypothesis_after_rejection_must_be_revalidated_and_rereviewed():
+    task = terminal_ready_task()
+    task["agent_events"].append(
+        {
+            "type": "semantic_acceptance_state",
+            "ts": 22.0,
+            "accepted": False,
+            "review_error": False,
             "reason": "Unsupported deployment-state assumption.",
         }
     )
