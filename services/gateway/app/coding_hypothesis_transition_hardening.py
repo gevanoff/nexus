@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
 
+from app import coding_evidence_range_provenance as evidence_range_provenance
+from app import coding_hypothesis_range_contract as hypothesis_range_contract
+
 
 _CONTRACT_ERRORS = {
     "coding_update_plan_hypothesis_required",
     "coding_update_plan_hypothesis_unlinked",
+    "coding_update_plan_hypothesis_range_unverified",
 }
 _SAFE_RESULT_KEYS = (
     "ok",
@@ -15,6 +19,8 @@ _SAFE_RESULT_KEYS = (
     "missing_hypothesis_fields",
     "required_hypothesis_fields",
     "verified_causal_targets",
+    "verified_causal_ranges",
+    "unverified_bounded_targets",
 )
 
 
@@ -104,6 +110,32 @@ def _contract_preflight(
             base=base,
             state=state,
         )
+
+    # Keep the policy preflight equivalent to the later execution wrapper. When
+    # bounded evidence exists, a path-only citation is not enough: each bounded
+    # target named in Repository evidence must cite a span contained in the
+    # actual completed read. Handling this here makes range mistakes participate
+    # in the normal forced-action rejection counter instead of becoming a second
+    # post-policy no-progress loop.
+    if hypothesis_range_contract._verified_ranges(state):
+        validation = evidence_range_provenance.validate_repository_evidence(
+            evidence_policy,
+            forced_action,
+            task,
+            state,
+            repository_evidence,
+            targets=linked,
+        )
+        if (
+            validation.get("missing_range_targets")
+            or not validation.get("matched_targets")
+        ):
+            return hypothesis_range_contract._range_error(
+                hypothesis_persistence,
+                agent,
+                state,
+                validation,
+            )
     return None
 
 
@@ -198,10 +230,26 @@ def install(
         state = forced_action.active_state(task)
         if not hypothesis_persistence._contract_required(state):
             return specs
-        return [
-            hypothesis_persistence._contract_tool_spec(agent, spec, state)
-            for spec in specs
-        ]
+
+        # Re-materialize the strict note-only persistence schema, then reapply
+        # the bounded-range augmentation. The range layer runs before this late
+        # overlay in production, so rebuilding only the base contract here would
+        # otherwise erase its path:start-end guidance.
+        out: list[Any] = []
+        for spec in specs:
+            specialized = hypothesis_persistence._contract_tool_spec(
+                agent,
+                spec,
+                state,
+            )
+            specialized = hypothesis_range_contract._augment_tool_spec(
+                agent,
+                hypothesis_persistence,
+                specialized,
+                state,
+            )
+            out.append(specialized)
+        return out
 
     agent._tool_specs_for_task = specs_for_task_with_contract_guard
     agent._tool_specs_for_task_before_hypothesis_transition_hardening = prior_specs_for_task
