@@ -8,6 +8,12 @@ _TERMINAL_SCHEMA = "nexus_coding_terminal_convergence.v1"
 _TERMINAL_ACTION = "finish"
 _VALIDATION_KEY = "coding_validation_provenance"
 _LIFECYCLE_KEY = "agent_hypothesis_lifecycle"
+_HYPOTHESIS_LABELS = (
+    "Root cause:",
+    "Repository evidence:",
+    "Competing explanation checked:",
+    "Expected result:",
+)
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -28,14 +34,48 @@ def _int(value: Any) -> int:
         return 0
 
 
+def _structured_hypothesis_fingerprint(task: Mapping[str, Any]) -> str:
+    plan = _mapping(task.get("project_plan"))
+    note = str(plan.get("note") or "").strip()
+    if not note or not all(label in note for label in _HYPOTHESIS_LABELS):
+        return ""
+    return hashlib.sha256(note.encode("utf-8")).hexdigest()
+
+
+def _material_hypothesis_updated_at(task: Mapping[str, Any]) -> float:
+    """Return plan update time only for a replacement four-field hypothesis.
+
+    Project-plan bookkeeping is intentionally broader than causal state: item status,
+    summaries, and generic notes may all advance ``updated_at`` after validation and
+    diff review. Those updates must not reopen broad tools. A fresh acceptance pass is
+    required only when the current structured remediation hypothesis differs from the
+    hypothesis consumed by the latest repository mutation.
+    """
+    lifecycle = _mapping(task.get(_LIFECYCLE_KEY))
+    if str(lifecycle.get("status") or "") != "consumed":
+        return 0.0
+    consumed_fingerprint = str(lifecycle.get("note_fingerprint") or "").strip()
+    current_fingerprint = _structured_hypothesis_fingerprint(task)
+    if not consumed_fingerprint or not current_fingerprint:
+        return 0.0
+    if current_fingerprint == consumed_fingerprint:
+        return 0.0
+
+    plan = _mapping(task.get("project_plan"))
+    plan_revision = _int(plan.get("revision"))
+    consumed_revision = _int(lifecycle.get("plan_revision"))
+    if plan_revision <= consumed_revision:
+        return 0.0
+    return _float(plan.get("updated_at"))
+
+
 def _readiness_threshold(task: Mapping[str, Any], mission_epoch: Any) -> float:
     epoch = _mapping(task.get(getattr(mission_epoch, "KEY", "coding_mission_acceptance_epoch")))
     lifecycle = _mapping(task.get(_LIFECYCLE_KEY))
-    plan = _mapping(task.get("project_plan"))
     return max(
         _float(epoch.get("last_mutation_at")),
         _float(lifecycle.get("consumed_at")),
-        _float(plan.get("updated_at")),
+        _material_hypothesis_updated_at(task),
     )
 
 
