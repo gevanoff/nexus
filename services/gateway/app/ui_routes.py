@@ -1664,7 +1664,7 @@ async def _fetch_image_backend_catalog_entry(client: httpx.AsyncClient, *, backe
 
     models, management = _normalize_image_models_payload(payload)
     if backend_class == "gpu_heavy":
-        ui_url = _invokeai_ui_url()
+        ui_url = _invokeai_ui_url() or browser_accessible_url(base)
         if ui_url:
             management = dict(management)
             management["supported"] = True
