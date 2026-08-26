@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from app import coding_acceptance_convergence_hardening
 from app import coding_agent_guarded as guarded_agent
 from app import coding_completion_state_dispatch
 from app import coding_completion_state_hardening
@@ -162,6 +163,17 @@ coding_hypothesis_transition_hardening.install(
     coding_hypothesis_persistence,
     coding_evidence_policy,
     coding_debug_report,
+)
+# The final convergence layer must observe every policy/schema/mission overlay.
+# It executes refutation against the live policy that advertised the tool and
+# forces reviewed+validated mission deltas through independent semantic
+# acceptance before the agent can resume broad inspection.
+coding_acceptance_convergence_hardening.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_mission_acceptance_epoch,
+    coding_semantic_acceptance,
 )
 
 routes.ca = guarded_agent
