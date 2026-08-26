@@ -4,6 +4,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from app import coding_evidence_range_provenance as evidence_range_provenance
 from app import coding_hypothesis_range_contract as hypothesis_range_contract
+from app import coding_policy_evidence_continuity_hardening as policy_evidence_continuity
 
 
 _CONTRACT_ERRORS = {
@@ -199,6 +200,12 @@ def install(
     debug_report: Any,
 ) -> None:
     """Close hypothesis-transition composition, enforcement, and observability gaps."""
+    live_forced_action = getattr(agent, "forced_action", None)
+    if not callable(getattr(live_forced_action, "active_state", None)):
+        live_forced_action = forced_action
+    policy_evidence_continuity.install(agent, live_forced_action)
+    forced_action = live_forced_action
+
     if bool(getattr(agent, "_coding_hypothesis_transition_hardening_installed", False)):
         return
 
