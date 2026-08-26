@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 
 from app import coding_acceptance_convergence_hardening as hardening
+
+
+HYPOTHESIS_A = (
+    "Root cause: existing causal path A\n"
+    "Repository evidence: app.py:10-20\n"
+    "Competing explanation checked: path B was ruled out\n"
+    "Expected result: behavior A is restored"
+)
+HYPOTHESIS_B = (
+    "Root cause: replacement causal path B\n"
+    "Repository evidence: app.py:30-40\n"
+    "Competing explanation checked: path A was contradicted\n"
+    "Expected result: behavior B is restored"
+)
 
 
 class Policy:
@@ -74,7 +89,8 @@ def terminal_ready_task():
         "project_plan": {
             "revision": 2,
             "updated_at": 5.0,
-            "note": "consumed hypothesis",
+            "note": HYPOTHESIS_A,
+            "items": [],
         },
         "coding_mission_acceptance_epoch": {
             "schema": "nexus_coding_mission_acceptance_epoch.v1",
@@ -84,6 +100,8 @@ def terminal_ready_task():
         "agent_hypothesis_lifecycle": {
             "status": "consumed",
             "consumed_at": 10.0,
+            "plan_revision": 2,
+            "note_fingerprint": hashlib.sha256(HYPOTHESIS_A.encode("utf-8")).hexdigest(),
         },
         "coding_validation_provenance": {
             "schema": "nexus_coding_validation_provenance.v1",
@@ -172,6 +190,36 @@ def test_terminal_ready_mission_forces_coding_finish_only():
     assert "Call coding_finish now" in prompt
 
 
+def test_status_only_plan_update_does_not_invalidate_terminal_readiness():
+    task = terminal_ready_task()
+    task["project_plan"]["revision"] = 3
+    task["project_plan"]["updated_at"] = 30.0
+    task["project_plan"]["items"] = [
+        {"id": "verify", "title": "Verify", "status": "done", "summary": "complete"}
+    ]
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    state = agent.forced_action.active_state(task)
+
+    assert state["action_kind"] == "finish"
+    assert state["allowed_tools"] == ["coding_finish"]
+    assert hardening._readiness_threshold(task, MissionEpoch) == 10.0
+
+
+def test_generic_progress_note_does_not_invalidate_terminal_readiness():
+    task = terminal_ready_task()
+    task["project_plan"]["revision"] = 3
+    task["project_plan"]["updated_at"] = 30.0
+    task["project_plan"]["note"] = "Validation and diff review are complete; ready for acceptance."
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    state = agent.forced_action.active_state(task)
+
+    assert state["action_kind"] == "finish"
+    assert state["allowed_tools"] == ["coding_finish"]
+    assert hardening._readiness_threshold(task, MissionEpoch) == 10.0
+
+
 def test_semantic_rejection_reopens_execution_until_acceptance_state_changes():
     task = terminal_ready_task()
     task["agent_events"].append(
@@ -188,7 +236,7 @@ def test_semantic_rejection_reopens_execution_until_acceptance_state_changes():
     assert agent.forced_action.prompt_context(task) == "BASE POLICY PROMPT"
 
 
-def test_new_plan_revision_after_rejection_must_be_revalidated_and_rereviewed():
+def test_replacement_hypothesis_after_rejection_must_be_revalidated_and_rereviewed():
     task = terminal_ready_task()
     task["agent_events"].append(
         {
@@ -200,8 +248,10 @@ def test_new_plan_revision_after_rejection_must_be_revalidated_and_rereviewed():
     )
     task["project_plan"]["revision"] = 3
     task["project_plan"]["updated_at"] = 23.0
+    task["project_plan"]["note"] = HYPOTHESIS_B
     agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
 
+    assert hardening._readiness_threshold(task, MissionEpoch) == 23.0
     assert agent.forced_action.active_state(task) == {}
 
     task["coding_validation_provenance"]["ts"] = 24.0
