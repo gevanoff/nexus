@@ -225,7 +225,7 @@ def multi_range_verified_evidence_bundle(
         start = item.get("start_line")
         end = item.get("end_line")
         locator = f"{path}:{start}-{end}" if start and end else path
-        header = f"Repository path/range: {locator}\n"
+        header = f"Repository path: {locator}\n"
         per_path_share = max(
             128,
             continuity._MAX_PATH_CHARS // max(1, counts_by_path[path]),
@@ -284,7 +284,7 @@ def assert_execution_policy_consistency(
         return
     effective_task = dispatch.coding_execution_policy.execution_task(agent, task)
     state = agent.forced_action.active_state(effective_task)
-    if not state:
+    if not state or "allowed_tools" not in state:
         return
 
     expected = tuple(
