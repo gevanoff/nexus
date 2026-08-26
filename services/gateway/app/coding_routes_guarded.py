@@ -26,6 +26,7 @@ from app import coding_hypothesis_persistence
 from app import coding_hypothesis_range_contract
 from app import coding_inspection_ledger_integrity
 from app import coding_mission_acceptance_epoch
+from app import coding_mission_acceptance_integrity
 from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
@@ -137,6 +138,16 @@ coding_mission_acceptance_epoch.install(
     guarded_agent,
     cw,
     coding_forced_action,
+    coding_terminal_acceptance_hardening,
+)
+# Bind semantic identity to exact untracked bytes, preserve the exact pre-agent
+# baseline for fresh workspaces, and make inherited-only publication fail closed
+# if repository state changes after acceptance.
+coding_mission_acceptance_integrity.install(
+    coding_mission_acceptance_epoch,
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
     coding_terminal_acceptance_hardening,
 )
 
