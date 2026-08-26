@@ -34,6 +34,7 @@ from app import coding_network_resilience
 from app import coding_plan_edit_serialization
 from app import coding_policy_rejection_recovery
 from app import coding_refuted_findings
+from app import coding_resume_convergence_hardening
 from app import coding_semantic_acceptance
 from app import coding_stagnation_resilience
 from app import coding_terminal_acceptance_hardening
@@ -174,6 +175,16 @@ coding_acceptance_convergence_hardening.install(
     cw,
     coding_mission_acceptance_epoch,
     coding_semantic_acceptance,
+)
+# Runner attempts and Sentinel supervision must not erase mission-scoped output
+# obligations. Derive validate -> review -> finish from durable mission state on
+# every resume, and leave generic failed runs stable for human attention instead
+# of treating them as automatically recoverable infrastructure interruptions.
+coding_resume_convergence_hardening.install(
+    guarded_agent._agent,
+    cw,
+    coding_mission_acceptance_epoch,
+    coding_acceptance_convergence_hardening,
 )
 
 routes.ca = guarded_agent
