@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional
 
 
 _CONTRACT_ERRORS = {
@@ -20,6 +20,13 @@ _SAFE_RESULT_KEYS = (
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _tool_name(spec: Any) -> str:
+    function = getattr(spec, "function", None)
+    if isinstance(function, Mapping):
+        return str(function.get("name") or "").strip()
+    return str(getattr(function, "name", "") or "").strip()
 
 
 def _contract_preflight(
@@ -118,7 +125,11 @@ def _safe_tool_result(debug_report: Any, result: Mapping[str, Any]) -> Dict[str,
     return safe
 
 
-def _progress_for_forced_action(snapshot: Dict[str, Any], task: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, Any]:
+def _progress_for_forced_action(
+    snapshot: Dict[str, Any],
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> Dict[str, Any]:
     if not state:
         return snapshot
     plan = _mapping(task.get("project_plan"))
@@ -159,15 +170,31 @@ def install(
     if bool(getattr(agent, "_coding_hypothesis_transition_hardening_installed", False)):
         return
 
-    # Preserve every previously installed task-specific tool transformation. The
-    # mission-acceptance layer adds raw tools (notably coding_refute_hypothesis),
-    # while hypothesis persistence specializes coding_update_plan. Rebuild only
-    # the latter spec from the already-composed resolver rather than starting from
-    # raw agent._tool_specs(), which would erase upstream schema contracts.
+    # Preserve every previously installed task-specific transformation. Some
+    # earlier resolvers captured the pre-mission raw tool set, so merge only
+    # names that are newly available from the current raw set (notably
+    # coding_refute_hypothesis), then run the current forced-action filter. This
+    # keeps specialized specs already produced by earlier overlays instead of
+    # replacing them with generic raw definitions.
     prior_specs_for_task = agent._tool_specs_for_task
 
     def specs_for_task_with_contract_guard(task: Dict[str, Any]) -> list[Any]:
         specs = list(prior_specs_for_task(task))
+        names = {_tool_name(spec) for spec in specs if _tool_name(spec)}
+        raw_specs = getattr(agent, "_tool_specs", None)
+        if callable(raw_specs):
+            try:
+                for spec in raw_specs():
+                    name = _tool_name(spec)
+                    if name and name not in names:
+                        specs.append(spec)
+                        names.add(name)
+            except Exception:
+                pass
+        filter_specs = getattr(forced_action, "filter_tool_specs", None)
+        if callable(filter_specs):
+            specs = list(filter_specs(specs, task))
+
         state = forced_action.active_state(task)
         if not hypothesis_persistence._contract_required(state):
             return specs
