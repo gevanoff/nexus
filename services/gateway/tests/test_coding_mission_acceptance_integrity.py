@@ -124,7 +124,7 @@ def test_successful_normal_finalization_records_commit_created_by_finalizer():
     assert stored["status"] == "finalized"
 
 
-def test_inherited_finalization_fails_closed_when_head_changes_before_publish():
+def test_inherited_finalization_fails_closed_when_head_changes_before_publish(monkeypatch):
     cw = _CW()
     cw.task["agent_start_head"] = "workspace-head"
     cw.task["coding_mission"] = {
@@ -151,16 +151,21 @@ def test_inherited_finalization_fails_closed_when_head_changes_before_publish():
     cw.push_task = lambda *args, **kwargs: pushed.append((args, kwargs)) or {"ok": True}
 
     epoch = _epoch_facade()
-    epoch.mission_delta_state = lambda _cw, _task_id, _task: {
+    epoch._epoch_accepted_for_current = lambda *_args, **_kwargs: True
+    accepted_state = {
         "ok": True,
         "has_delta": True,
         "current_head": "workspace-head",
     }
-    epoch._epoch_accepted_for_current = lambda *_args, **_kwargs: True
-
-    # The accepted state said workspace-head, but the repository moves before the
-    # final audit reads HEAD. Publication must stop before push.
+    # Hold the dispatch decision at the already-accepted state, then move HEAD
+    # before the final repository audit. This isolates the publication race.
+    monkeypatch.setattr(
+        integrity,
+        "_accepted_inherited_state",
+        lambda *_args, **_kwargs: dict(accepted_state),
+    )
     cw.current_head = "concurrent-head"
+
     result = integrity._finalize_inherited_delta(
         epoch=epoch,
         terminal_hardening=SimpleNamespace(),
