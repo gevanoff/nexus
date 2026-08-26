@@ -10,6 +10,17 @@ _TERMINAL_ACTION = "finish"
 _VALIDATION_KEY = "coding_validation_provenance"
 _LIFECYCLE_KEY = "agent_hypothesis_lifecycle"
 _SEMANTIC_STATE_EVENT = "semantic_acceptance_state"
+_REJECTION_GUARD_KEY = "coding_semantic_rejection_guard"
+_VALIDATION_HISTORY_LIMIT = 32
+_MISSING_TOOL_MARKERS = (
+    "command not found:",
+    "no module named pytest",
+    "no module named ruff",
+    "no module named mypy",
+    "modulenotfounderror: no module named",
+    "executable file not found",
+    "not recognized as an internal or external command",
+)
 _HYPOTHESIS_FIELDS = (
     "Root cause",
     "Repository evidence",
@@ -145,6 +156,154 @@ def _readiness_threshold(task: Mapping[str, Any], mission_epoch: Any) -> float:
     )
 
 
+def _validation_signature(argv: Any) -> tuple[str, ...]:
+    if not isinstance(argv, (list, tuple)):
+        return ()
+    return tuple(str(item).strip() for item in argv if str(item).strip())
+
+
+def _validation_result_missing_tool(result: Mapping[str, Any]) -> bool:
+    if result.get("ok") is True:
+        return False
+    text = (
+        f"{result.get('error') or ''}\n"
+        f"{result.get('stdout') or ''}\n"
+        f"{result.get('stderr') or ''}"
+    ).lower()
+    return any(marker in text for marker in _MISSING_TOOL_MARKERS)
+
+
+def _validation_records_from_history(
+    task: Mapping[str, Any],
+    threshold: float,
+) -> list[tuple[float, tuple[str, ...], bool]]:
+    validation = _mapping(task.get(_VALIDATION_KEY))
+    output: list[tuple[float, tuple[str, ...], bool]] = []
+    for raw in validation.get("history") or []:
+        item = _mapping(raw)
+        ts = _float(item.get("ts"))
+        signature = _validation_signature(item.get("argv"))
+        if ts < threshold or not signature or item.get("substantive") is False:
+            continue
+        output.append((ts, signature, item.get("ok") is True))
+    return output
+
+
+def _validation_records_from_events(
+    task: Mapping[str, Any],
+    threshold: float,
+) -> list[tuple[float, tuple[str, ...], bool]]:
+    from app import coding_work_phases
+
+    pending_by_id: dict[str, tuple[tuple[str, ...], float]] = {}
+    pending_without_id: list[tuple[tuple[str, ...], float]] = []
+    output: list[tuple[float, tuple[str, ...], bool]] = []
+    for raw in task.get("agent_events") or []:
+        event = _mapping(raw)
+        event_type = str(event.get("type") or "")
+        name = str(event.get("name") or "")
+        call_id = str(event.get("tool_call_id") or "").strip()
+        if event_type == "tool_started" and name == "coding_run_command":
+            args = _mapping(event.get("args"))
+            argv = args.get("argv")
+            if not coding_work_phases.is_validation_command(argv):
+                continue
+            signature = _validation_signature(argv)
+            if not signature:
+                continue
+            started_at = _float(event.get("ts"))
+            if call_id:
+                pending_by_id[call_id] = (signature, started_at)
+            else:
+                pending_without_id.append((signature, started_at))
+            continue
+        if event_type != "tool_finished" or name != "coding_run_command":
+            continue
+        started = pending_by_id.pop(call_id, None) if call_id else None
+        if started is None and pending_without_id:
+            started = pending_without_id.pop(0)
+        if started is None:
+            continue
+        signature, started_at = started
+        result = _mapping(event.get("result"))
+        if str(result.get("error") or "") == "forced_action_tool_rejected":
+            continue
+        if _validation_result_missing_tool(result):
+            continue
+        finished_at = _float(event.get("ts")) or started_at
+        if finished_at < threshold:
+            continue
+        output.append((finished_at, signature, result.get("ok") is True))
+    return output
+
+
+def _validation_records_from_commands(
+    task: Mapping[str, Any],
+    threshold: float,
+) -> list[tuple[float, tuple[str, ...], bool]]:
+    from app import coding_work_phases
+
+    output: list[tuple[float, tuple[str, ...], bool]] = []
+    for raw in task.get("commands") or []:
+        item = _mapping(raw)
+        if str(item.get("label") or "") not in {"agent-command", "command"}:
+            continue
+        argv = item.get("argv")
+        if not coding_work_phases.is_validation_command(argv):
+            continue
+        ts = _float(item.get("ts"))
+        signature = _validation_signature(argv)
+        if ts < threshold or not signature:
+            continue
+        if _validation_result_missing_tool(item):
+            continue
+        output.append((ts, signature, item.get("ok") is True))
+    return output
+
+
+def _validation_obligations_ready(task: Mapping[str, Any], threshold: float) -> bool:
+    """Do not let a later weak check erase an unresolved substantive failure.
+
+    The original finish gate enforced this rule inside one runner attempt. This
+    terminal layer is mission-scoped, so it must preserve the same obligation
+    across checkpoints and resumes before semantic acceptance can run.
+    """
+    records = [
+        *_validation_records_from_history(task, threshold),
+        *_validation_records_from_events(task, threshold),
+        *_validation_records_from_commands(task, threshold),
+    ]
+    validation = _mapping(task.get(_VALIDATION_KEY))
+    latest_ts = _float(validation.get("ts"))
+    latest_signature = _validation_signature(validation.get("argv"))
+    if (
+        latest_ts >= threshold
+        and latest_signature
+        and validation.get("ok") is True
+    ):
+        records.append((latest_ts, latest_signature, True))
+
+    # Deduplicate the same durable command represented in history/event/command
+    # ledgers without changing ordering semantics.
+    unique: dict[tuple[float, tuple[str, ...], bool], tuple[float, tuple[str, ...], bool]] = {}
+    for record in records:
+        unique[record] = record
+    ordered = sorted(unique.values(), key=lambda item: item[0])
+    successes = [record for record in ordered if record[2]]
+    failures = [record for record in ordered if not record[2]]
+    if not successes:
+        # Legacy tasks may predate all bounded histories but still contain the
+        # durable latest success. The caller independently validates that state.
+        return not failures
+    return all(
+        any(
+            success_at > failure_at and success_signature == failure_signature
+            for success_at, success_signature, _ok in successes
+        )
+        for failure_at, failure_signature, _ok in failures
+    )
+
+
 def _validation_ready(task: Mapping[str, Any], threshold: float) -> tuple[bool, float]:
     validation = _mapping(task.get(_VALIDATION_KEY))
     ts = _float(validation.get("ts"))
@@ -153,6 +312,7 @@ def _validation_ready(task: Mapping[str, Any], threshold: float) -> tuple[bool, 
         and validation.get("ok") is True
         and ts
         and ts >= threshold
+        and _validation_obligations_ready(task, threshold)
     )
     return ready, ts
 
@@ -174,13 +334,11 @@ def _latest_diff_review_at(task: Mapping[str, Any], threshold: float) -> float:
 
 
 def _latest_decisive_rejection(task: Mapping[str, Any], threshold: float) -> Mapping[str, Any]:
-    """Return only a durable semantic rejection for the current readiness epoch.
+    """Return a durable semantic rejection for the current readiness epoch.
 
-    The semantic reviewer can also accept immediately before a gateway crash, or
-    fail because its backend/protocol response was unusable. Neither is a reason
-    to reopen broad coding tools. ``coding_terminal_acceptance_hardening`` emits
-    semantic_acceptance_state after rejected finishes; retryable reviewer/protocol
-    failures are marked ``review_error`` by this final overlay.
+    Retryable reviewer/protocol failures do not erase an earlier decisive
+    rejection. Only a later causal-state threshold (new mutation or replacement
+    hypothesis) supersedes the rejection.
     """
     for raw in reversed(list(task.get("agent_events") or [])):
         event = _mapping(raw)
@@ -190,8 +348,95 @@ def _latest_decisive_rejection(task: Mapping[str, Any], threshold: float) -> Map
             continue
         if event.get("accepted") is False and not bool(event.get("review_error")):
             return event
-        return {}
     return {}
+
+
+def _hypothesis_identity(task: Mapping[str, Any]) -> str:
+    current = _structured_hypothesis_fingerprint(task)
+    if current:
+        return current
+    lifecycle = _mapping(task.get(_LIFECYCLE_KEY))
+    return str(
+        lifecycle.get("structured_hypothesis_fingerprint")
+        or lifecycle.get("note_fingerprint")
+        or ""
+    ).strip()
+
+
+def _semantic_rejection_guard_key(
+    cw: Any,
+    mission_epoch: Any,
+    task_id: str,
+    task: Mapping[str, Any],
+) -> str:
+    try:
+        delta = mission_epoch.mission_delta_state(cw, task_id, dict(task))
+    except Exception:
+        return ""
+    if not delta.get("ok") or not delta.get("has_delta"):
+        return ""
+    lifecycle = _mapping(task.get(_LIFECYCLE_KEY))
+    payload = "\x1f".join(
+        [
+            str(delta.get("diff_sha256") or ""),
+            _hypothesis_identity(task),
+            str(lifecycle.get("verified_evidence_digest") or ""),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _semantic_rejection_guard_blocks(
+    cw: Any,
+    mission_epoch: Any,
+    task_id: str,
+    task: Mapping[str, Any],
+) -> bool:
+    guard = _mapping(task.get(_REJECTION_GUARD_KEY))
+    recorded = str(guard.get("causal_key") or "").strip()
+    if not recorded:
+        return False
+    current = _semantic_rejection_guard_key(cw, mission_epoch, task_id, task)
+    return bool(current and current == recorded)
+
+
+def _record_semantic_rejection_guard(
+    agent: Any,
+    cw: Any,
+    mission_epoch: Any,
+    task_id: str,
+    result: Mapping[str, Any],
+) -> None:
+    review = _mapping(result.get("semantic_review"))
+    if review.get("review_error") is True or review.get("parse_error") is True:
+        return
+    if review.get("accepted") is True:
+        return
+    try:
+        task = cw.load_task(task_id)
+    except Exception:
+        return
+    causal_key = _semantic_rejection_guard_key(cw, mission_epoch, task_id, task)
+    if not causal_key:
+        return
+    payload = {
+        "schema": "nexus_coding_semantic_rejection_guard.v1",
+        "causal_key": causal_key,
+        "recorded_at": max(
+            (
+                _float(event.get("ts"))
+                for event in task.get("agent_events") or []
+                if isinstance(event, Mapping)
+                and str(event.get("type") or "") == _SEMANTIC_STATE_EVENT
+            ),
+            default=0.0,
+        ),
+        "reason": str(review.get("reason") or result.get("summary") or "")[:2000],
+    }
+    try:
+        agent._mutate_task(task_id, {_REJECTION_GUARD_KEY: payload})
+    except Exception:
+        return
 
 
 def _terminal_state(
@@ -221,8 +466,8 @@ def _terminal_state(
 
     if _latest_decisive_rejection(task, threshold):
         # A real semantic rejection deliberately reopens execution so the agent
-        # can change the diff/hypothesis/evidence. Accepted-but-not-durable and
-        # reviewer/protocol failures remain finish-only and retry acceptance.
+        # can materially change the diff/hypothesis/evidence. Accepted-but-not-
+        # durable and reviewer/protocol failures remain finish-only and retry.
         return {}
 
     try:
@@ -308,17 +553,24 @@ def _run_live_refutation(
     task = cw.load_task(task_id)
     policy = getattr(agent, "forced_action", None)
     state = policy.active_state(task) if callable(getattr(policy, "active_state", None)) else {}
-    allowed = {
-        str(item).strip()
-        for item in (state.get("allowed_tools") or [])
-        if str(item).strip()
-    }
+    allowed_names = getattr(policy, "allowed_tool_names", None)
+    if callable(allowed_names):
+        try:
+            allowed = {str(item).strip() for item in allowed_names(task) if str(item).strip()}
+        except Exception:
+            allowed = set()
+    else:
+        allowed = {
+            str(item).strip()
+            for item in (state.get("allowed_tools") or [])
+            if str(item).strip()
+        }
     tool_name = str(getattr(mission_epoch, "REFUTATION_TOOL", "coding_refute_hypothesis"))
     if str(state.get("action_kind") or "") != "edit" or tool_name not in allowed:
         return {
             "ok": False,
             "error": "hypothesis_refutation_not_available",
-            "summary": "coding_refute_hypothesis is available only while the live effective policy authorizes forced edit mode.",
+            "summary": "coding_refute_hypothesis is available only while the canonical live policy authorizes forced edit mode.",
         }
 
     reason = str(args.get("reason") or "").strip()
@@ -387,7 +639,8 @@ def _install_live_refutation(agent: Any, guarded: Any, cw: Any, mission_epoch: A
         *,
         git_token_value: Any,
     ) -> Dict[str, Any]:
-        if str(name or "") == refutation_tool:
+        normalized_name = str(name or "")
+        if normalized_name == refutation_tool:
             return _run_live_refutation(
                 agent,
                 cw,
@@ -395,12 +648,48 @@ def _install_live_refutation(agent: Any, guarded: Any, cw: Any, mission_epoch: A
                 task_id,
                 args,
             )
-        return prior_run_tool(
+        if normalized_name == "coding_finish":
+            try:
+                before = cw.load_task(task_id)
+            except Exception:
+                before = {}
+            if before and _semantic_rejection_guard_blocks(
+                cw,
+                mission_epoch,
+                task_id,
+                before,
+            ):
+                return {
+                    "ok": False,
+                    "success": False,
+                    "error": "semantic_acceptance_state_unchanged",
+                    "required_action": (
+                        "Change the repository diff or materially revise the remediation hypothesis/evidence, "
+                        "then rerun validation and diff review before finishing again."
+                    ),
+                    "summary": (
+                        "Independent semantic acceptance already rejected this causal repository state. "
+                        "Project-plan status or bookkeeping changes do not make the same patch eligible for another review."
+                    ),
+                }
+        result = prior_run_tool(
             task_id,
             name,
             args,
             git_token_value=git_token_value,
         )
+        if (
+            normalized_name == "coding_finish"
+            and str(result.get("error") or "") == "semantic_acceptance_rejected"
+        ):
+            _record_semantic_rejection_guard(
+                agent,
+                cw,
+                mission_epoch,
+                task_id,
+                result,
+            )
+        return result
 
     agent._run_tool = run_tool_with_live_refutation
     guarded._run_tool_with_semantic_acceptance = run_tool_with_live_refutation
@@ -488,6 +777,80 @@ def _install_consumed_lifecycle_continuity() -> None:
     completion._coding_consumed_lifecycle_continuity_installed = True
 
 
+def _install_validation_continuity() -> None:
+    """Persist validation obligations across checkpoints and runner attempts."""
+    from app import coding_terminal_acceptance_hardening as terminal
+
+    if bool(getattr(terminal, "_coding_validation_history_continuity_installed", False)):
+        return
+    prior_persist = terminal._persist_validation_provenance
+
+    def persist_validation_with_history(
+        cw: Any,
+        work_phases: Any,
+        *,
+        task_id: str,
+        argv: Any,
+        cwd: Any,
+        result: Mapping[str, Any],
+    ) -> None:
+        try:
+            before = cw.load_task(task_id)
+            prior_history = list(_mapping(before.get(_VALIDATION_KEY)).get("history") or [])
+        except Exception:
+            prior_history = []
+        prior_persist(
+            cw,
+            work_phases,
+            task_id=task_id,
+            argv=argv,
+            cwd=cwd,
+            result=result,
+        )
+        try:
+            latest = cw.load_task(task_id)
+        except Exception:
+            return
+        durable = dict(_mapping(latest.get(_VALIDATION_KEY)))
+        signature = _validation_signature(argv)
+        ts = _float(durable.get("ts"))
+        if not signature or not ts:
+            return
+        record = {
+            "argv": [str(item) for item in signature],
+            "ok": result.get("ok") is True,
+            "ts": ts,
+            "cwd": str(cwd or ""),
+            "substantive": not _validation_result_missing_tool(result),
+        }
+        merged = [item for item in prior_history if isinstance(item, Mapping)]
+        merged.append(record)
+        merged = merged[-_VALIDATION_HISTORY_LIMIT:]
+
+        def apply(task: Dict[str, Any]) -> None:
+            current = dict(_mapping(task.get(_VALIDATION_KEY)))
+            current["history"] = [dict(item) for item in merged]
+            task[_VALIDATION_KEY] = current
+
+        mutate = getattr(cw, "mutate_task", None)
+        if callable(mutate):
+            try:
+                mutate(task_id, apply)
+                return
+            except Exception:
+                pass
+        try:
+            fallback = cw.load_task(task_id)
+            apply(fallback)
+            cw.save_task(fallback)
+        except Exception:
+            return
+
+    terminal._persist_validation_provenance = persist_validation_with_history
+    terminal._persist_validation_provenance_before_convergence = prior_persist
+    terminal._coding_validation_history_continuity_installed = True
+
+
 def _install_retryable_acceptance_failures() -> None:
     """Treat reviewer transport/protocol failures as retryable, not semantic truth."""
     from app import coding_terminal_acceptance_hardening as terminal
@@ -553,6 +916,7 @@ def install(
 ) -> None:
     """Make refutation execution and terminal mission acceptance converge on live policy."""
     _install_consumed_lifecycle_continuity()
+    _install_validation_continuity()
     _install_retryable_acceptance_failures()
     _install_live_refutation(agent, guarded, cw, mission_epoch)
     _install_terminal_policy(agent, cw, mission_epoch)
