@@ -24,6 +24,7 @@ from app import coding_failed_edit_recovery
 from app import coding_forced_action
 from app import coding_hypothesis_persistence
 from app import coding_hypothesis_range_contract
+from app import coding_hypothesis_transition_hardening
 from app import coding_inspection_ledger_integrity
 from app import coding_mission_acceptance_epoch
 from app import coding_mission_acceptance_integrity
@@ -150,20 +151,18 @@ coding_mission_acceptance_integrity.install(
     cw,
     coding_terminal_acceptance_hardening,
 )
-
-
-def _mission_tool_specs_for_task(task: dict):
-    """Resolve the canonical post-overlay tool set for manifests and live runs."""
-    return coding_forced_action.filter_tool_specs(
-        guarded_agent._agent._tool_specs(),
-        task,
-    )
-
-
-# The mission-acceptance overlay adds a dedicated hypothesis-refutation tool.
-# Rebind the task-specific spec resolver after all overlays so the same effective
-# tool set is used by coding_tool_manifest, text-tool guidance, and live requests.
-guarded_agent._agent._tool_specs_for_task = _mission_tool_specs_for_task
+# Compose the final task-specific tool schema instead of rebuilding it from raw
+# specs. This preserves the four-field hypothesis contract while retaining the
+# mission-level refutation tool and turns malformed transition calls into the
+# established forced-action rejection/reroute path.
+coding_hypothesis_transition_hardening.install(
+    guarded_agent._agent,
+    cw,
+    coding_forced_action,
+    coding_hypothesis_persistence,
+    coding_evidence_policy,
+    coding_debug_report,
+)
 
 routes.ca = guarded_agent
 router = APIRouter()
