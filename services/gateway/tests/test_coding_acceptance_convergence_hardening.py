@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from app import coding_acceptance_convergence_hardening as hardening
 from app import coding_completion_state_hardening as completion
 from app import coding_terminal_acceptance_hardening as terminal
+from app import coding_work_phases
 
 
 HYPOTHESIS_A = (
@@ -30,7 +31,13 @@ class Policy:
         return dict(self.state)
 
     def allowed_tool_names(self, task):
-        return set(self.active_state(task).get("allowed_tools") or [])
+        state = self.active_state(task)
+        names = set(state.get("allowed_tools") or [])
+        # Match the real mission-acceptance overlay: refutation is an effective
+        # allowed tool in edit mode without widening active_state.allowed_tools.
+        if str(state.get("action_kind") or "") == "edit":
+            names.add("coding_refute_hypothesis")
+        return names
 
     def prompt_context(self, _task):
         return "BASE POLICY PROMPT"
@@ -41,6 +48,14 @@ class CW:
         self.task = task
 
     def load_task(self, _task_id):
+        return self.task
+
+    def save_task(self, task):
+        self.task = task
+        return task
+
+    def mutate_task(self, _task_id, mutator):
+        mutator(self.task)
         return self.task
 
     def workspace_progress_fingerprint(self, _task_id):
@@ -113,6 +128,7 @@ def terminal_ready_task():
         },
         "coding_validation_provenance": {
             "schema": "nexus_coding_validation_provenance.v1",
+            "argv": ["python3", "-m", "py_compile", "app.py"],
             "ok": True,
             "ts": 20.0,
         },
@@ -124,6 +140,7 @@ def terminal_ready_task():
                 "result": {"ok": True},
             }
         ],
+        "commands": [],
     }
 
 
@@ -157,7 +174,33 @@ def install_hardening(task, state=None):
     return agent, guarded, cw, semantic, calls
 
 
-def test_live_refutation_executes_when_live_effective_policy_advertised_it():
+def add_validation_events(task, *, call_id, started_at, argv, ok, error="", stdout="", stderr=""):
+    task.setdefault("agent_events", []).extend(
+        [
+            {
+                "type": "tool_started",
+                "name": "coding_run_command",
+                "tool_call_id": call_id,
+                "ts": started_at,
+                "args": {"argv": list(argv), "cwd": ""},
+            },
+            {
+                "type": "tool_finished",
+                "name": "coding_run_command",
+                "tool_call_id": call_id,
+                "ts": started_at + 0.1,
+                "result": {
+                    "ok": ok,
+                    "error": error,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                },
+            },
+        ]
+    )
+
+
+def test_live_refutation_uses_canonical_allowed_names_not_state_allowed_tools():
     task = {
         "id": "code-refute",
         "project_plan": {"revision": 1},
@@ -170,11 +213,12 @@ def test_live_refutation_executes_when_live_effective_policy_advertised_it():
         "allowed_tools": [
             "coding_apply_patch",
             "coding_finish",
-            "coding_refute_hypothesis",
         ],
     }
     agent, guarded, cw, _semantic, calls = install_hardening(task, state)
 
+    assert "coding_refute_hypothesis" not in state["allowed_tools"]
+    assert "coding_refute_hypothesis" in agent.forced_action.allowed_tool_names(task)
     result = agent._run_tool(
         "code-refute",
         "coding_refute_hypothesis",
@@ -317,6 +361,85 @@ def test_new_mutation_persists_consumed_hypothesis_for_later_plan_rewrites():
     assert "Verified repository evidence: app.py:10-20" in context
 
 
+def test_unresolved_strong_validation_failure_blocks_terminal_acceptance_across_resume():
+    task = terminal_ready_task()
+    task["coding_validation_provenance"] = {
+        "schema": "nexus_coding_validation_provenance.v1",
+        "argv": ["git", "diff", "--check"],
+        "ok": True,
+        "ts": 18.0,
+    }
+    add_validation_events(
+        task,
+        call_id="pytest-fail",
+        started_at=14.0,
+        argv=["pytest", "-q"],
+        ok=False,
+        stderr="1 failed",
+    )
+    add_validation_events(
+        task,
+        call_id="weak-success",
+        started_at=17.0,
+        argv=["git", "diff", "--check"],
+        ok=True,
+    )
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    ready, _ts = hardening._validation_ready(task, 10.0)
+    assert ready is False
+    assert agent.forced_action.active_state(task) == {}
+
+    add_validation_events(
+        task,
+        call_id="pytest-pass",
+        started_at=19.0,
+        argv=["pytest", "-q"],
+        ok=True,
+    )
+    task["coding_validation_provenance"] = {
+        "schema": "nexus_coding_validation_provenance.v1",
+        "argv": ["pytest", "-q"],
+        "ok": True,
+        "ts": 19.1,
+    }
+    ready, _ts = hardening._validation_ready(task, 10.0)
+    assert ready is True
+    assert agent.forced_action.active_state(task)["action_kind"] == "finish"
+
+
+def test_validation_history_survives_latest_provenance_overwrite():
+    task = terminal_ready_task()
+    task["coding_validation_provenance"] = {}
+    _agent, _guarded, cw, _semantic, _calls = install_hardening(task)
+
+    terminal._persist_validation_provenance(
+        cw,
+        coding_work_phases,
+        task_id=task["id"],
+        argv=["pytest", "-q"],
+        cwd="",
+        result={"ok": False, "stderr": "1 failed"},
+    )
+    terminal._persist_validation_provenance(
+        cw,
+        coding_work_phases,
+        task_id=task["id"],
+        argv=["git", "diff", "--check"],
+        cwd="",
+        result={"ok": True, "stderr": ""},
+    )
+
+    history = task["coding_validation_provenance"]["history"]
+    assert [item["argv"] for item in history[-2:]] == [
+        ["pytest", "-q"],
+        ["git", "diff", "--check"],
+    ]
+    assert history[-2]["ok"] is False
+    assert history[-1]["ok"] is True
+    assert hardening._validation_obligations_ready(task, 10.0) is False
+
+
 def test_decisive_semantic_rejection_reopens_execution():
     task = terminal_ready_task()
     task["agent_events"].append(
@@ -332,6 +455,78 @@ def test_decisive_semantic_rejection_reopens_execution():
 
     assert agent.forced_action.active_state(task) == {}
     assert agent.forced_action.prompt_context(task) == "BASE POLICY PROMPT"
+
+
+def test_retryable_reviewer_failure_does_not_erase_earlier_decisive_rejection():
+    task = terminal_ready_task()
+    task["agent_events"].extend(
+        [
+            {
+                "type": "semantic_acceptance_state",
+                "ts": 22.0,
+                "accepted": False,
+                "review_error": False,
+                "reason": "Patch is causally wrong.",
+            },
+            {
+                "type": "semantic_acceptance_state",
+                "ts": 23.0,
+                "accepted": False,
+                "review_error": True,
+                "reason": "review backend unavailable",
+            },
+        ]
+    )
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    rejection = hardening._latest_decisive_rejection(task, 10.0)
+    assert rejection["ts"] == 22.0
+    assert agent.forced_action.active_state(task) == {}
+
+
+def test_status_churn_cannot_bypass_semantic_rejection_guard():
+    task = terminal_ready_task()
+    agent, _guarded, cw, _semantic, calls = install_hardening(task)
+    hardening._record_semantic_rejection_guard(
+        agent,
+        cw,
+        MissionEpoch,
+        task["id"],
+        {
+            "error": "semantic_acceptance_rejected",
+            "semantic_review": {
+                "accepted": False,
+                "reason": "Patch is causally wrong.",
+                "review_error": False,
+            },
+        },
+    )
+
+    task["project_plan"]["revision"] = 3
+    task["project_plan"]["updated_at"] = 30.0
+    task["project_plan"]["items"] = [
+        {"id": "verify", "title": "Verify", "status": "completed", "summary": "done"}
+    ]
+    blocked = agent._run_tool(
+        task["id"],
+        "coding_finish",
+        {},
+        git_token_value=None,
+    )
+    assert blocked["error"] == "semantic_acceptance_state_unchanged"
+    assert calls == []
+
+    task["project_plan"]["revision"] = 4
+    task["project_plan"]["updated_at"] = 31.0
+    task["project_plan"]["note"] = HYPOTHESIS_B
+    allowed = agent._run_tool(
+        task["id"],
+        "coding_finish",
+        {},
+        git_token_value=None,
+    )
+    assert allowed["error"] == "stale_handler_called"
+    assert len(calls) == 1
 
 
 def test_accepted_review_without_durable_epoch_stays_finish_only_for_retry():
@@ -414,6 +609,7 @@ def test_replacement_hypothesis_after_rejection_must_be_revalidated_and_rereview
     assert agent.forced_action.active_state(task) == {}
 
     task["coding_validation_provenance"]["ts"] = 24.0
+    task["coding_validation_provenance"]["argv"] = ["python3", "-m", "py_compile", "app.py"]
     task["agent_events"].append(
         {
             "type": "tool_finished",
