@@ -218,12 +218,13 @@ async def test_sentinel_resumes_idle_waiting_workspace_when_resources_idle(monke
 
 
 @pytest.mark.asyncio
-async def test_sentinel_records_coding_attention_and_auto_resume(monkeypatch, tmp_path):
+async def test_sentinel_records_failed_coding_attention_without_auto_resume(monkeypatch, tmp_path):
     _sentinel_events(tmp_path, monkeypatch)
     _agent_tasks_db(tmp_path, monkeypatch)
     monkeypatch.setattr(sentinel_runtime, "_now", lambda: 1_700_000_000)
 
     resumed = []
+    sent = []
     coding_workspace = types.SimpleNamespace(
         monitor_tasks=lambda **_: {
             "counts": {"total": 1, "attention": 1},
@@ -248,7 +249,8 @@ async def test_sentinel_records_coding_attention_and_auto_resume(monkeypatch, tm
         resumed.append((task_id, actor))
         return {"agent": {"status": "queued"}}
 
-    async def _send_message(**_: object):
+    async def _send_message(**kwargs: object):
+        sent.append(dict(kwargs))
         return {"ok": True}
 
     coding_agent = types.SimpleNamespace(start_agent_run=_start_agent_run)
@@ -274,12 +276,14 @@ async def test_sentinel_records_coding_attention_and_auto_resume(monkeypatch, tm
     result = await sentinel_runtime.run_monitor_once()
 
     assert result["summary"]["coding"]["attention"] == 1
-    assert result["summary"]["coding"]["actions"] == 1
-    assert resumed == [("code_123", "nexus-sentinel-auto")]
+    assert result["summary"]["coding"]["actions"] == 0
+    assert result["summary"]["coding"]["notifications"] == 1
+    assert resumed == []
+    assert len(sent) == 1
     events = sentinel_runtime.list_events(limit=10)
     kinds = {(item["category"], item["event_type"]) for item in events}
     assert ("coding", "needs_attention") in kinds
-    assert ("coding", "auto_resume") in kinds
+    assert ("coding", "auto_resume") not in kinds
 
 
 @pytest.mark.asyncio
