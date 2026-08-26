@@ -36,10 +36,11 @@ def _int(value: Any) -> int:
 
 def _structured_hypothesis_fingerprint(task: Mapping[str, Any]) -> str:
     plan = _mapping(task.get("project_plan"))
-    note = str(plan.get("note") or "").strip()
+    raw_note = str(plan.get("note") or "")
+    note = raw_note.strip()
     if not note or not all(label in note for label in _HYPOTHESIS_LABELS):
         return ""
-    return hashlib.sha256(note.encode("utf-8")).hexdigest()
+    return hashlib.sha256(raw_note.encode("utf-8")).hexdigest()
 
 
 def _material_hypothesis_updated_at(task: Mapping[str, Any]) -> float:
