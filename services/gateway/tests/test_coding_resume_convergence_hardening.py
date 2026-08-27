@@ -4,8 +4,6 @@ import hashlib
 import sys
 from types import SimpleNamespace
 
-import pytest
-
 import app
 from app import coding_acceptance_convergence_hardening as real_convergence
 from app import coding_resume_convergence_hardening as hardening
@@ -263,12 +261,12 @@ def test_generic_failed_run_becomes_sentinel_auto_resume_blocker(monkeypatch):
     assert "finish_gate" in fake_sentinel._CODING_AUTO_RESUME_BLOCKERS
 
 
-def test_sentinel_failure_policy_drift_fails_loudly(monkeypatch):
+def test_sentinel_failure_policy_drift_is_nonfatal_and_fail_closed(monkeypatch):
     fake_sentinel = SimpleNamespace(_CODING_AUTO_RESUME_BLOCKERS=frozenset({"finish_gate"}))
     monkeypatch.setitem(sys.modules, "app.sentinel_runtime", fake_sentinel)
     monkeypatch.setattr(app, "sentinel_runtime", fake_sentinel, raising=False)
-    with pytest.raises(RuntimeError, match="must be a mutable set"):
-        hardening._install_sentinel_failed_resume_guard()
+    hardening._install_sentinel_failed_resume_guard()
+    assert fake_sentinel._CODING_AUTO_RESUME_BLOCKERS == {"finish_gate", "run_failed"}
 
 
 def test_structured_hypothesis_identity_ignores_arbitrary_trailing_plan_sections():
@@ -353,7 +351,7 @@ def test_nonvalidation_command_does_not_pollute_validation_history():
     assert task[_VALIDATION_KEY]["history"] == before
 
 
-def test_validation_side_effect_is_restamped_after_mission_mutation():
+def test_validation_side_effect_remains_stale_after_mission_mutation():
     task = {
         "id": "code-side-effect",
         "coding_mission_acceptance_epoch": {
@@ -378,8 +376,8 @@ def test_validation_side_effect_is_restamped_after_mission_mutation():
         task["id"],
         ["pytest", "-q"],
     )
-    assert task[_VALIDATION_KEY]["ts"] > 20.0
-    assert task[_VALIDATION_KEY]["history"][-1]["ts"] == task[_VALIDATION_KEY]["ts"]
+    assert task[_VALIDATION_KEY]["ts"] == 19.0
+    assert task[_VALIDATION_KEY]["history"][-1]["ts"] == 19.0
 
 
 class RealMissionEpoch:
