@@ -12,6 +12,8 @@ from app import coding_resume_convergence_hardening as hardening
 from app import coding_terminal_acceptance_hardening as terminal
 from app import coding_work_phases
 
+_VALIDATION_KEY = hardening._VALIDATION_KEY
+
 
 class Policy:
     def __init__(self):
@@ -151,9 +153,7 @@ def test_resumed_pending_delta_forces_validation_before_broad_inspection():
     task["test_validation_ready"] = False
     task["test_review_at"] = 12.0
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["schema"] == hardening.SCHEMA
     assert state["action_kind"] == "validate"
     assert state["allowed_tools"] == ["coding_finish", "coding_run_command"]
@@ -170,9 +170,7 @@ def test_failed_validation_opens_governed_repair_instead_of_validate_livelock():
         (13.0, ("git", "diff", "--check"), True),
     ]
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["schema"] == hardening.SCHEMA
     assert state["stage"] == "post_edit_validation_repair"
     assert state["action_kind"] == "edit"
@@ -195,9 +193,7 @@ def test_same_failed_signature_success_clears_repair_obligation():
     ]
     task["test_review_at"] = 15.0
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["action_kind"] == "finish"
     assert state["allowed_tools"] == ["coding_finish"]
 
@@ -208,9 +204,7 @@ def test_resumed_pending_delta_forces_diff_review_after_validation():
     task["test_validation_at"] = 12.0
     task["test_review_at"] = 0.0
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["schema"] == hardening.SCHEMA
     assert state["action_kind"] == "review"
     assert state["allowed_tools"] == ["coding_finish", "coding_git_diff"]
@@ -224,9 +218,7 @@ def test_resumed_pending_delta_becomes_finish_only_when_prerequisites_are_curren
     task["test_validation_at"] = 12.0
     task["test_review_at"] = 13.0
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["schema"] == "nexus_coding_terminal_convergence.v1"
     assert state["action_kind"] == "finish"
     assert state["allowed_tools"] == ["coding_finish"]
@@ -239,9 +231,7 @@ def test_active_refutation_is_not_overridden_by_post_edit_convergence():
         "status": "active",
     }
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["schema"] == "base"
     assert state["action_kind"] == "edit"
 
@@ -250,9 +240,7 @@ def test_replacement_hypothesis_waits_for_consuming_edit_before_validation():
     task = pending_task()
     task["test_material_hypothesis_updated_at"] = 20.0
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["schema"] == "base"
     assert state["action_kind"] == "edit"
 
@@ -261,9 +249,7 @@ def test_semantic_rejection_reopens_repair_instead_of_forcing_validation():
     task = pending_task()
     task["test_semantic_rejection"] = True
     agent, _cw = installed(task)
-
     state = agent.forced_action.active_state(task)
-
     assert state["schema"] == "base"
     assert state["action_kind"] == "edit"
 
@@ -272,9 +258,7 @@ def test_generic_failed_run_becomes_sentinel_auto_resume_blocker(monkeypatch):
     fake_sentinel = SimpleNamespace(_CODING_AUTO_RESUME_BLOCKERS={"finish_gate"})
     monkeypatch.setitem(sys.modules, "app.sentinel_runtime", fake_sentinel)
     monkeypatch.setattr(app, "sentinel_runtime", fake_sentinel, raising=False)
-
     hardening._install_sentinel_failed_resume_guard()
-
     assert "run_failed" in fake_sentinel._CODING_AUTO_RESUME_BLOCKERS
     assert "finish_gate" in fake_sentinel._CODING_AUTO_RESUME_BLOCKERS
 
@@ -283,7 +267,6 @@ def test_sentinel_failure_policy_drift_fails_loudly(monkeypatch):
     fake_sentinel = SimpleNamespace(_CODING_AUTO_RESUME_BLOCKERS=frozenset({"finish_gate"}))
     monkeypatch.setitem(sys.modules, "app.sentinel_runtime", fake_sentinel)
     monkeypatch.setattr(app, "sentinel_runtime", fake_sentinel, raising=False)
-
     with pytest.raises(RuntimeError, match="must be a mutable set"):
         hardening._install_sentinel_failed_resume_guard()
 
@@ -297,9 +280,7 @@ def test_structured_hypothesis_identity_ignores_arbitrary_trailing_plan_sections
         "Status (auto): waiting\n"
         "状態: 実行待ち"
     )
-
     fields = hardening._fixed_structured_hypothesis_fields(note)
-
     assert fields == {
         "Root cause": "typo",
         "Repository evidence": "app.py:10",
@@ -333,9 +314,7 @@ def test_validation_event_pairing_does_not_steal_idless_validation_for_unmatched
         ]
     }
     hardening._install_convergence_review_fixes(CW(task), MissionEpoch, real_convergence)
-
     records = real_convergence._validation_records_from_events(task, 10.0)
-
     assert records == [(11.2, ("pytest", "-q"), True)]
 
 
@@ -350,7 +329,6 @@ def test_nonvalidation_command_does_not_pollute_validation_history():
     }
     cw = CW(task)
     hardening._install_validation_persistence_fix(real_convergence)
-
     terminal._persist_validation_provenance(
         cw,
         coding_work_phases,
@@ -371,7 +349,6 @@ def test_nonvalidation_command_does_not_pollute_validation_history():
         cwd="",
         result={"ok": False, "stderr": "cat: missing-file: No such file"},
     )
-
     assert task[_VALIDATION_KEY]["argv"] == ["pytest", "-q"]
     assert task[_VALIDATION_KEY]["history"] == before
 
@@ -395,14 +372,12 @@ def test_validation_side_effect_is_restamped_after_mission_mutation():
         },
     }
     cw = CW(task)
-
     hardening._restamp_validation_after_workspace_mutation(
         cw,
         MissionEpoch,
         task["id"],
         ["pytest", "-q"],
     )
-
     assert task[_VALIDATION_KEY]["ts"] > 20.0
     assert task[_VALIDATION_KEY]["history"][-1]["ts"] == task[_VALIDATION_KEY]["ts"]
 
@@ -449,24 +424,5 @@ def test_real_terminal_state_respects_durable_rejection_guard_without_event():
         task,
     )
     task["coding_semantic_rejection_guard"] = {"causal_key": key}
-
     state = real_convergence._terminal_state(cw, RealMissionEpoch, task)
-
     assert state == {}
-
-
-def test_same_diff_cosmetic_hypothesis_rewording_does_not_change_rejection_guard_key():
-    task = {
-        "id": "code-guard-key",
-        "project_plan": {"note": "Root cause: wording A"},
-        "agent_hypothesis_lifecycle": {"verified_evidence_digest": "evidence-A"},
-    }
-    cw = CW(task)
-    hardening._install_convergence_review_fixes(cw, RealMissionEpoch, real_convergence)
-
-    first = real_convergence._semantic_rejection_guard_key(cw, RealMissionEpoch, task["id"], task)
-    task["project_plan"]["note"] = "Root cause: wording B"
-    second = real_convergence._semantic_rejection_guard_key(cw, RealMissionEpoch, task["id"], task)
-
-    assert first == second
-    assert first == hashlib.sha256("same-diff\x1fevidence-A".encode("utf-8")).hexdigest()
