@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from app import coding_acceptance_convergence_hardening
 from app import coding_agent_guarded as guarded_agent
 from app import coding_completion_state_dispatch
 from app import coding_completion_state_hardening
@@ -33,6 +34,7 @@ from app import coding_network_resilience
 from app import coding_plan_edit_serialization
 from app import coding_policy_rejection_recovery
 from app import coding_refuted_findings
+from app import coding_resume_convergence_hardening
 from app import coding_semantic_acceptance
 from app import coding_stagnation_resilience
 from app import coding_terminal_acceptance_hardening
@@ -162,6 +164,27 @@ coding_hypothesis_transition_hardening.install(
     coding_hypothesis_persistence,
     coding_evidence_policy,
     coding_debug_report,
+)
+# The final convergence layer must observe every policy/schema/mission overlay.
+# It executes refutation against the live policy that advertised the tool and
+# forces reviewed+validated mission deltas through independent semantic
+# acceptance before the agent can resume broad inspection.
+coding_acceptance_convergence_hardening.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_mission_acceptance_epoch,
+    coding_semantic_acceptance,
+)
+# Runner attempts and Sentinel supervision must not erase mission-scoped output
+# obligations. Derive validate -> review -> finish from durable mission state on
+# every resume, and leave generic failed runs stable for human attention instead
+# of treating them as automatically recoverable infrastructure interruptions.
+coding_resume_convergence_hardening.install(
+    guarded_agent._agent,
+    cw,
+    coding_mission_acceptance_epoch,
+    coding_acceptance_convergence_hardening,
 )
 
 routes.ca = guarded_agent
