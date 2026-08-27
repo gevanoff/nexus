@@ -18,7 +18,15 @@ from app.resources_snapshot import build_registry_backend_status_payload, call_l
 
 log = logging.getLogger(__name__)
 
-_CODING_AUTO_RESUME_BLOCKERS = {"repeated_no_tool_call", "no_change_audit", "finish_gate", "metadata_read_failed"}
+# "run_failed" keeps generic failed runs parked for human attention instead of
+# blind auto-resume; typed interruptions (run_interrupted) remain recoverable.
+_CODING_AUTO_RESUME_BLOCKERS = {
+    "repeated_no_tool_call",
+    "no_change_audit",
+    "finish_gate",
+    "metadata_read_failed",
+    "run_failed",
+}
 
 _TASK_LOOP: asyncio.Task | None = None
 _STOP_EVENT: asyncio.Event | None = None

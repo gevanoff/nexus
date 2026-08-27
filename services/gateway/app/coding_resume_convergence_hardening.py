@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-import re
+import logging
 import time
 from typing import Any, Dict, Mapping
 
+
+log = logging.getLogger(__name__)
 
 SCHEMA = "nexus_coding_resume_convergence.v1"
 _SENTINEL_FAILED_ATTENTION = "run_failed"
 _VALIDATION_KEY = "coding_validation_provenance"
 _LIFECYCLE_KEY = "agent_hypothesis_lifecycle"
-_HYPOTHESIS_FIELDS = (
-    "Root cause",
-    "Repository evidence",
-    "Competing explanation checked",
-    "Expected result",
-)
-_ANY_PLAN_FIELD_RE = re.compile(r"(?im)(?:^|[\n;])\s*([^:\n;]{1,120})\s*:\s*")
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -104,51 +99,6 @@ def _state(
     return state
 
 
-def _validation_records(
-    convergence: Any,
-    task: Mapping[str, Any],
-    threshold: float,
-) -> list[tuple[float, tuple[str, ...], bool]]:
-    records = [
-        *convergence._validation_records_from_history(task, threshold),
-        *convergence._validation_records_from_events(task, threshold),
-        *convergence._validation_records_from_commands(task, threshold),
-    ]
-    validation = _mapping(task.get(_VALIDATION_KEY))
-    durable_ts = _float(validation.get("ts"))
-    durable_signature = _signature(validation.get("argv"))
-    if durable_ts >= threshold and durable_signature:
-        represented = any(
-            abs(ts - durable_ts) < 1e-6 and signature == durable_signature
-            for ts, signature, _ok in records
-        )
-        if not represented:
-            records.append((durable_ts, durable_signature, validation.get("ok") is True))
-    unique: dict[tuple[float, tuple[str, ...], bool], tuple[float, tuple[str, ...], bool]] = {}
-    for record in records:
-        unique[record] = record
-    return sorted(unique.values(), key=lambda item: item[0])
-
-
-def _unresolved_validation_failures(
-    convergence: Any,
-    task: Mapping[str, Any],
-    threshold: float,
-) -> list[tuple[float, tuple[str, ...]]]:
-    records = _validation_records(convergence, task, threshold)
-    failures: list[tuple[float, tuple[str, ...]]] = []
-    for failed_at, failed_signature, ok in records:
-        if ok:
-            continue
-        superseded = any(
-            later_at > failed_at and later_signature == failed_signature and later_ok
-            for later_at, later_signature, later_ok in records
-        )
-        if not superseded:
-            failures.append((failed_at, failed_signature))
-    return failures
-
-
 def post_edit_state(
     cw: Any,
     mission_epoch: Any,
@@ -192,8 +142,11 @@ def post_edit_state(
 
     validation_ready, validation_at = convergence._validation_ready(task, threshold)
     if not validation_ready:
-        unresolved = _unresolved_validation_failures(convergence, task, threshold)
+        unresolved = convergence._unresolved_validation_failures(task, threshold)
         if unresolved:
+            refutation_tool = str(
+                getattr(mission_epoch, "REFUTATION_TOOL", "coding_refute_hypothesis")
+            )
             labels = [" ".join(signature) for _ts, signature in unresolved[-3:]]
             failing = "; ".join(labels)
             required = (
@@ -201,7 +154,9 @@ def post_edit_state(
                 "smallest evidence-backed defect with structured edit tools, materially revise "
                 "the plan if the causal hypothesis changed, or rerun the same failing validation "
                 f"after an environmental correction. Unresolved validation: {failing}. Do not "
-                "substitute a weaker green check for the failing signature."
+                "substitute a weaker green check for the failing signature. If the failing "
+                f"validation contradicts the consumed causal hypothesis, {refutation_tool} is "
+                "explicitly available."
             )
             return _state(
                 task_id=task_id,
@@ -213,6 +168,7 @@ def post_edit_state(
                     "coding_apply_patch",
                     "coding_run_command",
                     "coding_update_plan",
+                    refutation_tool,
                     "coding_finish",
                 ],
                 threshold=threshold,
@@ -284,7 +240,8 @@ def _install_policy(agent: Any, cw: Any, mission_epoch: Any, convergence: Any) -
                         f"validation failure remains unresolved: {failing}. Repair it with the "
                         "smallest structured edit, revise the plan only if the causal hypothesis "
                         "changed, or rerun that same validation after an environmental correction. "
-                        "coding_run_command remains validation-only; shell edits are not authorized."
+                        "coding_run_command accepts only validation commands in forced states; "
+                        "make repairs with the structured edit tools."
                     )
                 kind = str(state.get("action_kind") or "")
                 if kind == "validate":
@@ -306,183 +263,15 @@ def _install_policy(agent: Any, cw: Any, mission_epoch: Any, convergence: Any) -
     policy._coding_resume_convergence_installed = True
 
 
-def _fixed_structured_hypothesis_fields(note: Any) -> Dict[str, str]:
-    text = str(note or "").strip()
-    if not text:
-        return {}
-    matches = list(_ANY_PLAN_FIELD_RE.finditer(text))
-    if not matches:
-        return {}
-    fields: Dict[str, str] = {}
-    for index, match in enumerate(matches):
-        raw_label = str(match.group(1) or "").strip()
-        label = next(
-            (candidate for candidate in _HYPOTHESIS_FIELDS if candidate.casefold() == raw_label.casefold()),
-            "",
-        )
-        if not label or label in fields:
-            continue
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        value = text[match.end() : end].strip(" \t\r\n;")
-        if not value:
-            return {}
-        fields[label] = value
-    return fields if all(label in fields for label in _HYPOTHESIS_FIELDS) else {}
-
-
-def _install_convergence_review_fixes(cw: Any, mission_epoch: Any, convergence: Any) -> None:
-    if bool(getattr(convergence, "_coding_pr93_review_fixes_installed", False)):
-        return
-    convergence._structured_hypothesis_fields = _fixed_structured_hypothesis_fields
-
-    def validation_records_from_events(
-        task: Mapping[str, Any],
-        threshold: float,
-    ) -> list[tuple[float, tuple[str, ...], bool]]:
-        from app import coding_work_phases
-        pending_by_id: dict[str, tuple[tuple[str, ...] | None, float]] = {}
-        pending_without_id: list[tuple[tuple[str, ...] | None, float]] = []
-        output: list[tuple[float, tuple[str, ...], bool]] = []
-        for raw in task.get("agent_events") or []:
-            event = _mapping(raw)
-            event_type = str(event.get("type") or "")
-            name = str(event.get("name") or "")
-            call_id = str(event.get("tool_call_id") or "").strip()
-            if event_type == "tool_started" and name == "coding_run_command":
-                args = _mapping(event.get("args"))
-                argv = args.get("argv")
-                signature = _signature(argv) if coding_work_phases.is_validation_command(argv) else None
-                started = (signature, _float(event.get("ts")))
-                if call_id:
-                    pending_by_id[call_id] = started
-                else:
-                    pending_without_id.append(started)
-                continue
-            if event_type != "tool_finished" or name != "coding_run_command":
-                continue
-            started = pending_by_id.pop(call_id, None) if call_id else (
-                pending_without_id.pop(0) if pending_without_id else None
-            )
-            if started is None:
-                continue
-            signature, started_at = started
-            if not signature:
-                continue
-            result = _mapping(event.get("result"))
-            if str(result.get("error") or "") == "forced_action_tool_rejected":
-                continue
-            if convergence._validation_result_missing_tool(result):
-                continue
-            finished_at = _float(event.get("ts")) or started_at
-            if finished_at >= threshold:
-                output.append((finished_at, signature, result.get("ok") is True))
-        return output
-
-    convergence._validation_records_from_events = validation_records_from_events
-    prior_terminal_state = convergence._terminal_state
-
-    def terminal_state_with_rejection_guard(
-        next_cw: Any,
-        next_mission_epoch: Any,
-        task: Mapping[str, Any],
-    ) -> Dict[str, Any]:
-        task_id = str(task.get("id") or "").strip()
-        if task_id and convergence._semantic_rejection_guard_blocks(
-            next_cw, next_mission_epoch, task_id, task
-        ):
-            return {}
-        return dict(prior_terminal_state(next_cw, next_mission_epoch, task) or {})
-
-    convergence._terminal_state = terminal_state_with_rejection_guard
-    convergence._terminal_state_before_pr93_review_fix = prior_terminal_state
-    convergence._coding_pr93_review_fixes_installed = True
-
-
-def _install_validation_persistence_fix(convergence: Any) -> None:
-    from app import coding_terminal_acceptance_hardening as terminal
-    if bool(getattr(terminal, "_coding_pr93_validation_persistence_fixed", False)):
-        return
-
-    def persist_validation_atomically(
-        cw: Any,
-        work_phases: Any,
-        *,
-        task_id: str,
-        argv: Any,
-        cwd: Any,
-        result: Mapping[str, Any],
-    ) -> None:
-        try:
-            qualifies = bool(work_phases.is_validation_command(argv))
-        except Exception:
-            qualifies = False
-        if not qualifies:
-            return
-        signature = _signature(argv)
-        if not signature:
-            return
-        try:
-            before = cw.load_task(task_id)
-        except Exception:
-            return
-        latest_command_timestamp = getattr(terminal, "_latest_command_timestamp", None)
-        ts = 0.0
-        if callable(latest_command_timestamp):
-            try:
-                ts = _float(latest_command_timestamp(before, argv=list(signature)))
-            except Exception:
-                ts = 0.0
-        ts = ts or time.time()
-        record = {
-            "argv": list(signature),
-            "ok": result.get("ok") is True,
-            "ts": ts,
-            "cwd": str(cwd or ""),
-            "substantive": not convergence._validation_result_missing_tool(result),
-        }
-
-        def apply(task: Dict[str, Any]) -> None:
-            current = dict(_mapping(task.get(_VALIDATION_KEY)))
-            history = [
-                dict(item)
-                for item in (current.get("history") or [])
-                if isinstance(item, Mapping)
-            ]
-            duplicate = any(
-                _signature(item.get("argv")) == signature
-                and abs(_float(item.get("ts")) - ts) < 1e-6
-                and bool(item.get("ok")) == bool(record["ok"])
-                for item in history
-            )
-            if not duplicate:
-                history.append(dict(record))
-            task[_VALIDATION_KEY] = {
-                "schema": "nexus_coding_validation_provenance.v1",
-                "argv": list(signature),
-                "ok": result.get("ok") is True,
-                "ts": ts,
-                "cwd": str(cwd or ""),
-                "run_id": str(task.get("agent_run_id") or ""),
-                "cycle": int(task.get("agent_cycle") or 0),
-                "history": history[-32:],
-            }
-
-        mutate = getattr(cw, "mutate_task", None)
-        if callable(mutate):
-            try:
-                mutate(task_id, apply)
-                return
-            except Exception:
-                pass
-        try:
-            fallback = cw.load_task(task_id)
-            apply(fallback)
-            cw.save_task(fallback)
-        except Exception:
-            return
-
-    terminal._persist_validation_provenance = persist_validation_atomically
-    terminal._coding_pr93_validation_persistence_fixed = True
+def _tracked_diff_sha(cw: Any, mission_epoch: Any, task_id: str) -> tuple[bool, str]:
+    """Return (ok, sha) for the tracked-only portion of the mission delta."""
+    try:
+        delta = mission_epoch.mission_delta_state(cw, task_id)
+    except Exception:
+        return False, ""
+    if not delta.get("ok"):
+        return False, ""
+    return True, str(delta.get("tracked_diff_sha256") or "")
 
 
 def _restamp_validation_after_workspace_mutation(
@@ -491,6 +280,12 @@ def _restamp_validation_after_workspace_mutation(
     task_id: str,
     argv: Any,
 ) -> None:
+    """Re-stamp a validation whose only side effects were untracked artifacts.
+
+    Callers must verify the tracked mission diff is unchanged before invoking
+    this: a validation that rewrote tracked source did not verify the tree it
+    produced, so its provenance must stay stale and force a re-run.
+    """
     signature = _signature(argv)
     if not signature:
         return
@@ -557,14 +352,23 @@ def _install_validation_side_effect_restamp(agent: Any, cw: Any, mission_epoch: 
         *,
         git_token_value: Any,
     ) -> Dict[str, Any]:
+        argv = args.get("argv") if str(name or "") == "coding_run_command" else None
+        try:
+            qualifies = bool(argv is not None and coding_work_phases.is_validation_command(argv))
+        except Exception:
+            qualifies = False
+        before_ok, before_tracked = (
+            _tracked_diff_sha(cw, mission_epoch, task_id) if qualifies else (False, "")
+        )
         result = prior_run_tool(task_id, name, args, git_token_value=git_token_value)
-        if str(name or "") == "coding_run_command" and result.get("workspace_modified") is True:
-            argv = args.get("argv")
-            try:
-                qualifies = bool(coding_work_phases.is_validation_command(argv))
-            except Exception:
-                qualifies = False
-            if qualifies:
+        if qualifies and result.get("workspace_modified") is True and before_ok:
+            # Re-stamp freshness only when the validation's side effects were
+            # invisible to the tracked mission diff (caches, coverage files).
+            # A tracked-source mutation (fix-mode linters, snapshot-updating
+            # test runs) leaves provenance stale so validation must re-run
+            # against the tree it actually produced.
+            after_ok, after_tracked = _tracked_diff_sha(cw, mission_epoch, task_id)
+            if after_ok and after_tracked == before_tracked:
                 _restamp_validation_after_workspace_mutation(
                     cw, mission_epoch, task_id, argv
                 )
@@ -577,20 +381,44 @@ def _install_validation_side_effect_restamp(agent: Any, cw: Any, mission_epoch: 
 
 
 def _install_sentinel_failed_resume_guard() -> None:
-    from app import sentinel_runtime
-    blockers = getattr(sentinel_runtime, "_CODING_AUTO_RESUME_BLOCKERS", None)
-    if not isinstance(blockers, set):
-        raise RuntimeError(
-            "Sentinel auto-resume policy drifted: _CODING_AUTO_RESUME_BLOCKERS must be a mutable set"
-        )
+    """Verify the Sentinel auto-resume blocker without risking gateway boot.
+
+    ``run_failed`` is declared in ``sentinel_runtime._CODING_AUTO_RESUME_BLOCKERS``
+    itself; this guard only repairs and reports drift. Supervision policy
+    problems must never take the Coding API down with them.
+    """
+    try:
+        from app import sentinel_runtime
+    except Exception:
+        log.exception("Sentinel unavailable while verifying coding auto-resume blockers")
+        return
+    raw = getattr(sentinel_runtime, "_CODING_AUTO_RESUME_BLOCKERS", None)
+    if isinstance(raw, set) and _SENTINEL_FAILED_ATTENTION in raw:
+        return
+    log.error(
+        "Sentinel auto-resume blockers drifted (missing %s); repairing in place",
+        _SENTINEL_FAILED_ATTENTION,
+    )
+    try:
+        blockers = set(raw or ())
+    except TypeError:
+        blockers = set()
     blockers.add(_SENTINEL_FAILED_ATTENTION)
-    if _SENTINEL_FAILED_ATTENTION not in blockers:
-        raise RuntimeError("Sentinel refused the generic coding failure auto-resume blocker")
+    sentinel_runtime._CODING_AUTO_RESUME_BLOCKERS = blockers
 
 
 def install(agent: Any, cw: Any, mission_epoch: Any, convergence: Any) -> None:
+    policy = getattr(agent, "forced_action", None)
+    if policy is not None and not bool(
+        getattr(policy, "_coding_terminal_convergence_installed", False)
+    ):
+        # This layer must wrap the acceptance-convergence policy to take
+        # precedence over it. Installing in the wrong order would silently
+        # invert derived-state priority, so fail loudly at install time.
+        raise RuntimeError(
+            "coding_resume_convergence_hardening.install() requires "
+            "coding_acceptance_convergence_hardening.install() to run first"
+        )
     _install_sentinel_failed_resume_guard()
-    _install_convergence_review_fixes(cw, mission_epoch, convergence)
-    _install_validation_persistence_fix(convergence)
     _install_policy(agent, cw, mission_epoch, convergence)
     _install_validation_side_effect_restamp(agent, cw, mission_epoch)

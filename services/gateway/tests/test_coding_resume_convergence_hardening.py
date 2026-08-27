@@ -4,6 +4,8 @@ import hashlib
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 import app
 from app import coding_acceptance_convergence_hardening as real_convergence
 from app import coding_resume_convergence_hardening as hardening
@@ -103,6 +105,21 @@ class Convergence:
         return []
 
     @staticmethod
+    def _unresolved_validation_failures(task, _threshold):
+        records = list(task.get("test_validation_records") or [])
+        failures = []
+        for failed_at, failed_signature, ok in records:
+            if ok:
+                continue
+            superseded = any(
+                later_at > failed_at and later_signature == failed_signature and later_ok
+                for later_at, later_signature, later_ok in records
+            )
+            if not superseded:
+                failures.append((failed_at, failed_signature))
+        return failures
+
+    @staticmethod
     def _latest_diff_review_at(task, _threshold):
         return float(task.get("test_review_at") or 0.0)
 
@@ -178,7 +195,9 @@ def test_failed_validation_opens_governed_repair_instead_of_validate_livelock():
     assert "coding_apply_patch" in state["allowed_tools"]
     assert "coding_update_plan" in state["allowed_tools"]
     assert "coding_run_command" in state["allowed_tools"]
+    assert "coding_refute_hypothesis" in state["allowed_tools"]
     assert "weaker green check" in state["required_action"]
+    assert "explicitly available" in state["required_action"]
 
 
 def test_same_failed_signature_success_clears_repair_obligation():
@@ -261,12 +280,28 @@ def test_generic_failed_run_becomes_sentinel_auto_resume_blocker(monkeypatch):
     assert "finish_gate" in fake_sentinel._CODING_AUTO_RESUME_BLOCKERS
 
 
-def test_sentinel_failure_policy_drift_is_nonfatal_and_fail_closed(monkeypatch):
+def test_sentinel_policy_drift_is_repaired_without_boot_failure(monkeypatch):
     fake_sentinel = SimpleNamespace(_CODING_AUTO_RESUME_BLOCKERS=frozenset({"finish_gate"}))
     monkeypatch.setitem(sys.modules, "app.sentinel_runtime", fake_sentinel)
     monkeypatch.setattr(app, "sentinel_runtime", fake_sentinel, raising=False)
     hardening._install_sentinel_failed_resume_guard()
-    assert fake_sentinel._CODING_AUTO_RESUME_BLOCKERS == {"finish_gate", "run_failed"}
+    blockers = fake_sentinel._CODING_AUTO_RESUME_BLOCKERS
+    assert isinstance(blockers, set)
+    assert "run_failed" in blockers
+    assert "finish_gate" in blockers
+
+
+def test_sentinel_declares_run_failed_blocker_in_its_own_literal():
+    from app import sentinel_runtime
+
+    assert "run_failed" in sentinel_runtime._CODING_AUTO_RESUME_BLOCKERS
+
+
+def test_install_requires_acceptance_convergence_first():
+    policy = Policy()
+    agent = SimpleNamespace(forced_action=policy, _run_tool=lambda *a, **k: {})
+    with pytest.raises(RuntimeError, match="acceptance_convergence_hardening"):
+        hardening.install(agent, CW({}), MissionEpoch, Convergence)
 
 
 def test_structured_hypothesis_identity_ignores_arbitrary_trailing_plan_sections():
@@ -278,7 +313,7 @@ def test_structured_hypothesis_identity_ignores_arbitrary_trailing_plan_sections
         "Status (auto): waiting\n"
         "状態: 実行待ち"
     )
-    fields = hardening._fixed_structured_hypothesis_fields(note)
+    fields = real_convergence._structured_hypothesis_fields(note)
     assert fields == {
         "Root cause": "typo",
         "Repository evidence": "app.py:10",
@@ -311,7 +346,6 @@ def test_validation_event_pairing_does_not_steal_idless_validation_for_unmatched
             },
         ]
     }
-    hardening._install_convergence_review_fixes(CW(task), MissionEpoch, real_convergence)
     records = real_convergence._validation_records_from_events(task, 10.0)
     assert records == [(11.2, ("pytest", "-q"), True)]
 
@@ -326,7 +360,7 @@ def test_nonvalidation_command_does_not_pollute_validation_history():
         ],
     }
     cw = CW(task)
-    hardening._install_validation_persistence_fix(real_convergence)
+    real_convergence._install_validation_continuity()
     terminal._persist_validation_provenance(
         cw,
         coding_work_phases,
@@ -351,7 +385,7 @@ def test_nonvalidation_command_does_not_pollute_validation_history():
     assert task[_VALIDATION_KEY]["history"] == before
 
 
-def test_validation_side_effect_remains_stale_after_mission_mutation():
+def test_validation_side_effect_is_restamped_after_mission_mutation():
     task = {
         "id": "code-side-effect",
         "coding_mission_acceptance_epoch": {
@@ -376,8 +410,79 @@ def test_validation_side_effect_remains_stale_after_mission_mutation():
         task["id"],
         ["pytest", "-q"],
     )
+    assert task[_VALIDATION_KEY]["ts"] > 20.0
+    assert task[_VALIDATION_KEY]["history"][-1]["ts"] == task[_VALIDATION_KEY]["ts"]
+
+
+class TrackedDeltaMissionEpoch:
+    KEY = "coding_mission_acceptance_epoch"
+
+    def __init__(self, tracked_shas):
+        self._tracked = list(tracked_shas)
+
+    def mission_delta_state(self, _cw, _task_id, task=None):
+        sha = self._tracked.pop(0) if len(self._tracked) > 1 else self._tracked[0]
+        return {
+            "ok": True,
+            "has_delta": True,
+            "diff_sha256": f"combined-{sha}",
+            "tracked_diff_sha256": sha,
+        }
+
+
+def _restamp_wrapper_run(monkeypatch, tracked_shas):
+    from app import coding_agent_guarded as guarded
+
+    task = {
+        "id": "code-side-effect",
+        "coding_mission_acceptance_epoch": {
+            "schema": "nexus_coding_mission_acceptance_epoch.v1",
+            "status": "pending",
+            "last_mutation_at": 20.0,
+        },
+        _VALIDATION_KEY: {
+            "schema": "nexus_coding_validation_provenance.v1",
+            "argv": ["pytest", "-q"],
+            "ok": True,
+            "ts": 19.0,
+            "history": [
+                {"argv": ["pytest", "-q"], "ok": True, "ts": 19.0, "substantive": True}
+            ],
+        },
+    }
+    monkeypatch.setattr(
+        guarded,
+        "_run_tool_with_semantic_acceptance",
+        guarded._run_tool_with_semantic_acceptance,
+        raising=False,
+    )
+    cw = CW(task)
+    agent = SimpleNamespace(
+        forced_action=Policy(),
+        _run_tool=lambda task_id, name, args, *, git_token_value: {
+            "ok": True,
+            "workspace_modified": True,
+        },
+    )
+    hardening._install_validation_side_effect_restamp(
+        agent, cw, TrackedDeltaMissionEpoch(tracked_shas)
+    )
+    agent._run_tool(
+        task["id"], "coding_run_command", {"argv": ["pytest", "-q"]}, git_token_value=None
+    )
+    return task
+
+
+def test_untracked_only_validation_side_effect_is_restamped(monkeypatch):
+    task = _restamp_wrapper_run(monkeypatch, ["tracked-A", "tracked-A"])
+    assert task[_VALIDATION_KEY]["ts"] > 20.0
+
+
+def test_tracked_source_mutation_by_validation_is_not_restamped(monkeypatch):
+    task = _restamp_wrapper_run(monkeypatch, ["tracked-A", "tracked-B"])
+    # The validation rewrote tracked source (fix-mode linter, snapshot update):
+    # its provenance must stay stale so validation re-runs on the produced tree.
     assert task[_VALIDATION_KEY]["ts"] == 19.0
-    assert task[_VALIDATION_KEY]["history"][-1]["ts"] == 19.0
 
 
 class RealMissionEpoch:
@@ -414,7 +519,6 @@ def test_real_terminal_state_respects_durable_rejection_guard_without_event():
         ],
     }
     cw = CW(task)
-    hardening._install_convergence_review_fixes(cw, RealMissionEpoch, real_convergence)
     key = real_convergence._semantic_rejection_guard_key(
         cw,
         RealMissionEpoch,

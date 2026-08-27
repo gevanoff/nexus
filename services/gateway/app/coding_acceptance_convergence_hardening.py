@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 from typing import Any, Dict, Mapping
 
 
@@ -30,8 +31,9 @@ _HYPOTHESIS_FIELDS = (
 _HYPOTHESIS_FIELD_RE = re.compile(
     rf"(?is)(?:^|[\n;])\s*({'|'.join(re.escape(label) for label in _HYPOTHESIS_FIELDS)})\s*:\s*"
 )
-_TRAILING_PLAN_SECTION_RE = re.compile(
-    r"(?im)(?:\n|;)\s*[A-Za-z][A-Za-z0-9 _-]{1,40}\s*:\s*"
+_UNKNOWN_LINE_FIELD_RE = re.compile(r"(?m)^\s*([^:\n]{1,120})\s*:\s*")
+_BOOKKEEPING_LABEL_RE = re.compile(
+    r"(?i)(?:^|\b)(status|state|progress|note|next action|next step|blocker|phase|stage|result)(?:\b|\s|\()"
 )
 
 
@@ -61,15 +63,43 @@ def _note_fingerprint(note: Any) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _looks_like_trailing_bookkeeping_label(label: str) -> bool:
+    normalized = str(label or "").strip()
+    if not normalized:
+        return False
+    if any(char in normalized for char in ("/", "\\")):
+        return False
+    # File/symbol locators such as app.py: or package.module: are ordinary
+    # hypothesis value content, not plan-section boundaries.
+    if "." in normalized and not normalized.endswith("."):
+        return False
+    if _BOOKKEEPING_LABEL_RE.search(normalized):
+        return True
+    if "(" in normalized or ")" in normalized:
+        return True
+    # Non-ASCII plan labels are commonly generated bookkeeping headings. Keep
+    # them suffix-only so non-ASCII prose inside earlier fields remains intact.
+    return any(ord(char) > 127 for char in normalized)
+
+
 def _structured_hypothesis_fields(note: Any) -> Dict[str, str]:
+    """Parse only the four causal fields without truncating locator-like lines.
+
+    Only the four known field labels delimit values, so unknown ``label:`` lines
+    inside a field (multiline repository evidence such as ``app.py: ...``)
+    remain value content. After the final known field, a clearly
+    bookkeeping-like suffix section (status/state/progress and similar) is
+    stripped so trailing plan bookkeeping never becomes causal state.
+    """
     text = str(note or "").strip()
     if not text:
         return {}
     matches = list(_HYPOTHESIS_FIELD_RE.finditer(text))
     if not matches:
         return {}
-    fields: Dict[str, str] = {}
-    for index, match in enumerate(matches):
+    seen_matches: list[tuple[str, "re.Match[str]"]] = []
+    seen_labels: set[str] = set()
+    for match in matches:
         raw_label = str(match.group(1) or "").strip()
         label = next(
             (
@@ -79,19 +109,32 @@ def _structured_hypothesis_fields(note: Any) -> Dict[str, str]:
             ),
             "",
         )
-        if not label or label in fields:
-            continue
-        if index + 1 < len(matches):
-            end = matches[index + 1].start()
-        else:
-            trailing = _TRAILING_PLAN_SECTION_RE.search(text, match.end())
-            end = trailing.start() if trailing else len(text)
+        if label and label not in seen_labels:
+            seen_labels.add(label)
+            seen_matches.append((label, match))
+    if seen_labels != set(_HYPOTHESIS_FIELDS):
+        return {}
+
+    fields: Dict[str, str] = {}
+    for index, (label, match) in enumerate(seen_matches):
+        end = seen_matches[index + 1][1].start() if index + 1 < len(seen_matches) else len(text)
+        if index + 1 == len(seen_matches):
+            # Only the final field is eligible for a non-causal suffix. Locator
+            # lines remain content; status/state-style labels terminate it.
+            for candidate in _UNKNOWN_LINE_FIELD_RE.finditer(text, match.end(), end):
+                candidate_label = str(candidate.group(1) or "").strip()
+                if any(
+                    known.casefold() == candidate_label.casefold()
+                    for known in _HYPOTHESIS_FIELDS
+                ):
+                    continue
+                if _looks_like_trailing_bookkeeping_label(candidate_label):
+                    end = candidate.start()
+                    break
         value = text[match.end() : end].strip(" \t\r\n;")
-        if len(value) < 8:
+        if not value:
             return {}
         fields[label] = value
-    if not all(label in fields for label in _HYPOTHESIS_FIELDS):
-        return {}
     return fields
 
 
@@ -99,7 +142,9 @@ def _structured_hypothesis_fingerprint_from_note(note: Any) -> str:
     fields = _structured_hypothesis_fields(note)
     if not fields:
         return ""
-    payload = "\x1f".join(f"{label}\x1e{fields[label]}" for label in _HYPOTHESIS_FIELDS)
+    payload = "v2\x1f" + "\x1f".join(
+        f"{label}\x1e{fields[label]}" for label in _HYPOTHESIS_FIELDS
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -125,18 +170,30 @@ def _material_hypothesis_updated_at(task: Mapping[str, Any]) -> float:
 
     plan = _mapping(task.get("project_plan"))
     current_structured = _structured_hypothesis_fingerprint(task)
-    consumed_structured = str(
-        lifecycle.get("structured_hypothesis_fingerprint") or ""
-    ).strip()
-    if consumed_structured and current_structured:
-        if current_structured == consumed_structured:
-            return 0.0
-    else:
-        consumed_note = str(lifecycle.get("note_fingerprint") or "").strip()
+    if not current_structured:
+        return 0.0
+
+    # Tolerate fingerprints recorded under earlier parser revisions: compare
+    # against the stored value and against a recomputation of the consumed note
+    # under the current parser, so a parser change never manufactures a
+    # "material" hypothesis update for an unchanged note.
+    consumed_candidates = {
+        str(lifecycle.get("structured_hypothesis_fingerprint") or "").strip(),
+    }
+    consumed_note = str(lifecycle.get("consumed_hypothesis_note") or "").strip()
+    if consumed_note:
+        consumed_candidates.add(_structured_hypothesis_fingerprint_from_note(consumed_note))
+    consumed_candidates.discard("")
+    if current_structured in consumed_candidates:
+        return 0.0
+
+    if not consumed_candidates:
+        # Legacy lifecycle records carry only the exact-note fingerprint that
+        # existed before this convergence layer. Preserve that fallback rather
+        # than manufacturing a causal change.
+        consumed_note_fp = str(lifecycle.get("note_fingerprint") or "").strip()
         current_note = _note_fingerprint(plan.get("note"))
-        if not consumed_note or not current_structured:
-            return 0.0
-        if current_note == consumed_note:
+        if not consumed_note_fp or current_note == consumed_note_fp:
             return 0.0
 
     plan_revision = _int(plan.get("revision"))
@@ -195,8 +252,8 @@ def _validation_records_from_events(
 ) -> list[tuple[float, tuple[str, ...], bool]]:
     from app import coding_work_phases
 
-    pending_by_id: dict[str, tuple[tuple[str, ...], float]] = {}
-    pending_without_id: list[tuple[tuple[str, ...], float]] = []
+    pending_by_id: dict[str, tuple[tuple[str, ...] | None, float]] = {}
+    pending_without_id: list[tuple[tuple[str, ...] | None, float]] = []
     output: list[tuple[float, tuple[str, ...], bool]] = []
     for raw in task.get("agent_events") or []:
         event = _mapping(raw)
@@ -204,27 +261,31 @@ def _validation_records_from_events(
         name = str(event.get("name") or "")
         call_id = str(event.get("tool_call_id") or "").strip()
         if event_type == "tool_started" and name == "coding_run_command":
+            # Track every start (validation or not) so id-less finished events
+            # can never steal an unrelated validation start from the FIFO.
             args = _mapping(event.get("args"))
             argv = args.get("argv")
-            if not coding_work_phases.is_validation_command(argv):
-                continue
-            signature = _validation_signature(argv)
-            if not signature:
-                continue
-            started_at = _float(event.get("ts"))
+            signature = (
+                _validation_signature(argv)
+                if coding_work_phases.is_validation_command(argv)
+                else None
+            )
+            started = (signature, _float(event.get("ts")))
             if call_id:
-                pending_by_id[call_id] = (signature, started_at)
+                pending_by_id[call_id] = started
             else:
-                pending_without_id.append((signature, started_at))
+                pending_without_id.append(started)
             continue
         if event_type != "tool_finished" or name != "coding_run_command":
             continue
-        started = pending_by_id.pop(call_id, None) if call_id else None
-        if started is None and pending_without_id:
-            started = pending_without_id.pop(0)
+        started = pending_by_id.pop(call_id, None) if call_id else (
+            pending_without_id.pop(0) if pending_without_id else None
+        )
         if started is None:
             continue
         signature, started_at = started
+        if not signature:
+            continue
         result = _mapping(event.get("result"))
         if str(result.get("error") or "") == "forced_action_tool_rejected":
             continue
@@ -261,6 +322,47 @@ def _validation_records_from_commands(
     return output
 
 
+def _validation_records(
+    task: Mapping[str, Any],
+    threshold: float,
+) -> list[tuple[float, tuple[str, ...], bool]]:
+    """Single source for post-threshold validation records across all ledgers."""
+    records = [
+        *_validation_records_from_history(task, threshold),
+        *_validation_records_from_events(task, threshold),
+        *_validation_records_from_commands(task, threshold),
+    ]
+    durable = _mapping(task.get(_VALIDATION_KEY))
+    durable_ts = _float(durable.get("ts"))
+    durable_signature = _validation_signature(durable.get("argv"))
+    durable_substantive = durable.get("substantive") is not False
+    if durable_ts >= threshold and durable_signature and durable_substantive:
+        record = (durable_ts, durable_signature, durable.get("ok") is True)
+        if record not in records:
+            records.append(record)
+    unique = {record: record for record in records}
+    return sorted(unique.values(), key=lambda item: item[0])
+
+
+def _unresolved_validation_failures(
+    task: Mapping[str, Any],
+    threshold: float,
+) -> list[tuple[float, tuple[str, ...]]]:
+    """Substantive failures not yet superseded by a same-signature success."""
+    records = _validation_records(task, threshold)
+    failures: list[tuple[float, tuple[str, ...]]] = []
+    for failed_at, failed_signature, ok in records:
+        if ok:
+            continue
+        superseded = any(
+            later_at > failed_at and later_signature == failed_signature and later_ok
+            for later_at, later_signature, later_ok in records
+        )
+        if not superseded:
+            failures.append((failed_at, failed_signature))
+    return failures
+
+
 def _validation_obligations_ready(task: Mapping[str, Any], threshold: float) -> bool:
     """Do not let a later weak check erase an unresolved substantive failure.
 
@@ -268,40 +370,7 @@ def _validation_obligations_ready(task: Mapping[str, Any], threshold: float) -> 
     terminal layer is mission-scoped, so it must preserve the same obligation
     across checkpoints and resumes before semantic acceptance can run.
     """
-    records = [
-        *_validation_records_from_history(task, threshold),
-        *_validation_records_from_events(task, threshold),
-        *_validation_records_from_commands(task, threshold),
-    ]
-    validation = _mapping(task.get(_VALIDATION_KEY))
-    latest_ts = _float(validation.get("ts"))
-    latest_signature = _validation_signature(validation.get("argv"))
-    if (
-        latest_ts >= threshold
-        and latest_signature
-        and validation.get("ok") is True
-    ):
-        records.append((latest_ts, latest_signature, True))
-
-    # Deduplicate the same durable command represented in history/event/command
-    # ledgers without changing ordering semantics.
-    unique: dict[tuple[float, tuple[str, ...], bool], tuple[float, tuple[str, ...], bool]] = {}
-    for record in records:
-        unique[record] = record
-    ordered = sorted(unique.values(), key=lambda item: item[0])
-    successes = [record for record in ordered if record[2]]
-    failures = [record for record in ordered if not record[2]]
-    if not successes:
-        # Legacy tasks may predate all bounded histories but still contain the
-        # durable latest success. The caller independently validates that state.
-        return not failures
-    return all(
-        any(
-            success_at > failure_at and success_signature == failure_signature
-            for success_at, success_signature, _ok in successes
-        )
-        for failure_at, failure_signature, _ok in failures
-    )
+    return not _unresolved_validation_failures(task, threshold)
 
 
 def _validation_ready(task: Mapping[str, Any], threshold: float) -> tuple[bool, float]:
@@ -468,6 +537,13 @@ def _terminal_state(
         # A real semantic rejection deliberately reopens execution so the agent
         # can materially change the diff/hypothesis/evidence. Accepted-but-not-
         # durable and reviewer/protocol failures remain finish-only and retry.
+        return {}
+
+    if _semantic_rejection_guard_blocks(cw, mission_epoch, task_id, task):
+        # The durable rejection guard outlives bounded agent_events. Without
+        # this check, a trimmed rejection event would force finish-only while
+        # the run-tool guard deterministically blocks coding_finish — an
+        # unrecoverable livelock. Returning empty reopens repair instead.
         return {}
 
     try:
@@ -778,14 +854,21 @@ def _install_consumed_lifecycle_continuity() -> None:
 
 
 def _install_validation_continuity() -> None:
-    """Persist validation obligations across checkpoints and runner attempts."""
+    """Persist validation obligations across checkpoints and runner attempts.
+
+    Replaces the terminal layer's provenance writer with one atomic
+    implementation that (a) refuses non-validation commands — so a failed
+    ``cat missing-file`` can never become an unclearable validation obligation
+    — and (b) writes the durable record and its bounded history in a single
+    mutation, so concurrent validations cannot drop each other's records.
+    """
     from app import coding_terminal_acceptance_hardening as terminal
 
     if bool(getattr(terminal, "_coding_validation_history_continuity_installed", False)):
         return
     prior_persist = terminal._persist_validation_provenance
 
-    def persist_validation_with_history(
+    def persist_validation_atomically(
         cw: Any,
         work_phases: Any,
         *,
@@ -795,42 +878,61 @@ def _install_validation_continuity() -> None:
         result: Mapping[str, Any],
     ) -> None:
         try:
-            before = cw.load_task(task_id)
-            prior_history = list(_mapping(before.get(_VALIDATION_KEY)).get("history") or [])
+            qualifies = bool(work_phases.is_validation_command(argv))
         except Exception:
-            prior_history = []
-        prior_persist(
-            cw,
-            work_phases,
-            task_id=task_id,
-            argv=argv,
-            cwd=cwd,
-            result=result,
-        )
-        try:
-            latest = cw.load_task(task_id)
-        except Exception:
+            qualifies = False
+        if not qualifies:
             return
-        durable = dict(_mapping(latest.get(_VALIDATION_KEY)))
         signature = _validation_signature(argv)
-        ts = _float(durable.get("ts"))
-        if not signature or not ts:
+        if not signature:
             return
+        try:
+            before = cw.load_task(task_id)
+        except Exception:
+            return
+        latest_command_timestamp = getattr(terminal, "_latest_command_timestamp", None)
+        ts = 0.0
+        if callable(latest_command_timestamp):
+            try:
+                ts = _float(latest_command_timestamp(before, argv=list(signature)))
+            except Exception:
+                ts = 0.0
+        ts = ts or time.time()
+        substantive = not _validation_result_missing_tool(result)
         record = {
-            "argv": [str(item) for item in signature],
+            "argv": list(signature),
             "ok": result.get("ok") is True,
             "ts": ts,
             "cwd": str(cwd or ""),
-            "substantive": not _validation_result_missing_tool(result),
+            "substantive": substantive,
         }
-        merged = [item for item in prior_history if isinstance(item, Mapping)]
-        merged.append(record)
-        merged = merged[-_VALIDATION_HISTORY_LIMIT:]
 
         def apply(task: Dict[str, Any]) -> None:
             current = dict(_mapping(task.get(_VALIDATION_KEY)))
-            current["history"] = [dict(item) for item in merged]
-            task[_VALIDATION_KEY] = current
+            history = [
+                dict(item)
+                for item in (current.get("history") or [])
+                if isinstance(item, Mapping)
+            ]
+            duplicate = any(
+                _validation_signature(item.get("argv")) == signature
+                and abs(_float(item.get("ts")) - ts) < 1e-6
+                and bool(item.get("ok")) == bool(record["ok"])
+                for item in history
+            )
+            if not duplicate:
+                history.append(dict(record))
+            task[_VALIDATION_KEY] = {
+                "schema": "nexus_coding_validation_provenance.v1",
+                "argv": list(signature),
+                "ok": result.get("ok") is True,
+                "ts": ts,
+                "cwd": str(cwd or ""),
+                "run_id": str(task.get("agent_run_id") or ""),
+                "cycle": int(task.get("agent_cycle") or 0),
+                "substantive": substantive,
+                "history": history[-_VALIDATION_HISTORY_LIMIT:],
+            }
 
         mutate = getattr(cw, "mutate_task", None)
         if callable(mutate):
@@ -846,7 +948,7 @@ def _install_validation_continuity() -> None:
         except Exception:
             return
 
-    terminal._persist_validation_provenance = persist_validation_with_history
+    terminal._persist_validation_provenance = persist_validation_atomically
     terminal._persist_validation_provenance_before_convergence = prior_persist
     terminal._coding_validation_history_continuity_installed = True
 

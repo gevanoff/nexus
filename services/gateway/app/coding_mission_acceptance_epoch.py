@@ -268,9 +268,13 @@ def mission_delta_state(
             "error": untracked_error,
             "epoch": epoch,
         }
-    pieces = [part for part in (str(tracked.get("stdout") or "").strip(), untracked) if part]
+    tracked_text = str(tracked.get("stdout") or "").strip()
+    pieces = [part for part in (tracked_text, untracked) if part]
     raw = "\n\n".join(pieces).strip()
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest() if raw else ""
+    tracked_digest = (
+        hashlib.sha256(tracked_text.encode("utf-8")).hexdigest() if tracked_text else ""
+    )
     return {
         "ok": True,
         "has_delta": bool(raw),
@@ -278,6 +282,7 @@ def mission_delta_state(
         "current_head": _head(cw, task_id, task),
         "diff_text": raw,
         "diff_sha256": digest,
+        "tracked_diff_sha256": tracked_digest,
         "diff_chars": len(raw),
         "error": "",
         "epoch": epoch,

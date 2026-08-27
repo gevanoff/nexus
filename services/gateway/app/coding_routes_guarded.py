@@ -33,7 +33,6 @@ from app import coding_model_metadata_resilience
 from app import coding_network_resilience
 from app import coding_plan_edit_serialization
 from app import coding_policy_rejection_recovery
-from app import coding_pr93_review_hardening
 from app import coding_refuted_findings
 from app import coding_resume_convergence_hardening
 from app import coding_semantic_acceptance
@@ -165,16 +164,6 @@ coding_hypothesis_transition_hardening.install(
     coding_hypothesis_persistence,
     coding_evidence_policy,
     coding_debug_report,
-)
-# Apply the final review fixes before the acceptance/resume overlays invoke their
-# historical installers. This makes validation continuity order-independent,
-# keeps parser/event reconstruction single-sourced, disables unsound validation
-# restamping, and makes Sentinel policy drift non-fatal to the Coding API.
-coding_pr93_review_hardening.preinstall(
-    cw,
-    coding_mission_acceptance_epoch,
-    coding_acceptance_convergence_hardening,
-    coding_resume_convergence_hardening,
 )
 # The final convergence layer must observe every policy/schema/mission overlay.
 # It executes refutation against the live policy that advertised the tool and
