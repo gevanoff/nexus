@@ -121,6 +121,67 @@ def test_finish_semantic_review_is_driven_by_actual_run_delta(monkeypatch) -> No
     assert reviews == ["diff --git a/x.py b/x.py\n+fixed\n"]
 
 
+def test_retryable_semantic_review_failure_does_not_instruct_repository_repair(monkeypatch) -> None:
+    task = {
+        "agent_run_id": "run-1",
+        "agent_cycle": 5,
+        "agent_events": [],
+        "prompt": "Fix the issue",
+    }
+    events: list[dict] = []
+
+    monkeypatch.setattr(guarded.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(
+        guarded,
+        "_ORIGINAL_RUN_TOOL",
+        lambda _task_id, _name, _args, *, git_token_value: {
+            "ok": True,
+            "success": True,
+            "summary": "done",
+        },
+    )
+    monkeypatch.setattr(
+        guarded,
+        "_run_delta_diff",
+        lambda _task_id, _task: "diff --git a/x.py b/x.py\n+fixed\n",
+    )
+    monkeypatch.setattr(guarded, "_deterministic_acceptance_ready", lambda _task_id: True)
+
+    async def fake_review(_task_id, _task, *, diff_text):
+        assert diff_text
+        return {
+            "accepted": False,
+            "reason": "reviewer response could not be parsed",
+            "causal_alignment": False,
+            "existing_mechanism_checked": False,
+            "acceptance_criteria_checked": False,
+            "review_error": True,
+            "fingerprint": "review-fingerprint",
+        }
+
+    monkeypatch.setattr(guarded, "_semantic_acceptance_review", fake_review)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_append_event",
+        lambda _task_id, event: events.append(dict(event)),
+    )
+
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code_test",
+        "coding_finish",
+        {"success": True, "summary": "done"},
+        git_token_value=None,
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "semantic_acceptance_review_failed"
+    assert "Retry coding_finish without changing" in result["required_action"]
+    assert "repository repair is not required" in result["summary"]
+    assert events[-1]["type"] == "semantic_acceptance_review"
+    assert events[-1]["review_error"] is True
+    assert events[-1]["fingerprint"] == "review-fingerprint"
+
+
 def test_finish_fails_closed_when_recorded_command_mutation_loses_delta(monkeypatch) -> None:
     task = {
         "agent_run_id": "run-1",
