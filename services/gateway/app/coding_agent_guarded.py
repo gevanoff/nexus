@@ -499,6 +499,7 @@ def _run_tool_with_semantic_acceptance(
             diff_text=diff_text,
         )
     )
+    review_error = bool(review.get("review_error") or review.get("parse_error"))
     _agent._append_event(
         task_id,
         {
@@ -515,6 +516,8 @@ def _run_tool_with_semantic_acceptance(
             ),
             "backend": str(review.get("backend") or ""),
             "upstream_model": str(review.get("upstream_model") or ""),
+            "review_error": review_error,
+            "fingerprint": str(review.get("fingerprint") or ""),
         },
     )
     if bool(review.get("accepted")):
@@ -522,6 +525,21 @@ def _run_tool_with_semantic_acceptance(
     reason = str(review.get("reason") or "").strip() or (
         "the patch does not yet demonstrate causal alignment with the request"
     )
+    if review_error:
+        return {
+            "ok": False,
+            "success": False,
+            "error": "semantic_acceptance_review_failed",
+            "required_action": (
+                "Retry coding_finish without changing the repository state; the independent "
+                "semantic review did not complete reliably."
+            ),
+            "summary": (
+                f"Independent semantic acceptance could not complete reliably: {reason}. "
+                "No semantic rejection was recorded and repository repair is not required."
+            ),
+            "semantic_review": review,
+        }
     return {
         "ok": False,
         "success": False,
