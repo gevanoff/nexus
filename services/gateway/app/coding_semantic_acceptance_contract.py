@@ -134,8 +134,6 @@ def ensure_contract(cw: Any, task_id: str, task: Optional[Mapping[str, Any]] = N
         current = _mapping(latest.get(KEY))
         if _is_frozen_contract(current):
             return
-        # Build from the task inside the mutation lock so operator criteria and
-        # first-review contract freeze have one serializable winner.
         latest[KEY] = _materialize_contract(latest)
 
     mutate = getattr(cw, "mutate_task", None)
@@ -161,7 +159,6 @@ def set_acceptance_criteria(cw: Any, task_id: str, criteria: Any) -> Dict[str, A
             if existing_criteria == normalized:
                 return
             raise ValueError("mission acceptance contract is already immutable for this workspace")
-        # Persist criteria and freeze their contract in the same atomic mutation.
         latest["mission_acceptance_criteria"] = list(normalized)
         latest[KEY] = _materialize_contract(latest)
 
@@ -401,7 +398,7 @@ def install(
         try:
             expected_contract = _contract_fingerprint_state(task)
             latest = cw.load_task(task_id)
-            contract = ensure_contract(cw, task_id, latest)
+            frozen = ensure_contract(cw, task_id, latest)
             latest = cw.load_task(task_id)
             actual_contract = _contract_fingerprint_state(latest)
             fingerprint = terminal_hardening.semantic_acceptance_fingerprint(
@@ -432,7 +429,7 @@ def install(
 
             evidence = repository_grounding(epoch, cw, agent, task_id, latest)
             token = semantic_acceptance.set_review_grounding(
-                acceptance_contract=render_contract(contract),
+                acceptance_contract=render_contract(frozen),
                 repository_evidence=evidence,
             )
             try:
@@ -454,8 +451,6 @@ def install(
 
     guarded._semantic_acceptance_review = grounded_review
 
-    # Duplicate rejection suppression must be based on the live contract/diff,
-    # not a task snapshot captured before an operator criteria update.
     original_prior_rejection = getattr(terminal_hardening, "_prior_rejection", None)
     if callable(original_prior_rejection):
         def prior_rejection_if_live(task: Mapping[str, Any], fingerprint: str) -> Mapping[str, Any]:
@@ -470,7 +465,9 @@ def install(
                     diff_text=live_diff,
                 ) if live_diff else ""
             except Exception:
-                return {}
+                # Non-production/synthetic callers may invoke the owning module
+                # directly without a task in this installed workspace store.
+                return original_prior_rejection(task, fingerprint)
             if not live_fingerprint or live_fingerprint != fingerprint:
                 return {}
             return original_prior_rejection(latest, fingerprint)
@@ -478,9 +475,6 @@ def install(
         terminal_hardening._prior_rejection = prior_rejection_if_live
         terminal_hardening._prior_rejection_before_semantic_contract = original_prior_rejection
 
-    # Bind the older causal rejection guard to the same immutable acceptance
-    # contract. Otherwise changing operator criteria could remain blocked by a
-    # rejection of the same diff/hypothesis under different human intent.
     try:
         from app import coding_acceptance_convergence_hardening as convergence
     except Exception:
@@ -541,8 +535,6 @@ def install(
             convergence._semantic_rejection_guard_blocks_before_semantic_contract = original_guard_blocks
         convergence._semantic_contract_rejection_guard_installed = True
 
-    # Persist semantic rejection under the fingerprint actually reviewed rather
-    # than the retry layer's earlier candidate snapshot.
     original_record_rejection = getattr(terminal_hardening, "_record_rejection", None)
     if callable(original_record_rejection):
         def record_rejection_with_reviewed_fingerprint(
@@ -566,9 +558,6 @@ def install(
         terminal_hardening._record_rejection = record_rejection_with_reviewed_fingerprint
         terminal_hardening._record_rejection_before_semantic_contract = original_record_rejection
 
-    # Bind mission acceptance publication to the exact accepted review event.
-    # This patch is scoped to the production objects supplied to install(), so
-    # direct legacy module fixtures preserve their historical semantics.
     original_record_semantic_acceptance = getattr(epoch, "_record_semantic_acceptance", None)
     latest_accepted_review = getattr(epoch, "_latest_accepted_review", None)
     mission_review_diff = getattr(epoch, "mission_review_diff", None)
@@ -639,8 +628,6 @@ def install(
             before = cw_obj.load_task(task_id)
             review = _mapping(latest_accepted_review(before))
             reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
-            # Pre-#96 review events have no fingerprint. Preserve compatibility
-            # only while no new immutable contract has been frozen for the task.
             if not reviewed_fingerprint:
                 if not _is_frozen_contract(before.get(KEY)):
                     return original_record_semantic_acceptance(
@@ -682,7 +669,6 @@ def install(
         epoch._record_semantic_acceptance = record_semantic_acceptance_if_review_current
         epoch._record_semantic_acceptance_before_semantic_contract = original_record_semantic_acceptance
 
-    # Make reviewer fingerprint/error durable before the debug exporter sees it.
     original_append_event = agent._append_event
 
     def append_event_with_semantic_metadata(task_id: str, event: Dict[str, Any]) -> Any:
