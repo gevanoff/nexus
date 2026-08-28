@@ -11,6 +11,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence
 SCHEMA = "nexus_coding_mission_acceptance_contract.v1"
 KEY = "coding_mission_acceptance_contract"
 _MAX_GROUNDING_CHARS = 30_000
+_MAX_WIDE_DIFF_CHARS = 18_000
 _MAX_HELPERS = 8
 _HELPER_CONTEXT_LINES = 28
 _CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
@@ -180,9 +181,11 @@ def _added_or_removed_calls(diff_text: str) -> list[str]:
 
 def _definition_context(epoch: Any, cw: Any, *, repo: Path, name: str) -> str:
     escaped = re.escape(name)
+    # POSIX ERE character class [(] is a portable literal open parenthesis and
+    # avoids double-escaping differences between git grep implementations.
     pattern = (
-        rf"(^|[[:space:]])(async[[:space:]]+)?def[[:space:]]+{escaped}[[:space:]]*\\(|"
-        rf"(^|[[:space:]])function[[:space:]]+{escaped}[[:space:]]*\\(|"
+        rf"(^|[[:space:]])(async[[:space:]]+)?def[[:space:]]+{escaped}[[:space:]]*[(]|"
+        rf"(^|[[:space:]])function[[:space:]]+{escaped}[[:space:]]*[(]|"
         rf"(^|[[:space:]])class[[:space:]]+{escaped}([[:space:](]|$)"
     )
     result = epoch._run_process(
@@ -238,7 +241,10 @@ def repository_grounding(epoch: Any, cw: Any, agent: Any, task_id: str, task: Ma
         if bool(wide.get("ok")):
             text = str(wide.get("stdout") or "").strip()
             if text:
-                pieces.append("Wide repository context around the changed lines:\n" + text)
+                pieces.append(
+                    "Wide repository context around the changed lines:\n"
+                    + agent._clip_text(text, _MAX_WIDE_DIFF_CHARS)
+                )
 
     diff_text = str(state.get("diff_text") or "")
     for name in _added_or_removed_calls(diff_text):
@@ -294,6 +300,7 @@ def install(
         )
 
     agent._run_tool = run_tool_with_contract
+    guarded._run_tool_with_semantic_acceptance = run_tool_with_contract
 
     original_review = guarded._semantic_acceptance_review
 
