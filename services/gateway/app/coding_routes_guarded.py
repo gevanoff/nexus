@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -36,6 +36,7 @@ from app import coding_policy_rejection_recovery
 from app import coding_refuted_findings
 from app import coding_resume_convergence_hardening
 from app import coding_semantic_acceptance
+from app import coding_semantic_acceptance_contract
 from app import coding_stagnation_resilience
 from app import coding_terminal_acceptance_hardening
 from app import coding_text_tool_handoff
@@ -186,6 +187,19 @@ coding_resume_convergence_hardening.install(
     coding_mission_acceptance_epoch,
     coding_acceptance_convergence_hardening,
 )
+# Semantic acceptance is the final authority before publication. Freeze human
+# mission intent separately from the agent-authored plan, ground the reviewer in
+# surrounding repository code, and preserve its decision rationale in debug
+# reports. Install last so no earlier dispatch overlay can bypass this contract.
+coding_semantic_acceptance_contract.install(
+    guarded_agent._agent,
+    guarded_agent,
+    cw,
+    coding_mission_acceptance_epoch,
+    coding_terminal_acceptance_hardening,
+    coding_semantic_acceptance,
+    coding_debug_report,
+)
 
 routes.ca = guarded_agent
 router = APIRouter()
@@ -198,6 +212,10 @@ class CodingFollowUpRequest(BaseModel):
     prompt: str = Field(min_length=1)
     coding_model: Optional[str] = None
     base_branch: Optional[str] = None
+
+
+class CodingAcceptanceContractRequest(BaseModel):
+    acceptance_criteria: List[str] = Field(min_length=1, max_length=40)
 
 
 def _integrated_reason(task: dict) -> str:
@@ -261,6 +279,25 @@ async def ui_coding_debug_report(req: Request, task_id: str) -> PlainTextRespons
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.put("/ui/api/coding/tasks/{task_id}/acceptance-contract", include_in_schema=False)
+async def ui_coding_set_acceptance_contract(
+    req: Request,
+    task_id: str,
+    body: CodingAcceptanceContractRequest,
+):
+    routes._require_coding_ui(req)
+    try:
+        contract = await routes._to_thread(
+            coding_semantic_acceptance_contract.set_acceptance_criteria,
+            cw,
+            task_id,
+            body.acceptance_criteria,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"acceptance_contract": contract}
 
 
 @router.post("/ui/api/coding/tasks/{task_id}/follow-up", include_in_schema=False)
