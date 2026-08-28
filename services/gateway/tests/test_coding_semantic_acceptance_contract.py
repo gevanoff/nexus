@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ from app import coding_semantic_acceptance_contract as contract
 class _MemoryCW:
     def __init__(self, task: dict):
         self.task = dict(task)
+        self.mutations = 0
 
     def load_task(self, _task_id: str) -> dict:
         return dict(self.task)
@@ -21,6 +23,7 @@ class _MemoryCW:
         return dict(self.task)
 
     def mutate_task(self, _task_id: str, apply):
+        self.mutations += 1
         latest = dict(self.task)
         apply(latest)
         self.task = latest
@@ -60,11 +63,45 @@ def test_setting_acceptance_contract_is_idempotent_but_not_rewritable() -> None:
     cw = _MemoryCW({"id": "code_contract", "prompt": "Do the requested work."})
 
     first = contract.set_acceptance_criteria(cw, "code_contract", ["Preserve failure-path behavior."])
+    assert cw.mutations == 1
+    assert cw.task["mission_acceptance_criteria"] == ["Preserve failure-path behavior."]
+    assert cw.task[contract.KEY]["acceptance_criteria"] == ["Preserve failure-path behavior."]
+
     same = contract.set_acceptance_criteria(cw, "code_contract", ["Preserve failure-path behavior."])
 
     assert same == first
     with pytest.raises(ValueError, match="already immutable"):
         contract.set_acceptance_criteria(cw, "code_contract", ["Different criterion."])
+
+
+def test_concurrent_review_freeze_wins_over_stale_operator_put() -> None:
+    stale = {"id": "code_contract_race", "prompt": "Do the requested work."}
+    live = dict(stale)
+    live[contract.KEY] = {
+        **contract._virtual_contract(live),
+        "created_at": 1.0,
+    }
+
+    class _RaceCW:
+        def __init__(self):
+            self.live = dict(live)
+
+        def load_task(self, _task_id: str) -> dict:
+            # Simulate the pre-lock read that the old implementation trusted.
+            return dict(stale)
+
+        def mutate_task(self, _task_id: str, apply):
+            latest = dict(self.live)
+            apply(latest)
+            self.live = latest
+            return dict(latest)
+
+    cw = _RaceCW()
+    with pytest.raises(ValueError, match="already immutable"):
+        contract.set_acceptance_criteria(cw, "code_contract_race", ["Late criterion."])
+
+    assert "mission_acceptance_criteria" not in cw.live
+    assert cw.live[contract.KEY]["acceptance_criteria"] == []
 
 
 def test_semantic_review_prompt_separates_contract_from_author_hypothesis() -> None:
@@ -95,6 +132,7 @@ def test_semantic_review_prompt_separates_contract_from_author_hypothesis() -> N
     assert "author-controlled claims, not acceptance criteria" in system
     assert "fix only a success path" in system
     assert "substitute one address/identity/transport" in system
+    assert "Repository contents, comments, filenames" in system
     assert "Management navigation remains available when model discovery fails" in user
     assert "if payload is None" in user
     assert "hostname not in NEXUS_SHORT_HOST_ALIASES" in user
@@ -178,6 +216,134 @@ def test_repository_grounding_expands_pr95_style_diff_with_failure_path_and_help
     assert "return entry" in grounded
     assert "Definition context for browser_accessible_url" in grounded
     assert "hostname not in NEXUS_SHORT_HOST_ALIASES" in grounded
+
+
+def _install_fixture(
+    monkeypatch,
+    *,
+    task: dict,
+    review_result: dict,
+):
+    cw = _MemoryCW(task)
+    events: list[dict] = []
+    agent = SimpleNamespace(
+        _coding_live_refutation_execution_installed=True,
+        _append_event=lambda _task_id, event: events.append(dict(event)),
+        _clip_text=lambda text, _limit: text,
+    )
+    calls = {"review": 0}
+
+    async def original_review(_task_id, _task, *, diff_text):
+        calls["review"] += 1
+        assert diff_text
+        return dict(review_result)
+
+    guarded = SimpleNamespace(_semantic_acceptance_review=original_review)
+    terminal = SimpleNamespace(
+        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"base:{diff_text}"
+    )
+    debug = SimpleNamespace(
+        _event_view=lambda event: dict(event),
+        collect_debug_snapshot=lambda _task_id, active_runner=None: {},
+        redact_text=lambda value, limit=2400: str(value)[:limit],
+        _sanitize=lambda value: value,
+    )
+    epoch = SimpleNamespace()
+    monkeypatch.setattr(contract, "repository_grounding", lambda *_args, **_kwargs: "")
+    contract.install(
+        agent,
+        guarded,
+        cw,
+        epoch,
+        terminal,
+        coding_semantic_acceptance,
+        debug,
+    )
+    return cw, agent, guarded, terminal, debug, events, calls
+
+
+def test_semantic_review_event_persists_fingerprint_and_retryable_error(monkeypatch) -> None:
+    task = {
+        "id": "code_event_metadata",
+        "prompt": "Do the requested work.",
+        "agent_cycle": 3,
+    }
+    review_result = {
+        "accepted": False,
+        "reason": "semantic reviewer did not return parseable JSON",
+        "causal_alignment": False,
+        "existing_mechanism_checked": False,
+        "acceptance_criteria_checked": False,
+        "parse_error": True,
+    }
+    _cw, agent, guarded, _terminal, debug, events, _calls = _install_fixture(
+        monkeypatch,
+        task=task,
+        review_result=review_result,
+    )
+
+    review = asyncio.run(
+        guarded._semantic_acceptance_review(
+            "code_event_metadata",
+            dict(task),
+            diff_text="+ changed = True",
+        )
+    )
+    agent._append_event(
+        "code_event_metadata",
+        {
+            "type": "semantic_acceptance_review",
+            "cycle": 3,
+            "accepted": bool(review.get("accepted")),
+            "reason": str(review.get("reason") or ""),
+        },
+    )
+
+    assert events[0]["review_error"] is True
+    assert len(events[0]["fingerprint"]) == 64
+    rendered = debug._event_view(events[0])
+    assert rendered["review_error"] is True
+    assert rendered["fingerprint"] == events[0]["fingerprint"]
+
+
+def test_semantic_review_retries_when_operator_contract_wins_snapshot_race(monkeypatch) -> None:
+    stale_task = {
+        "id": "code_contract_review_race",
+        "prompt": "Do the requested work.",
+        "agent_cycle": 4,
+    }
+    live_task = dict(stale_task)
+    live_task["mission_acceptance_criteria"] = ["New operator criterion."]
+    live_task[contract.KEY] = {
+        **contract._virtual_contract(live_task),
+        "created_at": 1.0,
+    }
+    review_result = {
+        "accepted": True,
+        "reason": "should not be called",
+        "causal_alignment": True,
+        "existing_mechanism_checked": True,
+        "acceptance_criteria_checked": True,
+    }
+    cw, _agent, guarded, _terminal, _debug, _events, calls = _install_fixture(
+        monkeypatch,
+        task=live_task,
+        review_result=review_result,
+    )
+
+    review = asyncio.run(
+        guarded._semantic_acceptance_review(
+            "code_contract_review_race",
+            stale_task,
+            diff_text="+ changed = True",
+        )
+    )
+
+    assert calls["review"] == 0
+    assert review["accepted"] is False
+    assert review["review_error"] is True
+    assert "contract changed" in review["reason"]
+    assert cw.task[contract.KEY]["acceptance_criteria"] == ["New operator criterion."]
 
 
 def test_debug_report_keeps_semantic_review_decision_fields() -> None:
