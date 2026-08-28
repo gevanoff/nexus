@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 from app import coding_semantic_acceptance
@@ -24,7 +25,13 @@ class _MemoryCW:
         return dict(latest)
 
 
-def _install(*, task: dict, epoch, record_rejection=None):
+def _install(
+    *,
+    task: dict,
+    epoch,
+    record_rejection=None,
+    prior_rejection=None,
+):
     cw = _MemoryCW(task)
     agent = SimpleNamespace(
         _coding_live_refutation_execution_installed=True,
@@ -35,12 +42,17 @@ def _install(*, task: dict, epoch, record_rejection=None):
     async def original_review(_task_id, _task, *, diff_text):
         raise AssertionError(f"unexpected reviewer call for {diff_text}")
 
-    guarded = SimpleNamespace(_semantic_acceptance_review=original_review)
+    guarded = SimpleNamespace(
+        _semantic_acceptance_review=original_review,
+        _run_delta_diff=lambda _task_id, _task: "review-diff",
+    )
     terminal = SimpleNamespace(
         semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"base:{diff_text}"
     )
     if record_rejection is not None:
         terminal._record_rejection = record_rejection
+    if prior_rejection is not None:
+        terminal._prior_rejection = prior_rejection
     debug = SimpleNamespace(
         _event_view=lambda event: dict(event),
         collect_debug_snapshot=lambda _task_id, active_runner=None: {},
@@ -57,6 +69,19 @@ def _install(*, task: dict, epoch, record_rejection=None):
         debug,
     )
     return cw, agent, guarded, terminal
+
+
+def test_frozen_contract_rejects_payload_tampering() -> None:
+    task = {
+        "id": "code_contract_integrity",
+        "prompt": "Do the work.",
+        "mission_acceptance_criteria": ["Preserve failure behavior."],
+    }
+    frozen = contract._materialize_contract(task)
+    assert contract._is_frozen_contract(frozen) is True
+
+    frozen["acceptance_criteria"] = ["Different criterion."]
+    assert contract._is_frozen_contract(frozen) is False
 
 
 def test_rejection_ledger_uses_fingerprint_from_actual_review() -> None:
@@ -87,6 +112,57 @@ def test_rejection_ledger_uses_fingerprint_from_actual_review() -> None:
     )
 
     assert recorded == ["reviewed-contract-fingerprint"]
+
+
+def test_duplicate_rejection_precheck_reloads_live_contract() -> None:
+    prior_calls: list[str] = []
+
+    def prior_rejection(_task, fingerprint):
+        prior_calls.append(fingerprint)
+        return {"accepted": False, "fingerprint": fingerprint}
+
+    epoch = SimpleNamespace()
+    cw, _agent, _guarded, terminal = _install(
+        task={"id": "code_prior_race", "prompt": "Do the work."},
+        epoch=epoch,
+        prior_rejection=prior_rejection,
+    )
+    before = cw.load_task("code_prior_race")
+    stale_fingerprint = terminal.semantic_acceptance_fingerprint(
+        before,
+        diff_text="review-diff",
+    )
+
+    contract.set_acceptance_criteria(cw, "code_prior_race", ["New operator criterion."])
+
+    assert terminal._prior_rejection(before, stale_fingerprint) == {}
+    assert prior_calls == []
+
+
+def test_grounding_failure_is_retryable_instead_of_crashing_finish() -> None:
+    cw, _agent, guarded, _terminal = _install(
+        task={
+            "id": "code_grounding_error",
+            "prompt": "Do the work.",
+            "agent_cycle": 6,
+        },
+        # Missing mission-delta methods deliberately makes repository grounding
+        # fail before the backend reviewer can run.
+        epoch=SimpleNamespace(),
+    )
+
+    review = asyncio.run(
+        guarded._semantic_acceptance_review(
+            "code_grounding_error",
+            cw.load_task("code_grounding_error"),
+            diff_text="+ changed = True",
+        )
+    )
+
+    assert review["accepted"] is False
+    assert review["review_error"] is True
+    assert "grounding failed" in review["reason"]
+    assert review["fingerprint"]
 
 
 def test_mission_acceptance_refuses_accepted_event_for_stale_fingerprint() -> None:
