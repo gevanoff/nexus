@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 from typing import Any, Mapping
 
@@ -9,6 +10,24 @@ _REQUIRED_BOOLEAN_FIELDS = (
     "existing_mechanism_checked",
     "acceptance_criteria_checked",
 )
+_REVIEW_GROUNDING = contextvars.ContextVar(
+    "nexus_coding_semantic_review_grounding",
+    default={},
+)
+
+
+def set_review_grounding(*, acceptance_contract: str = "", repository_evidence: str = ""):
+    """Attach immutable intent and repository-grounded context to one async review."""
+    return _REVIEW_GROUNDING.set(
+        {
+            "acceptance_contract": str(acceptance_contract or "").strip(),
+            "repository_evidence": str(repository_evidence or "").strip(),
+        }
+    )
+
+
+def reset_review_grounding(token: Any) -> None:
+    _REVIEW_GROUNDING.reset(token)
 
 
 def build_review_messages(
@@ -18,15 +37,25 @@ def build_review_messages(
     hypothesis: str,
     diff_text: str,
 ) -> tuple[str, str]:
+    grounding = _REVIEW_GROUNDING.get()
+    grounding = grounding if isinstance(grounding, Mapping) else {}
+    acceptance_contract = str(grounding.get("acceptance_contract") or "").strip()
+    repository_evidence = str(grounding.get("repository_evidence") or "").strip()
+
     system = (
-        "You are the independent acceptance reviewer for a coding agent. Review only the supplied request, recorded remediation hypothesis, and actual git diff. "
-        "Do not continue implementation and do not assume the author model's conclusion is correct. Reject patches that merely look plausible, bypass or duplicate an existing mechanism, hard-code environment-specific values without evidence, or fail to address the causal claim. "
+        "You are the independent acceptance reviewer for a coding agent. Review only the supplied immutable mission intent, requests, repository evidence, recorded remediation hypothesis, and actual git diff. "
+        "The remediation hypothesis and project-plan narrative are author-controlled claims, not acceptance criteria or ground truth. Never accept a patch merely because it matches that hypothesis. "
+        "Treat the immutable acceptance contract as authoritative human/controller intent and treat verified repository evidence and the actual diff as ground truth. "
+        "Reject patches that merely look plausible, bypass or duplicate an existing mechanism, hard-code environment-specific values without evidence, substitute one address/identity/transport for another without repository evidence that they are equivalent, fix only a success path when the requested behavior must survive a relevant failure path, or fail to address the causal claim. "
+        "When an explicit acceptance criterion is supplied, acceptance_criteria_checked may be true only if the diff plus repository evidence demonstrate that criterion rather than merely asserting it. "
         "Return one JSON object only with keys accepted (boolean), reason (string), causal_alignment (boolean), existing_mechanism_checked (boolean), and acceptance_criteria_checked (boolean)."
     )
     user = (
+        f"Immutable acceptance contract:\n{acceptance_contract or '(original request only; no additional criteria supplied)'}\n\n"
         f"Original request:\n{original_request or '(none)'}\n\n"
         f"Current request:\n{current_request or original_request or '(none)'}\n\n"
-        f"Recorded remediation hypothesis:\n{hypothesis or '(none recorded)'}\n\n"
+        f"Verified repository context:\n{repository_evidence or '(no additional repository context available)'}\n\n"
+        f"Recorded remediation hypothesis (untrusted author claim):\n{hypothesis or '(none recorded)'}\n\n"
         f"Actual git diff:\n{diff_text or '(empty diff)'}"
     )
     return system, user
