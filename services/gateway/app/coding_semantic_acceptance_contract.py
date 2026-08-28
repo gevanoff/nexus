@@ -403,6 +403,7 @@ def install(
                 "existing_mechanism_checked": False,
                 "acceptance_criteria_checked": False,
                 "review_error": True,
+                "fingerprint": fingerprint,
             }
             _remember_review_event_metadata(
                 task_id,
@@ -418,10 +419,12 @@ def install(
             repository_evidence=evidence,
         )
         try:
-            review = await original_review(task_id, latest, diff_text=diff_text)
+            review = dict(await original_review(task_id, latest, diff_text=diff_text))
         finally:
             semantic_acceptance.reset_review_grounding(token)
         review_error = bool(review.get("review_error") or review.get("parse_error"))
+        review["review_error"] = review_error
+        review["fingerprint"] = fingerprint
         _remember_review_event_metadata(
             task_id,
             cycle=cycle,
@@ -431,6 +434,132 @@ def install(
         return review
 
     guarded._semantic_acceptance_review = grounded_review
+
+    # The retry-dedup layer computes its candidate fingerprint before invoking
+    # the reviewer. If operator intent changes after that snapshot, persist a
+    # rejection under the fingerprint the reviewer actually assessed, never the
+    # stale pre-review candidate.
+    original_record_rejection = getattr(terminal_hardening, "_record_rejection", None)
+    if callable(original_record_rejection):
+        def record_rejection_with_reviewed_fingerprint(
+            agent_obj: Any,
+            task_id: str,
+            task: Mapping[str, Any],
+            *,
+            fingerprint: str,
+            result: Mapping[str, Any],
+        ) -> None:
+            review = _mapping(result.get("semantic_review"))
+            reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
+            original_record_rejection(
+                agent_obj,
+                task_id,
+                task,
+                fingerprint=reviewed_fingerprint or fingerprint,
+                result=result,
+            )
+
+        terminal_hardening._record_rejection = record_rejection_with_reviewed_fingerprint
+        terminal_hardening._record_rejection_before_semantic_contract = original_record_rejection
+
+    # Mission acceptance is written after the review event. Bind that write to
+    # the event's reviewed fingerprint and recheck after the legacy recorder
+    # runs. A concurrent repository/contract mutation can therefore never turn
+    # an accepted old-state review into acceptance of a new unreviewed state.
+    original_record_semantic_acceptance = getattr(epoch, "_record_semantic_acceptance", None)
+    latest_accepted_review = getattr(epoch, "_latest_accepted_review", None)
+    mission_review_diff = getattr(epoch, "mission_review_diff", None)
+    epoch_key = str(getattr(epoch, "KEY", "coding_mission_acceptance_epoch"))
+    epoch_schema = str(getattr(epoch, "SCHEMA", "nexus_coding_mission_acceptance_epoch.v1"))
+
+    def current_review_fingerprint(
+        terminal_obj: Any,
+        cw_obj: Any,
+        agent_obj: Any,
+        task_id: str,
+        task: Mapping[str, Any],
+    ) -> str:
+        if not callable(mission_review_diff):
+            return ""
+        rendered = str(mission_review_diff(cw_obj, agent_obj, task_id, dict(task)) or "")
+        if not rendered:
+            return ""
+        fn = getattr(terminal_obj, "semantic_acceptance_fingerprint", None)
+        if not callable(fn):
+            return ""
+        try:
+            return str(fn(task, diff_text=rendered) or "")
+        except Exception:
+            return ""
+
+    def clear_stale_epoch_acceptance(cw_obj: Any, task_id: str) -> None:
+        def apply(latest: Dict[str, Any]) -> None:
+            current = dict(_mapping(latest.get(epoch_key)))
+            if str(current.get("schema") or "") != epoch_schema:
+                return
+            if not str(current.get("accepted_fingerprint") or "").strip():
+                return
+            current.update(
+                {
+                    "status": "pending",
+                    "accepted_at": 0.0,
+                    "accepted_head": "",
+                    "accepted_run_id": "",
+                    "accepted_fingerprint": "",
+                    "accepted_diff_sha256": "",
+                    "updated_at": time.time(),
+                }
+            )
+            latest[epoch_key] = current
+
+        mutate = getattr(cw_obj, "mutate_task", None)
+        if callable(mutate):
+            mutate(task_id, apply)
+        else:
+            latest = cw_obj.load_task(task_id)
+            apply(latest)
+            cw_obj.save_task(latest)
+
+    if callable(original_record_semantic_acceptance) and callable(latest_accepted_review):
+        def record_semantic_acceptance_if_review_current(
+            terminal_obj: Any,
+            cw_obj: Any,
+            agent_obj: Any,
+            task_id: str,
+        ) -> None:
+            before = cw_obj.load_task(task_id)
+            review = _mapping(latest_accepted_review(before))
+            reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
+            current_fingerprint = current_review_fingerprint(
+                terminal_obj,
+                cw_obj,
+                agent_obj,
+                task_id,
+                before,
+            )
+            if not reviewed_fingerprint or reviewed_fingerprint != current_fingerprint:
+                return
+
+            original_record_semantic_acceptance(
+                terminal_obj,
+                cw_obj,
+                agent_obj,
+                task_id,
+            )
+
+            after = cw_obj.load_task(task_id)
+            after_fingerprint = current_review_fingerprint(
+                terminal_obj,
+                cw_obj,
+                agent_obj,
+                task_id,
+                after,
+            )
+            if reviewed_fingerprint != after_fingerprint:
+                clear_stale_epoch_acceptance(cw_obj, task_id)
+
+        epoch._record_semantic_acceptance = record_semantic_acceptance_if_review_current
+        epoch._record_semantic_acceptance_before_semantic_contract = original_record_semantic_acceptance
 
     # The guarded semantic dispatcher currently emits the review event after the
     # async reviewer returns and intentionally copies only the reviewer decision
@@ -482,9 +611,9 @@ def install(
     def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None) -> Dict[str, Any]:
         snapshot = original_collect(task_id, active_runner=active_runner)
         task = cw.load_task(task_id)
-        contract = _mapping(task.get(KEY))
-        if _is_frozen_contract(contract):
-            snapshot["mission_acceptance_contract"] = debug_report._sanitize(dict(contract))
+        frozen = _mapping(task.get(KEY))
+        if _is_frozen_contract(frozen):
+            snapshot["mission_acceptance_contract"] = debug_report._sanitize(dict(frozen))
         return snapshot
 
     debug_report.collect_debug_snapshot = collect_debug_snapshot
