@@ -1,0 +1,369 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import time
+from pathlib import Path
+from typing import Any, Dict, Mapping, Optional, Sequence
+
+
+SCHEMA = "nexus_coding_mission_acceptance_contract.v1"
+KEY = "coding_mission_acceptance_contract"
+_MAX_GROUNDING_CHARS = 30_000
+_MAX_HELPERS = 8
+_HELPER_CONTEXT_LINES = 28
+_CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_IGNORED_CALLS = {
+    "bool",
+    "dict",
+    "float",
+    "int",
+    "len",
+    "list",
+    "max",
+    "min",
+    "print",
+    "range",
+    "set",
+    "str",
+    "super",
+    "tuple",
+}
+_SEMANTIC_EVENT_FIELDS = (
+    "accepted",
+    "reason",
+    "causal_alignment",
+    "existing_mechanism_checked",
+    "acceptance_criteria_checked",
+    "review_error",
+    "fingerprint",
+)
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _stable_hash(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _normalize_criteria(value: Any) -> list[str]:
+    if isinstance(value, str):
+        values = [line.strip(" -*\t") for line in value.splitlines()]
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        values = [str(item or "").strip() for item in value]
+    else:
+        values = []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in values:
+        normalized = " ".join(item.split()).strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized[:2000])
+    return out[:40]
+
+
+def _contract_payload(task: Mapping[str, Any]) -> Dict[str, Any]:
+    mission = _mapping(task.get("mission"))
+    criteria = _normalize_criteria(task.get("mission_acceptance_criteria"))
+    if not criteria:
+        criteria = _normalize_criteria(mission.get("acceptance_criteria"))
+    return {
+        "original_request": str(task.get("prompt") or mission.get("goal") or "").strip(),
+        "acceptance_criteria": criteria,
+    }
+
+
+def ensure_contract(cw: Any, task_id: str, task: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    source = dict(task or cw.load_task(task_id))
+    existing = _mapping(source.get(KEY))
+    if str(existing.get("schema") or "") == SCHEMA and existing.get("fingerprint"):
+        return dict(existing)
+
+    payload = _contract_payload(source)
+    now = time.time()
+    proposed = {
+        "schema": SCHEMA,
+        **payload,
+        "fingerprint": _stable_hash(payload),
+        "created_at": now,
+        "immutable": True,
+    }
+
+    def apply(latest: Dict[str, Any]) -> None:
+        current = _mapping(latest.get(KEY))
+        if str(current.get("schema") or "") == SCHEMA and current.get("fingerprint"):
+            return
+        latest[KEY] = dict(proposed)
+
+    mutate = getattr(cw, "mutate_task", None)
+    if callable(mutate):
+        stored = mutate(task_id, apply)
+    else:
+        latest = cw.load_task(task_id)
+        apply(latest)
+        stored = cw.save_task(latest)
+    return dict(_mapping(stored.get(KEY)) or proposed)
+
+
+def set_acceptance_criteria(cw: Any, task_id: str, criteria: Any) -> Dict[str, Any]:
+    normalized = _normalize_criteria(criteria)
+    if not normalized:
+        raise ValueError("at least one non-empty acceptance criterion is required")
+    task = cw.load_task(task_id)
+    existing = _mapping(task.get(KEY))
+    if str(existing.get("schema") or "") == SCHEMA and existing.get("fingerprint"):
+        existing_criteria = _normalize_criteria(existing.get("acceptance_criteria"))
+        if existing_criteria == normalized:
+            return dict(existing)
+        raise ValueError("mission acceptance contract is already immutable for this workspace")
+
+    def apply(latest: Dict[str, Any]) -> None:
+        latest["mission_acceptance_criteria"] = list(normalized)
+
+    mutate = getattr(cw, "mutate_task", None)
+    if callable(mutate):
+        task = mutate(task_id, apply)
+    else:
+        apply(task)
+        task = cw.save_task(task)
+    return ensure_contract(cw, task_id, task)
+
+
+def render_contract(contract: Mapping[str, Any]) -> str:
+    request = str(contract.get("original_request") or "").strip() or "(none)"
+    criteria = _normalize_criteria(contract.get("acceptance_criteria"))
+    lines = [
+        f"Contract schema: {contract.get('schema') or SCHEMA}",
+        f"Contract fingerprint: {contract.get('fingerprint') or ''}",
+        "Original user request (immutable):",
+        request,
+        "Acceptance criteria (immutable; agent-authored plan text cannot replace these):",
+    ]
+    if criteria:
+        lines.extend(f"- {item}" for item in criteria)
+    else:
+        lines.append("- No additional operator-supplied criteria; evaluate the original request literally.")
+    return "\n".join(lines).strip()
+
+
+def _added_or_removed_calls(diff_text: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in str(diff_text or "").splitlines():
+        if not raw or raw.startswith(("+++", "---")) or raw[0] not in "+-":
+            continue
+        for match in _CALL_RE.finditer(raw[1:]):
+            name = match.group(1)
+            if name in _IGNORED_CALLS or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+            if len(out) >= _MAX_HELPERS:
+                return out
+    return out
+
+
+def _definition_context(epoch: Any, cw: Any, *, repo: Path, name: str) -> str:
+    escaped = re.escape(name)
+    pattern = (
+        rf"(^|[[:space:]])(async[[:space:]]+)?def[[:space:]]+{escaped}[[:space:]]*\\(|"
+        rf"(^|[[:space:]])function[[:space:]]+{escaped}[[:space:]]*\\(|"
+        rf"(^|[[:space:]])class[[:space:]]+{escaped}([[:space:](]|$)"
+    )
+    result = epoch._run_process(
+        cw,
+        ["git", "grep", "-n", "-E", pattern, "--", "."],
+        cwd=repo,
+    )
+    if not bool(result.get("ok")):
+        return ""
+    pieces: list[str] = []
+    for hit in str(result.get("stdout") or "").splitlines()[:2]:
+        parts = hit.split(":", 2)
+        if len(parts) < 3:
+            continue
+        raw_path, raw_line, _text = parts
+        try:
+            line_no = int(raw_line)
+        except ValueError:
+            continue
+        candidate = repo.joinpath(raw_path).resolve()
+        try:
+            candidate.relative_to(repo)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            continue
+        try:
+            lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            continue
+        start = max(0, line_no - 1 - _HELPER_CONTEXT_LINES)
+        end = min(len(lines), line_no + _HELPER_CONTEXT_LINES)
+        numbered = "\n".join(
+            f"{index + 1:>6}: {lines[index]}" for index in range(start, end)
+        )
+        pieces.append(f"Definition context for {name} at {raw_path}:{line_no}:\n{numbered}")
+    return "\n\n".join(pieces).strip()
+
+
+def repository_grounding(epoch: Any, cw: Any, agent: Any, task_id: str, task: Mapping[str, Any]) -> str:
+    state = epoch.mission_delta_state(cw, task_id, dict(task))
+    if not state.get("ok") or not state.get("has_delta"):
+        return ""
+    repo = epoch._repo_path(cw, task)
+    base_head = str(state.get("base_head") or "").strip()
+    pieces: list[str] = []
+    if base_head:
+        wide = epoch._run_process(
+            cw,
+            ["git", "diff", "--no-ext-diff", "--unified=80", base_head, "--", "."],
+            cwd=repo,
+        )
+        if bool(wide.get("ok")):
+            text = str(wide.get("stdout") or "").strip()
+            if text:
+                pieces.append("Wide repository context around the changed lines:\n" + text)
+
+    diff_text = str(state.get("diff_text") or "")
+    for name in _added_or_removed_calls(diff_text):
+        context = _definition_context(epoch, cw, repo=repo, name=name)
+        if context:
+            pieces.append(context)
+
+    raw = "\n\n".join(pieces).strip()
+    return agent._clip_text(raw, _MAX_GROUNDING_CHARS) if raw else ""
+
+
+def _contract_fingerprint_state(task: Mapping[str, Any]) -> Dict[str, Any]:
+    contract = _mapping(task.get(KEY))
+    if str(contract.get("schema") or "") != SCHEMA:
+        return {}
+    return {
+        "schema": SCHEMA,
+        "fingerprint": str(contract.get("fingerprint") or ""),
+        "original_request": str(contract.get("original_request") or ""),
+        "acceptance_criteria": _normalize_criteria(contract.get("acceptance_criteria")),
+    }
+
+
+def install(
+    agent: Any,
+    guarded: Any,
+    cw: Any,
+    epoch: Any,
+    terminal_hardening: Any,
+    semantic_acceptance: Any,
+    debug_report: Any,
+) -> None:
+    """Bind final semantic acceptance to immutable mission intent and repository ground truth."""
+    if bool(getattr(guarded, "_semantic_acceptance_contract_installed", False)):
+        return
+
+    original_run_tool = agent._run_tool
+
+    def run_tool_with_contract(
+        task_id: str,
+        name: str,
+        args: Dict[str, Any],
+        *,
+        git_token_value: Any,
+    ) -> Dict[str, Any]:
+        if name == "coding_finish":
+            ensure_contract(cw, task_id)
+        return original_run_tool(
+            task_id,
+            name,
+            args,
+            git_token_value=git_token_value,
+        )
+
+    agent._run_tool = run_tool_with_contract
+
+    original_review = guarded._semantic_acceptance_review
+
+    async def grounded_review(
+        task_id: str,
+        task: Dict[str, Any],
+        *,
+        diff_text: str,
+    ) -> Dict[str, Any]:
+        latest = cw.load_task(task_id)
+        contract = ensure_contract(cw, task_id, latest)
+        latest = cw.load_task(task_id)
+        evidence = repository_grounding(epoch, cw, agent, task_id, latest)
+        token = semantic_acceptance.set_review_grounding(
+            acceptance_contract=render_contract(contract),
+            repository_evidence=evidence,
+        )
+        try:
+            return await original_review(task_id, latest, diff_text=diff_text)
+        finally:
+            semantic_acceptance.reset_review_grounding(token)
+
+    guarded._semantic_acceptance_review = grounded_review
+
+    original_fingerprint = terminal_hardening.semantic_acceptance_fingerprint
+
+    def semantic_acceptance_fingerprint(task: Mapping[str, Any], *, diff_text: str) -> str:
+        base = str(original_fingerprint(task, diff_text=diff_text) or "")
+        if not base:
+            return ""
+        return _stable_hash(
+            {
+                "base_fingerprint": base,
+                "acceptance_contract": _contract_fingerprint_state(task),
+            }
+        )
+
+    terminal_hardening.semantic_acceptance_fingerprint = semantic_acceptance_fingerprint
+
+    original_event_view = debug_report._event_view
+
+    def event_view(event: Dict[str, Any]) -> Dict[str, Any]:
+        output = original_event_view(event)
+        if str(event.get("type") or "") in {
+            "semantic_acceptance_review",
+            "semantic_acceptance_state",
+            "semantic_acceptance_repeat_blocked",
+        }:
+            for key in _SEMANTIC_EVENT_FIELDS:
+                if key not in event:
+                    continue
+                value = event.get(key)
+                output[key] = (
+                    debug_report.redact_text(value, limit=2400)
+                    if isinstance(value, str)
+                    else value
+                )
+        return output
+
+    debug_report._event_view = event_view
+
+    original_collect = debug_report.collect_debug_snapshot
+
+    def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None) -> Dict[str, Any]:
+        snapshot = original_collect(task_id, active_runner=active_runner)
+        task = cw.load_task(task_id)
+        contract = _mapping(task.get(KEY))
+        if str(contract.get("schema") or "") == SCHEMA:
+            snapshot["mission_acceptance_contract"] = debug_report._sanitize(dict(contract))
+        return snapshot
+
+    debug_report.collect_debug_snapshot = collect_debug_snapshot
+    guarded._semantic_acceptance_contract_installed = True
