@@ -89,20 +89,32 @@ def _contract_payload(task: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _virtual_contract(task: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return deterministic contract identity even before durable materialization.
+
+    Semantic rejection deduplication computes its fingerprint before the reviewer
+    runs. Binding that pre-review fingerprint to this virtual form means the
+    later persisted contract has exactly the same semantic identity without an
+    extra mutation-capable dispatch wrapper.
+    """
+    payload = _contract_payload(task)
+    return {
+        "schema": SCHEMA,
+        **payload,
+        "fingerprint": _stable_hash(payload),
+        "immutable": True,
+    }
+
+
 def ensure_contract(cw: Any, task_id: str, task: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     source = dict(task or cw.load_task(task_id))
     existing = _mapping(source.get(KEY))
     if str(existing.get("schema") or "") == SCHEMA and existing.get("fingerprint"):
         return dict(existing)
 
-    payload = _contract_payload(source)
-    now = time.time()
     proposed = {
-        "schema": SCHEMA,
-        **payload,
-        "fingerprint": _stable_hash(payload),
-        "created_at": now,
-        "immutable": True,
+        **_virtual_contract(source),
+        "created_at": time.time(),
     }
 
     def apply(latest: Dict[str, Any]) -> None:
@@ -258,8 +270,8 @@ def repository_grounding(epoch: Any, cw: Any, agent: Any, task_id: str, task: Ma
 
 def _contract_fingerprint_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     contract = _mapping(task.get(KEY))
-    if str(contract.get("schema") or "") != SCHEMA:
-        return {}
+    if str(contract.get("schema") or "") != SCHEMA or not contract.get("fingerprint"):
+        contract = _virtual_contract(task)
     return {
         "schema": SCHEMA,
         "fingerprint": str(contract.get("fingerprint") or ""),
@@ -280,28 +292,16 @@ def install(
     """Bind final semantic acceptance to immutable mission intent and repository ground truth."""
     if bool(getattr(guarded, "_semantic_acceptance_contract_installed", False)):
         return
-
-    original_run_tool = agent._run_tool
-
-    def run_tool_with_contract(
-        task_id: str,
-        name: str,
-        args: Dict[str, Any],
-        *,
-        git_token_value: Any,
-    ) -> Dict[str, Any]:
-        if name == "coding_finish":
-            ensure_contract(cw, task_id)
-        return original_run_tool(
-            task_id,
-            name,
-            args,
-            git_token_value=git_token_value,
+    if not bool(getattr(agent, "_coding_live_refutation_execution_installed", False)):
+        raise RuntimeError(
+            "semantic acceptance contract must be installed after acceptance convergence"
         )
 
-    agent._run_tool = run_tool_with_contract
-    guarded._run_tool_with_semantic_acceptance = run_tool_with_contract
-
+    # Do not wrap the public tool dispatcher. Semantic identity is bound to a
+    # deterministic virtual contract before review; durable materialization
+    # happens only when a real semantic review is actually invoked. This keeps
+    # mocked dispatch seams and rejected pre-review finishes untouched while
+    # avoiding the shadow-dispatch fragility that earlier hardening removed.
     original_review = guarded._semantic_acceptance_review
 
     async def grounded_review(
