@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
@@ -40,6 +41,8 @@ _SEMANTIC_EVENT_FIELDS = (
     "review_error",
     "fingerprint",
 )
+_REVIEW_EVENT_METADATA: dict[str, tuple[int, str, bool]] = {}
+_REVIEW_EVENT_METADATA_LOCK = threading.Lock()
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -106,22 +109,35 @@ def _virtual_contract(task: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def ensure_contract(cw: Any, task_id: str, task: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
-    source = dict(task or cw.load_task(task_id))
-    existing = _mapping(source.get(KEY))
-    if str(existing.get("schema") or "") == SCHEMA and existing.get("fingerprint"):
-        return dict(existing)
+def _is_frozen_contract(value: Any) -> bool:
+    contract = _mapping(value)
+    return bool(
+        str(contract.get("schema") or "") == SCHEMA
+        and str(contract.get("fingerprint") or "").strip()
+    )
 
-    proposed = {
-        **_virtual_contract(source),
+
+def _materialize_contract(task: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        **_virtual_contract(task),
         "created_at": time.time(),
     }
 
+
+def ensure_contract(cw: Any, task_id: str, task: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    source = dict(task or cw.load_task(task_id))
+    existing = _mapping(source.get(KEY))
+    if _is_frozen_contract(existing):
+        return dict(existing)
+
     def apply(latest: Dict[str, Any]) -> None:
         current = _mapping(latest.get(KEY))
-        if str(current.get("schema") or "") == SCHEMA and current.get("fingerprint"):
+        if _is_frozen_contract(current):
             return
-        latest[KEY] = dict(proposed)
+        # Compute from the task *inside* the mutation lock. An operator criteria
+        # PUT and the first semantic review therefore have one serializable
+        # winner instead of freezing a proposal built from stale pre-lock state.
+        latest[KEY] = _materialize_contract(latest)
 
     mutate = getattr(cw, "mutate_task", None)
     if callable(mutate):
@@ -130,31 +146,39 @@ def ensure_contract(cw: Any, task_id: str, task: Optional[Mapping[str, Any]] = N
         latest = cw.load_task(task_id)
         apply(latest)
         stored = cw.save_task(latest)
-    return dict(_mapping(stored.get(KEY)) or proposed)
+    contract = _mapping(stored.get(KEY))
+    return dict(contract if _is_frozen_contract(contract) else _materialize_contract(stored))
 
 
 def set_acceptance_criteria(cw: Any, task_id: str, criteria: Any) -> Dict[str, Any]:
     normalized = _normalize_criteria(criteria)
     if not normalized:
         raise ValueError("at least one non-empty acceptance criterion is required")
-    task = cw.load_task(task_id)
-    existing = _mapping(task.get(KEY))
-    if str(existing.get("schema") or "") == SCHEMA and existing.get("fingerprint"):
-        existing_criteria = _normalize_criteria(existing.get("acceptance_criteria"))
-        if existing_criteria == normalized:
-            return dict(existing)
-        raise ValueError("mission acceptance contract is already immutable for this workspace")
 
     def apply(latest: Dict[str, Any]) -> None:
+        current = _mapping(latest.get(KEY))
+        if _is_frozen_contract(current):
+            existing_criteria = _normalize_criteria(current.get("acceptance_criteria"))
+            if existing_criteria == normalized:
+                return
+            raise ValueError("mission acceptance contract is already immutable for this workspace")
+        # Persist the operator criteria and freeze the contract in the same task
+        # mutation. A concurrent PUT or semantic review can no longer observe or
+        # acknowledge a half-applied acceptance contract.
         latest["mission_acceptance_criteria"] = list(normalized)
+        latest[KEY] = _materialize_contract(latest)
 
     mutate = getattr(cw, "mutate_task", None)
     if callable(mutate):
-        task = mutate(task_id, apply)
+        stored = mutate(task_id, apply)
     else:
-        apply(task)
-        task = cw.save_task(task)
-    return ensure_contract(cw, task_id, task)
+        latest = cw.load_task(task_id)
+        apply(latest)
+        stored = cw.save_task(latest)
+    contract = _mapping(stored.get(KEY))
+    if not _is_frozen_contract(contract):
+        raise RuntimeError("mission acceptance contract was not persisted")
+    return dict(contract)
 
 
 def render_contract(contract: Mapping[str, Any]) -> str:
@@ -270,13 +294,42 @@ def repository_grounding(epoch: Any, cw: Any, agent: Any, task_id: str, task: Ma
 
 def _contract_fingerprint_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     contract = _mapping(task.get(KEY))
-    if str(contract.get("schema") or "") != SCHEMA or not contract.get("fingerprint"):
+    if not _is_frozen_contract(contract):
         contract = _virtual_contract(task)
     return {
         "schema": SCHEMA,
         "fingerprint": str(contract.get("fingerprint") or ""),
         "original_request": str(contract.get("original_request") or ""),
         "acceptance_criteria": _normalize_criteria(contract.get("acceptance_criteria")),
+    }
+
+
+def _remember_review_event_metadata(
+    task_id: str,
+    *,
+    cycle: int,
+    fingerprint: str,
+    review_error: bool,
+) -> None:
+    with _REVIEW_EVENT_METADATA_LOCK:
+        _REVIEW_EVENT_METADATA[str(task_id)] = (
+            int(cycle),
+            str(fingerprint or ""),
+            bool(review_error),
+        )
+
+
+def _take_review_event_metadata(task_id: str, *, cycle: int) -> Dict[str, Any]:
+    with _REVIEW_EVENT_METADATA_LOCK:
+        stored = _REVIEW_EVENT_METADATA.pop(str(task_id), None)
+    if stored is None:
+        return {}
+    stored_cycle, fingerprint, review_error = stored
+    if int(stored_cycle) != int(cycle):
+        return {}
+    return {
+        "fingerprint": fingerprint,
+        "review_error": review_error,
     }
 
 
@@ -304,27 +357,6 @@ def install(
     # avoiding the shadow-dispatch fragility that earlier hardening removed.
     original_review = guarded._semantic_acceptance_review
 
-    async def grounded_review(
-        task_id: str,
-        task: Dict[str, Any],
-        *,
-        diff_text: str,
-    ) -> Dict[str, Any]:
-        latest = cw.load_task(task_id)
-        contract = ensure_contract(cw, task_id, latest)
-        latest = cw.load_task(task_id)
-        evidence = repository_grounding(epoch, cw, agent, task_id, latest)
-        token = semantic_acceptance.set_review_grounding(
-            acceptance_contract=render_contract(contract),
-            repository_evidence=evidence,
-        )
-        try:
-            return await original_review(task_id, latest, diff_text=diff_text)
-        finally:
-            semantic_acceptance.reset_review_grounding(token)
-
-    guarded._semantic_acceptance_review = grounded_review
-
     original_fingerprint = terminal_hardening.semantic_acceptance_fingerprint
 
     def semantic_acceptance_fingerprint(task: Mapping[str, Any], *, diff_text: str) -> str:
@@ -339,6 +371,89 @@ def install(
         )
 
     terminal_hardening.semantic_acceptance_fingerprint = semantic_acceptance_fingerprint
+
+    async def grounded_review(
+        task_id: str,
+        task: Dict[str, Any],
+        *,
+        diff_text: str,
+    ) -> Dict[str, Any]:
+        # Capture the contract identity associated with the caller's acceptance
+        # snapshot. If an operator criteria PUT wins the task lock between that
+        # snapshot and contract freeze, abort this review as retryable rather than
+        # reviewing one contract and recording a fingerprint for another.
+        expected_contract = _contract_fingerprint_state(task)
+        latest = cw.load_task(task_id)
+        contract = ensure_contract(cw, task_id, latest)
+        latest = cw.load_task(task_id)
+        actual_contract = _contract_fingerprint_state(latest)
+        fingerprint = terminal_hardening.semantic_acceptance_fingerprint(
+            latest,
+            diff_text=diff_text,
+        )
+        cycle = int(latest.get("agent_cycle") or task.get("agent_cycle") or 0)
+        if expected_contract.get("fingerprint") != actual_contract.get("fingerprint"):
+            review = {
+                "accepted": False,
+                "reason": (
+                    "mission acceptance contract changed while semantic review was starting; "
+                    "retry coding_finish against the newly frozen operator intent"
+                ),
+                "causal_alignment": False,
+                "existing_mechanism_checked": False,
+                "acceptance_criteria_checked": False,
+                "review_error": True,
+            }
+            _remember_review_event_metadata(
+                task_id,
+                cycle=cycle,
+                fingerprint=fingerprint,
+                review_error=True,
+            )
+            return review
+
+        evidence = repository_grounding(epoch, cw, agent, task_id, latest)
+        token = semantic_acceptance.set_review_grounding(
+            acceptance_contract=render_contract(contract),
+            repository_evidence=evidence,
+        )
+        try:
+            review = await original_review(task_id, latest, diff_text=diff_text)
+        finally:
+            semantic_acceptance.reset_review_grounding(token)
+        review_error = bool(review.get("review_error") or review.get("parse_error"))
+        _remember_review_event_metadata(
+            task_id,
+            cycle=cycle,
+            fingerprint=fingerprint,
+            review_error=review_error,
+        )
+        return review
+
+    guarded._semantic_acceptance_review = grounded_review
+
+    # The guarded semantic dispatcher currently emits the review event after the
+    # async reviewer returns and intentionally copies only the reviewer decision
+    # fields. Enrich that event at the persistence boundary so fingerprint and
+    # retryable reviewer-error status exist in durable task history, not merely
+    # in the later debug rendering layer.
+    original_append_event = agent._append_event
+
+    def append_event_with_semantic_metadata(task_id: str, event: Dict[str, Any]) -> Any:
+        if str(event.get("type") or "") == "semantic_acceptance_review":
+            enriched = dict(event)
+            metadata = _take_review_event_metadata(
+                task_id,
+                cycle=int(enriched.get("cycle") or 0),
+            )
+            if metadata:
+                enriched["fingerprint"] = str(metadata.get("fingerprint") or "")
+                enriched["review_error"] = bool(metadata.get("review_error"))
+            event = enriched
+        return original_append_event(task_id, event)
+
+    agent._append_event = append_event_with_semantic_metadata
+    agent._append_event_before_semantic_acceptance_contract = original_append_event
 
     original_event_view = debug_report._event_view
 
@@ -368,7 +483,7 @@ def install(
         snapshot = original_collect(task_id, active_runner=active_runner)
         task = cw.load_task(task_id)
         contract = _mapping(task.get(KEY))
-        if str(contract.get("schema") or "") == SCHEMA:
+        if _is_frozen_contract(contract):
             snapshot["mission_acceptance_contract"] = debug_report._sanitize(dict(contract))
         return snapshot
 
