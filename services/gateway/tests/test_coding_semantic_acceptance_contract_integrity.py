@@ -289,8 +289,10 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
     accepted = cw.task["coding_mission_acceptance_epoch"]
     assert cw.task["repo_version"] == 2
     assert accepted["status"] == "pending"
-    assert accepted["accepted_fingerprint"] == ""
+    assert accepted["accepted_at"] == 0.0
     assert accepted["accepted_head"] == ""
+    assert accepted["accepted_run_id"] == ""
+    assert accepted["accepted_fingerprint"] == ""
     assert accepted["accepted_diff_sha256"] == ""
 
 
