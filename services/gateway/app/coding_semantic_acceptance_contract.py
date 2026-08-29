@@ -633,13 +633,27 @@ def install(
             if reviewed_fingerprint != current_fingerprint:
                 return
 
-            publication = original_record_semantic_acceptance(
-                terminal_obj,
-                cw_obj,
-                agent_obj,
-                task_id,
-                return_publication=True,
-            )
+            try:
+                publication = original_record_semantic_acceptance(
+                    terminal_obj,
+                    cw_obj,
+                    agent_obj,
+                    task_id,
+                    return_publication=True,
+                )
+            except TypeError as exc:
+                # Synthetic/legacy recorders may not expose the structured-return
+                # keyword. Run them for compatibility, but without an exact
+                # publication identity stale cleanup must fail closed.
+                if "return_publication" not in str(exc):
+                    raise
+                original_record_semantic_acceptance(
+                    terminal_obj,
+                    cw_obj,
+                    agent_obj,
+                    task_id,
+                )
+                publication = {}
             publication_info = _mapping(publication)
             published_fingerprint = str(
                 publication_info.get("fingerprint") or ""
