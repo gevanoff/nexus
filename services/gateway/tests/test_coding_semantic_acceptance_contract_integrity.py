@@ -32,8 +32,9 @@ def _install(
     epoch,
     record_rejection=None,
     prior_rejection=None,
+    cw_override=None,
 ):
-    cw = _MemoryCW(task)
+    cw = cw_override or _MemoryCW(task)
     agent = SimpleNamespace(
         _coding_live_refutation_execution_installed=True,
         _append_event=lambda _task_id, _event: None,
@@ -291,3 +292,99 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
     assert accepted["accepted_fingerprint"] == ""
     assert accepted["accepted_head"] == ""
     assert accepted["accepted_diff_sha256"] == ""
+
+
+def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
+    state = {"review": {"accepted": True, "fingerprint": ""}}
+    epoch_key = "coding_mission_acceptance_epoch"
+    epoch_schema = "nexus_coding_mission_acceptance_epoch.v1"
+
+    class _RaceCW(_MemoryCW):
+        def __init__(self, task: dict):
+            super().__init__(task)
+            self.mutation_count = 0
+            self.fresh_fingerprint = ""
+
+        def mutate_task(self, _task_id: str, apply):
+            self.mutation_count += 1
+            latest = dict(self.task)
+            if self.mutation_count == 2:
+                # A second finish publishes a fresh acceptance after the stale
+                # recorder detected its mismatch but before cleanup acquires the lock.
+                latest[epoch_key] = {
+                    "schema": epoch_schema,
+                    "status": "semantic_accepted",
+                    "accepted_at": 2.0,
+                    "accepted_head": "head-v2",
+                    "accepted_run_id": "run-v2",
+                    "accepted_fingerprint": self.fresh_fingerprint,
+                    "accepted_diff_sha256": "diff-v2",
+                }
+            apply(latest)
+            self.task = latest
+            return dict(latest)
+
+    def latest_accepted_review(_task):
+        return dict(state["review"])
+
+    def mission_review_diff(_cw, _agent, _task_id, task):
+        return f"review-diff-v{int(task.get('repo_version') or 1)}"
+
+    def record_semantic_acceptance(terminal, cw, _agent, task_id):
+        before = cw.load_task(task_id)
+        accepted_fp = terminal.semantic_acceptance_fingerprint(
+            before,
+            diff_text=mission_review_diff(cw, None, task_id, before),
+        )
+
+        def apply(latest):
+            latest[epoch_key] = {
+                "schema": epoch_schema,
+                "status": "semantic_accepted",
+                "accepted_at": 1.0,
+                "accepted_head": "head-v1",
+                "accepted_run_id": "run-v1",
+                "accepted_fingerprint": accepted_fp,
+                "accepted_diff_sha256": "diff-v1",
+            }
+            latest["repo_version"] = 2
+
+        cw.mutate_task(task_id, apply)
+
+    epoch = SimpleNamespace(
+        KEY=epoch_key,
+        SCHEMA=epoch_schema,
+        _latest_accepted_review=latest_accepted_review,
+        mission_review_diff=mission_review_diff,
+        _record_semantic_acceptance=record_semantic_acceptance,
+    )
+    race_cw = _RaceCW(
+        {
+            "id": "code_accept_cleanup_race",
+            "prompt": "Do the work.",
+            "repo_version": 1,
+        }
+    )
+    cw, agent, _guarded, terminal = _install(
+        task=race_cw.task,
+        epoch=epoch,
+        cw_override=race_cw,
+    )
+    state["review"]["fingerprint"] = terminal.semantic_acceptance_fingerprint(
+        cw.load_task("code_accept_cleanup_race"),
+        diff_text="review-diff-v1",
+    )
+    v2_task = cw.load_task("code_accept_cleanup_race")
+    v2_task["repo_version"] = 2
+    race_cw.fresh_fingerprint = terminal.semantic_acceptance_fingerprint(
+        v2_task,
+        diff_text="review-diff-v2",
+    )
+
+    epoch._record_semantic_acceptance(terminal, cw, agent, "code_accept_cleanup_race")
+
+    accepted = cw.task[epoch_key]
+    assert accepted["status"] == "semantic_accepted"
+    assert accepted["accepted_fingerprint"] == race_cw.fresh_fingerprint
+    assert accepted["accepted_head"] == "head-v2"
+    assert accepted["accepted_diff_sha256"] == "diff-v2"
