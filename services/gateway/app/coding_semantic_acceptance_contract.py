@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
-import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
@@ -41,8 +41,7 @@ _SEMANTIC_EVENT_FIELDS = (
     "review_error",
     "fingerprint",
 )
-_REVIEW_EVENT_METADATA: dict[str, tuple[int, str, bool]] = {}
-_REVIEW_EVENT_METADATA_LOCK = threading.Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -295,32 +294,6 @@ def _contract_fingerprint_state(task: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _remember_review_event_metadata(
-    task_id: str,
-    *,
-    cycle: int,
-    fingerprint: str,
-    review_error: bool,
-) -> None:
-    with _REVIEW_EVENT_METADATA_LOCK:
-        _REVIEW_EVENT_METADATA[str(task_id)] = (
-            int(cycle),
-            str(fingerprint or ""),
-            bool(review_error),
-        )
-
-
-def _take_review_event_metadata(task_id: str, *, cycle: int) -> Dict[str, Any]:
-    with _REVIEW_EVENT_METADATA_LOCK:
-        stored = _REVIEW_EVENT_METADATA.pop(str(task_id), None)
-    if stored is None:
-        return {}
-    stored_cycle, fingerprint, review_error = stored
-    if int(stored_cycle) != int(cycle):
-        return {}
-    return {"fingerprint": fingerprint, "review_error": review_error}
-
-
 def install(
     agent: Any,
     guarded: Any,
@@ -358,18 +331,16 @@ def install(
         diff_text: str,
         exc: Exception,
     ) -> Dict[str, Any]:
-        cycle = int(task.get("agent_cycle") or 0)
         fingerprint = ""
         try:
             latest = cw.load_task(task_id)
-            cycle = int(latest.get("agent_cycle") or cycle)
             fingerprint = terminal_hardening.semantic_acceptance_fingerprint(
                 latest,
                 diff_text=diff_text,
             )
         except Exception:
             pass
-        review = {
+        return {
             "accepted": False,
             "reason": (
                 "semantic acceptance contract/repository grounding failed: "
@@ -381,13 +352,6 @@ def install(
             "review_error": True,
             "fingerprint": fingerprint,
         }
-        _remember_review_event_metadata(
-            task_id,
-            cycle=cycle,
-            fingerprint=fingerprint,
-            review_error=True,
-        )
-        return review
 
     async def grounded_review(
         task_id: str,
@@ -405,9 +369,8 @@ def install(
                 latest,
                 diff_text=diff_text,
             )
-            cycle = int(latest.get("agent_cycle") or task.get("agent_cycle") or 0)
             if expected_contract.get("fingerprint") != actual_contract.get("fingerprint"):
-                review = {
+                return {
                     "accepted": False,
                     "reason": (
                         "mission acceptance contract changed while semantic review was starting; "
@@ -419,13 +382,6 @@ def install(
                     "review_error": True,
                     "fingerprint": fingerprint,
                 }
-                _remember_review_event_metadata(
-                    task_id,
-                    cycle=cycle,
-                    fingerprint=fingerprint,
-                    review_error=True,
-                )
-                return review
 
             evidence = repository_grounding(epoch, cw, agent, task_id, latest)
             token = semantic_acceptance.set_review_grounding(
@@ -436,15 +392,8 @@ def install(
                 review = dict(await original_review(task_id, latest, diff_text=diff_text))
             finally:
                 semantic_acceptance.reset_review_grounding(token)
-            review_error = bool(review.get("review_error") or review.get("parse_error"))
-            review["review_error"] = review_error
+            review["review_error"] = bool(review.get("review_error") or review.get("parse_error"))
             review["fingerprint"] = fingerprint
-            _remember_review_event_metadata(
-                task_id,
-                cycle=cycle,
-                fingerprint=fingerprint,
-                review_error=review_error,
-            )
             return review
         except Exception as exc:
             return retryable_review_failure(task_id, task, diff_text, exc)
@@ -636,6 +585,29 @@ def install(
                         agent_obj,
                         task_id,
                     )
+                message = (
+                    "Refusing to record semantic acceptance for a frozen mission contract because "
+                    "the latest accepted review has no acceptance fingerprint."
+                )
+                _LOGGER.warning("%s task_id=%s", message, task_id)
+                try:
+                    agent_obj._append_event(
+                        task_id,
+                        {
+                            "type": "semantic_acceptance_record_blocked",
+                            "cycle": int(before.get("agent_cycle") or 0),
+                            "accepted": False,
+                            "review_error": True,
+                            "fingerprint": "",
+                            "reason": message,
+                            "summary": (
+                                "Semantic acceptance publication was blocked instead of silently "
+                                "recording or dropping an unbound accepted review."
+                            ),
+                        },
+                    )
+                except Exception:
+                    pass
                 return
 
             current_fingerprint = current_review_fingerprint(
@@ -669,24 +641,6 @@ def install(
         epoch._record_semantic_acceptance = record_semantic_acceptance_if_review_current
         epoch._record_semantic_acceptance_before_semantic_contract = original_record_semantic_acceptance
 
-    original_append_event = agent._append_event
-
-    def append_event_with_semantic_metadata(task_id: str, event: Dict[str, Any]) -> Any:
-        if str(event.get("type") or "") == "semantic_acceptance_review":
-            enriched = dict(event)
-            metadata = _take_review_event_metadata(
-                task_id,
-                cycle=int(enriched.get("cycle") or 0),
-            )
-            if metadata:
-                enriched["fingerprint"] = str(metadata.get("fingerprint") or "")
-                enriched["review_error"] = bool(metadata.get("review_error"))
-            event = enriched
-        return original_append_event(task_id, event)
-
-    agent._append_event = append_event_with_semantic_metadata
-    agent._append_event_before_semantic_acceptance_contract = original_append_event
-
     original_event_view = debug_report._event_view
 
     def event_view(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -695,6 +649,7 @@ def install(
             "semantic_acceptance_review",
             "semantic_acceptance_state",
             "semantic_acceptance_repeat_blocked",
+            "semantic_acceptance_record_blocked",
         }:
             for key in _SEMANTIC_EVENT_FIELDS:
                 if key not in event:
