@@ -357,8 +357,10 @@ def _record_semantic_acceptance(
     task_id: str,
 ) -> None:
     task = cw.load_task(task_id)
-    if not _latest_accepted_review(task):
+    review = _latest_accepted_review(task)
+    if not review:
         return
+    reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
     state = mission_delta_state(cw, task_id, task)
     if not state.get("ok") or not state.get("has_delta"):
         return
@@ -369,6 +371,11 @@ def _record_semantic_acceptance(
         review_diff=review_diff,
     )
     if not fingerprint:
+        return
+    # When semantic review events carry a fingerprint, publication is bound to
+    # that exact reviewed workspace. A later reload must never turn an accepted
+    # review of an old delta into acceptance of a newer, unreviewed delta.
+    if reviewed_fingerprint and fingerprint != reviewed_fingerprint:
         return
     now = time.time()
     base_head = str(state.get("base_head") or "")
