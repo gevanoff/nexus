@@ -12,12 +12,14 @@ class _RaceCW:
         *,
         mutate_workspace_on_first_cas: bool = False,
         clear_stale_on_second_cas: bool = False,
+        mutate_epoch_on_second_cas: bool = False,
         replacement_fingerprint_on_second_cas: str = "",
     ):
         self.task = dict(task)
         self.mutations = 0
         self.mutate_workspace_on_first_cas = mutate_workspace_on_first_cas
         self.clear_stale_on_second_cas = clear_stale_on_second_cas
+        self.mutate_epoch_on_second_cas = mutate_epoch_on_second_cas
         self.replacement_fingerprint_on_second_cas = replacement_fingerprint_on_second_cas
 
     def load_task(self, _task_id: str) -> dict:
@@ -53,6 +55,14 @@ class _RaceCW:
                 "accepted_fingerprint": "",
                 "accepted_diff_sha256": "",
             }
+            if self.mutate_epoch_on_second_cas:
+                # A real workspace mutation also clears acceptance, but unlike
+                # stale cleanup it advances the epoch's mutation identity.
+                latest[epoch.KEY] = {
+                    **dict(latest[epoch.KEY]),
+                    "last_mutation_at": 99.0,
+                    "last_mutation_run_id": "run-mutator",
+                }
         elif self.mutations == 2 and self.replacement_fingerprint_on_second_cas:
             # A different non-empty publication is never a cleanup transition;
             # B must not overwrite it merely because B is on its retry attempt.
@@ -88,6 +98,8 @@ def _task() -> dict:
             "schema": epoch.SCHEMA,
             "status": "pending",
             "base_head": "base",
+            "last_mutation_at": 1.0,
+            "last_mutation_run_id": "run-before-review",
             "accepted_fingerprint": "",
         },
     }
@@ -187,6 +199,35 @@ def test_retry_publishes_when_observed_stale_acceptance_is_cleared_before_final_
     assert accepted["accepted_head"] == "head-v1"
     assert accepted["accepted_run_id"] == "run-current"
     assert accepted["accepted_diff_sha256"] == "sha-v1"
+
+
+def test_retry_does_not_treat_workspace_mutation_clear_as_stale_cleanup(
+    monkeypatch,
+) -> None:
+    _install_delta_stubs(monkeypatch)
+    cw = _RaceCW(
+        _task(),
+        clear_stale_on_second_cas=True,
+        mutate_epoch_on_second_cas=True,
+    )
+    terminal = SimpleNamespace(
+        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"
+    )
+
+    published = epoch._record_semantic_acceptance(
+        terminal,
+        cw,
+        SimpleNamespace(),
+        "code_epoch_publication_retry",
+    )
+
+    assert published is False
+    assert cw.mutations == 2
+    accepted = cw.task[epoch.KEY]
+    assert accepted["status"] == "pending"
+    assert accepted["accepted_fingerprint"] == ""
+    assert accepted["last_mutation_at"] == 99.0
+    assert accepted["last_mutation_run_id"] == "run-mutator"
 
 
 def test_retry_does_not_overwrite_different_nonempty_acceptance_on_final_cas(
