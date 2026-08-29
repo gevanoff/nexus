@@ -355,60 +355,80 @@ def _record_semantic_acceptance(
     cw: Any,
     agent: Any,
     task_id: str,
-) -> None:
-    task = cw.load_task(task_id)
-    review = _latest_accepted_review(task)
+) -> bool:
+    initial = cw.load_task(task_id)
+    review = _latest_accepted_review(initial)
     if not review:
-        return
+        return False
     reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
-    state = mission_delta_state(cw, task_id, task)
-    if not state.get("ok") or not state.get("has_delta"):
-        return
-    review_diff = mission_review_diff(cw, agent, task_id, task)
-    fingerprint = _acceptance_fingerprint(
-        terminal_hardening,
-        task,
-        review_diff=review_diff,
-    )
-    if not fingerprint:
-        return
-    # When semantic review events carry a fingerprint, publication is bound to
-    # that exact reviewed workspace. A later reload must never turn an accepted
-    # review of an old delta into acceptance of a newer, unreviewed delta.
-    if reviewed_fingerprint and fingerprint != reviewed_fingerprint:
-        return
-    now = time.time()
-    base_head = str(state.get("base_head") or "")
-    current_head = str(state.get("current_head") or "")
-    run_id = str(task.get("agent_run_id") or "")
-    diff_sha = str(state.get("diff_sha256") or "")
-    observed_accepted_fingerprint = str(
-        _mapping(task.get(KEY)).get("accepted_fingerprint") or ""
-    ).strip()
+    reviewed_cycle = _int(initial.get("agent_cycle"))
+    max_attempts = 2 if reviewed_fingerprint else 1
 
-    def apply(latest: Dict[str, Any]) -> None:
-        current = dict(_mapping(latest.get(KEY)))
-        if str(current.get("base_head") or "") != base_head:
-            return
-        if (
-            str(current.get("accepted_fingerprint") or "").strip()
-            != observed_accepted_fingerprint
-        ):
-            return
-        current.update(
-            {
-                "status": "semantic_accepted",
-                "accepted_at": now,
-                "accepted_head": current_head,
-                "accepted_run_id": run_id,
-                "accepted_fingerprint": fingerprint,
-                "accepted_diff_sha256": diff_sha,
-                "updated_at": now,
-            }
+    task = initial
+    for attempt in range(max_attempts):
+        if attempt:
+            task = cw.load_task(task_id)
+            if _int(task.get("agent_cycle")) != reviewed_cycle:
+                return False
+
+        state = mission_delta_state(cw, task_id, task)
+        if not state.get("ok") or not state.get("has_delta"):
+            return False
+        review_diff = mission_review_diff(cw, agent, task_id, task)
+        fingerprint = _acceptance_fingerprint(
+            terminal_hardening,
+            task,
+            review_diff=review_diff,
         )
-        latest[KEY] = current
+        if not fingerprint:
+            return False
+        # Publication and retry are both bound to the exact workspace accepted
+        # by this review. A stale reviewer can never retry over newer state.
+        if reviewed_fingerprint and fingerprint != reviewed_fingerprint:
+            return False
 
-    _mutate_task(cw, task_id, apply)
+        now = time.time()
+        base_head = str(state.get("base_head") or "")
+        current_head = str(state.get("current_head") or "")
+        run_id = str(task.get("agent_run_id") or "")
+        diff_sha = str(state.get("diff_sha256") or "")
+        observed_accepted_fingerprint = str(
+            _mapping(task.get(KEY)).get("accepted_fingerprint") or ""
+        ).strip()
+        published = False
+
+        def apply(latest: Dict[str, Any]) -> None:
+            nonlocal published
+            current = dict(_mapping(latest.get(KEY)))
+            if str(current.get("base_head") or "") != base_head:
+                return
+            if (
+                str(current.get("accepted_fingerprint") or "").strip()
+                != observed_accepted_fingerprint
+            ):
+                return
+            current.update(
+                {
+                    "status": "semantic_accepted",
+                    "accepted_at": now,
+                    "accepted_head": current_head,
+                    "accepted_run_id": run_id,
+                    "accepted_fingerprint": fingerprint,
+                    "accepted_diff_sha256": diff_sha,
+                    "updated_at": now,
+                }
+            )
+            latest[KEY] = current
+            published = True
+
+        _mutate_task(cw, task_id, apply)
+        if published:
+            return True
+        # A CAS loss is retried at most once, after reloading and revalidating
+        # that this review still describes the live workspace. This lets a
+        # current recorder recover when a stale recorder briefly wins first.
+
+    return False
 
 
 def _record_mutation(cw: Any, task_id: str) -> None:
