@@ -143,6 +143,7 @@ def ensure_epoch(
             "accepted_run_id": "",
             "accepted_fingerprint": "",
             "accepted_diff_sha256": "",
+            "acceptance_publication_generation": 0,
             "finalized_at": 0.0,
             "finalized_head": "",
         }
@@ -355,7 +356,9 @@ def _record_semantic_acceptance(
     cw: Any,
     agent: Any,
     task_id: str,
-) -> bool:
+    *,
+    return_publication: bool = False,
+) -> Any:
     initial = cw.load_task(task_id)
     review = _latest_accepted_review(initial)
     if not review:
@@ -400,21 +403,33 @@ def _record_semantic_acceptance(
         observed_last_mutation_run_id = str(
             observed_epoch.get("last_mutation_run_id") or ""
         )
+        observed_publication_generation = _int(
+            observed_epoch.get("acceptance_publication_generation")
+        )
         published = False
+        published_generation = 0
 
         def apply(latest: Dict[str, Any]) -> None:
-            nonlocal published
+            nonlocal published, published_generation
             current = dict(_mapping(latest.get(KEY)))
             if str(current.get("base_head") or "") != base_head:
                 return
             current_accepted_fingerprint = str(
                 current.get("accepted_fingerprint") or ""
             ).strip()
+            current_publication_generation = _int(
+                current.get("acceptance_publication_generation")
+            )
+            publication_generation_unchanged = (
+                current_publication_generation == observed_publication_generation
+            )
             acceptance_unchanged = (
-                current_accepted_fingerprint == observed_accepted_fingerprint
+                publication_generation_unchanged
+                and current_accepted_fingerprint == observed_accepted_fingerprint
             )
             cleanup_cleared_observed_stale = (
                 attempt > 0
+                and publication_generation_unchanged
                 and bool(observed_accepted_fingerprint)
                 and not current_accepted_fingerprint
                 and str(current.get("status") or "") == "pending"
@@ -437,20 +452,27 @@ def _record_semantic_acceptance(
                     "accepted_run_id": run_id,
                     "accepted_fingerprint": fingerprint,
                     "accepted_diff_sha256": diff_sha,
+                    "acceptance_publication_generation": observed_publication_generation + 1,
                     "updated_at": now,
                 }
             )
             latest[KEY] = current
+            published_generation = observed_publication_generation + 1
             published = True
 
         _mutate_task(cw, task_id, apply)
         if published:
+            if return_publication:
+                return {
+                    "fingerprint": fingerprint,
+                    "publication_generation": published_generation,
+                }
             return True
         # A CAS loss is retried at most once, after reloading and revalidating
         # that this review still describes the live workspace. This lets a
         # current recorder recover when a stale recorder briefly wins first.
 
-    return False
+    return {} if return_publication else False
 
 
 def _record_mutation(cw: Any, task_id: str) -> None:

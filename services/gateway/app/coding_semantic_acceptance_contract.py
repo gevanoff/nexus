@@ -536,9 +536,11 @@ def install(
         task_id: str,
         *,
         stale_fingerprint: str,
+        stale_publication_generation: int,
     ) -> None:
         target = str(stale_fingerprint or "").strip()
-        if not target:
+        target_generation = int(stale_publication_generation or 0)
+        if not target or target_generation <= 0:
             return
 
         def apply(latest: Dict[str, Any]) -> None:
@@ -546,6 +548,8 @@ def install(
             if str(current.get("schema") or "") != epoch_schema:
                 return
             if str(current.get("accepted_fingerprint") or "").strip() != target:
+                return
+            if int(current.get("acceptance_publication_generation") or 0) != target_generation:
                 return
             current.update(
                 {
@@ -629,12 +633,22 @@ def install(
             if reviewed_fingerprint != current_fingerprint:
                 return
 
-            original_record_semantic_acceptance(
+            publication = original_record_semantic_acceptance(
                 terminal_obj,
                 cw_obj,
                 agent_obj,
                 task_id,
+                return_publication=True,
             )
+            publication_info = _mapping(publication)
+            published_fingerprint = str(
+                publication_info.get("fingerprint") or ""
+            ).strip()
+            published_generation = int(
+                publication_info.get("publication_generation") or 0
+            )
+            if not published_fingerprint or published_generation <= 0:
+                return
 
             after = cw_obj.load_task(task_id)
             after_fingerprint = current_review_fingerprint(
@@ -648,7 +662,8 @@ def install(
                 clear_stale_epoch_acceptance(
                     cw_obj,
                     task_id,
-                    stale_fingerprint=reviewed_fingerprint,
+                    stale_fingerprint=published_fingerprint,
+                    stale_publication_generation=published_generation,
                 )
 
         epoch._record_semantic_acceptance = record_semantic_acceptance_if_review_current
