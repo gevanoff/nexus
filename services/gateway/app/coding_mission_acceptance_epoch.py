@@ -382,10 +382,18 @@ def _record_semantic_acceptance(
     current_head = str(state.get("current_head") or "")
     run_id = str(task.get("agent_run_id") or "")
     diff_sha = str(state.get("diff_sha256") or "")
+    observed_accepted_fingerprint = str(
+        _mapping(task.get(KEY)).get("accepted_fingerprint") or ""
+    ).strip()
 
     def apply(latest: Dict[str, Any]) -> None:
         current = dict(_mapping(latest.get(KEY)))
         if str(current.get("base_head") or "") != base_head:
+            return
+        if (
+            str(current.get("accepted_fingerprint") or "").strip()
+            != observed_accepted_fingerprint
+        ):
             return
         current.update(
             {
