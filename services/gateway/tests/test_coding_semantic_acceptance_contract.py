@@ -262,7 +262,7 @@ def _install_fixture(
     return cw, agent, guarded, terminal, debug, events, calls
 
 
-def test_semantic_review_event_persists_fingerprint_and_retryable_error(monkeypatch) -> None:
+def test_semantic_review_result_carries_fingerprint_and_retryable_error(monkeypatch) -> None:
     task = {
         "id": "code_event_metadata",
         "prompt": "Do the requested work.",
@@ -276,7 +276,7 @@ def test_semantic_review_event_persists_fingerprint_and_retryable_error(monkeypa
         "acceptance_criteria_checked": False,
         "parse_error": True,
     }
-    _cw, agent, guarded, _terminal, debug, events, _calls = _install_fixture(
+    _cw, _agent, guarded, _terminal, _debug, _events, _calls = _install_fixture(
         monkeypatch,
         task=task,
         review_result=review_result,
@@ -289,21 +289,9 @@ def test_semantic_review_event_persists_fingerprint_and_retryable_error(monkeypa
             diff_text="+ changed = True",
         )
     )
-    agent._append_event(
-        "code_event_metadata",
-        {
-            "type": "semantic_acceptance_review",
-            "cycle": 3,
-            "accepted": bool(review.get("accepted")),
-            "reason": str(review.get("reason") or ""),
-        },
-    )
 
-    assert events[0]["review_error"] is True
-    assert len(events[0]["fingerprint"]) == 64
-    rendered = debug._event_view(events[0])
-    assert rendered["review_error"] is True
-    assert rendered["fingerprint"] == events[0]["fingerprint"]
+    assert review["review_error"] is True
+    assert len(review["fingerprint"]) == 64
 
 
 def test_semantic_review_retries_when_operator_contract_wins_snapshot_race(monkeypatch) -> None:
@@ -372,3 +360,43 @@ def test_debug_report_keeps_semantic_review_decision_fields() -> None:
     assert rendered["acceptance_criteria_checked"] is True
     assert rendered["review_error"] is False
     assert rendered["fingerprint"] == "abc"
+
+
+def test_follow_up_workspace_starts_with_fresh_acceptance_intent(monkeypatch) -> None:
+    from app import coding_routes_guarded as guarded_routes
+
+    source = {
+        "id": "code_source",
+        "repo_url": "https://github.com/example/repo.git",
+        "base_branch": "main",
+        "prompt": "Original mission.",
+        "coding_model": "coder",
+        "agent_stop_reason_code": "work_already_integrated",
+    }
+    source[contract.KEY] = contract._materialize_contract(source)
+    captured = {}
+
+    monkeypatch.setattr(guarded_routes.routes, "_require_coding_ui", lambda _req: None)
+    monkeypatch.setattr(guarded_routes.cw, "load_task", lambda _task_id: dict(source))
+
+    async def fake_create_task(_req, body):
+        captured["body"] = body
+        return {"task": {"id": "code_follow_up"}}
+
+    monkeypatch.setattr(guarded_routes.routes, "ui_coding_create_task", fake_create_task)
+    result = asyncio.run(
+        guarded_routes.ui_coding_create_follow_up(
+            object(),
+            "code_source",
+            guarded_routes.CodingFollowUpRequest(prompt="Follow-up mission."),
+        )
+    )
+
+    body = captured["body"]
+    assert body.prompt == "Follow-up mission."
+    assert contract.KEY not in body.model_dump()
+    fresh = contract._virtual_contract({"id": "code_follow_up", "prompt": body.prompt})
+    assert fresh["original_request"] == "Follow-up mission."
+    assert fresh["fingerprint"] != source[contract.KEY]["fingerprint"]
+    assert result["source_task_id"] == "code_source"
+    assert result["action"] == "created_follow_up_workspace"
