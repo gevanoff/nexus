@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 
 from app import coding_semantic_acceptance
@@ -198,6 +199,36 @@ def test_mission_acceptance_refuses_accepted_event_for_stale_fingerprint() -> No
     )
     epoch._record_semantic_acceptance(terminal, cw, agent, "code_accept_race")
     assert state["calls"] == 1
+
+
+def test_frozen_contract_missing_review_fingerprint_is_logged_and_blocked(caplog) -> None:
+    state = {"calls": 0}
+    task = {"id": "code_missing_review_fp", "prompt": "Do the work.", "agent_cycle": 8}
+    task[contract.KEY] = contract._materialize_contract(task)
+
+    def latest_accepted_review(_task):
+        return {"accepted": True, "fingerprint": ""}
+
+    def mission_review_diff(_cw, _agent, _task_id, _task):
+        return "review-diff"
+
+    def record_semantic_acceptance(_terminal, _cw, _agent, _task_id):
+        state["calls"] += 1
+
+    epoch = SimpleNamespace(
+        KEY="coding_mission_acceptance_epoch",
+        SCHEMA="nexus_coding_mission_acceptance_epoch.v1",
+        _latest_accepted_review=latest_accepted_review,
+        mission_review_diff=mission_review_diff,
+        _record_semantic_acceptance=record_semantic_acceptance,
+    )
+    cw, agent, _guarded, terminal = _install(task=task, epoch=epoch)
+
+    with caplog.at_level(logging.WARNING, logger=contract.__name__):
+        epoch._record_semantic_acceptance(terminal, cw, agent, "code_missing_review_fp")
+
+    assert state["calls"] == 0
+    assert "latest accepted review has no acceptance fingerprint" in caplog.text
 
 
 def test_mission_acceptance_clears_state_if_workspace_changes_during_record() -> None:
