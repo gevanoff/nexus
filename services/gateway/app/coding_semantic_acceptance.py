@@ -53,6 +53,9 @@ def build_review_messages(
         "When an explicit acceptance criterion is supplied, acceptance_criteria_checked may be true only if the diff plus repository evidence demonstrate that criterion rather than merely asserting it. "
         "Return one JSON object only with keys accepted (boolean), reason (string), causal_alignment (boolean), existing_mechanism_checked (boolean), and acceptance_criteria_checked (boolean)."
     )
+    # current_request is trusted control-plane run guidance (for example an
+    # authenticated/bearer or allowlisted UI resume prompt). It may clarify how
+    # to proceed, but it does not replace or mutate the immutable mission intent.
     user = (
         f"Immutable acceptance contract:\n{acceptance_contract or '(original request only; no additional criteria supplied)'}\n\n"
         f"Original request:\n{original_request or '(none)'}\n\n"
