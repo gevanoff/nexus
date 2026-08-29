@@ -637,9 +637,6 @@ def install(
             )
 
             after = cw_obj.load_task(task_id)
-            published_fingerprint = str(
-                _mapping(after.get(epoch_key)).get("accepted_fingerprint") or ""
-            ).strip()
             after_fingerprint = current_review_fingerprint(
                 terminal_obj,
                 cw_obj,
@@ -651,7 +648,7 @@ def install(
                 clear_stale_epoch_acceptance(
                     cw_obj,
                     task_id,
-                    stale_fingerprint=published_fingerprint,
+                    stale_fingerprint=reviewed_fingerprint,
                 )
 
         epoch._record_semantic_acceptance = record_semantic_acceptance_if_review_current
