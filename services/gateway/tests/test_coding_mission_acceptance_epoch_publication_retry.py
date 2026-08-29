@@ -6,10 +6,19 @@ from app import coding_mission_acceptance_epoch as epoch
 
 
 class _RaceCW:
-    def __init__(self, task: dict, *, mutate_workspace_on_first_cas: bool = False):
+    def __init__(
+        self,
+        task: dict,
+        *,
+        mutate_workspace_on_first_cas: bool = False,
+        clear_stale_on_second_cas: bool = False,
+        replacement_fingerprint_on_second_cas: str = "",
+    ):
         self.task = dict(task)
         self.mutations = 0
         self.mutate_workspace_on_first_cas = mutate_workspace_on_first_cas
+        self.clear_stale_on_second_cas = clear_stale_on_second_cas
+        self.replacement_fingerprint_on_second_cas = replacement_fingerprint_on_second_cas
 
     def load_task(self, _task_id: str) -> dict:
         return dict(self.task)
@@ -32,6 +41,30 @@ class _RaceCW:
             }
             if self.mutate_workspace_on_first_cas:
                 latest["repo_version"] = 2
+        elif self.mutations == 2 and self.clear_stale_on_second_cas:
+            # A's post-publication stale cleanup wins after B has reloaded A's
+            # fingerprint but before B enters its final CAS callback.
+            latest[epoch.KEY] = {
+                **dict(latest[epoch.KEY]),
+                "status": "pending",
+                "accepted_at": 0.0,
+                "accepted_head": "",
+                "accepted_run_id": "",
+                "accepted_fingerprint": "",
+                "accepted_diff_sha256": "",
+            }
+        elif self.mutations == 2 and self.replacement_fingerprint_on_second_cas:
+            # A different non-empty publication is never a cleanup transition;
+            # B must not overwrite it merely because B is on its retry attempt.
+            latest[epoch.KEY] = {
+                **dict(latest[epoch.KEY]),
+                "status": "semantic_accepted",
+                "accepted_at": 2.0,
+                "accepted_head": "other-head",
+                "accepted_run_id": "other-run",
+                "accepted_fingerprint": self.replacement_fingerprint_on_second_cas,
+                "accepted_diff_sha256": "other-sha",
+            }
         apply(latest)
         self.task = latest
         return dict(latest)
@@ -128,3 +161,58 @@ def test_publication_retry_aborts_if_review_no_longer_matches_workspace(monkeypa
     accepted = cw.task[epoch.KEY]
     assert accepted["accepted_fingerprint"] == "fp:stale-diff"
     assert accepted["accepted_head"] == "stale-head"
+
+
+def test_retry_publishes_when_observed_stale_acceptance_is_cleared_before_final_cas(
+    monkeypatch,
+) -> None:
+    _install_delta_stubs(monkeypatch)
+    cw = _RaceCW(_task(), clear_stale_on_second_cas=True)
+    terminal = SimpleNamespace(
+        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"
+    )
+
+    published = epoch._record_semantic_acceptance(
+        terminal,
+        cw,
+        SimpleNamespace(),
+        "code_epoch_publication_retry",
+    )
+
+    assert published is True
+    assert cw.mutations == 2
+    accepted = cw.task[epoch.KEY]
+    assert accepted["status"] == "semantic_accepted"
+    assert accepted["accepted_fingerprint"] == "fp:current-diff"
+    assert accepted["accepted_head"] == "head-v1"
+    assert accepted["accepted_run_id"] == "run-current"
+    assert accepted["accepted_diff_sha256"] == "sha-v1"
+
+
+def test_retry_does_not_overwrite_different_nonempty_acceptance_on_final_cas(
+    monkeypatch,
+) -> None:
+    _install_delta_stubs(monkeypatch)
+    cw = _RaceCW(
+        _task(),
+        replacement_fingerprint_on_second_cas="fp:other-current",
+    )
+    terminal = SimpleNamespace(
+        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"
+    )
+
+    published = epoch._record_semantic_acceptance(
+        terminal,
+        cw,
+        SimpleNamespace(),
+        "code_epoch_publication_retry",
+    )
+
+    assert published is False
+    assert cw.mutations == 2
+    accepted = cw.task[epoch.KEY]
+    assert accepted["status"] == "semantic_accepted"
+    assert accepted["accepted_fingerprint"] == "fp:other-current"
+    assert accepted["accepted_head"] == "other-head"
+    assert accepted["accepted_run_id"] == "other-run"
+    assert accepted["accepted_diff_sha256"] == "other-sha"
