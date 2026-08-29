@@ -1,0 +1,129 @@
+name: PR96 one-shot ABA publication identity patch
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch-source:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - name: Patch acceptance publication identity
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          epoch_path = Path('services/gateway/app/coding_mission_acceptance_epoch.py')
+          text = epoch_path.read_text()
+
+          # Backward-compatible durable monotonic publication generation.
+          init_marker = '            "accepted_diff_sha256": "",\n            "finalized_at": 0.0,'
+          if text.count(init_marker) != 1:
+              raise SystemExit(f'epoch init marker count={text.count(init_marker)}')
+          text = text.replace(
+              init_marker,
+              '            "accepted_diff_sha256": "",\n'
+              '            "acceptance_publication_generation": 0,\n'
+              '            "finalized_at": 0.0,',
+              1,
+          )
+
+          sig = '''def _record_semantic_acceptance(\n    terminal_hardening: Any,\n    cw: Any,\n    agent: Any,\n    task_id: str,\n) -> bool:'''
+          sig_new = '''def _record_semantic_acceptance(\n    terminal_hardening: Any,\n    cw: Any,\n    agent: Any,\n    task_id: str,\n    *,\n    return_publication: bool = False,\n) -> Any:'''
+          if text.count(sig) != 1:
+              raise SystemExit(f'epoch signature count={text.count(sig)}')
+          text = text.replace(sig, sig_new, 1)
+
+          observed_marker = '''        observed_last_mutation_run_id = str(\n            observed_epoch.get("last_mutation_run_id") or ""\n        )\n        published = False'''
+          observed_new = '''        observed_last_mutation_run_id = str(\n            observed_epoch.get("last_mutation_run_id") or ""\n        )\n        observed_publication_generation = _int(\n            observed_epoch.get("acceptance_publication_generation")\n        )\n        published = False\n        published_generation = 0'''
+          if text.count(observed_marker) != 1:
+              raise SystemExit(f'epoch observed marker count={text.count(observed_marker)}')
+          text = text.replace(observed_marker, observed_new, 1)
+
+          nonlocal_marker = '            nonlocal published\n            current = dict(_mapping(latest.get(KEY)))'
+          nonlocal_new = '            nonlocal published, published_generation\n            current = dict(_mapping(latest.get(KEY)))'
+          if text.count(nonlocal_marker) != 1:
+              raise SystemExit(f'epoch nonlocal marker count={text.count(nonlocal_marker)}')
+          text = text.replace(nonlocal_marker, nonlocal_new, 1)
+
+          current_marker = '''            current_accepted_fingerprint = str(\n                current.get("accepted_fingerprint") or ""\n            ).strip()\n            acceptance_unchanged = (\n                current_accepted_fingerprint == observed_accepted_fingerprint\n            )'''
+          current_new = '''            current_accepted_fingerprint = str(\n                current.get("accepted_fingerprint") or ""\n            ).strip()\n            current_publication_generation = _int(\n                current.get("acceptance_publication_generation")\n            )\n            publication_generation_unchanged = (\n                current_publication_generation == observed_publication_generation\n            )\n            acceptance_unchanged = (\n                publication_generation_unchanged\n                and current_accepted_fingerprint == observed_accepted_fingerprint\n            )'''
+          if text.count(current_marker) != 1:
+              raise SystemExit(f'epoch current marker count={text.count(current_marker)}')
+          text = text.replace(current_marker, current_new, 1)
+
+          cleanup_marker = '''                attempt > 0\n                and bool(observed_accepted_fingerprint)'''
+          cleanup_new = '''                attempt > 0\n                and publication_generation_unchanged\n                and bool(observed_accepted_fingerprint)'''
+          if text.count(cleanup_marker) != 1:
+              raise SystemExit(f'epoch cleanup marker count={text.count(cleanup_marker)}')
+          text = text.replace(cleanup_marker, cleanup_new, 1)
+
+          update_marker = '''                    "accepted_fingerprint": fingerprint,\n                    "accepted_diff_sha256": diff_sha,\n                    "updated_at": now,'''
+          update_new = '''                    "accepted_fingerprint": fingerprint,\n                    "accepted_diff_sha256": diff_sha,\n                    "acceptance_publication_generation": observed_publication_generation + 1,\n                    "updated_at": now,'''
+          if text.count(update_marker) != 1:
+              raise SystemExit(f'epoch update marker count={text.count(update_marker)}')
+          text = text.replace(update_marker, update_new, 1)
+
+          published_marker = '''            latest[KEY] = current\n            published = True\n\n        _mutate_task(cw, task_id, apply)\n        if published:\n            return True'''
+          published_new = '''            latest[KEY] = current\n            published_generation = observed_publication_generation + 1\n            published = True\n\n        _mutate_task(cw, task_id, apply)\n        if published:\n            if return_publication:\n                return {\n                    "fingerprint": fingerprint,\n                    "publication_generation": published_generation,\n                }\n            return True'''
+          if text.count(published_marker) != 1:
+              raise SystemExit(f'epoch published marker count={text.count(published_marker)}')
+          text = text.replace(published_marker, published_new, 1)
+
+          final_marker = '    return False\n\n\ndef _record_mutation(cw: Any, task_id: str) -> None:'
+          final_new = '''    return {} if return_publication else False\n\n\ndef _record_mutation(cw: Any, task_id: str) -> None:'''
+          if text.count(final_marker) != 1:
+              raise SystemExit(f'epoch final marker count={text.count(final_marker)}')
+          text = text.replace(final_marker, final_new, 1)
+          compile(text, str(epoch_path), 'exec')
+          epoch_path.write_text(text)
+
+          contract_path = Path('services/gateway/app/coding_semantic_acceptance_contract.py')
+          text = contract_path.read_text()
+
+          clear_sig = '''    def clear_stale_epoch_acceptance(\n        cw_obj: Any,\n        task_id: str,\n        *,\n        stale_fingerprint: str,\n    ) -> None:\n        target = str(stale_fingerprint or "").strip()\n        if not target:\n            return'''
+          clear_sig_new = '''    def clear_stale_epoch_acceptance(\n        cw_obj: Any,\n        task_id: str,\n        *,\n        stale_fingerprint: str,\n        stale_publication_generation: int,\n    ) -> None:\n        target = str(stale_fingerprint or "").strip()\n        target_generation = int(stale_publication_generation or 0)\n        if not target or target_generation <= 0:\n            return'''
+          if text.count(clear_sig) != 1:
+              raise SystemExit(f'contract clear signature count={text.count(clear_sig)}')
+          text = text.replace(clear_sig, clear_sig_new, 1)
+
+          clear_compare = '''            if str(current.get("accepted_fingerprint") or "").strip() != target:\n                return'''
+          clear_compare_new = '''            if str(current.get("accepted_fingerprint") or "").strip() != target:\n                return\n            if int(current.get("acceptance_publication_generation") or 0) != target_generation:\n                return'''
+          if text.count(clear_compare) != 1:
+              raise SystemExit(f'contract clear compare count={text.count(clear_compare)}')
+          text = text.replace(clear_compare, clear_compare_new, 1)
+
+          record_call = '''            original_record_semantic_acceptance(\n                terminal_obj,\n                cw_obj,\n                agent_obj,\n                task_id,\n            )\n\n            after = cw_obj.load_task(task_id)'''
+          record_call_new = '''            publication = original_record_semantic_acceptance(\n                terminal_obj,\n                cw_obj,\n                agent_obj,\n                task_id,\n                return_publication=True,\n            )\n            publication_info = _mapping(publication)\n            published_fingerprint = str(\n                publication_info.get("fingerprint") or ""\n            ).strip()\n            published_generation = int(\n                publication_info.get("publication_generation") or 0\n            )\n            if not published_fingerprint or published_generation <= 0:\n                return\n\n            after = cw_obj.load_task(task_id)'''
+          if text.count(record_call) != 1:
+              raise SystemExit(f'contract record call count={text.count(record_call)}')
+          text = text.replace(record_call, record_call_new, 1)
+
+          cleanup_call = '''                clear_stale_epoch_acceptance(\n                    cw_obj,\n                    task_id,\n                    stale_fingerprint=reviewed_fingerprint,\n                )'''
+          cleanup_call_new = '''                clear_stale_epoch_acceptance(\n                    cw_obj,\n                    task_id,\n                    stale_fingerprint=published_fingerprint,\n                    stale_publication_generation=published_generation,\n                )'''
+          if text.count(cleanup_call) != 1:
+              raise SystemExit(f'contract cleanup call count={text.count(cleanup_call)}')
+          text = text.replace(cleanup_call, cleanup_call_new, 1)
+
+          compile(text, str(contract_path), 'exec')
+          contract_path.write_text(text)
+          PY
+      - name: Commit source patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/gateway/app/coding_mission_acceptance_epoch.py services/gateway/app/coding_semantic_acceptance_contract.py
+          git diff --cached --check
+          git commit -m 'Bind acceptance cleanup to publication generation'
+          git push origin HEAD:agent/semantic-acceptance-contract
