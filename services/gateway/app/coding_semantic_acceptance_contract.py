@@ -531,12 +531,21 @@ def install(
         except Exception:
             return ""
 
-    def clear_stale_epoch_acceptance(cw_obj: Any, task_id: str) -> None:
+    def clear_stale_epoch_acceptance(
+        cw_obj: Any,
+        task_id: str,
+        *,
+        stale_fingerprint: str,
+    ) -> None:
+        target = str(stale_fingerprint or "").strip()
+        if not target:
+            return
+
         def apply(latest: Dict[str, Any]) -> None:
             current = dict(_mapping(latest.get(epoch_key)))
             if str(current.get("schema") or "") != epoch_schema:
                 return
-            if not str(current.get("accepted_fingerprint") or "").strip():
+            if str(current.get("accepted_fingerprint") or "").strip() != target:
                 return
             current.update(
                 {
@@ -628,6 +637,9 @@ def install(
             )
 
             after = cw_obj.load_task(task_id)
+            published_fingerprint = str(
+                _mapping(after.get(epoch_key)).get("accepted_fingerprint") or ""
+            ).strip()
             after_fingerprint = current_review_fingerprint(
                 terminal_obj,
                 cw_obj,
@@ -636,7 +648,11 @@ def install(
                 after,
             )
             if reviewed_fingerprint != after_fingerprint:
-                clear_stale_epoch_acceptance(cw_obj, task_id)
+                clear_stale_epoch_acceptance(
+                    cw_obj,
+                    task_id,
+                    stale_fingerprint=published_fingerprint,
+                )
 
         epoch._record_semantic_acceptance = record_semantic_acceptance_if_review_current
         epoch._record_semantic_acceptance_before_semantic_contract = original_record_semantic_acceptance
