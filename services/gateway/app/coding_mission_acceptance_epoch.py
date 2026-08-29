@@ -392,9 +392,14 @@ def _record_semantic_acceptance(
         current_head = str(state.get("current_head") or "")
         run_id = str(task.get("agent_run_id") or "")
         diff_sha = str(state.get("diff_sha256") or "")
+        observed_epoch = _mapping(task.get(KEY))
         observed_accepted_fingerprint = str(
-            _mapping(task.get(KEY)).get("accepted_fingerprint") or ""
+            observed_epoch.get("accepted_fingerprint") or ""
         ).strip()
+        observed_last_mutation_at = _float(observed_epoch.get("last_mutation_at"))
+        observed_last_mutation_run_id = str(
+            observed_epoch.get("last_mutation_run_id") or ""
+        )
         published = False
 
         def apply(latest: Dict[str, Any]) -> None:
@@ -402,10 +407,27 @@ def _record_semantic_acceptance(
             current = dict(_mapping(latest.get(KEY)))
             if str(current.get("base_head") or "") != base_head:
                 return
-            if (
-                str(current.get("accepted_fingerprint") or "").strip()
-                != observed_accepted_fingerprint
-            ):
+            current_accepted_fingerprint = str(
+                current.get("accepted_fingerprint") or ""
+            ).strip()
+            acceptance_unchanged = (
+                current_accepted_fingerprint == observed_accepted_fingerprint
+            )
+            cleanup_cleared_observed_stale = (
+                attempt > 0
+                and bool(observed_accepted_fingerprint)
+                and not current_accepted_fingerprint
+                and str(current.get("status") or "") == "pending"
+                and not _float(current.get("accepted_at"))
+                and not str(current.get("accepted_head") or "").strip()
+                and not str(current.get("accepted_run_id") or "").strip()
+                and not str(current.get("accepted_diff_sha256") or "").strip()
+                and _float(current.get("last_mutation_at"))
+                == observed_last_mutation_at
+                and str(current.get("last_mutation_run_id") or "")
+                == observed_last_mutation_run_id
+            )
+            if not acceptance_unchanged and not cleanup_cleared_observed_stale:
                 return
             current.update(
                 {
