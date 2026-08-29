@@ -25,62 +25,76 @@ jobs:
 
           path = Path('services/gateway/app/coding_mission_acceptance_epoch.py')
           text = path.read_text()
+          lines = text.splitlines()
 
-          old_observed = '''        observed_accepted_fingerprint = str(
-              _mapping(task.get(KEY)).get("accepted_fingerprint") or ""
-          ).strip()
-          published = False
-          '''
-          new_observed = '''        observed_epoch = _mapping(task.get(KEY))
-          observed_accepted_fingerprint = str(
-              observed_epoch.get("accepted_fingerprint") or ""
-          ).strip()
-          observed_last_mutation_at = _float(observed_epoch.get("last_mutation_at"))
-          observed_last_mutation_run_id = str(
-              observed_epoch.get("last_mutation_run_id") or ""
+          observed_index = next(
+              i
+              for i in range(len(lines) - 3)
+              if lines[i].strip() == 'observed_accepted_fingerprint = str('
+              and lines[i + 1].strip()
+              == '_mapping(task.get(KEY)).get("accepted_fingerprint") or ""'
+              and lines[i + 2].strip() == ').strip()'
+              and lines[i + 3].strip() == 'published = False'
           )
-          published = False
-          '''
+          observed_indent = lines[observed_index][
+              : len(lines[observed_index]) - len(lines[observed_index].lstrip())
+          ]
+          lines[observed_index : observed_index + 4] = [
+              observed_indent + 'observed_epoch = _mapping(task.get(KEY))',
+              observed_indent + 'observed_accepted_fingerprint = str(',
+              observed_indent + '    observed_epoch.get("accepted_fingerprint") or ""',
+              observed_indent + ').strip()',
+              observed_indent
+              + 'observed_last_mutation_at = _float(observed_epoch.get("last_mutation_at"))',
+              observed_indent + 'observed_last_mutation_run_id = str(',
+              observed_indent + '    observed_epoch.get("last_mutation_run_id") or ""',
+              observed_indent + ')',
+              observed_indent + 'published = False',
+          ]
 
-          old_cas = '''            if (
-                  str(current.get("accepted_fingerprint") or "").strip()
-                  != observed_accepted_fingerprint
-              ):
-                  return
-          '''
-          new_cas = '''            current_accepted_fingerprint = str(
-                  current.get("accepted_fingerprint") or ""
-              ).strip()
-              acceptance_unchanged = (
-                  current_accepted_fingerprint == observed_accepted_fingerprint
-              )
-              cleanup_cleared_observed_stale = (
-                  attempt > 0
-                  and bool(observed_accepted_fingerprint)
-                  and not current_accepted_fingerprint
-                  and str(current.get("status") or "") == "pending"
-                  and not _float(current.get("accepted_at"))
-                  and not str(current.get("accepted_head") or "").strip()
-                  and not str(current.get("accepted_run_id") or "").strip()
-                  and not str(current.get("accepted_diff_sha256") or "").strip()
-                  and _float(current.get("last_mutation_at"))
-                  == observed_last_mutation_at
-                  and str(current.get("last_mutation_run_id") or "")
-                  == observed_last_mutation_run_id
-              )
-              if not acceptance_unchanged and not cleanup_cleared_observed_stale:
-                  return
-          '''
+          cas_index = next(
+              i
+              for i in range(len(lines) - 4)
+              if lines[i].strip() == 'if ('
+              and lines[i + 1].strip()
+              == 'str(current.get("accepted_fingerprint") or "").strip()'
+              and lines[i + 2].strip() == '!= observed_accepted_fingerprint'
+              and lines[i + 3].strip() == '):'
+              and lines[i + 4].strip() == 'return'
+          )
+          cas_indent = lines[cas_index][
+              : len(lines[cas_index]) - len(lines[cas_index].lstrip())
+          ]
+          cont = cas_indent + '    '
+          lines[cas_index : cas_index + 5] = [
+              cas_indent + 'current_accepted_fingerprint = str(',
+              cont + 'current.get("accepted_fingerprint") or ""',
+              cas_indent + ').strip()',
+              cas_indent + 'acceptance_unchanged = (',
+              cont + 'current_accepted_fingerprint == observed_accepted_fingerprint',
+              cas_indent + ')',
+              cas_indent + 'cleanup_cleared_observed_stale = (',
+              cont + 'attempt > 0',
+              cont + 'and bool(observed_accepted_fingerprint)',
+              cont + 'and not current_accepted_fingerprint',
+              cont + 'and str(current.get("status") or "") == "pending"',
+              cont + 'and not _float(current.get("accepted_at"))',
+              cont + 'and not str(current.get("accepted_head") or "").strip()',
+              cont + 'and not str(current.get("accepted_run_id") or "").strip()',
+              cont + 'and not str(current.get("accepted_diff_sha256") or "").strip()',
+              cont + 'and _float(current.get("last_mutation_at"))',
+              cont + '== observed_last_mutation_at',
+              cont + 'and str(current.get("last_mutation_run_id") or "")',
+              cont + '== observed_last_mutation_run_id',
+              cas_indent + ')',
+              cas_indent
+              + 'if not acceptance_unchanged and not cleanup_cleared_observed_stale:',
+              cont + 'return',
+          ]
 
-          if text.count(old_observed) != 1:
-              raise SystemExit(f'observed block count={text.count(old_observed)}')
-          if text.count(old_cas) != 1:
-              raise SystemExit(f'CAS block count={text.count(old_cas)}')
-
-          text = text.replace(old_observed, new_observed, 1)
-          text = text.replace(old_cas, new_cas, 1)
-          compile(text, str(path), 'exec')
-          path.write_text(text)
+          updated = '\n'.join(lines) + '\n'
+          compile(updated, str(path), 'exec')
+          path.write_text(updated)
           PY
       - name: Commit source patch
         shell: bash
