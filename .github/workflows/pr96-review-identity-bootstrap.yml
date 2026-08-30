@@ -1,0 +1,54 @@
+name: PR96 review identity workflow bootstrap
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  fix-workflow:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - name: Repair malformed Python tail
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/pr96-review-identity-selfpatch.yml')
+          text = path.read_text()
+          start = text.find('          for path_s in (\\n')
+          if start < 0:
+              raise SystemExit('malformed tail marker not found')
+          end = text.find('\n          PY\n', start)
+          if end < 0:
+              raise SystemExit('heredoc end marker not found')
+          corrected = '''          for path_s in (
+              'services/gateway/app/coding_agent_guarded.py',
+              'services/gateway/app/coding_mission_acceptance_epoch.py',
+              'services/gateway/app/coding_semantic_acceptance_contract.py',
+              'services/gateway/tests/test_coding_mission_acceptance_epoch.py',
+              'services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py',
+              'services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py',
+          ):
+              path = Path(path_s)
+              compile(path.read_text(), str(path), 'exec')
+'''
+          path.write_text(text[:start] + corrected + text[end:])
+          PY
+      - name: Commit workflow repair
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/pr96-review-identity-selfpatch.yml
+          git diff --cached --check
+          git commit -m 'Repair one-shot review identity workflow'
+          git push origin HEAD:agent/semantic-acceptance-contract
