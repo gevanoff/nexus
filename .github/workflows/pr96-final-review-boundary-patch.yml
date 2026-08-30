@@ -31,142 +31,53 @@ jobs:
               text = path.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{path_s}: expected one marker, got {count}\nMARKER:\n{old[:600]}")
+                  raise SystemExit(f"{path_s}: expected one exact marker, got {count}: {old[:180]!r}")
               path.write_text(text.replace(old, new, 1))
+
+          def replace_span(path_s, start, end, new, *, include_end=True):
+              path = Path(path_s)
+              text = path.read_text()
+              if text.count(start) != 1:
+                  raise SystemExit(f"{path_s}: start marker count={text.count(start)}: {start!r}")
+              start_i = text.index(start)
+              end_i = text.index(end, start_i)
+              if include_end:
+                  end_i += len(end)
+              path.write_text(text[:start_i] + new + text[end_i:])
 
           epoch = "services/gateway/app/coding_mission_acceptance_epoch.py"
           contract = "services/gateway/app/coding_semantic_acceptance_contract.py"
 
           replace_once(
               epoch,
-              """def _mapping(value: Any) -> Mapping[str, Any]:
-              return value if isinstance(value, Mapping) else {}
+              "def _mapping(value: Any) -> Mapping[str, Any]:\n    return value if isinstance(value, Mapping) else {}\n\n\ndef _float(value: Any) -> float:\n",
+              "def _mapping(value: Any) -> Mapping[str, Any]:\n    return value if isinstance(value, Mapping) else {}\n\n\ndef _consume_semantic_review_identity(\n    value: Any,\n) -> tuple[Dict[str, Any], Mapping[str, Any]]:\n    result = dict(value) if isinstance(value, Mapping) else {}\n    identity = _mapping(\n        result.pop(\"_semantic_acceptance_review_identity\", {})\n    )\n    return result, identity\n\n\ndef _float(value: Any) -> float:\n",
+          )
 
-
-          def _float(value: Any) -> float:
-          """.replace("          ", ""),
-              """def _mapping(value: Any) -> Mapping[str, Any]:
-              return value if isinstance(value, Mapping) else {}
-
-
-          def _consume_semantic_review_identity(
-              value: Any,
-          ) -> tuple[Dict[str, Any], Mapping[str, Any]]:
-              result = dict(value) if isinstance(value, Mapping) else {}
-              identity = _mapping(
-                  result.pop("_semantic_acceptance_review_identity", {})
-              )
-              return result, identity
-
-
-          def _float(value: Any) -> float:
-          """.replace("          ", ""),
+          replace_span(
+              epoch,
+              "    initial = cw.load_task(task_id)\n    explicit_review_identity =",
+              "    max_attempts = 2\n",
+              "    bound_fingerprint = str(reviewed_fingerprint or \"\").strip()\n    if not bound_fingerprint or reviewed_cycle is None:\n        return {} if return_publication else False\n    bound_cycle = _int(reviewed_cycle)\n    initial = cw.load_task(task_id)\n    if _int(initial.get(\"agent_cycle\")) != bound_cycle:\n        return {} if return_publication else False\n    reviewed_fingerprint = bound_fingerprint\n    reviewed_cycle = bound_cycle\n    max_attempts = 2\n",
           )
 
           replace_once(
               epoch,
-              """    initial = cw.load_task(task_id)
-              explicit_review_identity = reviewed_cycle is not None or bool(
-                  str(reviewed_fingerprint or "").strip()
-              )
-              if explicit_review_identity:
-                  bound_fingerprint = str(reviewed_fingerprint or "").strip()
-                  bound_cycle = _int(reviewed_cycle)
-              else:
-                  review = _latest_accepted_review(initial)
-                  if not review:
-                      return False
-                  bound_fingerprint = str(review.get("fingerprint") or "").strip()
-                  bound_cycle = _int(review.get("cycle") or initial.get("agent_cycle"))
-              if not bound_fingerprint:
-                  return False
-              if _int(initial.get("agent_cycle")) != bound_cycle:
-                  return False
-              reviewed_fingerprint = bound_fingerprint
-              reviewed_cycle = bound_cycle
-              max_attempts = 2
-          """.replace("              ", ""),
-              """    bound_fingerprint = str(reviewed_fingerprint or "").strip()
-              if not bound_fingerprint or reviewed_cycle is None:
-                  return {} if return_publication else False
-              bound_cycle = _int(reviewed_cycle)
-              initial = cw.load_task(task_id)
-              if _int(initial.get("agent_cycle")) != bound_cycle:
-                  return {} if return_publication else False
-              reviewed_fingerprint = bound_fingerprint
-              reviewed_cycle = bound_cycle
-              max_attempts = 2
-          """.replace("              ", ""),
+              "        def apply(latest: Dict[str, Any]) -> None:\n            nonlocal published, published_generation\n            current = dict(_mapping(latest.get(KEY)))\n",
+              "        def apply(latest: Dict[str, Any]) -> None:\n            nonlocal published, published_generation\n            if _int(latest.get(\"agent_cycle\")) != reviewed_cycle:\n                return\n            current = dict(_mapping(latest.get(KEY)))\n",
+          )
+
+          replace_span(
+              epoch,
+              "        try:\n            before_task = cw.load_task(task_id)\n        except Exception:\n",
+              "\n\n        forced_state = forced_action.active_state(before_task)",
+              "        try:\n            before_task = cw.load_task(task_id)\n        except Exception:\n            delegated, _ = _consume_semantic_review_identity(\n                original_run_tool(\n                    task_id,\n                    name,\n                    args,\n                    git_token_value=git_token_value,\n                )\n            )\n            return delegated\n\n        forced_state = forced_action.active_state(before_task)",
           )
 
           replace_once(
               epoch,
-              """        def apply(latest: Dict[str, Any]) -> None:
-                  nonlocal published, published_generation
-                  current = dict(_mapping(latest.get(KEY)))
-                  if str(current.get("base_head") or "") != base_head:
-                      return
-          """.replace("              ", ""),
-              """        def apply(latest: Dict[str, Any]) -> None:
-                  nonlocal published, published_generation
-                  if _int(latest.get("agent_cycle")) != reviewed_cycle:
-                      return
-                  current = dict(_mapping(latest.get(KEY)))
-                  if str(current.get("base_head") or "") != base_head:
-                      return
-          """.replace("              ", ""),
-          )
-
-          replace_once(
-              epoch,
-              """        try:
-                  before_task = cw.load_task(task_id)
-              except Exception:
-                  return original_run_tool(
-                      task_id,
-                      name,
-                      args,
-                      git_token_value=git_token_value,
-                  )
-          """.replace("              ", ""),
-              """        try:
-                  before_task = cw.load_task(task_id)
-              except Exception:
-                  delegated, _ = _consume_semantic_review_identity(
-                      original_run_tool(
-                          task_id,
-                          name,
-                          args,
-                          git_token_value=git_token_value,
-                      )
-                  )
-                  return delegated
-          """.replace("              ", ""),
-          )
-
-          replace_once(
-              epoch,
-              """        result = dict(
-                  original_run_tool(
-                      task_id,
-                      name,
-                      args,
-                      git_token_value=git_token_value,
-                  )
-              )
-              review_identity = _mapping(
-                  result.pop("_semantic_acceptance_review_identity", {})
-              )
-          """.replace("              ", ""),
-              """        result, review_identity = _consume_semantic_review_identity(
-                  original_run_tool(
-                      task_id,
-                      name,
-                      args,
-                      git_token_value=git_token_value,
-                  )
-              )
-          """.replace("              ", ""),
+              "        result = dict(\n            original_run_tool(\n                task_id,\n                name,\n                args,\n                git_token_value=git_token_value,\n            )\n        )\n        review_identity = _mapping(\n            result.pop(\"_semantic_acceptance_review_identity\", {})\n        )\n",
+              "        result, review_identity = _consume_semantic_review_identity(\n            original_run_tool(\n                task_id,\n                name,\n                args,\n                git_token_value=git_token_value,\n            )\n        )\n",
           )
 
           replace_once(
@@ -175,129 +86,31 @@ jobs:
               "    if callable(original_record_semantic_acceptance):\n",
           )
 
-          replace_once(
+          replace_span(
               contract,
-              """            if terminal_obj is not terminal_hardening or cw_obj is not cw or agent_obj is not agent:
-                  return original_record_semantic_acceptance(
-                      terminal_obj,
-                      cw_obj,
-                      agent_obj,
-                      task_id,
-                  )
-
-              before = cw_obj.load_task(task_id)
-              explicit_review_identity = reviewed_cycle is not None or bool(
-                  str(reviewed_fingerprint or "").strip()
-              )
-              if explicit_review_identity:
-                  reviewed_fingerprint = str(reviewed_fingerprint or "").strip()
-                  effective_reviewed_cycle = (
-                      int(reviewed_cycle)
-                      if reviewed_cycle is not None
-                      else int(before.get("agent_cycle") or 0)
-                  )
-              else:
-                  review = _mapping(latest_accepted_review(before))
-                  reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
-                  effective_reviewed_cycle = int(
-                      review.get("cycle") or before.get("agent_cycle") or 0
-                  )
-              if not reviewed_fingerprint:
-                  message = (
-                      "Refusing to record semantic acceptance because the latest accepted review "
-                      "has no acceptance fingerprint."
-                  )
-          """.replace("              ", ""),
-              """            if terminal_obj is not terminal_hardening or cw_obj is not cw or agent_obj is not agent:
-                  return original_record_semantic_acceptance(
-                      terminal_obj,
-                      cw_obj,
-                      agent_obj,
-                      task_id,
-                      reviewed_fingerprint=reviewed_fingerprint,
-                      reviewed_cycle=reviewed_cycle,
-                      return_publication=return_publication,
-                  )
-
-              before = cw_obj.load_task(task_id)
-              reviewed_fingerprint = str(reviewed_fingerprint or "").strip()
-              if not reviewed_fingerprint or reviewed_cycle is None:
-                  message = (
-                      "Refusing to record semantic acceptance because no complete "
-                      "invocation-local review identity was supplied."
-                  )
-          """.replace("              ", ""),
+              "            if terminal_obj is not terminal_hardening or cw_obj is not cw or agent_obj is not agent:\n",
+              "            if not reviewed_fingerprint:\n",
+              "            if terminal_obj is not terminal_hardening or cw_obj is not cw or agent_obj is not agent:\n                return original_record_semantic_acceptance(\n                    terminal_obj,\n                    cw_obj,\n                    agent_obj,\n                    task_id,\n                    reviewed_fingerprint=reviewed_fingerprint,\n                    reviewed_cycle=reviewed_cycle,\n                    return_publication=return_publication,\n                )\n\n            before = cw_obj.load_task(task_id)\n            reviewed_fingerprint = str(reviewed_fingerprint or \"\").strip()\n            if not reviewed_fingerprint or reviewed_cycle is None:\n",
           )
 
           replace_once(
               contract,
-              """                return
-
-              current_fingerprint = current_review_fingerprint(
-          """.replace("              ", ""),
-              """                return
-
-              effective_reviewed_cycle = int(reviewed_cycle)
-              if int(before.get("agent_cycle") or 0) != effective_reviewed_cycle:
-                  return
-
-              current_fingerprint = current_review_fingerprint(
-          """.replace("              ", ""),
+              "                message = (\n                    \"Refusing to record semantic acceptance because the latest accepted review \"\n                    \"has no acceptance fingerprint.\"\n                )\n",
+              "                message = (\n                    \"Refusing to record semantic acceptance because no complete \"\n                    \"invocation-local review identity was supplied.\"\n                )\n",
           )
 
-          old = """            try:
-                  publication = original_record_semantic_acceptance(
-                      terminal_obj,
-                      cw_obj,
-                      agent_obj,
-                      task_id,
-                      reviewed_fingerprint=reviewed_fingerprint,
-                      reviewed_cycle=effective_reviewed_cycle,
-                      return_publication=True,
-                  )
-              except TypeError as exc:
-                  # Synthetic/legacy recorders may not expose invocation identity.
-                  # Production owner code does; compatibility recorders still need
-                  # an exact structured publication identity for cleanup.
-                  if not any(
-                      token in str(exc)
-                      for token in (
-                          "reviewed_fingerprint",
-                          "reviewed_cycle",
-                          "return_publication",
-                      )
-                  ):
-                      raise
-                  try:
-                      publication = original_record_semantic_acceptance(
-                          terminal_obj,
-                          cw_obj,
-                          agent_obj,
-                          task_id,
-                          return_publication=True,
-                      )
-                  except TypeError as legacy_exc:
-                      if "return_publication" not in str(legacy_exc):
-                          raise
-                      original_record_semantic_acceptance(
-                          terminal_obj,
-                          cw_obj,
-                          agent_obj,
-                          task_id,
-                      )
-                      publication = {}
-          """.replace("              ", "")
-          new = """            publication = original_record_semantic_acceptance(
-                  terminal_obj,
-                  cw_obj,
-                  agent_obj,
-                  task_id,
-                  reviewed_fingerprint=reviewed_fingerprint,
-                  reviewed_cycle=effective_reviewed_cycle,
-                  return_publication=True,
-              )
-          """.replace("              ", "")
-          replace_once(contract, old, new)
+          replace_once(
+              contract,
+              "                except Exception:\n                    pass\n                return\n\n            current_fingerprint = current_review_fingerprint(\n",
+              "                except Exception:\n                    pass\n                return\n\n            effective_reviewed_cycle = int(reviewed_cycle)\n            if int(before.get(\"agent_cycle\") or 0) != effective_reviewed_cycle:\n                return\n\n            current_fingerprint = current_review_fingerprint(\n",
+          )
+
+          replace_span(
+              contract,
+              "            try:\n                publication = original_record_semantic_acceptance(\n",
+              "                    publication = {}\n",
+              "            publication = original_record_semantic_acceptance(\n                terminal_obj,\n                cw_obj,\n                agent_obj,\n                task_id,\n                reviewed_fingerprint=reviewed_fingerprint,\n                reviewed_cycle=effective_reviewed_cycle,\n                return_publication=True,\n            )\n",
+          )
           PY
           python /tmp/pr96_patch.py
           python -m py_compile services/gateway/app/coding_mission_acceptance_epoch.py services/gateway/app/coding_semantic_acceptance_contract.py
