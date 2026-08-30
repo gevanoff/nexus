@@ -578,6 +578,10 @@ def install(
             cw_obj: Any,
             agent_obj: Any,
             task_id: str,
+            *,
+            reviewed_fingerprint: str = "",
+            reviewed_cycle: Optional[int] = None,
+            return_publication: bool = False,
         ) -> None:
             if terminal_obj is not terminal_hardening or cw_obj is not cw or agent_obj is not agent:
                 return original_record_semantic_acceptance(
@@ -588,19 +592,26 @@ def install(
                 )
 
             before = cw_obj.load_task(task_id)
-            review = _mapping(latest_accepted_review(before))
-            reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
+            explicit_review_identity = reviewed_cycle is not None or bool(
+                str(reviewed_fingerprint or "").strip()
+            )
+            if explicit_review_identity:
+                reviewed_fingerprint = str(reviewed_fingerprint or "").strip()
+                effective_reviewed_cycle = (
+                    int(reviewed_cycle)
+                    if reviewed_cycle is not None
+                    else int(before.get("agent_cycle") or 0)
+                )
+            else:
+                review = _mapping(latest_accepted_review(before))
+                reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
+                effective_reviewed_cycle = int(
+                    review.get("cycle") or before.get("agent_cycle") or 0
+                )
             if not reviewed_fingerprint:
-                if not _is_frozen_contract(before.get(KEY)):
-                    return original_record_semantic_acceptance(
-                        terminal_obj,
-                        cw_obj,
-                        agent_obj,
-                        task_id,
-                    )
                 message = (
-                    "Refusing to record semantic acceptance for a frozen mission contract because "
-                    "the latest accepted review has no acceptance fingerprint."
+                    "Refusing to record semantic acceptance because the latest accepted review "
+                    "has no acceptance fingerprint."
                 )
                 _LOGGER.warning("%s task_id=%s", message, task_id)
                 try:
@@ -639,21 +650,41 @@ def install(
                     cw_obj,
                     agent_obj,
                     task_id,
+                    reviewed_fingerprint=reviewed_fingerprint,
+                    reviewed_cycle=effective_reviewed_cycle,
                     return_publication=True,
                 )
             except TypeError as exc:
-                # Synthetic/legacy recorders may not expose the structured-return
-                # keyword. Run them for compatibility, but without an exact
-                # publication identity stale cleanup must fail closed.
-                if "return_publication" not in str(exc):
+                # Synthetic/legacy recorders may not expose invocation identity.
+                # Production owner code does; compatibility recorders still need
+                # an exact structured publication identity for cleanup.
+                if not any(
+                    token in str(exc)
+                    for token in (
+                        "reviewed_fingerprint",
+                        "reviewed_cycle",
+                        "return_publication",
+                    )
+                ):
                     raise
-                original_record_semantic_acceptance(
-                    terminal_obj,
-                    cw_obj,
-                    agent_obj,
-                    task_id,
-                )
-                publication = {}
+                try:
+                    publication = original_record_semantic_acceptance(
+                        terminal_obj,
+                        cw_obj,
+                        agent_obj,
+                        task_id,
+                        return_publication=True,
+                    )
+                except TypeError as legacy_exc:
+                    if "return_publication" not in str(legacy_exc):
+                        raise
+                    original_record_semantic_acceptance(
+                        terminal_obj,
+                        cw_obj,
+                        agent_obj,
+                        task_id,
+                    )
+                    publication = {}
             publication_info = _mapping(publication)
             published_fingerprint = str(
                 publication_info.get("fingerprint") or ""

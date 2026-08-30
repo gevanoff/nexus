@@ -521,7 +521,12 @@ def _run_tool_with_semantic_acceptance(
         },
     )
     if bool(review.get("accepted")):
-        return result
+        accepted_result = dict(result)
+        accepted_result["_semantic_acceptance_review_identity"] = {
+            "fingerprint": str(review.get("fingerprint") or "").strip(),
+            "cycle": int(task.get("agent_cycle") or 0),
+        }
+        return accepted_result
     reason = str(review.get("reason") or "").strip() or (
         "the patch does not yet demonstrate causal alignment with the request"
     )

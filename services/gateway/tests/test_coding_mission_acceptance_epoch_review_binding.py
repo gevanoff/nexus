@@ -74,6 +74,51 @@ def test_acceptance_recorder_refuses_live_fingerprint_not_bound_to_review(monkey
     assert cw.task[epoch.KEY]["status"] == "pending"
 
 
+def test_explicit_finish_review_identity_beats_later_stale_shared_event(monkeypatch) -> None:
+    cw = _MemoryCW(_task("fp:reviewed-diff"))
+    cw.task["agent_events"].append(
+        {
+            "type": "semantic_acceptance_review",
+            "cycle": 4,
+            "accepted": True,
+            "fingerprint": "fp:stale-diff",
+        }
+    )
+    terminal = SimpleNamespace(
+        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"
+    )
+    agent = SimpleNamespace()
+
+    monkeypatch.setattr(
+        epoch,
+        "mission_delta_state",
+        lambda _cw, _task_id, _task: {
+            "ok": True,
+            "has_delta": True,
+            "base_head": "base",
+            "current_head": "reviewed-head",
+            "diff_sha256": "reviewed-diff-sha",
+        },
+    )
+    monkeypatch.setattr(
+        epoch,
+        "mission_review_diff",
+        lambda _cw, _agent, _task_id, _task: "reviewed-diff",
+    )
+
+    published = epoch._record_semantic_acceptance(
+        terminal,
+        cw,
+        agent,
+        "code_epoch_review_binding",
+        reviewed_fingerprint="fp:reviewed-diff",
+        reviewed_cycle=4,
+    )
+
+    assert published is True
+    assert cw.task[epoch.KEY]["accepted_fingerprint"] == "fp:reviewed-diff"
+
+
 def test_acceptance_recorder_publishes_only_matching_review_fingerprint(monkeypatch) -> None:
     cw = _MemoryCW(_task("fp:reviewed-diff"))
     terminal = SimpleNamespace(

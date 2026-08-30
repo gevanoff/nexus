@@ -62,15 +62,29 @@ class _Guarded:
     def _run(self, task_id, name, args, *, git_token_value):
         del args, git_token_value
         if name == "coding_finish":
+            review_diff = epoch.mission_review_diff(
+                self.cw, self._agent, task_id, self.cw.task
+            )
+            fingerprint = _TerminalHardening.semantic_acceptance_fingerprint(
+                self.cw.task, diff_text=review_diff
+            )
             self._agent._append_event(
                 task_id,
                 {
                     "type": "semantic_acceptance_review",
                     "cycle": int(self.cw.task.get("agent_cycle") or 0),
                     "accepted": True,
+                    "fingerprint": fingerprint,
                 },
             )
-            return {"ok": True, "success": True}
+            return {
+                "ok": True,
+                "success": True,
+                "_semantic_acceptance_review_identity": {
+                    "fingerprint": fingerprint,
+                    "cycle": int(self.cw.task.get("agent_cycle") or 0),
+                },
+            }
         return {"ok": True}
 
 
@@ -266,6 +280,7 @@ def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
     )
     assert finish["ok"] is True
     assert finish["success"] is True
+    assert "_semantic_acceptance_review_identity" not in finish
     assert cw.task[epoch.KEY]["status"] == "semantic_accepted"
     assert cw.task[epoch.KEY]["accepted_fingerprint"]
 

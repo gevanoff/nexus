@@ -357,15 +357,30 @@ def _record_semantic_acceptance(
     agent: Any,
     task_id: str,
     *,
+    reviewed_fingerprint: str = "",
+    reviewed_cycle: Optional[int] = None,
     return_publication: bool = False,
 ) -> Any:
     initial = cw.load_task(task_id)
-    review = _latest_accepted_review(initial)
-    if not review:
+    explicit_review_identity = reviewed_cycle is not None or bool(
+        str(reviewed_fingerprint or "").strip()
+    )
+    if explicit_review_identity:
+        bound_fingerprint = str(reviewed_fingerprint or "").strip()
+        bound_cycle = _int(reviewed_cycle)
+    else:
+        review = _latest_accepted_review(initial)
+        if not review:
+            return False
+        bound_fingerprint = str(review.get("fingerprint") or "").strip()
+        bound_cycle = _int(review.get("cycle") or initial.get("agent_cycle"))
+    if not bound_fingerprint:
         return False
-    reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
-    reviewed_cycle = _int(initial.get("agent_cycle"))
-    max_attempts = 2 if reviewed_fingerprint else 1
+    if _int(initial.get("agent_cycle")) != bound_cycle:
+        return False
+    reviewed_fingerprint = bound_fingerprint
+    reviewed_cycle = bound_cycle
+    max_attempts = 2
 
     task = initial
     for attempt in range(max_attempts):
@@ -977,11 +992,23 @@ def install(
                 "summary": "The current remediation hypothesis was explicitly refuted; forced edit mode is suspended for one bounded evidence pass.",
             }
 
-        result = original_run_tool(
-            task_id,
-            name,
-            args,
-            git_token_value=git_token_value,
+        result = dict(
+            original_run_tool(
+                task_id,
+                name,
+                args,
+                git_token_value=git_token_value,
+            )
+        )
+        review_identity = _mapping(
+            result.pop("_semantic_acceptance_review_identity", {})
+        )
+        reviewed_fingerprint = str(
+            review_identity.get("fingerprint") or ""
+        ).strip()
+        raw_reviewed_cycle = review_identity.get("cycle")
+        reviewed_cycle = (
+            _int(raw_reviewed_cycle) if raw_reviewed_cycle is not None else None
         )
 
         mutation = bool(result.get("workspace_modified")) or (
@@ -1001,12 +1028,6 @@ def install(
                 state = {}
             if state.get("ok") and state.get("has_delta"):
                 try:
-                    _record_semantic_acceptance(
-                        terminal_hardening,
-                        cw,
-                        agent,
-                        task_id,
-                    )
                     latest = cw.load_task(task_id)
                     accepted = _epoch_accepted_for_current(
                         terminal_hardening,
@@ -1015,6 +1036,23 @@ def install(
                         task_id,
                         latest,
                     )
+                    if not accepted and reviewed_fingerprint:
+                        _record_semantic_acceptance(
+                            terminal_hardening,
+                            cw,
+                            agent,
+                            task_id,
+                            reviewed_fingerprint=reviewed_fingerprint,
+                            reviewed_cycle=reviewed_cycle,
+                        )
+                        latest = cw.load_task(task_id)
+                        accepted = _epoch_accepted_for_current(
+                            terminal_hardening,
+                            cw,
+                            agent,
+                            task_id,
+                            latest,
+                        )
                 except Exception:
                     accepted = False
                 if not accepted:

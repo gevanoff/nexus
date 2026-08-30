@@ -202,6 +202,43 @@ def test_mission_acceptance_refuses_accepted_event_for_stale_fingerprint() -> No
     assert state["calls"] == 1
 
 
+def test_unfrozen_migrated_review_missing_fingerprint_is_logged_and_blocked(caplog) -> None:
+    state = {"calls": 0}
+
+    def latest_accepted_review(_task):
+        return {"accepted": True, "fingerprint": "", "cycle": 8}
+
+    def mission_review_diff(_cw, _agent, _task_id, _task):
+        return "review-diff"
+
+    def record_semantic_acceptance(_terminal, _cw, _agent, _task_id, **_kwargs):
+        state["calls"] += 1
+
+    epoch_obj = SimpleNamespace(
+        KEY="coding_mission_acceptance_epoch",
+        SCHEMA="nexus_coding_mission_acceptance_epoch.v1",
+        _latest_accepted_review=latest_accepted_review,
+        mission_review_diff=mission_review_diff,
+        _record_semantic_acceptance=record_semantic_acceptance,
+    )
+    cw, agent, _guarded, terminal = _install(
+        task={
+            "id": "code_unfrozen_missing_review_fp",
+            "prompt": "Do the work.",
+            "agent_cycle": 8,
+        },
+        epoch=epoch_obj,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=contract.__name__):
+        epoch_obj._record_semantic_acceptance(
+            terminal, cw, agent, "code_unfrozen_missing_review_fp"
+        )
+
+    assert state["calls"] == 0
+    assert "latest accepted review has no acceptance fingerprint" in caplog.text
+
+
 def test_frozen_contract_missing_review_fingerprint_is_logged_and_blocked(caplog) -> None:
     state = {"calls": 0}
     task = {"id": "code_missing_review_fp", "prompt": "Do the work.", "agent_cycle": 8}
