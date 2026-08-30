@@ -51,6 +51,26 @@ jobs:
           python -m pip install --quiet \
             -r services/gateway/app/requirements.freeze.txt \
             -r services/gateway/tests/requirements.freeze.txt
+      - name: Prepare writable Gateway runtime paths
+        shell: bash
+        run: |
+          sudo mkdir -p \
+            /var/lib/gateway/app \
+            /var/lib/gateway/config \
+            /var/lib/gateway/data/agent \
+            /var/lib/gateway/data/coding/tasks \
+            /var/lib/gateway/data/coding/workspaces \
+            /var/lib/gateway/data/model_benchmarks \
+            /var/lib/gateway/data/model_tool_qualification \
+            /var/lib/gateway/data/sentinel \
+            /var/lib/gateway/data/tools \
+            /var/lib/gateway/data/ui_chats \
+            /var/lib/gateway/data/ui_files \
+            /var/lib/gateway/data/ui_images \
+            /var/lib/gateway/data/voice_library \
+            /var/lib/gateway/tools \
+            /workspace/nexus/souls
+          sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
       - name: Run focused acceptance tests
         env:
           PYTHONPATH: services/gateway
