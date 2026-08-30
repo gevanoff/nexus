@@ -1,0 +1,106 @@
+name: PR96 post-dispatch fail-closed patch
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply post-dispatch fail-closed patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('services/gateway/app/coding_mission_acceptance_epoch.py')
+          text = source.read_text()
+          old = '''        if name == "coding_finish" and result.get("ok") is True and result.get("success") is True:\n            try:\n                state = mission_delta_state(cw, task_id)\n            except Exception:\n                state = {}\n            if state.get("ok") and state.get("has_delta"):\n                try:\n                    latest = cw.load_task(task_id)\n                    accepted = _epoch_accepted_for_current(\n                        terminal_hardening,\n                        cw,\n                        agent,\n                        task_id,\n                        latest,\n                    )\n                    if not accepted and reviewed_fingerprint:\n                        _record_semantic_acceptance(\n                            terminal_hardening,\n                            cw,\n                            agent,\n                            task_id,\n                            reviewed_fingerprint=reviewed_fingerprint,\n                            reviewed_cycle=reviewed_cycle,\n                        )\n                        latest = cw.load_task(task_id)\n                        accepted = _epoch_accepted_for_current(\n                            terminal_hardening,\n                            cw,\n                            agent,\n                            task_id,\n                            latest,\n                        )\n                except Exception:\n                    accepted = False\n                if not accepted:\n                    return {\n                        "ok": False,\n                        "success": False,\n                        "error": "mission_semantic_acceptance_missing",\n                        "summary": (\n                            "The workspace contains an unaccepted mission delta, including inherited checkpoint changes. "\n                            "A successful independent semantic acceptance review of the full mission delta is required before finishing."\n                        ),\n                    }\n'''
+          new = '''        if name == "coding_finish" and result.get("ok") is True and result.get("success") is True:\n            try:\n                state = mission_delta_state(cw, task_id)\n            except Exception:\n                return {\n                    "ok": False,\n                    "success": False,\n                    "error": "mission_acceptance_state_unavailable",\n                    "required_action": "Retry coding_finish after mission acceptance state is available.",\n                    "summary": (\n                        "Mission acceptance state could not be loaded after coding_finish. "\n                        "The delegated success was sanitized and blocked; retry coding_finish."\n                    ),\n                }\n            if not state.get("ok"):\n                return {\n                    "ok": False,\n                    "success": False,\n                    "error": "mission_acceptance_state_unavailable",\n                    "required_action": "Retry coding_finish after mission acceptance state is available.",\n                    "summary": (\n                        "Mission delta state is unavailable after coding_finish. "\n                        "The delegated success was blocked instead of being treated as terminal."\n                    ),\n                }\n            if state.get("has_delta"):\n                try:\n                    latest = cw.load_task(task_id)\n                    accepted = _epoch_accepted_for_current(\n                        terminal_hardening,\n                        cw,\n                        agent,\n                        task_id,\n                        latest,\n                    )\n                    if not accepted and reviewed_fingerprint:\n                        _record_semantic_acceptance(\n                            terminal_hardening,\n                            cw,\n                            agent,\n                            task_id,\n                            reviewed_fingerprint=reviewed_fingerprint,\n                            reviewed_cycle=reviewed_cycle,\n                        )\n                        latest = cw.load_task(task_id)\n                        accepted = _epoch_accepted_for_current(\n                            terminal_hardening,\n                            cw,\n                            agent,\n                            task_id,\n                            latest,\n                        )\n                except Exception:\n                    return {\n                        "ok": False,\n                        "success": False,\n                        "error": "mission_acceptance_state_unavailable",\n                        "required_action": "Retry coding_finish after mission acceptance state is available.",\n                        "summary": (\n                            "Mission acceptance could not be reloaded or verified after coding_finish. "\n                            "The delegated success was blocked; retry coding_finish."\n                        ),\n                    }\n                if not accepted:\n                    return {\n                        "ok": False,\n                        "success": False,\n                        "error": "mission_semantic_acceptance_missing",\n                        "summary": (\n                            "The workspace contains an unaccepted mission delta, including inherited checkpoint changes. "\n                            "A successful independent semantic acceptance review of the full mission delta is required before finishing."\n                        ),\n                    }\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'post-dispatch marker count={text.count(old)}')
+          source.write_text(text.replace(old, new, 1))
+
+          test = Path('services/gateway/tests/test_coding_mission_acceptance_epoch.py')
+          t = test.read_text()
+          marker = '''def test_unaccepted_inherited_delta_cannot_reach_original_finalizer():\n'''
+          insert = '''def test_post_dispatch_delta_state_exception_fails_closed(monkeypatch):\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n\n    def fail_state(*_args, **_kwargs):\n        raise RuntimeError("synthetic post-dispatch delta-state failure")\n\n    monkeypatch.setattr(epoch, "mission_delta_state", fail_state)\n    result = guarded._run_tool_with_semantic_acceptance(\n        "code-test", "coding_finish", {}, git_token_value=None\n    )\n    assert result["ok"] is False\n    assert result["success"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["required_action"].startswith("Retry coding_finish")\n    assert "_semantic_acceptance_review_identity" not in result\n    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")\n\n\ndef test_post_dispatch_invalid_delta_state_fails_closed(monkeypatch):\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n    monkeypatch.setattr(\n        epoch,\n        "mission_delta_state",\n        lambda *_args, **_kwargs: {"ok": False, "error": "synthetic git diff failure"},\n    )\n    result = guarded._run_tool_with_semantic_acceptance(\n        "code-test", "coding_finish", {}, git_token_value=None\n    )\n    assert result["ok"] is False\n    assert result["success"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["required_action"].startswith("Retry coding_finish")\n    assert "_semantic_acceptance_review_identity" not in result\n    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")\n\n\ndef test_post_dispatch_acceptance_verification_exception_fails_closed(monkeypatch):\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n\n    def fail_acceptance(*_args, **_kwargs):\n        raise RuntimeError("synthetic acceptance verification failure")\n\n    monkeypatch.setattr(epoch, "_epoch_accepted_for_current", fail_acceptance)\n    result = guarded._run_tool_with_semantic_acceptance(\n        "code-test", "coding_finish", {}, git_token_value=None\n    )\n    assert result["ok"] is False\n    assert result["success"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["required_action"].startswith("Retry coding_finish")\n    assert "_semantic_acceptance_review_identity" not in result\n\n\n'''
+          if t.count(marker) != 1:
+              raise SystemExit(f'test insertion marker count={t.count(marker)}')
+          test.write_text(t.replace(marker, insert + marker, 1))
+          PY
+          python -m py_compile \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py
+          git diff --check
+      - name: Install Gateway test dependencies
+        shell: bash
+        run: |
+          python -m pip install --quiet \
+            -r services/gateway/app/requirements.freeze.txt \
+            -r services/gateway/tests/requirements.freeze.txt
+      - name: Prepare writable Gateway runtime paths
+        shell: bash
+        run: |
+          sudo mkdir -p \
+            /var/lib/gateway/app \
+            /var/lib/gateway/config \
+            /var/lib/gateway/data/agent \
+            /var/lib/gateway/data/coding/tasks \
+            /var/lib/gateway/data/coding/workspaces \
+            /var/lib/gateway/data/model_benchmarks \
+            /var/lib/gateway/data/model_tool_qualification \
+            /var/lib/gateway/data/sentinel \
+            /var/lib/gateway/data/tools \
+            /var/lib/gateway/data/ui_chats \
+            /var/lib/gateway/data/ui_files \
+            /var/lib/gateway/data/ui_images \
+            /var/lib/gateway/data/voice_library \
+            /var/lib/gateway/tools \
+            /workspace/nexus/souls
+          sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
+      - name: Run focused acceptance tests
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: |
+          python -m pytest -q --tb=short \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_cas.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_retry.py \
+            services/gateway/tests/test_coding_mission_acceptance_publication_generation.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_post_record_race.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+      - name: Run full Gateway suite
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: python -m pytest -q --tb=short services/gateway/tests
+      - name: Commit clean fix
+        shell: bash
+        run: |
+          git rm -f .github/workflows/pr96-postdispatch-failclosed.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py
+          git commit -m "Fail closed on post-dispatch acceptance state errors"
+          git push origin HEAD:agent/semantic-acceptance-contract
