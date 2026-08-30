@@ -1,0 +1,159 @@
+name: PR96 finalization serialization patch
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply finalization serialization patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          workspace = Path('services/gateway/app/coding_workspace.py')
+          w = workspace.read_text()
+          old = '''_JSON_LOCKS_GUARD = threading.Lock()\n_JSON_LOCKS: Dict[str, threading.RLock] = {}\n'''
+          new = '''_JSON_LOCKS_GUARD = threading.Lock()\n_JSON_LOCKS: Dict[str, threading.RLock] = {}\n_WORKSPACE_LOCKS_GUARD = threading.Lock()\n_WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}\n'''
+          if w.count(old) != 1:
+              raise SystemExit(f'workspace-lock globals marker count={w.count(old)}')
+          w = w.replace(old, new, 1)
+
+          old = '''def _json_lock(path: Path) -> threading.RLock:\n    try:\n        key = str(path.resolve())\n    except Exception:\n        key = str(path)\n    with _JSON_LOCKS_GUARD:\n        lock = _JSON_LOCKS.get(key)\n        if lock is None:\n            lock = threading.RLock()\n            _JSON_LOCKS[key] = lock\n        return lock\n\n\n'''
+          new = '''def _json_lock(path: Path) -> threading.RLock:\n    try:\n        key = str(path.resolve())\n    except Exception:\n        key = str(path)\n    with _JSON_LOCKS_GUARD:\n        lock = _JSON_LOCKS.get(key)\n        if lock is None:\n            lock = threading.RLock()\n            _JSON_LOCKS[key] = lock\n        return lock\n\n\ndef task_workspace_lock(task_id: str) -> threading.RLock:\n    \"\"\"Serialize same-task worktree mutations and publish/finalization side effects.\"\"\"\n    value = str(task_id or \"\").strip()\n    if not _SAFE_TASK_RE.match(value):\n        raise HTTPException(status_code=404, detail=\"coding task not found\")\n    with _WORKSPACE_LOCKS_GUARD:\n        lock = _WORKSPACE_LOCKS.get(value)\n        if lock is None:\n            lock = threading.RLock()\n            _WORKSPACE_LOCKS[value] = lock\n        return lock\n\n\n'''
+          if w.count(old) != 1:
+              raise SystemExit(f'workspace-lock function marker count={w.count(old)}')
+          w = w.replace(old, new, 1)
+
+          serialization = '''\n\ndef _serialize_task_workspace_operation(operation: Any) -> Any:\n    \"\"\"Make a task-scoped checkout operation participate in finalization serialization.\"\"\"\n    if bool(getattr(operation, \"_nexus_workspace_serialized\", False)):\n        return operation\n\n    def serialized(task_id: str, *args: Any, **kwargs: Any) -> Any:\n        with task_workspace_lock(task_id):\n            return operation(task_id, *args, **kwargs)\n\n    serialized.__name__ = str(getattr(operation, \"__name__\", \"serialized_workspace_operation\"))\n    serialized.__doc__ = getattr(operation, \"__doc__\", None)\n    serialized._nexus_workspace_serialized = True\n    serialized._nexus_workspace_operation = operation\n    return serialized\n\n\n# These operations can mutate, remove, commit, or externally publish the task\n# checkout. Keeping them on one re-entrant task lock lets finalization hold the\n# checkout stable from semantic-acceptance revalidation through its final side\n# effect without deadlocking nested commit/push/PR calls.\nfor _workspace_operation_name in (\n    \"write_file\",\n    \"replace_text\",\n    \"apply_unified_patch\",\n    \"run_task_command\",\n    \"checkpoint_task\",\n    \"commit_task\",\n    \"push_task\",\n    \"create_pull_request\",\n    \"archive_task\",\n    \"delete_task\",\n):\n    _workspace_operation = globals().get(_workspace_operation_name)\n    if callable(_workspace_operation):\n        globals()[_workspace_operation_name] = _serialize_task_workspace_operation(\n            _workspace_operation\n        )\n'''
+          if '_serialize_task_workspace_operation' in w:
+              raise SystemExit('workspace serialization already present')
+          w = w.rstrip() + serialization + '\n'
+          workspace.write_text(w)
+
+          epoch = Path('services/gateway/app/coding_mission_acceptance_epoch.py')
+          e = epoch.read_text()
+          start = e.index('    def finalize_successful_mission(\n')
+          end = e.index('\n    agent.finalize_successful_run = finalize_successful_mission', start)
+          old_fn = e[start:end]
+          new_fn = '''    def finalize_successful_mission(\n        task_id: str,\n        *,\n        mission: Optional[Dict[str, Any]] = None,\n        git_token_value: Optional[str] = None,\n        finish_summary: str = \"\",\n        run_id: str = \"\",\n    ) -> Dict[str, Any]:\n        try:\n            workspace_lock = cw.task_workspace_lock(task_id)\n        except Exception:\n            return {\n                \"ok\": False,\n                \"error\": \"mission_acceptance_state_unavailable\",\n                \"required_action\": \"Retry coding_finish after mission acceptance state is available.\",\n                \"summary\": (\n                    \"The task workspace serialization boundary is unavailable during finalization. \"\n                    \"Finalization was blocked before repository side effects.\"\n                ),\n            }\n\n        # Hold the same re-entrant lock used by every checkout-mutating or\n        # publishing workspace operation. Acceptance is recomputed only after\n        # acquiring it, so an earlier edit is visible here and a later edit\n        # cannot enter between this check and commit/push/PR side effects.\n        with workspace_lock:\n            try:\n                task = cw.load_task(task_id)\n                state = mission_delta_state(cw, task_id, task)\n                snapshot = cw.coding_state_snapshot(task_id)\n                accepted = _epoch_accepted_for_current(\n                    terminal_hardening,\n                    cw,\n                    agent,\n                    task_id,\n                    task,\n                )\n            except Exception:\n                return {\n                    \"ok\": False,\n                    \"error\": \"mission_acceptance_state_unavailable\",\n                    \"required_action\": \"Retry coding_finish after mission acceptance state is available.\",\n                    \"summary\": (\n                        \"Mission acceptance state could not be established during finalization. \"\n                        \"Finalization was blocked instead of falling through to the unguarded finalizer.\"\n                    ),\n                }\n            if not state.get(\"ok\"):\n                return {\n                    \"ok\": False,\n                    \"error\": \"mission_acceptance_state_unavailable\",\n                    \"required_action\": \"Retry coding_finish after mission acceptance state is available.\",\n                    \"summary\": (\n                        \"Mission delta state is unavailable during finalization. \"\n                        \"Finalization was blocked instead of falling through to the unguarded finalizer.\"\n                    ),\n                }\n            if state.get(\"has_delta\") and not accepted:\n                return {\n                    \"ok\": False,\n                    \"error\": \"mission_semantic_acceptance_missing\",\n                    \"required_action\": \"Retry coding_finish to obtain semantic acceptance for the current mission delta.\",\n                    \"summary\": (\n                        \"The workspace contains a mission delta without current semantic acceptance. \"\n                        \"Finalization was blocked before commit or push.\"\n                    ),\n                }\n            if state.get(\"has_delta\") and accepted and _snapshot_ready(snapshot):\n                contract = cw.normalize_coding_mission(task, mission)\n                patched = dict(contract)\n                completion = dict(_mapping(contract.get(\"completion_policy\")))\n                completion[\"require_file_changes\"] = False\n                patched[\"completion_policy\"] = completion\n                result = original_finalize(\n                    task_id,\n                    mission=patched,\n                    git_token_value=git_token_value,\n                    finish_summary=finish_summary,\n                    run_id=run_id,\n                )\n                if result.get(\"ok\") is True:\n                    now = time.time()\n                    final_head = str(state.get(\"current_head\") or \"\")\n\n                    def apply(latest: Dict[str, Any]) -> None:\n                        current = dict(_mapping(latest.get(KEY)))\n                        if current.get(\"accepted_fingerprint\"):\n                            current.update(\n                                {\n                                    \"status\": \"finalized\",\n                                    \"finalized_at\": now,\n                                    \"finalized_head\": final_head,\n                                    \"updated_at\": now,\n                                }\n                            )\n                            latest[KEY] = current\n\n                    try:\n                        _mutate_task(cw, task_id, apply)\n                    except Exception:\n                        pass\n                return result\n            return original_finalize(\n                task_id,\n                mission=mission,\n                git_token_value=git_token_value,\n                finish_summary=finish_summary,\n                run_id=run_id,\n            )\n'''
+          if 'task_workspace_lock' in old_fn:
+              raise SystemExit('finalizer serialization already present')
+          epoch.write_text(e[:start] + new_fn + e[end:])
+
+          test = Path('services/gateway/tests/test_coding_mission_acceptance_epoch.py')
+          t = test.read_text()
+          old = '''from __future__ import annotations\n\nimport hashlib\nfrom pathlib import Path\n'''
+          new = '''from __future__ import annotations\n\nimport hashlib\nimport threading\nfrom pathlib import Path\n'''
+          if t.count(old) != 1:
+              raise SystemExit(f'epoch-test imports marker count={t.count(old)}')
+          t = t.replace(old, new, 1)
+
+          old = '''        self.current_head = \"checkpoint-head\"\n        self.merge_base = \"mission-base\"\n'''
+          new = '''        self.current_head = \"checkpoint-head\"\n        self.merge_base = \"mission-base\"\n        self._workspace_lock = threading.RLock()\n'''
+          if t.count(old) != 1:
+              raise SystemExit(f'epoch-test fake lock marker count={t.count(old)}')
+          t = t.replace(old, new, 1)
+
+          old = '''    def load_task(self, _task_id):\n        return self.task\n\n    def save_task(self, task):\n'''
+          new = '''    def task_workspace_lock(self, _task_id):\n        return self._workspace_lock\n\n    def load_task(self, _task_id):\n        return self.task\n\n    def save_task(self, task):\n'''
+          if t.count(old) != 1:
+              raise SystemExit(f'epoch-test fake lock method marker count={t.count(old)}')
+          t = t.replace(old, new, 1)
+
+          marker = '''def test_initial_load_failure_still_sanitizes_private_review_identity():\n'''
+          insert = '''def test_finalization_holds_workspace_lock_through_original_side_effects():\n    cw = _CW()\n    agent = _Agent(cw)\n    original_finalize = agent.finalize_successful_run\n    observed = {\"owned\": False}\n\n    def asserting_finalize(*args, **kwargs):\n        owned = getattr(cw._workspace_lock, \"_is_owned\", lambda: False)()\n        observed[\"owned\"] = bool(owned)\n        assert owned, \"underlying finalizer side effects must run under the task workspace lock\"\n        return original_finalize(*args, **kwargs)\n\n    agent.finalize_successful_run = asserting_finalize\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n\n    finish = guarded._run_tool_with_semantic_acceptance(\n        \"code-test\", \"coding_finish\", {}, git_token_value=None\n    )\n    assert finish[\"ok\"] is True\n    finalization = agent.finalize_successful_run(\n        \"code-test\", mission=cw.task[\"coding_mission\"], run_id=\"run-b\"\n    )\n    assert finalization[\"ok\"] is True\n    assert observed[\"owned\"] is True\n\n\n'''
+          if t.count(marker) != 1:
+              raise SystemExit(f'epoch-test finalization insertion marker count={t.count(marker)}')
+          test.write_text(t.replace(marker, insert + marker, 1))
+
+          workspace_test = Path('services/gateway/tests/test_coding_mission_finalization.py')
+          f = workspace_test.read_text()
+          marker = '''def test_coding_mission_contract_defaults():\n'''
+          insert = '''def test_checkout_mutation_and_publish_operations_are_workspace_serialized():\n    operation_names = (\n        \"write_file\",\n        \"replace_text\",\n        \"apply_unified_patch\",\n        \"run_task_command\",\n        \"checkpoint_task\",\n        \"commit_task\",\n        \"push_task\",\n        \"create_pull_request\",\n        \"archive_task\",\n        \"delete_task\",\n    )\n    for name in operation_names:\n        operation = getattr(cw, name)\n        assert getattr(operation, \"_nexus_workspace_serialized\", False) is True, name\n        assert getattr(operation, \"_nexus_workspace_operation\", None) is not None, name\n\n\n'''
+          if f.count(marker) != 1:
+              raise SystemExit(f'finalizer-test serialization marker count={f.count(marker)}')
+          workspace_test.write_text(f.replace(marker, insert + marker, 1))
+          PY
+          python -m py_compile \
+            services/gateway/app/coding_workspace.py \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git diff --check
+      - name: Install Gateway test dependencies
+        shell: bash
+        run: |
+          python -m pip install --quiet \
+            -r services/gateway/app/requirements.freeze.txt \
+            -r services/gateway/tests/requirements.freeze.txt
+      - name: Prepare writable Gateway runtime paths
+        shell: bash
+        run: |
+          sudo mkdir -p \
+            /var/lib/gateway/app \
+            /var/lib/gateway/config \
+            /var/lib/gateway/data/agent \
+            /var/lib/gateway/data/coding/tasks \
+            /var/lib/gateway/data/coding/workspaces \
+            /var/lib/gateway/data/model_benchmarks \
+            /var/lib/gateway/data/model_tool_qualification \
+            /var/lib/gateway/data/sentinel \
+            /var/lib/gateway/data/tools \
+            /var/lib/gateway/data/ui_chats \
+            /var/lib/gateway/data/ui_files \
+            /var/lib/gateway/data/ui_images \
+            /var/lib/gateway/data/voice_library \
+            /var/lib/gateway/tools \
+            /workspace/nexus/souls
+          sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
+      - name: Run focused finalization and acceptance tests
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: |
+          python -m pytest -q --tb=short \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_cas.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_retry.py \
+            services/gateway/tests/test_coding_mission_acceptance_publication_generation.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_post_record_race.py \
+            services/gateway/tests/test_coding_mission_finalization.py \
+            services/gateway/tests/test_coding_command_mutation_acceptance.py
+      - name: Run full Gateway suite
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: python -m pytest -q --tb=short services/gateway/tests
+      - name: Commit clean fix
+        shell: bash
+        run: |
+          git rm -f .github/workflows/pr96-finalization-serialization.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            services/gateway/app/coding_workspace.py \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git commit -m "Serialize accepted finalization with workspace mutations"
+          git push origin HEAD:agent/semantic-acceptance-contract
