@@ -435,6 +435,35 @@ def test_unaccepted_inherited_delta_cannot_reach_original_finalizer():
     )
     assert result["ok"] is False
     assert result["error"] == "mission_semantic_acceptance_missing"
+    assert result["finalization_status"] == "interrupted"
+    assert result["stop_reason_code"] == "run_interrupted"
+    assert result["retryable"] is True
+    assert result["finalization_error"]
+    assert cw.task["finalization_status"] == "interrupted"
+    assert agent.finalize_calls == []
+
+
+def test_finalizer_invalid_delta_state_is_resumable_interruption(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    monkeypatch.setattr(
+        epoch,
+        "mission_delta_state",
+        lambda *_args, **_kwargs: {"ok": False, "error": "synthetic git diff outage"},
+    )
+    result = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["finalization_status"] == "interrupted"
+    assert result["stop_reason_code"] == "run_interrupted"
+    assert result["retryable"] is True
+    assert cw.task["finalization_status"] == "interrupted"
     assert agent.finalize_calls == []
 
 
@@ -453,7 +482,11 @@ def test_finalizer_load_failure_cannot_reach_original_finalizer():
     )
     assert result["ok"] is False
     assert result["error"] == "mission_acceptance_state_unavailable"
-    assert result["required_action"].startswith("Retry coding_finish")
+    assert result["finalization_status"] == "interrupted"
+    assert result["stop_reason_code"] == "run_interrupted"
+    assert result["retryable"] is True
+    assert "mission_acceptance_state_unavailable" in result["finalization_error"]
+    assert "retry coding_finish" in result["required_action"].lower()
     assert agent.finalize_calls == []
 
 

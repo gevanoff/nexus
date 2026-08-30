@@ -1155,18 +1155,50 @@ def install(
         finish_summary: str = "",
         run_id: str = "",
     ) -> Dict[str, Any]:
+        def resumable_guard_failure(*, error: str, summary: str, required_action: str) -> Dict[str, Any]:
+            now = time.time()
+            finalization_error = f"{error}: {summary}"
+            result = {
+                "ok": False,
+                "success": False,
+                "error": error,
+                "finalization_status": "interrupted",
+                "finalization_error": finalization_error,
+                "stop_reason_code": "run_interrupted",
+                "retryable": True,
+                "required_action": required_action,
+                "summary": summary,
+                "finished_at": now,
+            }
+
+            def persist(latest: Dict[str, Any]) -> None:
+                latest.update(
+                    {
+                        "finalization_status": "interrupted",
+                        "finalization_error": finalization_error,
+                        "terminal_result": dict(result),
+                    }
+                )
+
+            try:
+                _mutate_task(cw, task_id, persist)
+            except Exception:
+                # The structured return still carries the interruption identity;
+                # persistence is best-effort when metadata storage itself is impaired.
+                pass
+            return result
+
         try:
             workspace_lock = cw.task_workspace_lock(task_id)
         except Exception:
-            return {
-                "ok": False,
-                "error": "mission_acceptance_state_unavailable",
-                "required_action": "Retry coding_finish after mission acceptance state is available.",
-                "summary": (
+            return resumable_guard_failure(
+                error="mission_acceptance_state_unavailable",
+                required_action="Resume the run and retry coding_finish after mission acceptance state is available.",
+                summary=(
                     "The task workspace serialization boundary is unavailable during finalization. "
-                    "Finalization was blocked before repository side effects."
+                    "Finalization was interrupted before repository side effects and may be resumed."
                 ),
-            }
+            )
 
         # Hold the same re-entrant lock used by every checkout-mutating or
         # publishing workspace operation. Acceptance is recomputed only after
@@ -1185,35 +1217,32 @@ def install(
                     task,
                 )
             except Exception:
-                return {
-                    "ok": False,
-                    "error": "mission_acceptance_state_unavailable",
-                    "required_action": "Retry coding_finish after mission acceptance state is available.",
-                    "summary": (
+                return resumable_guard_failure(
+                    error="mission_acceptance_state_unavailable",
+                    required_action="Resume the run and retry coding_finish after mission acceptance state is available.",
+                    summary=(
                         "Mission acceptance state could not be established during finalization. "
-                        "Finalization was blocked instead of falling through to the unguarded finalizer."
+                        "Finalization was interrupted before repository side effects and may be resumed."
                     ),
-                }
+                )
             if not state.get("ok"):
-                return {
-                    "ok": False,
-                    "error": "mission_acceptance_state_unavailable",
-                    "required_action": "Retry coding_finish after mission acceptance state is available.",
-                    "summary": (
+                return resumable_guard_failure(
+                    error="mission_acceptance_state_unavailable",
+                    required_action="Resume the run and retry coding_finish after mission acceptance state is available.",
+                    summary=(
                         "Mission delta state is unavailable during finalization. "
-                        "Finalization was blocked instead of falling through to the unguarded finalizer."
+                        "Finalization was interrupted before repository side effects and may be resumed."
                     ),
-                }
+                )
             if state.get("has_delta") and not accepted:
-                return {
-                    "ok": False,
-                    "error": "mission_semantic_acceptance_missing",
-                    "required_action": "Retry coding_finish to obtain semantic acceptance for the current mission delta.",
-                    "summary": (
+                return resumable_guard_failure(
+                    error="mission_semantic_acceptance_missing",
+                    required_action="Resume the run and retry coding_finish to obtain semantic acceptance for the current mission delta.",
+                    summary=(
                         "The workspace contains a mission delta without current semantic acceptance. "
-                        "Finalization was blocked before commit or push."
+                        "Finalization was interrupted before commit or push and may be resumed."
                     ),
-                }
+                )
             if state.get("has_delta") and accepted and _snapshot_ready(snapshot):
                 contract = cw.normalize_coding_mission(task, mission)
                 patched = dict(contract)

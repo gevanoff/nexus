@@ -211,6 +211,13 @@ def test_model_task_context_omits_duplicate_snapshot_history(monkeypatch):
     assert "duplicate-event-sentinel" not in context
 
 
+def test_interrupted_finalization_uses_typed_resume_stop_reason():
+    source = Path(ca.__file__).read_text(encoding="utf-8")
+    assert 'elif final_status == "interrupted":' in source
+    assert 'final_stop_reason_code = "run_interrupted"' in source
+    assert 'finalization.get("finalization_status")' in source
+
+
 def test_coding_cancellation_distinguishes_user_pause_from_gateway_restart():
     assert ca._cancelled_run_status({"agent_pause_requested": True}) == "paused"
     assert ca._cancelled_run_status({"agent_stop_requested": True}) == "paused"

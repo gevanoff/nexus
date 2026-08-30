@@ -3662,6 +3662,7 @@ async def _run_agent(
         if audit_event is not None:
             await asyncio.to_thread(_append_event, task_id, audit_event)
 
+        finalization: Dict[str, Any] = {}
         if finish_success:
             finalization = await asyncio.to_thread(
                 finalize_successful_run,
@@ -3678,15 +3679,20 @@ async def _run_agent(
 
         finished_at = time.time()
         latest_after_finalization = await asyncio.to_thread(cw.load_task, task_id)
-        finalization_status = str(latest_after_finalization.get("finalization_status") or "")
-        final_status = "completed" if finish_success else (finalization_status or "failed")
-        final_stop_reason_code = (
-            "run_completed"
-            if finish_success
-            else finalization_status
-            if finalization_status in {"failed_finalization", "failed_publish"}
-            else "agent_failed"
+        finalization_status = str(
+            finalization.get("finalization_status")
+            or latest_after_finalization.get("finalization_status")
+            or ""
         )
+        final_status = "completed" if finish_success else (finalization_status or "failed")
+        if finish_success:
+            final_stop_reason_code = "run_completed"
+        elif final_status == "interrupted":
+            final_stop_reason_code = "run_interrupted"
+        elif finalization_status in {"failed_finalization", "failed_publish"}:
+            final_stop_reason_code = finalization_status
+        else:
+            final_stop_reason_code = "agent_failed"
         await asyncio.to_thread(
             _mutate_task,
             task_id,
