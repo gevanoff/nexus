@@ -20,10 +20,285 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Apply patch
+      - name: Apply source hardening
         shell: bash
         run: |
-          echo 'CmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAoKZGVmIHJlcGxhY2Vfb25jZShwYXRoX3MsIG9sZCwgbmV3KToKICAgIHAgPSBQYXRoKHBhdGhfcykKICAgIHRleHQgPSBwLnJlYWRfdGV4dCgpCiAgICBuID0gdGV4dC5jb3VudChvbGQpCiAgICBpZiBuICE9IDE6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmIntwYXRoX3N9OiBleHBlY3RlZCBvbmUgbWFya2VyLCBnb3Qge259XG5NQVJLRVI6XG57b2xkWzo1MDBdfSIpCiAgICBwLndyaXRlX3RleHQodGV4dC5yZXBsYWNlKG9sZCwgbmV3LCAxKSkKCmVwb2NoID0gInNlcnZpY2VzL2dhdGV3YXkvYXBwL2NvZGluZ19taXNzaW9uX2FjY2VwdGFuY2VfZXBvY2gucHkiCmNvbnRyYWN0ID0gInNlcnZpY2VzL2dhdGV3YXkvYXBwL2NvZGluZ19zZW1hbnRpY19hY2NlcHRhbmNlX2NvbnRyYWN0LnB5IgoKcmVwbGFjZV9vbmNlKAogICAgZXBvY2gsCiAgICAnJydkZWYgX21hcHBpbmcodmFsdWU6IEFueSkgLT4gTWFwcGluZ1tzdHIsIEFueV06CiAgICByZXR1cm4gdmFsdWUgaWYgaXNpbnN0YW5jZSh2YWx1ZSwgTWFwcGluZykgZWxzZSB7fQoKCmRlZiBfZmxvYXQodmFsdWU6IEFueSkgLT4gZmxvYXQ6CicnJywKICAgICcnJ2RlZiBfbWFwcGluZyh2YWx1ZTogQW55KSAtPiBNYXBwaW5nW3N0ciwgQW55XToKICAgIHJldHVybiB2YWx1ZSBpZiBpc2luc3RhbmNlKHZhbHVlLCBNYXBwaW5nKSBlbHNlIHt9CgoKZGVmIF9jb25zdW1lX3NlbWFudGljX3Jldmlld19pZGVudGl0eSgKICAgIHZhbHVlOiBBbnksCikgLT4gdHVwbGVbRGljdFtzdHIsIEFueV0sIE1hcHBpbmdbc3RyLCBBbnldXToKICAgIHJlc3VsdCA9IGRpY3QodmFsdWUpIGlmIGlzaW5zdGFuY2UodmFsdWUsIE1hcHBpbmcpIGVsc2Uge30KICAgIGlkZW50aXR5ID0gX21hcHBpbmcoCiAgICAgICAgcmVzdWx0LnBvcCgiX3NlbWFudGljX2FjY2VwdGFuY2VfcmV2aWV3X2lkZW50aXR5Iiwge30pCiAgICApCiAgICByZXR1cm4gcmVzdWx0LCBpZGVudGl0eQoKCmRlZiBfZmxvYXQodmFsdWU6IEFueSkgLT4gZmxvYXQ6CicnJywKKQoKcmVwbGFjZV9vbmNlKAogICAgZXBvY2gsCiAgICAnJycgICAgaW5pdGlhbCA9IGN3LmxvYWRfdGFzayh0YXNrX2lkKQogICAgZXhwbGljaXRfcmV2aWV3X2lkZW50aXR5ID0gcmV2aWV3ZWRfY3ljbGUgaXMgbm90IE5vbmUgb3IgYm9vbCgKICAgICAgICBzdHIocmV2aWV3ZWRfZmluZ2VycHJpbnQgb3IgIiIpLnN0cmlwKCkKICAgICkKICAgIGlmIGV4cGxpY2l0X3Jldmlld19pZGVudGl0eToKICAgICAgICBib3VuZF9maW5nZXJwcmludCA9IHN0cihyZXZpZXdlZF9maW5nZXJwcmludCBvciAiIikuc3RyaXAoKQogICAgICAgIGJvdW5kX2N5Y2xlID0gX2ludChyZXZpZXdlZF9jeWNsZSkKICAgIGVsc2U6CiAgICAgICAgcmV2aWV3ID0gX2xhdGVzdF9hY2NlcHRlZF9yZXZpZXcoaW5pdGlhbCkKICAgICAgICBpZiBub3QgcmV2aWV3OgogICAgICAgICAgICByZXR1cm4gRmFsc2UKICAgICAgICBib3VuZF9maW5nZXJwcmludCA9IHN0cihyZXZpZXcuZ2V0KCJmaW5nZXJwcmludCIpIG9yICIiKS5zdHJpcCgpCiAgICAgICAgYm91bmRfY3ljbGUgPSBfaW50KHJldmlldy5nZXQoImN5Y2xlIikgb3IgaW5pdGlhbC5nZXQoImFnZW50X2N5Y2xlIikpCiAgICBpZiBub3QgYm91bmRfZmluZ2VycHJpbnQ6CiAgICAgICAgcmV0dXJuIEZhbHNlCiAgICBpZiBfaW50KGluaXRpYWwuZ2V0KCJhZ2VudF9jeWNsZSIpICE9IGJvdW5kX2N5Y2xlOgogICAgICAgIHJldHVybiBGYWxzZQogICAgcmV2aWV3ZWRfZmluZ2VycHJpbnQgPSBib3VuZF9maW5nZXJwcmludAogICAgcmV2aWV3ZWRfY3ljbGUgPSBib3VuZF9jeWNsZQogICAgbWF4X2F0dGVtcHRzID0gMgonJycsCiAgICAnJycgICAgYm91bmRfZmluZ2VycHJpbnQgPSBzdHIocmV2aWV3ZWRfZmluZ2VycHJpbnQgb3IgIiIpLnN0cmlwKCkKICAgIGlmIG5vdCBib3VuZF9maW5nZXJwcmludCBvciByZXZpZXdlZF9jeWNsZSBpcyBOb25lOgogICAgICAgIHJldHVybiB7fSBpZiByZXR1cm5fcHVibGljYXRpb24gZWxzZSBGYWxzZQogICAgYm91bmRfY3ljbGUgPSBfaW50KHJldmlld2VkX2N5Y2xlKQogICAgaW5pdGlhbCA9IGN3LmxvYWRfdGFzayh0YXNrX2lkKQogICAgaWYgX2ludChpbml0aWFsLmdldCgiYWdlbnRfY3ljbGUiKSkgIT0gYm91bmRfY3ljbGU6CiAgICAgICAgcmV0dXJuIHt9IGlmIHJldHVybl9wdWJsaWNhdGlvbiBlbHNlIEZhbHNlCiAgICByZXZpZXdlZF9maW5nZXJwcmludCA9IGJvdW5kX2ZpbmdlcnByaW50CiAgICByZXZpZXdlZF9jeWNsZSA9IGJvdW5kX2N5Y2xlCiAgICBtYXhfYXR0ZW1wdHMgPSAyCicnJywKKQoKcmVwbGFjZV9vbmNlKAogICAgZXBvY2gsCiAgICAnJycgICAgICAgIGRlZiBhcHBseShsYXRlc3Q6IERpY3Rbc3RyLCBBbnldKSAtPiBOb25lOgogICAgICAgICAgICBub25sb2NhbCBwdWJsaXNoZWQsIHB1Ymxpc2hlZF9nZW5lcmF0aW9uCiAgICAgICAgICAgIGN1cnJlbnQgPSBkaWN0KF9tYXBwaW5nKGxhdGVzdC5nZXQoS0VZKSkKICAgICAgICAgICAgaWYgc3RyKGN1cnJlbnQuZ2V0KCJiYXNlX2hlYWQiKSBvciAiIikgIT0gYmFzZV9oZWFkOgogICAgICAgICAgICAgICAgcmV0dXJuCicnJywKICAgICcnJyAgICAgICAgZGVmIGFwcGx5KGxhdGVzdDogRGljdFtzdHIsIEFueV0pIC0+IE5vbmU6CiAgICAgICAgICAgIG5vbmxvY2FsIHB1Ymxpc2hlZCwgcHVibGlzaGVkX2dlbmVyYXRpb24KICAgICAgICAgICAgaWYgX2ludChsYXRlc3QuZ2V0KCJhZ2VudF9jeWNsZSIpKSAhPSByZXZpZXdlZF9jeWNsZToKICAgICAgICAgICAgICAgIHJldHVybgogICAgICAgICAgICBjdXJyZW50ID0gZGljdChfbWFwcGluZyhsYXRlc3QuZ2V0KEtFWSkpKQogICAgICAgICAgICBpZiBzdHIoY3VycmVudC5nZXQoImJhc2VfaGVhZCIpIG9yICIiKSAhPSBiYXNlX2hlYWQ6CiAgICAgICAgICAgICAgICByZXR1cm4KJycnLAopCgpyZXBsYWNlX29uY2UoCiAgICBlcG9jaCwKICAgICcnJyAgICAgICAgdHJ5OgogICAgICAgICAgICBiZWZvcmVfdGFzayA9IGN3LmxvYWRfdGFzayh0YXNrX2lkKQogICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgIHJldHVybiBvcmlnaW5hbF9ydW5fdG9vbCgKICAgICAgICAgICAgICAgIHRhc2tfaWQsCiAgICAgICAgICAgICAgICBuYW1lLAogICAgICAgICAgICAgICAgYXJncywKICAgICAgICAgICAgICAgIGdpdF90b2tlbl92YWx1ZT1naXRfdG9rZW5fdmFsdWUsCiAgICAgICAgICAgICkKJycnLAogICAgJycnICAgICAgICB0cnk6CiAgICAgICAgICAgIGJlZm9yZV90YXNrID0gY3cubG9hZF90YXNrKHRhc2tfaWQpCiAgICAgICAgZXhjZXB0IEV4Y2VwdGlvbjoKICAgICAgICAgICAgZGVsZWdhdGVkLCBfID0gX2NvbnN1bWVfc2VtYW50aWNfcmV2aWV3X2lkZW50aXR5KAogICAgICAgICAgICAgICAgb3JpZ2luYWxfcnVuX3Rvb2woCiAgICAgICAgICAgICAgICAgICAgdGFza19pZCwKICAgICAgICAgICAgICAgICAgICBuYW1lLAogICAgICAgICAgICAgICAgICAgIGFyZ3MsCiAgICAgICAgICAgICAgICAgICAgZ2l0X3Rva2VuX3ZhbHVlPWdpdF90b2tlbl92YWx1ZSwKICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICkKICAgICAgICAgICAgcmV0dXJuIGRlbGVnYXRlZAonJycsCikKCnJlcGxhY2Vfb25jZSgKICAgIGVwb2NoLAogICAgJycnICAgICAgICByZXN1bHQgPSBkaWN0KAogICAgICAgICAgICBvcmlnaW5hbF9ydW5fdG9vbCgKICAgICAgICAgICAgICAgIHRhc2tfaWQsCiAgICAgICAgICAgICAgICBuYW1lLAogICAgICAgICAgICAgICAgYXJncywKICAgICAgICAgICAgICAgIGdpdF90b2tlbl92YWx1ZT1naXRfdG9rZW5fdmFsdWUsCiAgICAgICAgICAgICkKICAgICAgICApCiAgICAgICAgcmV2aWV3X2lkZW50aXR5ID0gX21hcHBpbmcoCiAgICAgICAgICAgIHJlc3VsdC5wb3AoIl9zZW1hbnRpY19hY2NlcHRhbmNlX3Jldmlld19pZGVudGl0eSIsIHt9KQogICAgICAgICkKJycnLAogICAgJycnICAgICAgICByZXN1bHQsIHJldmlld19pZGVudGl0eSA9IF9jb25zdW1lX3NlbWFudGljX3Jldmlld19pZGVudGl0eSgKICAgICAgICAgICAgb3JpZ2luYWxfcnVuX3Rvb2woCiAgICAgICAgICAgICAgICB0YXNrX2lkLAogICAgICAgICAgICAgICAgbmFtZSwKICAgICAgICAgICAgICAgIGFyZ3MsCiAgICAgICAgICAgICAgICBnaXRfdG9rZW5fdmFsdWU9Z2l0X3Rva2VuX3ZhbHVlLAogICAgICAgICAgICApCiAgICAgICAgKQonJycsCikKCnJlcGxhY2Vfb25jZSgKICAgIGNvbnRyYWN0LAogICAgJycnICAgIGlmIGNhbGxhYmxlKG9yaWdpbmFsX3JlY29yZF9zZW1hbnRpY19hY2NlcHRhbmNlKSBhbmQgY2FsbGFibGUobGF0ZXN0X2FjY2VwdGVkX3Jldmlldyk6CicnJywKICAgICcnJyAgICBpZiBjYWxsYWJsZShvcmlnaW5hbF9yZWNvcmRfc2VtYW50aWNfYWNjZXB0YW5jZSk6CicnJywKKQoKcmVwbGFjZV9vbmNlKAogICAgY29udHJhY3QsCiAgICAnJycgICAgICAgICAgICBpZiB0ZXJtaW5hbF9vYmogaXMgbm90IHRlcm1pbmFsX2hhcmRlbmluZyBvciBjd19vYmogaXMgbm90IGN3IG9yIGFnZW50X29iaiBpcyBub3QgYWdlbnQ6CiAgICAgICAgICAgICAgICByZXR1cm4gb3JpZ2luYWxfcmVjb3JkX3NlbWFudGljX2FjY2VwdGFuY2UoCiAgICAgICAgICAgICAgICAgICAgdGVybWluYWxfb2JqLAogICAgICAgICAgICAgICAgICAgIGN3X29iaiwKICAgICAgICAgICAgICAgICAgICBhZ2VudF9vYmosCiAgICAgICAgICAgICAgICAgICAgdGFza19pZCwKICAgICAgICAgICAgICAgICApCgogICAgICAgICAgICBiZWZvcmUgPSBjd19vYmoubG9hZF90YXNrKHRhc2tfaWQpCiAgICAgICAgICAgIGV4cGxpY2l0X3Jldmlld19pZGVudGl0eSA9IHJldmlld2VkX2N5Y2xlIGlzIG5vdCBOb25lIG9yIGJvb2woCiAgICAgICAgICAgICAgICBzdHIocmV2aWV3ZWRfZmluZ2VycHJpbnQgb3IgIiIpLnN0cmlwKCkKICAgICAgICAgICAgKQogICAgICAgICAgICBpZiBleHBsaWNpdF9yZXZpZXdfaWRlbnRpdHk6CiAgICAgICAgICAgICAgICByZXZpZXdlZF9maW5nZXJwcmludCA9IHN0cihyZXZpZXdlZF9maW5nZXJwcmludCBvciAiIikuc3RyaXAoKQogICAgICAgICAgICAgICAgZWZmZWN0aXZlX3Jldmlld2VkX2N5Y2xlID0gKAogICAgICAgICAgICAgICAgICAgIGludChyZXZpZXdlZF9jeWNsZSkKICAgICAgICAgICAgICAgICAgICBpZiByZXZpZXdlZF9jeWNsZSBpcyBub3QgTm9uZQogICAgICAgICAgICAgICAgICAgIGVsc2UgaW50KGJlZm9yZS5nZXQoImFnZW50X2N5Y2xlIikgb3IgMCkKICAgICAgICAgICAgICAgICkKICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgIHJldmlldyA9IF9tYXBwaW5nKGxhdGVzdF9hY2NlcHRlZF9yZXZpZXcoYmVmb3JlKSkKICAgICAgICAgICAgICAgIHJldmlld2VkX2ZpbmdlcnByaW50ID0gc3RyKHJldmlldy5nZXQoImZpbmdlcnByaW50Iikgb3IgIiIpLnN0cmlwKCkKICAgICAgICAgICAgICAgIGVmZmVjdGl2ZV9yZXZpZXdlZF9jeWNsZSA9IGludCgKICAgICAgICAgICAgICAgICAgICByZXZpZXcuZ2V0KCJjeWNsZSIpIG9yIGJlZm9yZS5nZXQoImFnZW50X2N5Y2xlIikgb3IgMAogICAgICAgICAgICAgICAgKQogICAgICAgICAgICBpZiBub3QgcmV2aWV3ZWRfZmluZ2VycHJpbnQ6CiAgICAgICAgICAgICAgICBtZXNzYWdlID0gKAogICAgICAgICAgICAgICAgICAgICJSZWZ1c2luZyB0byByZWNvcmQgc2VtYW50aWMgYWNjZXB0YW5jZSBiZWNhdXNlIHRoZSBsYXRlc3QgYWNjZXB0ZWQgcmV2aWV3ICIKICAgICAgICAgICAgICAgICAgICAiaGFzIG5vIGFjY2VwdGFuY2UgZmluZ2VycHJpbnQuIgogICAgICAgICAgICAgICAgKQonJycsCiAgICAnJycgICAgICAgICAgICBpZiB0ZXJtaW5hbF9vYmogaXMgbm90IHRlcm1pbmFsX2hhcmRlbmluZyBvciBjd19vYmogaXMgbm90IGN3IG9yIGFnZW50X29iaiBpcyBub3QgYWdlbnQ6CiAgICAgICAgICAgICAgICByZXR1cm4gb3JpZ2luYWxfcmVjb3JkX3NlbWFudGljX2FjY2VwdGFuY2UoCiAgICAgICAgICAgICAgICAgICAgdGVybWluYWxfb2JqLAogICAgICAgICAgICAgICAgICAgIGN3X29iaiwKICAgICAgICAgICAgICAgICAgICBhZ2VudF9vYmosCiAgICAgICAgICAgICAgICAgICAgdGFza19pZCwKICAgICAgICAgICAgICAgICAgICByZXZpZXdlZF9maW5nZXJwcmludD1yZXZpZXdlZF9maW5nZXJwcmludCwKICAgICAgICAgICAgICAgICAgICByZXZpZXdlZF9jeWNsZT1yZXZpZXdlZF9jeWNsZSwKICAgICAgICAgICAgICAgICAgICByZXR1cm5fcHVibGljYXRpb249cmV0dXJuX3B1YmxpY2F0aW9uLAogICAgICAgICAgICAgICAgKQoKICAgICAgICAgICAgYmVmb3JlID0gY3dfb2JqLmxvYWRfdGFzayh0YXNrX2lkKQogICAgICAgICAgICByZXZpZXdlZF9maW5nZXJwcmludCA9IHN0cihyZXZpZXdlZF9maW5nZXJwcmludCBvciAiIikuc3RyaXAoKQogICAgICAgICAgICBpZiBub3QgcmV2aWV3ZWRfZmluZ2VycHJpbnQgb3IgcmV2aWV3ZWRfY3ljbGUgaXMgTm9uZToKICAgICAgICAgICAgICAgIG1lc3NhZ2UgPSAoCiAgICAgICAgICAgICAgICAgICAgIlJlZnVzaW5nIHRvIHJlY29yZCBzZW1hbnRpYyBhY2NlcHRhbmNlIGJlY2F1c2Ugbm8gY29tcGxldGUgIgogICAgICAgICAgICAgICAgICAgICJpbnZvY2F0aW9uLWxvY2FsIHJldmlldyBpZGVudGl0eSB3YXMgc3VwcGxpZWQuIgogICAgICAgICAgICAgICAgKQonJycsCikKCnJlcGxhY2Vfb25jZSgKICAgIGNvbnRyYWN0LAogICAgJycnICAgICAgICAgICAgICAgIHJldHVybgoKICAgICAgICAgICAgY3VycmVudF9maW5nZXJwcmludCA9IGN1cnJlbnRfcmV2aWV3X2ZpbmdlcnByaW50KAonJycsCiAgICAnJycgICAgICAgICAgICAgICAgcmV0dXJuCgogICAgICAgICAgICBlZmZlY3RpdmVfcmV2aWV3ZWRfY3ljbGUgPSBpbnQocmV2aWV3ZWRfY3ljbGUpCiAgICAgICAgICAgIGlmIGludChiZWZvcmUuZ2V0KCJhZ2VudF9jeWNsZSIpIG9yIDApICE9IGVmZmVjdGl2ZV9yZXZpZXdlZF9jeWNsZToKICAgICAgICAgICAgICAgIHJldHVybgoKICAgICAgICAgICAgY3VycmVudF9maW5nZXJwcmludCA9IGN1cnJlbnRfcmV2aWV3X2ZpbmdlcnByaW50KAonJycsCikKCm9sZF90cnkgPSAnJycgICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICBwdWJsaWNhdGlvbiA9IG9yaWdpbmFsX3JlY29yZF9zZW1hbnRpY19hY2NlcHRhbmNlKAogICAgICAgICAgICAgICAgICAgIHRlcm1pbmFsX29iaiwKICAgICAgICAgICAgICAgICAgICBjd19vYmosCiAgICAgICAgICAgICAgICAgICAgYWdlbnRfb2JqLAogICAgICAgICAgICAgICAgICAgIHRhc2tfaWQsCiAgICAgICAgICAgICAgICAgICAgcmV2aWV3ZWRfZmluZ2VycHJpbnQ9cmV2aWV3ZWRfZmluZ2VycHJpbnQsCiAgICAgICAgICAgICAgICAgICAgcmV2aWV3ZWRfY3ljbGU9ZWZmZWN0aXZlX3Jldmlld2VkX2N5Y2xlLAogICAgICAgICAgICAgICAgICAgIHJldHVybl9wdWJsaWNhdGlvbj1UcnVlLAogICAgICAgICAgICAgICAgKQogICAgICAgICAgICBleGNlcHQgVHlwZUVycm9yIGFzIGV4YzoKICAgICAgICAgICAgICAgICMgU3ludGhldGljL2xlZ2FjeSByZWNvcmRlcnMgbWF5IG5vdCBleHBvc2UgaW52b2NhdGlvbiBpZGVudGl0eS4KICAgICAgICAgICAgICAgICMgUHJvZHVjdGlvbiBvd25lciBjb2RlIGRvZXM7IGNvbXBhdGliaWxpdHkgcmVjb3JkZXJzIHN0aWxsIG5lZWQKICAgICAgICAgICAgICAgICMgYW4gZXhhY3Qgc3RydWN0dXJlZCBwdWJsaWNhdGlvbiBpZGVudGl0eSBmb3IgY2xlYW51cC4KICAgICAgICAgICAgICAgIGlmIG5vdCBhbnkoCiAgICAgICAgICAgICAgICAgICAgdG9rZW4gaW4gc3RyKGV4YykKICAgICAgICAgICAgICAgICAgICBmb3IgdG9rZW4gaW4gKAogICAgICAgICAgICAgICAgICAgICAgICAicmV2aWV3ZWRfZmluZ2VycHJpbnQiLAogICAgICAgICAgICAgICAgICAgICAgICAicmV2aWV3ZWRfY3ljbGUiLAogICAgICAgICAgICAgICAgICAgICAgICAicmV0dXJuX3B1YmxpY2F0aW9uIiwKICAgICAgICAgICAgICAgICAgICApCiAgICAgICAgICAgICAgICApOgogICAgICAgICAgICAgICAgICAgIHJhaXNlCiAgICAgICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICAgICAgcHVibGljYXRpb24gPSBvcmlnaW5hbF9yZWNvcmRfc2VtYW50aWNfYWNjZXB0YW5jZSgKICAgICAgICAgICAgICAgICAgICAgICAgdGVybWluYWxfb2JqLAogICAgICAgICAgICAgICAgICAgICAgICBjd19vYmosCiAgICAgICAgICAgICAgICAgICAgICAgIGFnZW50X29iaiwKICAgICAgICAgICAgICAgICAgICAgICAgdGFza19pZCwKICAgICAgICAgICAgICAgICAgICAgICAgcmV0dXJuX3B1YmxpY2F0aW9uPVRydWUsCiAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgZXhjZXB0IFR5cGVFcnJvciBhcyBsZWdhY3lfZXhjOgogICAgICAgICAgICAgICAgICAgIGlmICJyZXR1cm5fcHVibGljYXRpb24iIG5vdCBpbiBzdHIobGVnYWN5X2V4Yyk6CiAgICAgICAgICAgICAgICAgICAgICAgIHJhaXNlCiAgICAgICAgICAgICAgICAgICAgb3JpZ2luYWxfcmVjb3JkX3NlbWFudGljX2FjY2VwdGFuY2UoCiAgICAgICAgICAgICAgICAgICAgICAgIHRlcm1pbmFsX29iaiwKICAgICAgICAgICAgICAgICAgICAgICAgY3dfb2JqLAogICAgICAgICAgICAgICAgICAgICAgICBhZ2VudF9vYmosCiAgICAgICAgICAgICAgICAgICAgICAgIHRhc2tfaWQsCiAgICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgICAgIHB1YmxpY2F0aW9uID0ge30KJycnCm5ld190cnkgPSAnJycgICAgICAgICAgICBwdWJsaWNhdGlvbiA9IG9yaWdpbmFsX3JlY29yZF9zZW1hbnRpY19hY2NlcHRhbmNlKAogICAgICAgICAgICAgICAgdGVybWluYWxfb2JqLAogICAgICAgICAgICAgICAgY3dfb2JqLAogICAgICAgICAgICAgICAgYWdlbnRfb2JqLAogICAgICAgICAgICAgICAgdGFza19pZCwKICAgICAgICAgICAgICAgIHJldmlld2VkX2ZpbmdlcnByaW50PXJldmlld2VkX2ZpbmdlcnByaW50LAogICAgICAgICAgICAgICAgcmV2aWV3ZWRfY3ljbGU9ZWZmZWN0aXZlX3Jldmlld2VkX2N5Y2xlLAogICAgICAgICAgICAgICAgcmV0dXJuX3B1YmxpY2F0aW9uPVRydWUsCiAgICAgICAgICAgICkKJycKcmVwbGFjZV9vbmNlKGNvbnRyYWN0LCBvbGRfdHJ5LCBuZXdfdHJ5KQoKcmV2aWV3X3Rlc3QgPSBQYXRoKCJzZXJ2aWNlcy9nYXRld2F5L3Rlc3RzL3Rlc3RfY29kaW5nX21pc3Npb25fYWNjZXB0YW5jZV9lcG9jaF9yZXZpZXdfYmluZGluZy5weSIpCnRleHQgPSByZXZpZXdfdGVzdC5yZWFkX3RleHQoKQppZiAidGVzdF9hY2NlcHRhbmNlX3JlY29yZGVyX3JlcXVpcmVzX2V4cGxpY2l0X3Jldmlld19pZGVudGl0eSIgbm90IGluIHRleHQ6CiAgICB0ZXh0ICs9IHInJycKCgpkZWYgdGVzdF9hY2NlcHRhbmNlX3JlY29yZGVyX3JlcXVpcmVzX2V4cGxpY2l0X3Jldmlld19pZGVudGl0eShtb25rZXlwYXRjaCkgLT4gTm9uZToKICAgIGN3ID0gX01lbW9yeUNXKF90YXNrKCJmcDpyZXZpZXdlZC1kaWZmIikpCiAgICB0ZXJtaW5hbCA9IFNpbXBsZU5hbWVzcGFjZSgKICAgICAgICBzZW1hbnRpY19hY2NlcHRhbmNlX2ZpbmdlcnByaW50PWxhbWJkYSBfdGFzaywgKiwgZGlmZl90ZXh0OiBmImZwOntkaWZmX3RleHR9IgogICAgKQogICAgYWdlbnQgPSBTaW1wbGVOYW1lc3BhY2UoKQogICAgbW9ua2V5cGF0Y2guc2V0YXR0cigKICAgICAgICBlcG9jaCwKICAgICAgICAibWlzc2lvbl9kZWx0YV9zdGF0ZSIsCiAgICAgICAgbGFtYmRhIF9jdywgX3Rhc2tfaWQsIF90YXNrOiB7CiAgICAgICAgICAgICJvayI6IFRydWUsCiAgICAgICAgICAgICJoYXNfZGVsdGEiOiBUcnVlLAogICAgICAgICAgICAiYmFzZV9oZWFkIjogImJhc2UiLAogICAgICAgICAgICAiY3VycmVudF9oZWFkIjogInJldmlld2VkLWhlYWQiLAogICAgICAgICAgICAiZGlmZl9zaGEyNTYiOiAicmV2aWV3ZWQtZGlmZi1zaGEiLAogICAgICAgIH0sCiAgICApCiAgICBtb25rZXlwYXRjaC5zZXRhdHRyKAogICAgICAgIGVwb2NoLAogICAgICAgICJtaXNzaW9uX3Jldmlld19kaWZmIiwKICAgICAgICBsYW1iZGEgX2N3LCBfYWdlbnQsIF90YXNrX2lkLCBfdGFzazogInJldmlld2VkLWRpZmYiLAogICAgKQoKICAgIHB1Ymxpc2hlZCA9IGVwb2NoLl9yZWNvcmRfc2VtYW50aWNfYWNjZXB0YW5jZSgKICAgICAgICB0ZXJtaW5hbCwgY3csIGFnZW50LCAiY29kZV9lcG9jaF9yZXZpZXdfYmluZGluZyIKICAgICkKCiAgICBhc3NlcnQgcHVibGlzaGVkIGlzIEZhbHNlCiAgICBhc3NlcnQgY3cubXV0YXRpb25zID09IDAKICAgIGFzc2VydCBjdy50YXNrW2Vwb2NoLktFWV1bImFjY2VwdGVkX2ZpbmdlcnByaW50Il0gPT0gIiIKCgpjbGFzcyBfQ3ljbGVBZHZhbmNlQ1coX01lbW9yeUNXKToKICAgIGRlZiBtdXRhdGVfdGFzayhzZWxmLCBfdGFza19pZDogc3RyLCBhcHBseSk6CiAgICAgICAgc2VsZi5tdXRhdGlvbnMgKz0gMQogICAgICAgIGxhdGVzdCA9IGRpY3Qoc2VsZi50YXNrKQogICAgICAgIGxhdGVzdFsiYWdlbnRfY3ljbGUiXSA9IDUKICAgICAgICBhcHBseShsYXRlc3QpCiAgICAgICAgc2VsZi50YXNrID0gbGF0ZXN0CiAgICAgICAgcmV0dXJuIGRpY3QobGF0ZXN0KQoKCmRlZiB0ZXN0X2FjY2VwdGFuY2VfcmVjb3JkZXJfcmVjaGVja3NfY3ljbGVfaW5zaWRlX3B1YmxpY2F0aW9uX2Nhcyhtb25rZXlwYXRjaCkgLT4gTm9uZToKICAgIGN3ID0gX0N5Y2xlQWR2YW5jZUNXKF90YXNrKCJmcDpyZXZpZXdlZC1kaWZmIikpCiAgICB0ZXJtaW5hbCA9IFNpbXBsZU5hbWVzcGFjZSgKICAgICAgICBzZW1hbnRpY19hY2NlcHRhbmNlX2ZpbmdlcnByaW50PWxhbWJkYSBfdGFzaywgKiwgZGlmZl90ZXh0OiBmImZwOntkaWZmX3RleHR9IgogICAgKQogICAgYWdlbnQgPSBTaW1wbGVOYW1lc3BhY2UoKQogICAgbW9ua2V5cGF0Y2guc2V0YXR0cigKICAgICAgICBlcG9jaCwKICAgICAgICAibWlzc2lvbl9kZWx0YV9zdGF0ZSIsCiAgICAgICAgbGFtYmRhIF9jdywgX3Rhc2tfaWQsIF90YXNrOiB7CiAgICAgICAgICAgICJvayI6IFRydWUsCiAgICAgICAgICAgICJoYXNfZGVsdGEiOiBUcnVlLAogICAgICAgICAgICAiYmFzZV9oZWFkIjogImJhc2UiLAogICAgICAgICAgICAiY3VycmVudF9oZWFkIjogInJldmlld2VkLWhlYWQiLAogICAgICAgICAgICAiZGlmZl9zaGEyNTYiOiAicmV2aWV3ZWQtZGlmZi1zaGEiLAogICAgICAgIH0sCiAgICApCiAgICBtb25rZXlwYXRjaC5zZXRhdHRyKAogICAgICAgIGVwb2NoLAogICAgICAgICJtaXNzaW9uX3Jldmlld19kaWZmIiwKICAgICAgICBsYW1iZGEgX2N3LCBfYWdlbnQsIF90YXNrX2lkLCBfdGFzazogInJldmlld2VkLWRpZmYiLAogICAgKQoKICAgIHB1Ymxpc2hlZCA9IGVwb2NoLl9yZWNvcmRfc2VtYW50aWNfYWNjZXB0YW5jZSgKICAgICAgICB0ZXJtaW5hbCwKICAgICAgICBjdywKICAgICAgICBhZ2VudCwKICAgICAgICAiY29kZV9lcG9jaF9yZXZpZXdfYmluZGluZyIsCiAgICAgICAgcmV2aWV3ZWRfZmluZ2VycHJpbnQ9ImZwOnJldmlld2VkLWRpZmYiLAogICAgICAgIHJldmlld2VkX2N5Y2xlPTQsCiAgICApCgogICAgYXNzZXJ0IHB1Ymxpc2hlZCBpcyBGYWxzZQogICAgYXNzZXJ0IGN3LnRhc2tbImFnZW50X2N5Y2xlIl0gPT0gNQogICAgYXNzZXJ0IGN3LnRhc2tbZXBvY2guS0VZXVsiYWNjZXB0ZWRfZmluZ2VycHJpbnQiXSA9PSAiIgonJycKICAgIHJldmlld190ZXN0LndyaXRlX3RleHQodGV4dCkKCmVwb2NoX3Rlc3QgPSBQYXRoKCJzZXJ2aWNlcy9nYXRld2F5L3Rlc3RzL3Rlc3RfY29kaW5nX21pc3Npb25fYWNjZXB0YW5jZV9lcG9jaC5weSIpCnRleHQgPSBlcG9jaF90ZXN0LnJlYWRfdGV4dCgpCmlmICJ0ZXN0X3ByaXZhdGVfcmV2aWV3X2lkZW50aXR5X2lzX3Nhbml0aXplZF93aGVuX2luaXRpYWxfdGFza19sb2FkX2ZhaWxzIiBub3QgaW4gdGV4dDoKICAgIHRleHQgKz0gcicnJwoKCmRlZiB0ZXN0X3ByaXZhdGVfcmV2aWV3X2lkZW50aXR5X2lzX3Nhbml0aXplZF93aGVuX2luaXRpYWxfdGFza19sb2FkX2ZhaWxzKCk6CiAgICBjdyA9IF9DVygpCiAgICBhZ2VudCA9IF9BZ2VudChjdykKICAgIGd1YXJkZWQgPSBfR3VhcmRlZChhZ2VudCwgY3cpCiAgICBlcG9jaC5pbnN0YWxsKGFnZW50LCBndWFyZGVkLCBjdywgX0ZvcmNlZEFjdGlvbigpLCBfVGVybWluYWxIYXJkZW5pbmcoKSkKCiAgICBvcmlnaW5hbF9sb2FkID0gY3cubG9hZF90YXNrCiAgICBzdGF0ZSA9IHsiY2FsbHMiOiAwfQoKICAgIGRlZiBmbGFreV9sb2FkKHRhc2tfaWQpOgogICAgICAgIHN0YXRlWyJjYWxscyJdICs9IDEKICAgICAgICBpZiBzdGF0ZVsiY2FsbHMiXSA9PSAxOgogICAgICAgICAgICByYWlzZSBSdW50aW1lRXJyb3IoInN5bnRoZXRpYyBpbml0aWFsIGxvYWQgZmFpbHVyZSIpCiAgICAgICAgcmV0dXJuIG9yaWdpbmFsX2xvYWQodGFza19pZCkKCiAgICBjdy5sb2FkX3Rhc2sgPSBmbGFreV9sb2FkCiAgICByZXN1bHQgPSBndWFyZGVkLl9ydW5fdG9vbF93aXRoX3NlbWFudGljX2FjY2VwdGFuY2UoCiAgICAgICAgImNvZGUtdGVzdCIsICJjb2RpbmdfZmluaXNoIiwge30sIGdpdF90b2tlbl92YWx1ZT1Ob25lCiAgICApCgogICAgYXNzZXJ0IHJlc3VsdFsib2siXSBpcyBUcnVlCiAgICBhc3NlcnQgcmVzdWx0WyJzdWNjZXNzIl0gaXMgVHJ1ZQogICAgYXNzZXJ0ICJfc2VtYW50aWNfYWNjZXB0YW5jZV9yZXZpZXdfaWRlbnRpdHkiIG5vdCBpbiByZXN1bHQKJycnCiAgICBlcG9jaF90ZXN0LndyaXRlX3RleHQodGV4dCkK' | base64 -d > /tmp/pr96_patch.py
+          cat > /tmp/pr96_patch.py <<'PY'
+          from pathlib import Path
+
+          def replace_once(path_s, old, new):
+              path = Path(path_s)
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path_s}: expected one marker, got {count}\nMARKER:\n{old[:600]}")
+              path.write_text(text.replace(old, new, 1))
+
+          epoch = "services/gateway/app/coding_mission_acceptance_epoch.py"
+          contract = "services/gateway/app/coding_semantic_acceptance_contract.py"
+
+          replace_once(
+              epoch,
+              """def _mapping(value: Any) -> Mapping[str, Any]:
+              return value if isinstance(value, Mapping) else {}
+
+
+          def _float(value: Any) -> float:
+          """.replace("          ", ""),
+              """def _mapping(value: Any) -> Mapping[str, Any]:
+              return value if isinstance(value, Mapping) else {}
+
+
+          def _consume_semantic_review_identity(
+              value: Any,
+          ) -> tuple[Dict[str, Any], Mapping[str, Any]]:
+              result = dict(value) if isinstance(value, Mapping) else {}
+              identity = _mapping(
+                  result.pop("_semantic_acceptance_review_identity", {})
+              )
+              return result, identity
+
+
+          def _float(value: Any) -> float:
+          """.replace("          ", ""),
+          )
+
+          replace_once(
+              epoch,
+              """    initial = cw.load_task(task_id)
+              explicit_review_identity = reviewed_cycle is not None or bool(
+                  str(reviewed_fingerprint or "").strip()
+              )
+              if explicit_review_identity:
+                  bound_fingerprint = str(reviewed_fingerprint or "").strip()
+                  bound_cycle = _int(reviewed_cycle)
+              else:
+                  review = _latest_accepted_review(initial)
+                  if not review:
+                      return False
+                  bound_fingerprint = str(review.get("fingerprint") or "").strip()
+                  bound_cycle = _int(review.get("cycle") or initial.get("agent_cycle"))
+              if not bound_fingerprint:
+                  return False
+              if _int(initial.get("agent_cycle")) != bound_cycle:
+                  return False
+              reviewed_fingerprint = bound_fingerprint
+              reviewed_cycle = bound_cycle
+              max_attempts = 2
+          """.replace("              ", ""),
+              """    bound_fingerprint = str(reviewed_fingerprint or "").strip()
+              if not bound_fingerprint or reviewed_cycle is None:
+                  return {} if return_publication else False
+              bound_cycle = _int(reviewed_cycle)
+              initial = cw.load_task(task_id)
+              if _int(initial.get("agent_cycle")) != bound_cycle:
+                  return {} if return_publication else False
+              reviewed_fingerprint = bound_fingerprint
+              reviewed_cycle = bound_cycle
+              max_attempts = 2
+          """.replace("              ", ""),
+          )
+
+          replace_once(
+              epoch,
+              """        def apply(latest: Dict[str, Any]) -> None:
+                  nonlocal published, published_generation
+                  current = dict(_mapping(latest.get(KEY)))
+                  if str(current.get("base_head") or "") != base_head:
+                      return
+          """.replace("              ", ""),
+              """        def apply(latest: Dict[str, Any]) -> None:
+                  nonlocal published, published_generation
+                  if _int(latest.get("agent_cycle")) != reviewed_cycle:
+                      return
+                  current = dict(_mapping(latest.get(KEY)))
+                  if str(current.get("base_head") or "") != base_head:
+                      return
+          """.replace("              ", ""),
+          )
+
+          replace_once(
+              epoch,
+              """        try:
+                  before_task = cw.load_task(task_id)
+              except Exception:
+                  return original_run_tool(
+                      task_id,
+                      name,
+                      args,
+                      git_token_value=git_token_value,
+                  )
+          """.replace("              ", ""),
+              """        try:
+                  before_task = cw.load_task(task_id)
+              except Exception:
+                  delegated, _ = _consume_semantic_review_identity(
+                      original_run_tool(
+                          task_id,
+                          name,
+                          args,
+                          git_token_value=git_token_value,
+                      )
+                  )
+                  return delegated
+          """.replace("              ", ""),
+          )
+
+          replace_once(
+              epoch,
+              """        result = dict(
+                  original_run_tool(
+                      task_id,
+                      name,
+                      args,
+                      git_token_value=git_token_value,
+                  )
+              )
+              review_identity = _mapping(
+                  result.pop("_semantic_acceptance_review_identity", {})
+              )
+          """.replace("              ", ""),
+              """        result, review_identity = _consume_semantic_review_identity(
+                  original_run_tool(
+                      task_id,
+                      name,
+                      args,
+                      git_token_value=git_token_value,
+                  )
+              )
+          """.replace("              ", ""),
+          )
+
+          replace_once(
+              contract,
+              "    if callable(original_record_semantic_acceptance) and callable(latest_accepted_review):\n",
+              "    if callable(original_record_semantic_acceptance):\n",
+          )
+
+          replace_once(
+              contract,
+              """            if terminal_obj is not terminal_hardening or cw_obj is not cw or agent_obj is not agent:
+                  return original_record_semantic_acceptance(
+                      terminal_obj,
+                      cw_obj,
+                      agent_obj,
+                      task_id,
+                  )
+
+              before = cw_obj.load_task(task_id)
+              explicit_review_identity = reviewed_cycle is not None or bool(
+                  str(reviewed_fingerprint or "").strip()
+              )
+              if explicit_review_identity:
+                  reviewed_fingerprint = str(reviewed_fingerprint or "").strip()
+                  effective_reviewed_cycle = (
+                      int(reviewed_cycle)
+                      if reviewed_cycle is not None
+                      else int(before.get("agent_cycle") or 0)
+                  )
+              else:
+                  review = _mapping(latest_accepted_review(before))
+                  reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
+                  effective_reviewed_cycle = int(
+                      review.get("cycle") or before.get("agent_cycle") or 0
+                  )
+              if not reviewed_fingerprint:
+                  message = (
+                      "Refusing to record semantic acceptance because the latest accepted review "
+                      "has no acceptance fingerprint."
+                  )
+          """.replace("              ", ""),
+              """            if terminal_obj is not terminal_hardening or cw_obj is not cw or agent_obj is not agent:
+                  return original_record_semantic_acceptance(
+                      terminal_obj,
+                      cw_obj,
+                      agent_obj,
+                      task_id,
+                      reviewed_fingerprint=reviewed_fingerprint,
+                      reviewed_cycle=reviewed_cycle,
+                      return_publication=return_publication,
+                  )
+
+              before = cw_obj.load_task(task_id)
+              reviewed_fingerprint = str(reviewed_fingerprint or "").strip()
+              if not reviewed_fingerprint or reviewed_cycle is None:
+                  message = (
+                      "Refusing to record semantic acceptance because no complete "
+                      "invocation-local review identity was supplied."
+                  )
+          """.replace("              ", ""),
+          )
+
+          replace_once(
+              contract,
+              """                return
+
+              current_fingerprint = current_review_fingerprint(
+          """.replace("              ", ""),
+              """                return
+
+              effective_reviewed_cycle = int(reviewed_cycle)
+              if int(before.get("agent_cycle") or 0) != effective_reviewed_cycle:
+                  return
+
+              current_fingerprint = current_review_fingerprint(
+          """.replace("              ", ""),
+          )
+
+          old = """            try:
+                  publication = original_record_semantic_acceptance(
+                      terminal_obj,
+                      cw_obj,
+                      agent_obj,
+                      task_id,
+                      reviewed_fingerprint=reviewed_fingerprint,
+                      reviewed_cycle=effective_reviewed_cycle,
+                      return_publication=True,
+                  )
+              except TypeError as exc:
+                  # Synthetic/legacy recorders may not expose invocation identity.
+                  # Production owner code does; compatibility recorders still need
+                  # an exact structured publication identity for cleanup.
+                  if not any(
+                      token in str(exc)
+                      for token in (
+                          "reviewed_fingerprint",
+                          "reviewed_cycle",
+                          "return_publication",
+                      )
+                  ):
+                      raise
+                  try:
+                      publication = original_record_semantic_acceptance(
+                          terminal_obj,
+                          cw_obj,
+                          agent_obj,
+                          task_id,
+                          return_publication=True,
+                      )
+                  except TypeError as legacy_exc:
+                      if "return_publication" not in str(legacy_exc):
+                          raise
+                      original_record_semantic_acceptance(
+                          terminal_obj,
+                          cw_obj,
+                          agent_obj,
+                          task_id,
+                      )
+                      publication = {}
+          """.replace("              ", "")
+          new = """            publication = original_record_semantic_acceptance(
+                  terminal_obj,
+                  cw_obj,
+                  agent_obj,
+                  task_id,
+                  reviewed_fingerprint=reviewed_fingerprint,
+                  reviewed_cycle=effective_reviewed_cycle,
+                  return_publication=True,
+              )
+          """.replace("              ", "")
+          replace_once(contract, old, new)
+          PY
           python /tmp/pr96_patch.py
           python -m py_compile services/gateway/app/coding_mission_acceptance_epoch.py services/gateway/app/coding_semantic_acceptance_contract.py
           git diff --check
@@ -39,7 +314,7 @@ jobs:
           GATEWAY_BEARER_TOKEN: test-token
         shell: bash
         run: |
-          python -m pytest -q \
+          python -m pytest -q --tb=short \
             services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py \
             services/gateway/tests/test_coding_mission_acceptance_epoch.py \
             services/gateway/tests/test_coding_mission_acceptance_epoch_publication_cas.py \
@@ -59,9 +334,6 @@ jobs:
           git rm .github/workflows/pr96-final-review-boundary-patch.yml
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add services/gateway/app/coding_mission_acceptance_epoch.py \
-                  services/gateway/app/coding_semantic_acceptance_contract.py \
-                  services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py \
-                  services/gateway/tests/test_coding_mission_acceptance_epoch.py
+          git add services/gateway/app/coding_mission_acceptance_epoch.py services/gateway/app/coding_semantic_acceptance_contract.py
           git commit -m "Require complete semantic review identity"
           git push origin HEAD:agent/semantic-acceptance-contract
