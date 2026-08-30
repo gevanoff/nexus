@@ -101,6 +101,8 @@ def test_final_cas_does_not_overwrite_same_fingerprint_new_publication(monkeypat
         cw,
         SimpleNamespace(),
         cw.task["id"],
+        reviewed_fingerprint="fp:y",
+        reviewed_cycle=5,
     )
 
     assert published is False
@@ -152,12 +154,13 @@ class _CleanupRaceCW:
 
 
 def test_stale_cleanup_preserves_new_same_fingerprint_publication() -> None:
-    state = {"review": {"accepted": True, "fingerprint": ""}}
+    state = {"review": {"accepted": True, "fingerprint": "", "cycle": 5}}
     cw = _CleanupRaceCW(
         {
             "id": "code_cleanup_generation_aba",
             "prompt": "Do the work.",
             "repo_version": 1,
+            "agent_cycle": 5,
             EPOCH_KEY: {
                 "schema": EPOCH_SCHEMA,
                 "status": "pending",
@@ -195,13 +198,21 @@ def test_stale_cleanup_preserves_new_same_fingerprint_publication() -> None:
         _agent,
         task_id,
         *,
+        reviewed_fingerprint="",
+        reviewed_cycle=None,
         return_publication=False,
     ):
         before = cw_obj.load_task(task_id)
+        if not reviewed_fingerprint or reviewed_cycle is None:
+            return {} if return_publication else False
+        if int(before.get("agent_cycle") or 0) != int(reviewed_cycle):
+            return {} if return_publication else False
         fingerprint = terminal_obj.semantic_acceptance_fingerprint(
             before,
             diff_text=mission_review_diff(cw_obj, None, task_id, before),
         )
+        if fingerprint != reviewed_fingerprint:
+            return {} if return_publication else False
 
         def apply(latest):
             latest[EPOCH_KEY] = {
@@ -262,6 +273,8 @@ def test_stale_cleanup_preserves_new_same_fingerprint_publication() -> None:
         cw,
         agent,
         "code_cleanup_generation_aba",
+        reviewed_fingerprint=state["review"]["fingerprint"],
+        reviewed_cycle=5,
     )
 
     accepted = cw.task[EPOCH_KEY]

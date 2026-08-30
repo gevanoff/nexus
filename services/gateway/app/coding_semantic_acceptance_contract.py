@@ -572,7 +572,7 @@ def install(
             apply(latest)
             cw_obj.save_task(latest)
 
-    if callable(original_record_semantic_acceptance) and callable(latest_accepted_review):
+    if callable(original_record_semantic_acceptance):
         def record_semantic_acceptance_if_review_current(
             terminal_obj: Any,
             cw_obj: Any,
@@ -589,29 +589,17 @@ def install(
                     cw_obj,
                     agent_obj,
                     task_id,
+                    reviewed_fingerprint=reviewed_fingerprint,
+                    reviewed_cycle=reviewed_cycle,
+                    return_publication=return_publication,
                 )
 
             before = cw_obj.load_task(task_id)
-            explicit_review_identity = reviewed_cycle is not None or bool(
-                str(reviewed_fingerprint or "").strip()
-            )
-            if explicit_review_identity:
-                reviewed_fingerprint = str(reviewed_fingerprint or "").strip()
-                effective_reviewed_cycle = (
-                    int(reviewed_cycle)
-                    if reviewed_cycle is not None
-                    else int(before.get("agent_cycle") or 0)
-                )
-            else:
-                review = _mapping(latest_accepted_review(before))
-                reviewed_fingerprint = str(review.get("fingerprint") or "").strip()
-                effective_reviewed_cycle = int(
-                    review.get("cycle") or before.get("agent_cycle") or 0
-                )
-            if not reviewed_fingerprint:
+            reviewed_fingerprint = str(reviewed_fingerprint or "").strip()
+            if not reviewed_fingerprint or reviewed_cycle is None:
                 message = (
-                    "Refusing to record semantic acceptance because the latest accepted review "
-                    "has no acceptance fingerprint."
+                    "Refusing to record semantic acceptance because no complete "
+                    "invocation-local review identity was supplied."
                 )
                 _LOGGER.warning("%s task_id=%s", message, task_id)
                 try:
@@ -634,6 +622,10 @@ def install(
                     pass
                 return
 
+            effective_reviewed_cycle = int(reviewed_cycle)
+            if int(before.get("agent_cycle") or 0) != effective_reviewed_cycle:
+                return
+
             current_fingerprint = current_review_fingerprint(
                 terminal_obj,
                 cw_obj,
@@ -644,47 +636,15 @@ def install(
             if reviewed_fingerprint != current_fingerprint:
                 return
 
-            try:
-                publication = original_record_semantic_acceptance(
-                    terminal_obj,
-                    cw_obj,
-                    agent_obj,
-                    task_id,
-                    reviewed_fingerprint=reviewed_fingerprint,
-                    reviewed_cycle=effective_reviewed_cycle,
-                    return_publication=True,
-                )
-            except TypeError as exc:
-                # Synthetic/legacy recorders may not expose invocation identity.
-                # Production owner code does; compatibility recorders still need
-                # an exact structured publication identity for cleanup.
-                if not any(
-                    token in str(exc)
-                    for token in (
-                        "reviewed_fingerprint",
-                        "reviewed_cycle",
-                        "return_publication",
-                    )
-                ):
-                    raise
-                try:
-                    publication = original_record_semantic_acceptance(
-                        terminal_obj,
-                        cw_obj,
-                        agent_obj,
-                        task_id,
-                        return_publication=True,
-                    )
-                except TypeError as legacy_exc:
-                    if "return_publication" not in str(legacy_exc):
-                        raise
-                    original_record_semantic_acceptance(
-                        terminal_obj,
-                        cw_obj,
-                        agent_obj,
-                        task_id,
-                    )
-                    publication = {}
+            publication = original_record_semantic_acceptance(
+                terminal_obj,
+                cw_obj,
+                agent_obj,
+                task_id,
+                reviewed_fingerprint=reviewed_fingerprint,
+                reviewed_cycle=effective_reviewed_cycle,
+                return_publication=True,
+            )
             publication_info = _mapping(publication)
             published_fingerprint = str(
                 publication_info.get("fingerprint") or ""

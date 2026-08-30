@@ -140,6 +140,8 @@ def test_current_recorder_retries_after_stale_recorder_wins_first_cas(monkeypatc
         cw,
         SimpleNamespace(),
         "code_epoch_publication_retry",
+        reviewed_fingerprint="fp:current-diff",
+        reviewed_cycle=4,
     )
 
     assert published is True
@@ -164,6 +166,8 @@ def test_publication_retry_aborts_if_review_no_longer_matches_workspace(monkeypa
         cw,
         SimpleNamespace(),
         "code_epoch_publication_retry",
+        reviewed_fingerprint="fp:current-diff",
+        reviewed_cycle=4,
     )
 
     assert published is False
@@ -189,6 +193,8 @@ def test_retry_publishes_when_observed_stale_acceptance_is_cleared_before_final_
         cw,
         SimpleNamespace(),
         "code_epoch_publication_retry",
+        reviewed_fingerprint="fp:current-diff",
+        reviewed_cycle=4,
     )
 
     assert published is True
@@ -219,6 +225,8 @@ def test_retry_does_not_treat_workspace_mutation_clear_as_stale_cleanup(
         cw,
         SimpleNamespace(),
         "code_epoch_publication_retry",
+        reviewed_fingerprint="fp:current-diff",
+        reviewed_cycle=4,
     )
 
     assert published is False
@@ -247,6 +255,8 @@ def test_retry_does_not_overwrite_different_nonempty_acceptance_on_final_cas(
         cw,
         SimpleNamespace(),
         "code_epoch_publication_retry",
+        reviewed_fingerprint="fp:current-diff",
+        reviewed_cycle=4,
     )
 
     assert published is False

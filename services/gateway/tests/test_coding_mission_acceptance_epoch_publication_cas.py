@@ -102,6 +102,8 @@ def test_recorder_does_not_overwrite_concurrent_acceptance(monkeypatch) -> None:
         cw,
         SimpleNamespace(),
         cw.task["id"],
+        reviewed_fingerprint="fp:reviewed-a",
+        reviewed_cycle=7,
     )
 
     accepted = cw.task[epoch.KEY]
@@ -126,6 +128,8 @@ def test_recorder_can_replace_exact_stale_acceptance_it_observed(monkeypatch) ->
         cw,
         SimpleNamespace(),
         cw.task["id"],
+        reviewed_fingerprint="fp:reviewed-a",
+        reviewed_cycle=7,
     )
 
     accepted = cw.task[epoch.KEY]

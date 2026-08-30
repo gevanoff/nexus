@@ -22,6 +22,16 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _consume_semantic_review_identity(
+    value: Any,
+) -> tuple[Dict[str, Any], Mapping[str, Any]]:
+    result = dict(value) if isinstance(value, Mapping) else {}
+    identity = _mapping(
+        result.pop("_semantic_acceptance_review_identity", {})
+    )
+    return result, identity
+
+
 def _float(value: Any) -> float:
     try:
         return float(value or 0.0)
@@ -361,23 +371,13 @@ def _record_semantic_acceptance(
     reviewed_cycle: Optional[int] = None,
     return_publication: bool = False,
 ) -> Any:
+    bound_fingerprint = str(reviewed_fingerprint or "").strip()
+    if not bound_fingerprint or reviewed_cycle is None:
+        return {} if return_publication else False
+    bound_cycle = _int(reviewed_cycle)
     initial = cw.load_task(task_id)
-    explicit_review_identity = reviewed_cycle is not None or bool(
-        str(reviewed_fingerprint or "").strip()
-    )
-    if explicit_review_identity:
-        bound_fingerprint = str(reviewed_fingerprint or "").strip()
-        bound_cycle = _int(reviewed_cycle)
-    else:
-        review = _latest_accepted_review(initial)
-        if not review:
-            return False
-        bound_fingerprint = str(review.get("fingerprint") or "").strip()
-        bound_cycle = _int(review.get("cycle") or initial.get("agent_cycle"))
-    if not bound_fingerprint:
-        return False
     if _int(initial.get("agent_cycle")) != bound_cycle:
-        return False
+        return {} if return_publication else False
     reviewed_fingerprint = bound_fingerprint
     reviewed_cycle = bound_cycle
     max_attempts = 2
@@ -426,6 +426,8 @@ def _record_semantic_acceptance(
 
         def apply(latest: Dict[str, Any]) -> None:
             nonlocal published, published_generation
+            if _int(latest.get("agent_cycle")) != reviewed_cycle:
+                return
             current = dict(_mapping(latest.get(KEY)))
             if str(current.get("base_head") or "") != base_head:
                 return
@@ -939,12 +941,15 @@ def install(
         try:
             before_task = cw.load_task(task_id)
         except Exception:
-            return original_run_tool(
-                task_id,
-                name,
-                args,
-                git_token_value=git_token_value,
+            delegated, _ = _consume_semantic_review_identity(
+                original_run_tool(
+                    task_id,
+                    name,
+                    args,
+                    git_token_value=git_token_value,
+                )
             )
+            return delegated
 
         forced_state = forced_action.active_state(before_task)
         if name == REFUTATION_TOOL:
@@ -992,16 +997,13 @@ def install(
                 "summary": "The current remediation hypothesis was explicitly refuted; forced edit mode is suspended for one bounded evidence pass.",
             }
 
-        result = dict(
+        result, review_identity = _consume_semantic_review_identity(
             original_run_tool(
                 task_id,
                 name,
                 args,
                 git_token_value=git_token_value,
             )
-        )
-        review_identity = _mapping(
-            result.pop("_semantic_acceptance_review_identity", {})
         )
         reviewed_fingerprint = str(
             review_identity.get("fingerprint") or ""

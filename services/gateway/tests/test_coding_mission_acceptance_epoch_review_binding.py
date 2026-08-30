@@ -76,7 +76,12 @@ def test_acceptance_recorder_refuses_live_fingerprint_not_bound_to_review(monkey
     )
 
     _owner_record_semantic_acceptance()(
-        terminal, cw, agent, "code_epoch_review_binding"
+        terminal,
+        cw,
+        agent,
+        "code_epoch_review_binding",
+        reviewed_fingerprint="fp:reviewed-diff",
+        reviewed_cycle=4,
     )
 
     assert cw.mutations == 0
@@ -154,7 +159,12 @@ def test_acceptance_recorder_publishes_only_matching_review_fingerprint(monkeypa
     )
 
     _owner_record_semantic_acceptance()(
-        terminal, cw, agent, "code_epoch_review_binding"
+        terminal,
+        cw,
+        agent,
+        "code_epoch_review_binding",
+        reviewed_fingerprint="fp:reviewed-diff",
+        reviewed_cycle=4,
     )
 
     assert cw.mutations == 1
@@ -163,3 +173,60 @@ def test_acceptance_recorder_publishes_only_matching_review_fingerprint(monkeypa
     assert accepted["accepted_fingerprint"] == "fp:reviewed-diff"
     assert accepted["accepted_head"] == "reviewed-head"
     assert accepted["accepted_diff_sha256"] == "reviewed-diff-sha"
+
+
+def test_owner_recorder_requires_complete_invocation_identity() -> None:
+    terminal = SimpleNamespace(
+        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"
+    )
+    recorder = _owner_record_semantic_acceptance()
+    for kwargs in (
+        {},
+        {"reviewed_fingerprint": "fp:reviewed-diff"},
+        {"reviewed_cycle": 4},
+    ):
+        cw = _MemoryCW(_task("fp:reviewed-diff"))
+        published = recorder(
+            terminal, cw, SimpleNamespace(), "code_epoch_review_binding", **kwargs
+        )
+        assert published is False
+        assert cw.mutations == 0
+        assert cw.task[epoch.KEY]["status"] == "pending"
+        assert cw.task[epoch.KEY]["accepted_fingerprint"] == ""
+
+
+def test_owner_recorder_rechecks_cycle_inside_atomic_publication(monkeypatch) -> None:
+    class _CycleRaceCW(_MemoryCW):
+        def mutate_task(self, _task_id: str, apply):
+            self.mutations += 1
+            latest = dict(self.task)
+            latest["agent_cycle"] = 5
+            apply(latest)
+            self.task = latest
+            return dict(latest)
+
+    cw = _CycleRaceCW(_task("fp:reviewed-diff"))
+    terminal = SimpleNamespace(
+        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"
+    )
+    monkeypatch.setattr(
+        epoch,
+        "mission_delta_state",
+        lambda _cw, _task_id, _task: {
+            "ok": True, "has_delta": True, "base_head": "base",
+            "current_head": "reviewed-head", "diff_sha256": "reviewed-diff-sha",
+        },
+    )
+    monkeypatch.setattr(
+        epoch, "mission_review_diff",
+        lambda _cw, _agent, _task_id, _task: "reviewed-diff",
+    )
+    published = _owner_record_semantic_acceptance()(
+        terminal, cw, SimpleNamespace(), "code_epoch_review_binding",
+        reviewed_fingerprint="fp:reviewed-diff", reviewed_cycle=4,
+    )
+    assert published is False
+    assert cw.mutations == 1
+    assert cw.task["agent_cycle"] == 5
+    assert cw.task[epoch.KEY]["status"] == "pending"
+    assert cw.task[epoch.KEY]["accepted_fingerprint"] == ""

@@ -43,12 +43,13 @@ class _RaceCW:
 
 
 def test_stale_recorder_does_not_target_acceptance_published_before_post_record_load() -> None:
-    state = {"review": {"accepted": True, "fingerprint": ""}}
+    state = {"review": {"accepted": True, "fingerprint": "", "cycle": 4}}
     cw = _RaceCW(
         {
             "id": "code_accept_post_record_load_race",
             "prompt": "Do the work.",
             "repo_version": 1,
+            "agent_cycle": 4,
         }
     )
     agent = SimpleNamespace(
@@ -80,13 +81,21 @@ def test_stale_recorder_does_not_target_acceptance_published_before_post_record_
         _agent,
         task_id,
         *,
+        reviewed_fingerprint="",
+        reviewed_cycle=None,
         return_publication=False,
     ):
         before = cw_obj.load_task(task_id)
+        if not reviewed_fingerprint or reviewed_cycle is None:
+            return {} if return_publication else False
+        if int(before.get("agent_cycle") or 0) != int(reviewed_cycle):
+            return {} if return_publication else False
         stale_fingerprint = terminal_obj.semantic_acceptance_fingerprint(
             before,
             diff_text=mission_review_diff(cw_obj, None, task_id, before),
         )
+        if stale_fingerprint != reviewed_fingerprint:
+            return {} if return_publication else False
         generation = int(
             dict(before.get(EPOCH_KEY) or {}).get("acceptance_publication_generation") or 0
         ) + 1
@@ -155,6 +164,8 @@ def test_stale_recorder_does_not_target_acceptance_published_before_post_record_
         cw,
         agent,
         "code_accept_post_record_load_race",
+        reviewed_fingerprint=state["review"]["fingerprint"],
+        reviewed_cycle=4,
     )
 
     accepted = cw.task[EPOCH_KEY]

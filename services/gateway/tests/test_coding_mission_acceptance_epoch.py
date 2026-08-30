@@ -293,6 +293,29 @@ def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
     assert cw.task[epoch.KEY]["status"] == "finalized"
 
 
+def test_initial_load_failure_still_sanitizes_private_review_identity():
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+    original_load = cw.load_task
+    calls = {"count": 0}
+
+    def fail_once(task_id):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("synthetic initial load failure")
+        return original_load(task_id)
+
+    cw.load_task = fail_once
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert result["ok"] is True
+    assert result["success"] is True
+    assert "_semantic_acceptance_review_identity" not in result
+
+
 def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
     cw = _CW()
     agent = _Agent(cw)

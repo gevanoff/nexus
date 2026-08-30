@@ -176,7 +176,7 @@ def test_mission_acceptance_refuses_accepted_event_for_stale_fingerprint() -> No
     def mission_review_diff(_cw, _agent, _task_id, _task):
         return "review-diff"
 
-    def record_semantic_acceptance(_terminal, _cw, _agent, _task_id):
+    def record_semantic_acceptance(_terminal, _cw, _agent, _task_id, **_kwargs):
         state["calls"] += 1
 
     epoch = SimpleNamespace(
@@ -187,18 +187,24 @@ def test_mission_acceptance_refuses_accepted_event_for_stale_fingerprint() -> No
         _record_semantic_acceptance=record_semantic_acceptance,
     )
     cw, agent, _guarded, terminal = _install(
-        task={"id": "code_accept_race", "prompt": "Do the work."},
+        task={"id": "code_accept_race", "prompt": "Do the work.", "agent_cycle": 3},
         epoch=epoch,
     )
 
-    epoch._record_semantic_acceptance(terminal, cw, agent, "code_accept_race")
+    epoch._record_semantic_acceptance(
+        terminal, cw, agent, "code_accept_race",
+        reviewed_fingerprint="stale", reviewed_cycle=3,
+    )
     assert state["calls"] == 0
 
     state["review"]["fingerprint"] = terminal.semantic_acceptance_fingerprint(
         cw.load_task("code_accept_race"),
         diff_text="review-diff",
     )
-    epoch._record_semantic_acceptance(terminal, cw, agent, "code_accept_race")
+    epoch._record_semantic_acceptance(
+        terminal, cw, agent, "code_accept_race",
+        reviewed_fingerprint=state["review"]["fingerprint"], reviewed_cycle=3,
+    )
     assert state["calls"] == 1
 
 
@@ -236,7 +242,7 @@ def test_unfrozen_migrated_review_missing_fingerprint_is_logged_and_blocked(capl
         )
 
     assert state["calls"] == 0
-    assert "latest accepted review has no acceptance fingerprint" in caplog.text
+    assert "no complete invocation-local review identity was supplied" in caplog.text
 
 
 def test_frozen_contract_missing_review_fingerprint_is_logged_and_blocked(caplog) -> None:
@@ -250,7 +256,7 @@ def test_frozen_contract_missing_review_fingerprint_is_logged_and_blocked(caplog
     def mission_review_diff(_cw, _agent, _task_id, _task):
         return "review-diff"
 
-    def record_semantic_acceptance(_terminal, _cw, _agent, _task_id):
+    def record_semantic_acceptance(_terminal, _cw, _agent, _task_id, **_kwargs):
         state["calls"] += 1
 
     epoch = SimpleNamespace(
@@ -266,11 +272,11 @@ def test_frozen_contract_missing_review_fingerprint_is_logged_and_blocked(caplog
         epoch._record_semantic_acceptance(terminal, cw, agent, "code_missing_review_fp")
 
     assert state["calls"] == 0
-    assert "latest accepted review has no acceptance fingerprint" in caplog.text
+    assert "no complete invocation-local review identity was supplied" in caplog.text
 
 
 def test_mission_acceptance_clears_state_if_workspace_changes_during_record() -> None:
-    state = {"review": {"accepted": True, "fingerprint": ""}}
+    state = {"review": {"accepted": True, "fingerprint": "", "cycle": 4}}
 
     def latest_accepted_review(_task):
         return dict(state["review"])
@@ -284,13 +290,21 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
         _agent,
         task_id,
         *,
+        reviewed_fingerprint="",
+        reviewed_cycle=None,
         return_publication=False,
     ):
         before = cw.load_task(task_id)
+        if not reviewed_fingerprint or reviewed_cycle is None:
+            return {} if return_publication else False
+        if int(before.get("agent_cycle") or 0) != int(reviewed_cycle):
+            return {} if return_publication else False
         accepted_fp = terminal.semantic_acceptance_fingerprint(
             before,
             diff_text=mission_review_diff(cw, None, task_id, before),
         )
+        if accepted_fp != reviewed_fingerprint:
+            return {} if return_publication else False
         generation = int(
             dict(before.get("coding_mission_acceptance_epoch") or {}).get(
                 "acceptance_publication_generation"
@@ -333,6 +347,7 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
             "id": "code_accept_post_race",
             "prompt": "Do the work.",
             "repo_version": 1,
+            "agent_cycle": 4,
         },
         epoch=epoch,
     )
@@ -341,7 +356,10 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
         diff_text="review-diff-v1",
     )
 
-    epoch._record_semantic_acceptance(terminal, cw, agent, "code_accept_post_race")
+    epoch._record_semantic_acceptance(
+        terminal, cw, agent, "code_accept_post_race",
+        reviewed_fingerprint=state["review"]["fingerprint"], reviewed_cycle=4,
+    )
 
     accepted = cw.task["coding_mission_acceptance_epoch"]
     assert cw.task["repo_version"] == 2
@@ -355,7 +373,7 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
 
 
 def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
-    state = {"review": {"accepted": True, "fingerprint": ""}}
+    state = {"review": {"accepted": True, "fingerprint": "", "cycle": 4}}
     epoch_key = "coding_mission_acceptance_epoch"
     epoch_schema = "nexus_coding_mission_acceptance_epoch.v1"
 
@@ -397,13 +415,21 @@ def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
         _agent,
         task_id,
         *,
+        reviewed_fingerprint="",
+        reviewed_cycle=None,
         return_publication=False,
     ):
         before = cw.load_task(task_id)
+        if not reviewed_fingerprint or reviewed_cycle is None:
+            return {} if return_publication else False
+        if int(before.get("agent_cycle") or 0) != int(reviewed_cycle):
+            return {} if return_publication else False
         accepted_fp = terminal.semantic_acceptance_fingerprint(
             before,
             diff_text=mission_review_diff(cw, None, task_id, before),
         )
+        if accepted_fp != reviewed_fingerprint:
+            return {} if return_publication else False
         generation = int(
             dict(before.get(epoch_key) or {}).get("acceptance_publication_generation") or 0
         ) + 1
@@ -441,6 +467,7 @@ def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
             "id": "code_accept_cleanup_race",
             "prompt": "Do the work.",
             "repo_version": 1,
+            "agent_cycle": 4,
         }
     )
     cw, agent, _guarded, terminal = _install(
@@ -459,7 +486,10 @@ def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
         diff_text="review-diff-v2",
     )
 
-    epoch._record_semantic_acceptance(terminal, cw, agent, "code_accept_cleanup_race")
+    epoch._record_semantic_acceptance(
+        terminal, cw, agent, "code_accept_cleanup_race",
+        reviewed_fingerprint=state["review"]["fingerprint"], reviewed_cycle=4,
+    )
 
     accepted = cw.task[epoch_key]
     assert accepted["status"] == "semantic_accepted"
