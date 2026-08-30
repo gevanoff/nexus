@@ -176,6 +176,8 @@ def test_acceptance_recorder_publishes_only_matching_review_fingerprint(monkeypa
 
 
 def test_owner_recorder_requires_complete_invocation_identity() -> None:
+    # Shared review events are audit history; only the invocation-local token
+    # carried by the finishing call can authorize a new acceptance publication.
     terminal = SimpleNamespace(
         semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"
     )
