@@ -198,6 +198,8 @@ def test_owner_recorder_requires_complete_invocation_identity() -> None:
 
 
 def test_owner_recorder_rechecks_cycle_inside_atomic_publication(monkeypatch) -> None:
+    # Cycle ownership is part of publication authority, so it must still hold
+    # after the recorder crosses the final load-to-mutation boundary.
     class _CycleRaceCW(_MemoryCW):
         def mutate_task(self, _task_id: str, apply):
             self.mutations += 1
