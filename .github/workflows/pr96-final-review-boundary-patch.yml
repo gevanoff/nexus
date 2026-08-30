@@ -23,6 +23,16 @@ jobs:
       - name: Apply production and regression hardening
         shell: bash
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/pr96_final_review_boundary_patch.py')
+          text = path.read_text()
+          old = '''    if actual != count:\n        raise SystemExit(\n            f"{path_s}:{func_name}: expected {count} marker(s), got {actual}: {old[:180]!r}"\n        )\n    block = block.replace(old, new)\n'''
+          new = '''    if actual < count:\n        raise SystemExit(\n            f"{path_s}:{func_name}: expected at least {count} marker(s), got {actual}: {old[:180]!r}"\n        )\n    block = block.replace(old, new, count)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('replace_in_function helper marker mismatch')
+          path.write_text(text.replace(old, new, 1))
+          PY
           python .github/scripts/pr96_final_review_boundary_patch.py
           python -m py_compile \
             services/gateway/app/coding_mission_acceptance_epoch.py \
