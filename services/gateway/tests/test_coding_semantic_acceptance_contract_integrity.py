@@ -241,12 +241,25 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
     def mission_review_diff(_cw, _agent, _task_id, task):
         return f"review-diff-v{int(task.get('repo_version') or 1)}"
 
-    def record_semantic_acceptance(terminal, cw, _agent, task_id):
+    def record_semantic_acceptance(
+        terminal,
+        cw,
+        _agent,
+        task_id,
+        *,
+        return_publication=False,
+    ):
         before = cw.load_task(task_id)
         accepted_fp = terminal.semantic_acceptance_fingerprint(
             before,
             diff_text=mission_review_diff(cw, None, task_id, before),
         )
+        generation = int(
+            dict(before.get("coding_mission_acceptance_epoch") or {}).get(
+                "acceptance_publication_generation"
+            )
+            or 0
+        ) + 1
 
         def apply(latest):
             latest["coding_mission_acceptance_epoch"] = {
@@ -257,12 +270,19 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
                 "accepted_run_id": "run-v1",
                 "accepted_fingerprint": accepted_fp,
                 "accepted_diff_sha256": "diff-v1",
+                "acceptance_publication_generation": generation,
             }
             # Simulate a repository/controller mutation landing after review but
             # before the legacy acceptance recorder returns.
             latest["repo_version"] = 2
 
         cw.mutate_task(task_id, apply)
+        if return_publication:
+            return {
+                "fingerprint": accepted_fp,
+                "publication_generation": generation,
+            }
+        return True
 
     epoch = SimpleNamespace(
         KEY="coding_mission_acceptance_epoch",
@@ -294,6 +314,7 @@ def test_mission_acceptance_clears_state_if_workspace_changes_during_record() ->
     assert accepted["accepted_run_id"] == ""
     assert accepted["accepted_fingerprint"] == ""
     assert accepted["accepted_diff_sha256"] == ""
+    assert accepted["acceptance_publication_generation"] == 1
 
 
 def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
@@ -321,6 +342,7 @@ def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
                     "accepted_run_id": "run-v2",
                     "accepted_fingerprint": self.fresh_fingerprint,
                     "accepted_diff_sha256": "diff-v2",
+                    "acceptance_publication_generation": 2,
                 }
             apply(latest)
             self.task = latest
@@ -332,12 +354,22 @@ def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
     def mission_review_diff(_cw, _agent, _task_id, task):
         return f"review-diff-v{int(task.get('repo_version') or 1)}"
 
-    def record_semantic_acceptance(terminal, cw, _agent, task_id):
+    def record_semantic_acceptance(
+        terminal,
+        cw,
+        _agent,
+        task_id,
+        *,
+        return_publication=False,
+    ):
         before = cw.load_task(task_id)
         accepted_fp = terminal.semantic_acceptance_fingerprint(
             before,
             diff_text=mission_review_diff(cw, None, task_id, before),
         )
+        generation = int(
+            dict(before.get(epoch_key) or {}).get("acceptance_publication_generation") or 0
+        ) + 1
 
         def apply(latest):
             latest[epoch_key] = {
@@ -348,10 +380,17 @@ def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
                 "accepted_run_id": "run-v1",
                 "accepted_fingerprint": accepted_fp,
                 "accepted_diff_sha256": "diff-v1",
+                "acceptance_publication_generation": generation,
             }
             latest["repo_version"] = 2
 
         cw.mutate_task(task_id, apply)
+        if return_publication:
+            return {
+                "fingerprint": accepted_fp,
+                "publication_generation": generation,
+            }
+        return True
 
     epoch = SimpleNamespace(
         KEY=epoch_key,
@@ -390,3 +429,4 @@ def test_stale_cleanup_does_not_erase_newer_concurrent_acceptance() -> None:
     assert accepted["accepted_fingerprint"] == race_cw.fresh_fingerprint
     assert accepted["accepted_head"] == "head-v2"
     assert accepted["accepted_diff_sha256"] == "diff-v2"
+    assert accepted["acceptance_publication_generation"] == 2
