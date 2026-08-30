@@ -2,7 +2,19 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from app import coding_agent_guarded as guarded
+
+
+@pytest.fixture(autouse=True)
+def _exercise_guarded_dispatcher_before_mission_epoch(monkeypatch):
+    base = getattr(
+        guarded,
+        "_run_tool_with_semantic_acceptance_before_mission_acceptance_epoch",
+        guarded._run_tool_with_semantic_acceptance,
+    )
+    monkeypatch.setattr(guarded, "_run_tool_with_semantic_acceptance", base)
 
 
 def test_run_command_snapshots_baseline_and_marks_workspace_mutation(monkeypatch) -> None:

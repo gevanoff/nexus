@@ -319,6 +319,80 @@ def test_initial_load_failure_still_sanitizes_private_review_identity():
     assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")
 
 
+def test_post_dispatch_delta_state_exception_fails_closed(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+    original_state = epoch.mission_delta_state
+    calls = {"count": 0}
+
+    def fail_after_review(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return original_state(*args, **kwargs)
+        raise RuntimeError("synthetic post-dispatch delta-state failure")
+
+    monkeypatch.setattr(epoch, "mission_delta_state", fail_after_review)
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert calls["count"] >= 2
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert "_semantic_acceptance_review_identity" not in result
+    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")
+
+
+def test_post_dispatch_invalid_delta_state_fails_closed(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+    original_state = epoch.mission_delta_state
+    calls = {"count": 0}
+
+    def invalid_after_review(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return original_state(*args, **kwargs)
+        return {"ok": False, "error": "synthetic git diff failure"}
+
+    monkeypatch.setattr(epoch, "mission_delta_state", invalid_after_review)
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert calls["count"] >= 2
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert "_semantic_acceptance_review_identity" not in result
+    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")
+
+
+def test_post_dispatch_acceptance_verification_exception_fails_closed(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    def fail_acceptance(*_args, **_kwargs):
+        raise RuntimeError("synthetic acceptance verification failure")
+
+    monkeypatch.setattr(epoch, "_epoch_accepted_for_current", fail_acceptance)
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert "_semantic_acceptance_review_identity" not in result
+
+
 def test_unaccepted_inherited_delta_cannot_reach_original_finalizer():
     cw = _CW()
     agent = _Agent(cw)

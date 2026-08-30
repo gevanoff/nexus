@@ -826,6 +826,10 @@ def install(
 
     original_run_delta_diff = guarded._run_delta_diff
     original_run_tool = guarded._run_tool_with_semantic_acceptance
+    if not callable(
+        getattr(guarded, "_run_tool_with_semantic_acceptance_before_mission_acceptance_epoch", None)
+    ):
+        guarded._run_tool_with_semantic_acceptance_before_mission_acceptance_epoch = original_run_tool
     original_start_agent_run = agent.start_agent_run
     original_requires_edits = agent._mission_requires_workspace_edits
     original_finalize = agent.finalize_successful_run
@@ -1046,8 +1050,28 @@ def install(
             try:
                 state = mission_delta_state(cw, task_id)
             except Exception:
-                state = {}
-            if state.get("ok") and state.get("has_delta"):
+                return {
+                    "ok": False,
+                    "success": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission acceptance state could not be loaded after coding_finish. "
+                        "The delegated success was sanitized and blocked; retry coding_finish."
+                    ),
+                }
+            if not state.get("ok"):
+                return {
+                    "ok": False,
+                    "success": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission delta state is unavailable after coding_finish. "
+                        "The delegated success was blocked instead of being treated as terminal."
+                    ),
+                }
+            if state.get("has_delta"):
                 try:
                     latest = cw.load_task(task_id)
                     accepted = _epoch_accepted_for_current(
@@ -1075,7 +1099,16 @@ def install(
                             latest,
                         )
                 except Exception:
-                    accepted = False
+                    return {
+                        "ok": False,
+                        "success": False,
+                        "error": "mission_acceptance_state_unavailable",
+                        "required_action": "Retry coding_finish after mission acceptance state is available.",
+                        "summary": (
+                            "Mission acceptance could not be reloaded or verified after coding_finish. "
+                            "The delegated success was blocked; retry coding_finish."
+                        ),
+                    }
                 if not accepted:
                     return {
                         "ok": False,
