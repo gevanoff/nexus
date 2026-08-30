@@ -1,0 +1,170 @@
+name: PR96 resumable finalization guard repair
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply resumable finalization guard patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          epoch = Path('services/gateway/app/coding_mission_acceptance_epoch.py')
+          e = epoch.read_text()
+          marker = '''    ) -> Dict[str, Any]:\n        try:\n            workspace_lock = cw.task_workspace_lock(task_id)\n'''
+          replacement = '''    ) -> Dict[str, Any]:\n        def resumable_guard_failure(*, error: str, summary: str, required_action: str) -> Dict[str, Any]:\n            now = time.time()\n            finalization_error = f"{error}: {summary}"\n            result = {\n                "ok": False,\n                "success": False,\n                "error": error,\n                "finalization_status": "interrupted",\n                "finalization_error": finalization_error,\n                "stop_reason_code": "run_interrupted",\n                "retryable": True,\n                "required_action": required_action,\n                "summary": summary,\n                "finished_at": now,\n            }\n\n            def persist(latest: Dict[str, Any]) -> None:\n                latest.update(\n                    {\n                        "finalization_status": "interrupted",\n                        "finalization_error": finalization_error,\n                        "terminal_result": dict(result),\n                    }\n                )\n\n            try:\n                _mutate_task(cw, task_id, persist)\n            except Exception:\n                # The structured return still carries the interruption identity;\n                # persistence is best-effort when metadata storage itself is impaired.\n                pass\n            return result\n\n        try:\n            workspace_lock = cw.task_workspace_lock(task_id)\n'''
+          if e.count(marker) != 1:
+              raise SystemExit(f'finalizer helper marker count={e.count(marker)}')
+          e = e.replace(marker, replacement, 1)
+
+          old = '''        except Exception:\n            return {\n                "ok": False,\n                "error": "mission_acceptance_state_unavailable",\n                "required_action": "Retry coding_finish after mission acceptance state is available.",\n                "summary": (\n                    "The task workspace serialization boundary is unavailable during finalization. "\n                    "Finalization was blocked before repository side effects."\n                ),\n            }\n'''
+          new = '''        except Exception:\n            return resumable_guard_failure(\n                error="mission_acceptance_state_unavailable",\n                required_action="Resume the run and retry coding_finish after mission acceptance state is available.",\n                summary=(\n                    "The task workspace serialization boundary is unavailable during finalization. "\n                    "Finalization was interrupted before repository side effects and may be resumed."\n                ),\n            )\n'''
+          if e.count(old) != 1:
+              raise SystemExit(f'workspace-lock failure marker count={e.count(old)}')
+          e = e.replace(old, new, 1)
+
+          old = '''            except Exception:\n                return {\n                    "ok": False,\n                    "error": "mission_acceptance_state_unavailable",\n                    "required_action": "Retry coding_finish after mission acceptance state is available.",\n                    "summary": (\n                        "Mission acceptance state could not be established during finalization. "\n                        "Finalization was blocked instead of falling through to the unguarded finalizer."\n                    ),\n                }\n'''
+          new = '''            except Exception:\n                return resumable_guard_failure(\n                    error="mission_acceptance_state_unavailable",\n                    required_action="Resume the run and retry coding_finish after mission acceptance state is available.",\n                    summary=(\n                        "Mission acceptance state could not be established during finalization. "\n                        "Finalization was interrupted before repository side effects and may be resumed."\n                    ),\n                )\n'''
+          if e.count(old) != 1:
+              raise SystemExit(f'acceptance exception marker count={e.count(old)}')
+          e = e.replace(old, new, 1)
+
+          old = '''            if not state.get("ok"):\n                return {\n                    "ok": False,\n                    "error": "mission_acceptance_state_unavailable",\n                    "required_action": "Retry coding_finish after mission acceptance state is available.",\n                    "summary": (\n                        "Mission delta state is unavailable during finalization. "\n                        "Finalization was blocked instead of falling through to the unguarded finalizer."\n                    ),\n                }\n'''
+          new = '''            if not state.get("ok"):\n                return resumable_guard_failure(\n                    error="mission_acceptance_state_unavailable",\n                    required_action="Resume the run and retry coding_finish after mission acceptance state is available.",\n                    summary=(\n                        "Mission delta state is unavailable during finalization. "\n                        "Finalization was interrupted before repository side effects and may be resumed."\n                    ),\n                )\n'''
+          if e.count(old) != 1:
+              raise SystemExit(f'invalid delta-state marker count={e.count(old)}')
+          e = e.replace(old, new, 1)
+
+          old = '''            if state.get("has_delta") and not accepted:\n                return {\n                    "ok": False,\n                    "error": "mission_semantic_acceptance_missing",\n                    "required_action": "Retry coding_finish to obtain semantic acceptance for the current mission delta.",\n                    "summary": (\n                        "The workspace contains a mission delta without current semantic acceptance. "\n                        "Finalization was blocked before commit or push."\n                    ),\n                }\n'''
+          new = '''            if state.get("has_delta") and not accepted:\n                return resumable_guard_failure(\n                    error="mission_semantic_acceptance_missing",\n                    required_action="Resume the run and retry coding_finish to obtain semantic acceptance for the current mission delta.",\n                    summary=(\n                        "The workspace contains a mission delta without current semantic acceptance. "\n                        "Finalization was interrupted before commit or push and may be resumed."\n                    ),\n                )\n'''
+          if e.count(old) != 1:
+              raise SystemExit(f'unaccepted delta marker count={e.count(old)}')
+          e = e.replace(old, new, 1)
+          epoch.write_text(e)
+
+          agent = Path('services/gateway/app/coding_agent.py')
+          a = agent.read_text()
+          marker = '''        if finish_success:\n            finalization = await asyncio.to_thread(\n'''
+          replacement = '''        finalization: Dict[str, Any] = {}\n        if finish_success:\n            finalization = await asyncio.to_thread(\n'''
+          if a.count(marker) != 1:
+              raise SystemExit(f'finalization init marker count={a.count(marker)}')
+          a = a.replace(marker, replacement, 1)
+
+          marker = '''        latest_after_finalization = await asyncio.to_thread(cw.load_task, task_id)\n        finalization_status = str(latest_after_finalization.get("finalization_status") or "")\n        final_status = "completed" if finish_success else (finalization_status or "failed")\n        final_stop_reason_code = (\n            "run_completed"\n            if finish_success\n            else finalization_status\n            if finalization_status in {"failed_finalization", "failed_publish"}\n            else "agent_failed"\n        )\n'''
+          replacement = '''        latest_after_finalization = await asyncio.to_thread(cw.load_task, task_id)\n        finalization_status = str(\n            finalization.get("finalization_status")\n            or latest_after_finalization.get("finalization_status")\n            or ""\n        )\n        final_status = "completed" if finish_success else (finalization_status or "failed")\n        if finish_success:\n            final_stop_reason_code = "run_completed"\n        elif final_status == "interrupted":\n            final_stop_reason_code = "run_interrupted"\n        elif finalization_status in {"failed_finalization", "failed_publish"}:\n            final_stop_reason_code = finalization_status\n        else:\n            final_stop_reason_code = "agent_failed"\n'''
+          if a.count(marker) != 1:
+              raise SystemExit(f'final status marker count={a.count(marker)}')
+          agent.write_text(a.replace(marker, replacement, 1))
+
+          test = Path('services/gateway/tests/test_coding_mission_acceptance_epoch.py')
+          t = test.read_text()
+          marker = '''    assert result["ok"] is False\n    assert result["error"] == "mission_semantic_acceptance_missing"\n    assert agent.finalize_calls == []\n\n\ndef test_finalizer_load_failure_cannot_reach_original_finalizer():\n'''
+          replacement = '''    assert result["ok"] is False\n    assert result["error"] == "mission_semantic_acceptance_missing"\n    assert result["finalization_status"] == "interrupted"\n    assert result["stop_reason_code"] == "run_interrupted"\n    assert result["retryable"] is True\n    assert result["finalization_error"]\n    assert cw.task["finalization_status"] == "interrupted"\n    assert agent.finalize_calls == []\n\n\ndef test_finalizer_load_failure_cannot_reach_original_finalizer():\n'''
+          if t.count(marker) != 1:
+              raise SystemExit(f'unaccepted test marker count={t.count(marker)}')
+          t = t.replace(marker, replacement, 1)
+
+          marker = '''    assert result["ok"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n'''
+          # This assertion pair appears in several dispatch tests; target only the
+          # finalizer-load test by replacing the first occurrence after its def.
+          anchor = 'def test_finalizer_load_failure_cannot_reach_original_finalizer():'
+          pos = t.index(anchor)
+          tail = t[pos:]
+          if marker not in tail:
+              raise SystemExit('finalizer-load assertion marker missing')
+          replacement = '''    assert result["ok"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["finalization_status"] == "interrupted"\n    assert result["stop_reason_code"] == "run_interrupted"\n    assert result["retryable"] is True\n    assert "mission_acceptance_state_unavailable" in result["finalization_error"]\n'''
+          tail = tail.replace(marker, replacement, 1)
+          t = t[:pos] + tail
+
+          insertion_marker = '''\ndef test_finalizer_load_failure_cannot_reach_original_finalizer():\n'''
+          new_test = '''\ndef test_finalizer_invalid_delta_state_is_resumable_interruption(monkeypatch):\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n\n    monkeypatch.setattr(\n        epoch,\n        "mission_delta_state",\n        lambda *_args, **_kwargs: {"ok": False, "error": "synthetic git diff outage"},\n    )\n    result = agent.finalize_successful_run(\n        "code-test", mission=cw.task["coding_mission"], run_id="run-b"\n    )\n\n    assert result["ok"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["finalization_status"] == "interrupted"\n    assert result["stop_reason_code"] == "run_interrupted"\n    assert result["retryable"] is True\n    assert cw.task["finalization_status"] == "interrupted"\n    assert agent.finalize_calls == []\n\n'''
+          if t.count(insertion_marker) != 1:
+              raise SystemExit(f'new test insertion marker count={t.count(insertion_marker)}')
+          test.write_text(t.replace(insertion_marker, new_test + insertion_marker, 1))
+
+          finalizer_tests = Path('services/gateway/tests/test_coding_mission_finalization.py')
+          ft = finalizer_tests.read_text()
+          marker = '''def test_coding_cancellation_distinguishes_user_pause_from_gateway_restart():\n'''
+          insertion = '''def test_interrupted_finalization_uses_typed_resume_stop_reason():\n    source = Path(ca.__file__).read_text(encoding="utf-8")\n    assert 'elif final_status == "interrupted":' in source\n    assert 'final_stop_reason_code = "run_interrupted"' in source\n    assert 'finalization.get("finalization_status")' in source\n\n\n'''
+          if ft.count(marker) != 1:
+              raise SystemExit(f'agent lifecycle test insertion marker count={ft.count(marker)}')
+          finalizer_tests.write_text(ft.replace(marker, insertion + marker, 1))
+          PY
+          python -m py_compile \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/app/coding_agent.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git diff --check
+      - name: Install Gateway test dependencies
+        shell: bash
+        run: |
+          python -m pip install --quiet \
+            -r services/gateway/app/requirements.freeze.txt \
+            -r services/gateway/tests/requirements.freeze.txt
+      - name: Prepare writable Gateway runtime paths
+        shell: bash
+        run: |
+          sudo mkdir -p \
+            /var/lib/gateway/app \
+            /var/lib/gateway/config \
+            /var/lib/gateway/data/agent \
+            /var/lib/gateway/data/coding/tasks \
+            /var/lib/gateway/data/coding/workspaces \
+            /var/lib/gateway/data/model_benchmarks \
+            /var/lib/gateway/data/model_tool_qualification \
+            /var/lib/gateway/data/sentinel \
+            /var/lib/gateway/data/tools \
+            /var/lib/gateway/data/ui_chats \
+            /var/lib/gateway/data/ui_files \
+            /var/lib/gateway/data/ui_images \
+            /var/lib/gateway/data/voice_library \
+            /var/lib/gateway/tools \
+            /workspace/nexus/souls
+          sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
+      - name: Run focused finalization lifecycle tests
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: |
+          python -m pytest -q --tb=short \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py \
+            services/gateway/tests/test_coding_resume_convergence_hardening.py
+      - name: Run full Gateway suite
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: python -m pytest -q --tb=short services/gateway/tests
+      - name: Commit clean fix
+        shell: bash
+        run: |
+          git rm -f .github/workflows/pr96-finalization-retryability.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/app/coding_agent.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git commit -m "Keep guarded finalization resumable"
+          git push origin HEAD:agent/semantic-acceptance-contract
