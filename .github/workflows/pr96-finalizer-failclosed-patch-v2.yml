@@ -1,0 +1,131 @@
+name: PR96 finalizer fail-closed patch v2
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply fail-closed acceptance patch and isolate base-finalizer tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path('services/gateway/app/coding_mission_acceptance_epoch.py')
+          text = source.read_text()
+
+          old = '''    original_finalize = agent.finalize_successful_run\n'''
+          new = '''    original_finalize = agent.finalize_successful_run\n    if not callable(\n        getattr(agent, "_finalize_successful_run_before_mission_acceptance_epoch", None)\n    ):\n        agent._finalize_successful_run_before_mission_acceptance_epoch = original_finalize\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'original-finalizer marker count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''        except Exception:\n            delegated, _ = _consume_semantic_review_identity(\n                original_run_tool(\n                    task_id,\n                    name,\n                    args,\n                    git_token_value=git_token_value,\n                )\n            )\n            return delegated\n'''
+          new = '''        except Exception:\n            delegated, _ = _consume_semantic_review_identity(\n                original_run_tool(\n                    task_id,\n                    name,\n                    args,\n                    git_token_value=git_token_value,\n                )\n            )\n            if (\n                name == "coding_finish"\n                and delegated.get("ok") is True\n                and delegated.get("success") is True\n            ):\n                return {\n                    "ok": False,\n                    "success": False,\n                    "error": "mission_acceptance_state_unavailable",\n                    "required_action": "Retry coding_finish after mission acceptance state is available.",\n                    "summary": (\n                        "Mission acceptance state could not be loaded before coding_finish. "\n                        "The delegated success was sanitized and blocked from finalization; retry coding_finish."\n                    ),\n                }\n            return delegated\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'pre-dispatch exception marker count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''        try:\n            task = cw.load_task(task_id)\n            state = mission_delta_state(cw, task_id, task)\n            snapshot = cw.coding_state_snapshot(task_id)\n            accepted = _epoch_accepted_for_current(\n                terminal_hardening,\n                cw,\n                agent,\n                task_id,\n                task,\n            )\n        except Exception:\n            task, state, snapshot, accepted = {}, {}, {}, False\n        if state.get("ok") and state.get("has_delta") and accepted and _snapshot_ready(snapshot):\n'''
+          new = '''        try:\n            task = cw.load_task(task_id)\n            state = mission_delta_state(cw, task_id, task)\n            snapshot = cw.coding_state_snapshot(task_id)\n            accepted = _epoch_accepted_for_current(\n                terminal_hardening,\n                cw,\n                agent,\n                task_id,\n                task,\n            )\n        except Exception:\n            return {\n                "ok": False,\n                "error": "mission_acceptance_state_unavailable",\n                "required_action": "Retry coding_finish after mission acceptance state is available.",\n                "summary": (\n                    "Mission acceptance state could not be established during finalization. "\n                    "Finalization was blocked instead of falling through to the unguarded finalizer."\n                ),\n            }\n        if not state.get("ok"):\n            return {\n                "ok": False,\n                "error": "mission_acceptance_state_unavailable",\n                "required_action": "Retry coding_finish after mission acceptance state is available.",\n                "summary": (\n                    "Mission delta state is unavailable during finalization. "\n                    "Finalization was blocked instead of falling through to the unguarded finalizer."\n                ),\n            }\n        if state.get("has_delta") and not accepted:\n            return {\n                "ok": False,\n                "error": "mission_semantic_acceptance_missing",\n                "required_action": "Retry coding_finish to obtain semantic acceptance for the current mission delta.",\n                "summary": (\n                    "The workspace contains a mission delta without current semantic acceptance. "\n                    "Finalization was blocked before commit or push."\n                ),\n            }\n        if state.get("has_delta") and accepted and _snapshot_ready(snapshot):\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'finalizer marker count={text.count(old)}')
+          source.write_text(text.replace(old, new, 1))
+
+          acceptance_test = Path('services/gateway/tests/test_coding_mission_acceptance_epoch.py')
+          t = acceptance_test.read_text()
+          old = '''def test_initial_load_failure_still_sanitizes_private_review_identity():\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n    original_load = cw.load_task\n    calls = {"count": 0}\n\n    def fail_once(task_id):\n        calls["count"] += 1\n        if calls["count"] == 1:\n            raise RuntimeError("synthetic initial load failure")\n        return original_load(task_id)\n\n    cw.load_task = fail_once\n    result = guarded._run_tool_with_semantic_acceptance(\n        "code-test", "coding_finish", {}, git_token_value=None\n    )\n    assert result["ok"] is True\n    assert result["success"] is True\n    assert "_semantic_acceptance_review_identity" not in result\n\n\ndef test_unaccepted_inherited_delta_does_not_relax_finalization_contract():\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n    result = agent.finalize_successful_run(\n        "code-test", mission=cw.task["coding_mission"], run_id="run-b"\n    )\n    assert result["ok"] is True\n    original_mission = agent.finalize_calls[-1][1]\n    assert original_mission["completion_policy"]["require_file_changes"] is True\n'''
+          new = '''def test_initial_load_failure_still_sanitizes_private_review_identity():\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n    original_load = cw.load_task\n    calls = {"count": 0}\n\n    def fail_once(task_id):\n        calls["count"] += 1\n        if calls["count"] == 1:\n            raise RuntimeError("synthetic initial load failure")\n        return original_load(task_id)\n\n    cw.load_task = fail_once\n    result = guarded._run_tool_with_semantic_acceptance(\n        "code-test", "coding_finish", {}, git_token_value=None\n    )\n    assert result["ok"] is False\n    assert result["success"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["required_action"].startswith("Retry coding_finish")\n    assert "_semantic_acceptance_review_identity" not in result\n    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")\n\n\ndef test_unaccepted_inherited_delta_cannot_reach_original_finalizer():\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n    result = agent.finalize_successful_run(\n        "code-test", mission=cw.task["coding_mission"], run_id="run-b"\n    )\n    assert result["ok"] is False\n    assert result["error"] == "mission_semantic_acceptance_missing"\n    assert agent.finalize_calls == []\n\n\ndef test_finalizer_load_failure_cannot_reach_original_finalizer():\n    cw = _CW()\n    agent = _Agent(cw)\n    guarded = _Guarded(agent, cw)\n    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())\n\n    def fail_load(_task_id):\n        raise RuntimeError("synthetic finalizer load failure")\n\n    cw.load_task = fail_load\n    result = agent.finalize_successful_run(\n        "code-test", mission=cw.task["coding_mission"], run_id="run-b"\n    )\n    assert result["ok"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["required_action"].startswith("Retry coding_finish")\n    assert agent.finalize_calls == []\n'''
+          if t.count(old) != 1:
+              raise SystemExit(f'acceptance-test marker count={t.count(old)}')
+          acceptance_test.write_text(t.replace(old, new, 1))
+
+          finalizer_test = Path('services/gateway/tests/test_coding_mission_finalization.py')
+          f = finalizer_test.read_text()
+          old = '''from app import coding_workspace as cw\n\n\ndef _task(**extra):\n'''
+          new = '''from app import coding_workspace as cw\n\n\n@pytest.fixture(autouse=True)\ndef _exercise_underlying_finalizer(monkeypatch):\n    base = getattr(\n        ca, "_finalize_successful_run_before_mission_acceptance_epoch", None\n    )\n    assert callable(base), "mission acceptance install must retain the underlying finalizer"\n    monkeypatch.setattr(ca, "finalize_successful_run", base)\n\n\ndef _task(**extra):\n'''
+          if f.count(old) != 1:
+              raise SystemExit(f'finalizer-test fixture marker count={f.count(old)}')
+          finalizer_test.write_text(f.replace(old, new, 1))
+          PY
+          python -m py_compile \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git diff --check
+      - name: Install Gateway test dependencies
+        shell: bash
+        run: |
+          python -m pip install --quiet \
+            -r services/gateway/app/requirements.freeze.txt \
+            -r services/gateway/tests/requirements.freeze.txt
+      - name: Prepare writable Gateway runtime paths
+        shell: bash
+        run: |
+          sudo mkdir -p \
+            /var/lib/gateway/app \
+            /var/lib/gateway/config \
+            /var/lib/gateway/data/agent \
+            /var/lib/gateway/data/coding/tasks \
+            /var/lib/gateway/data/coding/workspaces \
+            /var/lib/gateway/data/model_benchmarks \
+            /var/lib/gateway/data/model_tool_qualification \
+            /var/lib/gateway/data/sentinel \
+            /var/lib/gateway/data/tools \
+            /var/lib/gateway/data/ui_chats \
+            /var/lib/gateway/data/ui_files \
+            /var/lib/gateway/data/ui_images \
+            /var/lib/gateway/data/voice_library \
+            /var/lib/gateway/tools \
+            /workspace/nexus/souls
+          sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
+      - name: Run focused acceptance and finalizer tests
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: |
+          python -m pytest -q --tb=short \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_cas.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_retry.py \
+            services/gateway/tests/test_coding_mission_acceptance_publication_generation.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_post_record_race.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+      - name: Run full Gateway suite
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: python -m pytest -q --tb=short services/gateway/tests
+      - name: Commit clean fix
+        shell: bash
+        run: |
+          git rm -f \
+            .github/workflows/pr96-finalizer-failclosed-patch.yml \
+            .github/workflows/pr96-finalizer-failclosed-patch-v2.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            services/gateway/app/coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git commit -m "Fail closed when mission acceptance state is unavailable"
+          git push origin HEAD:agent/semantic-acceptance-contract
