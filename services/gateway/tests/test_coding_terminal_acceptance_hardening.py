@@ -179,6 +179,7 @@ def test_validation_provenance_wrapper_reapplies_workspace_serialization():
 
     hardening.install(agent, guarded, cw, _WorkPhases)
 
+    # Replacing a public workspace operation must explicitly restore the outer lock.
     assert cw.serialization_requests == ["run_task_command"]
 
 
