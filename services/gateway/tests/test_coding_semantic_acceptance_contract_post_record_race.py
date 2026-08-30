@@ -27,6 +27,7 @@ class _RaceCW:
                 "accepted_run_id": "run-v2",
                 "accepted_fingerprint": self.fresh_fingerprint,
                 "accepted_diff_sha256": "diff-v2",
+                "acceptance_publication_generation": 2,
             }
         return dict(self.task)
 
@@ -73,12 +74,22 @@ def test_stale_recorder_does_not_target_acceptance_published_before_post_record_
     def mission_review_diff(_cw, _agent, _task_id, task):
         return f"review-diff-v{int(task.get('repo_version') or 1)}"
 
-    def record_semantic_acceptance(terminal_obj, cw_obj, _agent, task_id):
+    def record_semantic_acceptance(
+        terminal_obj,
+        cw_obj,
+        _agent,
+        task_id,
+        *,
+        return_publication=False,
+    ):
         before = cw_obj.load_task(task_id)
         stale_fingerprint = terminal_obj.semantic_acceptance_fingerprint(
             before,
             diff_text=mission_review_diff(cw_obj, None, task_id, before),
         )
+        generation = int(
+            dict(before.get(EPOCH_KEY) or {}).get("acceptance_publication_generation") or 0
+        ) + 1
 
         def apply(latest):
             latest[EPOCH_KEY] = {
@@ -89,6 +100,7 @@ def test_stale_recorder_does_not_target_acceptance_published_before_post_record_
                 "accepted_run_id": "run-v1",
                 "accepted_fingerprint": stale_fingerprint,
                 "accepted_diff_sha256": "diff-v1",
+                "acceptance_publication_generation": generation,
             }
             latest["repo_version"] = 2
 
@@ -96,6 +108,12 @@ def test_stale_recorder_does_not_target_acceptance_published_before_post_record_
         # The competing finish publishes after this recorder returns but before
         # the wrapper's post-record load samples shared task state.
         cw_obj.publish_fresh_on_next_load = True
+        if return_publication:
+            return {
+                "fingerprint": stale_fingerprint,
+                "publication_generation": generation,
+            }
+        return True
 
     epoch = SimpleNamespace(
         KEY=EPOCH_KEY,
@@ -144,3 +162,4 @@ def test_stale_recorder_does_not_target_acceptance_published_before_post_record_
     assert accepted["accepted_fingerprint"] == cw.fresh_fingerprint
     assert accepted["accepted_head"] == "head-v2"
     assert accepted["accepted_diff_sha256"] == "diff-v2"
+    assert accepted["acceptance_publication_generation"] == 2
