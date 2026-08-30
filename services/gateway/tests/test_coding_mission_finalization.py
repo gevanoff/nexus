@@ -52,6 +52,25 @@ def _finalizer_mocks(monkeypatch, *, changed=True, base_delta=True, commit_ok=Tr
     return stored
 
 
+def test_checkout_mutation_and_publish_operations_are_workspace_serialized():
+    operation_names = (
+        "write_file",
+        "replace_text",
+        "apply_unified_patch",
+        "run_task_command",
+        "checkpoint_task",
+        "commit_task",
+        "push_task",
+        "create_pull_request",
+        "archive_task",
+        "delete_task",
+    )
+    for name in operation_names:
+        operation = getattr(cw, name)
+        assert getattr(operation, "_nexus_workspace_serialized", False) is True, name
+        assert getattr(operation, "_nexus_workspace_operation", None) is not None, name
+
+
 def test_coding_mission_contract_defaults():
     mission = cw.normalize_coding_mission(_task())
     assert mission["schema"] == "nexus_coding_mission.v1"

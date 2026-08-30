@@ -1156,88 +1156,106 @@ def install(
         run_id: str = "",
     ) -> Dict[str, Any]:
         try:
-            task = cw.load_task(task_id)
-            state = mission_delta_state(cw, task_id, task)
-            snapshot = cw.coding_state_snapshot(task_id)
-            accepted = _epoch_accepted_for_current(
-                terminal_hardening,
-                cw,
-                agent,
-                task_id,
-                task,
-            )
+            workspace_lock = cw.task_workspace_lock(task_id)
         except Exception:
             return {
                 "ok": False,
                 "error": "mission_acceptance_state_unavailable",
                 "required_action": "Retry coding_finish after mission acceptance state is available.",
                 "summary": (
-                    "Mission acceptance state could not be established during finalization. "
-                    "Finalization was blocked instead of falling through to the unguarded finalizer."
+                    "The task workspace serialization boundary is unavailable during finalization. "
+                    "Finalization was blocked before repository side effects."
                 ),
             }
-        if not state.get("ok"):
-            return {
-                "ok": False,
-                "error": "mission_acceptance_state_unavailable",
-                "required_action": "Retry coding_finish after mission acceptance state is available.",
-                "summary": (
-                    "Mission delta state is unavailable during finalization. "
-                    "Finalization was blocked instead of falling through to the unguarded finalizer."
-                ),
-            }
-        if state.get("has_delta") and not accepted:
-            return {
-                "ok": False,
-                "error": "mission_semantic_acceptance_missing",
-                "required_action": "Retry coding_finish to obtain semantic acceptance for the current mission delta.",
-                "summary": (
-                    "The workspace contains a mission delta without current semantic acceptance. "
-                    "Finalization was blocked before commit or push."
-                ),
-            }
-        if state.get("has_delta") and accepted and _snapshot_ready(snapshot):
-            contract = cw.normalize_coding_mission(task, mission)
-            patched = dict(contract)
-            completion = dict(_mapping(contract.get("completion_policy")))
-            completion["require_file_changes"] = False
-            patched["completion_policy"] = completion
-            result = original_finalize(
+
+        # Hold the same re-entrant lock used by every checkout-mutating or
+        # publishing workspace operation. Acceptance is recomputed only after
+        # acquiring it, so an earlier edit is visible here and a later edit
+        # cannot enter between this check and commit/push/PR side effects.
+        with workspace_lock:
+            try:
+                task = cw.load_task(task_id)
+                state = mission_delta_state(cw, task_id, task)
+                snapshot = cw.coding_state_snapshot(task_id)
+                accepted = _epoch_accepted_for_current(
+                    terminal_hardening,
+                    cw,
+                    agent,
+                    task_id,
+                    task,
+                )
+            except Exception:
+                return {
+                    "ok": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission acceptance state could not be established during finalization. "
+                        "Finalization was blocked instead of falling through to the unguarded finalizer."
+                    ),
+                }
+            if not state.get("ok"):
+                return {
+                    "ok": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission delta state is unavailable during finalization. "
+                        "Finalization was blocked instead of falling through to the unguarded finalizer."
+                    ),
+                }
+            if state.get("has_delta") and not accepted:
+                return {
+                    "ok": False,
+                    "error": "mission_semantic_acceptance_missing",
+                    "required_action": "Retry coding_finish to obtain semantic acceptance for the current mission delta.",
+                    "summary": (
+                        "The workspace contains a mission delta without current semantic acceptance. "
+                        "Finalization was blocked before commit or push."
+                    ),
+                }
+            if state.get("has_delta") and accepted and _snapshot_ready(snapshot):
+                contract = cw.normalize_coding_mission(task, mission)
+                patched = dict(contract)
+                completion = dict(_mapping(contract.get("completion_policy")))
+                completion["require_file_changes"] = False
+                patched["completion_policy"] = completion
+                result = original_finalize(
+                    task_id,
+                    mission=patched,
+                    git_token_value=git_token_value,
+                    finish_summary=finish_summary,
+                    run_id=run_id,
+                )
+                if result.get("ok") is True:
+                    now = time.time()
+                    final_head = str(state.get("current_head") or "")
+
+                    def apply(latest: Dict[str, Any]) -> None:
+                        current = dict(_mapping(latest.get(KEY)))
+                        if current.get("accepted_fingerprint"):
+                            current.update(
+                                {
+                                    "status": "finalized",
+                                    "finalized_at": now,
+                                    "finalized_head": final_head,
+                                    "updated_at": now,
+                                }
+                            )
+                            latest[KEY] = current
+
+                    try:
+                        _mutate_task(cw, task_id, apply)
+                    except Exception:
+                        pass
+                return result
+            return original_finalize(
                 task_id,
-                mission=patched,
+                mission=mission,
                 git_token_value=git_token_value,
                 finish_summary=finish_summary,
                 run_id=run_id,
             )
-            if result.get("ok") is True:
-                now = time.time()
-                final_head = str(state.get("current_head") or "")
-
-                def apply(latest: Dict[str, Any]) -> None:
-                    current = dict(_mapping(latest.get(KEY)))
-                    if current.get("accepted_fingerprint"):
-                        current.update(
-                            {
-                                "status": "finalized",
-                                "finalized_at": now,
-                                "finalized_head": final_head,
-                                "updated_at": now,
-                            }
-                        )
-                        latest[KEY] = current
-
-                try:
-                    _mutate_task(cw, task_id, apply)
-                except Exception:
-                    pass
-            return result
-        return original_finalize(
-            task_id,
-            mission=mission,
-            git_token_value=git_token_value,
-            finish_summary=finish_summary,
-            run_id=run_id,
-        )
 
     agent.finalize_successful_run = finalize_successful_mission
 

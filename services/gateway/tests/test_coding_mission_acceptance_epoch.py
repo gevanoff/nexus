@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 
 from app import coding_mission_acceptance_epoch as epoch
@@ -146,6 +147,7 @@ class _CW:
     def __init__(self, *, tracked_diff="diff --git a/app.py b/app.py\n+fixed\n"):
         self.current_head = "checkpoint-head"
         self.merge_base = "mission-base"
+        self._workspace_lock = threading.RLock()
         self.tracked_diff = tracked_diff
         self.task = {
             "id": "code-test",
@@ -189,6 +191,9 @@ class _CW:
             },
         }
         self.coding_state_snapshot = lambda _task_id: dict(self.snapshot)
+
+    def task_workspace_lock(self, _task_id):
+        return self._workspace_lock
 
     def load_task(self, _task_id):
         return self.task
@@ -291,6 +296,33 @@ def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
     patched_mission = agent.finalize_calls[-1][1]
     assert patched_mission["completion_policy"]["require_file_changes"] is False
     assert cw.task[epoch.KEY]["status"] == "finalized"
+
+
+def test_finalization_holds_workspace_lock_through_original_side_effects():
+    cw = _CW()
+    agent = _Agent(cw)
+    original_finalize = agent.finalize_successful_run
+    observed = {"owned": False}
+
+    def asserting_finalize(*args, **kwargs):
+        owned = getattr(cw._workspace_lock, "_is_owned", lambda: False)()
+        observed["owned"] = bool(owned)
+        assert owned, "underlying finalizer side effects must run under the task workspace lock"
+        return original_finalize(*args, **kwargs)
+
+    agent.finalize_successful_run = asserting_finalize
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    finish = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert finish["ok"] is True
+    finalization = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
+    )
+    assert finalization["ok"] is True
+    assert observed["owned"] is True
 
 
 def test_initial_load_failure_still_sanitizes_private_review_identity():

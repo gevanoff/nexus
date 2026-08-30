@@ -51,6 +51,8 @@ _FINDING_REVIEW_VERDICTS = {"invalid", "superseded"}
 _PROJECT_PLAN_STATUSES = {"pending", "in_progress", "completed", "blocked", "skipped"}
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
+_WORKSPACE_LOCKS_GUARD = threading.Lock()
+_WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
 
 
 def coding_enabled() -> bool:
@@ -571,6 +573,19 @@ def _json_lock(path: Path) -> threading.RLock:
         if lock is None:
             lock = threading.RLock()
             _JSON_LOCKS[key] = lock
+        return lock
+
+
+def task_workspace_lock(task_id: str) -> threading.RLock:
+    """Serialize same-task worktree mutations and publish/finalization side effects."""
+    value = str(task_id or "").strip()
+    if not _SAFE_TASK_RE.match(value):
+        raise HTTPException(status_code=404, detail="coding task not found")
+    with _WORKSPACE_LOCKS_GUARD:
+        lock = _WORKSPACE_LOCKS.get(value)
+        if lock is None:
+            lock = threading.RLock()
+            _WORKSPACE_LOCKS[value] = lock
         return lock
 
 
@@ -3648,3 +3663,52 @@ def config_payload(*, git_token_value: Optional[str] = None, preferred_coding_mo
         "model_integration_route_kinds": ["chat", "embeddings", "images", "tts", "ocr", "video", "music", "json"],
         "model_integration_host_lanes": miw.integration_host_lanes(),
     }
+
+def _serialize_task_workspace_operation(operation: Any) -> Any:
+    """Make a task-scoped checkout operation participate in finalization serialization."""
+    if bool(getattr(operation, "_nexus_workspace_serialized", False)):
+        return operation
+
+    def serialized(task_id: str, *args: Any, **kwargs: Any) -> Any:
+        with task_workspace_lock(task_id):
+            return operation(task_id, *args, **kwargs)
+
+    serialized.__name__ = str(getattr(operation, "__name__", "serialized_workspace_operation"))
+    serialized.__doc__ = getattr(operation, "__doc__", None)
+    serialized._nexus_workspace_serialized = True
+    serialized._nexus_workspace_operation = operation
+    return serialized
+
+
+def ensure_task_workspace_serialized(operation_name: str) -> Any:
+    """Keep serialization outermost when later installers replace an operation."""
+    name = str(operation_name or "").strip()
+    operation = globals().get(name)
+    if not callable(operation):
+        return operation
+    wrapped = _serialize_task_workspace_operation(operation)
+    globals()[name] = wrapped
+    return wrapped
+
+
+# These operations can mutate, remove, commit, or externally publish the task
+# checkout. Keeping them on one re-entrant task lock lets finalization hold the
+# checkout stable from semantic-acceptance revalidation through its final side
+# effect without deadlocking nested commit/push/PR calls.
+for _workspace_operation_name in (
+    "write_file",
+    "replace_text",
+    "apply_unified_patch",
+    "run_task_command",
+    "checkpoint_task",
+    "commit_task",
+    "push_task",
+    "create_pull_request",
+    "archive_task",
+    "delete_task",
+):
+    _workspace_operation = globals().get(_workspace_operation_name)
+    if callable(_workspace_operation):
+        globals()[_workspace_operation_name] = _serialize_task_workspace_operation(
+            _workspace_operation
+        )
