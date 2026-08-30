@@ -311,12 +311,15 @@ def test_initial_load_failure_still_sanitizes_private_review_identity():
     result = guarded._run_tool_with_semantic_acceptance(
         "code-test", "coding_finish", {}, git_token_value=None
     )
-    assert result["ok"] is True
-    assert result["success"] is True
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
     assert "_semantic_acceptance_review_identity" not in result
+    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")
 
 
-def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
+def test_unaccepted_inherited_delta_cannot_reach_original_finalizer():
     cw = _CW()
     agent = _Agent(cw)
     guarded = _Guarded(agent, cw)
@@ -324,9 +327,28 @@ def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
     result = agent.finalize_successful_run(
         "code-test", mission=cw.task["coding_mission"], run_id="run-b"
     )
-    assert result["ok"] is True
-    original_mission = agent.finalize_calls[-1][1]
-    assert original_mission["completion_policy"]["require_file_changes"] is True
+    assert result["ok"] is False
+    assert result["error"] == "mission_semantic_acceptance_missing"
+    assert agent.finalize_calls == []
+
+
+def test_finalizer_load_failure_cannot_reach_original_finalizer():
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    def fail_load(_task_id):
+        raise RuntimeError("synthetic finalizer load failure")
+
+    cw.load_task = fail_load
+    result = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
+    )
+    assert result["ok"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert agent.finalize_calls == []
 
 
 def test_refutation_tool_does_not_widen_active_state_but_is_effectively_allowed():

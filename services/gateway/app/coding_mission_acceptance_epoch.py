@@ -829,6 +829,10 @@ def install(
     original_start_agent_run = agent.start_agent_run
     original_requires_edits = agent._mission_requires_workspace_edits
     original_finalize = agent.finalize_successful_run
+    if not callable(
+        getattr(agent, "_finalize_successful_run_before_mission_acceptance_epoch", None)
+    ):
+        agent._finalize_successful_run_before_mission_acceptance_epoch = original_finalize
     original_snapshot = cw.coding_state_snapshot
     original_active_state = forced_action.active_state
     original_tool_specs = agent._tool_specs
@@ -949,6 +953,21 @@ def install(
                     git_token_value=git_token_value,
                 )
             )
+            if (
+                name == "coding_finish"
+                and delegated.get("ok") is True
+                and delegated.get("success") is True
+            ):
+                return {
+                    "ok": False,
+                    "success": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission acceptance state could not be loaded before coding_finish. "
+                        "The delegated success was sanitized and blocked from finalization; retry coding_finish."
+                    ),
+                }
             return delegated
 
         forced_state = forced_action.active_state(before_task)
@@ -1115,8 +1134,36 @@ def install(
                 task,
             )
         except Exception:
-            task, state, snapshot, accepted = {}, {}, {}, False
-        if state.get("ok") and state.get("has_delta") and accepted and _snapshot_ready(snapshot):
+            return {
+                "ok": False,
+                "error": "mission_acceptance_state_unavailable",
+                "required_action": "Retry coding_finish after mission acceptance state is available.",
+                "summary": (
+                    "Mission acceptance state could not be established during finalization. "
+                    "Finalization was blocked instead of falling through to the unguarded finalizer."
+                ),
+            }
+        if not state.get("ok"):
+            return {
+                "ok": False,
+                "error": "mission_acceptance_state_unavailable",
+                "required_action": "Retry coding_finish after mission acceptance state is available.",
+                "summary": (
+                    "Mission delta state is unavailable during finalization. "
+                    "Finalization was blocked instead of falling through to the unguarded finalizer."
+                ),
+            }
+        if state.get("has_delta") and not accepted:
+            return {
+                "ok": False,
+                "error": "mission_semantic_acceptance_missing",
+                "required_action": "Retry coding_finish to obtain semantic acceptance for the current mission delta.",
+                "summary": (
+                    "The workspace contains a mission delta without current semantic acceptance. "
+                    "Finalization was blocked before commit or push."
+                ),
+            }
+        if state.get("has_delta") and accepted and _snapshot_ready(snapshot):
             contract = cw.normalize_coding_mission(task, mission)
             patched = dict(contract)
             completion = dict(_mapping(contract.get("completion_policy")))

@@ -13,6 +13,16 @@ from app import coding_routes
 from app import coding_workspace as cw
 
 
+@pytest.fixture(autouse=True)
+def _exercise_underlying_finalizer(monkeypatch):
+    base = getattr(
+        ca,
+        "_finalize_successful_run_before_mission_acceptance_epoch",
+        ca.finalize_successful_run,
+    )
+    monkeypatch.setattr(ca, "finalize_successful_run", base)
+
+
 def _task(**extra):
     task = {
         "id": "task-1",
