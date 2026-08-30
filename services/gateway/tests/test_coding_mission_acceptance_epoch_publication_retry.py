@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 from app import coding_mission_acceptance_epoch as epoch
 
+# Publication retries stay bounded here; finalization lifecycle retries are covered separately.
+
 
 class _RaceCW:
     def __init__(
