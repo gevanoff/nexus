@@ -215,8 +215,11 @@ def test_owner_recorder_rechecks_cycle_inside_atomic_publication(monkeypatch) ->
         epoch,
         "mission_delta_state",
         lambda _cw, _task_id, _task: {
-            "ok": True, "has_delta": True, "base_head": "base",
-            "current_head": "reviewed-head", "diff_sha256": "reviewed-diff-sha",
+            "ok": True,
+            "has_delta": True,
+            "base_head": "base",
+            "current_head": "reviewed-head",
+            "diff_sha256": "reviewed-diff-sha",
         },
     )
     monkeypatch.setattr(
