@@ -94,7 +94,7 @@ jobs:
       - name: Commit clean review-boundary fix
         shell: bash
         run: |
-          git rm \
+          git rm -f \
             .github/workflows/pr96-final-review-boundary-patch.yml \
             .github/scripts/pr96_final_review_boundary_patch.py
           git config user.name github-actions[bot]
