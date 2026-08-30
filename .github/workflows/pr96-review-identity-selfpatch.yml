@@ -1,0 +1,149 @@
+name: PR96 one-shot review identity binding patch
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch-source:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - name: Bind semantic acceptance to invoking finish review
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path_s, old, new):
+              path = Path(path_s)
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path_s}: expected one marker, got {count}')
+              path.write_text(text.replace(old, new, 1))
+
+          # Carry the exact accepted-review identity with the successful finish.
+          replace_once(
+              'services/gateway/app/coding_agent_guarded.py',
+              '''    if bool(review.get("accepted")):\n        return result\n''',
+              '''    if bool(review.get("accepted")):\n        accepted_result = dict(result)\n        accepted_result["_semantic_acceptance_review_identity"] = {\n            "fingerprint": str(review.get("fingerprint") or "").strip(),\n            "cycle": int(task.get("agent_cycle") or 0),\n        }\n        return accepted_result\n''',
+          )
+
+          # The owner recorder accepts invocation-local identity. Shared event history
+          # remains a compatibility source only for direct/non-production callers.
+          replace_once(
+              'services/gateway/app/coding_mission_acceptance_epoch.py',
+              '''def _record_semantic_acceptance(\n    terminal_hardening: Any,\n    cw: Any,\n    agent: Any,\n    task_id: str,\n    *,\n    return_publication: bool = False,\n) -> Any:\n    initial = cw.load_task(task_id)\n    review = _latest_accepted_review(initial)\n    if not review:\n        return False\n    reviewed_fingerprint = str(review.get("fingerprint") or "").strip()\n    reviewed_cycle = _int(initial.get("agent_cycle"))\n    max_attempts = 2 if reviewed_fingerprint else 1\n''',
+              '''def _record_semantic_acceptance(\n    terminal_hardening: Any,\n    cw: Any,\n    agent: Any,\n    task_id: str,\n    *,\n    reviewed_fingerprint: str = "",\n    reviewed_cycle: Optional[int] = None,\n    return_publication: bool = False,\n) -> Any:\n    initial = cw.load_task(task_id)\n    explicit_review_identity = reviewed_cycle is not None or bool(\n        str(reviewed_fingerprint or "").strip()\n    )\n    if explicit_review_identity:\n        bound_fingerprint = str(reviewed_fingerprint or "").strip()\n        bound_cycle = _int(reviewed_cycle)\n    else:\n        review = _latest_accepted_review(initial)\n        if not review:\n            return False\n        bound_fingerprint = str(review.get("fingerprint") or "").strip()\n        bound_cycle = _int(review.get("cycle") or initial.get("agent_cycle"))\n    if not bound_fingerprint:\n        return False\n    if _int(initial.get("agent_cycle")) != bound_cycle:\n        return False\n    reviewed_fingerprint = bound_fingerprint\n    reviewed_cycle = bound_cycle\n    max_attempts = 2\n''',
+          )
+
+          # Consume the private token immediately, so it cannot leak outside the
+          # mission-acceptance wrapper.
+          replace_once(
+              'services/gateway/app/coding_mission_acceptance_epoch.py',
+              '''        result = original_run_tool(\n            task_id,\n            name,\n            args,\n            git_token_value=git_token_value,\n        )\n\n        mutation = bool(result.get("workspace_modified")) or (\n''',
+              '''        result = dict(\n            original_run_tool(\n                task_id,\n                name,\n                args,\n                git_token_value=git_token_value,\n            )\n        )\n        review_identity = _mapping(\n            result.pop("_semantic_acceptance_review_identity", {})\n        )\n        reviewed_fingerprint = str(\n            review_identity.get("fingerprint") or ""\n        ).strip()\n        raw_reviewed_cycle = review_identity.get("cycle")\n        reviewed_cycle = (\n            _int(raw_reviewed_cycle) if raw_reviewed_cycle is not None else None\n        )\n\n        mutation = bool(result.get("workspace_modified")) or (\n''',
+          )
+
+          # No invocation-local review token means no new publication. An already
+          # current accepted epoch may still be reused.
+          replace_once(
+              'services/gateway/app/coding_mission_acceptance_epoch.py',
+              '''            if state.get("ok") and state.get("has_delta"):\n                try:\n                    _record_semantic_acceptance(\n                        terminal_hardening,\n                        cw,\n                        agent,\n                        task_id,\n                    )\n                    latest = cw.load_task(task_id)\n                    accepted = _epoch_accepted_for_current(\n                        terminal_hardening,\n                        cw,\n                        agent,\n                        task_id,\n                        latest,\n                    )\n                except Exception:\n                    accepted = False\n''',
+              '''            if state.get("ok") and state.get("has_delta"):\n                try:\n                    latest = cw.load_task(task_id)\n                    accepted = _epoch_accepted_for_current(\n                        terminal_hardening,\n                        cw,\n                        agent,\n                        task_id,\n                        latest,\n                    )\n                    if not accepted and reviewed_fingerprint:\n                        _record_semantic_acceptance(\n                            terminal_hardening,\n                            cw,\n                            agent,\n                            task_id,\n                            reviewed_fingerprint=reviewed_fingerprint,\n                            reviewed_cycle=reviewed_cycle,\n                        )\n                        latest = cw.load_task(task_id)\n                        accepted = _epoch_accepted_for_current(\n                            terminal_hardening,\n                            cw,\n                            agent,\n                            task_id,\n                            latest,\n                        )\n                except Exception:\n                    accepted = False\n''',
+          )
+
+          # Contract wrapper accepts the explicit identity and blocks empty
+          # fingerprints for migrated/unfrozen tasks too.
+          replace_once(
+              'services/gateway/app/coding_semantic_acceptance_contract.py',
+              '''        def record_semantic_acceptance_if_review_current(\n            terminal_obj: Any,\n            cw_obj: Any,\n            agent_obj: Any,\n            task_id: str,\n        ) -> None:\n''',
+              '''        def record_semantic_acceptance_if_review_current(\n            terminal_obj: Any,\n            cw_obj: Any,\n            agent_obj: Any,\n            task_id: str,\n            *,\n            reviewed_fingerprint: str = "",\n            reviewed_cycle: Optional[int] = None,\n            return_publication: bool = False,\n        ) -> None:\n''',
+          )
+
+          replace_once(
+              'services/gateway/app/coding_semantic_acceptance_contract.py',
+              '''            before = cw_obj.load_task(task_id)\n            review = _mapping(latest_accepted_review(before))\n            reviewed_fingerprint = str(review.get("fingerprint") or "").strip()\n            if not reviewed_fingerprint:\n                if not _is_frozen_contract(before.get(KEY)):\n                    return original_record_semantic_acceptance(\n                        terminal_obj,\n                        cw_obj,\n                        agent_obj,\n                        task_id,\n                    )\n                message = (\n                    "Refusing to record semantic acceptance for a frozen mission contract because "\n                    "the latest accepted review has no acceptance fingerprint."\n                )\n''',
+              '''            before = cw_obj.load_task(task_id)\n            explicit_review_identity = reviewed_cycle is not None or bool(\n                str(reviewed_fingerprint or "").strip()\n            )\n            if explicit_review_identity:\n                reviewed_fingerprint = str(reviewed_fingerprint or "").strip()\n                effective_reviewed_cycle = (\n                    int(reviewed_cycle)\n                    if reviewed_cycle is not None\n                    else int(before.get("agent_cycle") or 0)\n                )\n            else:\n                review = _mapping(latest_accepted_review(before))\n                reviewed_fingerprint = str(review.get("fingerprint") or "").strip()\n                effective_reviewed_cycle = int(\n                    review.get("cycle") or before.get("agent_cycle") or 0\n                )\n            if not reviewed_fingerprint:\n                message = (\n                    "Refusing to record semantic acceptance because the latest accepted review "\n                    "has no acceptance fingerprint."\n                )\n''',
+          )
+
+          replace_once(
+              'services/gateway/app/coding_semantic_acceptance_contract.py',
+              '''                publication = original_record_semantic_acceptance(\n                    terminal_obj,\n                    cw_obj,\n                    agent_obj,\n                    task_id,\n                    return_publication=True,\n                )\n            except TypeError as exc:\n                # Synthetic/legacy recorders may not expose the structured-return\n                # keyword. Run them for compatibility, but without an exact\n                # publication identity stale cleanup must fail closed.\n                if "return_publication" not in str(exc):\n                    raise\n                original_record_semantic_acceptance(\n                    terminal_obj,\n                    cw_obj,\n                    agent_obj,\n                    task_id,\n                )\n                publication = {}\n''',
+              '''                publication = original_record_semantic_acceptance(\n                    terminal_obj,\n                    cw_obj,\n                    agent_obj,\n                    task_id,\n                    reviewed_fingerprint=reviewed_fingerprint,\n                    reviewed_cycle=effective_reviewed_cycle,\n                    return_publication=True,\n                )\n            except TypeError as exc:\n                # Synthetic/legacy recorders may not expose invocation identity.\n                # Production owner code does; compatibility recorders still need\n                # an exact structured publication identity for cleanup.\n                if not any(\n                    token in str(exc)\n                    for token in (\n                        "reviewed_fingerprint",\n                        "reviewed_cycle",\n                        "return_publication",\n                    )\n                ):\n                    raise\n                try:\n                    publication = original_record_semantic_acceptance(\n                        terminal_obj,\n                        cw_obj,\n                        agent_obj,\n                        task_id,\n                        return_publication=True,\n                    )\n                except TypeError as legacy_exc:\n                    if "return_publication" not in str(legacy_exc):\n                        raise\n                    original_record_semantic_acceptance(\n                        terminal_obj,\n                        cw_obj,\n                        agent_obj,\n                        task_id,\n                    )\n                    publication = {}\n''',
+          )
+
+          # Test harness: its synthetic guarded finish now supplies the same private
+          # identity production guarded code supplies.
+          replace_once(
+              'services/gateway/tests/test_coding_mission_acceptance_epoch.py',
+              '''        if name == "coding_finish":\n            self._agent._append_event(\n                task_id,\n                {\n                    "type": "semantic_acceptance_review",\n                    "cycle": int(self.cw.task.get("agent_cycle") or 0),\n                    "accepted": True,\n                },\n            )\n            return {"ok": True, "success": True}\n''',
+              '''        if name == "coding_finish":\n            review_diff = epoch.mission_review_diff(\n                self.cw, self._agent, task_id, self.cw.task\n            )\n            fingerprint = _TerminalHardening.semantic_acceptance_fingerprint(\n                self.cw.task, diff_text=review_diff\n            )\n            self._agent._append_event(\n                task_id,\n                {\n                    "type": "semantic_acceptance_review",\n                    "cycle": int(self.cw.task.get("agent_cycle") or 0),\n                    "accepted": True,\n                    "fingerprint": fingerprint,\n                },\n            )\n            return {\n                "ok": True,\n                "success": True,\n                "_semantic_acceptance_review_identity": {\n                    "fingerprint": fingerprint,\n                    "cycle": int(self.cw.task.get("agent_cycle") or 0),\n                },\n            }\n''',
+          )
+
+          # External result must not expose the internal token.
+          replace_once(
+              'services/gateway/tests/test_coding_mission_acceptance_epoch.py',
+              '''    assert finish["ok"] is True\n    assert finish["success"] is True\n    assert cw.task[epoch.KEY]["status"] == "semantic_accepted"\n''',
+              '''    assert finish["ok"] is True\n    assert finish["success"] is True\n    assert "_semantic_acceptance_review_identity" not in finish\n    assert cw.task[epoch.KEY]["status"] == "semantic_accepted"\n''',
+          )
+
+          # Owner regression: a later stale shared event cannot steal the invoking
+          # finish's explicit review identity.
+          review_binding = Path('services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py')
+          text = review_binding.read_text()
+          marker = '''\n\ndef test_acceptance_recorder_publishes_only_matching_review_fingerprint(monkeypatch) -> None:\n'''
+          if text.count(marker) != 1:
+              raise SystemExit('review binding insertion marker mismatch')
+          test = '''\n\ndef test_explicit_finish_review_identity_beats_later_stale_shared_event(monkeypatch) -> None:\n    cw = _MemoryCW(_task("fp:reviewed-diff"))\n    cw.task["agent_events"].append(\n        {\n            "type": "semantic_acceptance_review",\n            "cycle": 4,\n            "accepted": True,\n            "fingerprint": "fp:stale-diff",\n        }\n    )\n    terminal = SimpleNamespace(\n        semantic_acceptance_fingerprint=lambda _task, *, diff_text: f"fp:{diff_text}"\n    )\n    agent = SimpleNamespace()\n\n    monkeypatch.setattr(\n        epoch,\n        "mission_delta_state",\n        lambda _cw, _task_id, _task: {\n            "ok": True,\n            "has_delta": True,\n            "base_head": "base",\n            "current_head": "reviewed-head",\n            "diff_sha256": "reviewed-diff-sha",\n        },\n    )\n    monkeypatch.setattr(\n        epoch,\n        "mission_review_diff",\n        lambda _cw, _agent, _task_id, _task: "reviewed-diff",\n    )\n\n    published = epoch._record_semantic_acceptance(\n        terminal,\n        cw,\n        agent,\n        "code_epoch_review_binding",\n        reviewed_fingerprint="fp:reviewed-diff",\n        reviewed_cycle=4,\n    )\n\n    assert published is True\n    assert cw.task[epoch.KEY]["accepted_fingerprint"] == "fp:reviewed-diff"\n\n'''
+          review_binding.write_text(text.replace(marker, test + marker, 1))
+
+          # Contract regression: fingerprint-less migrated/unfrozen accepted event
+          # cannot be upgraded to acceptance of live content.
+          integrity = Path('services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py')
+          text = integrity.read_text()
+          marker = '''\n\ndef test_frozen_contract_missing_review_fingerprint_is_logged_and_blocked(caplog) -> None:\n'''
+          if text.count(marker) != 1:
+              raise SystemExit('contract integrity insertion marker mismatch')
+          test = '''\n\ndef test_unfrozen_migrated_review_missing_fingerprint_is_logged_and_blocked(caplog) -> None:\n    state = {"calls": 0}\n\n    def latest_accepted_review(_task):\n        return {"accepted": True, "fingerprint": "", "cycle": 8}\n\n    def mission_review_diff(_cw, _agent, _task_id, _task):\n        return "review-diff"\n\n    def record_semantic_acceptance(_terminal, _cw, _agent, _task_id, **_kwargs):\n        state["calls"] += 1\n\n    epoch_obj = SimpleNamespace(\n        KEY="coding_mission_acceptance_epoch",\n        SCHEMA="nexus_coding_mission_acceptance_epoch.v1",\n        _latest_accepted_review=latest_accepted_review,\n        mission_review_diff=mission_review_diff,\n        _record_semantic_acceptance=record_semantic_acceptance,\n    )\n    cw, agent, _guarded, terminal = _install(\n        task={\n            "id": "code_unfrozen_missing_review_fp",\n            "prompt": "Do the work.",\n            "agent_cycle": 8,\n        },\n        epoch=epoch_obj,\n    )\n\n    with caplog.at_level(logging.WARNING, logger=contract.__name__):\n        epoch_obj._record_semantic_acceptance(\n            terminal, cw, agent, "code_unfrozen_missing_review_fp"\n        )\n\n    assert state["calls"] == 0\n    assert "latest accepted review has no acceptance fingerprint" in caplog.text\n\n'''
+          integrity.write_text(text.replace(marker, test + marker, 1))
+
+          for path_s in (\n              'services/gateway/app/coding_agent_guarded.py',\n              'services/gateway/app/coding_mission_acceptance_epoch.py',\n              'services/gateway/app/coding_semantic_acceptance_contract.py',\n              'services/gateway/tests/test_coding_mission_acceptance_epoch.py',\n              'services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py',\n              'services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py',\n          ):\n              path = Path(path_s)\n              compile(path.read_text(), str(path), 'exec')\n          PY
+      - name: Run focused acceptance tests
+        shell: bash
+        env:
+          GATEWAY_BEARER_TOKEN: test-token
+          PYTHONPATH: services/gateway
+        run: |
+          python -m pip install --quiet -r services/gateway/app/requirements.freeze.txt -r services/gateway/tests/requirements.freeze.txt
+          python -m pytest -q \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_cas.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch_publication_retry.py \
+            services/gateway/tests/test_coding_semantic_acceptance_contract_post_record_race.py \
+            services/gateway/tests/test_coding_command_mutation_acceptance.py
+      - name: Commit review identity fix
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/gateway/app/coding_agent_guarded.py \
+                  services/gateway/app/coding_mission_acceptance_epoch.py \
+                  services/gateway/app/coding_semantic_acceptance_contract.py \
+                  services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+                  services/gateway/tests/test_coding_mission_acceptance_epoch_review_binding.py \
+                  services/gateway/tests/test_coding_semantic_acceptance_contract_integrity.py
+          git diff --cached --check
+          git commit -m 'Bind acceptance publication to invoking finish review'
+          git push origin HEAD:agent/semantic-acceptance-contract
