@@ -1,0 +1,181 @@
+name: PR96 review finalization boundary fix
+
+on:
+  push:
+    branches:
+      - agent/semantic-acceptance-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/semantic-acceptance-contract
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # 1. The later integrity finalizer must participate in the same task
+          # workspace serialization boundary as the mission-epoch finalizer.
+          integrity = Path('services/gateway/app/coding_mission_acceptance_integrity.py')
+          text = integrity.read_text(encoding='utf-8')
+
+          marker = '\n\ndef _accepted_inherited_state(\n'
+          helper = '''\n\ndef _resumable_guard_failure(\n    cw: Any,\n    task_id: str,\n    *,\n    summary: str,\n) -> Dict[str, Any]:\n    error = "mission_acceptance_state_unavailable"\n    required_action = (\n        "Resume the run and retry coding_finish after mission acceptance state is available."\n    )\n    now = time.time()\n    finalization_error = f"{error}: {summary}"\n    result: Dict[str, Any] = {\n        "ok": False,\n        "success": False,\n        "error": error,\n        "finalization_status": "interrupted",\n        "finalization_error": finalization_error,\n        "stop_reason_code": "run_interrupted",\n        "retryable": True,\n        "required_action": required_action,\n        "summary": summary,\n        "finished_at": now,\n    }\n\n    def persist(latest: Dict[str, Any]) -> None:\n        latest.update(\n            {\n                "finalization_status": "interrupted",\n                "finalization_error": finalization_error,\n                "terminal_result": dict(result),\n            }\n        )\n\n    try:\n        mutate = getattr(cw, "mutate_task", None)\n        if callable(mutate):\n            mutate(task_id, persist)\n        else:\n            latest = cw.load_task(task_id)\n            persist(latest)\n            cw.save_task(latest)\n    except Exception:\n        # The typed return remains authoritative when metadata persistence is\n        # itself part of the transient outage.\n        pass\n    return result\n'''
+          if helper.strip() not in text:
+              if text.count(marker) != 1:
+                  raise SystemExit(f'integrity helper marker count={text.count(marker)}')
+              text = text.replace(marker, helper + marker, 1)
+
+          old_prefix = '''def _finalize_inherited_delta(\n    *,\n    epoch: Any,\n    terminal_hardening: Any,\n    cw: Any,\n    agent: Any,\n    task_id: str,\n    mission: Optional[Dict[str, Any]],\n    git_token_value: Optional[str],\n    finish_summary: str,\n) -> Dict[str, Any]:\n    """Publish an accepted checkpointed delta without laundering concurrent changes."""\n    task = cw.load_task(task_id)\n    state = _accepted_inherited_state(\n        epoch,\n        terminal_hardening,\n        cw,\n        agent,\n        task_id,\n        task,\n    )\n    if not state:\n        raise RuntimeError("inherited finalization requested without a stable accepted mission delta")\n\n'''
+          new_prefix = '''def _finalize_inherited_delta(\n    *,\n    epoch: Any,\n    terminal_hardening: Any,\n    cw: Any,\n    agent: Any,\n    task_id: str,\n    task: Mapping[str, Any],\n    state: Mapping[str, Any],\n    mission: Optional[Dict[str, Any]],\n    git_token_value: Optional[str],\n    finish_summary: str,\n) -> Dict[str, Any]:\n    """Publish an accepted checkpointed delta without laundering concurrent changes."""\n\n'''
+          if old_prefix in text:
+              text = text.replace(old_prefix, new_prefix, 1)
+          elif new_prefix not in text:
+              raise SystemExit('inherited finalizer prefix not found')
+
+          start_anchor = '    prior_finalize = agent.finalize_successful_run\n\n'
+          start_base = text.index(start_anchor) + len(start_anchor)
+          start = text.index('    def finalize_successful_run(\n', start_base)
+          end = text.index('\n    agent.finalize_successful_run = finalize_successful_run', start)
+          replacement = '''    def finalize_successful_run(\n        task_id: str,\n        *,\n        mission: Optional[Dict[str, Any]] = None,\n        git_token_value: Optional[str] = None,\n        finish_summary: str = "",\n        run_id: str = "",\n    ) -> Dict[str, Any]:\n        try:\n            workspace_lock = cw.task_workspace_lock(task_id)\n        except Exception:\n            return _resumable_guard_failure(\n                cw,\n                task_id,\n                summary=(\n                    "The task workspace serialization boundary is unavailable during "\n                    "mission-integrity finalization. Finalization was interrupted before "\n                    "repository side effects and may be resumed."\n                ),\n            )\n\n        # This integrity wrapper is installed after the mission-epoch finalizer.\n        # Keep the same re-entrant task lock outermost here so inherited-delta\n        # publication cannot bypass the acceptance-check -> push/PR boundary.\n        with workspace_lock:\n            try:\n                task = cw.load_task(task_id)\n                inherited = _accepted_inherited_state(\n                    epoch,\n                    terminal_hardening,\n                    cw,\n                    agent,\n                    task_id,\n                    task,\n                )\n            except Exception:\n                return _resumable_guard_failure(\n                    cw,\n                    task_id,\n                    summary=(\n                        "Inherited mission acceptance state could not be established during "\n                        "finalization. Finalization was interrupted before repository side "\n                        "effects and may be resumed."\n                    ),\n                )\n\n            if inherited:\n                return _finalize_inherited_delta(\n                    epoch=epoch,\n                    terminal_hardening=terminal_hardening,\n                    cw=cw,\n                    agent=agent,\n                    task_id=task_id,\n                    task=task,\n                    state=inherited,\n                    mission=mission,\n                    git_token_value=git_token_value,\n                    finish_summary=finish_summary,\n                )\n\n            # The prior mission-epoch finalizer acquires this same RLock. Re-entry\n            # is intentional and keeps every active finalizer layer serialized.\n            result = prior_finalize(\n                task_id,\n                mission=mission,\n                git_token_value=git_token_value,\n                finish_summary=finish_summary,\n                run_id=run_id,\n            )\n            if result.get("ok") is True:\n                final_head = (\n                    str(result.get("final_commit") or "").strip()\n                    or _current_head(cw, task_id)\n                )\n                _record_final_head(epoch, cw, task_id, final_head)\n            return result\n'''
+          text = text[:start] + replacement + text[end:]
+          integrity.write_text(text, encoding='utf-8')
+
+          # 2. Run outcome classification must use this invocation's finalizer
+          # result only; persisted finalization metadata belongs to earlier runs.
+          agent = Path('services/gateway/app/coding_agent.py')
+          text = agent.read_text(encoding='utf-8')
+          old = '''        finished_at = time.time()\n        latest_after_finalization = await asyncio.to_thread(cw.load_task, task_id)\n        finalization_status = str(\n            finalization.get("finalization_status")\n            or latest_after_finalization.get("finalization_status")\n            or ""\n        )\n'''
+          new = '''        finished_at = time.time()\n        finalization_status = str(finalization.get("finalization_status") or "")\n'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('coding_agent finalization-status marker not found')
+          agent.write_text(text, encoding='utf-8')
+
+          # 3. Regression coverage for the inherited finalizer lock and typed
+          # pre-side-effect guard outage.
+          test = Path('services/gateway/tests/test_coding_mission_acceptance_integrity.py')
+          t = test.read_text(encoding='utf-8')
+          if 'import threading\n' not in t:
+              t = t.replace('from pathlib import Path\n', 'from pathlib import Path\nimport threading\n', 1)
+          old = '''    def __init__(self):\n        self.current_head = "workspace-head"\n        self.task = {\n'''
+          new = '''    def __init__(self):\n        self.current_head = "workspace-head"\n        self._workspace_lock = threading.RLock()\n        self.task = {\n'''
+          if old in t:
+              t = t.replace(old, new, 1)
+          elif new not in t:
+              raise SystemExit('integrity test CW init marker not found')
+          marker = '''    def git_head(self, _task_id):\n'''
+          method = '''    def task_workspace_lock(self, _task_id):\n        return self._workspace_lock\n\n'''
+          if method not in t:
+              if t.count(marker) != 1:
+                  raise SystemExit(f'integrity test lock marker count={t.count(marker)}')
+              t = t.replace(marker, method + marker, 1)
+
+          old = '''        task_id="code-test",\n        mission=cw.task["coding_mission"],\n'''
+          new = '''        task_id="code-test",\n        task=cw.task,\n        state=accepted_state,\n        mission=cw.task["coding_mission"],\n'''
+          if old in t:
+              t = t.replace(old, new, 1)
+          elif new not in t:
+              raise SystemExit('direct inherited finalizer test call marker not found')
+
+          additions = '''\n\ndef test_installed_inherited_finalizer_holds_workspace_lock_through_publish():\n    cw = _CW()\n    cw.task["agent_start_head"] = "workspace-head"\n    cw.task["coding_mission"] = {\n        "completion_policy": {\n            "require_validation_after_edit": True,\n            "require_diff_review_after_edit": True,\n            "require_commit_on_success": True,\n        },\n        "publish_policy": {"push": "on_success"},\n    }\n    observed = {"push_locked": False}\n\n    cw.git_status = lambda *_args, **_kwargs: {"ok": True}\n    cw.git_diff = lambda _task_id: {"ok": True}\n    cw.coding_state_snapshot = lambda _task_id: {\n        "validation": {\n            "validation_after_latest_edit": True,\n            "last_validation_ok": True,\n        },\n        "diff_review": {"diff_reviewed_after_latest_edit": True},\n    }\n    cw.normalize_coding_mission = (\n        lambda task, mission=None: dict(mission or task["coding_mission"])\n    )\n\n    def push_task(*_args, **_kwargs):\n        owned = getattr(cw._workspace_lock, "_is_owned", lambda: False)()\n        observed["push_locked"] = bool(owned)\n        assert owned, "inherited publication must run under the task workspace lock"\n        return {"ok": True}\n\n    cw.push_task = push_task\n    epoch = _epoch_facade()\n    epoch.mission_delta_state = lambda *_args, **_kwargs: {\n        "ok": True,\n        "has_delta": True,\n        "current_head": "workspace-head",\n    }\n    epoch._epoch_accepted_for_current = lambda *_args, **_kwargs: True\n    agent = _Agent(cw)\n    integrity.install(epoch, agent, _Guarded(), cw, SimpleNamespace())\n\n    result = agent.finalize_successful_run(\n        "code-test", mission=cw.task["coding_mission"]\n    )\n\n    assert result["ok"] is True\n    assert observed["push_locked"] is True\n\n\ndef test_inherited_finalizer_guard_outage_is_resumable(monkeypatch):\n    cw = _CW()\n    epoch = _epoch_facade()\n    agent = _Agent(cw)\n    integrity.install(epoch, agent, _Guarded(), cw, SimpleNamespace())\n\n    def fail_probe(*_args, **_kwargs):\n        raise RuntimeError("synthetic inherited acceptance-state outage")\n\n    monkeypatch.setattr(integrity, "_accepted_inherited_state", fail_probe)\n    result = agent.finalize_successful_run("code-test", mission={})\n\n    assert result["ok"] is False\n    assert result["error"] == "mission_acceptance_state_unavailable"\n    assert result["finalization_status"] == "interrupted"\n    assert result["stop_reason_code"] == "run_interrupted"\n    assert result["retryable"] is True\n    assert "retry coding_finish" in result["required_action"].lower()\n    assert cw.task["finalization_status"] == "interrupted"\n    assert agent.calls == []\n'''
+          if 'def test_installed_inherited_finalizer_holds_workspace_lock_through_publish' not in t:
+              t = t.rstrip() + additions + '\n'
+          test.write_text(t, encoding='utf-8')
+
+          # 4. Make the prior-run status regression explicit at the existing
+          # agent/finalization unit boundary.
+          test = Path('services/gateway/tests/test_coding_mission_finalization.py')
+          t = test.read_text(encoding='utf-8')
+          old = '''    assert 'final_stop_reason_code = "run_interrupted"' in source\n    assert 'finalization.get("finalization_status")' in source\n'''
+          new = '''    assert 'final_stop_reason_code = "run_interrupted"' in source\n    assert 'finalization.get("finalization_status")' in source\n    assert 'latest_after_finalization.get("finalization_status")' not in source\n'''
+          if old in t:
+              t = t.replace(old, new, 1)
+          elif new not in t:
+              raise SystemExit('mission finalization regression marker not found')
+          test.write_text(t, encoding='utf-8')
+          PY
+
+          python -m py_compile \
+            services/gateway/app/coding_mission_acceptance_integrity.py \
+            services/gateway/app/coding_agent.py \
+            services/gateway/tests/test_coding_mission_acceptance_integrity.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git diff --check
+
+      - name: Install Gateway test dependencies
+        shell: bash
+        run: |
+          python -m pip install --quiet \
+            -r services/gateway/app/requirements.freeze.txt \
+            -r services/gateway/tests/requirements.freeze.txt
+
+      - name: Prepare writable Gateway runtime paths
+        shell: bash
+        run: |
+          sudo mkdir -p \
+            /var/lib/gateway/app \
+            /var/lib/gateway/config \
+            /var/lib/gateway/data/agent \
+            /var/lib/gateway/data/coding/tasks \
+            /var/lib/gateway/data/coding/workspaces \
+            /var/lib/gateway/data/model_benchmarks \
+            /var/lib/gateway/data/model_tool_qualification \
+            /var/lib/gateway/data/sentinel \
+            /var/lib/gateway/data/tools \
+            /var/lib/gateway/data/ui_chats \
+            /var/lib/gateway/data/ui_files \
+            /var/lib/gateway/data/ui_images \
+            /var/lib/gateway/data/voice_library \
+            /var/lib/gateway/tools \
+            /workspace/nexus/souls
+          sudo chown -R "$USER:$USER" /var/lib/gateway /workspace/nexus
+
+      - name: Run focused regressions
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: |
+          python -m pytest -q --tb=short \
+            services/gateway/tests/test_coding_mission_acceptance_integrity.py \
+            services/gateway/tests/test_coding_mission_acceptance_epoch.py \
+            services/gateway/tests/test_coding_mission_finalization.py \
+            services/gateway/tests/test_coding_terminal_acceptance_hardening.py
+
+      - name: Run full Gateway suite
+        env:
+          PYTHONPATH: services/gateway
+          GATEWAY_BEARER_TOKEN: test-token
+        shell: bash
+        run: python -m pytest -q --tb=short services/gateway/tests
+
+      - name: Commit clean review fix
+        shell: bash
+        run: |
+          git rm -f \
+            .github/workflows/pr96-finalization-audit-hardening.yml \
+            .github/workflows/pr96-finalization-audit-hardening-v2.yml \
+            .github/workflows/pr96-review-finalization-boundary-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            services/gateway/app/coding_mission_acceptance_integrity.py \
+            services/gateway/app/coding_agent.py \
+            services/gateway/tests/test_coding_mission_acceptance_integrity.py \
+            services/gateway/tests/test_coding_mission_finalization.py
+          git commit -m "Close finalization wrapper authority gaps"
+          git push origin HEAD:agent/semantic-acceptance-contract
