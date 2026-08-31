@@ -420,6 +420,9 @@ def install(agent: Any, guarded: Any, cw: Any, work_phases: Any) -> None:
             return result
 
         cw.run_task_command = run_task_command_with_validation_provenance
+        ensure_serialized = getattr(cw, "ensure_task_workspace_serialized", None)
+        if callable(ensure_serialized):
+            ensure_serialized("run_task_command")
 
     original_snapshot = cw.coding_state_snapshot
 

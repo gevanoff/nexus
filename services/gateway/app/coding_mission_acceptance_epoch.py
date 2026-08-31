@@ -22,6 +22,16 @@ def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _consume_semantic_review_identity(
+    value: Any,
+) -> tuple[Dict[str, Any], Mapping[str, Any]]:
+    result = dict(value) if isinstance(value, Mapping) else {}
+    identity = _mapping(
+        result.pop("_semantic_acceptance_review_identity", {})
+    )
+    return result, identity
+
+
 def _float(value: Any) -> float:
     try:
         return float(value or 0.0)
@@ -143,6 +153,7 @@ def ensure_epoch(
             "accepted_run_id": "",
             "accepted_fingerprint": "",
             "accepted_diff_sha256": "",
+            "acceptance_publication_generation": 0,
             "finalized_at": 0.0,
             "finalized_head": "",
         }
@@ -355,45 +366,130 @@ def _record_semantic_acceptance(
     cw: Any,
     agent: Any,
     task_id: str,
-) -> None:
-    task = cw.load_task(task_id)
-    if not _latest_accepted_review(task):
-        return
-    state = mission_delta_state(cw, task_id, task)
-    if not state.get("ok") or not state.get("has_delta"):
-        return
-    review_diff = mission_review_diff(cw, agent, task_id, task)
-    fingerprint = _acceptance_fingerprint(
-        terminal_hardening,
-        task,
-        review_diff=review_diff,
-    )
-    if not fingerprint:
-        return
-    now = time.time()
-    base_head = str(state.get("base_head") or "")
-    current_head = str(state.get("current_head") or "")
-    run_id = str(task.get("agent_run_id") or "")
-    diff_sha = str(state.get("diff_sha256") or "")
+    *,
+    reviewed_fingerprint: str = "",
+    reviewed_cycle: Optional[int] = None,
+    return_publication: bool = False,
+) -> Any:
+    bound_fingerprint = str(reviewed_fingerprint or "").strip()
+    if not bound_fingerprint or reviewed_cycle is None:
+        return {} if return_publication else False
+    bound_cycle = _int(reviewed_cycle)
+    initial = cw.load_task(task_id)
+    if _int(initial.get("agent_cycle")) != bound_cycle:
+        return {} if return_publication else False
+    reviewed_fingerprint = bound_fingerprint
+    reviewed_cycle = bound_cycle
+    max_attempts = 2
 
-    def apply(latest: Dict[str, Any]) -> None:
-        current = dict(_mapping(latest.get(KEY)))
-        if str(current.get("base_head") or "") != base_head:
-            return
-        current.update(
-            {
-                "status": "semantic_accepted",
-                "accepted_at": now,
-                "accepted_head": current_head,
-                "accepted_run_id": run_id,
-                "accepted_fingerprint": fingerprint,
-                "accepted_diff_sha256": diff_sha,
-                "updated_at": now,
-            }
+    task = initial
+    for attempt in range(max_attempts):
+        if attempt:
+            task = cw.load_task(task_id)
+            if _int(task.get("agent_cycle")) != reviewed_cycle:
+                return False
+
+        state = mission_delta_state(cw, task_id, task)
+        if not state.get("ok") or not state.get("has_delta"):
+            return False
+        review_diff = mission_review_diff(cw, agent, task_id, task)
+        fingerprint = _acceptance_fingerprint(
+            terminal_hardening,
+            task,
+            review_diff=review_diff,
         )
-        latest[KEY] = current
+        if not fingerprint:
+            return False
+        # Publication and retry are both bound to the exact workspace accepted
+        # by this review. A stale reviewer can never retry over newer state.
+        if reviewed_fingerprint and fingerprint != reviewed_fingerprint:
+            return False
 
-    _mutate_task(cw, task_id, apply)
+        now = time.time()
+        base_head = str(state.get("base_head") or "")
+        current_head = str(state.get("current_head") or "")
+        run_id = str(task.get("agent_run_id") or "")
+        diff_sha = str(state.get("diff_sha256") or "")
+        observed_epoch = _mapping(task.get(KEY))
+        observed_accepted_fingerprint = str(
+            observed_epoch.get("accepted_fingerprint") or ""
+        ).strip()
+        observed_last_mutation_at = _float(observed_epoch.get("last_mutation_at"))
+        observed_last_mutation_run_id = str(
+            observed_epoch.get("last_mutation_run_id") or ""
+        )
+        observed_publication_generation = _int(
+            observed_epoch.get("acceptance_publication_generation")
+        )
+        published = False
+        published_generation = 0
+
+        def apply(latest: Dict[str, Any]) -> None:
+            nonlocal published, published_generation
+            if _int(latest.get("agent_cycle")) != reviewed_cycle:
+                return
+            current = dict(_mapping(latest.get(KEY)))
+            if str(current.get("base_head") or "") != base_head:
+                return
+            current_accepted_fingerprint = str(
+                current.get("accepted_fingerprint") or ""
+            ).strip()
+            current_publication_generation = _int(
+                current.get("acceptance_publication_generation")
+            )
+            publication_generation_unchanged = (
+                current_publication_generation == observed_publication_generation
+            )
+            acceptance_unchanged = (
+                publication_generation_unchanged
+                and current_accepted_fingerprint == observed_accepted_fingerprint
+            )
+            cleanup_cleared_observed_stale = (
+                attempt > 0
+                and publication_generation_unchanged
+                and bool(observed_accepted_fingerprint)
+                and not current_accepted_fingerprint
+                and str(current.get("status") or "") == "pending"
+                and not _float(current.get("accepted_at"))
+                and not str(current.get("accepted_head") or "").strip()
+                and not str(current.get("accepted_run_id") or "").strip()
+                and not str(current.get("accepted_diff_sha256") or "").strip()
+                and _float(current.get("last_mutation_at"))
+                == observed_last_mutation_at
+                and str(current.get("last_mutation_run_id") or "")
+                == observed_last_mutation_run_id
+            )
+            if not acceptance_unchanged and not cleanup_cleared_observed_stale:
+                return
+            current.update(
+                {
+                    "status": "semantic_accepted",
+                    "accepted_at": now,
+                    "accepted_head": current_head,
+                    "accepted_run_id": run_id,
+                    "accepted_fingerprint": fingerprint,
+                    "accepted_diff_sha256": diff_sha,
+                    "acceptance_publication_generation": observed_publication_generation + 1,
+                    "updated_at": now,
+                }
+            )
+            latest[KEY] = current
+            published_generation = observed_publication_generation + 1
+            published = True
+
+        _mutate_task(cw, task_id, apply)
+        if published:
+            if return_publication:
+                return {
+                    "fingerprint": fingerprint,
+                    "publication_generation": published_generation,
+                }
+            return True
+        # A CAS loss is retried at most once, after reloading and revalidating
+        # that this review still describes the live workspace. This lets a
+        # current recorder recover when a stale recorder briefly wins first.
+
+    return {} if return_publication else False
 
 
 def _record_mutation(cw: Any, task_id: str) -> None:
@@ -730,9 +826,17 @@ def install(
 
     original_run_delta_diff = guarded._run_delta_diff
     original_run_tool = guarded._run_tool_with_semantic_acceptance
+    if not callable(
+        getattr(guarded, "_run_tool_with_semantic_acceptance_before_mission_acceptance_epoch", None)
+    ):
+        guarded._run_tool_with_semantic_acceptance_before_mission_acceptance_epoch = original_run_tool
     original_start_agent_run = agent.start_agent_run
     original_requires_edits = agent._mission_requires_workspace_edits
     original_finalize = agent.finalize_successful_run
+    if not callable(
+        getattr(agent, "_finalize_successful_run_before_mission_acceptance_epoch", None)
+    ):
+        agent._finalize_successful_run_before_mission_acceptance_epoch = original_finalize
     original_snapshot = cw.coding_state_snapshot
     original_active_state = forced_action.active_state
     original_tool_specs = agent._tool_specs
@@ -845,12 +949,30 @@ def install(
         try:
             before_task = cw.load_task(task_id)
         except Exception:
-            return original_run_tool(
-                task_id,
-                name,
-                args,
-                git_token_value=git_token_value,
+            delegated, _ = _consume_semantic_review_identity(
+                original_run_tool(
+                    task_id,
+                    name,
+                    args,
+                    git_token_value=git_token_value,
+                )
             )
+            if (
+                name == "coding_finish"
+                and delegated.get("ok") is True
+                and delegated.get("success") is True
+            ):
+                return {
+                    "ok": False,
+                    "success": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission acceptance state could not be loaded before coding_finish. "
+                        "The delegated success was sanitized and blocked from finalization; retry coding_finish."
+                    ),
+                }
+            return delegated
 
         forced_state = forced_action.active_state(before_task)
         if name == REFUTATION_TOOL:
@@ -898,11 +1020,20 @@ def install(
                 "summary": "The current remediation hypothesis was explicitly refuted; forced edit mode is suspended for one bounded evidence pass.",
             }
 
-        result = original_run_tool(
-            task_id,
-            name,
-            args,
-            git_token_value=git_token_value,
+        result, review_identity = _consume_semantic_review_identity(
+            original_run_tool(
+                task_id,
+                name,
+                args,
+                git_token_value=git_token_value,
+            )
+        )
+        reviewed_fingerprint = str(
+            review_identity.get("fingerprint") or ""
+        ).strip()
+        raw_reviewed_cycle = review_identity.get("cycle")
+        reviewed_cycle = (
+            _int(raw_reviewed_cycle) if raw_reviewed_cycle is not None else None
         )
 
         mutation = bool(result.get("workspace_modified")) or (
@@ -919,15 +1050,29 @@ def install(
             try:
                 state = mission_delta_state(cw, task_id)
             except Exception:
-                state = {}
-            if state.get("ok") and state.get("has_delta"):
+                return {
+                    "ok": False,
+                    "success": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission acceptance state could not be loaded after coding_finish. "
+                        "The delegated success was sanitized and blocked; retry coding_finish."
+                    ),
+                }
+            if not state.get("ok"):
+                return {
+                    "ok": False,
+                    "success": False,
+                    "error": "mission_acceptance_state_unavailable",
+                    "required_action": "Retry coding_finish after mission acceptance state is available.",
+                    "summary": (
+                        "Mission delta state is unavailable after coding_finish. "
+                        "The delegated success was blocked instead of being treated as terminal."
+                    ),
+                }
+            if state.get("has_delta"):
                 try:
-                    _record_semantic_acceptance(
-                        terminal_hardening,
-                        cw,
-                        agent,
-                        task_id,
-                    )
                     latest = cw.load_task(task_id)
                     accepted = _epoch_accepted_for_current(
                         terminal_hardening,
@@ -936,8 +1081,34 @@ def install(
                         task_id,
                         latest,
                     )
+                    if not accepted and reviewed_fingerprint:
+                        _record_semantic_acceptance(
+                            terminal_hardening,
+                            cw,
+                            agent,
+                            task_id,
+                            reviewed_fingerprint=reviewed_fingerprint,
+                            reviewed_cycle=reviewed_cycle,
+                        )
+                        latest = cw.load_task(task_id)
+                        accepted = _epoch_accepted_for_current(
+                            terminal_hardening,
+                            cw,
+                            agent,
+                            task_id,
+                            latest,
+                        )
                 except Exception:
-                    accepted = False
+                    return {
+                        "ok": False,
+                        "success": False,
+                        "error": "mission_acceptance_state_unavailable",
+                        "required_action": "Retry coding_finish after mission acceptance state is available.",
+                        "summary": (
+                            "Mission acceptance could not be reloaded or verified after coding_finish. "
+                            "The delegated success was blocked; retry coding_finish."
+                        ),
+                    }
                 if not accepted:
                     return {
                         "ok": False,
@@ -984,61 +1155,136 @@ def install(
         finish_summary: str = "",
         run_id: str = "",
     ) -> Dict[str, Any]:
+        def resumable_guard_failure(*, error: str, summary: str, required_action: str) -> Dict[str, Any]:
+            now = time.time()
+            finalization_error = f"{error}: {summary}"
+            result = {
+                "ok": False,
+                "success": False,
+                "error": error,
+                "finalization_status": "interrupted",
+                "finalization_error": finalization_error,
+                "stop_reason_code": "run_interrupted",
+                "retryable": True,
+                "required_action": required_action,
+                "summary": summary,
+                "finished_at": now,
+            }
+
+            def persist(latest: Dict[str, Any]) -> None:
+                latest.update(
+                    {
+                        "finalization_status": "interrupted",
+                        "finalization_error": finalization_error,
+                        "terminal_result": dict(result),
+                    }
+                )
+
+            try:
+                _mutate_task(cw, task_id, persist)
+            except Exception:
+                # The structured return still carries the interruption identity;
+                # persistence is best-effort when metadata storage itself is impaired.
+                pass
+            return result
+
         try:
-            task = cw.load_task(task_id)
-            state = mission_delta_state(cw, task_id, task)
-            snapshot = cw.coding_state_snapshot(task_id)
-            accepted = _epoch_accepted_for_current(
-                terminal_hardening,
-                cw,
-                agent,
-                task_id,
-                task,
-            )
+            workspace_lock = cw.task_workspace_lock(task_id)
         except Exception:
-            task, state, snapshot, accepted = {}, {}, {}, False
-        if state.get("ok") and state.get("has_delta") and accepted and _snapshot_ready(snapshot):
-            contract = cw.normalize_coding_mission(task, mission)
-            patched = dict(contract)
-            completion = dict(_mapping(contract.get("completion_policy")))
-            completion["require_file_changes"] = False
-            patched["completion_policy"] = completion
-            result = original_finalize(
+            return resumable_guard_failure(
+                error="mission_acceptance_state_unavailable",
+                required_action="Resume the run and retry coding_finish after mission acceptance state is available.",
+                summary=(
+                    "The task workspace serialization boundary is unavailable during finalization. "
+                    "Finalization was interrupted before repository side effects and may be resumed."
+                ),
+            )
+
+        # Hold the same re-entrant lock used by every checkout-mutating or
+        # publishing workspace operation. Acceptance is recomputed only after
+        # acquiring it, so an earlier edit is visible here and a later edit
+        # cannot enter between this check and commit/push/PR side effects.
+        with workspace_lock:
+            try:
+                task = cw.load_task(task_id)
+                state = mission_delta_state(cw, task_id, task)
+                snapshot = cw.coding_state_snapshot(task_id)
+                accepted = _epoch_accepted_for_current(
+                    terminal_hardening,
+                    cw,
+                    agent,
+                    task_id,
+                    task,
+                )
+            except Exception:
+                return resumable_guard_failure(
+                    error="mission_acceptance_state_unavailable",
+                    required_action="Resume the run and retry coding_finish after mission acceptance state is available.",
+                    summary=(
+                        "Mission acceptance state could not be established during finalization. "
+                        "Finalization was interrupted before repository side effects and may be resumed."
+                    ),
+                )
+            if not state.get("ok"):
+                return resumable_guard_failure(
+                    error="mission_acceptance_state_unavailable",
+                    required_action="Resume the run and retry coding_finish after mission acceptance state is available.",
+                    summary=(
+                        "Mission delta state is unavailable during finalization. "
+                        "Finalization was interrupted before repository side effects and may be resumed."
+                    ),
+                )
+            if state.get("has_delta") and not accepted:
+                return resumable_guard_failure(
+                    error="mission_semantic_acceptance_missing",
+                    required_action="Resume the run and retry coding_finish to obtain semantic acceptance for the current mission delta.",
+                    summary=(
+                        "The workspace contains a mission delta without current semantic acceptance. "
+                        "Finalization was interrupted before commit or push and may be resumed."
+                    ),
+                )
+            if state.get("has_delta") and accepted and _snapshot_ready(snapshot):
+                contract = cw.normalize_coding_mission(task, mission)
+                patched = dict(contract)
+                completion = dict(_mapping(contract.get("completion_policy")))
+                completion["require_file_changes"] = False
+                patched["completion_policy"] = completion
+                result = original_finalize(
+                    task_id,
+                    mission=patched,
+                    git_token_value=git_token_value,
+                    finish_summary=finish_summary,
+                    run_id=run_id,
+                )
+                if result.get("ok") is True:
+                    now = time.time()
+                    final_head = str(state.get("current_head") or "")
+
+                    def apply(latest: Dict[str, Any]) -> None:
+                        current = dict(_mapping(latest.get(KEY)))
+                        if current.get("accepted_fingerprint"):
+                            current.update(
+                                {
+                                    "status": "finalized",
+                                    "finalized_at": now,
+                                    "finalized_head": final_head,
+                                    "updated_at": now,
+                                }
+                            )
+                            latest[KEY] = current
+
+                    try:
+                        _mutate_task(cw, task_id, apply)
+                    except Exception:
+                        pass
+                return result
+            return original_finalize(
                 task_id,
-                mission=patched,
+                mission=mission,
                 git_token_value=git_token_value,
                 finish_summary=finish_summary,
                 run_id=run_id,
             )
-            if result.get("ok") is True:
-                now = time.time()
-                final_head = str(state.get("current_head") or "")
-
-                def apply(latest: Dict[str, Any]) -> None:
-                    current = dict(_mapping(latest.get(KEY)))
-                    if current.get("accepted_fingerprint"):
-                        current.update(
-                            {
-                                "status": "finalized",
-                                "finalized_at": now,
-                                "finalized_head": final_head,
-                                "updated_at": now,
-                            }
-                        )
-                        latest[KEY] = current
-
-                try:
-                    _mutate_task(cw, task_id, apply)
-                except Exception:
-                    pass
-            return result
-        return original_finalize(
-            task_id,
-            mission=mission,
-            git_token_value=git_token_value,
-            finish_summary=finish_summary,
-            run_id=run_id,
-        )
 
     agent.finalize_successful_run = finalize_successful_mission
 

@@ -1,6 +1,20 @@
 from __future__ import annotations
 
+import threading
+
+import pytest
+
 from app import coding_agent_guarded as guarded
+
+
+@pytest.fixture(autouse=True)
+def _exercise_guarded_dispatcher_before_mission_epoch(monkeypatch):
+    base = getattr(
+        guarded,
+        "_run_tool_with_semantic_acceptance_before_mission_acceptance_epoch",
+        guarded._run_tool_with_semantic_acceptance,
+    )
+    monkeypatch.setattr(guarded, "_run_tool_with_semantic_acceptance", base)
 
 
 def test_run_command_snapshots_baseline_and_marks_workspace_mutation(monkeypatch) -> None:
@@ -119,6 +133,147 @@ def test_finish_semantic_review_is_driven_by_actual_run_delta(monkeypatch) -> No
 
     assert result["success"] is True
     assert reviews == ["diff --git a/x.py b/x.py\n+fixed\n"]
+
+
+def test_retryable_semantic_review_failure_does_not_instruct_repository_repair(monkeypatch) -> None:
+    task = {
+        "agent_run_id": "run-1",
+        "agent_cycle": 5,
+        "agent_events": [],
+        "prompt": "Fix the issue",
+    }
+    events: list[dict] = []
+
+    monkeypatch.setattr(guarded.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(
+        guarded,
+        "_ORIGINAL_RUN_TOOL",
+        lambda _task_id, _name, _args, *, git_token_value: {
+            "ok": True,
+            "success": True,
+            "summary": "done",
+        },
+    )
+    monkeypatch.setattr(
+        guarded,
+        "_run_delta_diff",
+        lambda _task_id, _task: "diff --git a/x.py b/x.py\n+fixed\n",
+    )
+    monkeypatch.setattr(guarded, "_deterministic_acceptance_ready", lambda _task_id: True)
+
+    async def fake_review(_task_id, _task, *, diff_text):
+        assert diff_text
+        return {
+            "accepted": False,
+            "reason": "reviewer response could not be parsed",
+            "causal_alignment": False,
+            "existing_mechanism_checked": False,
+            "acceptance_criteria_checked": False,
+            "review_error": True,
+            "fingerprint": "review-fingerprint",
+        }
+
+    monkeypatch.setattr(guarded, "_semantic_acceptance_review", fake_review)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_append_event",
+        lambda _task_id, event: events.append(dict(event)),
+    )
+
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code_test",
+        "coding_finish",
+        {"success": True, "summary": "done"},
+        git_token_value=None,
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "semantic_acceptance_review_failed"
+    assert "Retry coding_finish without changing" in result["required_action"]
+    assert "repository repair is not required" in result["summary"]
+    assert events[-1]["type"] == "semantic_acceptance_review"
+    assert events[-1]["review_error"] is True
+    assert events[-1]["fingerprint"] == "review-fingerprint"
+
+
+def test_concurrent_same_cycle_finishes_keep_review_metadata_isolated(monkeypatch) -> None:
+    task = {
+        "agent_run_id": "run-1",
+        "agent_cycle": 9,
+        "agent_events": [],
+        "prompt": "Fix the issue",
+    }
+    events: list[dict] = []
+    results: dict[str, dict] = {}
+    event_lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    monkeypatch.setattr(guarded.cw, "load_task", lambda _task_id: dict(task))
+    monkeypatch.setattr(
+        guarded,
+        "_ORIGINAL_RUN_TOOL",
+        lambda _task_id, _name, _args, *, git_token_value: {
+            "ok": True,
+            "success": True,
+            "summary": "done",
+        },
+    )
+    monkeypatch.setattr(
+        guarded,
+        "_run_delta_diff",
+        lambda _task_id, _task: f"diff-{threading.current_thread().name}",
+    )
+    monkeypatch.setattr(guarded, "_deterministic_acceptance_ready", lambda _task_id: True)
+
+    async def fake_review(_task_id, _task, *, diff_text):
+        thread_name = threading.current_thread().name
+        assert diff_text == f"diff-{thread_name}"
+        barrier.wait(timeout=5)
+        review_error = thread_name == "finish-error"
+        return {
+            "accepted": not review_error,
+            "reason": "retry" if review_error else "aligned",
+            "causal_alignment": not review_error,
+            "existing_mechanism_checked": not review_error,
+            "acceptance_criteria_checked": not review_error,
+            "review_error": review_error,
+            "fingerprint": f"fp-{thread_name}",
+        }
+
+    def append_event(_task_id, event):
+        with event_lock:
+            events.append(dict(event))
+
+    monkeypatch.setattr(guarded, "_semantic_acceptance_review", fake_review)
+    monkeypatch.setattr(guarded._agent, "_append_event", append_event)
+
+    def finish() -> None:
+        result = guarded._run_tool_with_semantic_acceptance(
+            "code_test",
+            "coding_finish",
+            {"success": True, "summary": "done"},
+            git_token_value=None,
+        )
+        with event_lock:
+            results[threading.current_thread().name] = dict(result)
+
+    threads = [
+        threading.Thread(target=finish, name="finish-ok"),
+        threading.Thread(target=finish, name="finish-error"),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+    by_fingerprint = {event["fingerprint"]: event for event in events}
+    assert by_fingerprint["fp-finish-ok"]["review_error"] is False
+    assert by_fingerprint["fp-finish-ok"]["accepted"] is True
+    assert by_fingerprint["fp-finish-error"]["review_error"] is True
+    assert by_fingerprint["fp-finish-error"]["accepted"] is False
+    assert results["finish-ok"]["success"] is True
+    assert results["finish-error"]["error"] == "semantic_acceptance_review_failed"
 
 
 def test_finish_fails_closed_when_recorded_command_mutation_loses_delta(monkeypatch) -> None:

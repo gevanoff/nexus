@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 
 from app import coding_mission_acceptance_epoch as epoch
@@ -62,15 +63,29 @@ class _Guarded:
     def _run(self, task_id, name, args, *, git_token_value):
         del args, git_token_value
         if name == "coding_finish":
+            review_diff = epoch.mission_review_diff(
+                self.cw, self._agent, task_id, self.cw.task
+            )
+            fingerprint = _TerminalHardening.semantic_acceptance_fingerprint(
+                self.cw.task, diff_text=review_diff
+            )
             self._agent._append_event(
                 task_id,
                 {
                     "type": "semantic_acceptance_review",
                     "cycle": int(self.cw.task.get("agent_cycle") or 0),
                     "accepted": True,
+                    "fingerprint": fingerprint,
                 },
             )
-            return {"ok": True, "success": True}
+            return {
+                "ok": True,
+                "success": True,
+                "_semantic_acceptance_review_identity": {
+                    "fingerprint": fingerprint,
+                    "cycle": int(self.cw.task.get("agent_cycle") or 0),
+                },
+            }
         return {"ok": True}
 
 
@@ -132,6 +147,7 @@ class _CW:
     def __init__(self, *, tracked_diff="diff --git a/app.py b/app.py\n+fixed\n"):
         self.current_head = "checkpoint-head"
         self.merge_base = "mission-base"
+        self._workspace_lock = threading.RLock()
         self.tracked_diff = tracked_diff
         self.task = {
             "id": "code-test",
@@ -175,6 +191,9 @@ class _CW:
             },
         }
         self.coding_state_snapshot = lambda _task_id: dict(self.snapshot)
+
+    def task_workspace_lock(self, _task_id):
+        return self._workspace_lock
 
     def load_task(self, _task_id):
         return self.task
@@ -266,6 +285,7 @@ def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
     )
     assert finish["ok"] is True
     assert finish["success"] is True
+    assert "_semantic_acceptance_review_identity" not in finish
     assert cw.task[epoch.KEY]["status"] == "semantic_accepted"
     assert cw.task[epoch.KEY]["accepted_fingerprint"]
 
@@ -278,7 +298,134 @@ def test_accepted_inherited_delta_can_finalize_without_new_run_delta():
     assert cw.task[epoch.KEY]["status"] == "finalized"
 
 
-def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
+def test_finalization_holds_workspace_lock_through_original_side_effects():
+    cw = _CW()
+    agent = _Agent(cw)
+    original_finalize = agent.finalize_successful_run
+    observed = {"owned": False}
+
+    def asserting_finalize(*args, **kwargs):
+        owned = getattr(cw._workspace_lock, "_is_owned", lambda: False)()
+        observed["owned"] = bool(owned)
+        assert owned, "underlying finalizer side effects must run under the task workspace lock"
+        return original_finalize(*args, **kwargs)
+
+    agent.finalize_successful_run = asserting_finalize
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    finish = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert finish["ok"] is True
+    finalization = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
+    )
+    assert finalization["ok"] is True
+    assert observed["owned"] is True
+
+
+def test_initial_load_failure_still_sanitizes_private_review_identity():
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+    original_load = cw.load_task
+    calls = {"count": 0}
+
+    def fail_once(task_id):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("synthetic initial load failure")
+        return original_load(task_id)
+
+    cw.load_task = fail_once
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert "_semantic_acceptance_review_identity" not in result
+    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")
+
+
+def test_post_dispatch_delta_state_exception_fails_closed(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+    original_state = epoch.mission_delta_state
+    calls = {"count": 0}
+
+    def fail_after_review(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return original_state(*args, **kwargs)
+        raise RuntimeError("synthetic post-dispatch delta-state failure")
+
+    monkeypatch.setattr(epoch, "mission_delta_state", fail_after_review)
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert calls["count"] >= 2
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert "_semantic_acceptance_review_identity" not in result
+    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")
+
+
+def test_post_dispatch_invalid_delta_state_fails_closed(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+    original_state = epoch.mission_delta_state
+    calls = {"count": 0}
+
+    def invalid_after_review(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return original_state(*args, **kwargs)
+        return {"ok": False, "error": "synthetic git diff failure"}
+
+    monkeypatch.setattr(epoch, "mission_delta_state", invalid_after_review)
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert calls["count"] >= 2
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert "_semantic_acceptance_review_identity" not in result
+    assert not (cw.task.get(epoch.KEY) or {}).get("accepted_fingerprint")
+
+
+def test_post_dispatch_acceptance_verification_exception_fails_closed(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    def fail_acceptance(*_args, **_kwargs):
+        raise RuntimeError("synthetic acceptance verification failure")
+
+    monkeypatch.setattr(epoch, "_epoch_accepted_for_current", fail_acceptance)
+    result = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    assert result["ok"] is False
+    assert result["success"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["required_action"].startswith("Retry coding_finish")
+    assert "_semantic_acceptance_review_identity" not in result
+
+
+def test_unaccepted_inherited_delta_cannot_reach_original_finalizer():
     cw = _CW()
     agent = _Agent(cw)
     guarded = _Guarded(agent, cw)
@@ -286,9 +433,61 @@ def test_unaccepted_inherited_delta_does_not_relax_finalization_contract():
     result = agent.finalize_successful_run(
         "code-test", mission=cw.task["coding_mission"], run_id="run-b"
     )
-    assert result["ok"] is True
-    original_mission = agent.finalize_calls[-1][1]
-    assert original_mission["completion_policy"]["require_file_changes"] is True
+    assert result["ok"] is False
+    assert result["error"] == "mission_semantic_acceptance_missing"
+    assert result["finalization_status"] == "interrupted"
+    assert result["stop_reason_code"] == "run_interrupted"
+    assert result["retryable"] is True
+    assert result["finalization_error"]
+    assert cw.task["finalization_status"] == "interrupted"
+    assert agent.finalize_calls == []
+
+
+def test_finalizer_invalid_delta_state_is_resumable_interruption(monkeypatch):
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    monkeypatch.setattr(
+        epoch,
+        "mission_delta_state",
+        lambda *_args, **_kwargs: {"ok": False, "error": "synthetic git diff outage"},
+    )
+    result = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["finalization_status"] == "interrupted"
+    assert result["stop_reason_code"] == "run_interrupted"
+    assert result["retryable"] is True
+    assert cw.task["finalization_status"] == "interrupted"
+    assert agent.finalize_calls == []
+
+
+def test_finalizer_load_failure_cannot_reach_original_finalizer():
+    cw = _CW()
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    def fail_load(_task_id):
+        raise RuntimeError("synthetic finalizer load failure")
+
+    cw.load_task = fail_load
+    result = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
+    )
+    assert result["ok"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["finalization_status"] == "interrupted"
+    assert result["stop_reason_code"] == "run_interrupted"
+    assert result["retryable"] is True
+    assert "mission_acceptance_state_unavailable" in result["finalization_error"]
+    assert "retry coding_finish" in result["required_action"].lower()
+    assert agent.finalize_calls == []
 
 
 def test_refutation_tool_does_not_widen_active_state_but_is_effectively_allowed():

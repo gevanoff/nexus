@@ -13,6 +13,16 @@ from app import coding_routes
 from app import coding_workspace as cw
 
 
+@pytest.fixture(autouse=True)
+def _exercise_underlying_finalizer(monkeypatch):
+    base = getattr(
+        ca,
+        "_finalize_successful_run_before_mission_acceptance_epoch",
+        ca.finalize_successful_run,
+    )
+    monkeypatch.setattr(ca, "finalize_successful_run", base)
+
+
 def _task(**extra):
     task = {
         "id": "task-1",
@@ -40,6 +50,25 @@ def _finalizer_mocks(monkeypatch, *, changed=True, base_delta=True, commit_ok=Tr
     monkeypatch.setattr(cw, "coding_state_snapshot", lambda *_a, **_k: {"validation": {"validation_after_latest_edit": True}, "diff_review": {"diff_reviewed_after_latest_edit": True}})
     monkeypatch.setattr(cw, "mutate_task", lambda _task_id, fn: fn(stored) or stored)
     return stored
+
+
+def test_checkout_mutation_and_publish_operations_are_workspace_serialized():
+    operation_names = (
+        "write_file",
+        "replace_text",
+        "apply_unified_patch",
+        "run_task_command",
+        "checkpoint_task",
+        "commit_task",
+        "push_task",
+        "create_pull_request",
+        "archive_task",
+        "delete_task",
+    )
+    for name in operation_names:
+        operation = getattr(cw, name)
+        assert getattr(operation, "_nexus_workspace_serialized", False) is True, name
+        assert getattr(operation, "_nexus_workspace_operation", None) is not None, name
 
 
 def test_coding_mission_contract_defaults():
@@ -180,6 +209,14 @@ def test_model_task_context_omits_duplicate_snapshot_history(monkeypatch):
     assert "next_recommended_action" in context
     assert "duplicate-guidance-sentinel" not in context
     assert "duplicate-event-sentinel" not in context
+
+
+def test_interrupted_finalization_uses_typed_resume_stop_reason():
+    source = Path(ca.__file__).read_text(encoding="utf-8")
+    assert 'elif final_status == "interrupted":' in source
+    assert 'final_stop_reason_code = "run_interrupted"' in source
+    assert 'finalization.get("finalization_status")' in source
+    assert 'latest_after_finalization.get("finalization_status")' not in source
 
 
 def test_coding_cancellation_distinguishes_user_pause_from_gateway_restart():

@@ -25,6 +25,7 @@ class _CW:
     def __init__(self, task):
         self.tasks = {task["id"]: task}
         self.command_ts = 20.0
+        self.serialization_requests = []
         self.coding_state_snapshot = lambda _task_id: {
             "changes": {"last_edit_at": 10.0},
             "validation": {
@@ -42,6 +43,10 @@ class _CW:
                 "diff_reviewed_after_latest_edit": True,
             },
         }
+
+    def ensure_task_workspace_serialized(self, operation_name):
+        self.serialization_requests.append(str(operation_name))
+        return getattr(self, str(operation_name))
 
     def load_task(self, task_id):
         return self.tasks[task_id]
@@ -164,6 +169,18 @@ def test_duplicate_semantic_rejection_is_blocked_until_acceptance_state_changes(
 
     assert third["error"] == "semantic_acceptance_rejected"
     assert guarded.calls == 2
+
+
+def test_validation_provenance_wrapper_reapplies_workspace_serialization():
+    task = _task()
+    cw = _CW(task)
+    agent = _Agent(cw)
+    guarded = _Guarded()
+
+    hardening.install(agent, guarded, cw, _WorkPhases)
+
+    # Replacing a public workspace operation must explicitly restore the outer lock.
+    assert cw.serialization_requests == ["run_task_command"]
 
 
 def test_validation_provenance_ignores_later_git_inspection_command():

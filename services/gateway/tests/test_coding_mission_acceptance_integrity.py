@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 from app import coding_mission_acceptance_integrity as integrity
@@ -24,6 +25,7 @@ class _Agent:
 class _CW:
     def __init__(self):
         self.current_head = "workspace-head"
+        self._workspace_lock = threading.RLock()
         self.task = {
             "id": "code-test",
             "agent_start_head": "older-run-head",
@@ -37,6 +39,9 @@ class _CW:
                 "finalized_head": "",
             },
         }
+
+    def task_workspace_lock(self, _task_id):
+        return self._workspace_lock
 
     def git_head(self, _task_id):
         return {"ok": True, "commit": self.current_head}
@@ -172,6 +177,8 @@ def test_inherited_finalization_fails_closed_when_head_changes_before_publish(mo
         cw=cw,
         agent=SimpleNamespace(),
         task_id="code-test",
+        task=cw.task,
+        state=accepted_state,
         mission=cw.task["coding_mission"],
         git_token_value=None,
         finish_summary="finish",
@@ -179,3 +186,75 @@ def test_inherited_finalization_fails_closed_when_head_changes_before_publish(mo
     assert result["ok"] is False
     assert "HEAD changed" in result["finalization_error"]
     assert pushed == []
+
+def test_installed_inherited_finalizer_holds_workspace_lock_through_publish():
+    cw = _CW()
+    cw.task["agent_start_head"] = "workspace-head"
+    cw.task["coding_mission"] = {
+        "completion_policy": {
+            "require_validation_after_edit": True,
+            "require_diff_review_after_edit": True,
+            "require_commit_on_success": True,
+        },
+        "publish_policy": {"push": "on_success"},
+    }
+    observed = {"push_locked": False}
+
+    cw.git_status = lambda *_args, **_kwargs: {"ok": True}
+    cw.git_diff = lambda _task_id: {"ok": True}
+    cw.coding_state_snapshot = lambda _task_id: {
+        "validation": {
+            "validation_after_latest_edit": True,
+            "last_validation_ok": True,
+        },
+        "diff_review": {"diff_reviewed_after_latest_edit": True},
+    }
+    cw.normalize_coding_mission = (
+        lambda task, mission=None: dict(mission or task["coding_mission"])
+    )
+
+    def push_task(*_args, **_kwargs):
+        owned = getattr(cw._workspace_lock, "_is_owned", lambda: False)()
+        observed["push_locked"] = bool(owned)
+        assert owned, "inherited publication must run under the task workspace lock"
+        return {"ok": True}
+
+    cw.push_task = push_task
+    epoch = _epoch_facade()
+    epoch.mission_delta_state = lambda *_args, **_kwargs: {
+        "ok": True,
+        "has_delta": True,
+        "current_head": "workspace-head",
+    }
+    epoch._epoch_accepted_for_current = lambda *_args, **_kwargs: True
+    agent = _Agent(cw)
+    integrity.install(epoch, agent, _Guarded(), cw, SimpleNamespace())
+
+    result = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"]
+    )
+
+    assert result["ok"] is True
+    assert observed["push_locked"] is True
+
+
+def test_inherited_finalizer_guard_outage_is_resumable(monkeypatch):
+    cw = _CW()
+    epoch = _epoch_facade()
+    agent = _Agent(cw)
+    integrity.install(epoch, agent, _Guarded(), cw, SimpleNamespace())
+
+    def fail_probe(*_args, **_kwargs):
+        raise RuntimeError("synthetic inherited acceptance-state outage")
+
+    monkeypatch.setattr(integrity, "_accepted_inherited_state", fail_probe)
+    result = agent.finalize_successful_run("code-test", mission={})
+
+    assert result["ok"] is False
+    assert result["error"] == "mission_acceptance_state_unavailable"
+    assert result["finalization_status"] == "interrupted"
+    assert result["stop_reason_code"] == "run_interrupted"
+    assert result["retryable"] is True
+    assert "retry coding_finish" in result["required_action"].lower()
+    assert cw.task["finalization_status"] == "interrupted"
+    assert agent.calls == []
