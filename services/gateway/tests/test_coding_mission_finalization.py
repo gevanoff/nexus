@@ -216,6 +216,7 @@ def test_interrupted_finalization_uses_typed_resume_stop_reason():
     assert 'elif final_status == "interrupted":' in source
     assert 'final_stop_reason_code = "run_interrupted"' in source
     assert 'finalization.get("finalization_status")' in source
+    assert 'latest_after_finalization.get("finalization_status")' not in source
 
 
 def test_coding_cancellation_distinguishes_user_pause_from_gateway_restart():

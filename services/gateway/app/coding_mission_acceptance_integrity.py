@@ -109,6 +109,55 @@ def _run_local_delta(cw: Any, task_id: str, task: Mapping[str, Any]) -> bool:
     return bool(start and current and current != start) or _worktree_dirty(cw, task_id)
 
 
+def _resumable_guard_failure(
+    cw: Any,
+    task_id: str,
+    *,
+    summary: str,
+) -> Dict[str, Any]:
+    error = "mission_acceptance_state_unavailable"
+    required_action = (
+        "Resume the run and retry coding_finish after mission acceptance state is available."
+    )
+    now = time.time()
+    finalization_error = f"{error}: {summary}"
+    result: Dict[str, Any] = {
+        "ok": False,
+        "success": False,
+        "error": error,
+        "finalization_status": "interrupted",
+        "finalization_error": finalization_error,
+        "stop_reason_code": "run_interrupted",
+        "retryable": True,
+        "required_action": required_action,
+        "summary": summary,
+        "finished_at": now,
+    }
+
+    def persist(latest: Dict[str, Any]) -> None:
+        latest.update(
+            {
+                "finalization_status": "interrupted",
+                "finalization_error": finalization_error,
+                "terminal_result": dict(result),
+            }
+        )
+
+    try:
+        mutate = getattr(cw, "mutate_task", None)
+        if callable(mutate):
+            mutate(task_id, persist)
+        else:
+            latest = cw.load_task(task_id)
+            persist(latest)
+            cw.save_task(latest)
+    except Exception:
+        # The typed return remains authoritative when metadata persistence is
+        # itself part of the transient outage.
+        pass
+    return result
+
+
 def _accepted_inherited_state(
     epoch: Any,
     terminal_hardening: Any,
@@ -171,22 +220,13 @@ def _finalize_inherited_delta(
     cw: Any,
     agent: Any,
     task_id: str,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
     mission: Optional[Dict[str, Any]],
     git_token_value: Optional[str],
     finish_summary: str,
 ) -> Dict[str, Any]:
     """Publish an accepted checkpointed delta without laundering concurrent changes."""
-    task = cw.load_task(task_id)
-    state = _accepted_inherited_state(
-        epoch,
-        terminal_hardening,
-        cw,
-        agent,
-        task_id,
-        task,
-    )
-    if not state:
-        raise RuntimeError("inherited finalization requested without a stable accepted mission delta")
 
     contract = cw.normalize_coding_mission(task, mission)
     publish = _mapping(contract.get("publish_policy"))
@@ -355,41 +395,74 @@ def install(
         finish_summary: str = "",
         run_id: str = "",
     ) -> Dict[str, Any]:
-        task = cw.load_task(task_id)
         try:
-            inherited = _accepted_inherited_state(
-                epoch,
-                terminal_hardening,
-                cw,
-                agent,
-                task_id,
-                task,
-            )
+            workspace_lock = cw.task_workspace_lock(task_id)
         except Exception:
-            inherited = {}
-        if inherited:
-            return _finalize_inherited_delta(
-                epoch=epoch,
-                terminal_hardening=terminal_hardening,
-                cw=cw,
-                agent=agent,
-                task_id=task_id,
+            return _resumable_guard_failure(
+                cw,
+                task_id,
+                summary=(
+                    "The task workspace serialization boundary is unavailable during "
+                    "mission-integrity finalization. Finalization was interrupted before "
+                    "repository side effects and may be resumed."
+                ),
+            )
+
+        # This integrity wrapper is installed after the mission-epoch finalizer.
+        # Keep the same re-entrant task lock outermost here so inherited-delta
+        # publication cannot bypass the acceptance-check -> push/PR boundary.
+        with workspace_lock:
+            try:
+                task = cw.load_task(task_id)
+                inherited = _accepted_inherited_state(
+                    epoch,
+                    terminal_hardening,
+                    cw,
+                    agent,
+                    task_id,
+                    task,
+                )
+            except Exception:
+                return _resumable_guard_failure(
+                    cw,
+                    task_id,
+                    summary=(
+                        "Inherited mission acceptance state could not be established during "
+                        "finalization. Finalization was interrupted before repository side "
+                        "effects and may be resumed."
+                    ),
+                )
+
+            if inherited:
+                return _finalize_inherited_delta(
+                    epoch=epoch,
+                    terminal_hardening=terminal_hardening,
+                    cw=cw,
+                    agent=agent,
+                    task_id=task_id,
+                    task=task,
+                    state=inherited,
+                    mission=mission,
+                    git_token_value=git_token_value,
+                    finish_summary=finish_summary,
+                )
+
+            # The prior mission-epoch finalizer acquires this same RLock. Re-entry
+            # is intentional and keeps every active finalizer layer serialized.
+            result = prior_finalize(
+                task_id,
                 mission=mission,
                 git_token_value=git_token_value,
                 finish_summary=finish_summary,
+                run_id=run_id,
             )
-
-        result = prior_finalize(
-            task_id,
-            mission=mission,
-            git_token_value=git_token_value,
-            finish_summary=finish_summary,
-            run_id=run_id,
-        )
-        if result.get("ok") is True:
-            final_head = str(result.get("final_commit") or "").strip() or _current_head(cw, task_id)
-            _record_final_head(epoch, cw, task_id, final_head)
-        return result
+            if result.get("ok") is True:
+                final_head = (
+                    str(result.get("final_commit") or "").strip()
+                    or _current_head(cw, task_id)
+                )
+                _record_final_head(epoch, cw, task_id, final_head)
+            return result
 
     agent.finalize_successful_run = finalize_successful_run
     guarded._mission_acceptance_integrity_installed = True

@@ -3678,12 +3678,7 @@ async def _run_agent(
                 finish_summary = f"Code work completed but controller finalization failed: {finalization.get('finalization_error') or 'unknown error'}"
 
         finished_at = time.time()
-        latest_after_finalization = await asyncio.to_thread(cw.load_task, task_id)
-        finalization_status = str(
-            finalization.get("finalization_status")
-            or latest_after_finalization.get("finalization_status")
-            or ""
-        )
+        finalization_status = str(finalization.get("finalization_status") or "")
         final_status = "completed" if finish_success else (finalization_status or "failed")
         if finish_success:
             final_stop_reason_code = "run_completed"
