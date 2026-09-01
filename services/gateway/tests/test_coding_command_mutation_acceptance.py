@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import threading
 
 import pytest
 
 from app import coding_agent_guarded as guarded
+
+
+_RAW_SEMANTIC_ACCEPTANCE_REVIEW = guarded._semantic_acceptance_review
 
 
 @pytest.fixture(autouse=True)
@@ -15,6 +20,11 @@ def _exercise_guarded_dispatcher_before_mission_epoch(monkeypatch):
         guarded._run_tool_with_semantic_acceptance,
     )
     monkeypatch.setattr(guarded, "_run_tool_with_semantic_acceptance", base)
+    monkeypatch.setattr(
+        guarded,
+        "_semantic_acceptance_review",
+        _RAW_SEMANTIC_ACCEPTANCE_REVIEW,
+    )
 
 
 def test_run_command_snapshots_baseline_and_marks_workspace_mutation(monkeypatch) -> None:
@@ -188,8 +198,9 @@ def test_retryable_semantic_review_failure_does_not_instruct_repository_repair(m
     )
 
     assert result["success"] is False
-    assert result["error"] == "semantic_acceptance_review_failed"
-    assert "Retry coding_finish without changing" in result["required_action"]
+    assert result["error"] == "semantic_reviewer_unavailable"
+    assert result["interrupted"] is True
+    assert result["resumable"] is True
     assert "repository repair is not required" in result["summary"]
     assert events[-1]["type"] == "semantic_acceptance_review"
     assert events[-1]["review_error"] is True
@@ -273,7 +284,62 @@ def test_concurrent_same_cycle_finishes_keep_review_metadata_isolated(monkeypatc
     assert by_fingerprint["fp-finish-error"]["review_error"] is True
     assert by_fingerprint["fp-finish-error"]["accepted"] is False
     assert results["finish-ok"]["success"] is True
-    assert results["finish-error"]["error"] == "semantic_acceptance_review_failed"
+    assert results["finish-error"]["error"] == "semantic_reviewer_unavailable"
+
+
+def test_unparseable_reviewer_response_fails_over_without_author_retry(monkeypatch) -> None:
+    task = {"agent_model": "coder", "agent_backend": "author", "agent_upstream_model": "author-model"}
+    routes = iter([
+        {"backend": "local_mlx", "upstream_model": "a"},
+        {"backend": "review-b", "upstream_model": "b"},
+        None,
+    ])
+    calls: list[tuple[str, str, object]] = []
+
+    monkeypatch.setattr(guarded._agent.user_llm, "is_user_model_id", lambda _model: False)
+    monkeypatch.setattr(guarded._agent, "_semantic_reroute_candidate", lambda *_args, **_kwargs: next(routes))
+    monkeypatch.setattr(guarded._agent, "_max_completion_tokens_for_route", lambda *_args: 1200)
+    monkeypatch.setattr(guarded._agent, "_settings_for_task_owner", lambda _task: None)
+    monkeypatch.setattr(guarded._agent, "_extract_assistant_message", lambda response: type("Message", (), {"content": response})())
+
+    async def fake_chat(req, backend, upstream_model, **_kwargs):
+        calls.append((backend, upstream_model, req.response_format))
+        content = "not JSON" if backend == "local_mlx" else json.dumps({
+            "accepted": True, "reason": "aligned", "causal_alignment": True,
+            "existing_mechanism_checked": True, "acceptance_criteria_checked": True,
+        })
+        return content, backend, upstream_model
+
+    monkeypatch.setattr(guarded, "_call_backend_chat_with_failover", fake_chat)
+    review = asyncio.run(guarded._semantic_acceptance_review("code_test", task, diff_text="+ fixed"))
+
+    assert review["accepted"] is True, review
+    assert [call[0] for call in calls] == ["local_mlx", "review-b"]
+    assert calls[0][2] == {"type": "json_object"}
+
+
+def test_valid_semantic_rejection_does_not_fail_over(monkeypatch) -> None:
+    task = {"agent_model": "coder", "agent_backend": "author", "agent_upstream_model": "author-model"}
+    calls: list[str] = []
+    monkeypatch.setattr(guarded._agent.user_llm, "is_user_model_id", lambda _model: False)
+    monkeypatch.setattr(guarded._agent, "_semantic_reroute_candidate", lambda *_args, **_kwargs: {"backend": "review-a", "upstream_model": "a"})
+    monkeypatch.setattr(guarded._agent, "_max_completion_tokens_for_route", lambda *_args: 1200)
+    monkeypatch.setattr(guarded._agent, "_settings_for_task_owner", lambda _task: None)
+    monkeypatch.setattr(guarded._agent, "_extract_assistant_message", lambda response: type("Message", (), {"content": response})())
+
+    async def fake_chat(_req, backend, upstream_model, **_kwargs):
+        calls.append(backend)
+        return json.dumps({
+            "accepted": False, "reason": "criterion missing", "causal_alignment": False,
+            "existing_mechanism_checked": True, "acceptance_criteria_checked": True,
+        }), backend, upstream_model
+
+    monkeypatch.setattr(guarded, "_call_backend_chat_with_failover", fake_chat)
+    review = asyncio.run(guarded._semantic_acceptance_review("code_test", task, diff_text="+ fixed"))
+
+    assert review["accepted"] is False
+    assert review.get("review_error") is not True
+    assert calls == ["review-a"]
 
 
 def test_finish_fails_closed_when_recorded_command_mutation_loses_delta(monkeypatch) -> None:

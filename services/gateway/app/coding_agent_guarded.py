@@ -362,50 +362,70 @@ async def _semantic_acceptance_review(
         hypothesis=_project_hypothesis_text(task),
         diff_text=diff_text,
     )
-    req = _agent.ChatCompletionRequest(
-        model=model,
-        messages=[
-            _agent.ChatMessage(role="system", content=system_text),
-            _agent.ChatMessage(role="user", content=user_text),
-        ],
-        tools=None,
-        temperature=0.0,
-        max_tokens=min(
-            1200,
-            _agent._max_completion_tokens_for_route(
-                model,
-                review_backend,
-                review_model,
+    # Reviewer protocol failures are route failures, not author-agent work. Try
+    # each independently eligible route once inside this finish operation.
+    excluded_backends: set[str] = set()
+    attempts: list[dict[str, str]] = []
+    current_backend, current_model = review_backend, review_model
+    for _attempt in range(3):
+        response_format = {"type": "json_object"} if current_backend == "local_mlx" else None
+        req = _agent.ChatCompletionRequest(
+            model=model,
+            messages=[
+                _agent.ChatMessage(role="system", content=system_text),
+                _agent.ChatMessage(role="user", content=user_text),
+            ],
+            tools=None,
+            response_format=response_format,
+            temperature=0.0,
+            max_tokens=min(
+                1200,
+                _agent._max_completion_tokens_for_route(model, current_backend, current_model),
             ),
-        ),
-        stream=False,
-    )
-    try:
-        resp, selected_backend, selected_model = await _call_backend_chat_with_failover(
-            req,
-            review_backend,
-            review_model,
-            task_id=task_id,
-            cycle=int(task.get("agent_cycle") or 0),
-            user_settings=_agent._settings_for_task_owner(task),
+            stream=False,
         )
-        assistant = _agent._extract_assistant_message(resp)
-        review = coding_semantic_acceptance.parse_review(assistant.content)
-        review["backend"] = selected_backend
-        review["upstream_model"] = selected_model
-        return review
-    except Exception as exc:
-        return {
-            "accepted": False,
-            "reason": (
-                "semantic acceptance reviewer failed: "
-                f"{type(exc).__name__}: {exc}"
-            ),
-            "causal_alignment": False,
-            "existing_mechanism_checked": False,
-            "acceptance_criteria_checked": False,
-            "review_error": True,
-        }
+        try:
+            resp, selected_backend, selected_model = await _call_backend_chat_with_failover(
+                req, current_backend, current_model, task_id=task_id,
+                cycle=int(task.get("agent_cycle") or 0),
+                user_settings=_agent._settings_for_task_owner(task),
+            )
+            assistant = _agent._extract_assistant_message(resp)
+            review = coding_semantic_acceptance.parse_review(assistant.content)
+            review["backend"] = selected_backend
+            review["upstream_model"] = selected_model
+            review["structured_output_requested"] = response_format is not None
+            if not review.get("parse_error"):
+                return review
+            failure = str(review.get("reason") or "unusable semantic review response")
+        except Exception as exc:
+            selected_backend, selected_model = current_backend, current_model
+            failure = f"{type(exc).__name__}: {exc}"
+        attempts.append({
+            "backend": str(selected_backend),
+            "upstream_model": str(selected_model),
+            "reason": _agent._clip_text(failure, 400),
+            "structured_output_requested": str(response_format is not None).lower(),
+        })
+        excluded_backends.add(str(selected_backend))
+        alternate = _agent._semantic_reroute_candidate(
+            model, backend, upstream_model, excluded_backends=excluded_backends | {backend},
+        )
+        if alternate is None:
+            break
+        current_backend = str(alternate.get("backend") or "")
+        current_model = str(alternate.get("upstream_model") or "")
+
+    return {
+        "accepted": False,
+        "reason": "all eligible semantic reviewer routes returned unusable responses",
+        "causal_alignment": False,
+        "existing_mechanism_checked": False,
+        "acceptance_criteria_checked": False,
+        "review_error": True,
+        "reviewer_unavailable": True,
+        "attempted_routes": attempts,
+    }
 
 
 def _workspace_progress_fingerprint(task_id: str) -> str:
@@ -518,6 +538,8 @@ def _run_tool_with_semantic_acceptance(
             "upstream_model": str(review.get("upstream_model") or ""),
             "review_error": review_error,
             "fingerprint": str(review.get("fingerprint") or ""),
+            "attempted_routes": list(review.get("attempted_routes") or [])[:3],
+            "structured_output_requested": bool(review.get("structured_output_requested")),
         },
     )
     if bool(review.get("accepted")):
@@ -534,11 +556,10 @@ def _run_tool_with_semantic_acceptance(
         return {
             "ok": False,
             "success": False,
-            "error": "semantic_acceptance_review_failed",
-            "required_action": (
-                "Retry coding_finish without changing the repository state; the independent "
-                "semantic review did not complete reliably."
-            ),
+            "error": "semantic_reviewer_unavailable",
+            "interrupted": True,
+            "resumable": True,
+            "required_action": "Resume semantic acceptance when an independent reviewer route is available; repository repair is not required.",
             "summary": (
                 f"Independent semantic acceptance could not complete reliably: {reason}. "
                 "No semantic rejection was recorded and repository repair is not required."
