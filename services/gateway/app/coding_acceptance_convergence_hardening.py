@@ -591,10 +591,13 @@ def _install_terminal_policy(agent: Any, cw: Any, mission_epoch: Any) -> None:
         return
 
     def active_state_with_terminal_acceptance(task: Mapping[str, Any]) -> Dict[str, Any]:
-        state = dict(prior_active(task) or {})
-        if state:
-            return state
-        return _terminal_state(cw, mission_epoch, task)
+        # Authority order: decisive repair obligations > terminal acceptance >
+        # generic recovery/stagnation coaching. A stale persisted edit state
+        # must never reopen tools after validation and diff review are current.
+        terminal = _terminal_state(cw, mission_epoch, task)
+        if terminal:
+            return terminal
+        return dict(prior_active(task) or {})
 
     policy.active_state = active_state_with_terminal_acceptance
     policy._coding_active_state_before_terminal_convergence = prior_active

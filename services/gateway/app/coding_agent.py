@@ -49,6 +49,19 @@ class _CodingAgentPaused(Exception):
         self.details = dict(details or {})
 
 
+class _CodingAgentInterrupted(Exception):
+    def __init__(
+        self,
+        summary: str,
+        *,
+        reason_code: str = "run_interrupted",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(summary)
+        self.reason_code = reason_code
+        self.details = dict(details or {})
+
+
 _RUNNING: Dict[str, asyncio.Task[Any]] = {}
 _ACTIVE_AGENT_STATUSES = {"queued", "running", "stopping", "pausing"}
 
@@ -3485,6 +3498,24 @@ async def _run_agent(
                 else:
                     messages.append(_tool_message_for_result(tool_call_id=tool_call_id, result=result))
 
+                if result.get("interrupted") is True:
+                    interruption_summary = str(
+                        result.get("summary")
+                        or result.get("error")
+                        or "Coding run was interrupted and may be resumed."
+                    ).strip()
+                    raise _CodingAgentInterrupted(
+                        interruption_summary,
+                        reason_code=str(result.get("stop_reason_code") or "run_interrupted"),
+                        details={
+                            "cycle": cycle,
+                            "tool": name,
+                            "error": str(result.get("error") or ""),
+                            "resumable": bool(result.get("resumable")),
+                            "required_action": str(result.get("required_action") or ""),
+                        },
+                    )
+
                 if rejected_by_forced_action and forced_action_rejections >= int((forced_action.active_state(policy_task) or {}).get("rejection_limit") or 2):
                     fallback = None
                     if not user_llm.is_user_model_id(model) and semantic_reroutes < _max_semantic_reroutes():
@@ -3809,6 +3840,46 @@ async def _run_agent(
             run_id,
             {
                 "status": "paused",
+                "finished_at": finished_at,
+                "cycle": cycle,
+                "backend": backend,
+                "upstream_model": upstream_model,
+                "summary": str(exc),
+                "stop_reason_code": exc.reason_code,
+                "duration_ms": round((time.monotonic() - t0) * 1000.0, 1),
+            },
+        )
+    except _CodingAgentInterrupted as exc:
+        finished_at = time.time()
+        await asyncio.to_thread(
+            _mutate_task,
+            task_id,
+            {
+                "agent_status": "interrupted",
+                "agent_error": "",
+                "agent_summary": str(exc),
+                "agent_stop_reason_code": exc.reason_code,
+                "agent_finished_at": finished_at,
+                "agent_last_event_at": now_unix(),
+                "agent_auto_resume_pending": False,
+            },
+        )
+        await asyncio.to_thread(
+            _append_event,
+            task_id,
+            {
+                "type": "interrupted",
+                "summary": str(exc),
+                "stop_reason_code": exc.reason_code,
+                "details": exc.details,
+            },
+        )
+        await asyncio.to_thread(
+            _update_run_record,
+            task_id,
+            run_id,
+            {
+                "status": "interrupted",
                 "finished_at": finished_at,
                 "cycle": cycle,
                 "backend": backend,

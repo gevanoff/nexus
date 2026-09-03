@@ -100,6 +100,17 @@ def parse_review(content: Any) -> dict[str, Any]:
             "raw": text[:1000],
         }
     reason = str(payload.get("reason") or "").strip()
+    if (
+        not isinstance(payload.get("accepted"), bool)
+        or not reason
+        or any(not isinstance(payload.get(field), bool) for field in _REQUIRED_BOOLEAN_FIELDS)
+    ):
+        return {
+            "accepted": False,
+            "reason": "semantic reviewer returned an invalid review object",
+            "parse_error": True,
+            "raw": text[:1000],
+        }
     checks = {field: payload.get(field) is True for field in _REQUIRED_BOOLEAN_FIELDS}
     accepted = payload.get("accepted") is True and all(checks.values()) and bool(reason)
     return {
