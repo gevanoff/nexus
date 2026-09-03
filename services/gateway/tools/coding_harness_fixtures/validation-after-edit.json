@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "validation-after-edit",
+  "description": "Small mutation whose correctness is only established by a targeted test run after the edit.",
+  "repository": {
+    "files": {
+      "ports.py": "DEFAULT_PORT = 8800\n\n\ndef normalize_port(value):\n    if value is None:\n        return DEFAULT_PORT\n    return int(value)\n",
+      "test_ports.py": "import unittest\n\nfrom ports import DEFAULT_PORT, normalize_port\n\n\nclass PortTests(unittest.TestCase):\n    def test_none_uses_default(self):\n        self.assertEqual(normalize_port(None), DEFAULT_PORT)\n\n    def test_blank_string_uses_default(self):\n        self.assertEqual(normalize_port(\"   \"), DEFAULT_PORT)\n\n    def test_numeric_string_is_preserved(self):\n        self.assertEqual(normalize_port(\"9000\"), 9000)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "mission": "Fix normalize_port so blank or whitespace-only strings use DEFAULT_PORT while numeric strings keep working. Do not change the public API or tests. Run the targeted unit tests after the edit.",
+  "expected": {
+    "files_changed": ["ports.py"],
+    "allowed_files_changed": ["ports.py"],
+    "file_contains": [{"path": "ports.py", "needle": "strip"}],
+    "validation": [["python3", "-m", "unittest", "-q"]]
+  },
+  "limits": {"wall_time_sec": 180, "max_agent_steps": 14},
+  "tags": ["validation", "small-fix", "trajectory"]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "failure-path-management-link",
+  "description": "A success-path-looking implementation must preserve management metadata when model discovery fails before the normal attachment point.",
+  "repository": {
+    "files": {
+      "catalog.py": "def backend_entry(fetch_models, ui_url):\n    entry = {\"name\": \"invokeai\"}\n    try:\n        entry[\"models\"] = list(fetch_models())\n    except RuntimeError as exc:\n        entry[\"models_error\"] = str(exc)\n        return entry\n    entry[\"model_management\"] = {\"ui_url\": ui_url}\n    return entry\n",
+      "test_catalog.py": "import unittest\n\nfrom catalog import backend_entry\n\n\nclass CatalogTests(unittest.TestCase):\n    def test_success_exposes_management(self):\n        entry = backend_entry(lambda: [\"a\"], \"http://invokeai/ui\")\n        self.assertEqual(entry[\"models\"], [\"a\"])\n        self.assertEqual(entry[\"model_management\"][\"ui_url\"], \"http://invokeai/ui\")\n\n    def test_failure_still_exposes_management(self):\n        def fail():\n            raise RuntimeError(\"catalog unavailable\")\n\n        entry = backend_entry(fail, \"http://invokeai/ui\")\n        self.assertEqual(entry[\"models_error\"], \"catalog unavailable\")\n        self.assertEqual(entry[\"model_management\"][\"ui_url\"], \"http://invokeai/ui\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "mission": "Fix backend_entry so the management UI URL remains available whether model discovery succeeds or raises RuntimeError. Preserve models_error on discovery failure. Make the smallest causal change and do not weaken or remove the tests. Run the targeted unit tests after the edit.",
+  "expected": {
+    "files_changed": ["catalog.py"],
+    "allowed_files_changed": ["catalog.py"],
+    "validation": [["python3", "-m", "unittest", "-q"]],
+    "file_contains": [{"path": "catalog.py", "needle": "model_management"}]
+  },
+  "limits": {"wall_time_sec": 240, "max_agent_steps": 18},
+  "tags": ["causal-alignment", "failure-path", "validation"]
+}
