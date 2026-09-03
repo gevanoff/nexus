@@ -186,6 +186,120 @@ async def test_real_agent_loop_enforces_forced_action_against_repeated_reads(mon
     assert task["agent_forced_action"]["status"] == "active"
 
 
+@pytest.mark.asyncio
+async def test_real_agent_loop_persists_resumable_tool_interruption(monkeypatch) -> None:
+    task = {
+        "id": "code_test",
+        "prompt": "Fix the issue.",
+        "agent_status": "queued",
+        "agent_pause_requested": False,
+        "agent_stop_requested": False,
+        "agent_runs": [{"run_id": "run", "status": "queued"}],
+        "agent_events": [],
+        "guidance_messages": [],
+        "project_plan": {"revision": 0},
+    }
+    mission = {
+        "budget_policy": {"max_no_progress_cycles": 8},
+        "context_policy": {"context_reset_chars": 64_000},
+        "completion_policy": {
+            "require_file_changes": False,
+            "require_commit_on_success": False,
+        },
+    }
+    backend_calls = 0
+
+    def mutate_task(_task_id, mutator):
+        mutator(task)
+        return task
+
+    finish_call = {
+        "id": "finish-1",
+        "function": {
+            "name": "coding_finish",
+            "arguments": json.dumps({"summary": "done", "success": True}),
+        },
+    }
+
+    async def backend_call(_req, backend, upstream_model, **_kwargs):
+        nonlocal backend_calls
+        backend_calls += 1
+        return {}, backend, upstream_model
+
+    monkeypatch.setattr(coding_agent.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(coding_agent.cw, "mutate_task", mutate_task)
+    monkeypatch.setattr(coding_agent.cw, "save_task", lambda value: value)
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "git_head",
+        lambda _task_id: {"ok": True, "commit": "abc123"},
+    )
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "workspace_progress_fingerprint",
+        lambda _task_id: "unchanged",
+    )
+    monkeypatch.setattr(coding_agent, "_settings_for_task_owner", lambda _task: {})
+    monkeypatch.setattr(coding_agent, "_mission_for_task", lambda _task: mission)
+    monkeypatch.setattr(coding_agent, "_system_prompt", lambda *args, **kwargs: "system")
+    monkeypatch.setattr(coding_agent, "_task_context", lambda _task: "task")
+    monkeypatch.setattr(coding_agent, "_backend_supports_tool_calling", lambda _backend: True)
+    monkeypatch.setattr(coding_agent, "_max_completion_tokens_for_route", lambda *_args: 64)
+    monkeypatch.setattr(coding_agent, "_call_backend_chat_with_retry", backend_call)
+    monkeypatch.setattr(
+        coding_agent,
+        "_extract_assistant_message",
+        lambda _response: coding_agent.ChatMessage(
+            role="assistant", content=None, tool_calls=[finish_call]
+        ),
+    )
+    monkeypatch.setattr(coding_agent, "_extract_assistant_thinking", lambda _response: "")
+    monkeypatch.setattr(coding_agent, "_extract_tool_calls", lambda _response: [finish_call])
+    monkeypatch.setattr(
+        coding_agent,
+        "_run_tool",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "success": False,
+            "error": "semantic_reviewer_unavailable",
+            "interrupted": True,
+            "resumable": True,
+            "required_action": "Resume semantic acceptance later.",
+            "summary": "Independent semantic acceptance is temporarily unavailable.",
+        },
+    )
+    monkeypatch.setattr(coding_agent, "_checkpoint_enabled", lambda: False)
+    monkeypatch.setattr(
+        coding_agent,
+        "decide_route",
+        lambda **_kwargs: SimpleNamespace(
+            backend="test_backend", model="test_model", reason="test"
+        ),
+    )
+
+    await coding_agent._run_agent(
+        "code_test",
+        run_id="run",
+        git_token_value=None,
+        model="coder",
+        auto_commit=False,
+        commit_message=None,
+        max_cycles=20,
+        max_runtime_sec=600,
+        context_reset_cycles=0,
+    )
+
+    assert backend_calls == 1
+    assert task["agent_status"] == "interrupted"
+    assert task["agent_stop_reason_code"] == "run_interrupted"
+    assert task["agent_auto_resume_pending"] is False
+    assert task["agent_runs"][-1]["status"] == "interrupted"
+    interrupted = [event for event in task["agent_events"] if event.get("type") == "interrupted"]
+    assert len(interrupted) == 1
+    assert interrupted[0]["details"]["error"] == "semantic_reviewer_unavailable"
+    assert interrupted[0]["details"]["resumable"] is True
+
+
 def test_noop_write_fingerprint_is_not_progress(monkeypatch, tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

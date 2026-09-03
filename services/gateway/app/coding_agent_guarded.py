@@ -362,8 +362,9 @@ async def _semantic_acceptance_review(
         hypothesis=_project_hypothesis_text(task),
         diff_text=diff_text,
     )
-    # Reviewer protocol failures are route failures, not author-agent work. Try
-    # each independently eligible route once inside this finish operation.
+    # Reviewer protocol failures are route failures, not author-agent work. Each
+    # outer attempt starts from a distinct eligible route; the shared backend call
+    # may still perform its own transient retries or backend failover.
     excluded_backends: set[str] = set()
     attempts: list[dict[str, str]] = []
     current_backend, current_model = review_backend, review_model
