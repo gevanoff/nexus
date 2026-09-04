@@ -374,6 +374,38 @@ def test_workspace_snapshot_never_executes_agent_git_filters(tmp_path: Path) -> 
     assert not marker.exists()
 
 
+def test_validation_scratch_mount_follows_recursive_read_only_remount(
+    tmp_path: Path,
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("bubblewrap sandbox regression requires Linux")
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("bubblewrap sandbox regression requires bwrap")
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+
+    argv, _ = harness._validation_sandbox_argv(
+        ["python3", "-c", "pass"], workspace, home, temp_dir
+    )
+
+    remount_index = argv.index("--remount-ro")
+    scratch_index = next(
+        index
+        for index in range(len(argv) - 2)
+        if argv[index:index + 3] == ["--bind", str(temp_dir.resolve()), "/tmp"]
+    )
+    workspace_index = next(
+        index
+        for index in range(len(argv) - 2)
+        if argv[index:index + 3]
+        == ["--ro-bind", str(workspace.resolve()), str(workspace.resolve())]
+    )
+    assert remount_index < scratch_index < workspace_index
+
+
 def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("bubblewrap sandbox regression requires Linux")
@@ -391,9 +423,14 @@ def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> No
     script = (
         "import fixture_module,os,pathlib; "
         f"outside=pathlib.Path({str(outside)!r}); "
+        "tmp=pathlib.Path(os.environ['TMPDIR'])/'validation.tmp'; "
+        "home=pathlib.Path(os.environ['HOME'])/'validation.home'; "
+        "tmp.write_text('temporary', encoding='utf-8'); "
+        "home.write_text('home', encoding='utf-8'); "
         "print('file-blocked' if not outside.exists() else outside.read_text()); "
         f"print('network-isolated' if os.readlink('/proc/self/ns/net') != {host_net_namespace!r} "
-        "else 'network-shared'); print(fixture_module.VALUE)"
+        "else 'network-shared'); print(fixture_module.VALUE); "
+        "print(tmp.read_text(encoding='utf-8'), home.read_text(encoding='utf-8'))"
     )
 
     result = harness.run_validation(
@@ -404,9 +441,9 @@ def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> No
         deadline=harness.time.monotonic() + 10.0,
     )
 
-    assert result["passed"] is True
+    assert result["passed"] is True, result["commands"][0]["stderr"]
     assert result["commands"][0]["stdout"].splitlines() == [
-        "file-blocked", "network-isolated", "loaded",
+        "file-blocked", "network-isolated", "loaded", "temporary home",
     ]
     assert not list(workspace.rglob("*.pyc"))
     assert not list(workspace.rglob("__pycache__"))
