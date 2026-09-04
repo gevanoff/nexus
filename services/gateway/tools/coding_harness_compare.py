@@ -639,6 +639,8 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
         for spec in expected.get(key) or []:
             path, error = _workspace_regular_file(workspace, str(spec["path"]), max_bytes=MAX_OBJECTIVE_FILE_BYTES)
             if error or path is None:
+                if error == f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte limit":
+                    error = f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"
                 checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
                                "passed": False, "error": error or "unsafe file"})
                 continue
