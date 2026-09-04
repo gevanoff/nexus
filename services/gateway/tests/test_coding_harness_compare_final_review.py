@@ -93,7 +93,7 @@ def test_workspace_snapshot_fails_closed_when_git_metadata_is_missing(tmp_path: 
     baseline = harness.initialize_workspace(workspace, _workspace_fixture({"app.py": "VALUE = 1\n"}))
     harness.discard_path_verified(workspace / ".git")
 
-    with pytest.raises(RuntimeError, match="git status"):
+    with pytest.raises(RuntimeError, match="snapshot Git metadata"):
         harness.workspace_snapshot(workspace, baseline, artifacts)
 
     assert not artifacts.exists()

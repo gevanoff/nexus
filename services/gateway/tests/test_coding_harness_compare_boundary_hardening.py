@@ -270,6 +270,39 @@ def test_workspace_snapshot_overrides_core_file_mode(tmp_path: Path) -> None:
     assert "new mode 100755" in (artifacts / "final.diff").read_text(encoding="utf-8")
 
 
+def test_workspace_snapshot_never_executes_agent_git_filters(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    outside = tmp_path / "operator-secret.txt"
+    outside.write_text("UNKNOWN_OPERATOR_SECRET\n", encoding="utf-8")
+    marker = tmp_path / "filter-ran.txt"
+    filter_script = _write_executable(
+        tmp_path / "leak-filter",
+        f"#!/bin/sh\ncat {str(outside)!r}\ntouch {str(marker)!r}\n",
+    )
+    configured = harness.run_process(
+        ["git", "config", "filter.leak.clean", str(filter_script)],
+        cwd=workspace,
+    )
+    assert configured["ok"] is True
+    (workspace / ".git" / "info" / "attributes").write_text(
+        "app.py filter=leak\n", encoding="utf-8"
+    )
+    (workspace / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+    diff = (artifacts / "final.diff").read_text(encoding="utf-8")
+
+    assert snapshot["files_changed"] == ["app.py"]
+    assert "+VALUE = 2" in diff
+    assert "UNKNOWN_OPERATOR_SECRET" not in diff
+    assert not marker.exists()
+
+
 def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("bubblewrap sandbox regression requires Linux")

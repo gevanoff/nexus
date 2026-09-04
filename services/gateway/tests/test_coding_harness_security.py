@@ -16,7 +16,7 @@ def _load_module():
 harness = _load_module()
 
 
-def test_albatross_agent_surface_omits_arbitrary_shell(tmp_path: Path) -> None:
+def test_albatross_agent_surface_omits_unsandboxed_execution(tmp_path: Path) -> None:
     env = harness.build_albatross_env(
         nexus_base_url="http://ai2:8800/v1",
         nexus_token="test-token",
@@ -28,7 +28,7 @@ def test_albatross_agent_surface_omits_arbitrary_shell(tmp_path: Path) -> None:
     )
     tools = set(env["AGENT_TOOLS"].split(","))
     assert "shell" not in tools
-    assert "run_tests" in tools
+    assert "run_tests" not in tools
     assert "file_edit" in tools
 
 

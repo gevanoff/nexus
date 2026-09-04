@@ -71,3 +71,35 @@ def test_trace_aggregate_budget_skips_later_candidates(
     assert result["trace_input_bytes"] == first_size
     assert len(result["trace_omissions"]) == 1
     assert "aggregate limit" in result["trace_omissions"][0]["reason"]
+
+
+def test_trace_enumeration_has_entry_and_file_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    for index in range(4):
+        (sessions / f"entry-{index}.txt").touch()
+    monkeypatch.setattr(harness, "MAX_TRACE_ENTRIES", 3)
+
+    with pytest.raises(RuntimeError, match="entry limit"):
+        harness.parse_trace(sessions)
+
+    for path in sessions.iterdir():
+        path.unlink()
+    for index in range(3):
+        (sessions / f"trace-{index}.events.jsonl").touch()
+    monkeypatch.setattr(harness, "MAX_TRACE_ENTRIES", 10)
+    monkeypatch.setattr(harness, "MAX_TRACE_FILES", 2)
+
+    with pytest.raises(RuntimeError, match="file limit"):
+        harness.parse_trace(sessions)
+
+
+def test_trace_enumeration_obeys_parse_deadline(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "trace.events.jsonl").write_text(_event("file_read"), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="time budget"):
+        harness.parse_trace(sessions, deadline=0.0)

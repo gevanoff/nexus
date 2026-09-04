@@ -58,7 +58,8 @@ For each run the adapter:
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
 - builds final Git evidence from an independent baseline index with pinned worktree and file-mode settings so agent-controlled assume-unchanged, skip-worktree, local comparison, and ignore settings cannot hide workspace changes;
 - copies only explicitly selected evidence into the retained artifact directory;
-- enforces aggregate changed-file count, file-byte, diff-size, and snapshot-time limits before retaining evidence;
+- sanitizes disposable Git config and info attributes before snapshotting so agent-defined hooks, filters, and comparison settings cannot execute during evidence collection;
+- enforces aggregate changed-file count, file-byte, diff-size, snapshot-time, trace-entry, trace-file, and trace-time limits before retaining evidence;
 - redacts protected values before applying the final stdout/stderr tail bound and records `artifacts.process_output_truncated` when the retained tails omit earlier data;
 - captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home, and sanitizes retained text evidence before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
@@ -69,7 +70,7 @@ For each run the adapter:
 
 This retention boundary is deliberate. Arbitrary workspace/session files are not considered safe artifacts merely because a best-effort redaction pass ran over them. Protected values are checked in raw, UTF, Base64, URL-safe Base64, and hexadecimal forms; encoded values in paths are replaced with generic metadata and are never copied. Non-UTF-8 files copied into the retained evidence area are discarded if they cannot be sanitized safely and are listed in `artifacts.omitted_non_text`.
 
-Mutating runs expose a restricted edit/test tool set inside the disposable fixture workspace and omit arbitrary `shell`. Read-only runs, including the live capability probe, expose only `file_read`, `glob`, `grep`, and `list_dir`; write/edit/test tools are removed from the child capability surface rather than relying on prompt compliance.
+Mutating runs expose a restricted read/edit tool set inside the disposable fixture workspace and omit arbitrary `shell` and `run_tests`. Tests run only through the declared post-run validation commands inside the OS sandbox, preventing agent-launched test code from forging Albatross trace files or accessing operator state. Read-only runs, including the live capability probe, expose only `file_read`, `glob`, `grep`, and `list_dir`; write/edit tools are removed from the child capability surface rather than relying on prompt compliance.
 
 The adapter passes `--allow-tools` for both mutating and read-only runs so non-interactive tool calls do not block on approval. Authorization still comes from the fixed `AGENT_TOOLS` surface: read-only runs receive only the four inspection tools above, while mutating runs target a disposable fixture workspace with `OUTSIDE_WORKSPACE=deny`. Do not modify the adapter to point mutating tool mode at the live Nexus checkout by default.
 

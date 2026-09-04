@@ -211,6 +211,24 @@ def test_read_only_env_removes_mutating_tool_surfaces(tmp_path: Path) -> None:
     assert tools.isdisjoint({"apply_patch", "file_write", "file_edit", "run_tests", "update_plan", "shell"})
 
 
+def test_mutating_env_excludes_unsandboxed_test_execution(tmp_path: Path) -> None:
+    env = harness.build_albatross_env(
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="review-token",
+        model="coder",
+        workspace=tmp_path / "work",
+        home=tmp_path / "home",
+        temp_dir=tmp_path / "tmp",
+        max_steps=8,
+        allow_mutations=True,
+    )
+    tools = set(env["AGENT_TOOLS"].split(","))
+
+    assert "file_edit" in tools
+    assert "run_tests" not in tools
+    assert "shell" not in tools
+
+
 def test_read_only_run_auto_approves_its_restricted_tool_surface(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -1200,6 +1218,8 @@ def test_required_workspace_git_failures_redact_secrets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     secret = "nexus-required-git-secret"
+    workspace = tmp_path / "workspace"
+    (workspace / ".git").mkdir(parents=True)
 
     def fail_git(*args, **kwargs):
         assert tuple(kwargs["secrets"]) == (secret,)
@@ -1219,7 +1239,7 @@ def test_required_workspace_git_failures_redact_secrets(
 
     with pytest.raises(RuntimeError) as raised:
         harness.workspace_snapshot(
-            tmp_path / "workspace",
+            workspace,
             "baseline",
             tmp_path / "artifacts",
             secrets=[secret],

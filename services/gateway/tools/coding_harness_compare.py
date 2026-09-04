@@ -31,7 +31,7 @@ SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorizatio
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 RESERVED_PARTS = {".git", ".albatross", ".small-harness", ".sessions"}
 RESERVED_FILES = {"agent.config.json", ".env"}
-ALBATROSS_TOOLS = "apply_patch,file_read,file_write,file_edit,glob,grep,list_dir,run_tests,update_plan"
+ALBATROSS_TOOLS = "apply_patch,file_read,file_write,file_edit,glob,grep,list_dir,update_plan"
 ALBATROSS_READ_ONLY_TOOLS = "file_read,glob,grep,list_dir"
 REQUIRED_PROBE_CAPABILITIES = ("one_shot", "allow_tools")
 MAX_FIXTURE_FILE_BYTES = 2_000_000
@@ -44,6 +44,9 @@ MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
 MAX_TRACE_TOTAL_BYTES = 16_000_000
 MAX_TRACE_STEP_DIGITS = 18
+MAX_TRACE_FILES = 256
+MAX_TRACE_ENTRIES = 4096
+MAX_TRACE_PARSE_SECONDS = 10.0
 MAX_SNAPSHOT_CHANGED_FILES = 512
 MAX_SNAPSHOT_FILE_BYTES = 16_000_000
 MAX_SNAPSHOT_DIFF_CHARS = 8_000_000
@@ -578,7 +581,13 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
 
 def _git_env() -> dict[str, str]:
     env = clean_env()
-    env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"})
+    env.update({
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    })
     return env
 
 
@@ -846,6 +855,35 @@ def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
     return False
 
 
+def _sanitize_snapshot_git_metadata(workspace: Path) -> None:
+    git_dir = workspace / ".git"
+    try:
+        git_info = git_dir.lstat()
+    except OSError as exc:
+        raise RuntimeError(f"could not verify snapshot Git metadata: {exc}") from exc
+    if stat.S_ISLNK(git_info.st_mode) or not stat.S_ISDIR(git_info.st_mode):
+        raise RuntimeError("snapshot Git metadata is not a trusted directory")
+    config = git_dir / "config"
+    info_dir = git_dir / "info"
+    try:
+        if _path_lexists(config):
+            discard_path_verified(config)
+        if _path_lexists(info_dir):
+            discard_path_verified(info_dir)
+        info_dir.mkdir(mode=0o700, parents=False, exist_ok=False)
+        with config.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                "[core]\n"
+                "\trepositoryformatversion = 0\n"
+                "\tfilemode = true\n"
+                "\tbare = false\n"
+                "\tlogallrefupdates = true\n"
+            )
+        config.chmod(0o600)
+    except (OSError, RuntimeError) as exc:
+        raise RuntimeError("could not sanitize snapshot Git metadata") from exc
+
+
 def _is_harness_runtime_path(rel: str) -> bool:
     parts = Path(str(rel or "")).parts
     if not parts:
@@ -904,6 +942,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
                        *, secrets: Iterable[str] = ()) -> dict[str, Any]:
     secrets = tuple(str(secret) for secret in secrets if secret)
     deadline = time.monotonic() + MAX_SNAPSHOT_SECONDS
+    _sanitize_snapshot_git_metadata(workspace)
     _required_git(
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=workspace,
@@ -1080,7 +1119,12 @@ def albatross_capabilities(executable: str) -> tuple[dict[str, Any], dict[str, A
     return help_result, capabilities, missing
 
 
-def _trace_files(root: Path) -> list[Path]:
+def _trace_deadline(deadline: float) -> None:
+    if time.monotonic() >= deadline:
+        raise RuntimeError("trace parsing time budget exhausted")
+
+
+def _trace_files(root: Path, *, deadline: float) -> list[Path]:
     try:
         root_info = root.lstat()
     except OSError:
@@ -1088,33 +1132,41 @@ def _trace_files(root: Path) -> list[Path]:
     if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
         return []
     found: list[Path] = []
-    for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
-        current_path = Path(current)
-        safe_dirs: list[str] = []
-        for name in dirs:
-            child = current_path / name
-            try:
-                info = child.lstat()
-            except OSError:
-                continue
-            if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
-                safe_dirs.append(name)
-        dirs[:] = safe_dirs
-        for name in files:
-            if not name.endswith(".events.jsonl"):
-                continue
-            path = current_path / name
-            try:
-                info = path.lstat()
-            except OSError:
-                continue
-            if stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode):
-                found.append(path)
+    pending = [root]
+    entry_count = 0
+    while pending:
+        _trace_deadline(deadline)
+        current = pending.pop()
+        child_dirs: list[Path] = []
+        try:
+            scan = os.scandir(current)
+        except OSError:
+            continue
+        with scan:
+            for entry in scan:
+                _trace_deadline(deadline)
+                entry_count += 1
+                if entry_count > MAX_TRACE_ENTRIES:
+                    raise RuntimeError(f"trace enumeration exceeds {MAX_TRACE_ENTRIES} entry limit")
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                path = Path(entry.path)
+                if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                    child_dirs.append(path)
+                elif (entry.name.endswith(".events.jsonl")
+                      and stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode)):
+                    found.append(path)
+                    if len(found) > MAX_TRACE_FILES:
+                        raise RuntimeError(f"trace enumeration exceeds {MAX_TRACE_FILES} file limit")
+        pending.extend(sorted(child_dirs, reverse=True))
     return sorted(found)
 
 
 def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | None = None,
-                secrets: Iterable[str] = ()) -> dict[str, Any]:
+                secrets: Iterable[str] = (), deadline: float | None = None) -> dict[str, Any]:
+    deadline = time.monotonic() + MAX_TRACE_PARSE_SECONDS if deadline is None else deadline
     roots = [session_roots] if isinstance(session_roots, Path) else list(session_roots)
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
     omissions: list[dict[str, Any]] = []
@@ -1124,7 +1176,8 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
     trace_index = 0
     candidate_index = 0
     for root_index, root in enumerate(roots):
-        for path in _trace_files(root):
+        for path in _trace_files(root, deadline=deadline):
+            _trace_deadline(deadline)
             candidate_label = f"{root_index}:{candidate_index}"
             candidate_index += 1
             try:
@@ -1163,6 +1216,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                 else:
                     files.append(str(path))
                 while True:
+                    _trace_deadline(deadline)
                     try:
                         line = source_handle.readline()
                     except OSError as exc:
@@ -1457,6 +1511,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             home / ".config" / "albatross" / "sessions",
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
+            deadline=deadline,
         )
         validation = run_validation(
             fixture, workspace, home, tmp, deadline=deadline, secrets=[nexus_token]
