@@ -929,6 +929,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             "objective": objective,
             "artifacts": {"run_root": str(root), "stdout": str(artifacts / "stdout.txt"),
                           "stderr": str(artifacts / "stderr.txt"), "diff": str(artifacts / "final.diff"),
+                          "process_output_truncated": bool(process["output_truncated"]),
                           "trace_files": trace["trace_files"], "trace_omissions": trace["trace_omissions"],
                           "omitted_non_text": omitted_artifacts},
         }, [nexus_token])

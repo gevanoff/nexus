@@ -130,6 +130,36 @@ print('done')
     assert result["outcome"]["completed"] is True
 
 
+def test_result_records_when_process_output_artifacts_are_truncated(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+print('discarded-prefix-' + ('x' * 100_256))
+""",
+    )
+    fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"})
+
+    result, _ = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="review-token",
+        model="coder",
+        allow_mutations=False,
+    )
+
+    stdout = Path(result["artifacts"]["stdout"]).read_text(encoding="utf-8")
+    assert result["outcome"]["completed"] is True
+    assert result["artifacts"]["process_output_truncated"] is True
+    assert len(stdout) == harness.MAX_PROCESS_OUTPUT_CHARS
+    assert "discarded-prefix" not in stdout
+
+
 def test_parse_trace_streams_without_path_read_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     session_root = tmp_path / "sessions"
     session_root.mkdir()

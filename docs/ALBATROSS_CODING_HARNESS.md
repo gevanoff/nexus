@@ -56,6 +56,7 @@ For each run the adapter:
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
 - copies only explicitly selected evidence into the retained artifact directory;
+- bounds captured process output and records `artifacts.process_output_truncated` when the retained stdout/stderr tails omit earlier data;
 - sanitizes retained text evidence, including structured trace copies, before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
 - repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;
