@@ -213,6 +213,29 @@ def test_scrub_discards_base85_secret_artifacts(
     assert not encoded.exists()
 
 
+@pytest.mark.parametrize(
+    "escape",
+    [
+        lambda value: "".join(f"\\u{ord(character):04x}" for character in value),
+        lambda value: "".join(f"\\x{byte:02x}" for byte in value.encode("utf-8")),
+        lambda value: "".join(f"%{byte:02x}" for byte in value.encode("utf-8")),
+    ],
+)
+def test_scrub_discards_character_escaped_secret_artifacts(
+    tmp_path: Path, escape
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    encoded = artifacts / "escaped.txt"
+    encoded.write_text(escape(token) + "\n", encoding="utf-8")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert omitted == ["escaped.txt"]
+    assert not encoded.exists()
+
+
 def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
@@ -313,6 +336,46 @@ raise SystemExit(2)
     )
     token = "nexus-base85-result-secret"
     encoded = harness.base64.b85encode(token.encode("utf-8")).decode("ascii")
+    fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
+
+    result, result_path = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["outcome"]["completed"] is False
+    assert result["outcome"]["error"] == "(redacted)"
+    assert encoded not in json.dumps(result)
+    assert encoded not in result_path.read_text(encoding="utf-8")
+
+
+def test_unicode_escaped_process_output_is_redacted_from_the_complete_result(
+    tmp_path: Path,
+) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import os
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+encoded = ''.join(f'\\\\u{ord(character):04x}' for character in os.environ['OPENAI_API_KEY'])
+print('failure: ' + encoded)
+print('failure: ' + encoded, file=sys.stderr)
+raise SystemExit(2)
+""",
+    )
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    encoded = "".join(f"\\u{ord(character):04x}" for character in token)
     fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
 
     result, result_path = harness.run_albatross_fixture(

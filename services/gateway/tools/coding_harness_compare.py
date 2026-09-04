@@ -40,6 +40,7 @@ MAX_FIXTURE_JSON_BYTES = 10_000_000
 MAX_FIXTURE_FILES = 4096
 MAX_MISSION_BYTES = 64_000
 MAX_OBJECTIVE_FILE_BYTES = 2_000_000
+MAX_OBJECTIVE_CHECKS = 256
 MAX_PROCESS_OUTPUT_CHARS = 100_000
 MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
@@ -167,10 +168,16 @@ def load_fixture(path: Path) -> dict[str, Any]:
             if not isinstance(expected[key], list):
                 raise ValueError(f"expected.{key} must be an array")
             expected[key] = [safe_rel_path(str(v)).as_posix() for v in expected[key]]
+    content_check_count = 0
     for key in ("file_contains", "file_not_contains"):
         checks = expected.get(key) or []
         if not isinstance(checks, list):
             raise ValueError(f"expected.{key} must be an array")
+        content_check_count += len(checks)
+        if content_check_count > MAX_OBJECTIVE_CHECKS:
+            raise ValueError(
+                f"content objectives exceed {MAX_OBJECTIVE_CHECKS} check limit"
+            )
         for check in checks:
             if not isinstance(check, dict):
                 raise ValueError(f"expected.{key} entries must be objects")
@@ -1080,6 +1087,7 @@ def _encoded_secret_variants(secret: str) -> set[bytes]:
         variants.update(_base64_secret_variants(secret))
         variants.update(_base32_secret_variants(secret))
         variants.update(_base85_secret_variants(secret))
+        variants.update(_character_escape_secret_variants(secret))
         variants.update({raw.hex().encode("ascii"), raw.hex().upper().encode("ascii")})
     return {value for value in variants if value}
 
@@ -1118,6 +1126,25 @@ def _base85_secret_variants(secret: str) -> set[bytes]:
     return {value for value in variants if value}
 
 
+def _character_escape_secret_variants(secret: str) -> set[bytes]:
+    raw = secret.encode("utf-8")
+    if len(raw) < 8:
+        return set()
+    codepoints = tuple(ord(character) for character in secret)
+    variants = {
+        "".join(f"\\x{value:02x}" for value in raw),
+        "".join(f"%{value:02x}" for value in raw),
+        "".join(f"\\{value:03o}" for value in raw),
+        "".join(f"&#{value};" for value in codepoints),
+        "".join(f"&#x{value:x};" for value in codepoints),
+        "".join(f"\\u{{{value:x}}}" for value in codepoints),
+        "".join(f"\\U{value:08x}" for value in codepoints),
+    }
+    if all(value <= 0xffff for value in codepoints):
+        variants.add("".join(f"\\u{value:04x}" for value in codepoints))
+    return {value.encode("ascii") for value in variants if value}
+
+
 def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> bool:
     if b"\0" in raw_value:
         return True
@@ -1138,6 +1165,11 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
         if any(
             encoded in compact_whitespace
             for encoded in _base85_secret_variants(secret)
+        ):
+            return True
+        if any(
+            encoded.lower() in lowered
+            for encoded in _character_escape_secret_variants(secret)
         ):
             return True
         raw_secret = secret.encode("utf-8")
@@ -1693,6 +1725,7 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
 
 def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str], validation: dict[str, Any]) -> dict[str, Any]:
     expected, checks = fixture.get("expected", {}), []
+    content_cache: dict[str, tuple[str | None, str | None]] = {}
     if "files_changed" in expected:
         wanted = sorted(str(v) for v in expected["files_changed"])
         checks.append({"kind": "files_changed", "passed": sorted(changed) == wanted,
@@ -1703,18 +1736,28 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
                        "allowed": sorted(allowed), "actual": sorted(changed)})
     for key, negate in (("file_contains", False), ("file_not_contains", True)):
         for spec in expected.get(key) or []:
-            path, error = _workspace_regular_file(workspace, str(spec["path"]), max_bytes=MAX_OBJECTIVE_FILE_BYTES)
-            if error or path is None:
+            rel = str(spec["path"])
+            if rel not in content_cache:
+                path, error = _workspace_regular_file(
+                    workspace, rel, max_bytes=MAX_OBJECTIVE_FILE_BYTES
+                )
+                text: str | None = None
                 if error == f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte limit":
-                    error = f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"
+                    error = (
+                        f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"
+                    )
+                if error is None and path is not None:
+                    try:
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                    except OSError as exc:
+                        error = f"could not read file: {exc}"
+                elif error is None:
+                    error = "unsafe file"
+                content_cache[rel] = (text, error)
+            text, error = content_cache[rel]
+            if error or text is None:
                 checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
                                "passed": False, "error": error or "unsafe file"})
-                continue
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
-                               "passed": False, "error": f"could not read file: {exc}"})
                 continue
             found = str(spec["needle"]) in text
             checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],

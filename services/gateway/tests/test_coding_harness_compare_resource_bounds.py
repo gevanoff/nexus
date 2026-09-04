@@ -106,6 +106,54 @@ def test_objective_file_content_checks_fail_closed_above_read_limit(tmp_path: Pa
     assert "objective-read limit" in result["checks"][0]["error"]
 
 
+def test_fixture_content_objective_count_is_bounded(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path / "fixture.json",
+        files={"app.py": "VALUE = 1\n"},
+        expected={
+            "file_contains": [
+                {"path": "app.py", "needle": "VALUE"}
+                for _ in range(harness.MAX_OBJECTIVE_CHECKS + 1)
+            ]
+        },
+    )
+
+    with pytest.raises(ValueError, match="content objectives exceed 256 check limit"):
+        harness.load_fixture(fixture)
+
+
+def test_repeated_content_objectives_read_each_file_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "app.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    real_read_text = Path.read_text
+    target_reads = 0
+
+    def counted_read_text(path: Path, *args, **kwargs):
+        nonlocal target_reads
+        if path == target:
+            target_reads += 1
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counted_read_text)
+    result = harness.objective_checks(
+        {
+            "expected": {
+                "file_contains": [
+                    {"path": "app.py", "needle": "VALUE"} for _ in range(20)
+                ]
+            }
+        },
+        tmp_path,
+        changed=[],
+        validation={"passed": None},
+    )
+
+    assert result["passed"] is True
+    assert target_reads == 1
+
+
 def test_live_probe_requires_no_workspace_mutation(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
