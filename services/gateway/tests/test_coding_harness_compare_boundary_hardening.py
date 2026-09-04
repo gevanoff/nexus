@@ -188,6 +188,44 @@ def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     assert not encoded.exists()
 
 
+def test_encoded_process_output_is_redacted_from_the_complete_result(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import base64
+import os
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+encoded = base64.b64encode(os.environ['OPENAI_API_KEY'].encode('utf-8')).decode('ascii')
+print('failure: ' + encoded, file=sys.stderr)
+raise SystemExit(2)
+""",
+    )
+    token = "nexus-encoded-result-secret"
+    encoded = harness.base64.b64encode(token.encode("utf-8")).decode("ascii")
+    fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
+
+    result, result_path = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["outcome"]["completed"] is False
+    assert result["outcome"]["error"] == "(redacted)"
+    assert encoded not in json.dumps(result)
+    assert encoded not in result_path.read_text(encoding="utf-8")
+
+
 def test_encoded_secret_paths_are_never_retained_or_reported(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -333,13 +371,14 @@ def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> No
         path.mkdir()
     outside = tmp_path / "operator-secret.txt"
     outside.write_text("must-not-be-readable\n", encoding="utf-8")
+    (workspace / "fixture_module.py").write_text("VALUE = 'loaded'\n", encoding="utf-8")
     host_net_namespace = os.readlink("/proc/self/ns/net")
     script = (
-        "import os,pathlib; "
+        "import fixture_module,os,pathlib; "
         f"outside=pathlib.Path({str(outside)!r}); "
         "print('file-blocked' if not outside.exists() else outside.read_text()); "
         f"print('network-isolated' if os.readlink('/proc/self/ns/net') != {host_net_namespace!r} "
-        "else 'network-shared')"
+        "else 'network-shared'); print(fixture_module.VALUE)"
     )
 
     result = harness.run_validation(
@@ -351,7 +390,11 @@ def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> No
     )
 
     assert result["passed"] is True
-    assert result["commands"][0]["stdout"].splitlines() == ["file-blocked", "network-isolated"]
+    assert result["commands"][0]["stdout"].splitlines() == [
+        "file-blocked", "network-isolated", "loaded",
+    ]
+    assert not list(workspace.rglob("*.pyc"))
+    assert not list(workspace.rglob("__pycache__"))
 
 
 def test_validation_fails_closed_without_bubblewrap(
@@ -461,6 +504,66 @@ print('done')
     assert result["outcome"]["status"] == "timed_out"
     assert result["outcome"]["interrupted"] is True
     assert result["outcome"]["error"] == "validation command timed out"
+
+
+def test_agent_timeout_gets_a_separate_bounded_trace_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
+    original_run_process = harness.run_process
+    original_monotonic = harness.time.monotonic
+    clock_offset = [0.0]
+
+    monkeypatch.setattr(
+        harness,
+        "albatross_version",
+        lambda executable: {
+            "installed": True,
+            "executable": "fake-albatross",
+            "version": "2.4.0",
+        },
+    )
+    monkeypatch.setattr(
+        harness,
+        "albatross_capabilities",
+        lambda executable: ({"ok": True}, {"one_shot": True, "allow_tools": True}, []),
+    )
+    monkeypatch.setattr(
+        harness.time,
+        "monotonic",
+        lambda: original_monotonic() + clock_offset[0],
+    )
+
+    def fake_agent_timeout(argv, **kwargs):
+        if argv[0] == "fake-albatross":
+            clock_offset[0] = 60.0
+            return {
+                "ok": False,
+                "returncode": None,
+                "timed_out": True,
+                "stdout": "",
+                "stderr": "agent time budget exhausted",
+                "duration_ms": 30000.0,
+                "launch_error": None,
+                "output_truncated": False,
+            }
+        return original_run_process(argv, **kwargs)
+
+    monkeypatch.setattr(harness, "run_process", fake_agent_timeout)
+
+    result, result_path = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable="fake-albatross",
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="timeout-token",
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["outcome"]["status"] == "timed_out"
+    assert result["outcome"]["interrupted"] is True
+    assert result_path.exists()
 
 
 def test_workspace_trace_files_are_not_trusted(tmp_path: Path) -> None:

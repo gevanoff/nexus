@@ -51,7 +51,7 @@ For each run the adapter:
 - sets `BACKEND=openai` and `OPENAI_BASE_URL` to Nexus;
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
-- bounds the agent and post-run validation under one fixture wall-time deadline;
+- bounds the agent and post-run validation under one fixture wall-time deadline, then gives trace collection a separate ten-second post-run budget so normalized timeout evidence can still be retained;
 - launches agent commands under Linux subreaper supervision and post-run validation inside a Bubblewrap filesystem/network sandbox, terminates their complete adopted descendant trees even on operator interruption, and then collects final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
@@ -60,8 +60,8 @@ For each run the adapter:
 - copies only explicitly selected evidence into the retained artifact directory;
 - sanitizes disposable Git config and info attributes before snapshotting so agent-defined hooks, filters, and comparison settings cannot execute during evidence collection;
 - enforces aggregate changed-file count, file-byte, diff-size, snapshot-time, trace-entry, trace-file, and trace-time limits before retaining evidence;
-- redacts protected values before applying the final stdout/stderr tail bound and records `artifacts.process_output_truncated` when the retained tails omit earlier data;
-- captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home, and sanitizes retained text evidence before returning it;
+- redacts raw and encoded protected values before applying the final stdout/stderr tail bound and again across the complete result, and records `artifacts.process_output_truncated` when the retained tails omit earlier data;
+- captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home and Python bytecode generation disabled, and sanitizes retained text evidence before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
 - repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;
 - rejects unexpected entries anywhere inside the retained run hierarchy, leaving only the controlled artifact directory after execution cleanup;

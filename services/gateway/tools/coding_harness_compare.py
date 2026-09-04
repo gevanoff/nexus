@@ -79,13 +79,16 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def redact_text(text: str, secrets: Iterable[str] = ()) -> str:
+    secrets = tuple(str(secret) for secret in secrets if secret)
     out = str(text or "")
     for secret in secrets:
-        if secret:
-            out = out.replace(str(secret), "(redacted)")
+        out = out.replace(secret, "(redacted)")
     out = re.sub(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}", r"\1(redacted)", out)
     out = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "(redacted)", out)
-    return re.sub(r"(?i)\bsk-(?:or-)?[A-Za-z0-9_-]{8,}\b", "(redacted)", out)
+    out = re.sub(r"(?i)\bsk-(?:or-)?[A-Za-z0-9_-]{8,}\b", "(redacted)", out)
+    if _contains_encoded_secret_bytes(out.encode("utf-8", errors="replace"), secrets):
+        return "(redacted)"
+    return out
 
 
 def redact_value(value: Any, secrets: Iterable[str] = ()) -> Any:
@@ -236,6 +239,7 @@ def _validation_sandbox_argv(
         if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "HOME", "TMPDIR", "NO_COLOR"}
     }
     child_env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    child_env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     command = [
         bubblewrap,
@@ -837,6 +841,19 @@ def _encoded_secret_variants(secret: str) -> set[bytes]:
     return {value for value in variants if value}
 
 
+def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> bool:
+    if b"\0" in raw_value:
+        return True
+    lowered = raw_value.lower()
+    for secret in (str(value) for value in secrets if value):
+        if any(encoded in raw_value for encoded in _encoded_secret_variants(secret)):
+            return True
+        raw_secret = secret.encode("utf-8")
+        if len(raw_secret) >= 8 and raw_secret.hex().encode("ascii") in lowered:
+            return True
+    return False
+
+
 def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
     candidate = str(rel)
     candidate_lower = candidate.lower()
@@ -1373,13 +1390,6 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
 
 def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
     secrets = tuple(str(secret) for secret in secrets if secret)
-    encoded_secret_variants: set[bytes] = set()
-    hexadecimal_secret_variants: set[bytes] = set()
-    for secret in secrets:
-        encoded_secret_variants.update(_encoded_secret_variants(secret))
-        raw_secret = secret.encode("utf-8")
-        if len(raw_secret) >= 8:
-            hexadecimal_secret_variants.add(raw_secret.hex().encode("ascii"))
     omitted: list[str] = []
     for path in sorted(artifacts.rglob("*")):
         if _contains_secret_path(str(path.relative_to(artifacts)), secrets):
@@ -1406,9 +1416,7 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
             raw_artifact = path.read_bytes()
         except OSError:
             raw_artifact = b""
-        if (b"\0" in raw_artifact
-                or any(encoded and encoded in raw_artifact for encoded in encoded_secret_variants)
-                or any(encoded in raw_artifact.lower() for encoded in hexadecimal_secret_variants)):
+        if _contains_encoded_secret_bytes(raw_artifact, secrets):
             try:
                 path.unlink()
                 omitted.append(str(path.relative_to(artifacts)))
@@ -1515,7 +1523,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             home / ".config" / "albatross" / "sessions",
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
-            deadline=deadline,
+            deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
         )
         validation = run_validation(
             fixture, workspace, home, tmp, deadline=deadline, secrets=[nexus_token]
