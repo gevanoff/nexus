@@ -237,6 +237,22 @@ def test_repository_diff_external_and_fsmonitor_config_cannot_execute(tmp_path: 
     assert "+VALUE = 2" in (artifacts / "final.diff").read_text(encoding="utf-8")
 
 
+def test_workspace_snapshot_preserves_trailing_whitespace_in_git_diff(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(workspace, _workspace_fixture({"app.py": "VALUE = 1\n"}))
+    (workspace / "app.py").write_text("VALUE = 2  \n   \n", encoding="utf-8")
+    expected = harness._required_git(
+        ["diff", "--no-ext-diff", "--no-textconv", baseline], cwd=workspace
+    )["stdout"]
+
+    harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    retained = (artifacts / "final.diff").read_text(encoding="utf-8")
+    assert retained == expected
+    assert "+VALUE = 2  \n+   \n" in retained
+
+
 def test_secret_bearing_changed_filename_is_not_used_as_retained_artifact_path(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"

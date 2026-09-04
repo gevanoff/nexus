@@ -520,7 +520,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
     diff_args = ["diff", "--no-ext-diff", "--no-textconv"]
     tracked = _required_git([*diff_args, "--name-only", "-z", baseline], cwd=workspace)
     untracked = _required_git(["ls-files", "-z", "--others", "--exclude-standard"], cwd=workspace)
-    tracked_diff = _required_git([*diff_args, baseline], cwd=workspace)["stdout"].strip()
+    tracked_diff = _required_git([*diff_args, baseline], cwd=workspace)["stdout"].removesuffix("\n")
     pieces = [tracked_diff] if tracked_diff else []
     evidence_omissions: list[dict[str, str]] = []
     untracked_files = _parse_nul_paths(untracked["stdout"])
@@ -532,8 +532,9 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
         patch = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--", "/dev/null", rel],
                     cwd=workspace, evidence=True)
         _require_result(patch, f"git diff --no-index {rel}", allowed_returncodes=(0, 1))
-        if patch["stdout"].strip():
-            pieces.append(patch["stdout"].strip())
+        patch_text = patch["stdout"].removesuffix("\n")
+        if patch_text:
+            pieces.append(patch_text)
     diff_text = "\n".join(v for v in pieces if v)
     retained_diff = diff_text + ("\n" if diff_text else "")
     artifacts.mkdir(parents=True, exist_ok=True)
