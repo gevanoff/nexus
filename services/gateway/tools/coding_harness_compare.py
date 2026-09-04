@@ -1834,9 +1834,51 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
     return {"passed": None if not checks else all(v["passed"] for v in checks), "checks": checks}
 
 
+def _cross_artifact_secret_paths(
+    raw_artifacts: dict[Path, bytes], secrets: Iterable[str]
+) -> set[Path]:
+    implicated: set[Path] = set()
+    for secret in (str(value) for value in secrets if value):
+        raw_secret = secret.encode("utf-8")
+        if len(raw_secret) < 8:
+            continue
+        for protected in {raw_secret, *_encoded_secret_variants(secret)}:
+            if len(protected) < 2:
+                continue
+            candidates = [
+                (path, raw_value)
+                for path, raw_value in raw_artifacts.items()
+                if protected not in raw_value
+            ]
+            for split in range(1, len(protected)):
+                prefix = protected[:split]
+                suffix = protected[split:]
+                prefix_paths = {
+                    path for path, raw_value in candidates if prefix in raw_value
+                }
+                suffix_paths = {
+                    path for path, raw_value in candidates if suffix in raw_value
+                }
+                for prefix_path in prefix_paths:
+                    partners = suffix_paths - {prefix_path}
+                    if partners:
+                        implicated.add(prefix_path)
+                        implicated.update(partners)
+    return implicated
+
+
 def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
     secrets = tuple(str(secret) for secret in secrets if secret)
     omitted: list[str] = []
+    raw_artifacts: dict[Path, bytes] = {}
+    for path in sorted(artifacts.rglob("*")):
+        try:
+            info = path.lstat()
+            if stat.S_ISREG(info.st_mode):
+                raw_artifacts[path] = path.read_bytes()
+        except OSError:
+            continue
+    cross_artifact_secret_paths = _cross_artifact_secret_paths(raw_artifacts, secrets)
     for path in sorted(artifacts.rglob("*")):
         if _contains_secret_path(str(path.relative_to(artifacts)), secrets):
             try:
@@ -1857,6 +1899,15 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
                 raise RuntimeError(f"could not discard retained symlink artifact: {path}: {exc}") from exc
             continue
         if not stat.S_ISREG(info.st_mode):
+            continue
+        if path in cross_artifact_secret_paths:
+            try:
+                path.unlink()
+                omitted.append(str(path.relative_to(artifacts)))
+            except OSError as exc:
+                raise RuntimeError(
+                    "could not discard cross-artifact secret fragment"
+                ) from exc
             continue
         try:
             raw_artifact = path.read_bytes()

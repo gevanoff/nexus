@@ -249,6 +249,22 @@ def test_scrub_discards_character_escaped_secret_artifacts(
     assert not encoded.exists()
 
 
+def test_scrub_discards_secret_split_across_retained_artifacts(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    stdout = artifacts / "stdout.txt"
+    stderr = artifacts / "stderr.txt"
+    stdout.write_text(f"prefix:{token[:32]}", encoding="utf-8")
+    stderr.write_text(f"{token[32:]}:suffix", encoding="utf-8")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert set(omitted) == {"stdout.txt", "stderr.txt"}
+    assert not stdout.exists()
+    assert not stderr.exists()
+
+
 def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
