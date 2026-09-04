@@ -1084,6 +1084,76 @@ def test_workspace_snapshot_ignores_mutable_git_excludes(tmp_path: Path) -> None
     assert (artifacts / "final-files" / hidden).read_text(encoding="utf-8") == "created\n"
 
 
+@pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+def test_workspace_snapshot_ignores_mutable_index_flags(tmp_path: Path, flag: str) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    assert harness.git(["update-index", flag, "app.py"], cwd=workspace)["ok"] is True
+    (workspace / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert snapshot["dirty"] is True
+    assert snapshot["files_changed"] == ["app.py"]
+    assert "+VALUE = 2" in (artifacts / "final.diff").read_text(encoding="utf-8")
+    assert (artifacts / "final-files" / "app.py").read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
+def test_workspace_snapshot_bounds_aggregate_hard_link_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name != "posix":
+        pytest.skip("hard-link aggregate regression requires POSIX")
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    first = workspace / "first.txt"
+    first.write_text("12345", encoding="utf-8")
+    os.link(first, workspace / "second.txt")
+    monkeypatch.setattr(harness, "MAX_SNAPSHOT_FILE_BYTES", 8)
+
+    with pytest.raises(RuntimeError, match="byte file-evidence limit"):
+        harness.workspace_snapshot(workspace, baseline, artifacts)
+
+
+def test_workspace_snapshot_bounds_changed_file_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    for index in range(3):
+        (workspace / f"output-{index}.txt").write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(harness, "MAX_SNAPSHOT_CHANGED_FILES", 2)
+
+    with pytest.raises(RuntimeError, match="changed-file limit"):
+        harness.workspace_snapshot(workspace, baseline, artifacts)
+
+
+def test_workspace_snapshot_enforces_time_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    monkeypatch.setattr(harness, "MAX_SNAPSHOT_SECONDS", 0.0)
+
+    with pytest.raises(RuntimeError, match="snapshot time budget exhausted"):
+        harness.workspace_snapshot(workspace, baseline, tmp_path / "artifacts")
+
+
 def test_run_process_redacts_secret_before_tail_truncation(tmp_path: Path) -> None:
     secret = "nexus-boundary-secret-value"
     output_limit = 64

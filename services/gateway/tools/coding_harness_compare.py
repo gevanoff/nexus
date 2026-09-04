@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -42,6 +43,10 @@ MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
 MAX_TRACE_TOTAL_BYTES = 16_000_000
 MAX_TRACE_STEP_DIGITS = 18
+MAX_SNAPSHOT_CHANGED_FILES = 512
+MAX_SNAPSHOT_FILE_BYTES = 16_000_000
+MAX_SNAPSHOT_DIFF_CHARS = 8_000_000
+MAX_SNAPSHOT_SECONDS = 30.0
 
 
 def now_iso() -> str:
@@ -499,11 +504,16 @@ def _git_env() -> dict[str, str]:
 def git(
     argv: list[str], *, cwd: Path, evidence: bool = False, path_output: bool = False,
     secrets: Iterable[str] = (), include_raw_output: bool = False,
+    extra_env: dict[str, str] | None = None, timeout_sec: float = 60.0,
 ) -> dict[str, Any]:
+    env = _git_env()
+    if extra_env:
+        env.update(extra_env)
     return run_process(
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *argv],
         cwd=cwd,
-        env=_git_env(),
+        env=env,
+        timeout_sec=timeout_sec,
         output_limit_chars=MAX_GIT_EVIDENCE_CHARS if evidence else MAX_PROCESS_OUTPUT_CHARS,
         fail_on_output_limit=evidence,
         decode_errors="surrogateescape" if path_output else "backslashreplace",
@@ -523,7 +533,8 @@ def _require_result(result: dict[str, Any], label: str, *, allowed_returncodes: 
 
 def _required_git(
     argv: list[str], *, cwd: Path, label: str | None = None, path_output: bool = False,
-    secrets: Iterable[str] = (),
+    secrets: Iterable[str] = (), extra_env: dict[str, str] | None = None,
+    timeout_sec: float = 60.0,
 ) -> dict[str, Any]:
     secrets = tuple(str(secret) for secret in secrets if secret)
     result = git(
@@ -533,6 +544,8 @@ def _required_git(
         path_output=path_output,
         secrets=secrets,
         include_raw_output=True,
+        extra_env=extra_env,
+        timeout_sec=timeout_sec,
     )
     checked = _require_result(result, label or f"git {' '.join(argv)}", secrets=secrets)
     checked["stdout"] = checked.pop("_raw_stdout", checked["stdout"])
@@ -728,45 +741,115 @@ def _is_harness_runtime_path(rel: str) -> bool:
     return parts[0] in RESERVED_PARTS
 
 
+def _snapshot_timeout(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise RuntimeError("workspace snapshot time budget exhausted")
+    return max(0.001, remaining)
+
+
+@contextlib.contextmanager
+def _independent_snapshot_index(
+    workspace: Path,
+    baseline: str,
+    artifacts: Path,
+    secrets: Iterable[str],
+    deadline: float,
+):
+    artifacts.mkdir(parents=True, exist_ok=True)
+    index_path = artifacts / f".snapshot-index-{uuid.uuid4().hex}"
+    index_env = {"GIT_INDEX_FILE": str(index_path)}
+    try:
+        _required_git(
+            ["read-tree", baseline],
+            cwd=workspace,
+            secrets=secrets,
+            extra_env=index_env,
+            timeout_sec=_snapshot_timeout(deadline),
+        )
+        yield index_env
+    finally:
+        try:
+            index_path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise RuntimeError("could not discard independent snapshot index") from exc
+
+
 def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
                        *, secrets: Iterable[str] = ()) -> dict[str, Any]:
     secrets = tuple(str(secret) for secret in secrets if secret)
+    deadline = time.monotonic() + MAX_SNAPSHOT_SECONDS
     _required_git(
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=workspace,
         path_output=True,
         secrets=secrets,
+        timeout_sec=_snapshot_timeout(deadline),
     )
-    head = _required_git(["rev-parse", "HEAD"], cwd=workspace, secrets=secrets)
-    diff_args = ["diff", "--no-ext-diff", "--no-textconv"]
-    tracked = _required_git(
-        [*diff_args, "--name-only", "-z", baseline],
+    with _independent_snapshot_index(workspace, baseline, artifacts, secrets, deadline) as index_env:
+        tracked = _required_git(
+            ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", baseline],
+            cwd=workspace,
+            path_output=True,
+            secrets=secrets,
+            extra_env=index_env,
+            timeout_sec=_snapshot_timeout(deadline),
+        )
+        untracked = _required_git(
+            ["ls-files", "-z", "--others"],
+            cwd=workspace,
+            path_output=True,
+            secrets=secrets,
+            extra_env=index_env,
+            timeout_sec=_snapshot_timeout(deadline),
+        )
+        tracked_diff = _required_git(
+            ["diff", "--no-ext-diff", "--no-textconv", baseline],
+            cwd=workspace,
+            secrets=secrets,
+            extra_env=index_env,
+            timeout_sec=_snapshot_timeout(deadline),
+        )["stdout"].removesuffix("\n")
+    head = _required_git(
+        ["rev-parse", "HEAD"],
         cwd=workspace,
-        path_output=True,
         secrets=secrets,
+        timeout_sec=_snapshot_timeout(deadline),
     )
-    untracked = _required_git(
-        ["ls-files", "-z", "--others"],
-        cwd=workspace,
-        path_output=True,
-        secrets=secrets,
-    )
-    tracked_diff = _required_git(
-        [*diff_args, baseline], cwd=workspace, secrets=secrets
-    )["stdout"].removesuffix("\n")
     pieces = [tracked_diff] if tracked_diff else []
+    diff_chars = len(tracked_diff)
     evidence_omissions: list[dict[str, str]] = []
     untracked_files = [
         rel for rel in _parse_nul_paths(untracked["stdout"])
         if not _is_harness_runtime_path(rel)
     ]
+    changed = sorted(set(_parse_nul_paths(tracked["stdout"])) | set(untracked_files))
+    if len(changed) > MAX_SNAPSHOT_CHANGED_FILES:
+        raise RuntimeError(
+            f"workspace snapshot exceeds {MAX_SNAPSHOT_CHANGED_FILES} changed-file limit"
+        )
+    aggregate_file_bytes = 0
+    for rel in changed:
+        _snapshot_timeout(deadline)
+        path, error = _workspace_regular_file(
+            workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES
+        )
+        if error or path is None:
+            continue
+        aggregate_file_bytes += path.stat().st_size
+        if aggregate_file_bytes > MAX_SNAPSHOT_FILE_BYTES:
+            raise RuntimeError(
+                f"workspace snapshot exceeds {MAX_SNAPSHOT_FILE_BYTES} byte file-evidence limit"
+            )
     for rel in untracked_files:
+        _snapshot_timeout(deadline)
         path, error = _workspace_regular_file(workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES)
         if error or path is None:
             evidence_omissions.append({"path": redact_text(rel, secrets), "reason": error or "unsafe file"})
             continue
         patch = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--", "/dev/null", rel],
-                    cwd=workspace, evidence=True, secrets=secrets, include_raw_output=True)
+                    cwd=workspace, evidence=True, secrets=secrets, include_raw_output=True,
+                    timeout_sec=_snapshot_timeout(deadline))
         _require_result(
             patch,
             f"git diff --no-index {rel}",
@@ -777,15 +860,19 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
         patch["stderr"] = patch.pop("_raw_stderr", patch["stderr"])
         patch_text = patch["stdout"].removesuffix("\n")
         if patch_text:
+            diff_chars += len(patch_text) + (1 if pieces else 0)
+            if diff_chars > MAX_SNAPSHOT_DIFF_CHARS:
+                raise RuntimeError(
+                    f"workspace snapshot exceeds {MAX_SNAPSHOT_DIFF_CHARS} character diff limit"
+                )
             pieces.append(patch_text)
     diff_text = "\n".join(v for v in pieces if v)
     retained_diff = diff_text + ("\n" if diff_text else "")
-    artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "final.diff").write_text(retained_diff, encoding="utf-8")
-    changed = sorted(set(_parse_nul_paths(tracked["stdout"])) | set(untracked_files))
     final_files = artifacts / "final-files"
     final_file_omissions: list[dict[str, str]] = []
     for rel in changed:
+        _snapshot_timeout(deadline)
         if _contains_secret_path(rel, secrets):
             final_file_omissions.append({"path": "(redacted)", "reason": "path contains a protected secret"})
             continue

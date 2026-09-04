@@ -56,7 +56,9 @@ For each run the adapter:
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
+- builds final Git evidence from an independent baseline index so agent-controlled assume-unchanged, skip-worktree, and ignore settings cannot hide workspace changes;
 - copies only explicitly selected evidence into the retained artifact directory;
+- enforces aggregate changed-file count, file-byte, diff-size, and snapshot-time limits before retaining evidence;
 - redacts protected values before applying the final stdout/stderr tail bound and records `artifacts.process_output_truncated` when the retained tails omit earlier data;
 - sanitizes retained text evidence, including structured trace copies, before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
