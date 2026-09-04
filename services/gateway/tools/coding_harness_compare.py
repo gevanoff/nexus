@@ -48,6 +48,7 @@ MAX_TRACE_TURN_DIGITS = 18
 MAX_TRACE_FILES = 256
 MAX_TRACE_ENTRIES = 4096
 MAX_TRACE_PARSE_SECONDS = 10.0
+MAX_TRACE_AGENT_STEPS = 100
 MAX_SNAPSHOT_CHANGED_FILES = 512
 MAX_SNAPSHOT_FILE_BYTES = 16_000_000
 MAX_SNAPSHOT_DIFF_CHARS = 8_000_000
@@ -193,8 +194,10 @@ def load_fixture(path: Path) -> dict[str, Any]:
     limits["max_agent_steps"] = int(limits.get("max_agent_steps") or 20)
     if not 5 <= limits["wall_time_sec"] <= 3600:
         raise ValueError("wall_time_sec must be between 5 and 3600")
-    if not 1 <= limits["max_agent_steps"] <= 100:
-        raise ValueError("max_agent_steps must be between 1 and 100")
+    if not 1 <= limits["max_agent_steps"] <= MAX_TRACE_AGENT_STEPS:
+        raise ValueError(
+            f"max_agent_steps must be between 1 and {MAX_TRACE_AGENT_STEPS}"
+        )
     return fixture
 
 
@@ -1486,7 +1489,13 @@ def _trace_files(root: Path, *, deadline: float) -> list[Path]:
 
 
 def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | None = None,
-                secrets: Iterable[str] = (), deadline: float | None = None) -> dict[str, Any]:
+                secrets: Iterable[str] = (), deadline: float | None = None,
+                max_agent_steps: int = MAX_TRACE_AGENT_STEPS) -> dict[str, Any]:
+    if (isinstance(max_agent_steps, bool) or not isinstance(max_agent_steps, int)
+            or not 1 <= max_agent_steps <= MAX_TRACE_AGENT_STEPS):
+        raise ValueError(
+            f"max_agent_steps must be between 1 and {MAX_TRACE_AGENT_STEPS}"
+        )
     deadline = time.monotonic() + MAX_TRACE_PARSE_SECONDS if deadline is None else deadline
     roots = [session_roots] if isinstance(session_roots, Path) else list(session_roots)
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
@@ -1591,6 +1600,9 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                             malformed += 1
                             continue
                         summarized_turns.add(summary_key)
+                        if parsed_steps > max_agent_steps - steps:
+                            malformed += 1
+                            continue
                         steps += parsed_steps
             finally:
                 try:
@@ -1849,6 +1861,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
             deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
+            max_agent_steps=fixture["limits"]["max_agent_steps"],
         )
         deadline += time.monotonic() - trace_started
         validation = run_validation(

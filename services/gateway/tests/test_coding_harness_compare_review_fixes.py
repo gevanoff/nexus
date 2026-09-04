@@ -418,7 +418,7 @@ def test_parse_trace_counts_only_one_summary_per_trace_turn(tmp_path: Path) -> N
     session_root = tmp_path / "sessions"
     session_root.mkdir()
     records = [
-        {"turn": 1, "kind": "turnSummary", "steps": 10 ** 17}
+        {"turn": 1, "kind": "turnSummary", "steps": 80}
         for _ in range(20)
     ]
     (session_root / "one.events.jsonl").write_text(
@@ -429,8 +429,27 @@ def test_parse_trace_counts_only_one_summary_per_trace_turn(tmp_path: Path) -> N
     result = harness.parse_trace(session_root)
 
     assert result["agent_turns"] == 1
-    assert result["agent_steps"] == 10 ** 17
+    assert result["agent_steps"] == 80
     assert result["malformed_trace_lines"] == 19
+
+
+def test_parse_trace_bounds_steps_across_distinct_turns(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    records = [
+        {"turn": turn, "kind": "turnSummary", "steps": 1}
+        for turn in range(20)
+    ]
+    (session_root / "one.events.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(session_root, max_agent_steps=8)
+
+    assert result["agent_turns"] == 20
+    assert result["agent_steps"] == 8
+    assert result["malformed_trace_lines"] == 12
 
 
 def test_parse_trace_rejects_boolean_turn_identifiers(tmp_path: Path) -> None:
