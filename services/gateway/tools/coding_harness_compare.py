@@ -34,6 +34,8 @@ MAX_FIXTURE_JSON_BYTES = 10_000_000
 MAX_OBJECTIVE_FILE_BYTES = 2_000_000
 MAX_PROCESS_OUTPUT_CHARS = 100_000
 MAX_GIT_EVIDENCE_CHARS = 8_000_000
+MAX_TRACE_FILE_BYTES = 8_000_000
+MAX_TRACE_TOTAL_BYTES = 16_000_000
 
 
 def now_iso() -> str:
@@ -555,11 +557,30 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                 secrets: Iterable[str] = ()) -> dict[str, Any]:
     roots = [session_roots] if isinstance(session_roots, Path) else list(session_roots)
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
+    omissions: list[dict[str, Any]] = []
+    total_trace_bytes = 0
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
     trace_index = 0
+    candidate_index = 0
     for root_index, root in enumerate(roots):
         for path in _trace_files(root):
+            candidate_label = f"{root_index}:{candidate_index}"
+            candidate_index += 1
+            try:
+                trace_size = path.lstat().st_size
+            except OSError as exc:
+                omissions.append({"trace": candidate_label, "reason": f"could not stat trace: {exc}"})
+                continue
+            if trace_size > MAX_TRACE_FILE_BYTES:
+                omissions.append({"trace": candidate_label,
+                                  "reason": f"trace exceeds {MAX_TRACE_FILE_BYTES} byte per-file limit"})
+                continue
+            if total_trace_bytes + trace_size > MAX_TRACE_TOTAL_BYTES:
+                omissions.append({"trace": candidate_label,
+                                  "reason": f"trace budget exceeds {MAX_TRACE_TOTAL_BYTES} byte aggregate limit"})
+                continue
+            total_trace_bytes += trace_size
             dest: Path | None = None
             dest_handle = None
             if artifact_dir is not None:
@@ -597,7 +618,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                     dest_handle.close()
     return {"tool_calls": tools, "tool_call_count": len(tools), "agent_turns": len(turns),
             "agent_steps": steps, "context_resets": resets, "malformed_trace_lines": malformed,
-            "trace_files": files}
+            "trace_files": files, "trace_omissions": omissions, "trace_input_bytes": total_trace_bytes}
 
 
 def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_dir: Path,
@@ -781,11 +802,13 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             "workspace": workspace_info, "validation": validation,
             "trajectory": {"agent_turns": trace["agent_turns"], "agent_steps": trace["agent_steps"],
                            "tool_calls": trace["tool_call_count"], "tool_call_names": trace["tool_calls"],
-                           "context_resets": trace["context_resets"], "malformed_trace_lines": trace["malformed_trace_lines"]},
+                           "context_resets": trace["context_resets"], "malformed_trace_lines": trace["malformed_trace_lines"],
+                           "trace_input_bytes": trace["trace_input_bytes"]},
             "objective": objective,
             "artifacts": {"run_root": str(root), "stdout": str(artifacts / "stdout.txt"),
                           "stderr": str(artifacts / "stderr.txt"), "diff": str(artifacts / "final.diff"),
-                          "trace_files": trace["trace_files"], "omitted_non_text": omitted_artifacts},
+                          "trace_files": trace["trace_files"], "trace_omissions": trace["trace_omissions"],
+                          "omitted_non_text": omitted_artifacts},
         }, [nexus_token])
         result_path = artifacts / "result.json"
         write_json(result_path, result)
