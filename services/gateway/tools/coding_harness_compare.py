@@ -844,10 +844,17 @@ def _encoded_secret_variants(secret: str) -> set[bytes]:
         secret.encode("utf-32-be"),
     }
     if len(raw) >= 8:
-        base64_variants = {base64.b64encode(raw), base64.urlsafe_b64encode(raw)}
-        variants.update(base64_variants)
-        variants.update(value.rstrip(b"=") for value in base64_variants)
+        variants.update(_base64_secret_variants(secret))
         variants.update({raw.hex().encode("ascii"), raw.hex().upper().encode("ascii")})
+    return {value for value in variants if value}
+
+
+def _base64_secret_variants(secret: str) -> set[bytes]:
+    raw = secret.encode("utf-8")
+    if len(raw) < 8:
+        return set()
+    variants = {base64.b64encode(raw), base64.urlsafe_b64encode(raw)}
+    variants.update(value.rstrip(b"=") for value in tuple(variants))
     return {value for value in variants if value}
 
 
@@ -855,8 +862,11 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
     if b"\0" in raw_value:
         return True
     lowered = raw_value.lower()
+    compact_base64 = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
     for secret in (str(value) for value in secrets if value):
         if any(encoded in raw_value for encoded in _encoded_secret_variants(secret)):
+            return True
+        if any(encoded in compact_base64 for encoded in _base64_secret_variants(secret)):
             return True
         raw_secret = secret.encode("utf-8")
         if len(raw_secret) >= 8 and raw_secret.hex().encode("ascii") in lowered:
@@ -866,20 +876,10 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
 
 def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
     candidate = str(rel)
-    candidate_lower = candidate.lower()
     for secret in (str(value) for value in secrets if value):
         if secret in candidate:
             return True
-        raw = secret.encode("utf-8")
-        if len(raw) < 8:
-            continue
-        if raw.hex() in candidate_lower:
-            return True
-        for encoded in (base64.b64encode(raw), base64.urlsafe_b64encode(raw)):
-            text = encoded.decode("ascii")
-            if text in candidate or text.rstrip("=") in candidate:
-                return True
-    return False
+    return _contains_encoded_secret_bytes(candidate.encode("utf-8", errors="replace"), secrets)
 
 
 def _sanitize_snapshot_git_metadata(workspace: Path) -> None:

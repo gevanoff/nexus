@@ -188,6 +188,21 @@ def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     assert not encoded.exists()
 
 
+def test_scrub_and_result_redaction_detect_line_wrapped_base64_secrets(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "nexus-line-wrapped-base64-secret-" * 3
+    wrapped = harness.base64.encodebytes(token.encode("utf-8"))
+    encoded = artifacts / "encoded.txt"
+    encoded.write_bytes(b"before\n" + wrapped + b"after\n")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert omitted == ["encoded.txt"]
+    assert not encoded.exists()
+    assert harness.redact_text(wrapped.decode("ascii"), [token]) == "(redacted)"
+
+
 def test_encoded_process_output_is_redacted_from_the_complete_result(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
