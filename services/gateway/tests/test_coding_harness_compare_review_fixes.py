@@ -343,6 +343,20 @@ def test_parse_trace_counts_oversized_numeric_step_string_as_malformed(tmp_path:
     assert result["malformed_trace_lines"] == 1
 
 
+def test_parse_trace_counts_oversized_integer_steps_as_malformed(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    (session_root / "one.events.jsonl").write_text(
+        json.dumps({"turn": 1, "kind": "turnSummary", "steps": 10 ** 1_000}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(session_root)
+
+    assert result["agent_steps"] == 0
+    assert result["malformed_trace_lines"] == 1
+
+
 def test_parse_trace_counts_same_turn_number_in_distinct_trace_files(tmp_path: Path) -> None:
     session_root = tmp_path / "sessions"
     session_root.mkdir()
@@ -1211,6 +1225,26 @@ def test_run_process_redacts_secret_before_tail_truncation(tmp_path: Path) -> No
     assert result["output_truncated"] is True
     assert secret not in result["stdout"]
     assert secret[1:] not in result["stdout"]
+    assert len(result["stdout"]) <= output_limit
+
+
+def test_run_process_retains_overlap_for_longest_secret_encoding(tmp_path: Path) -> None:
+    secret = "nexus-encoded-boundary-secret"
+    encoded = secret.encode("utf-8").hex()
+    output_limit = 64
+    output = ("p" * 200) + encoded + ("x" * 50)
+
+    result = harness.run_process(
+        [sys.executable, "-c", f"import sys; sys.stdout.write({output!r})"],
+        cwd=tmp_path,
+        secrets=[secret],
+        output_limit_chars=output_limit,
+    )
+
+    assert result["ok"] is True
+    assert result["output_truncated"] is True
+    assert result["stdout"] == "(redacted)"
+    assert encoded[-14:] not in result["stdout"]
     assert len(result["stdout"]) <= output_limit
 
 

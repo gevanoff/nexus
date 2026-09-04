@@ -485,7 +485,17 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
     stream_threads: list[tuple[Any, Any, dict[str, Any]]] = []
     timed_out = False
     containment_error: str | None = None
-    redact_overlap_chars = max((len(str(secret)) for secret in secrets if secret), default=0)
+    redact_overlap_chars = max(
+        (
+            length
+            for secret in secrets
+            for length in (
+                len(secret),
+                *(len(encoded) for encoded in _encoded_secret_variants(secret)),
+            )
+        ),
+        default=0,
+    )
     try:
         stream_threads = [
             (threading.Thread(
@@ -1269,7 +1279,8 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                         elif isinstance(raw_steps, bool):
                             malformed += 1
                             continue
-                        elif isinstance(raw_steps, int) and raw_steps >= 0:
+                        elif (isinstance(raw_steps, int)
+                              and 0 <= raw_steps < 10 ** MAX_TRACE_STEP_DIGITS):
                             parsed_steps = raw_steps
                         elif (isinstance(raw_steps, str)
                               and len(raw_steps) <= MAX_TRACE_STEP_DIGITS
