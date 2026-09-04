@@ -278,26 +278,28 @@ def _terminate_linux_adopted_children(baseline_children: set[int]) -> None:
         raise RuntimeError(f"descendant processes survived containment: {sorted(remaining)}")
 
 
-def _drain_stream(stream: Any, limit_chars: int | None, state: dict[str, Any]) -> None:
+def _drain_stream(stream: Any, limit_chars: int | None, state: dict[str, Any],
+                  redact_overlap_chars: int = 0) -> None:
     chunks: deque[str] = deque()
     retained = 0
     total = 0
+    retention_limit = None if limit_chars is None else limit_chars + max(0, redact_overlap_chars)
     try:
         while True:
             chunk = stream.read(65_536)
             if not chunk:
                 break
             total += len(chunk)
-            if limit_chars is None:
+            if retention_limit is None:
                 chunks.append(chunk)
                 retained += len(chunk)
                 continue
-            if limit_chars <= 0:
+            if retention_limit <= 0:
                 continue
             chunks.append(chunk)
             retained += len(chunk)
-            while retained > limit_chars and chunks:
-                overflow = retained - limit_chars
+            while retained > retention_limit and chunks:
+                overflow = retained - retention_limit
                 first = chunks[0]
                 if len(first) <= overflow:
                     retained -= len(chunks.popleft())
@@ -320,8 +322,10 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 isolate_process_group: bool = False,
                 output_limit_chars: int | None = MAX_PROCESS_OUTPUT_CHARS,
                 fail_on_output_limit: bool = False,
-                decode_errors: str = "replace") -> dict[str, Any]:
+                decode_errors: str = "replace",
+                include_raw_output: bool = False) -> dict[str, Any]:
     started = time.monotonic()
+    secrets = tuple(str(secret) for secret in secrets if secret)
     if isolate_process_group and not sys.platform.startswith("linux"):
         return {"ok": False, "returncode": None, "timed_out": False,
                 "stdout": "", "stderr": "descendant process containment requires a Linux host",
@@ -388,13 +392,18 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
     stream_threads: list[tuple[Any, Any, dict[str, Any]]] = []
     timed_out = False
     containment_error: str | None = None
+    redact_overlap_chars = max((len(str(secret)) for secret in secrets if secret), default=0)
     try:
         stream_threads = [
             (threading.Thread(
-                target=_drain_stream, args=(proc.stdout, output_limit_chars, stdout_state), daemon=True
+                target=_drain_stream,
+                args=(proc.stdout, output_limit_chars, stdout_state, redact_overlap_chars),
+                daemon=True,
             ), proc.stdout, stdout_state),
             (threading.Thread(
-                target=_drain_stream, args=(proc.stderr, output_limit_chars, stderr_state), daemon=True
+                target=_drain_stream,
+                args=(proc.stderr, output_limit_chars, stderr_state, redact_overlap_chars),
+                daemon=True,
             ), proc.stderr, stderr_state),
         ]
         for thread, _, _ in stream_threads:
@@ -450,20 +459,35 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
     stderr_truncated = bool(stderr_state.get("truncated"))
     stream_error = stdout_state.get("error") or stderr_state.get("error")
     output_truncated = stdout_truncated or stderr_truncated or bool(stream_error)
+    clean_stdout = redact_text(raw_stdout, secrets)
+    clean_stderr = redact_text(raw_stderr, secrets)
+    bounded_raw_stdout = raw_stdout
+    bounded_raw_stderr = raw_stderr
+    if output_limit_chars is not None:
+        if stdout_truncated:
+            clean_stdout = clean_stdout[-output_limit_chars:] if output_limit_chars > 0 else ""
+            bounded_raw_stdout = raw_stdout[-output_limit_chars:] if output_limit_chars > 0 else ""
+        if stderr_truncated:
+            clean_stderr = clean_stderr[-output_limit_chars:] if output_limit_chars > 0 else ""
+            bounded_raw_stderr = raw_stderr[-output_limit_chars:] if output_limit_chars > 0 else ""
     if timed_out:
-        raw_stderr = f"timeout after {timeout_sec}s\n{raw_stderr}"
+        clean_stderr = f"timeout after {timeout_sec}s\n{clean_stderr}"
     if stream_error:
-        raw_stderr = f"stream read error: {stream_error}\n{raw_stderr}"
+        clean_stderr = f"stream read error: {stream_error}\n{clean_stderr}"
     if output_truncated and fail_on_output_limit:
-        raw_stderr = f"output exceeded {output_limit_chars} character evidence limit\n{raw_stderr}"
+        clean_stderr = f"output exceeded {output_limit_chars} character evidence limit\n{clean_stderr}"
     ok = bool(not timed_out and not stream_error and proc.returncode == 0
               and not (output_truncated and fail_on_output_limit))
-    return {"ok": ok, "returncode": None if timed_out else proc.returncode,
-            "timed_out": timed_out,
-            "stdout": redact_text(raw_stdout, secrets),
-            "stderr": redact_text(raw_stderr, secrets),
-            "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
-            "launch_error": None, "output_truncated": output_truncated}
+    result = {"ok": ok, "returncode": None if timed_out else proc.returncode,
+              "timed_out": timed_out,
+              "stdout": clean_stdout,
+              "stderr": clean_stderr,
+              "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
+              "launch_error": None, "output_truncated": output_truncated}
+    if include_raw_output:
+        result["_raw_stdout"] = bounded_raw_stdout
+        result["_raw_stderr"] = bounded_raw_stderr
+    return result
 
 
 def _git_env() -> dict[str, str]:
@@ -473,7 +497,8 @@ def _git_env() -> dict[str, str]:
 
 
 def git(
-    argv: list[str], *, cwd: Path, evidence: bool = False, path_output: bool = False
+    argv: list[str], *, cwd: Path, evidence: bool = False, path_output: bool = False,
+    secrets: Iterable[str] = (), include_raw_output: bool = False,
 ) -> dict[str, Any]:
     return run_process(
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *argv],
@@ -482,6 +507,8 @@ def git(
         output_limit_chars=MAX_GIT_EVIDENCE_CHARS if evidence else MAX_PROCESS_OUTPUT_CHARS,
         fail_on_output_limit=evidence,
         decode_errors="surrogateescape" if path_output else "backslashreplace",
+        secrets=secrets,
+        include_raw_output=include_raw_output,
     )
 
 
@@ -495,10 +522,22 @@ def _require_result(result: dict[str, Any], label: str, *, allowed_returncodes: 
 
 
 def _required_git(
-    argv: list[str], *, cwd: Path, label: str | None = None, path_output: bool = False
+    argv: list[str], *, cwd: Path, label: str | None = None, path_output: bool = False,
+    secrets: Iterable[str] = (),
 ) -> dict[str, Any]:
-    result = git(argv, cwd=cwd, evidence=True, path_output=path_output)
-    return _require_result(result, label or f"git {' '.join(argv)}")
+    secrets = tuple(str(secret) for secret in secrets if secret)
+    result = git(
+        argv,
+        cwd=cwd,
+        evidence=True,
+        path_output=path_output,
+        secrets=secrets,
+        include_raw_output=True,
+    )
+    checked = _require_result(result, label or f"git {' '.join(argv)}", secrets=secrets)
+    checked["stdout"] = checked.pop("_raw_stdout", checked["stdout"])
+    checked["stderr"] = checked.pop("_raw_stderr", checked["stderr"])
+    return checked
 
 
 def _mkdir_private(path: Path) -> None:
@@ -565,7 +604,13 @@ def _path_lexists(path: Path) -> bool:
 
 
 def _repair_tree_permissions(path: Path) -> None:
-    if not _path_lexists(path) or path.is_symlink():
+    if not _path_lexists(path):
+        return
+    try:
+        root_info = path.lstat()
+    except OSError:
+        return
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
         return
     try:
         os.chmod(path, stat.S_IRWXU)
@@ -615,12 +660,29 @@ def discard_run_root_verified(root: Path) -> None:
 def _prepare_artifacts_root(root: Path, artifacts: Path) -> None:
     if artifacts.parent != root:
         raise RuntimeError("artifact root is outside the run root")
+    root_info = root.lstat()
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        raise RuntimeError("execution root is not a trusted directory")
     if _path_lexists(artifacts):
         discard_path_verified(artifacts)
     artifacts.mkdir(mode=0o700, parents=False, exist_ok=False)
     info = artifacts.lstat()
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
         raise RuntimeError("artifact root is not a trusted directory")
+
+
+def _require_expected_directory_entries(
+    path: Path, expected: set[str], *, allowed: set[str] | None = None
+) -> None:
+    try:
+        info = path.lstat()
+        entries = {entry.name for entry in path.iterdir()}
+    except OSError as exc:
+        raise RuntimeError(f"could not verify retained run directory structure: {exc}") from exc
+    permitted = expected if allowed is None else allowed
+    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+            or not expected <= entries or not entries <= permitted):
+        raise RuntimeError("unexpected entries remained in the retained run directory structure")
 
 
 def _parse_nul_paths(text: str) -> list[str]:
@@ -659,34 +721,60 @@ def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
     return any(bool(secret) and str(secret) in rel for secret in secrets)
 
 
+def _is_harness_runtime_path(rel: str) -> bool:
+    parts = Path(str(rel or "")).parts
+    if not parts:
+        return False
+    return parts[0] in RESERVED_PARTS
+
+
 def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
                        *, secrets: Iterable[str] = ()) -> dict[str, Any]:
-    status = _required_git(
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=workspace, path_output=True
+    secrets = tuple(str(secret) for secret in secrets if secret)
+    _required_git(
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        cwd=workspace,
+        path_output=True,
+        secrets=secrets,
     )
-    head = _required_git(["rev-parse", "HEAD"], cwd=workspace)
+    head = _required_git(["rev-parse", "HEAD"], cwd=workspace, secrets=secrets)
     diff_args = ["diff", "--no-ext-diff", "--no-textconv"]
-    tracked = _required_git([*diff_args, "--name-only", "-z", baseline], cwd=workspace, path_output=True)
-    untracked = _required_git(
-        ["ls-files", "-z", "--others", "--exclude-standard"], cwd=workspace, path_output=True
+    tracked = _required_git(
+        [*diff_args, "--name-only", "-z", baseline],
+        cwd=workspace,
+        path_output=True,
+        secrets=secrets,
     )
-    tracked_diff = _required_git([*diff_args, baseline], cwd=workspace)["stdout"].removesuffix("\n")
+    untracked = _required_git(
+        ["ls-files", "-z", "--others"],
+        cwd=workspace,
+        path_output=True,
+        secrets=secrets,
+    )
+    tracked_diff = _required_git(
+        [*diff_args, baseline], cwd=workspace, secrets=secrets
+    )["stdout"].removesuffix("\n")
     pieces = [tracked_diff] if tracked_diff else []
     evidence_omissions: list[dict[str, str]] = []
-    untracked_files = _parse_nul_paths(untracked["stdout"])
+    untracked_files = [
+        rel for rel in _parse_nul_paths(untracked["stdout"])
+        if not _is_harness_runtime_path(rel)
+    ]
     for rel in untracked_files:
         path, error = _workspace_regular_file(workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES)
         if error or path is None:
             evidence_omissions.append({"path": redact_text(rel, secrets), "reason": error or "unsafe file"})
             continue
         patch = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--", "/dev/null", rel],
-                    cwd=workspace, evidence=True)
+                    cwd=workspace, evidence=True, secrets=secrets, include_raw_output=True)
         _require_result(
             patch,
             f"git diff --no-index {rel}",
             allowed_returncodes=(0, 1),
             secrets=secrets,
         )
+        patch["stdout"] = patch.pop("_raw_stdout", patch["stdout"])
+        patch["stderr"] = patch.pop("_raw_stderr", patch["stderr"])
         patch_text = patch["stdout"].removesuffix("\n")
         if patch_text:
             pieces.append(patch_text)
@@ -712,7 +800,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
         except (OSError, ValueError) as exc:
             raise RuntimeError(f"could not retain final file evidence for {redact_text(rel, secrets)}: {exc}") from exc
     return {"base_head": baseline, "final_head": head["stdout"].strip(),
-            "dirty": bool(status["stdout"]), "files_changed": changed,
+            "dirty": bool(changed), "files_changed": changed,
             "diff_sha256": hashlib.sha256(retained_diff.encode()).hexdigest(), "diff_chars": len(retained_diff),
             "evidence_omissions": evidence_omissions, "final_file_omissions": final_file_omissions,
             "git_metadata_retained": True, "execution_workspace_retained": True}
@@ -1084,6 +1172,13 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         process = run_process(argv, cwd=workspace, env=env, timeout_sec=process_timeout,
                               secrets=[nexus_token], isolate_process_group=True)
         validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
+        _require_expected_directory_entries(run_dir, {fixture_dir.name})
+        _require_expected_directory_entries(fixture_dir, {root.name})
+        _require_expected_directory_entries(
+            root,
+            {workspace.name, home.name, tmp.name},
+            allowed={workspace.name, home.name, tmp.name, artifacts.name},
+        )
         _prepare_artifacts_root(root, artifacts)
         (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
         (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
@@ -1101,6 +1196,9 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             discard_path_verified(execution_path)
         if any(_path_lexists(path) for path in (workspace, home, tmp)):
             raise RuntimeError("execution state remained after verified discard")
+        _require_expected_directory_entries(root, {artifacts.name})
+        _require_expected_directory_entries(fixture_dir, {root.name})
+        _require_expected_directory_entries(run_dir, {fixture_dir.name})
         workspace_info["git_metadata_retained"] = False
         workspace_info["execution_workspace_retained"] = False
 
@@ -1147,12 +1245,13 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         write_json(result_path, result)
         return result, result_path
     except BaseException:
-        if _path_lexists(root):
+        if _path_lexists(run_dir):
             try:
-                discard_run_root_verified(root)
+                discard_run_root_verified(run_dir)
             except BaseException as discard_exc:
+                discard_detail = redact_text(str(discard_exc), [nexus_token])
                 raise RuntimeError(
-                    f"SECURITY: evaluation failed and run root could not be securely discarded: {root}: {discard_exc}"
+                    f"SECURITY: evaluation failed and run directory could not be securely discarded: {run_dir}: {discard_detail}"
                 ) from discard_exc
         raise
 

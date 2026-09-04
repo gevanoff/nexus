@@ -57,10 +57,11 @@ For each run the adapter:
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
 - copies only explicitly selected evidence into the retained artifact directory;
-- bounds captured process output and records `artifacts.process_output_truncated` when the retained stdout/stderr tails omit earlier data;
+- redacts protected values before applying the final stdout/stderr tail bound and records `artifacts.process_output_truncated` when the retained tails omit earlier data;
 - sanitizes retained text evidence, including structured trace copies, before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
 - repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;
+- rejects unexpected entries anywhere inside the retained run hierarchy, leaving only the controlled artifact directory after execution cleanup;
 - if an unexpected failure occurs before safe retention is established, discards the whole run root and verifies its absence before propagating the failure;
 - recomputes the retained diff checksum after sanitization so it identifies the actual evidence file.
 

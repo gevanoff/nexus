@@ -1008,3 +1008,129 @@ print('done')
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         assert token not in text, f"secret remained in retained artifact: {path}"
+
+
+def test_fixture_rejects_and_discards_unexpected_execution_root_entries(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+workspace = pathlib.Path(os.environ['WORKSPACE_ROOT'])
+(workspace.parent / 'unexpected.txt').write_text(os.environ['OPENAI_API_KEY'], encoding='utf-8')
+print('done')
+""",
+    )
+    fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"})
+    out_root = tmp_path / "runs"
+    token = "nexus-unexpected-root-secret"
+
+    with pytest.raises(RuntimeError, match="unexpected entries remained") as raised:
+        harness.run_albatross_fixture(
+            fixture,
+            out_root=out_root,
+            executable=str(fake),
+            nexus_base_url="http://ai2:8800/v1",
+            nexus_token=token,
+            model="coder",
+        )
+
+    assert token not in str(raised.value)
+    assert not list(out_root.rglob("unexpected.txt"))
+    assert not any(path.is_dir() for path in out_root.iterdir())
+
+
+def test_discard_top_level_hard_link_does_not_chmod_external_inode(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX hard-link regression")
+    outside = tmp_path / "outside-file"
+    outside.write_text("external\n", encoding="utf-8")
+    outside.chmod(0o640)
+    original_mode = stat.S_IMODE(outside.stat().st_mode)
+    linked_root = tmp_path / "execution-root"
+    os.link(outside, linked_root)
+
+    harness.discard_path_verified(linked_root)
+
+    assert not os.path.lexists(linked_root)
+    assert outside.read_text(encoding="utf-8") == "external\n"
+    assert stat.S_IMODE(outside.stat().st_mode) == original_mode
+
+
+def test_workspace_snapshot_ignores_mutable_git_excludes(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    hidden = "agent-hidden-output.txt"
+    with (workspace / ".git" / "info" / "exclude").open("a", encoding="utf-8") as handle:
+        handle.write(f"{hidden}\n")
+    (workspace / hidden).write_text("created\n", encoding="utf-8")
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert snapshot["dirty"] is True
+    assert snapshot["files_changed"] == [hidden]
+    assert hidden in (artifacts / "final.diff").read_text(encoding="utf-8")
+    assert (artifacts / "final-files" / hidden).read_text(encoding="utf-8") == "created\n"
+
+
+def test_run_process_redacts_secret_before_tail_truncation(tmp_path: Path) -> None:
+    secret = "nexus-boundary-secret-value"
+    output_limit = 64
+    filler = "x" * (output_limit + 1 - len(secret))
+
+    result = harness.run_process(
+        [sys.executable, "-c", f"import sys; sys.stdout.write({(secret + filler)!r})"],
+        cwd=tmp_path,
+        secrets=[secret],
+        output_limit_chars=output_limit,
+    )
+
+    assert result["ok"] is True
+    assert result["output_truncated"] is True
+    assert secret not in result["stdout"]
+    assert secret[1:] not in result["stdout"]
+    assert len(result["stdout"]) <= output_limit
+
+
+def test_required_workspace_git_failures_redact_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "nexus-required-git-secret"
+
+    def fail_git(*args, **kwargs):
+        assert tuple(kwargs["secrets"]) == (secret,)
+        assert kwargs["include_raw_output"] is True
+        return {
+            "ok": False,
+            "returncode": 128,
+            "timed_out": False,
+            "stdout": "",
+            "stderr": f"fatal: invalid alternate /tmp/{secret}",
+            "duration_ms": 0.0,
+            "launch_error": None,
+            "output_truncated": False,
+        }
+
+    monkeypatch.setattr(harness, "git", fail_git)
+
+    with pytest.raises(RuntimeError) as raised:
+        harness.workspace_snapshot(
+            tmp_path / "workspace",
+            "baseline",
+            tmp_path / "artifacts",
+            secrets=[secret],
+        )
+
+    assert secret not in str(raised.value)
+    assert "/tmp/(redacted)" in str(raised.value)
