@@ -819,7 +819,11 @@ def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
             raise ValueError(f"fixture path escapes workspace: {rel}")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8", newline="\n")
-    for argv in (["init"], ["config", "user.email", "coding-harness@example.invalid"],
+    result = git(["init"], cwd=workspace)
+    if not result["ok"]:
+        raise RuntimeError(f"git init failed: {result['stderr'] or result['stdout']}")
+    _sanitize_snapshot_git_metadata(workspace)
+    for argv in (["config", "user.email", "coding-harness@example.invalid"],
                  ["config", "user.name", "Coding Harness Eval"], ["add", "."],
                  ["commit", "-m", "fixture baseline", "--allow-empty"]):
         result = git(list(argv), cwd=workspace)

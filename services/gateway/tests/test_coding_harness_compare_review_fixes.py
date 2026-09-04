@@ -711,6 +711,31 @@ def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path
     ) == "$Id: forged $\n"
 
 
+def test_initialize_workspace_neutralizes_fixture_ident_attributes(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {
+            "repository": {
+                "files": {
+                    ".gitattributes": "*.txt ident\n",
+                    "value.txt": "$Id: forged $\n",
+                }
+            }
+        },
+    )
+
+    stored = harness.git(["show", f"{baseline}:value.txt"], cwd=workspace)
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert stored["ok"] is True
+    assert stored["stdout"] == "$Id: forged $\n"
+    assert snapshot["files_changed"] == []
+
+
 def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixture = {"expected": {"validation": [["first"], ["second"]]}}
     workspace = tmp_path / "workspace"
