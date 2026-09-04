@@ -52,7 +52,7 @@ For each run the adapter:
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
 - bounds the agent and post-run validation under one fixture wall-time deadline;
-- launches agent/validation commands under Linux subreaper supervision, terminates their complete adopted descendant trees, and then collects final evidence;
+- launches agent/validation commands under Linux subreaper supervision, terminates their complete adopted descendant trees even on operator interruption, and then collects final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;

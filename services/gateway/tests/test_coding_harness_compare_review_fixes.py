@@ -275,6 +275,20 @@ def test_parse_trace_counts_non_object_json_as_malformed(tmp_path: Path) -> None
     assert result["agent_steps"] == 1
 
 
+def test_parse_trace_counts_oversized_numeric_step_string_as_malformed(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    (session_root / "one.events.jsonl").write_text(
+        json.dumps({"turn": 1, "kind": "turnSummary", "steps": "7" * 5_000}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(session_root)
+
+    assert result["agent_steps"] == 0
+    assert result["malformed_trace_lines"] == 1
+
+
 def test_parse_trace_records_source_open_failure_and_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -494,6 +508,58 @@ def test_discard_repairs_restrictive_permissions_and_verifies_absence(tmp_path: 
     assert not os.path.lexists(target)
 
 
+def test_keyboard_interrupt_discards_fixture_execution_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"})
+    token = "nexus-interrupted-run-secret"
+
+    monkeypatch.setattr(
+        harness,
+        "albatross_version",
+        lambda executable: {
+            "installed": True,
+            "executable": executable,
+            "version": "2.4.0",
+            "raw": "albatross 2.4.0",
+        },
+    )
+    monkeypatch.setattr(
+        harness,
+        "albatross_capabilities",
+        lambda executable: (
+            {"ok": True, "stdout": "--print --allow-tools", "stderr": ""},
+            {"one_shot": True, "allow_tools": True},
+            [],
+        ),
+    )
+
+    def initialize_with_secret(workspace: Path, fixture_data: dict) -> str:
+        workspace.mkdir(parents=True)
+        (workspace / "secret.txt").write_text(token, encoding="utf-8")
+        return "baseline"
+
+    def interrupt_run(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(harness, "initialize_workspace", initialize_with_secret)
+    monkeypatch.setattr(harness, "run_process", interrupt_run)
+    out_root = tmp_path / "runs"
+
+    with pytest.raises(KeyboardInterrupt):
+        harness.run_albatross_fixture(
+            fixture,
+            out_root=out_root,
+            executable="albatross",
+            nexus_base_url="http://ai2:8800/v1",
+            nexus_token=token,
+            model="coder",
+        )
+
+    assert not list(out_root.rglob("albatross"))
+    assert not list(out_root.rglob("secret.txt"))
+
+
 def test_isolated_process_group_terminates_background_descendants(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("subreaper containment is Linux-only")
@@ -565,6 +631,59 @@ def test_isolated_process_execution_fails_closed_when_descendants_cannot_be_insp
     assert result["ok"] is False
     assert result["launch_error"] == "subreaper_unavailable"
     assert "could not enable descendant containment" in result["stderr"]
+
+
+def test_isolated_process_reaps_detached_descendant_on_keyboard_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("subreaper containment is Linux-only")
+    try:
+        harness._linux_direct_children(os.getpid())
+    except OSError:
+        pytest.skip("procfs child enumeration is unavailable")
+
+    marker = tmp_path / "interrupted-late-write.txt"
+    child = (
+        "import pathlib,time; "
+        "time.sleep(1.2); "
+        f"pathlib.Path({str(marker)!r}).write_text('late', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, start_new_session=True); "
+        "time.sleep(5)"
+    )
+    original_popen = harness.subprocess.Popen
+
+    class InterruptingProcess:
+        def __init__(self, *args, **kwargs):
+            self._process = original_popen(*args, **kwargs)
+            self._first_wait = True
+
+        def __getattr__(self, name):
+            return getattr(self._process, name)
+
+        def wait(self, timeout=None):
+            if self._first_wait:
+                self._first_wait = False
+                time.sleep(0.2)
+                raise KeyboardInterrupt
+            return self._process.wait(timeout=timeout)
+
+    monkeypatch.setattr(harness.subprocess, "Popen", InterruptingProcess)
+
+    with pytest.raises(KeyboardInterrupt):
+        harness.run_process(
+            [sys.executable, "-c", parent],
+            cwd=tmp_path,
+            timeout_sec=2.0,
+            isolate_process_group=True,
+        )
+    time.sleep(1.4)
+
+    assert not marker.exists()
 
 
 def test_large_trace_is_sanitized_and_raw_execution_tree_is_not_retained(tmp_path: Path) -> None:

@@ -41,6 +41,7 @@ MAX_PROCESS_OUTPUT_CHARS = 100_000
 MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
 MAX_TRACE_TOTAL_BYTES = 16_000_000
+MAX_TRACE_STEP_DIGITS = 18
 
 
 def now_iso() -> str:
@@ -368,50 +369,47 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
 
     stdout_state: dict[str, Any] = {}
     stderr_state: dict[str, Any] = {}
-    stdout_thread = threading.Thread(
-        target=_drain_stream, args=(proc.stdout, output_limit_chars, stdout_state), daemon=True
-    )
-    stderr_thread = threading.Thread(
-        target=_drain_stream, args=(proc.stderr, output_limit_chars, stderr_state), daemon=True
-    )
-    stdout_thread.start()
-    stderr_thread.start()
     timed_out = False
+    containment_error: str | None = None
     try:
+        stdout_thread = threading.Thread(
+            target=_drain_stream, args=(proc.stdout, output_limit_chars, stdout_state), daemon=True
+        )
+        stderr_thread = threading.Thread(
+            target=_drain_stream, args=(proc.stderr, output_limit_chars, stderr_state), daemon=True
+        )
+        stdout_thread.start()
+        stderr_thread.start()
         try:
             proc.wait(timeout=max(0.001, timeout_sec))
         except subprocess.TimeoutExpired:
             timed_out = True
+    finally:
+        try:
             if isolate_process_group:
                 _terminate_process_group(proc.pid)
-            else:
+            elif proc.poll() is None:
                 proc.kill()
             try:
                 proc.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
-    finally:
-        if isolate_process_group:
-            _terminate_process_group(proc.pid)
-        elif proc.poll() is None:
-            proc.kill()
-        try:
-            proc.wait(timeout=1.0)
-        except subprocess.TimeoutExpired:
-            pass
-
-    containment_error: str | None = None
-    if isolate_process_group:
-        try:
-            _terminate_linux_adopted_children(baseline_children)
-        except (OSError, RuntimeError) as exc:
-            containment_error = f"could not verify descendant containment: {exc}"
-        finally:
-            if not subreaper_was_enabled:
                 try:
-                    _set_linux_subreaper(False)
-                except OSError as exc:
-                    containment_error = containment_error or f"could not restore subreaper state: {exc}"
+                    proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            if isolate_process_group:
+                try:
+                    _terminate_linux_adopted_children(baseline_children)
+                except (OSError, RuntimeError) as exc:
+                    containment_error = f"could not verify descendant containment: {exc}"
+                finally:
+                    if not subreaper_was_enabled:
+                        try:
+                            _set_linux_subreaper(False)
+                        except OSError as exc:
+                            containment_error = containment_error or f"could not restore subreaper state: {exc}"
 
     for thread, stream, state in (
         (stdout_thread, proc.stdout, stdout_state),
@@ -838,7 +836,9 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                             continue
                         elif isinstance(raw_steps, int) and raw_steps >= 0:
                             parsed_steps = raw_steps
-                        elif isinstance(raw_steps, str) and re.fullmatch(r"\d+", raw_steps):
+                        elif (isinstance(raw_steps, str)
+                              and len(raw_steps) <= MAX_TRACE_STEP_DIGITS
+                              and re.fullmatch(r"\d+", raw_steps)):
                             parsed_steps = int(raw_steps)
                         else:
                             malformed += 1
@@ -1016,12 +1016,10 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
     fixture_dir = run_dir / fixture["id"]
     root = fixture_dir / "albatross"
     workspace, artifacts, home, tmp = root / "workspace", root / "artifacts", root / "home", root / "tmp"
-    root_created = False
     try:
         _mkdir_private(run_dir)
         _mkdir_private(fixture_dir)
         _mkdir_private(root)
-        root_created = True
         _mkdir_private(home)
         _mkdir_private(tmp)
         baseline = initialize_workspace(workspace, fixture)
@@ -1098,11 +1096,11 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         result_path = artifacts / "result.json"
         write_json(result_path, result)
         return result, result_path
-    except Exception:
-        if root_created and _path_lexists(root):
+    except BaseException:
+        if _path_lexists(root):
             try:
                 discard_run_root_verified(root)
-            except Exception as discard_exc:
+            except BaseException as discard_exc:
                 raise RuntimeError(
                     f"SECURITY: evaluation failed and run root could not be securely discarded: {root}: {discard_exc}"
                 ) from discard_exc
