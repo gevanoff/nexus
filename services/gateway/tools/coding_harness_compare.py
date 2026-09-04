@@ -11,8 +11,11 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -203,6 +206,43 @@ def _terminate_process_group(pgid: int, grace_sec: float = 0.5) -> None:
         time.sleep(0.02)
 
 
+def _drain_stream(stream: Any, limit_chars: int | None, state: dict[str, Any]) -> None:
+    chunks: deque[str] = deque()
+    retained = 0
+    total = 0
+    try:
+        while True:
+            chunk = stream.read(65_536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if limit_chars is None:
+                chunks.append(chunk)
+                retained += len(chunk)
+                continue
+            if limit_chars <= 0:
+                continue
+            chunks.append(chunk)
+            retained += len(chunk)
+            while retained > limit_chars and chunks:
+                overflow = retained - limit_chars
+                first = chunks[0]
+                if len(first) <= overflow:
+                    retained -= len(chunks.popleft())
+                else:
+                    chunks[0] = first[overflow:]
+                    retained -= overflow
+    except OSError as exc:
+        state["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            stream.close()
+        except OSError:
+            pass
+    state["text"] = "".join(chunks)
+    state["truncated"] = bool(limit_chars is not None and total > limit_chars)
+
+
 def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None,
                 timeout_sec: float = 60.0, secrets: Iterable[str] = (),
                 isolate_process_group: bool = False,
@@ -232,44 +272,68 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
                 "launch_error": type(exc).__name__, "output_truncated": False}
 
+    stdout_state: dict[str, Any] = {}
+    stderr_state: dict[str, Any] = {}
+    stdout_thread = threading.Thread(
+        target=_drain_stream, args=(proc.stdout, output_limit_chars, stdout_state), daemon=True
+    )
+    stderr_thread = threading.Thread(
+        target=_drain_stream, args=(proc.stderr, output_limit_chars, stderr_state), daemon=True
+    )
+    stdout_thread.start()
+    stderr_thread.start()
     timed_out = False
-    stdout = ""
-    stderr = ""
     try:
         try:
-            stdout, stderr = proc.communicate(timeout=max(0.001, timeout_sec))
-        except subprocess.TimeoutExpired as exc:
+            proc.wait(timeout=max(0.001, timeout_sec))
+        except subprocess.TimeoutExpired:
             timed_out = True
             if isolate_process_group:
                 _terminate_process_group(proc.pid)
             else:
                 proc.kill()
-            stdout, stderr = proc.communicate()
-            if exc.stdout and not stdout:
-                stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout)
-            if exc.stderr and not stderr:
-                stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr)
+            try:
+                proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
     finally:
         if isolate_process_group:
             _terminate_process_group(proc.pid)
         elif proc.poll() is None:
             proc.kill()
-            proc.communicate()
+        try:
+            proc.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            pass
 
+    for thread, stream, state in (
+        (stdout_thread, proc.stdout, stdout_state),
+        (stderr_thread, proc.stderr, stderr_state),
+    ):
+        thread.join(timeout=2.0)
+        if thread.is_alive():
+            try:
+                stream.close()
+            except OSError:
+                pass
+            thread.join(timeout=0.5)
+            if thread.is_alive():
+                state["error"] = "stream drain did not terminate"
+
+    raw_stdout = str(stdout_state.get("text") or "")
+    raw_stderr = str(stderr_state.get("text") or "")
+    stdout_truncated = bool(stdout_state.get("truncated"))
+    stderr_truncated = bool(stderr_state.get("truncated"))
+    stream_error = stdout_state.get("error") or stderr_state.get("error")
+    output_truncated = stdout_truncated or stderr_truncated or bool(stream_error)
     if timed_out:
-        stderr = f"timeout after {timeout_sec}s\n{stderr or ''}"
-    raw_stdout, raw_stderr = stdout or "", stderr or ""
-    stdout_truncated = bool(output_limit_chars is not None and len(raw_stdout) > output_limit_chars)
-    stderr_truncated = bool(output_limit_chars is not None and len(raw_stderr) > output_limit_chars)
-    output_truncated = stdout_truncated or stderr_truncated
-    if output_limit_chars is not None:
-        if stdout_truncated:
-            raw_stdout = raw_stdout[-output_limit_chars:]
-        if stderr_truncated:
-            raw_stderr = raw_stderr[-output_limit_chars:]
+        raw_stderr = f"timeout after {timeout_sec}s\n{raw_stderr}"
+    if stream_error:
+        raw_stderr = f"stream read error: {stream_error}\n{raw_stderr}"
     if output_truncated and fail_on_output_limit:
         raw_stderr = f"output exceeded {output_limit_chars} character evidence limit\n{raw_stderr}"
-    ok = bool(not timed_out and proc.returncode == 0 and not (output_truncated and fail_on_output_limit))
+    ok = bool(not timed_out and not stream_error and proc.returncode == 0
+              and not (output_truncated and fail_on_output_limit))
     return {"ok": ok, "returncode": None if timed_out else proc.returncode,
             "timed_out": timed_out,
             "stdout": redact_text(raw_stdout, secrets),
@@ -389,6 +453,17 @@ def discard_run_root_verified(root: Path) -> None:
         raise RuntimeError(f"SECURITY: run root still exists after discard attempt: {root}")
 
 
+def _prepare_artifacts_root(root: Path, artifacts: Path) -> None:
+    if artifacts.parent != root:
+        raise RuntimeError("artifact root is outside the run root")
+    if _path_lexists(artifacts):
+        discard_path_verified(artifacts)
+    artifacts.mkdir(mode=0o700, parents=False, exist_ok=False)
+    info = artifacts.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError("artifact root is not a trusted directory")
+
+
 def parse_status_files(text: str) -> list[str]:
     values = []
     for line in str(text or "").splitlines():
@@ -398,6 +473,10 @@ def parse_status_files(text: str) -> list[str]:
         if value:
             values.append(value)
     return sorted(set(values))
+
+
+def _parse_nul_paths(text: str) -> list[str]:
+    return sorted(set(value for value in str(text or "").split("\0") if value))
 
 
 def _workspace_regular_file(workspace: Path, rel: str, *, max_bytes: int | None = None) -> tuple[Path | None, str | None]:
@@ -434,18 +513,21 @@ def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
 
 def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
                        *, secrets: Iterable[str] = ()) -> dict[str, Any]:
-    status = _required_git(["status", "--porcelain=v1", "--untracked-files=all"], cwd=workspace)
+    status = _required_git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=workspace)
     head = _required_git(["rev-parse", "HEAD"], cwd=workspace)
-    committed = _required_git(["diff", "--name-only", f"{baseline}..HEAD"], cwd=workspace)
-    untracked = _required_git(["ls-files", "--others", "--exclude-standard"], cwd=workspace)
     diff_args = ["diff", "--no-ext-diff", "--no-textconv"]
+    committed = _required_git([*diff_args, "--name-only", "-z", f"{baseline}..HEAD"], cwd=workspace)
+    staged = _required_git([*diff_args, "--cached", "--name-only", "-z"], cwd=workspace)
+    unstaged = _required_git([*diff_args, "--name-only", "-z"], cwd=workspace)
+    untracked = _required_git(["ls-files", "-z", "--others", "--exclude-standard"], cwd=workspace)
     pieces = [
         _required_git([*diff_args, f"{baseline}..HEAD"], cwd=workspace)["stdout"].strip(),
         _required_git([*diff_args, "--cached"], cwd=workspace)["stdout"].strip(),
         _required_git(diff_args, cwd=workspace)["stdout"].strip(),
     ]
     evidence_omissions: list[dict[str, str]] = []
-    for rel in [v.strip() for v in untracked["stdout"].splitlines() if v.strip()]:
+    untracked_files = _parse_nul_paths(untracked["stdout"])
+    for rel in untracked_files:
         path, error = _workspace_regular_file(workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES)
         if error or path is None:
             evidence_omissions.append({"path": redact_text(rel, secrets), "reason": error or "unsafe file"})
@@ -459,8 +541,12 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
     retained_diff = diff_text + ("\n" if diff_text else "")
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "final.diff").write_text(retained_diff, encoding="utf-8")
-    committed_files = [v.strip() for v in committed["stdout"].splitlines() if v.strip()]
-    changed = sorted(set(parse_status_files(status["stdout"])) | set(committed_files))
+    changed = sorted(
+        set(_parse_nul_paths(committed["stdout"]))
+        | set(_parse_nul_paths(staged["stdout"]))
+        | set(_parse_nul_paths(unstaged["stdout"]))
+        | set(untracked_files)
+    )
     final_files = artifacts / "final-files"
     final_file_omissions: list[dict[str, str]] = []
     for rel in changed:
@@ -478,7 +564,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
         except (OSError, ValueError) as exc:
             raise RuntimeError(f"could not retain final file evidence for {redact_text(rel, secrets)}: {exc}") from exc
     return {"base_head": baseline, "final_head": head["stdout"].strip(),
-            "dirty": bool(parse_status_files(status["stdout"])), "files_changed": changed,
+            "dirty": bool(status["stdout"]), "files_changed": changed,
             "diff_sha256": hashlib.sha256(retained_diff.encode()).hexdigest(), "diff_chars": len(retained_diff),
             "evidence_omissions": evidence_omissions, "final_file_omissions": final_file_omissions,
             "git_metadata_retained": True, "execution_workspace_retained": True}
@@ -626,6 +712,7 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
     commands = fixture.get("expected", {}).get("validation") or []
     results: list[dict[str, Any]] = []
     budget_exhausted = False
+    timed_out = False
     for argv in commands:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -633,6 +720,7 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
                             "stdout": "", "stderr": "validation time budget exhausted before command",
                             "duration_ms": 0.0, "launch_error": None, "output_truncated": False})
             budget_exhausted = True
+            timed_out = True
             break
         timeout_sec = min(300.0, remaining)
         result = run_process([str(v) for v in argv], cwd=workspace,
@@ -640,10 +728,12 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
                              isolate_process_group=True)
         results.append({"argv": argv, **result})
         if result["timed_out"]:
+            timed_out = True
             budget_exhausted = time.monotonic() >= deadline
             break
     passed = None if not commands else bool(len(results) == len(commands) and all(v["ok"] for v in results))
-    return {"commands": results, "passed": passed, "budget_exhausted": budget_exhausted}
+    return {"commands": results, "passed": passed, "budget_exhausted": budget_exhausted,
+            "timed_out": timed_out}
 
 
 def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str], validation: dict[str, Any]) -> dict[str, Any]:
@@ -695,25 +785,44 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
             continue
         if not stat.S_ISREG(info.st_mode):
             continue
-        temp = path.with_name(path.name + ".scrub-tmp")
+        fd = -1
+        temp: Path | None = None
         try:
+            fd, temp_name = tempfile.mkstemp(prefix=".nexus-scrub-", suffix=".tmp", dir=str(path.parent), text=True)
+            temp = Path(temp_name)
+            dest_handle = os.fdopen(fd, "w", encoding="utf-8", newline="")
+            fd = -1
             changed = False
-            with path.open("r", encoding="utf-8") as source, temp.open("w", encoding="utf-8", newline="") as dest:
+            with dest_handle as dest, path.open("r", encoding="utf-8") as source:
                 for line in source:
                     clean = redact_text(line, secrets)
                     changed = changed or clean != line
                     dest.write(clean)
             if changed:
                 os.replace(temp, path)
-            else:
-                temp.unlink(missing_ok=True)
+                temp = None
         except (UnicodeDecodeError, OSError):
-            temp.unlink(missing_ok=True)
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if temp is not None:
+                temp.unlink(missing_ok=True)
+                temp = None
             try:
                 path.unlink()
                 omitted.append(str(path.relative_to(artifacts)))
             except OSError:
                 raise RuntimeError(f"could not sanitize or discard retained artifact: {path}")
+        finally:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if temp is not None:
+                temp.unlink(missing_ok=True)
     return omitted
 
 
@@ -752,10 +861,10 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         process_timeout = max(0.001, deadline - time.monotonic())
         process = run_process(argv, cwd=workspace, env=env, timeout_sec=process_timeout,
                               secrets=[nexus_token], isolate_process_group=True)
-        artifacts.mkdir(parents=True, exist_ok=True)
+        validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
+        _prepare_artifacts_root(root, artifacts)
         (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
         (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
-        validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
         workspace_info = workspace_snapshot(workspace, baseline, artifacts, secrets=[nexus_token])
         objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
         trace = parse_trace(
@@ -774,12 +883,13 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         workspace_info["execution_workspace_retained"] = False
 
         duration_ms, finished_at = round((time.monotonic() - started) * 1000.0, 1), now_iso()
-        run_timed_out = bool(process["timed_out"] or validation["budget_exhausted"])
+        run_timed_out = bool(process["timed_out"] or validation["timed_out"])
         completed = bool(process["ok"] and objective["passed"] is True)
         if not process["ok"]:
             outcome_error = process["stderr"] or f"exit {process['returncode']}"
-        elif validation["budget_exhausted"]:
-            outcome_error = "validation time budget exhausted"
+        elif validation["timed_out"]:
+            outcome_error = ("validation time budget exhausted" if validation["budget_exhausted"]
+                             else "validation command timed out")
         elif validation.get("passed") is False:
             outcome_error = "validation failed"
         elif objective.get("passed") is not True:
@@ -813,7 +923,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         result_path = artifacts / "result.json"
         write_json(result_path, result)
         return result, result_path
-    except Exception as exc:
+    except Exception:
         if root_created and _path_lexists(root):
             try:
                 discard_run_root_verified(root)
