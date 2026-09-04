@@ -79,6 +79,7 @@ Fixture validation commands are trusted executable fixture content. Review new f
 Fixture missions are limited to 64,000 UTF-8 bytes because Albatross receives the mission as one `--print` argument. Before materializing a run, the adapter also verifies that the installed binary's help output advertises both `--print` and `--allow-tools`; incompatible binaries fail before any fixture execution.
 
 Complete descendant-process containment currently requires Linux `prctl` subreaper support and readable procfs child enumeration. Validation additionally requires Bubblewrap (`bwrap`) for a private mount, PID, user, and network namespace. On Ubuntu/Debian install it with `sudo apt-get install bubblewrap`. The adapter fails closed before unsafe validation when these controls are unavailable, including on macOS and other hosts, rather than allowing validation code to access operator files or the network. Credential-free offline `--version` and `--help` probes remain portable by falling back to bounded process-group cleanup when procfs enumeration is unavailable. Run comparison fixtures from a compatible Linux/WSL environment until equivalent macOS containment is implemented.
+Run the adapter as a non-root host user: the validation task ceiling relies on `RLIMIT_NPROC`, which Linux does not enforce for host UID 0, so validation fails closed before launch when the adapter itself is root.
 
 ## Install Albatross
 

@@ -56,6 +56,7 @@ MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
 MAX_TRACE_TOTAL_BYTES = 16_000_000
 MIN_CROSS_FIELD_FRAGMENT_BYTES = 2
+MIN_UNORDERED_FRAGMENT_BYTES = 8
 MAX_FRAGMENT_SEARCH_STATES = 4096
 RESULT_CHILD_CONTROLLED_FIELDS = frozenset(
     {
@@ -258,6 +259,10 @@ def _validation_sandbox_argv(
 ) -> tuple[list[str], dict[str, str]]:
     if not sys.platform.startswith("linux"):
         raise RuntimeError("validation sandbox requires a Linux host")
+    if os.getuid() == 0 or os.geteuid() == 0:
+        raise RuntimeError(
+            "validation sandbox requires a non-root host user for an enforceable task limit"
+        )
     bubblewrap = shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin")
     if bubblewrap is None:
         raise RuntimeError("validation sandbox requires bubblewrap (bwrap)")
@@ -1942,6 +1947,67 @@ def _contains_ordered_secret_fragments(
     return False
 
 
+def _contains_unordered_secret_fragments(
+    value: bytes,
+    protected: bytes,
+    *,
+    min_fragment_bytes: int,
+) -> bool:
+    minimum = max(MIN_UNORDERED_FRAGMENT_BYTES, min_fragment_bytes)
+    if len(protected) < minimum * 2:
+        return False
+    states: set[tuple[int, tuple[tuple[int, int], ...], int]] = {(0, (), 0)}
+    visited: set[tuple[int, tuple[tuple[int, int], ...], int]] = set()
+    transitions = 0
+    while states:
+        secret_position, used_intervals, fragment_count = states.pop()
+        state = (secret_position, used_intervals, fragment_count)
+        if state in visited:
+            continue
+        visited.add(state)
+        if len(visited) > MAX_FRAGMENT_SEARCH_STATES:
+            return True
+        needle = protected[secret_position : secret_position + minimum]
+        if len(needle) < minimum:
+            continue
+        match_start = value.find(needle)
+        while match_start >= 0:
+            transitions += 1
+            if transitions > MAX_FRAGMENT_SEARCH_STATES:
+                return True
+            match_length = minimum
+            limit = min(len(protected) - secret_position, len(value) - match_start)
+            while (
+                match_length < limit
+                and protected[secret_position + match_length]
+                == value[match_start + match_length]
+            ):
+                match_length += 1
+            match_end = match_start + match_length
+            if any(
+                match_start < used_end and used_start < match_end
+                for used_start, used_end in used_intervals
+            ):
+                match_start = value.find(needle, match_start + 1)
+                continue
+            next_secret_position = secret_position + match_length
+            next_fragment_count = min(2, fragment_count + 1)
+            if (
+                next_secret_position == len(protected)
+                and next_fragment_count >= 2
+            ):
+                return True
+            states.add(
+                (
+                    next_secret_position,
+                    tuple(sorted((*used_intervals, (match_start, match_end)))),
+                    next_fragment_count,
+                )
+            )
+            match_start = value.find(needle, match_start + 1)
+    return False
+
+
 def _fragmented_secret_indexes(
     values: list[bytes],
     secrets: Iterable[str],
@@ -1989,6 +2055,11 @@ def _fragmented_secret_indexes(
                         continue
                     if any(
                         _contains_ordered_secret_fragments(
+                            view,
+                            normalized_protected,
+                            min_fragment_bytes=min_fragment_bytes,
+                        )
+                        or _contains_unordered_secret_fragments(
                             view,
                             normalized_protected,
                             min_fragment_bytes=min_fragment_bytes,

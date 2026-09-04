@@ -637,6 +637,7 @@ def test_workspace_snapshot_never_executes_agent_git_filters(tmp_path: Path) -> 
     assert not marker.exists()
 
 
+@pytest.mark.requires_non_root_validation
 def test_validation_scratch_mount_follows_recursive_read_only_remount(
     tmp_path: Path,
 ) -> None:
@@ -670,6 +671,7 @@ def test_validation_scratch_mount_follows_recursive_read_only_remount(
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("bubblewrap sandbox regression requires Linux")
@@ -721,6 +723,8 @@ def test_validation_fails_closed_without_bubblewrap(
     temp_dir = tmp_path / "tmp"
     for path in (workspace, home, temp_dir):
         path.mkdir()
+    monkeypatch.setattr(harness.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(harness.os, "geteuid", lambda: 1000)
     monkeypatch.setattr(harness.shutil, "which", lambda *args, **kwargs: None)
 
     result = harness.run_validation(
@@ -734,6 +738,35 @@ def test_validation_fails_closed_without_bubblewrap(
     assert result["passed"] is False
     assert result["commands"][0]["launch_error"] == "validation_sandbox_unavailable"
     assert "requires bubblewrap" in result["commands"][0]["stderr"]
+
+
+def test_validation_fails_closed_for_root_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    monkeypatch.setattr(harness.os, "getuid", lambda: 0)
+    monkeypatch.setattr(harness.os, "geteuid", lambda: 0)
+
+    def forbidden_run(*args, **kwargs):
+        raise AssertionError("validation must not launch as host root")
+
+    monkeypatch.setattr(harness, "run_process", forbidden_run)
+
+    result = harness.run_validation(
+        {"expected": {"validation": [["python3", "-c", "print('unsafe')"]]}},
+        workspace,
+        home,
+        temp_dir,
+        deadline=harness.time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is False
+    assert result["commands"][0]["launch_error"] == "validation_sandbox_unavailable"
+    assert "requires a non-root host user" in result["commands"][0]["stderr"]
 
 
 def test_validation_command_timeout_is_typed_before_shared_deadline(
@@ -1031,6 +1064,7 @@ print('done')
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_cannot_forge_retained_trace_evidence(tmp_path: Path) -> None:
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
         pytest.skip("trace provenance integration requires bwrap")

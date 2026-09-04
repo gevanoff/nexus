@@ -897,6 +897,26 @@ def test_single_byte_fragments_in_one_value_are_redacted_everywhere(
     assert not retained.exists()
 
 
+def test_out_of_order_fragments_in_one_value_are_redacted_everywhere(
+    tmp_path: Path,
+) -> None:
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    evidence = f"part2={token[32:]}\npart1={token[:32]}"
+
+    assert harness.redact_text(evidence, [token]) == "(redacted)"
+    assert harness._redact_fragmented_value(
+        {"stdout": evidence}, [token]
+    ) == {"stdout": "(redacted)"}
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    retained = artifacts / "stdout.txt"
+    retained.write_text(evidence, encoding="utf-8")
+
+    assert harness.scrub_retained_artifacts(artifacts, [token]) == ["stdout.txt"]
+    assert not retained.exists()
+
+
 def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"
@@ -1034,6 +1054,7 @@ def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1069,6 +1090,7 @@ def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_scratch_entry_limit_fails_the_command(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1141,6 +1163,7 @@ def test_scratch_scan_stops_without_materializing_the_directory(
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1173,6 +1196,7 @@ def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1210,6 +1234,7 @@ def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> N
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_enforces_aggregate_resident_memory_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1242,6 +1267,7 @@ def test_validation_enforces_aggregate_resident_memory_limit(
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_validation_accounts_for_deleted_open_scratch_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1280,6 +1306,7 @@ def test_validation_accounts_for_deleted_open_scratch_files(
 
 
 @pytest.mark.requires_linux_process_containment
+@pytest.mark.requires_non_root_validation
 def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
         pytest.skip("validation integration requires bwrap")
