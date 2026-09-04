@@ -1621,6 +1621,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
     summarized_turns: set[tuple[str, int]] = set()
     omissions: list[dict[str, Any]] = []
+    retained_trace_items: list[list[dict[str, Any]]] = []
     total_trace_bytes = 0
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -1654,6 +1655,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
             dest: Path | None = None
             dest_handle = None
             source_error: OSError | None = None
+            retained_items: list[dict[str, Any]] = []
             tool_count_before = len(tools)
             turns_before = set(turns)
             summarized_turns_before = set(summarized_turns)
@@ -1685,7 +1687,9 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                         malformed += 1
                         continue
                     if dest_handle is not None:
-                        dest_handle.write(json.dumps(redact_value(item, secrets), separators=(",", ":"), sort_keys=True))
+                        retained_item = redact_value(item, secrets)
+                        retained_items.append(retained_item)
+                        dest_handle.write(json.dumps(retained_item, separators=(",", ":"), sort_keys=True))
                         dest_handle.write("\n")
                     raw_turn = item.get("turn")
                     if (isinstance(raw_turn, bool)
@@ -1743,6 +1747,20 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                     files.remove(retained_path)
                 if dest is not None:
                     dest.unlink(missing_ok=True)
+            elif dest is not None:
+                retained_trace_items.append(retained_items)
+    if artifact_dir is not None:
+        retained_trace_items = _redact_fragmented_value(
+            retained_trace_items, secrets, fields=None
+        )
+        for retained_path, retained_items in zip(files, retained_trace_items):
+            with Path(retained_path).open("w", encoding="utf-8", newline="\n") as handle:
+                for retained_item in retained_items:
+                    handle.write(
+                        json.dumps(retained_item, separators=(",", ":"), sort_keys=True)
+                    )
+                    handle.write("\n")
+    tools = _redact_fragmented_value(tools, secrets, fields=None)
     return {"tool_calls": tools, "tool_call_count": len(tools), "agent_turns": len(turns),
             "agent_steps": steps, "context_resets": resets, "malformed_trace_lines": malformed,
             "trace_files": files, "trace_omissions": omissions, "trace_input_bytes": total_trace_bytes}
@@ -1928,12 +1946,16 @@ def _fragmented_secret_indexes(
     return all_implicated
 
 
-def _redact_fragmented_value(value: Any, secrets: Iterable[str]) -> Any:
+def _redact_fragmented_value(
+    value: Any,
+    secrets: Iterable[str],
+    *,
+    fields: frozenset[str] | None = frozenset({"stdout", "stderr"}),
+) -> Any:
     leaves: list[str] = []
-    output_fields = {"stdout", "stderr"}
 
     def collect(candidate: Any, field: str | None = None) -> None:
-        if isinstance(candidate, str) and field in output_fields:
+        if isinstance(candidate, str) and (fields is None or field in fields):
             leaves.append(candidate)
         elif isinstance(candidate, dict):
             for key, nested in candidate.items():
@@ -1950,7 +1972,7 @@ def _redact_fragmented_value(value: Any, secrets: Iterable[str]) -> Any:
 
     def rebuild(candidate: Any, field: str | None = None) -> Any:
         nonlocal leaf_index
-        if isinstance(candidate, str) and field in output_fields:
+        if isinstance(candidate, str) and (fields is None or field in fields):
             replacement = "(redacted)" if leaf_index in implicated else candidate
             leaf_index += 1
             return replacement

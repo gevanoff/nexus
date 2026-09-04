@@ -1586,6 +1586,59 @@ print('done')
     assert result["workspace"]["execution_workspace_retained"] is False
 
 
+def test_fragmented_trace_scalars_are_redacted_in_result_and_artifact(
+    tmp_path: Path,
+) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+token = os.environ['OPENAI_API_KEY']
+sessions = pathlib.Path(os.environ['HOME']) / '.config' / 'albatross' / 'sessions'
+sessions.mkdir(parents=True, exist_ok=True)
+events = [
+    {'turn': 1, 'kind': 'toolCall', 'name': token[:32]},
+    {'turn': 1, 'kind': 'toolCall', 'name': token[32:]},
+]
+(sessions / 'fragmented.events.jsonl').write_text(
+    ''.join(json.dumps(event) + '\\n' for event in events),
+    encoding='utf-8',
+)
+print('done')
+""",
+    )
+    fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"})
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    result, result_path = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["trajectory"]["tool_call_names"] == ["(redacted)", "(redacted)"]
+    trace_text = Path(result["artifacts"]["trace_files"][0]).read_text(
+        encoding="utf-8"
+    )
+    result_text = result_path.read_text(encoding="utf-8")
+    for fragment in (token[:32], token[32:]):
+        assert fragment not in trace_text
+        assert fragment not in result_text
+
+
 def test_list_fixtures_loads_each_fixture_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
