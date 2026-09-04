@@ -897,9 +897,12 @@ def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> N
     for path in (workspace, home, temp_dir):
         path.mkdir()
     code = (
+        "import mmap\n"
         "import resource\n"
         f"assert resource.getrlimit(resource.RLIMIT_NPROC) == ({harness.MAX_VALIDATION_PROCESSES}, {harness.MAX_VALIDATION_PROCESSES})\n"
         f"assert resource.getrlimit(resource.RLIMIT_AS) == ({harness.MAX_VALIDATION_MEMORY_BYTES}, {harness.MAX_VALIDATION_MEMORY_BYTES})\n"
+        "reservation = mmap.mmap(-1, 4 * 1024 * 1024 * 1024)\n"
+        "reservation.close()\n"
         "try:\n"
         f"    bytearray({harness.MAX_VALIDATION_MEMORY_BYTES + 1})\n"
         "except MemoryError:\n"
