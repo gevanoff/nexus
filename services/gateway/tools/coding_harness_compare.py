@@ -961,6 +961,7 @@ def _encoded_secret_variants(secret: str) -> set[bytes]:
     }
     if len(raw) >= 8:
         variants.update(_base64_secret_variants(secret))
+        variants.update(_base32_secret_variants(secret))
         variants.update({raw.hex().encode("ascii"), raw.hex().upper().encode("ascii")})
     return {value for value in variants if value}
 
@@ -970,6 +971,16 @@ def _base64_secret_variants(secret: str) -> set[bytes]:
     if len(raw) < 8:
         return set()
     variants = {base64.b64encode(raw), base64.urlsafe_b64encode(raw)}
+    variants.update(value.rstrip(b"=") for value in tuple(variants))
+    return {value for value in variants if value}
+
+
+def _base32_secret_variants(secret: str) -> set[bytes]:
+    raw = secret.encode("utf-8")
+    if len(raw) < 8:
+        return set()
+    variants = {base64.b32encode(raw), base64.b32hexencode(raw)}
+    variants.update(value.lower() for value in tuple(variants))
     variants.update(value.rstrip(b"=") for value in tuple(variants))
     return {value for value in variants if value}
 
@@ -984,6 +995,12 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
         if any(encoded in raw_value for encoded in _encoded_secret_variants(secret)):
             return True
         if any(encoded in compact_whitespace for encoded in _base64_secret_variants(secret)):
+            return True
+        if any(
+            encoded.lower() in candidate
+            for encoded in _base32_secret_variants(secret)
+            for candidate in (lowered, compact_lowered)
+        ):
             return True
         raw_secret = secret.encode("utf-8")
         if (
