@@ -32,6 +32,8 @@ MAX_FIXTURE_FILE_BYTES = 2_000_000
 MAX_FIXTURE_TOTAL_BYTES = 8_000_000
 MAX_FIXTURE_JSON_BYTES = 10_000_000
 MAX_OBJECTIVE_FILE_BYTES = 2_000_000
+MAX_PROCESS_OUTPUT_CHARS = 100_000
+MAX_GIT_EVIDENCE_CHARS = 8_000_000
 
 
 def now_iso() -> str:
@@ -201,18 +203,23 @@ def _terminate_process_group(pgid: int, grace_sec: float = 0.5) -> None:
 
 def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None,
                 timeout_sec: float = 60.0, secrets: Iterable[str] = (),
-                isolate_process_group: bool = False) -> dict[str, Any]:
+                isolate_process_group: bool = False,
+                output_limit_chars: int | None = MAX_PROCESS_OUTPUT_CHARS,
+                fail_on_output_limit: bool = False) -> dict[str, Any]:
     started = time.monotonic()
     if isolate_process_group and os.name != "posix":
         return {"ok": False, "returncode": None, "timed_out": False,
                 "stdout": "", "stderr": "isolated process groups require a POSIX host",
-                "duration_ms": 0.0, "launch_error": "process_group_unsupported"}
+                "duration_ms": 0.0, "launch_error": "process_group_unsupported",
+                "output_truncated": False}
     try:
         proc = subprocess.Popen(
             argv,
             cwd=str(cwd),
             env=env,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=bool(isolate_process_group),
@@ -221,7 +228,7 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
         return {"ok": False, "returncode": None, "timed_out": False,
                 "stdout": "", "stderr": redact_text(f"{type(exc).__name__}: {exc}", secrets),
                 "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
-                "launch_error": type(exc).__name__}
+                "launch_error": type(exc).__name__, "output_truncated": False}
 
     timed_out = False
     stdout = ""
@@ -249,19 +256,53 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
 
     if timed_out:
         stderr = f"timeout after {timeout_sec}s\n{stderr or ''}"
-    return {"ok": (not timed_out and proc.returncode == 0),
-            "returncode": None if timed_out else proc.returncode,
+    raw_stdout, raw_stderr = stdout or "", stderr or ""
+    stdout_truncated = bool(output_limit_chars is not None and len(raw_stdout) > output_limit_chars)
+    stderr_truncated = bool(output_limit_chars is not None and len(raw_stderr) > output_limit_chars)
+    output_truncated = stdout_truncated or stderr_truncated
+    if output_limit_chars is not None:
+        if stdout_truncated:
+            raw_stdout = raw_stdout[-output_limit_chars:]
+        if stderr_truncated:
+            raw_stderr = raw_stderr[-output_limit_chars:]
+    if output_truncated and fail_on_output_limit:
+        raw_stderr = f"output exceeded {output_limit_chars} character evidence limit\n{raw_stderr}"
+    ok = bool(not timed_out and proc.returncode == 0 and not (output_truncated and fail_on_output_limit))
+    return {"ok": ok, "returncode": None if timed_out else proc.returncode,
             "timed_out": timed_out,
-            "stdout": redact_text((stdout or "")[-100000:], secrets),
-            "stderr": redact_text((stderr or "")[-100000:], secrets),
+            "stdout": redact_text(raw_stdout, secrets),
+            "stderr": redact_text(raw_stderr, secrets),
             "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
-            "launch_error": None}
+            "launch_error": None, "output_truncated": output_truncated}
 
 
-def git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
+def _git_env() -> dict[str, str]:
     env = clean_env()
     env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"})
-    return run_process(["git", "-c", "core.hooksPath=/dev/null", *argv], cwd=cwd, env=env)
+    return env
+
+
+def git(argv: list[str], *, cwd: Path, evidence: bool = False) -> dict[str, Any]:
+    return run_process(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *argv],
+        cwd=cwd,
+        env=_git_env(),
+        output_limit_chars=MAX_GIT_EVIDENCE_CHARS if evidence else MAX_PROCESS_OUTPUT_CHARS,
+        fail_on_output_limit=evidence,
+    )
+
+
+def _require_result(result: dict[str, Any], label: str, *, allowed_returncodes: tuple[int, ...] = (0,)) -> dict[str, Any]:
+    if (result.get("timed_out") or result.get("launch_error") or result.get("output_truncated")
+            or result.get("returncode") not in allowed_returncodes):
+        detail = result.get("stderr") or result.get("stdout") or f"returncode={result.get('returncode')}"
+        raise RuntimeError(f"{label} failed: {detail}")
+    return result
+
+
+def _required_git(argv: list[str], *, cwd: Path, label: str | None = None) -> dict[str, Any]:
+    result = git(argv, cwd=cwd, evidence=True)
+    return _require_result(result, label or f"git {' '.join(argv)}")
 
 
 def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
@@ -357,27 +398,61 @@ def parse_status_files(text: str) -> list[str]:
     return sorted(set(values))
 
 
-def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[str, Any]:
-    status = git(["status", "--porcelain=v1", "--untracked-files=all"], cwd=workspace)
-    head = git(["rev-parse", "HEAD"], cwd=workspace)
-    committed = git(["diff", "--name-only", f"{baseline}..HEAD"], cwd=workspace)
-    untracked = git(["ls-files", "--others", "--exclude-standard"], cwd=workspace)
-    pieces = [git(["diff", "--binary", f"{baseline}..HEAD"], cwd=workspace)["stdout"].strip(),
-              git(["diff", "--binary", "--cached"], cwd=workspace)["stdout"].strip(),
-              git(["diff", "--binary"], cwd=workspace)["stdout"].strip()]
-    diff_env = clean_env()
-    diff_env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"})
+def _workspace_regular_file(workspace: Path, rel: str, *, max_bytes: int | None = None) -> tuple[Path | None, str | None]:
+    try:
+        safe = safe_rel_path(rel)
+    except ValueError as exc:
+        return None, str(exc)
+    current = workspace
+    try:
+        root_stat = workspace.lstat()
+        if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+            return None, "workspace root is not a regular directory"
+        for index, part in enumerate(safe.parts):
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                return None, "path contains a symlink"
+            if index < len(safe.parts) - 1 and not stat.S_ISDIR(info.st_mode):
+                return None, "path parent is not a directory"
+        if not stat.S_ISREG(info.st_mode):
+            return None, "path is not a regular file"
+        if max_bytes is not None and info.st_size > max_bytes:
+            return None, f"file exceeds {max_bytes} byte limit"
+        return current, None
+    except FileNotFoundError:
+        return None, "file is missing"
+    except OSError as exc:
+        return None, f"could not inspect file: {exc}"
+
+
+def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
+    return any(bool(secret) and str(secret) in rel for secret in secrets)
+
+
+def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
+                       *, secrets: Iterable[str] = ()) -> dict[str, Any]:
+    status = _required_git(["status", "--porcelain=v1", "--untracked-files=all"], cwd=workspace)
+    head = _required_git(["rev-parse", "HEAD"], cwd=workspace)
+    committed = _required_git(["diff", "--name-only", f"{baseline}..HEAD"], cwd=workspace)
+    untracked = _required_git(["ls-files", "--others", "--exclude-standard"], cwd=workspace)
+    diff_args = ["diff", "--no-ext-diff", "--no-textconv"]
+    pieces = [
+        _required_git([*diff_args, f"{baseline}..HEAD"], cwd=workspace)["stdout"].strip(),
+        _required_git([*diff_args, "--cached"], cwd=workspace)["stdout"].strip(),
+        _required_git(diff_args, cwd=workspace)["stdout"].strip(),
+    ]
+    evidence_omissions: list[dict[str, str]] = []
     for rel in [v.strip() for v in untracked["stdout"].splitlines() if v.strip()]:
-        try:
-            path = workspace / safe_rel_path(rel)
-            if not path.is_file() or path.stat().st_size > MAX_FIXTURE_FILE_BYTES:
-                continue
-            patch = run_process(["git", "-c", "core.hooksPath=/dev/null", "diff", "--no-index", "--binary", "--", "/dev/null", rel],
-                                cwd=workspace, env=diff_env)
-            if patch["stdout"].strip():
-                pieces.append(patch["stdout"].strip())
-        except (OSError, ValueError):
-            pass
+        path, error = _workspace_regular_file(workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES)
+        if error or path is None:
+            evidence_omissions.append({"path": redact_text(rel, secrets), "reason": error or "unsafe file"})
+            continue
+        patch = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--", "/dev/null", rel],
+                    cwd=workspace, evidence=True)
+        _require_result(patch, f"git diff --no-index {rel}", allowed_returncodes=(0, 1))
+        if patch["stdout"].strip():
+            pieces.append(patch["stdout"].strip())
     diff_text = "\n".join(v for v in pieces if v)
     retained_diff = diff_text + ("\n" if diff_text else "")
     artifacts.mkdir(parents=True, exist_ok=True)
@@ -385,19 +460,25 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
     committed_files = [v.strip() for v in committed["stdout"].splitlines() if v.strip()]
     changed = sorted(set(parse_status_files(status["stdout"])) | set(committed_files))
     final_files = artifacts / "final-files"
+    final_file_omissions: list[dict[str, str]] = []
     for rel in changed:
+        if _contains_secret_path(rel, secrets):
+            final_file_omissions.append({"path": "(redacted)", "reason": "path contains a protected secret"})
+            continue
+        source, error = _workspace_regular_file(workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES)
+        if error or source is None:
+            final_file_omissions.append({"path": redact_text(rel, secrets), "reason": error or "unsafe file"})
+            continue
         try:
-            source = workspace / safe_rel_path(rel)
-            if not source.is_file() or source.stat().st_size > MAX_FIXTURE_FILE_BYTES:
-                continue
             target = final_files / safe_rel_path(rel)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"could not retain final file evidence for {redact_text(rel, secrets)}: {exc}") from exc
     return {"base_head": baseline, "final_head": head["stdout"].strip(),
             "dirty": bool(parse_status_files(status["stdout"])), "files_changed": changed,
             "diff_sha256": hashlib.sha256(retained_diff.encode()).hexdigest(), "diff_chars": len(retained_diff),
+            "evidence_omissions": evidence_omissions, "final_file_omissions": final_file_omissions,
             "git_metadata_retained": True, "execution_workspace_retained": True}
 
 
@@ -429,11 +510,45 @@ def albatross_version(executable: str) -> dict[str, Any]:
         resolved = shutil.which(executable) or ""
     if not resolved or not Path(resolved).is_file():
         return {"installed": False, "executable": executable, "version": "", "raw": "albatross unavailable"}
-    result = run_process([resolved, "--version"], cwd=Path.cwd(), timeout_sec=15)
+    result = run_process([resolved, "--version"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
+                         isolate_process_group=(os.name == "posix"))
     text = (result["stdout"] or result["stderr"]).strip()
     match = re.search(r"(?:albatross\s+)?v?(\d+\.\d+\.\d+)", text, re.I)
     return {"installed": bool(result["ok"]), "executable": resolved,
             "version": match.group(1) if match else "", "raw": text[:500]}
+
+
+def _trace_files(root: Path) -> list[Path]:
+    try:
+        root_info = root.lstat()
+    except OSError:
+        return []
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        return []
+    found: list[Path] = []
+    for current, dirs, files in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        safe_dirs: list[str] = []
+        for name in dirs:
+            child = current_path / name
+            try:
+                info = child.lstat()
+            except OSError:
+                continue
+            if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                safe_dirs.append(name)
+        dirs[:] = safe_dirs
+        for name in files:
+            if not name.endswith(".events.jsonl"):
+                continue
+            path = current_path / name
+            try:
+                info = path.lstat()
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                found.append(path)
+    return sorted(found)
 
 
 def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | None = None,
@@ -442,15 +557,14 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
+    trace_index = 0
     for root_index, root in enumerate(roots):
-        if not root.is_dir():
-            continue
-        for path in sorted(root.rglob("*.events.jsonl")):
+        for path in _trace_files(root):
             dest: Path | None = None
             dest_handle = None
             if artifact_dir is not None:
-                rel = path.relative_to(root)
-                dest = artifact_dir / str(root_index) / rel
+                dest = artifact_dir / f"{root_index}-{trace_index:04d}.events.jsonl"
+                trace_index += 1
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest_handle = dest.open("w", encoding="utf-8", newline="\n")
                 files.append(str(dest))
@@ -496,7 +610,7 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
         if remaining <= 0:
             results.append({"argv": argv, "ok": False, "returncode": None, "timed_out": True,
                             "stdout": "", "stderr": "validation time budget exhausted before command",
-                            "duration_ms": 0.0, "launch_error": None})
+                            "duration_ms": 0.0, "launch_error": None, "output_truncated": False})
             budget_exhausted = True
             break
         timeout_sec = min(300.0, remaining)
@@ -523,23 +637,17 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
                        "allowed": sorted(allowed), "actual": sorted(changed)})
     for key, negate in (("file_contains", False), ("file_not_contains", True)):
         for spec in expected.get(key) or []:
-            path = workspace / safe_rel_path(str(spec["path"]))
-            if not path.is_file():
+            path, error = _workspace_regular_file(workspace, str(spec["path"]), max_bytes=MAX_OBJECTIVE_FILE_BYTES)
+            if error or path is None:
                 checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
-                               "passed": False, "error": "file is missing"})
+                               "passed": False, "error": error or "unsafe file"})
                 continue
             try:
-                size = path.stat().st_size
+                text = path.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
                 checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
-                               "passed": False, "error": f"could not stat file: {exc}"})
+                               "passed": False, "error": f"could not read file: {exc}"})
                 continue
-            if size > MAX_OBJECTIVE_FILE_BYTES:
-                checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
-                               "passed": False,
-                               "error": f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"})
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
             found = str(spec["needle"]) in text
             checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
                            "passed": (not found) if negate else found})
@@ -551,7 +659,18 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
 def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
     omitted: list[str] = []
     for path in sorted(artifacts.rglob("*")):
-        if not path.is_file():
+        try:
+            info = path.lstat()
+        except OSError:
+            continue
+        if stat.S_ISLNK(info.st_mode):
+            try:
+                path.unlink()
+                omitted.append(str(path.relative_to(artifacts)))
+            except OSError as exc:
+                raise RuntimeError(f"could not discard retained symlink artifact: {path}: {exc}") from exc
+            continue
+        if not stat.S_ISREG(info.st_mode):
             continue
         temp = path.with_name(path.name + ".scrub-tmp")
         try:
@@ -613,8 +732,8 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         artifacts.mkdir(parents=True, exist_ok=True)
         (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
         (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
-        workspace_info = workspace_snapshot(workspace, baseline, artifacts)
         validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
+        workspace_info = workspace_snapshot(workspace, baseline, artifacts, secrets=[nexus_token])
         objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
         trace = parse_trace(
             [workspace / ".sessions", home / ".config" / "albatross" / "sessions"],
@@ -638,6 +757,10 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             outcome_error = process["stderr"] or f"exit {process['returncode']}"
         elif validation["budget_exhausted"]:
             outcome_error = "validation time budget exhausted"
+        elif validation.get("passed") is False:
+            outcome_error = "validation failed"
+        elif objective.get("passed") is not True:
+            outcome_error = "objective checks failed"
         else:
             outcome_error = None
         result = redact_value({
@@ -684,7 +807,8 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         "nexus": {"base_url": nexus_base_url, "model": model}, "capabilities": {}}
     if not version["installed"]:
         return report
-    help_result = run_process([version["executable"], "--help"], cwd=Path.cwd(), timeout_sec=15)
+    help_result = run_process([version["executable"], "--help"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
+                              isolate_process_group=(os.name == "posix"))
     help_text = help_result["stdout"] + "\n" + help_result["stderr"]
     report["capabilities"] = {"one_shot": "--print" in help_text, "external_eval": "--eval" in help_text,
         "json_eval_output": "--json" in help_text, "allow_tools": "--allow-tools" in help_text,
