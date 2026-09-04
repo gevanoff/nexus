@@ -973,7 +973,7 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         report["live_error"] = "Nexus bearer token is required for --live"
         return report
     root = (out_root or Path(".runtime/coding-harness-evals")).resolve()
-    fixture_path = root / "probe" / "read-only-probe.json"
+    fixture_path = root / "probe" / f"read-only-probe-{uuid.uuid4().hex}.json"
     write_json(fixture_path, {"schema_version": 1, "id": "read-only-probe",
         "description": "Read-only Albatross through Nexus capability probe.",
         "repository": {"files": {"probe.txt": "NEXUS_ALBATROSS_PROBE_OK\n"}},
@@ -987,6 +987,8 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         report["ok"] = False
         report["live_error"] = f"{type(exc).__name__}: {exc}"
         return redact_value(report, [nexus_token])
+    finally:
+        fixture_path.unlink(missing_ok=True)
     tools = result.get("trajectory", {}).get("tool_call_names") or []
     chat_ok = result.get("outcome", {}).get("exit_code") == 0
     report["capabilities"].update({"chat": chat_ok, "streaming": chat_ok,
