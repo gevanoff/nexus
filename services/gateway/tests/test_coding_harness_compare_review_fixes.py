@@ -1667,6 +1667,7 @@ def test_fragmented_trace_object_keys_are_redacted(tmp_path: Path) -> None:
 
 def test_final_result_redacts_fragments_across_trace_and_validation(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -1692,15 +1693,31 @@ print('done')
 """,
     )
     token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    monkeypatch.setattr(
+        harness,
+        "run_validation",
+        lambda *args, **kwargs: {
+            "commands": [
+                {
+                    "argv": ["validator"],
+                    "ok": True,
+                    "returncode": 0,
+                    "timed_out": False,
+                    "stdout": token[32:],
+                    "stderr": "",
+                    "duration_ms": 0.0,
+                    "launch_error": None,
+                    "output_truncated": False,
+                }
+            ],
+            "passed": True,
+            "budget_exhausted": False,
+            "timed_out": False,
+        },
+    )
     fixture = _fixture(
         tmp_path / "fixture.json",
-        files={
-            "app.py": "VALUE = 1\n",
-            "emit.py": f"print({token[32:]!r})\n",
-        },
-        expected={
-            "validation": [["python3", "emit.py"]],
-        },
+        files={"app.py": "VALUE = 1\n"},
     )
 
     result, result_path = harness.run_albatross_fixture(
