@@ -371,8 +371,16 @@ def _required_git(argv: list[str], *, cwd: Path, label: str | None = None) -> di
     return _require_result(result, label or f"git {' '.join(argv)}")
 
 
+def _mkdir_private(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=False, exist_ok=False)
+    os.chmod(path, 0o700)
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
+        raise RuntimeError(f"private run directory could not be secured: {path}")
+
+
 def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
-    workspace.mkdir(parents=True, exist_ok=False)
+    _mkdir_private(workspace)
     root = workspace.resolve()
     for rel, content in fixture["repository"]["files"].items():
         target = (workspace / rel).resolve()
@@ -842,13 +850,20 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
     if not nexus_token:
         raise RuntimeError("Nexus bearer token is required (NEXUS_API_KEY or GATEWAY_BEARER_TOKEN)")
     run_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
-    root = out_root.resolve() / run_id / fixture["id"] / "albatross"
+    out_root_resolved = out_root.resolve()
+    out_root_resolved.mkdir(parents=True, exist_ok=True)
+    run_dir = out_root_resolved / run_id
+    fixture_dir = run_dir / fixture["id"]
+    root = fixture_dir / "albatross"
     workspace, artifacts, home, tmp = root / "workspace", root / "artifacts", root / "home", root / "tmp"
     root_created = False
     try:
-        home.mkdir(parents=True, exist_ok=True)
+        _mkdir_private(run_dir)
+        _mkdir_private(fixture_dir)
+        _mkdir_private(root)
         root_created = True
-        tmp.mkdir(parents=True, exist_ok=True)
+        _mkdir_private(home)
+        _mkdir_private(tmp)
         baseline = initialize_workspace(workspace, fixture)
         env = build_albatross_env(nexus_base_url=nexus_base_url, nexus_token=nexus_token, model=model,
                                   workspace=workspace, home=home, temp_dir=tmp,
