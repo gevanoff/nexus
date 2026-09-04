@@ -414,6 +414,25 @@ def test_parse_trace_counts_same_turn_number_in_distinct_trace_files(tmp_path: P
     assert result["agent_steps"] == 2
 
 
+def test_parse_trace_counts_only_one_summary_per_trace_turn(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    records = [
+        {"turn": 1, "kind": "turnSummary", "steps": 10 ** 17}
+        for _ in range(20)
+    ]
+    (session_root / "one.events.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(session_root)
+
+    assert result["agent_turns"] == 1
+    assert result["agent_steps"] == 10 ** 17
+    assert result["malformed_trace_lines"] == 19
+
+
 def test_parse_trace_rejects_boolean_turn_identifiers(tmp_path: Path) -> None:
     session_root = tmp_path / "sessions"
     session_root.mkdir()
@@ -881,8 +900,10 @@ def test_validation_scratch_entry_limit_fails_the_command(tmp_path: Path) -> Non
     )
 
     assert result["passed"] is False
-    assert result["commands"][0]["launch_error"] == "scratch_limit_exceeded"
-    assert "entry limit" in result["commands"][0]["stderr"]
+    assert (
+        result["commands"][0]["launch_error"] == "scratch_limit_exceeded"
+    ), result["commands"][0]["stderr"]
+    assert "filesystem quota" in result["commands"][0]["stderr"]
 
 
 def test_scratch_scan_stops_without_materializing_the_directory(
@@ -952,7 +973,6 @@ def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
     )
 
     assert result["passed"] is True
-    assert (temp_dir / "large").stat().st_size <= harness.MAX_VALIDATION_FILE_BYTES
 
 
 def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> None:
@@ -989,6 +1009,74 @@ def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> N
     )
 
     assert result["passed"] is True
+
+
+def test_validation_enforces_aggregate_resident_memory_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("validation integration requires Linux")
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("validation integration requires bwrap")
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    monkeypatch.setattr(harness, "MAX_VALIDATION_AGGREGATE_MEMORY_BYTES", 1)
+
+    result = harness.run_validation(
+        {
+            "expected": {
+                "validation": [["python3", "-c", "import time; time.sleep(2)"]]
+            }
+        },
+        workspace,
+        home,
+        temp_dir,
+        deadline=time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is False
+    assert result["commands"][0]["launch_error"] == "validation_memory_limit_exceeded"
+    assert "process tree" in result["commands"][0]["stderr"]
+
+
+def test_validation_accounts_for_deleted_open_scratch_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("validation integration requires Linux")
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("validation integration requires bwrap")
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    monkeypatch.setattr(harness, "MAX_VALIDATION_SCRATCH_BYTES", 1024)
+    code = (
+        "import os,time\n"
+        "descriptor = os.open('/tmp/deleted', os.O_CREAT | os.O_WRONLY, 0o600)\n"
+        "os.unlink('/tmp/deleted')\n"
+        "remaining = 8192\n"
+        "while remaining:\n"
+        "    remaining -= os.write(descriptor, b'x' * remaining)\n"
+        "os.fsync(descriptor)\n"
+        "time.sleep(2)\n"
+    )
+
+    result = harness.run_validation(
+        {"expected": {"validation": [["python3", "-c", code]]}},
+        workspace,
+        home,
+        temp_dir,
+        deadline=time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is False
+    assert result["commands"][0]["launch_error"] == "scratch_limit_exceeded"
+    assert "filesystem quota" in result["commands"][0]["stderr"]
 
 
 def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:

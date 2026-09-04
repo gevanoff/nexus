@@ -193,6 +193,26 @@ def test_scrub_discards_base32_secret_artifacts(
     assert not encoded.exists()
 
 
+@pytest.mark.parametrize(
+    "encoder",
+    [harness.base64.b85encode, harness.base64.a85encode],
+)
+@pytest.mark.parametrize("padded", [True, False])
+def test_scrub_discards_base85_secret_artifacts(
+    tmp_path: Path, encoder, padded: bool
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "nexus-base85-retention-secret"
+    encoded = artifacts / "encoded.txt"
+    encoded.write_bytes(encoder(token.encode("utf-8"), pad=padded) + b"\n")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert omitted == ["encoded.txt"]
+    assert not encoded.exists()
+
+
 def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
@@ -270,6 +290,47 @@ raise SystemExit(2)
     assert encoded not in result_path.read_text(encoding="utf-8")
 
 
+def test_base85_process_output_is_redacted_from_the_complete_result(
+    tmp_path: Path,
+) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import base64
+import os
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+encoded = base64.b85encode(os.environ['OPENAI_API_KEY'].encode('utf-8')).decode('ascii')
+print('failure: ' + encoded)
+print('failure: ' + encoded, file=sys.stderr)
+raise SystemExit(2)
+""",
+    )
+    token = "nexus-base85-result-secret"
+    encoded = harness.base64.b85encode(token.encode("utf-8")).decode("ascii")
+    fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
+
+    result, result_path = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["outcome"]["completed"] is False
+    assert result["outcome"]["error"] == "(redacted)"
+    assert encoded not in json.dumps(result)
+    assert encoded not in result_path.read_text(encoding="utf-8")
+
+
 def test_encoded_secret_paths_are_never_retained_or_reported(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -296,6 +357,9 @@ raw = os.environ['OPENAI_API_KEY'].encode('utf-8')
 (workspace / base64.b32hexencode(raw).decode('ascii').rstrip('=').lower()).write_text(
     'base32hex path\\n', encoding='utf-8'
 )
+(workspace / base64.b85encode(raw).decode('ascii')).write_text(
+    'base85 path\\n', encoding='utf-8'
+)
 print('done')
 """,
     )
@@ -305,6 +369,7 @@ print('done')
         harness.base64.urlsafe_b64encode(token.encode("utf-8")).decode("ascii").rstrip("="),
         harness.base64.b32encode(token.encode("utf-8")).decode("ascii").rstrip("=").lower(),
         harness.base64.b32hexencode(token.encode("utf-8")).decode("ascii").rstrip("=").lower(),
+        harness.base64.b85encode(token.encode("utf-8")).decode("ascii"),
     }
     fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
 

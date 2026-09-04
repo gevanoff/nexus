@@ -58,6 +58,7 @@ MAX_VALIDATION_FILE_BYTES = 1024 * 1024
 MAX_VALIDATION_OPEN_FILES = 64
 MAX_VALIDATION_PROCESSES = 128
 MAX_VALIDATION_MEMORY_BYTES = 16 * 1024 * 1024 * 1024
+MAX_VALIDATION_AGGREGATE_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def now_iso() -> str:
@@ -218,6 +219,15 @@ def _validation_sandbox_argv(
     prlimit = shutil.which("prlimit", path="/usr/sbin:/usr/bin:/sbin:/bin")
     if prlimit is None:
         raise RuntimeError("validation sandbox requires prlimit")
+    unshare = shutil.which("unshare", path="/usr/sbin:/usr/bin:/sbin:/bin")
+    if unshare is None:
+        raise RuntimeError("validation sandbox requires unshare")
+    mount = shutil.which("mount", path="/usr/sbin:/usr/bin:/sbin:/bin")
+    if mount is None:
+        raise RuntimeError("validation sandbox requires mount")
+    shell = shutil.which("sh", path="/usr/sbin:/usr/bin:/sbin:/bin")
+    if shell is None:
+        raise RuntimeError("validation sandbox requires sh")
 
     trusted: dict[str, Path] = {}
     for label, path in (
@@ -241,11 +251,7 @@ def _validation_sandbox_argv(
     ):
         raise RuntimeError("validation workspace, agent home, and temporary directory must be disjoint")
 
-    host_validation_home = Path(
-        tempfile.mkdtemp(prefix=".validation-home-", dir=trusted["temporary directory"])
-    )
-    host_validation_home.chmod(0o700)
-    validation_home = Path("/tmp") / host_validation_home.name
+    validation_home = Path("/tmp") / f".validation-home-{uuid.uuid4().hex}"
     validation_temp = Path("/tmp")
     child_env = clean_env(home=validation_home, temp_dir=validation_temp)
     child_env = {
@@ -256,12 +262,6 @@ def _validation_sandbox_argv(
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     command = [
-        prlimit,
-        f"--fsize={MAX_VALIDATION_FILE_BYTES}:{MAX_VALIDATION_FILE_BYTES}",
-        f"--nofile={MAX_VALIDATION_OPEN_FILES}:{MAX_VALIDATION_OPEN_FILES}",
-        f"--nproc={MAX_VALIDATION_PROCESSES}:{MAX_VALIDATION_PROCESSES}",
-        f"--as={MAX_VALIDATION_MEMORY_BYTES}:{MAX_VALIDATION_MEMORY_BYTES}",
-        "--",
         bubblewrap,
         "--unshare-all",
         "--die-with-parent",
@@ -294,12 +294,44 @@ def _validation_sandbox_argv(
         "--dir", "/tmp",
         "--remount-ro", "/",
         "--bind", str(trusted["temporary directory"]), "/tmp",
+        "--dir", str(validation_home),
+        "--chmod", "0700", str(validation_home),
         "--ro-bind", str(trusted["workspace"]), str(trusted["workspace"]),
     ))
     for key, value in sorted(child_env.items()):
         command.extend(("--setenv", key, value))
     command.extend(("--chdir", str(trusted["workspace"]), "--", *argv))
-    return command, clean_env()
+    mount_script = (
+        'mount_path=$1; scratch=$2; options=$3; shift 3; '
+        '"$mount_path" -t tmpfs -o "$options" tmpfs "$scratch" || exit $?; '
+        'exec "$@"'
+    )
+    tmpfs_options = (
+        f"size={MAX_VALIDATION_SCRATCH_BYTES},"
+        f"nr_inodes={MAX_VALIDATION_SCRATCH_ENTRIES},mode=0700"
+    )
+    wrapped = [
+        prlimit,
+        f"--fsize={MAX_VALIDATION_FILE_BYTES}:{MAX_VALIDATION_FILE_BYTES}",
+        f"--nofile={MAX_VALIDATION_OPEN_FILES}:{MAX_VALIDATION_OPEN_FILES}",
+        f"--nproc={MAX_VALIDATION_PROCESSES}:{MAX_VALIDATION_PROCESSES}",
+        f"--as={MAX_VALIDATION_MEMORY_BYTES}:{MAX_VALIDATION_MEMORY_BYTES}",
+        "--",
+        unshare,
+        "--user",
+        "--map-root-user",
+        "--mount",
+        "--",
+        shell,
+        "-c",
+        mount_script,
+        "validation-scratch",
+        mount,
+        str(trusted["temporary directory"]),
+        tmpfs_options,
+        *command,
+    ]
+    return wrapped, clean_env()
 
 
 def _process_group_alive(pgid: int) -> bool:
@@ -477,6 +509,55 @@ def _scratch_limit_error(
     return None
 
 
+def _linux_pid_is_gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def _linux_validation_tree_usage(
+    root_pid: int, baseline_children: set[int]
+) -> int:
+    roots = {root_pid} | (_linux_direct_children(os.getpid()) - baseline_children)
+    pids = _linux_descendant_tree(roots)
+    page_size = os.sysconf("SC_PAGE_SIZE")
+    resident_bytes = 0
+    for pid in pids:
+        try:
+            fields = Path(f"/proc/{pid}/statm").read_text(encoding="ascii").split()
+        except FileNotFoundError:
+            if _linux_pid_is_gone(pid):
+                continue
+            raise
+        if len(fields) < 2 or not fields[1].isdigit():
+            raise RuntimeError(f"invalid resident-memory evidence for PID {pid}")
+        resident_bytes += int(fields[1]) * page_size
+    return resident_bytes
+
+
+def _validation_tree_limit_error(
+    root_pid: int,
+    baseline_children: set[int],
+    *,
+    max_resident_bytes: int,
+) -> tuple[str | None, str | None]:
+    try:
+        resident_bytes = _linux_validation_tree_usage(root_pid, baseline_children)
+    except (OSError, RuntimeError) as exc:
+        return (
+            "validation_resource_inspection_failed",
+            f"could not inspect validation process-tree resources: {exc}",
+        )
+    if resident_bytes > max_resident_bytes:
+        return (
+            "validation_memory_limit_exceeded",
+            f"validation process tree exceeded {max_resident_bytes} resident byte limit",
+        )
+    return None, None
+
+
 def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None,
                 timeout_sec: float = 60.0, secrets: Iterable[str] = (),
                 isolate_process_group: bool = False,
@@ -487,7 +568,8 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 include_raw_output: bool = False,
                 scratch_dir: Path | None = None,
                 scratch_max_bytes: int | None = None,
-                scratch_max_entries: int | None = None) -> dict[str, Any]:
+                scratch_max_entries: int | None = None,
+                aggregate_memory_max_bytes: int | None = None) -> dict[str, Any]:
     started = time.monotonic()
     secrets = tuple(str(secret) for secret in secrets if secret)
     stdout_state: dict[str, Any] = {}
@@ -495,6 +577,8 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
     stream_threads: list[tuple[Any, Any, dict[str, Any]]] = []
     timed_out = False
     scratch_error: str | None = None
+    resource_error: str | None = None
+    resource_error_kind: str | None = None
     containment_error: str | None = None
     redact_overlap_chars = max(
         (
@@ -610,6 +694,14 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                     )
                     if scratch_error:
                         break
+                if aggregate_memory_max_bytes is not None:
+                    resource_error_kind, resource_error = _validation_tree_limit_error(
+                        proc.pid,
+                        baseline_children,
+                        max_resident_bytes=aggregate_memory_max_bytes,
+                    )
+                    if resource_error:
+                        break
         if (
             scratch_error is None
             and scratch_dir is not None
@@ -670,6 +762,13 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
     output_truncated = stdout_truncated or stderr_truncated or bool(stream_error)
     clean_stdout = redact_text(raw_stdout, secrets)
     clean_stderr = redact_text(raw_stderr, secrets)
+    if (
+        scratch_error is None
+        and scratch_dir is not None
+        and proc.returncode not in (None, 0)
+        and "No space left on device" in clean_stderr
+    ):
+        scratch_error = "validation scratch exceeded its filesystem quota"
     bounded_raw_stdout = raw_stdout
     bounded_raw_stderr = raw_stderr
     if output_limit_chars is not None:
@@ -692,16 +791,22 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
         clean_stderr = f"stream read error: {stream_error}\n{clean_stderr}"
     if scratch_error:
         clean_stderr = f"{scratch_error}\n{clean_stderr}"
+    if resource_error:
+        clean_stderr = f"{resource_error}\n{clean_stderr}"
     if output_truncated and fail_on_output_limit:
         clean_stderr = f"output exceeded {output_limit_chars} character evidence limit\n{clean_stderr}"
-    ok = bool(not timed_out and not stream_error and not scratch_error and proc.returncode == 0
+    ok = bool(not timed_out and not stream_error and not scratch_error and not resource_error
+              and proc.returncode == 0
               and not (output_truncated and fail_on_output_limit))
     result = {"ok": ok, "returncode": None if timed_out else proc.returncode,
               "timed_out": timed_out,
               "stdout": clean_stdout,
               "stderr": clean_stderr,
               "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
-              "launch_error": "scratch_limit_exceeded" if scratch_error else None,
+              "launch_error": (
+                  resource_error_kind
+                  or ("scratch_limit_exceeded" if scratch_error else None)
+              ),
               "output_truncated": output_truncated}
     if include_raw_output:
         result["_raw_stdout"] = bounded_raw_stdout
@@ -966,6 +1071,7 @@ def _encoded_secret_variants(secret: str) -> set[bytes]:
     if len(raw) >= 8:
         variants.update(_base64_secret_variants(secret))
         variants.update(_base32_secret_variants(secret))
+        variants.update(_base85_secret_variants(secret))
         variants.update({raw.hex().encode("ascii"), raw.hex().upper().encode("ascii")})
     return {value for value in variants if value}
 
@@ -989,6 +1095,21 @@ def _base32_secret_variants(secret: str) -> set[bytes]:
     return {value for value in variants if value}
 
 
+def _base85_secret_variants(secret: str) -> set[bytes]:
+    raw = secret.encode("utf-8")
+    if len(raw) < 8:
+        return set()
+    variants = {
+        base64.b85encode(raw),
+        base64.b85encode(raw, pad=True),
+        base64.a85encode(raw),
+        base64.a85encode(raw, adobe=True),
+        base64.a85encode(raw, pad=True),
+        base64.a85encode(raw, adobe=True, pad=True),
+    }
+    return {value for value in variants if value}
+
+
 def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> bool:
     if b"\0" in raw_value:
         return True
@@ -1004,6 +1125,11 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
             encoded.lower() in candidate
             for encoded in _base32_secret_variants(secret)
             for candidate in (lowered, compact_lowered)
+        ):
+            return True
+        if any(
+            encoded in compact_whitespace
+            for encoded in _base85_secret_variants(secret)
         ):
             return True
         raw_secret = secret.encode("utf-8")
@@ -1364,6 +1490,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
     deadline = time.monotonic() + MAX_TRACE_PARSE_SECONDS if deadline is None else deadline
     roots = [session_roots] if isinstance(session_roots, Path) else list(session_roots)
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
+    summarized_turns: set[tuple[str, int]] = set()
     omissions: list[dict[str, Any]] = []
     total_trace_bytes = 0
     if artifact_dir is not None:
@@ -1400,6 +1527,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
             source_error: OSError | None = None
             tool_count_before = len(tools)
             turns_before = set(turns)
+            summarized_turns_before = set(summarized_turns)
             steps_before, resets_before, malformed_before = steps, resets, malformed
             try:
                 if artifact_dir is not None:
@@ -1442,6 +1570,10 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                     elif item.get("kind") == "contextCompacted":
                         resets += 1
                     elif item.get("kind") == "turnSummary":
+                        summary_key = (candidate_label, raw_turn)
+                        if summary_key in summarized_turns:
+                            malformed += 1
+                            continue
                         raw_steps = item.get("steps")
                         if raw_steps is None:
                             parsed_steps = 0
@@ -1458,6 +1590,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                         else:
                             malformed += 1
                             continue
+                        summarized_turns.add(summary_key)
                         steps += parsed_steps
             finally:
                 try:
@@ -1469,6 +1602,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
             if source_error is not None:
                 del tools[tool_count_before:]
                 turns = turns_before
+                summarized_turns = summarized_turns_before
                 steps, resets, malformed = steps_before, resets_before, malformed_before
                 total_trace_bytes -= trace_size
                 omissions.append({"trace": candidate_label, "reason": f"could not read trace: {source_error}"})
@@ -1528,6 +1662,7 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
             scratch_dir=temp_dir,
             scratch_max_bytes=MAX_VALIDATION_SCRATCH_BYTES,
             scratch_max_entries=MAX_VALIDATION_SCRATCH_ENTRIES,
+            aggregate_memory_max_bytes=MAX_VALIDATION_AGGREGATE_MEMORY_BYTES,
         )
         results.append({"argv": argv, **result})
         if result["timed_out"]:
