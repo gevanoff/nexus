@@ -302,6 +302,27 @@ def test_parse_trace_counts_same_turn_number_in_distinct_trace_files(tmp_path: P
     assert result["agent_steps"] == 2
 
 
+def test_parse_trace_rejects_boolean_turn_identifiers(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    records = [
+        {"turn": True, "kind": "toolCall", "name": "file_read"},
+        {"turn": False, "kind": "toolCall", "name": "grep"},
+        {"turn": 1, "kind": "turnSummary", "steps": 1},
+    ]
+    (session_root / "one.events.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(session_root)
+
+    assert result["agent_turns"] == 1
+    assert result["agent_steps"] == 1
+    assert result["tool_calls"] == []
+    assert result["malformed_trace_lines"] == 2
+
+
 def test_parse_trace_records_source_open_failure_and_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -845,8 +845,12 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                     if dest_handle is not None:
                         dest_handle.write(json.dumps(redact_value(item, secrets), separators=(",", ":"), sort_keys=True))
                         dest_handle.write("\n")
-                    if isinstance(item.get("turn"), int):
-                        turns.add((candidate_label, item["turn"]))
+                    raw_turn = item.get("turn")
+                    if isinstance(raw_turn, bool):
+                        malformed += 1
+                        continue
+                    if isinstance(raw_turn, int):
+                        turns.add((candidate_label, raw_turn))
                     if item.get("kind") == "toolCall" and item.get("name"):
                         tools.append(str(item["name"]))
                     elif item.get("kind") == "contextCompacted":
