@@ -273,7 +273,7 @@ def _validation_sandbox_argv(
         "--dev", "/dev",
         "--proc", "/proc",
         "--tmpfs", "/tmp",
-        "--bind", str(trusted["workspace"]), str(trusted["workspace"]),
+        "--ro-bind", str(trusted["workspace"]), str(trusted["workspace"]),
         "--bind", str(trusted["temporary directory"]), str(trusted["temporary directory"]),
     ))
     for key, value in sorted(child_env.items()):
@@ -877,13 +877,19 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
     if b"\0" in raw_value:
         return True
     lowered = raw_value.lower()
-    compact_base64 = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
+    compact_whitespace = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
     for secret in (str(value) for value in secrets if value):
         if any(encoded in raw_value for encoded in _encoded_secret_variants(secret)):
             return True
-        if any(encoded in compact_base64 for encoded in _base64_secret_variants(secret)):
+        if any(encoded in compact_whitespace for encoded in _base64_secret_variants(secret)):
             return True
         raw_secret = secret.encode("utf-8")
+        if (
+            len(raw_secret) >= 8
+            and raw_secret not in raw_value
+            and raw_secret in compact_whitespace
+        ):
+            return True
         if len(raw_secret) >= 8 and raw_secret.hex().encode("ascii") in lowered:
             return True
     return False

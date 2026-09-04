@@ -175,7 +175,7 @@ def test_binary_git_evidence_never_retains_reconstructable_secret(tmp_path: Path
             assert token.encode("utf-8") not in path.read_bytes()
 
 
-def test_final_snapshot_is_taken_after_validation_mutations(tmp_path: Path) -> None:
+def test_validation_cannot_supply_measured_workspace_mutation(tmp_path: Path) -> None:
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
         pytest.skip("validation integration requires bwrap")
     fake = _write_executable(
@@ -212,12 +212,13 @@ print('author complete')
         allow_mutations=True,
     )
 
-    assert result["outcome"]["completed"] is True
-    assert result["workspace"]["files_changed"] == ["app.py"]
+    assert result["outcome"]["completed"] is False
+    assert result["validation"]["passed"] is False
+    assert result["workspace"]["files_changed"] == []
     diff = Path(result["artifacts"]["diff"]).read_text(encoding="utf-8")
-    assert "+AFTER_VALIDATION" in diff
+    assert diff == ""
     final_file = Path(result["artifacts"]["run_root"]) / "artifacts" / "final-files" / "app.py"
-    assert final_file.read_text(encoding="utf-8") == "AFTER_VALIDATION\n"
+    assert not final_file.exists()
 
 
 def test_repository_diff_external_and_fsmonitor_config_cannot_execute(tmp_path: Path) -> None:
