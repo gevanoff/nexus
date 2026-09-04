@@ -485,11 +485,12 @@ def git(
     )
 
 
-def _require_result(result: dict[str, Any], label: str, *, allowed_returncodes: tuple[int, ...] = (0,)) -> dict[str, Any]:
+def _require_result(result: dict[str, Any], label: str, *, allowed_returncodes: tuple[int, ...] = (0,),
+                    secrets: Iterable[str] = ()) -> dict[str, Any]:
     if (result.get("timed_out") or result.get("launch_error") or result.get("output_truncated")
             or result.get("returncode") not in allowed_returncodes):
         detail = result.get("stderr") or result.get("stdout") or f"returncode={result.get('returncode')}"
-        raise RuntimeError(f"{label} failed: {detail}")
+        raise RuntimeError(redact_text(f"{label} failed: {detail}", secrets))
     return result
 
 
@@ -680,7 +681,12 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
             continue
         patch = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--", "/dev/null", rel],
                     cwd=workspace, evidence=True)
-        _require_result(patch, f"git diff --no-index {rel}", allowed_returncodes=(0, 1))
+        _require_result(
+            patch,
+            f"git diff --no-index {rel}",
+            allowed_returncodes=(0, 1),
+            secrets=secrets,
+        )
         patch_text = patch["stdout"].removesuffix("\n")
         if patch_text:
             pieces.append(patch_text)
@@ -742,7 +748,7 @@ def albatross_version(executable: str) -> dict[str, Any]:
     if not resolved or not Path(resolved).is_file():
         return {"installed": False, "executable": executable, "version": "", "raw": "albatross unavailable"}
     result = run_process([resolved, "--version"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
-                         isolate_process_group=False)
+                         isolate_process_group=sys.platform.startswith("linux"))
     text = (result["stdout"] or result["stderr"]).strip()
     match = re.search(r"(?:albatross\s+)?v?(\d+\.\d+\.\d+)", text, re.I)
     return {"installed": bool(result["ok"]), "executable": resolved,
@@ -751,7 +757,7 @@ def albatross_version(executable: str) -> dict[str, Any]:
 
 def albatross_capabilities(executable: str) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     help_result = run_process([executable, "--help"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
-                              isolate_process_group=False)
+                              isolate_process_group=sys.platform.startswith("linux"))
     help_text = help_result["stdout"] + "\n" + help_result["stderr"]
     capabilities = {"one_shot": "--print" in help_text, "external_eval": "--eval" in help_text,
         "json_eval_output": "--json" in help_text, "allow_tools": "--allow-tools" in help_text,
@@ -1188,11 +1194,20 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
     finally:
         fixture_path.unlink(missing_ok=True)
     tools = result.get("trajectory", {}).get("tool_call_names") or []
-    chat_ok = result.get("outcome", {}).get("exit_code") == 0
+    response_marker = "NEXUS_ALBATROSS_PROBE_OK"
+    response_output = ""
+    try:
+        response_output = Path(result["artifacts"]["stdout"]).read_text(encoding="utf-8")
+    except (KeyError, OSError, TypeError) as exc:
+        report["live_error"] = f"could not verify live probe response: {type(exc).__name__}: {exc}"
+    response_ok = response_marker in response_output
+    chat_ok = result.get("outcome", {}).get("exit_code") == 0 and response_ok
     report["capabilities"].update({"chat": chat_ok, "streaming": chat_ok,
         "tool_calls": "file_read" in tools, "structured_trace": bool(result.get("artifacts", {}).get("trace_files"))})
     report["live_result"] = str(result_path)
     report["ok"] = bool(chat_ok and report["capabilities"]["tool_calls"] and result.get("objective", {}).get("passed") is True)
+    if not response_ok and "live_error" not in report:
+        report["live_error"] = f"live probe response did not contain {response_marker}"
     return redact_value(report, [nexus_token])
 
 

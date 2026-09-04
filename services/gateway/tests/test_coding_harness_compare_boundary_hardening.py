@@ -365,12 +365,17 @@ def test_live_probe_uses_unique_ephemeral_fixture_paths(
     def fake_run(fixture_path: Path, **kwargs):
         assert fixture_path.exists()
         observed.append(fixture_path)
+        stdout_path = tmp_path / f"stdout-{len(observed)}.txt"
+        stdout_path.write_text("NEXUS_ALBATROSS_PROBE_OK\n", encoding="utf-8")
         return (
             {
                 "outcome": {"exit_code": 0},
                 "trajectory": {"tool_call_names": ["file_read"]},
                 "objective": {"passed": True},
-                "artifacts": {"trace_files": ["trace.events.jsonl"]},
+                "artifacts": {
+                    "stdout": str(stdout_path),
+                    "trace_files": ["trace.events.jsonl"],
+                },
             },
             tmp_path / f"result-{len(observed)}.json",
         )

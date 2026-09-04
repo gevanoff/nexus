@@ -126,6 +126,42 @@ elif '--help' in sys.argv:
     assert missing == []
 
 
+def test_linux_binary_probes_contain_detached_descendants(tmp_path: Path) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("subreaper containment is Linux-only")
+    try:
+        harness._linux_direct_children(os.getpid())
+    except OSError:
+        pytest.skip("procfs child enumeration is unavailable")
+    marker = tmp_path / "late-probe-write.txt"
+    child = (
+        "import pathlib,time; "
+        "time.sleep(0.5); "
+        f"pathlib.Path({str(marker)!r}).write_text('late', encoding='utf-8')"
+    )
+    binary = _write_executable(
+        tmp_path / "albatross",
+        f"""#!/usr/bin/env python3
+import subprocess
+import sys
+subprocess.Popen([sys.executable, '-c', {child!r}], start_new_session=True)
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+elif '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+""",
+    )
+
+    version = harness.albatross_version(str(binary))
+    help_result, _, missing = harness.albatross_capabilities(str(binary))
+    time.sleep(0.7)
+
+    assert version["installed"] is True
+    assert help_result["ok"] is True
+    assert missing == []
+    assert not marker.exists()
+
+
 def test_run_rejects_binary_missing_required_capability_before_execution(tmp_path: Path) -> None:
     marker = tmp_path / "executed"
     fake = _write_executable(
@@ -417,6 +453,42 @@ raise SystemExit(0)
     assert report["capabilities"]["one_shot"] is True
     assert report["capabilities"]["allow_tools"] is False
     assert "allow_tools" in report["compatibility"]["missing"]
+
+
+def test_workspace_snapshot_redacts_secret_from_git_failure_label_and_detail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    secret = "nexus-git-failure-secret"
+    (workspace / f"evidence-{secret}.txt").write_text("content\n", encoding="utf-8")
+    original_git = harness.git
+
+    def fail_no_index(argv, **kwargs):
+        if "--no-index" in argv:
+            return {
+                "ok": False,
+                "returncode": 1,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": f"fatal: could not diff evidence-{secret}.txt",
+                "duration_ms": 0.0,
+                "launch_error": None,
+                "output_truncated": True,
+            }
+        return original_git(argv, **kwargs)
+
+    monkeypatch.setattr(harness, "git", fail_no_index)
+
+    with pytest.raises(RuntimeError) as raised:
+        harness.workspace_snapshot(workspace, baseline, artifacts, secrets=[secret])
+
+    assert secret not in str(raised.value)
+    assert "evidence-(redacted).txt" in str(raised.value)
 
 
 def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

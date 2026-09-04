@@ -140,6 +140,47 @@ print('NEXUS_ALBATROSS_PROBE_OK')
     assert files_check["actual"] == ["probe.txt"]
 
 
+def test_live_probe_requires_marker_in_model_response(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools --eval --json')
+    raise SystemExit(0)
+root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
+sessions = root / '.sessions'
+sessions.mkdir(parents=True, exist_ok=True)
+(sessions / 'probe.events.jsonl').write_text(
+    json.dumps({'turn': 1, 'kind': 'toolCall', 'callId': '1', 'name': 'file_read', 'args': {'path': 'probe.txt'}, 'depth': 0}) + '\\n',
+    encoding='utf-8',
+)
+print('wrong response')
+""",
+    )
+
+    report = harness.probe(
+        str(fake),
+        live=True,
+        out_root=tmp_path / "runs",
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="probe-token",
+        model="coder",
+    )
+
+    assert report["capabilities"]["tool_calls"] is True
+    assert report["capabilities"]["chat"] is False
+    assert report["capabilities"]["streaming"] is False
+    assert report["ok"] is False
+    assert "did not contain NEXUS_ALBATROSS_PROBE_OK" in report["live_error"]
+
+
 def test_binary_secret_artifact_is_omitted_from_retained_evidence(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
