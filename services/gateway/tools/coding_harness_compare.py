@@ -1374,8 +1374,12 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
 def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
     secrets = tuple(str(secret) for secret in secrets if secret)
     encoded_secret_variants: set[bytes] = set()
+    hexadecimal_secret_variants: set[bytes] = set()
     for secret in secrets:
         encoded_secret_variants.update(_encoded_secret_variants(secret))
+        raw_secret = secret.encode("utf-8")
+        if len(raw_secret) >= 8:
+            hexadecimal_secret_variants.add(raw_secret.hex().encode("ascii"))
     omitted: list[str] = []
     for path in sorted(artifacts.rglob("*")):
         if _contains_secret_path(str(path.relative_to(artifacts)), secrets):
@@ -1402,9 +1406,9 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
             raw_artifact = path.read_bytes()
         except OSError:
             raw_artifact = b""
-        if b"\0" in raw_artifact or any(
-            encoded and encoded in raw_artifact for encoded in encoded_secret_variants
-        ):
+        if (b"\0" in raw_artifact
+                or any(encoded and encoded in raw_artifact for encoded in encoded_secret_variants)
+                or any(encoded in raw_artifact.lower() for encoded in hexadecimal_secret_variants)):
             try:
                 path.unlink()
                 omitted.append(str(path.relative_to(artifacts)))

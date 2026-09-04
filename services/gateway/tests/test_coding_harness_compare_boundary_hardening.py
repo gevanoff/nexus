@@ -170,6 +170,24 @@ def test_scrub_discards_encoded_secret_artifacts(tmp_path: Path) -> None:
     assert not encoded.exists()
 
 
+def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "nexus-mixed-case-hex-secret"
+    raw_hex = token.encode("utf-8").hex()
+    mixed_case_hex = "".join(
+        value.upper() if index % 2 else value
+        for index, value in enumerate(raw_hex)
+    )
+    encoded = artifacts / "encoded.txt"
+    encoded.write_text(mixed_case_hex + "\n", encoding="ascii")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert omitted == ["encoded.txt"]
+    assert not encoded.exists()
+
+
 def test_encoded_secret_paths_are_never_retained_or_reported(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
