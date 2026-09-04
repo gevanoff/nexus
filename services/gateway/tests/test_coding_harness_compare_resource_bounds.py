@@ -154,6 +154,7 @@ def test_repeated_content_objectives_read_each_file_once(
     assert target_reads == 1
 
 
+@pytest.mark.requires_linux_process_containment
 def test_live_probe_requires_no_workspace_mutation(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -198,6 +199,7 @@ print('NEXUS_ALBATROSS_PROBE_OK')
     assert files_check["actual"] == ["probe.txt"]
 
 
+@pytest.mark.requires_linux_process_containment
 def test_live_probe_requires_marker_in_model_response(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -239,6 +241,7 @@ print('wrong response')
     assert "did not contain NEXUS_ALBATROSS_PROBE_OK" in report["live_error"]
 
 
+@pytest.mark.requires_linux_process_containment
 def test_binary_secret_artifact_is_omitted_from_retained_evidence(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",

@@ -56,6 +56,7 @@ MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
 MAX_TRACE_TOTAL_BYTES = 16_000_000
 MIN_CROSS_FIELD_FRAGMENT_BYTES = 2
+MAX_FRAGMENT_SEARCH_STATES = 4096
 RESULT_CHILD_CONTROLLED_FIELDS = frozenset(
     {
         "actual",
@@ -123,6 +124,10 @@ def redact_text(text: str, secrets: Iterable[str] = ()) -> str:
     out = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "(redacted)", out)
     out = re.sub(r"(?i)\bsk-(?:or-)?[A-Za-z0-9_-]{8,}\b", "(redacted)", out)
     if _contains_encoded_secret_bytes(out.encode("utf-8", errors="replace"), secrets):
+        return "(redacted)"
+    if _fragmented_secret_indexes(
+        [out.encode("utf-8", errors="replace")], secrets
+    ):
         return "(redacted)"
     return out
 
@@ -1883,6 +1888,60 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
     return {"passed": None if not checks else all(v["passed"] for v in checks), "checks": checks}
 
 
+def _contains_ordered_secret_fragments(
+    value: bytes,
+    protected: bytes,
+    *,
+    min_fragment_bytes: int,
+) -> bool:
+    minimum = max(2, min_fragment_bytes)
+    if len(protected) < minimum * 2:
+        return False
+    states = {(0, 0, 0)}
+    visited: set[tuple[int, int, int]] = set()
+    transitions = 0
+    while states:
+        secret_position, value_position, fragment_count = states.pop()
+        state = (secret_position, value_position, fragment_count)
+        if state in visited:
+            continue
+        visited.add(state)
+        if len(visited) > MAX_FRAGMENT_SEARCH_STATES:
+            return True
+        needle = protected[secret_position : secret_position + minimum]
+        if len(needle) < minimum:
+            continue
+        match_start = value.find(needle, value_position)
+        while match_start >= 0:
+            transitions += 1
+            if transitions > MAX_FRAGMENT_SEARCH_STATES:
+                return True
+            match_length = minimum
+            limit = min(len(protected) - secret_position, len(value) - match_start)
+            while (
+                match_length < limit
+                and protected[secret_position + match_length]
+                == value[match_start + match_length]
+            ):
+                match_length += 1
+            next_secret_position = secret_position + match_length
+            next_fragment_count = min(2, fragment_count + 1)
+            if (
+                next_secret_position == len(protected)
+                and next_fragment_count >= 2
+            ):
+                return True
+            states.add(
+                (
+                    next_secret_position,
+                    match_start + match_length,
+                    next_fragment_count,
+                )
+            )
+            match_start = value.find(needle, match_start + 1)
+    return False
+
+
 def _fragmented_secret_indexes(
     values: list[bytes],
     secrets: Iterable[str],
@@ -1924,6 +1983,19 @@ def _fragmented_secret_indexes(
                 if case_insensitive:
                     views = {view.lower() for view in views}
                 normalized_values.append(views)
+            if not require_whole_value:
+                for index, views in enumerate(normalized_values):
+                    if any(normalized_protected in view for view in views):
+                        continue
+                    if any(
+                        _contains_ordered_secret_fragments(
+                            view,
+                            normalized_protected,
+                            min_fragment_bytes=min_fragment_bytes,
+                        )
+                        for view in views
+                    ):
+                        all_implicated.add(index)
             candidates = [
                 (index, views)
                 for index, views in enumerate(normalized_values)
@@ -1967,7 +2039,10 @@ def _fragmented_secret_indexes(
                             )
                         )
                         end_states.add(updated)
-                        if sum(len(entries) for entries in states.values()) > 4096:
+                        if (
+                            sum(len(entries) for entries in states.values())
+                            > MAX_FRAGMENT_SEARCH_STATES
+                        ):
                             return set(range(len(values)))
             all_implicated.update(implicated)
     return all_implicated

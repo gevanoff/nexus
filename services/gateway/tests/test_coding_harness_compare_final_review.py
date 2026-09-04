@@ -175,6 +175,7 @@ def test_binary_git_evidence_never_retains_reconstructable_secret(tmp_path: Path
             assert token.encode("utf-8") not in path.read_bytes()
 
 
+@pytest.mark.requires_linux_process_containment
 def test_validation_cannot_supply_measured_workspace_mutation(tmp_path: Path) -> None:
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
         pytest.skip("validation integration requires bwrap")

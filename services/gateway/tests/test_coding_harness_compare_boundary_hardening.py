@@ -363,6 +363,7 @@ def test_scrub_and_result_redaction_detect_line_wrapped_base64_secrets(tmp_path:
     assert harness.redact_text(wrapped.decode("ascii"), [token]) == "(redacted)"
 
 
+@pytest.mark.requires_linux_process_containment
 def test_encoded_process_output_is_redacted_from_the_complete_result(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -407,6 +408,7 @@ raise SystemExit(2)
     assert encoded not in result_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.requires_linux_process_containment
 def test_base85_process_output_is_redacted_from_the_complete_result(
     tmp_path: Path,
 ) -> None:
@@ -448,6 +450,7 @@ raise SystemExit(2)
     assert encoded not in result_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.requires_linux_process_containment
 def test_unicode_escaped_process_output_is_redacted_from_the_complete_result(
     tmp_path: Path,
 ) -> None:
@@ -488,6 +491,7 @@ raise SystemExit(2)
     assert encoded not in result_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.requires_linux_process_containment
 def test_encoded_secret_paths_are_never_retained_or_reported(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -665,6 +669,7 @@ def test_validation_scratch_mount_follows_recursive_read_only_remount(
     assert remount_index < scratch_index < workspace_index
 
 
+@pytest.mark.requires_linux_process_containment
 def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("bubblewrap sandbox regression requires Linux")
@@ -773,6 +778,7 @@ def test_validation_command_timeout_is_typed_before_shared_deadline(
     assert result["passed"] is False
 
 
+@pytest.mark.requires_linux_process_containment
 def test_final_outcome_preserves_validation_command_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -877,6 +883,7 @@ def test_agent_timeout_gets_a_separate_bounded_trace_budget(
     assert result_path.exists()
 
 
+@pytest.mark.requires_linux_process_containment
 def test_trace_collection_does_not_consume_validation_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -981,6 +988,7 @@ def test_bundled_mutating_missions_match_the_available_tool_surface() -> None:
         assert "run the unit tests" not in mission
 
 
+@pytest.mark.requires_linux_process_containment
 def test_workspace_trace_files_are_not_trusted(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -1022,6 +1030,7 @@ print('done')
     assert result["artifacts"]["trace_files"] == []
 
 
+@pytest.mark.requires_linux_process_containment
 def test_validation_cannot_forge_retained_trace_evidence(tmp_path: Path) -> None:
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
         pytest.skip("trace provenance integration requires bwrap")
@@ -1076,6 +1085,7 @@ print('done')
     assert len(result["artifacts"]["trace_files"]) == 1
 
 
+@pytest.mark.requires_linux_process_containment
 def test_untrusted_artifacts_symlink_is_replaced_before_retention(tmp_path: Path) -> None:
     if os.name != "posix":
         pytest.skip("symlink boundary regression requires POSIX")
@@ -1121,6 +1131,7 @@ print('done')
     assert sentinel.read_text(encoding="utf-8") == "UNCHANGED\n"
 
 
+@pytest.mark.requires_linux_process_containment
 def test_run_execution_directories_are_private_0700(tmp_path: Path) -> None:
     if os.name != "posix":
         pytest.skip("mode isolation regression requires POSIX")

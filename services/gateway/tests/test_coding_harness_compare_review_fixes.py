@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from coding_harness_test_support import linux_process_containment_available
+
 
 def _load_module():
     path = Path(__file__).resolve().parents[1] / "tools" / "coding_harness_compare.py"
@@ -22,22 +24,6 @@ def _load_module():
 
 
 harness = _load_module()
-
-
-def _linux_process_containment_available() -> bool:
-    if not sys.platform.startswith("linux"):
-        return False
-    try:
-        harness._linux_direct_children(os.getpid())
-    except OSError:
-        return False
-    return True
-
-
-requires_linux_process_containment = pytest.mark.skipif(
-    not _linux_process_containment_available(),
-    reason="Linux procfs child enumeration is unavailable",
-)
 
 
 def _write_executable(path: Path, body: str) -> Path:
@@ -157,7 +143,7 @@ def test_linux_process_containment_availability_requires_readable_procfs(
 
     monkeypatch.setattr(harness, "_linux_direct_children", unavailable_procfs)
 
-    assert _linux_process_containment_available() is False
+    assert linux_process_containment_available(harness) is False
 
 
 def test_offline_probe_fallback_reaps_process_group_children(
@@ -199,7 +185,7 @@ elif '--help' in sys.argv:
     assert not marker.exists()
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_linux_binary_probes_contain_detached_descendants(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("subreaper containment is Linux-only")
@@ -236,7 +222,7 @@ elif '--help' in sys.argv:
     assert not marker.exists()
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_linux_direct_children_includes_subprocesses_from_worker_threads() -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("procfs child enumeration requires Linux")
@@ -348,7 +334,7 @@ def test_mutating_env_excludes_unsandboxed_test_execution(tmp_path: Path) -> Non
     assert "shell" not in tools
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_read_only_run_auto_approves_its_restricted_tool_surface(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -381,7 +367,7 @@ print('done')
     assert result["outcome"]["completed"] is True
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_result_redacts_truncated_process_output_when_token_is_in_scope(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -600,7 +586,7 @@ def test_parse_trace_records_source_open_failure_and_continues(
     assert "could not read trace" in result["trace_omissions"][0]["reason"]
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_application_events_jsonl_is_not_counted_as_albatross_trace(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -871,6 +857,26 @@ def test_fragmented_result_fields_are_redacted_before_serialization() -> None:
     assert command["stderr"] == "(redacted)"
 
 
+def test_labeled_fragments_in_one_value_are_redacted_everywhere(
+    tmp_path: Path,
+) -> None:
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    evidence = f"part1={token[:32]}\npart2={token[32:]}"
+
+    assert harness.redact_text(evidence, [token]) == "(redacted)"
+    assert harness._redact_fragmented_value(
+        {"stdout": evidence}, [token]
+    ) == {"stdout": "(redacted)"}
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    retained = artifacts / "stdout.txt"
+    retained.write_text(evidence, encoding="utf-8")
+
+    assert harness.scrub_retained_artifacts(artifacts, [token]) == ["stdout.txt"]
+    assert not retained.exists()
+
+
 def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"
@@ -1007,7 +1013,7 @@ def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
     assert observed_timeouts == pytest.approx([600.0])
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1042,7 +1048,7 @@ def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
     assert not marker.exists()
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_validation_scratch_entry_limit_fails_the_command(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1114,7 +1120,7 @@ def test_scratch_scan_stops_without_materializing_the_directory(
     assert consumed == 4
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1146,7 +1152,7 @@ def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
     assert result["passed"] is True
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -1183,7 +1189,7 @@ def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> N
     assert result["passed"] is True
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_validation_enforces_aggregate_resident_memory_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1215,7 +1221,7 @@ def test_validation_enforces_aggregate_resident_memory_limit(
     assert "process tree" in result["commands"][0]["stderr"]
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_validation_accounts_for_deleted_open_scratch_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1253,7 +1259,7 @@ def test_validation_accounts_for_deleted_open_scratch_files(
     assert "filesystem quota" in result["commands"][0]["stderr"]
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
         pytest.skip("validation integration requires bwrap")
@@ -1388,7 +1394,7 @@ def test_keyboard_interrupt_discards_fixture_execution_state(
     assert not list(out_root.rglob("secret.txt"))
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_isolated_process_group_terminates_background_descendants(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("subreaper containment is Linux-only")
@@ -1462,7 +1468,7 @@ def test_isolated_process_execution_fails_closed_when_descendants_cannot_be_insp
     assert "could not enable descendant containment" in result["stderr"]
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_isolated_process_raises_when_post_launch_containment_cannot_be_verified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1486,7 +1492,7 @@ def test_isolated_process_raises_when_post_launch_containment_cannot_be_verified
         )
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_isolated_process_reaps_detached_descendant_on_keyboard_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1540,7 +1546,7 @@ def test_isolated_process_reaps_detached_descendant_on_keyboard_interrupt(
     assert not marker.exists()
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_isolated_process_contains_child_when_popen_is_interrupted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1585,7 +1591,7 @@ def test_isolated_process_contains_child_when_popen_is_interrupted(
     assert harness._linux_subreaper_enabled() is original_subreaper_state
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_large_trace_is_sanitized_and_raw_execution_tree_is_not_retained(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -1632,7 +1638,7 @@ print('done')
     assert result["workspace"]["execution_workspace_retained"] is False
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_fragmented_trace_scalars_are_redacted_in_result_and_artifact(
     tmp_path: Path,
 ) -> None:
@@ -1712,7 +1718,7 @@ def test_fragmented_trace_object_keys_are_redacted(tmp_path: Path) -> None:
     assert "(redacted-key-" in trace_text
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_final_result_redacts_fragments_across_trace_and_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1804,7 +1810,7 @@ def test_list_fixtures_loads_each_fixture_once(
     assert json.loads(capsys.readouterr().out)[0]["id"] == "a"
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_retained_run_discards_execution_tree_scrubs_secret_and_hashes_final_diff(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -1871,7 +1877,7 @@ print('done')
         assert token not in text, f"secret remained in retained artifact: {path}"
 
 
-@requires_linux_process_containment
+@pytest.mark.requires_linux_process_containment
 def test_fixture_rejects_and_discards_unexpected_execution_root_entries(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
