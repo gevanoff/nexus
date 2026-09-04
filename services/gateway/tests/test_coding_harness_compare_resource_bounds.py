@@ -112,7 +112,7 @@ if '--help' in sys.argv:
     raise SystemExit(0)
 root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
 (root / 'probe.txt').write_text('NEXUS_ALBATROSS_PROBE_OK\\nMUTATED\\n', encoding='utf-8')
-sessions = root / '.sessions'
+sessions = pathlib.Path(os.environ['HOME']) / '.config' / 'albatross' / 'sessions'
 sessions.mkdir(parents=True, exist_ok=True)
 (sessions / 'probe.events.jsonl').write_text(
     json.dumps({'turn': 1, 'kind': 'toolCall', 'callId': '1', 'name': 'file_read', 'args': {'path': 'probe.txt'}, 'depth': 0}) + '\\n',
@@ -155,7 +155,7 @@ if '--help' in sys.argv:
     print('albatross --print --allow-tools --eval --json')
     raise SystemExit(0)
 root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
-sessions = root / '.sessions'
+sessions = pathlib.Path(os.environ['HOME']) / '.config' / 'albatross' / 'sessions'
 sessions.mkdir(parents=True, exist_ok=True)
 (sessions / 'probe.events.jsonl').write_text(
     json.dumps({'turn': 1, 'kind': 'toolCall', 'callId': '1', 'name': 'file_read', 'args': {'path': 'probe.txt'}, 'depth': 0}) + '\\n',

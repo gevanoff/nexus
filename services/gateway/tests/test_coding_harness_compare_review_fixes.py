@@ -966,7 +966,7 @@ secret = os.environ['OPENAI_API_KEY']
 (root / 'leak.txt').write_text(secret + '\\n', encoding='utf-8')
 subprocess.run(['git', 'add', 'leak.txt'], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 subprocess.run(['git', 'commit', '-m', 'capture secret'], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-sessions = root / '.sessions'
+sessions = pathlib.Path(os.environ['HOME']) / '.config' / 'albatross' / 'sessions'
 sessions.mkdir(parents=True, exist_ok=True)
 (sessions / 'fake.events.jsonl').write_text(
     json.dumps({'turn': 1, 'kind': 'toolCall', 'callId': '1', 'name': 'file_write', 'args': {'path': 'leak.txt'}, 'depth': 0}) + '\\n',

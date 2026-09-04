@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import ctypes
 import hashlib
@@ -757,8 +758,21 @@ def _independent_snapshot_index(
     deadline: float,
 ):
     artifacts.mkdir(parents=True, exist_ok=True)
+    try:
+        workspace_info = workspace.lstat()
+        git_dir = workspace / ".git"
+        git_info = git_dir.lstat()
+    except OSError as exc:
+        raise RuntimeError(f"could not verify snapshot repository structure: {exc}") from exc
+    if (stat.S_ISLNK(workspace_info.st_mode) or not stat.S_ISDIR(workspace_info.st_mode)
+            or stat.S_ISLNK(git_info.st_mode) or not stat.S_ISDIR(git_info.st_mode)):
+        raise RuntimeError("snapshot repository structure is not trusted")
     index_path = artifacts / f".snapshot-index-{uuid.uuid4().hex}"
-    index_env = {"GIT_INDEX_FILE": str(index_path)}
+    index_env = {
+        "GIT_DIR": str(git_dir),
+        "GIT_INDEX_FILE": str(index_path),
+        "GIT_WORK_TREE": str(workspace),
+    }
     try:
         _required_git(
             ["read-tree", baseline],
@@ -1155,6 +1169,23 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
 
 
 def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
+    secrets = tuple(str(secret) for secret in secrets if secret)
+    encoded_secret_variants: set[bytes] = set()
+    for secret in secrets:
+        raw = secret.encode("utf-8")
+        encoded_secret_variants.update({
+            secret.encode("utf-16-le"),
+            secret.encode("utf-16-be"),
+            secret.encode("utf-32-le"),
+            secret.encode("utf-32-be"),
+        })
+        if len(raw) >= 8:
+            encoded_secret_variants.update({
+                base64.b64encode(raw),
+                base64.urlsafe_b64encode(raw),
+                raw.hex().encode("ascii"),
+                raw.hex().upper().encode("ascii"),
+            })
     omitted: list[str] = []
     for path in sorted(artifacts.rglob("*")):
         try:
@@ -1169,6 +1200,19 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
                 raise RuntimeError(f"could not discard retained symlink artifact: {path}: {exc}") from exc
             continue
         if not stat.S_ISREG(info.st_mode):
+            continue
+        try:
+            raw_artifact = path.read_bytes()
+        except OSError:
+            raw_artifact = b""
+        if b"\0" in raw_artifact or any(
+            encoded and encoded in raw_artifact for encoded in encoded_secret_variants
+        ):
+            try:
+                path.unlink()
+                omitted.append(str(path.relative_to(artifacts)))
+            except OSError as exc:
+                raise RuntimeError("could not discard encoded or binary retained artifact") from exc
             continue
         fd = -1
         temp: Path | None = None
@@ -1272,7 +1316,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         workspace_info = workspace_snapshot(workspace, baseline, artifacts, secrets=[nexus_token])
         objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
         trace = parse_trace(
-            [workspace / ".sessions", home / ".config" / "albatross" / "sessions"],
+            home / ".config" / "albatross" / "sessions",
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
         )
