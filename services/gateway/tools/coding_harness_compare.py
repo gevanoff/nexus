@@ -798,7 +798,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
                 raise RuntimeError(
                     f"SECURITY: evaluation failed and run root could not be securely discarded: {root}: {discard_exc}"
                 ) from discard_exc
-        raise exc
+        raise
 
 
 def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
