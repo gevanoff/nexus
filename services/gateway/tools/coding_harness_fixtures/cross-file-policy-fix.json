@@ -9,7 +9,7 @@
       "test_policy.py": "import unittest\n\nfrom policy import publish_enabled\nfrom service import publication_state\n\n\nclass PolicyTests(unittest.TestCase):\n    def test_absent_setting_uses_declared_default(self):\n        self.assertFalse(publish_enabled({}))\n        self.assertEqual(publication_state({}), \"disabled\")\n\n    def test_explicit_true_still_enables(self):\n        self.assertTrue(publish_enabled({\"publish_enabled\": True}))\n        self.assertEqual(publication_state({\"publish_enabled\": True}), \"enabled\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
     }
   },
-  "mission": "Fix the absent publish_enabled setting so behavior follows the existing DEFAULTS declaration. Repair the causal policy mechanism rather than special-casing service.py. Preserve explicit true behavior and run the unit tests.",
+  "mission": "Fix the absent publish_enabled setting so behavior follows the existing DEFAULTS declaration. Repair the causal policy mechanism rather than special-casing service.py. Preserve explicit true behavior and keep the existing unit tests intact.",
   "expected": {
     "files_changed": ["policy.py"],
     "allowed_files_changed": ["policy.py"],

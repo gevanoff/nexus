@@ -676,6 +676,52 @@ print('done')
     assert validation_remaining[0] > 28.0
 
 
+def test_vanished_descendant_is_a_normal_cleanup_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def direct_children(pid: int) -> set[int]:
+        if pid == 10:
+            return {20}
+        raise FileNotFoundError(f"/proc/{pid}/task/{pid}/children")
+
+    def process_exists(pid: int, signal_number: int) -> None:
+        assert (pid, signal_number) == (20, 0)
+        raise ProcessLookupError(pid)
+
+    monkeypatch.setattr(harness, "_linux_direct_children", direct_children)
+    monkeypatch.setattr(harness.os, "kill", process_exists)
+
+    assert harness._linux_descendant_tree({10}) == {10, 20}
+
+
+def test_missing_procfs_for_live_descendant_still_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing_children(pid: int) -> set[int]:
+        raise FileNotFoundError(f"/proc/{pid}")
+
+    monkeypatch.setattr(harness, "_linux_direct_children", missing_children)
+    monkeypatch.setattr(harness.os, "kill", lambda pid, signal_number: None)
+
+    with pytest.raises(FileNotFoundError):
+        harness._linux_descendant_tree({20})
+
+
+def test_bundled_mutating_missions_match_the_available_tool_surface() -> None:
+    assert "run_tests" not in harness.ALBATROSS_TOOLS
+    assert "shell" not in harness.ALBATROSS_TOOLS
+    prompt = harness.mission_prompt({"mission": "Fix the defect."}, True)
+    assert "do not attempt to run tests" in prompt
+    assert "harness will run declared validation" in prompt
+
+    fixture_dir = Path(__file__).resolve().parents[1] / "tools" / "coding_harness_fixtures"
+    for fixture_path in fixture_dir.glob("*.json"):
+        mission = json.loads(fixture_path.read_text(encoding="utf-8"))["mission"].lower()
+        assert "run tests" not in mission
+        assert "run the targeted unit tests" not in mission
+        assert "run the unit tests" not in mission
+
+
 def test_workspace_trace_files_are_not_trusted(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",

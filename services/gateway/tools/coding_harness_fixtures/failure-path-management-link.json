@@ -8,7 +8,7 @@
       "test_catalog.py": "import unittest\n\nfrom catalog import backend_entry\n\n\nclass CatalogTests(unittest.TestCase):\n    def test_success_exposes_management(self):\n        entry = backend_entry(lambda: [\"a\"], \"http://invokeai/ui\")\n        self.assertEqual(entry[\"models\"], [\"a\"])\n        self.assertEqual(entry[\"model_management\"][\"ui_url\"], \"http://invokeai/ui\")\n\n    def test_failure_still_exposes_management(self):\n        def fail():\n            raise RuntimeError(\"catalog unavailable\")\n\n        entry = backend_entry(fail, \"http://invokeai/ui\")\n        self.assertEqual(entry[\"models_error\"], \"catalog unavailable\")\n        self.assertEqual(entry[\"model_management\"][\"ui_url\"], \"http://invokeai/ui\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
     }
   },
-  "mission": "Fix backend_entry so the management UI URL remains available whether model discovery succeeds or raises RuntimeError. Preserve models_error on discovery failure. Make the smallest causal change and do not weaken or remove the tests. Run the targeted unit tests after the edit.",
+  "mission": "Fix backend_entry so the management UI URL remains available whether model discovery succeeds or raises RuntimeError. Preserve models_error on discovery failure. Make the smallest causal change and do not weaken or remove the tests.",
   "expected": {
     "files_changed": ["catalog.py"],
     "allowed_files_changed": ["catalog.py"],

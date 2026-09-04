@@ -364,7 +364,15 @@ def _linux_descendant_tree(roots: Iterable[int]) -> set[int]:
         if pid in found:
             continue
         found.add(pid)
-        pending.extend(_linux_direct_children(pid) - found)
+        try:
+            children = _linux_direct_children(pid)
+        except FileNotFoundError:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            raise
+        pending.extend(children - found)
     return found
 
 
@@ -1620,7 +1628,12 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
 
 
 def mission_prompt(fixture: dict[str, Any], allow_mutations: bool) -> str:
-    mode = "You may edit files and run tests." if allow_mutations else "This is read-only: do not mutate files or run mutating commands."
+    mode = (
+        "You may edit files. No command-execution tool is exposed, so do not attempt "
+        "to run tests; the harness will run declared validation after you finish."
+        if allow_mutations
+        else "This is read-only: do not mutate files or run mutating commands."
+    )
     return (f"{fixture['mission'].strip()}\n\n{mode} Work only inside the current repository workspace. "
             "Do not modify .git, .albatross, .small-harness, .sessions, agent.config.json, or files outside the workspace. "
             "Do not commit or push. Use repository tools rather than guessing file contents.")
