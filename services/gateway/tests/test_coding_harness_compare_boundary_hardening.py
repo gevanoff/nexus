@@ -265,6 +265,26 @@ def test_scrub_discards_secret_split_across_retained_artifacts(tmp_path: Path) -
     assert not stderr.exists()
 
 
+def test_scrub_discards_secret_split_across_three_retained_artifacts(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    paths = [artifacts / f"part-{index}.txt" for index in range(3)]
+    boundaries = (0, 21, 42, len(token))
+    for index, path in enumerate(paths):
+        path.write_text(
+            f"prefix:{token[boundaries[index]:boundaries[index + 1]]}:suffix",
+            encoding="utf-8",
+        )
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert set(omitted) == {path.name for path in paths}
+    assert not any(path.exists() for path in paths)
+
+
 def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()

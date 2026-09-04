@@ -766,6 +766,32 @@ def test_workspace_snapshot_omits_path_reconstructing_raw_secret(tmp_path: Path)
     assert not (artifacts / "final-files" / secret[:midpoint]).exists()
 
 
+def test_workspace_snapshot_omits_secret_split_across_sibling_filenames(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    secret = "nexus-sibling-filename-secret"
+    midpoint = len(secret) // 2
+    names = (secret[:midpoint], secret[midpoint:])
+    for name in names:
+        (workspace / name).write_text("safe content\n", encoding="utf-8")
+
+    snapshot = harness.workspace_snapshot(
+        workspace, baseline, artifacts, secrets=[secret]
+    )
+
+    assert snapshot["files_changed"] == ["(redacted)"]
+    assert snapshot["evidence_omissions"]
+    assert not any((artifacts / "final-files" / name).exists() for name in names)
+    retained_diff = (artifacts / "final.diff").read_text(encoding="utf-8")
+    assert all(name not in retained_diff for name in names)
+
+
 def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"

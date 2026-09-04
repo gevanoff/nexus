@@ -1411,8 +1411,24 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
         rel for rel in _parse_nul_paths(untracked["stdout"])
         if not _is_harness_runtime_path(rel)
     ]
-    protected_tracked = {rel for rel in tracked_files if _contains_secret_path(rel, secrets)}
-    protected_untracked = {rel for rel in raw_untracked_files if _contains_secret_path(rel, secrets)}
+    all_changed_paths = tracked_files + raw_untracked_files
+    fragmented_path_indexes = _fragmented_secret_indexes(
+        [rel.encode("utf-8", errors="replace") for rel in all_changed_paths],
+        secrets,
+    )
+    fragmented_paths = {
+        all_changed_paths[index] for index in fragmented_path_indexes
+    }
+    protected_tracked = {
+        rel
+        for rel in tracked_files
+        if rel in fragmented_paths or _contains_secret_path(rel, secrets)
+    }
+    protected_untracked = {
+        rel
+        for rel in raw_untracked_files
+        if rel in fragmented_paths or _contains_secret_path(rel, secrets)
+    }
     protected_paths = protected_tracked | protected_untracked
     tracked_files = [rel for rel in tracked_files if rel not in protected_paths]
     untracked_files = [rel for rel in raw_untracked_files if rel not in protected_paths]
@@ -1834,37 +1850,51 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
     return {"passed": None if not checks else all(v["passed"] for v in checks), "checks": checks}
 
 
-def _cross_artifact_secret_paths(
-    raw_artifacts: dict[Path, bytes], secrets: Iterable[str]
-) -> set[Path]:
-    implicated: set[Path] = set()
+def _fragmented_secret_indexes(
+    values: list[bytes], secrets: Iterable[str]
+) -> set[int]:
+    all_implicated: set[int] = set()
     for secret in (str(value) for value in secrets if value):
         raw_secret = secret.encode("utf-8")
         if len(raw_secret) < 8:
             continue
         for protected in {raw_secret, *_encoded_secret_variants(secret)}:
-            if len(protected) < 2:
-                continue
             candidates = [
-                (path, raw_value)
-                for path, raw_value in raw_artifacts.items()
+                (index, raw_value)
+                for index, raw_value in enumerate(values)
                 if protected not in raw_value
             ]
-            for split in range(1, len(protected)):
-                prefix = protected[:split]
-                suffix = protected[split:]
-                prefix_paths = {
-                    path for path, raw_value in candidates if prefix in raw_value
-                }
-                suffix_paths = {
-                    path for path, raw_value in candidates if suffix in raw_value
-                }
-                for prefix_path in prefix_paths:
-                    partners = suffix_paths - {prefix_path}
-                    if partners:
-                        implicated.add(prefix_path)
-                        implicated.update(partners)
-    return implicated
+            implicated: set[int] = set()
+            states: dict[int, set[frozenset[int]]] = {0: {frozenset()}}
+            for position in range(len(protected)):
+                current_states = tuple(states.get(position, ()))
+                for used in current_states:
+                    for index, raw_value in candidates:
+                        if index in used:
+                            continue
+                        end = len(protected)
+                        while (
+                            end > position
+                            and protected[position:end] not in raw_value
+                        ):
+                            end -= 1
+                        if end == position:
+                            continue
+                        updated = used | {index}
+                        if end == len(protected) and len(updated) > 1:
+                            implicated.update(updated)
+                            continue
+                        end_states = states.setdefault(end, set())
+                        if any(existing <= updated for existing in end_states):
+                            continue
+                        end_states.difference_update(
+                            existing for existing in end_states if updated < existing
+                        )
+                        end_states.add(updated)
+                        if sum(len(entries) for entries in states.values()) > 4096:
+                            return set(range(len(values)))
+            all_implicated.update(implicated)
+    return all_implicated
 
 
 def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
@@ -1878,7 +1908,11 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
                 raw_artifacts[path] = path.read_bytes()
         except OSError:
             continue
-    cross_artifact_secret_paths = _cross_artifact_secret_paths(raw_artifacts, secrets)
+    raw_paths = list(raw_artifacts)
+    fragmented_indexes = _fragmented_secret_indexes(
+        [raw_artifacts[path] for path in raw_paths], secrets
+    )
+    cross_artifact_secret_paths = {raw_paths[index] for index in fragmented_indexes}
     for path in sorted(artifacts.rglob("*")):
         if _contains_secret_path(str(path.relative_to(artifacts)), secrets):
             try:
