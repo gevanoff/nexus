@@ -369,17 +369,20 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
 
     stdout_state: dict[str, Any] = {}
     stderr_state: dict[str, Any] = {}
+    stream_threads: list[tuple[Any, Any, dict[str, Any]]] = []
     timed_out = False
     containment_error: str | None = None
     try:
-        stdout_thread = threading.Thread(
-            target=_drain_stream, args=(proc.stdout, output_limit_chars, stdout_state), daemon=True
-        )
-        stderr_thread = threading.Thread(
-            target=_drain_stream, args=(proc.stderr, output_limit_chars, stderr_state), daemon=True
-        )
-        stdout_thread.start()
-        stderr_thread.start()
+        stream_threads = [
+            (threading.Thread(
+                target=_drain_stream, args=(proc.stdout, output_limit_chars, stdout_state), daemon=True
+            ), proc.stdout, stdout_state),
+            (threading.Thread(
+                target=_drain_stream, args=(proc.stderr, output_limit_chars, stderr_state), daemon=True
+            ), proc.stderr, stderr_state),
+        ]
+        for thread, _, _ in stream_threads:
+            thread.start()
         try:
             proc.wait(timeout=max(0.001, timeout_sec))
         except subprocess.TimeoutExpired:
@@ -410,26 +413,26 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                             _set_linux_subreaper(False)
                         except OSError as exc:
                             containment_error = containment_error or f"could not restore subreaper state: {exc}"
-
-    for thread, stream, state in (
-        (stdout_thread, proc.stdout, stdout_state),
-        (stderr_thread, proc.stderr, stderr_state),
-    ):
-        thread.join(timeout=2.0)
-        if thread.is_alive():
-            try:
-                stream.close()
-            except OSError:
-                pass
-            thread.join(timeout=0.5)
-            if thread.is_alive():
-                state["error"] = "stream drain did not terminate"
+            for thread, stream, state in stream_threads:
+                if thread.ident is None:
+                    continue
+                thread.join(timeout=2.0)
+                if thread.is_alive():
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+                    thread.join(timeout=0.5)
+                    if thread.is_alive():
+                        state["error"] = "stream drain did not terminate"
+            if containment_error:
+                raise RuntimeError(f"SECURITY: {containment_error}")
 
     raw_stdout = str(stdout_state.get("text") or "")
     raw_stderr = str(stderr_state.get("text") or "")
     stdout_truncated = bool(stdout_state.get("truncated"))
     stderr_truncated = bool(stderr_state.get("truncated"))
-    stream_error = containment_error or stdout_state.get("error") or stderr_state.get("error")
+    stream_error = stdout_state.get("error") or stderr_state.get("error")
     output_truncated = stdout_truncated or stderr_truncated or bool(stream_error)
     if timed_out:
         raw_stderr = f"timeout after {timeout_sec}s\n{raw_stderr}"
@@ -525,7 +528,7 @@ def _repair_tree_permissions(path: Path) -> None:
         pass
     if not path.is_dir():
         return
-    for current, dirs, files in os.walk(path, topdown=True, followlinks=False):
+    for current, dirs, _files in os.walk(path, topdown=True, followlinks=False):
         current_path = Path(current)
         try:
             os.chmod(current_path, stat.S_IRWXU)
@@ -536,13 +539,6 @@ def _repair_tree_permissions(path: Path) -> None:
             if not child.is_symlink():
                 try:
                     os.chmod(child, stat.S_IRWXU)
-                except OSError:
-                    pass
-        for name in files:
-            child = current_path / name
-            if not child.is_symlink():
-                try:
-                    os.chmod(child, stat.S_IRUSR | stat.S_IWUSR)
                 except OSError:
                     pass
 
@@ -822,7 +818,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                         dest_handle.write(json.dumps(redact_value(item, secrets), separators=(",", ":"), sort_keys=True))
                         dest_handle.write("\n")
                     if isinstance(item.get("turn"), int):
-                        turns.add((str(root), item["turn"]))
+                        turns.add((candidate_label, item["turn"]))
                     if item.get("kind") == "toolCall" and item.get("name"):
                         tools.append(str(item["name"]))
                     elif item.get("kind") == "contextCompacted":

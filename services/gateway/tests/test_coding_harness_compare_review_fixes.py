@@ -289,6 +289,19 @@ def test_parse_trace_counts_oversized_numeric_step_string_as_malformed(tmp_path:
     assert result["malformed_trace_lines"] == 1
 
 
+def test_parse_trace_counts_same_turn_number_in_distinct_trace_files(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    event = json.dumps({"turn": 1, "kind": "turnSummary", "steps": 1}) + "\n"
+    (session_root / "first.events.jsonl").write_text(event, encoding="utf-8")
+    (session_root / "second.events.jsonl").write_text(event, encoding="utf-8")
+
+    result = harness.parse_trace(session_root)
+
+    assert result["agent_turns"] == 2
+    assert result["agent_steps"] == 2
+
+
 def test_parse_trace_records_source_open_failure_and_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -508,6 +521,26 @@ def test_discard_repairs_restrictive_permissions_and_verifies_absence(tmp_path: 
     assert not os.path.lexists(target)
 
 
+def test_discard_does_not_chmod_external_hard_link_target(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX mode regression")
+    outside = tmp_path / "outside-executable"
+    outside.write_text("external\n", encoding="utf-8")
+    outside.chmod(0o751)
+    original_mode = stat.S_IMODE(outside.stat().st_mode)
+    target = tmp_path / "unsafe"
+    nested = target / "nested"
+    nested.mkdir(parents=True)
+    os.link(outside, nested / "linked-file")
+    nested.chmod(0)
+
+    harness.discard_path_verified(target)
+
+    assert not os.path.lexists(target)
+    assert outside.read_text(encoding="utf-8") == "external\n"
+    assert stat.S_IMODE(outside.stat().st_mode) == original_mode
+
+
 def test_keyboard_interrupt_discards_fixture_execution_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -631,6 +664,29 @@ def test_isolated_process_execution_fails_closed_when_descendants_cannot_be_insp
     assert result["ok"] is False
     assert result["launch_error"] == "subreaper_unavailable"
     assert "could not enable descendant containment" in result["stderr"]
+
+
+def test_isolated_process_raises_when_post_launch_containment_cannot_be_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("subreaper containment is Linux-only")
+    try:
+        harness._linux_direct_children(os.getpid())
+    except OSError:
+        pytest.skip("procfs child enumeration is unavailable")
+
+    def fail_containment(baseline_children: set[int]) -> None:
+        raise RuntimeError("review regression")
+
+    monkeypatch.setattr(harness, "_terminate_linux_adopted_children", fail_containment)
+
+    with pytest.raises(RuntimeError, match="SECURITY: could not verify descendant containment"):
+        harness.run_process(
+            [sys.executable, "-c", "raise SystemExit(0)"],
+            cwd=tmp_path,
+            isolate_process_group=True,
+        )
 
 
 def test_isolated_process_reaps_detached_descendant_on_keyboard_interrupt(
