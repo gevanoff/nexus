@@ -55,6 +55,21 @@ MAX_PROCESS_OUTPUT_CHARS = 100_000
 MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
 MAX_TRACE_TOTAL_BYTES = 16_000_000
+MIN_CROSS_FIELD_FRAGMENT_BYTES = 2
+RESULT_CHILD_CONTROLLED_FIELDS = frozenset(
+    {
+        "actual",
+        "argv",
+        "error",
+        "files_changed",
+        "omitted_non_text",
+        "path",
+        "reason",
+        "stderr",
+        "stdout",
+        "tool_call_names",
+    }
+)
 MAX_TRACE_STEP_DIGITS = 18
 MAX_TRACE_TURN_DIGITS = 18
 MAX_TRACE_FILES = 256
@@ -1873,6 +1888,8 @@ def _fragmented_secret_indexes(
     secrets: Iterable[str],
     *,
     whole_values: bool = False,
+    embedded_raw_only: bool = False,
+    min_fragment_bytes: int = 1,
 ) -> set[int]:
     all_implicated: set[int] = set()
     for secret in (str(value) for value in secrets if value):
@@ -1889,6 +1906,9 @@ def _fragmented_secret_indexes(
                 or re.fullmatch(rb"[0-9a-fA-F]+", protected) is not None
             )
             normalized_protected = protected.lower() if case_insensitive else protected
+            require_whole_value = whole_values or (
+                embedded_raw_only and protected != raw_secret
+            )
             normalized_values: list[set[bytes]] = []
             for raw_value in values:
                 compact = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
@@ -1923,14 +1943,14 @@ def _fragmented_secret_indexes(
                             and not any(
                                 (
                                     normalized_protected[position:end] == view
-                                    if whole_values
+                                    if require_whole_value
                                     else normalized_protected[position:end] in view
                                 )
                                 for view in views
                             )
                         ):
                             end -= 1
-                        if end == position:
+                        if end - position < min_fragment_bytes:
                             continue
                         updated = used | {index}
                         if end == len(normalized_protected) and len(updated) > 1:
@@ -1960,6 +1980,8 @@ def _redact_fragmented_value(
     fields: frozenset[str] | None = frozenset({"stdout", "stderr"}),
     include_keys: bool = False,
     whole_values: bool = False,
+    embedded_raw_only: bool = False,
+    min_fragment_bytes: int = 1,
 ) -> Any:
     leaves: list[str] = []
 
@@ -1980,6 +2002,8 @@ def _redact_fragmented_value(
         [leaf.encode("utf-8", errors="replace") for leaf in leaves],
         secrets,
         whole_values=whole_values,
+        embedded_raw_only=embedded_raw_only,
+        min_fragment_bytes=min_fragment_bytes,
     )
     leaf_index = 0
 
@@ -2252,7 +2276,11 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         }, [nexus_token])
         result = _redact_fragmented_value(result, [nexus_token])
         result = _redact_fragmented_value(
-            result, [nexus_token], fields=None, whole_values=True
+            result,
+            [nexus_token],
+            fields=RESULT_CHILD_CONTROLLED_FIELDS,
+            embedded_raw_only=True,
+            min_fragment_bytes=MIN_CROSS_FIELD_FRAGMENT_BYTES,
         )
         result_path = artifacts / "result.json"
         write_json(result_path, result)

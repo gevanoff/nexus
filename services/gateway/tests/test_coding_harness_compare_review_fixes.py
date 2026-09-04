@@ -1703,7 +1703,7 @@ print('done')
                     "ok": True,
                     "returncode": 0,
                     "timed_out": False,
-                    "stdout": token[32:],
+                    "stdout": f"value: {token[32:]}",
                     "stderr": "",
                     "duration_ms": 0.0,
                     "launch_error": None,
