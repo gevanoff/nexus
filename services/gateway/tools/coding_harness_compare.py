@@ -28,6 +28,10 @@ RESERVED_FILES = {"agent.config.json", ".env"}
 ALBATROSS_TOOLS = "apply_patch,file_read,file_write,file_edit,glob,grep,list_dir,run_tests,update_plan"
 ALBATROSS_READ_ONLY_TOOLS = "file_read,glob,grep,list_dir"
 REQUIRED_PROBE_CAPABILITIES = ("one_shot", "allow_tools")
+MAX_FIXTURE_FILE_BYTES = 2_000_000
+MAX_FIXTURE_TOTAL_BYTES = 8_000_000
+MAX_FIXTURE_JSON_BYTES = 10_000_000
+MAX_OBJECTIVE_FILE_BYTES = 2_000_000
 
 
 def now_iso() -> str:
@@ -74,6 +78,12 @@ def redact_value(value: Any, secrets: Iterable[str] = ()) -> Any:
 
 
 def load_fixture(path: Path) -> dict[str, Any]:
+    try:
+        fixture_size = path.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"cannot stat fixture: {path}: {exc}") from exc
+    if fixture_size > MAX_FIXTURE_JSON_BYTES:
+        raise ValueError(f"fixture JSON exceeds {MAX_FIXTURE_JSON_BYTES} byte limit")
     fixture = read_json(path)
     if not isinstance(fixture, dict):
         raise ValueError("fixture must be a JSON object")
@@ -88,7 +98,19 @@ def load_fixture(path: Path) -> dict[str, Any]:
     files = repo.get("files") if isinstance(repo, dict) else None
     if not isinstance(files, dict) or not files:
         raise ValueError(f"fixture {fid} repository.files must be non-empty")
-    repo["files"] = {safe_rel_path(str(k)).as_posix(): str(v) for k, v in files.items()}
+    normalized_files: dict[str, str] = {}
+    total_file_bytes = 0
+    for raw_path, raw_content in files.items():
+        rel = safe_rel_path(str(raw_path)).as_posix()
+        content = str(raw_content)
+        size = len(content.encode("utf-8"))
+        if size > MAX_FIXTURE_FILE_BYTES:
+            raise ValueError(f"fixture file {rel} exceeds {MAX_FIXTURE_FILE_BYTES} byte limit")
+        total_file_bytes += size
+        if total_file_bytes > MAX_FIXTURE_TOTAL_BYTES:
+            raise ValueError(f"fixture inline files exceed {MAX_FIXTURE_TOTAL_BYTES} byte total limit")
+        normalized_files[rel] = content
+    repo["files"] = normalized_files
     expected = fixture.setdefault("expected", {})
     if not isinstance(expected, dict):
         raise ValueError("expected must be an object")
@@ -348,7 +370,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
     for rel in [v.strip() for v in untracked["stdout"].splitlines() if v.strip()]:
         try:
             path = workspace / safe_rel_path(rel)
-            if not path.is_file() or path.stat().st_size > 2_000_000:
+            if not path.is_file() or path.stat().st_size > MAX_FIXTURE_FILE_BYTES:
                 continue
             patch = run_process(["git", "-c", "core.hooksPath=/dev/null", "diff", "--no-index", "--binary", "--", "/dev/null", rel],
                                 cwd=workspace, env=diff_env)
@@ -366,7 +388,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
     for rel in changed:
         try:
             source = workspace / safe_rel_path(rel)
-            if not source.is_file() or source.stat().st_size > 2_000_000:
+            if not source.is_file() or source.stat().st_size > MAX_FIXTURE_FILE_BYTES:
                 continue
             target = final_files / safe_rel_path(rel)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -502,7 +524,22 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
     for key, negate in (("file_contains", False), ("file_not_contains", True)):
         for spec in expected.get(key) or []:
             path = workspace / safe_rel_path(str(spec["path"]))
-            text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+            if not path.is_file():
+                checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
+                               "passed": False, "error": "file is missing"})
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError as exc:
+                checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
+                               "passed": False, "error": f"could not stat file: {exc}"})
+                continue
+            if size > MAX_OBJECTIVE_FILE_BYTES:
+                checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
+                               "passed": False,
+                               "error": f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"})
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
             found = str(spec["needle"]) in text
             checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
                            "passed": (not found) if negate else found})
@@ -667,7 +704,7 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         "description": "Read-only Albatross through Nexus capability probe.",
         "repository": {"files": {"probe.txt": "NEXUS_ALBATROSS_PROBE_OK\n"}},
         "mission": "Use a repository read tool to read probe.txt and report the exact token NEXUS_ALBATROSS_PROBE_OK. Do not edit files.",
-        "expected": {"file_contains": [{"path": "probe.txt", "needle": "NEXUS_ALBATROSS_PROBE_OK"}]},
+        "expected": {"files_changed": [], "file_contains": [{"path": "probe.txt", "needle": "NEXUS_ALBATROSS_PROBE_OK"}]},
         "limits": {"wall_time_sec": 120, "max_agent_steps": 8}, "tags": ["probe", "read-only"]})
     try:
         result, result_path = run_albatross_fixture(fixture_path, out_root=root, executable=executable,
@@ -681,7 +718,7 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
     report["capabilities"].update({"chat": chat_ok, "streaming": chat_ok,
         "tool_calls": "file_read" in tools, "structured_trace": bool(result.get("artifacts", {}).get("trace_files"))})
     report["live_result"] = str(result_path)
-    report["ok"] = bool(chat_ok and report["capabilities"]["tool_calls"])
+    report["ok"] = bool(chat_ok and report["capabilities"]["tool_calls"] and result.get("objective", {}).get("passed") is True)
     return redact_value(report, [nexus_token])
 
 
