@@ -7,6 +7,8 @@ import json
 import os
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import time
@@ -142,23 +144,96 @@ def clean_env(*, home: Path | None = None, temp_dir: Path | None = None) -> dict
     return env
 
 
-def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None,
-                timeout_sec: float = 60.0, secrets: Iterable[str] = ()) -> dict[str, Any]:
-    started = time.monotonic()
+def _process_group_alive(pgid: int) -> bool:
+    if os.name != "posix":
+        return False
     try:
-        proc = subprocess.run(argv, cwd=str(cwd), env=env, text=True, capture_output=True,
-                              timeout=timeout_sec, check=False)
-        return {"ok": proc.returncode == 0, "returncode": proc.returncode, "timed_out": False,
-                "stdout": redact_text(proc.stdout[-100000:], secrets),
-                "stderr": redact_text(proc.stderr[-100000:], secrets),
-                "duration_ms": round((time.monotonic() - started) * 1000.0, 1)}
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout or "")
-        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr or "")
-        return {"ok": False, "returncode": None, "timed_out": True,
-                "stdout": redact_text(stdout[-100000:], secrets),
-                "stderr": redact_text(f"timeout after {timeout_sec}s\n{stderr[-100000:]}", secrets),
-                "duration_ms": round((time.monotonic() - started) * 1000.0, 1)}
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _terminate_process_group(pgid: int, grace_sec: float = 0.5) -> None:
+    if os.name != "posix":
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + max(0.0, grace_sec)
+    while time.monotonic() < deadline:
+        if not _process_group_alive(pgid):
+            return
+        time.sleep(0.02)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline and _process_group_alive(pgid):
+        time.sleep(0.02)
+
+
+def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None,
+                timeout_sec: float = 60.0, secrets: Iterable[str] = (),
+                isolate_process_group: bool = False) -> dict[str, Any]:
+    started = time.monotonic()
+    if isolate_process_group and os.name != "posix":
+        return {"ok": False, "returncode": None, "timed_out": False,
+                "stdout": "", "stderr": "isolated process groups require a POSIX host",
+                "duration_ms": 0.0, "launch_error": "process_group_unsupported"}
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(cwd),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=bool(isolate_process_group),
+        )
+    except OSError as exc:
+        return {"ok": False, "returncode": None, "timed_out": False,
+                "stdout": "", "stderr": redact_text(f"{type(exc).__name__}: {exc}", secrets),
+                "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
+                "launch_error": type(exc).__name__}
+
+    timed_out = False
+    stdout = ""
+    stderr = ""
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=max(0.001, timeout_sec))
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            if isolate_process_group:
+                _terminate_process_group(proc.pid)
+            else:
+                proc.kill()
+            stdout, stderr = proc.communicate()
+            if exc.stdout and not stdout:
+                stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else str(exc.stdout)
+            if exc.stderr and not stderr:
+                stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else str(exc.stderr)
+    finally:
+        if isolate_process_group:
+            _terminate_process_group(proc.pid)
+        elif proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+
+    if timed_out:
+        stderr = f"timeout after {timeout_sec}s\n{stderr or ''}"
+    return {"ok": (not timed_out and proc.returncode == 0),
+            "returncode": None if timed_out else proc.returncode,
+            "timed_out": timed_out,
+            "stdout": redact_text((stdout or "")[-100000:], secrets),
+            "stderr": redact_text((stderr or "")[-100000:], secrets),
+            "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
+            "launch_error": None}
 
 
 def git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
@@ -190,19 +265,63 @@ def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
     return head["stdout"].strip()
 
 
-def remove_git_metadata(workspace: Path) -> None:
-    candidates = {workspace / ".git"}
-    candidates.update(workspace.rglob(".git"))
-    for path in sorted(candidates, key=lambda p: len(p.parts), reverse=True):
+def _path_lexists(path: Path) -> bool:
+    return os.path.lexists(str(path))
+
+
+def _repair_tree_permissions(path: Path) -> None:
+    if not _path_lexists(path) or path.is_symlink():
+        return
+    try:
+        os.chmod(path, stat.S_IRWXU)
+    except OSError:
+        pass
+    if not path.is_dir():
+        return
+    for current, dirs, files in os.walk(path, topdown=True, followlinks=False):
+        current_path = Path(current)
         try:
-            if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path)
-            elif path.exists() or path.is_symlink():
+            os.chmod(current_path, stat.S_IRWXU)
+        except OSError:
+            pass
+        for name in dirs:
+            child = current_path / name
+            if not child.is_symlink():
+                try:
+                    os.chmod(child, stat.S_IRWXU)
+                except OSError:
+                    pass
+        for name in files:
+            child = current_path / name
+            if not child.is_symlink():
+                try:
+                    os.chmod(child, stat.S_IRUSR | stat.S_IWUSR)
+                except OSError:
+                    pass
+
+
+def discard_path_verified(path: Path) -> None:
+    if not _path_lexists(path):
+        return
+    last_error: Exception | None = None
+    for _ in range(2):
+        _repair_tree_permissions(path)
+        try:
+            if path.is_symlink() or not path.is_dir():
                 path.unlink()
+            else:
+                shutil.rmtree(path)
         except OSError as exc:
-            raise RuntimeError(f"could not remove retained Git metadata at {path}: {exc}") from exc
-    if any(path.exists() or path.is_symlink() for path in candidates):
-        raise RuntimeError("retained Git metadata remains after cleanup")
+            last_error = exc
+        if not _path_lexists(path):
+            return
+    raise RuntimeError(f"could not securely discard {path}: {last_error or 'path still exists'}")
+
+
+def discard_run_root_verified(root: Path) -> None:
+    discard_path_verified(root)
+    if _path_lexists(root):
+        raise RuntimeError(f"SECURITY: run root still exists after discard attempt: {root}")
 
 
 def parse_status_files(text: str) -> list[str]:
@@ -257,7 +376,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
     return {"base_head": baseline, "final_head": head["stdout"].strip(),
             "dirty": bool(parse_status_files(status["stdout"])), "files_changed": changed,
             "diff_sha256": hashlib.sha256(retained_diff.encode()).hexdigest(), "diff_chars": len(retained_diff),
-            "git_metadata_retained": True}
+            "git_metadata_retained": True, "execution_workspace_retained": True}
 
 
 def refresh_diff_metadata(workspace_info: dict[str, Any], diff_path: Path) -> None:
@@ -295,29 +414,51 @@ def albatross_version(executable: str) -> dict[str, Any]:
             "version": match.group(1) if match else "", "raw": text[:500]}
 
 
-def parse_trace(session_roots: Path | Iterable[Path]) -> dict[str, Any]:
+def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | None = None,
+                secrets: Iterable[str] = ()) -> dict[str, Any]:
     roots = [session_roots] if isinstance(session_roots, Path) else list(session_roots)
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
-    for root in roots:
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+    for root_index, root in enumerate(roots):
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*.events.jsonl")):
-            files.append(str(path))
-            with path.open("r", encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    try:
-                        item = json.loads(line)
-                    except Exception:
-                        malformed += 1
-                        continue
-                    if isinstance(item.get("turn"), int):
-                        turns.add((str(root), item["turn"]))
-                    if item.get("kind") == "toolCall" and item.get("name"):
-                        tools.append(str(item["name"]))
-                    elif item.get("kind") == "contextCompacted":
-                        resets += 1
-                    elif item.get("kind") == "turnSummary":
-                        steps += int(item.get("steps") or 0)
+            dest: Path | None = None
+            dest_handle = None
+            if artifact_dir is not None:
+                rel = path.relative_to(root)
+                dest = artifact_dir / str(root_index) / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest_handle = dest.open("w", encoding="utf-8", newline="\n")
+                files.append(str(dest))
+            else:
+                files.append(str(path))
+            try:
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        try:
+                            item = json.loads(line)
+                        except Exception:
+                            malformed += 1
+                            continue
+                        if not isinstance(item, dict):
+                            malformed += 1
+                            continue
+                        if dest_handle is not None:
+                            dest_handle.write(json.dumps(redact_value(item, secrets), separators=(",", ":"), sort_keys=True))
+                            dest_handle.write("\n")
+                        if isinstance(item.get("turn"), int):
+                            turns.add((str(root), item["turn"]))
+                        if item.get("kind") == "toolCall" and item.get("name"):
+                            tools.append(str(item["name"]))
+                        elif item.get("kind") == "contextCompacted":
+                            resets += 1
+                        elif item.get("kind") == "turnSummary":
+                            steps += int(item.get("steps") or 0)
+            finally:
+                if dest_handle is not None:
+                    dest_handle.close()
     return {"tool_calls": tools, "tool_call_count": len(tools), "agent_turns": len(turns),
             "agent_steps": steps, "context_resets": resets, "malformed_trace_lines": malformed,
             "trace_files": files}
@@ -333,12 +474,13 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
         if remaining <= 0:
             results.append({"argv": argv, "ok": False, "returncode": None, "timed_out": True,
                             "stdout": "", "stderr": "validation time budget exhausted before command",
-                            "duration_ms": 0.0})
+                            "duration_ms": 0.0, "launch_error": None})
             budget_exhausted = True
             break
         timeout_sec = min(300.0, remaining)
         result = run_process([str(v) for v in argv], cwd=workspace,
-                             env=clean_env(home=home, temp_dir=temp_dir), timeout_sec=timeout_sec)
+                             env=clean_env(home=home, temp_dir=temp_dir), timeout_sec=timeout_sec,
+                             isolate_process_group=True)
         results.append({"argv": argv, **result})
         if result["timed_out"]:
             budget_exhausted = time.monotonic() >= deadline
@@ -369,19 +511,31 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
     return {"passed": None if not checks else all(v["passed"] for v in checks), "checks": checks}
 
 
-def scrub_tree(root: Path, secrets: Iterable[str]) -> None:
-    for path in root.rglob("*"):
+def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
+    omitted: list[str] = []
+    for path in sorted(artifacts.rglob("*")):
         if not path.is_file():
             continue
+        temp = path.with_name(path.name + ".scrub-tmp")
         try:
-            if path.stat().st_size > 2_000_000:
-                continue
-            text = path.read_text(encoding="utf-8")
-            clean = redact_text(text, secrets)
-            if clean != text:
-                path.write_text(clean, encoding="utf-8")
+            changed = False
+            with path.open("r", encoding="utf-8") as source, temp.open("w", encoding="utf-8", newline="") as dest:
+                for line in source:
+                    clean = redact_text(line, secrets)
+                    changed = changed or clean != line
+                    dest.write(clean)
+            if changed:
+                os.replace(temp, path)
+            else:
+                temp.unlink(missing_ok=True)
         except (UnicodeDecodeError, OSError):
-            pass
+            temp.unlink(missing_ok=True)
+            try:
+                path.unlink()
+                omitted.append(str(path.relative_to(artifacts)))
+            except OSError:
+                raise RuntimeError(f"could not sanitize or discard retained artifact: {path}")
+    return omitted
 
 
 def mission_prompt(fixture: dict[str, Any], allow_mutations: bool) -> str:
@@ -402,68 +556,87 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
     run_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
     root = out_root.resolve() / run_id / fixture["id"] / "albatross"
     workspace, artifacts, home, tmp = root / "workspace", root / "artifacts", root / "home", root / "tmp"
-    home.mkdir(parents=True, exist_ok=True)
-    tmp.mkdir(parents=True, exist_ok=True)
-    baseline = initialize_workspace(workspace, fixture)
-    env = build_albatross_env(nexus_base_url=nexus_base_url, nexus_token=nexus_token, model=model,
-                              workspace=workspace, home=home, temp_dir=tmp,
-                              max_steps=fixture["limits"]["max_agent_steps"], allow_mutations=allow_mutations)
-    argv = [version["executable"], "--print", mission_prompt(fixture, allow_mutations)]
-    if allow_mutations:
-        argv.append("--allow-tools")
-    started_at, started = now_iso(), time.monotonic()
-    deadline = started + float(fixture["limits"]["wall_time_sec"])
-    process_timeout = max(0.001, deadline - time.monotonic())
-    process = run_process(argv, cwd=workspace, env=env, timeout_sec=process_timeout, secrets=[nexus_token])
-    artifacts.mkdir(parents=True, exist_ok=True)
-    (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
-    (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
-    workspace_info = workspace_snapshot(workspace, baseline, artifacts)
-    validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
-    objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
+    root_created = False
     try:
-        remove_git_metadata(workspace)
+        home.mkdir(parents=True, exist_ok=True)
+        root_created = True
+        tmp.mkdir(parents=True, exist_ok=True)
+        baseline = initialize_workspace(workspace, fixture)
+        env = build_albatross_env(nexus_base_url=nexus_base_url, nexus_token=nexus_token, model=model,
+                                  workspace=workspace, home=home, temp_dir=tmp,
+                                  max_steps=fixture["limits"]["max_agent_steps"], allow_mutations=allow_mutations)
+        argv = [version["executable"], "--print", mission_prompt(fixture, allow_mutations)]
+        if allow_mutations:
+            argv.append("--allow-tools")
+        started_at, started = now_iso(), time.monotonic()
+        deadline = started + float(fixture["limits"]["wall_time_sec"])
+        process_timeout = max(0.001, deadline - time.monotonic())
+        process = run_process(argv, cwd=workspace, env=env, timeout_sec=process_timeout,
+                              secrets=[nexus_token], isolate_process_group=True)
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
+        (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
+        workspace_info = workspace_snapshot(workspace, baseline, artifacts)
+        validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
+        objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
+        trace = parse_trace(
+            [workspace / ".sessions", home / ".config" / "albatross" / "sessions"],
+            artifact_dir=artifacts / "traces",
+            secrets=[nexus_token],
+        )
+        omitted_artifacts = scrub_retained_artifacts(artifacts, [nexus_token])
+        refresh_diff_metadata(workspace_info, artifacts / "final.diff")
+
+        for execution_path in (workspace, home, tmp):
+            discard_path_verified(execution_path)
+        if any(_path_lexists(path) for path in (workspace, home, tmp)):
+            raise RuntimeError("execution state remained after verified discard")
         workspace_info["git_metadata_retained"] = False
+        workspace_info["execution_workspace_retained"] = False
+
+        duration_ms, finished_at = round((time.monotonic() - started) * 1000.0, 1), now_iso()
+        run_timed_out = bool(process["timed_out"] or validation["budget_exhausted"])
+        completed = bool(process["ok"] and objective["passed"] is True)
+        if not process["ok"]:
+            outcome_error = process["stderr"] or f"exit {process['returncode']}"
+        elif validation["budget_exhausted"]:
+            outcome_error = "validation time budget exhausted"
+        else:
+            outcome_error = None
+        result = redact_value({
+            "schema_version": RESULT_SCHEMA_VERSION, "fixture_id": fixture["id"],
+            "fixture_description": fixture.get("description", ""), "tags": fixture.get("tags", []),
+            "harness": "albatross", "run_id": run_id, "started_at": started_at,
+            "finished_at": finished_at, "duration_ms": duration_ms,
+            "harness_version": {"version": version["version"], "tested_version": ALBATROSS_TESTED_VERSION,
+                                "tested_commit": ALBATROSS_TESTED_COMMIT},
+            "model": {"requested": model, "gateway": "nexus", "nexus_base_url": nexus_base_url,
+                      "client_backend": "openai", "backend": "", "upstream_model": "",
+                      "route_evidence": "not_available_from_albatross_adapter_v1"},
+            "outcome": {"status": "completed" if completed else ("timed_out" if run_timed_out else "failed"),
+                        "completed": completed, "interrupted": run_timed_out,
+                        "exit_code": process["returncode"], "error": outcome_error},
+            "workspace": workspace_info, "validation": validation,
+            "trajectory": {"agent_turns": trace["agent_turns"], "agent_steps": trace["agent_steps"],
+                           "tool_calls": trace["tool_call_count"], "tool_call_names": trace["tool_calls"],
+                           "context_resets": trace["context_resets"], "malformed_trace_lines": trace["malformed_trace_lines"]},
+            "objective": objective,
+            "artifacts": {"run_root": str(root), "stdout": str(artifacts / "stdout.txt"),
+                          "stderr": str(artifacts / "stderr.txt"), "diff": str(artifacts / "final.diff"),
+                          "trace_files": trace["trace_files"], "omitted_non_text": omitted_artifacts},
+        }, [nexus_token])
+        result_path = artifacts / "result.json"
+        write_json(result_path, result)
+        return result, result_path
     except Exception as exc:
-        shutil.rmtree(root, ignore_errors=True)
-        raise RuntimeError("could not sanitize retained workspace Git metadata; discarded the run") from exc
-    scrub_tree(root, [nexus_token])
-    refresh_diff_metadata(workspace_info, artifacts / "final.diff")
-    trace = parse_trace([workspace / ".sessions", home / ".config" / "albatross" / "sessions"])
-    duration_ms, finished_at = round((time.monotonic() - started) * 1000.0, 1), now_iso()
-    run_timed_out = bool(process["timed_out"] or validation["budget_exhausted"])
-    completed = bool(process["ok"] and objective["passed"] is True)
-    if not process["ok"]:
-        outcome_error = process["stderr"] or f"exit {process['returncode']}"
-    elif validation["budget_exhausted"]:
-        outcome_error = "validation time budget exhausted"
-    else:
-        outcome_error = None
-    result = redact_value({
-        "schema_version": RESULT_SCHEMA_VERSION, "fixture_id": fixture["id"],
-        "fixture_description": fixture.get("description", ""), "tags": fixture.get("tags", []),
-        "harness": "albatross", "run_id": run_id, "started_at": started_at,
-        "finished_at": finished_at, "duration_ms": duration_ms,
-        "harness_version": {"version": version["version"], "tested_version": ALBATROSS_TESTED_VERSION,
-                            "tested_commit": ALBATROSS_TESTED_COMMIT},
-        "model": {"requested": model, "gateway": "nexus", "nexus_base_url": nexus_base_url,
-                  "client_backend": "openai", "backend": "", "upstream_model": "",
-                  "route_evidence": "not_available_from_albatross_adapter_v1"},
-        "outcome": {"status": "completed" if completed else ("timed_out" if run_timed_out else "failed"),
-                    "completed": completed, "interrupted": run_timed_out,
-                    "exit_code": process["returncode"], "error": outcome_error},
-        "workspace": workspace_info, "validation": validation,
-        "trajectory": {"agent_turns": trace["agent_turns"], "agent_steps": trace["agent_steps"],
-                       "tool_calls": trace["tool_call_count"], "tool_call_names": trace["tool_calls"],
-                       "context_resets": trace["context_resets"], "malformed_trace_lines": trace["malformed_trace_lines"]},
-        "objective": objective,
-        "artifacts": {"run_root": str(root), "stdout": str(artifacts / "stdout.txt"),
-                      "stderr": str(artifacts / "stderr.txt"), "diff": str(artifacts / "final.diff"),
-                      "trace_files": trace["trace_files"]},
-    }, [nexus_token])
-    result_path = artifacts / "result.json"
-    write_json(result_path, result)
-    return result, result_path
+        if root_created and _path_lexists(root):
+            try:
+                discard_run_root_verified(root)
+            except Exception as discard_exc:
+                raise RuntimeError(
+                    f"SECURITY: evaluation failed and run root could not be securely discarded: {root}: {discard_exc}"
+                ) from discard_exc
+        raise exc
 
 
 def probe(executable: str, *, live: bool = False, out_root: Path | None = None,

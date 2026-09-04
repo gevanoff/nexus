@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import stat
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -108,6 +110,21 @@ def test_parse_trace_streams_without_path_read_text(tmp_path: Path, monkeypatch:
     assert result["agent_steps"] == 2
 
 
+def test_parse_trace_counts_non_object_json_as_malformed(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    trace = session_root / "one.events.jsonl"
+    trace.write_text(
+        "null\n[]\n" + json.dumps({"turn": 1, "kind": "turnSummary", "steps": 1}) + "\n",
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(session_root)
+
+    assert result["malformed_trace_lines"] == 2
+    assert result["agent_steps"] == 1
+
+
 def test_application_events_jsonl_is_not_counted_as_albatross_trace(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -177,16 +194,15 @@ raise SystemExit(0)
 
 
 def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fixture = {
-        "expected": {"validation": [["first"], ["second"]]},
-    }
+    fixture = {"expected": {"validation": [["first"], ["second"]]}}
     observed_timeouts: list[float] = []
     monotonic_values = iter([9.0, 9.4])
 
     monkeypatch.setattr(harness.time, "monotonic", lambda: next(monotonic_values))
 
-    def fake_run_process(argv, *, cwd, env=None, timeout_sec=60.0, secrets=()):
+    def fake_run_process(argv, *, cwd, env=None, timeout_sec=60.0, secrets=(), isolate_process_group=False):
         observed_timeouts.append(timeout_sec)
+        assert isolate_process_group is True
         return {
             "ok": True,
             "returncode": 0,
@@ -194,6 +210,7 @@ def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pyt
             "stdout": "",
             "stderr": "",
             "duration_ms": 0.0,
+            "launch_error": None,
         }
 
     monkeypatch.setattr(harness, "run_process", fake_run_process)
@@ -207,6 +224,132 @@ def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pyt
 
     assert result["passed"] is True
     assert observed_timeouts == pytest.approx([1.0, 0.6])
+
+
+def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
+(root / 'leak.txt').write_text(os.environ['OPENAI_API_KEY'], encoding='utf-8')
+print('done')
+""",
+    )
+    fixture = _fixture(
+        tmp_path / "fixture.json",
+        files={"app.py": "VALUE = 1\n"},
+        expected={"validation": [["definitely-not-a-real-validation-command-xyz"]]},
+    )
+    token = "nexus-validation-launch-secret"
+
+    result, _ = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=True,
+    )
+
+    run_root = Path(result["artifacts"]["run_root"])
+    assert result["outcome"]["completed"] is False
+    assert result["validation"]["passed"] is False
+    assert result["validation"]["commands"][0]["launch_error"] == "FileNotFoundError"
+    assert not (run_root / "workspace").exists()
+    assert not (run_root / "home").exists()
+    assert not (run_root / "tmp").exists()
+    for path in (run_root / "artifacts").rglob("*"):
+        if path.is_file():
+            assert token not in path.read_text(encoding="utf-8", errors="ignore")
+
+
+def test_discard_repairs_restrictive_permissions_and_verifies_absence(tmp_path: Path) -> None:
+    target = tmp_path / "unsafe"
+    nested = target / "nested"
+    nested.mkdir(parents=True)
+    (nested / "secret.txt").write_text("secret", encoding="utf-8")
+    nested.chmod(0)
+
+    harness.discard_path_verified(target)
+
+    assert not os.path.lexists(target)
+
+
+def test_isolated_process_group_terminates_background_descendants(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("process-group isolation is POSIX-only")
+    marker = tmp_path / "late-write.txt"
+    child = (
+        "import pathlib,time; "
+        "time.sleep(0.35); "
+        f"pathlib.Path({str(marker)!r}).write_text('late', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess,sys; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+        "print('parent complete')"
+    )
+
+    result = harness.run_process(
+        [sys.executable, "-c", parent],
+        cwd=tmp_path,
+        timeout_sec=2.0,
+        isolate_process_group=True,
+    )
+    time.sleep(0.5)
+
+    assert result["ok"] is True
+    assert not marker.exists()
+
+
+def test_large_trace_is_sanitized_and_raw_execution_tree_is_not_retained(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
+home = pathlib.Path(os.environ['HOME'])
+sessions = home / '.config' / 'albatross' / 'sessions'
+sessions.mkdir(parents=True, exist_ok=True)
+payload = 'x' * 2200000 + os.environ['OPENAI_API_KEY']
+(sessions / 'large.events.jsonl').write_text(json.dumps({'turn': 1, 'kind': 'toolCall', 'name': 'file_read', 'args': {'payload': payload}}) + '\\n', encoding='utf-8')
+print('done')
+""",
+    )
+    fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"})
+    token = "nexus-large-trace-secret"
+
+    result, _ = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=False,
+    )
+
+    run_root = Path(result["artifacts"]["run_root"])
+    trace_path = Path(result["artifacts"]["trace_files"][0])
+    assert trace_path.stat().st_size > 2_000_000
+    assert token not in trace_path.read_text(encoding="utf-8")
+    assert not (run_root / "workspace").exists()
+    assert not (run_root / "home").exists()
+    assert not (run_root / "tmp").exists()
+    assert result["workspace"]["execution_workspace_retained"] is False
 
 
 def test_list_fixtures_loads_each_fixture_once(
@@ -228,7 +371,7 @@ def test_list_fixtures_loads_each_fixture_once(
     assert json.loads(capsys.readouterr().out)[0]["id"] == "a"
 
 
-def test_retained_run_removes_git_objects_scrubs_secret_and_hashes_final_diff(tmp_path: Path) -> None:
+def test_retained_run_discards_execution_tree_scrubs_secret_and_hashes_final_diff(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
         """#!/usr/bin/env python3
@@ -274,20 +417,18 @@ print('done')
     )
 
     run_root = Path(result["artifacts"]["run_root"])
-    workspace = run_root / "workspace"
     diff_path = Path(result["artifacts"]["diff"])
     assert result["outcome"]["completed"] is True
     assert result["workspace"]["git_metadata_retained"] is False
-    assert not (workspace / ".git").exists()
-    assert not list(workspace.rglob(".git"))
+    assert result["workspace"]["execution_workspace_retained"] is False
+    assert not (run_root / "workspace").exists()
+    assert not (run_root / "home").exists()
+    assert not (run_root / "tmp").exists()
     assert result_path.exists()
     assert result["workspace"]["diff_sha256"] == hashlib.sha256(diff_path.read_bytes()).hexdigest()
 
-    for path in run_root.rglob("*"):
-        if not path.is_file() or path.stat().st_size > 2_000_000:
+    for path in (run_root / "artifacts").rglob("*"):
+        if not path.is_file():
             continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
         assert token not in text, f"secret remained in retained artifact: {path}"

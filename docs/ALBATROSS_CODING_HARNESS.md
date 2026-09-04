@@ -52,17 +52,25 @@ For each run the adapter:
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
 - bounds the agent and post-run validation under one fixture wall-time deadline;
+- launches agent/validation commands in isolated POSIX process groups and terminates descendant processes before collecting final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
-- removes retained `.git` metadata before a run can be returned;
-- redacts the Nexus token from captured stdout/stderr/result data and scrubs retained text artifacts before returning;
+- copies only explicitly selected evidence into the retained artifact directory;
+- sanitizes retained text evidence, including structured trace copies, before returning it;
+- **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
+- repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;
+- if an unexpected failure occurs before safe retention is established, discards the whole run root and verifies its absence before propagating the failure;
 - recomputes the retained diff checksum after sanitization so it identifies the actual evidence file.
+
+This retention boundary is deliberate. Arbitrary workspace/session files are not considered safe artifacts merely because a best-effort redaction pass ran over them. Non-UTF-8 files copied into the retained evidence area are discarded if they cannot be sanitized safely and are listed in `artifacts.omitted_non_text`.
 
 Mutating runs expose a restricted edit/test tool set inside the disposable fixture workspace and omit arbitrary `shell`. Read-only runs, including the live capability probe, expose only `file_read`, `glob`, `grep`, and `list_dir`; write/edit/test tools are removed from the child capability surface rather than relying on prompt compliance.
 
 The adapter's `--allow-tools` mode is appropriate only because mutating runs target a disposable fixture workspace with `OUTSIDE_WORKSPACE=deny`. Do not modify the adapter to point that mode at the live Nexus checkout by default.
 
-Fixture validation commands are trusted executable fixture content. Review new fixtures before running them. Every fixture must define at least one objective result check or validation command; a successful Albatross process alone is not sufficient to mark a fixture complete.
+Fixture validation commands are trusted executable fixture content. Review new fixtures before running them. Every fixture must define at least one objective result check or validation command; a successful Albatross process alone is not sufficient to mark a fixture complete. Validation launch failures are recorded as failed validation evidence rather than escaping before sanitization.
+
+Process-group isolation currently requires a POSIX host. That covers the intended macOS/ai2 and Linux/WSL environments; the adapter fails closed rather than claiming descendant-process containment on unsupported hosts.
 
 ## Install Albatross
 
@@ -150,15 +158,15 @@ Artifacts default under:
 ${NEXUS_RUNTIME_ROOT:-.runtime}/coding-harness-evals/
 ```
 
-Each retained run keeps:
+Each retained run keeps only selected evidence:
 
 - redacted stdout/stderr;
 - the sanitized final Git diff;
-- final copies of changed files (size bounded);
-- Albatross JSONL event traces from the explicit Albatross session roots when emitted;
+- sanitized final copies of changed text files up to the capture limit;
+- sanitized copies of valid structured Albatross JSONL trace events from explicit Albatross session roots;
 - a common `result.json`.
 
-Git object metadata from the disposable fixture repository is not retained. This prevents an agent-created commit from preserving a secret that was subsequently redacted from ordinary text artifacts.
+The disposable repository, `.git` objects, Albatross HOME/session source tree, and temporary directory are deleted before `result.json` is returned. This prevents an agent-created commit, oversized workspace file, or raw session artifact from silently preserving the Gateway bearer outside the controlled artifact surface.
 
 The common result separates objective evidence from later semantic judgment. It records outcome, elapsed time, requested Nexus alias, workspace delta, post-run validation, tool/step/context-compaction counts, and artifact paths.
 
