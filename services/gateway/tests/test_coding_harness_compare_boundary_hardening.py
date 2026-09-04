@@ -285,6 +285,22 @@ def test_scrub_discards_secret_split_across_three_retained_artifacts(
     assert not any(path.exists() for path in paths)
 
 
+def test_scrub_discards_casefolded_hex_secret_split_across_artifacts(
+    tmp_path: Path,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    paths = (artifacts / "stdout.txt", artifacts / "stderr.txt")
+    paths[0].write_text(token[:32].upper(), encoding="ascii")
+    paths[1].write_text(token[32:].upper(), encoding="ascii")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert set(omitted) == {path.name for path in paths}
+    assert not any(path.exists() for path in paths)
+
+
 def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()

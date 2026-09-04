@@ -969,7 +969,7 @@ def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
         raise RuntimeError(f"git init failed: {result['stderr'] or result['stdout']}")
     _sanitize_snapshot_git_metadata(workspace)
     for argv in (["config", "user.email", "coding-harness@example.invalid"],
-                 ["config", "user.name", "Coding Harness Eval"], ["add", "."],
+                 ["config", "user.name", "Coding Harness Eval"], ["add", "--force", "."],
                  ["commit", "-m", "fixture baseline", "--allow-empty"]):
         result = git(list(argv), cwd=workspace)
         if not result["ok"]:
@@ -1858,30 +1858,43 @@ def _fragmented_secret_indexes(
         raw_secret = secret.encode("utf-8")
         if len(raw_secret) < 8:
             continue
+        casefold_variants = (
+            _base32_secret_variants(secret)
+            | _character_escape_secret_variants(secret)
+        )
         for protected in {raw_secret, *_encoded_secret_variants(secret)}:
+            case_insensitive = (
+                protected in casefold_variants
+                or re.fullmatch(rb"[0-9a-fA-F]+", protected) is not None
+            )
+            normalized_protected = protected.lower() if case_insensitive else protected
+            normalized_values = [
+                raw_value.lower() if case_insensitive else raw_value
+                for raw_value in values
+            ]
             candidates = [
                 (index, raw_value)
-                for index, raw_value in enumerate(values)
-                if protected not in raw_value
+                for index, raw_value in enumerate(normalized_values)
+                if normalized_protected not in raw_value
             ]
             implicated: set[int] = set()
             states: dict[int, set[frozenset[int]]] = {0: {frozenset()}}
-            for position in range(len(protected)):
+            for position in range(len(normalized_protected)):
                 current_states = tuple(states.get(position, ()))
                 for used in current_states:
                     for index, raw_value in candidates:
                         if index in used:
                             continue
-                        end = len(protected)
+                        end = len(normalized_protected)
                         while (
                             end > position
-                            and protected[position:end] not in raw_value
+                            and normalized_protected[position:end] not in raw_value
                         ):
                             end -= 1
                         if end == position:
                             continue
                         updated = used | {index}
-                        if end == len(protected) and len(updated) > 1:
+                        if end == len(normalized_protected) and len(updated) > 1:
                             implicated.update(updated)
                             continue
                         end_states = states.setdefault(end, set())

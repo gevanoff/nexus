@@ -792,6 +792,31 @@ def test_workspace_snapshot_omits_secret_split_across_sibling_filenames(
     assert all(name not in retained_diff for name in names)
 
 
+def test_initialize_workspace_force_stages_fixture_files_ignored_by_fixture(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {
+            "repository": {
+                "files": {
+                    ".gitignore": "ignored.txt\n",
+                    "ignored.txt": "fixture baseline\n",
+                }
+            }
+        },
+    )
+
+    tracked = harness.git(["ls-tree", "-r", "--name-only", baseline], cwd=workspace)
+    status = harness.git(["status", "--porcelain=v1"], cwd=workspace)
+
+    assert tracked["ok"] is True
+    assert set(tracked["stdout"].splitlines()) == {".gitignore", "ignored.txt"}
+    assert status["ok"] is True
+    assert status["stdout"] == ""
+
+
 def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"
