@@ -366,6 +366,22 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 "stdout": "", "stderr": stderr,
                 "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
                 "launch_error": type(exc).__name__, "output_truncated": False}
+    except BaseException as launch_exc:
+        containment_error: str | None = None
+        if isolate_process_group:
+            try:
+                _terminate_linux_adopted_children(baseline_children)
+            except (OSError, RuntimeError) as exc:
+                containment_error = f"could not contain interrupted process launch: {exc}"
+            finally:
+                if not subreaper_was_enabled:
+                    try:
+                        _set_linux_subreaper(False)
+                    except OSError as exc:
+                        containment_error = containment_error or f"could not restore subreaper state: {exc}"
+        if containment_error:
+            raise RuntimeError(f"SECURITY: {containment_error}") from launch_exc
+        raise
 
     stdout_state: dict[str, Any] = {}
     stderr_state: dict[str, Any] = {}

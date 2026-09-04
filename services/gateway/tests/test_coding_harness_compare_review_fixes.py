@@ -763,6 +763,50 @@ def test_isolated_process_reaps_detached_descendant_on_keyboard_interrupt(
     assert not marker.exists()
 
 
+def test_isolated_process_contains_child_when_popen_is_interrupted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("subreaper containment is Linux-only")
+    try:
+        harness._linux_direct_children(os.getpid())
+    except OSError:
+        pytest.skip("procfs child enumeration is unavailable")
+
+    marker = tmp_path / "interrupted-launch-late-write.txt"
+    child = (
+        "import pathlib,time; "
+        "time.sleep(1.0); "
+        f"pathlib.Path({str(marker)!r}).write_text('late', encoding='utf-8')"
+    )
+    original_popen = harness.subprocess.Popen
+    original_subreaper_state = harness._linux_subreaper_enabled()
+
+    def interrupt_after_launch(*args, **kwargs):
+        original_popen(
+            [sys.executable, "-c", child],
+            cwd=kwargs.get("cwd"),
+            stdout=harness.subprocess.DEVNULL,
+            stderr=harness.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        time.sleep(0.2)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(harness.subprocess, "Popen", interrupt_after_launch)
+
+    with pytest.raises(KeyboardInterrupt):
+        harness.run_process(
+            [sys.executable, "-c", "raise SystemExit(0)"],
+            cwd=tmp_path,
+            isolate_process_group=True,
+        )
+    time.sleep(1.2)
+
+    assert not marker.exists()
+    assert harness._linux_subreaper_enabled() is original_subreaper_state
+
+
 def test_large_trace_is_sanitized_and_raw_execution_tree_is_not_retained(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
