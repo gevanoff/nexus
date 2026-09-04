@@ -21,7 +21,7 @@ RESULT_SCHEMA_VERSION = 1
 SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "SSL_CERT_FILE", "SSL_CERT_DIR")
 SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
-RESERVED_PARTS = {".git", ".albatross", ".small-harness"}
+RESERVED_PARTS = {".git", ".albatross", ".small-harness", ".sessions"}
 RESERVED_FILES = {"agent.config.json", ".env"}
 ALBATROSS_TOOLS = "apply_patch,file_read,file_write,file_edit,glob,grep,list_dir,run_tests,update_plan"
 
@@ -169,11 +169,26 @@ def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
         if not result["ok"]:
             raise RuntimeError(f"git {' '.join(argv)} failed: {result['stderr'] or result['stdout']}")
     with (workspace / ".git" / "info" / "exclude").open("a", encoding="utf-8") as handle:
-        handle.write("\n# Nexus harness runtime\n.albatross/\n.small-harness/\n")
+        handle.write("\n# Nexus harness runtime\n.albatross/\n.small-harness/\n.sessions/\n")
     head = git(["rev-parse", "HEAD"], cwd=workspace)
     if not head["ok"]:
         raise RuntimeError("could not determine fixture baseline")
     return head["stdout"].strip()
+
+
+def remove_git_metadata(workspace: Path) -> None:
+    candidates = {workspace / ".git"}
+    candidates.update(workspace.rglob(".git"))
+    for path in sorted(candidates, key=lambda p: len(p.parts), reverse=True):
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            elif path.exists() or path.is_symlink():
+                path.unlink()
+        except OSError as exc:
+            raise RuntimeError(f"could not remove retained Git metadata at {path}: {exc}") from exc
+    if any(path.exists() or path.is_symlink() for path in candidates):
+        raise RuntimeError("retained Git metadata remains after cleanup")
 
 
 def parse_status_files(text: str) -> list[str]:
@@ -195,13 +210,15 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
     pieces = [git(["diff", "--binary", f"{baseline}..HEAD"], cwd=workspace)["stdout"].strip(),
               git(["diff", "--binary", "--cached"], cwd=workspace)["stdout"].strip(),
               git(["diff", "--binary"], cwd=workspace)["stdout"].strip()]
+    diff_env = clean_env()
+    diff_env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"})
     for rel in [v.strip() for v in untracked["stdout"].splitlines() if v.strip()]:
         try:
             path = workspace / safe_rel_path(rel)
             if not path.is_file() or path.stat().st_size > 2_000_000:
                 continue
-            patch = run_process(["git", "diff", "--no-index", "--binary", "--", "/dev/null", rel], cwd=workspace,
-                                env={**clean_env(), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"})
+            patch = run_process(["git", "-c", "core.hooksPath=/dev/null", "diff", "--no-index", "--binary", "--", "/dev/null", rel],
+                                cwd=workspace, env=diff_env)
             if patch["stdout"].strip():
                 pieces.append(patch["stdout"].strip())
         except (OSError, ValueError):
@@ -224,7 +241,8 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
             pass
     return {"base_head": baseline, "final_head": head["stdout"].strip(),
             "dirty": bool(parse_status_files(status["stdout"])), "files_changed": changed,
-            "diff_sha256": hashlib.sha256(diff_text.encode()).hexdigest(), "diff_chars": len(diff_text)}
+            "diff_sha256": hashlib.sha256(diff_text.encode()).hexdigest(), "diff_chars": len(diff_text),
+            "git_metadata_retained": False}
 
 
 def build_albatross_env(*, nexus_base_url: str, nexus_token: str, model: str,
@@ -240,8 +258,12 @@ def build_albatross_env(*, nexus_base_url: str, nexus_token: str, model: str,
 
 
 def albatross_version(executable: str) -> dict[str, Any]:
-    resolved = shutil.which(executable) if os.sep not in executable else executable
-    if not resolved or not Path(resolved).exists():
+    has_sep = os.sep in executable or bool(os.altsep and os.altsep in executable)
+    if has_sep:
+        resolved = str(Path(executable).expanduser().resolve())
+    else:
+        resolved = shutil.which(executable) or ""
+    if not resolved or not Path(resolved).is_file():
         return {"installed": False, "executable": executable, "version": "", "raw": "albatross unavailable"}
     result = run_process([resolved, "--version"], cwd=Path.cwd(), timeout_sec=15)
     text = (result["stdout"] or result["stderr"]).strip()
@@ -250,24 +272,28 @@ def albatross_version(executable: str) -> dict[str, Any]:
             "version": match.group(1) if match else "", "raw": text[:500]}
 
 
-def parse_trace(run_root: Path) -> dict[str, Any]:
+def parse_trace(session_roots: Path | Iterable[Path]) -> dict[str, Any]:
+    roots = [session_roots] if isinstance(session_roots, Path) else list(session_roots)
     tools, turns, steps, resets, malformed, files = [], set(), 0, 0, 0, []
-    for path in sorted(run_root.rglob("*.events.jsonl")):
-        files.append(str(path.relative_to(run_root)))
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                item = json.loads(line)
-            except Exception:
-                malformed += 1
-                continue
-            if isinstance(item.get("turn"), int):
-                turns.add(item["turn"])
-            if item.get("kind") == "toolCall" and item.get("name"):
-                tools.append(str(item["name"]))
-            elif item.get("kind") == "contextCompacted":
-                resets += 1
-            elif item.get("kind") == "turnSummary":
-                steps += int(item.get("steps") or 0)
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.events.jsonl")):
+            files.append(str(path))
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    malformed += 1
+                    continue
+                if isinstance(item.get("turn"), int):
+                    turns.add((str(root), item["turn"]))
+                if item.get("kind") == "toolCall" and item.get("name"):
+                    tools.append(str(item["name"]))
+                elif item.get("kind") == "contextCompacted":
+                    resets += 1
+                elif item.get("kind") == "turnSummary":
+                    steps += int(item.get("steps") or 0)
     return {"tool_calls": tools, "tool_call_count": len(tools), "agent_turns": len(turns),
             "agent_steps": steps, "context_resets": resets, "malformed_trace_lines": malformed,
             "trace_files": files}
@@ -306,7 +332,7 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
 
 def scrub_tree(root: Path, secrets: Iterable[str]) -> None:
     for path in root.rglob("*"):
-        if not path.is_file() or ".git" in path.parts:
+        if not path.is_file():
             continue
         try:
             if path.stat().st_size > 2_000_000:
@@ -322,7 +348,7 @@ def scrub_tree(root: Path, secrets: Iterable[str]) -> None:
 def mission_prompt(fixture: dict[str, Any], allow_mutations: bool) -> str:
     mode = "You may edit files and run tests." if allow_mutations else "This is read-only: do not mutate files or run mutating commands."
     return (f"{fixture['mission'].strip()}\n\n{mode} Work only inside the current repository workspace. "
-            "Do not modify .git, .albatross, .small-harness, agent.config.json, or files outside the workspace. "
+            "Do not modify .git, .albatross, .small-harness, .sessions, agent.config.json, or files outside the workspace. "
             "Do not commit or push. Use repository tools rather than guessing file contents.")
 
 
@@ -355,8 +381,13 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
     workspace_info = workspace_snapshot(workspace, baseline, artifacts)
     validation = run_validation(fixture, workspace, home, tmp)
     objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
+    try:
+        remove_git_metadata(workspace)
+    except Exception as exc:
+        shutil.rmtree(root, ignore_errors=True)
+        raise RuntimeError("could not sanitize retained workspace Git metadata; discarded the run") from exc
     scrub_tree(root, [nexus_token])
-    trace = parse_trace(root)
+    trace = parse_trace([workspace / ".sessions", home / ".config" / "albatross" / "sessions"])
     completed = bool(process["ok"] and objective["passed"] is not False)
     result = redact_value({
         "schema_version": RESULT_SCHEMA_VERSION, "fixture_id": fixture["id"],
