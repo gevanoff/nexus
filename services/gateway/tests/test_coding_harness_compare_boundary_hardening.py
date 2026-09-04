@@ -230,3 +230,55 @@ print('done')
     assert (artifacts / "stdout.txt").is_file()
     assert not (outside / "stdout.txt").exists()
     assert sentinel.read_text(encoding="utf-8") == "UNCHANGED\n"
+
+
+def test_run_execution_directories_are_private_0700(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("mode isolation regression requires POSIX")
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import stat
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+workspace = pathlib.Path(os.environ['WORKSPACE_ROOT'])
+root = workspace.parent
+home = pathlib.Path(os.environ['HOME'])
+tmp = pathlib.Path(os.environ['TMPDIR'])
+def mode(path):
+    return oct(stat.S_IMODE(path.stat().st_mode))
+values = {
+    'run_root': mode(root),
+    'workspace': mode(workspace),
+    'home': mode(home),
+    'tmp': mode(tmp),
+    'fixture_dir': mode(root.parent),
+    'run_dir': mode(root.parent.parent),
+}
+(workspace / 'modes.json').write_text(json.dumps(values, sort_keys=True), encoding='utf-8')
+print('done')
+""",
+    )
+    fixture = _fixture(
+        tmp_path / "fixture.json",
+        expected={"files_changed": ["modes.json"]},
+    )
+
+    result, _ = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="private-mode-token",
+        model="coder",
+        allow_mutations=True,
+    )
+
+    modes_path = Path(result["artifacts"]["run_root"]) / "artifacts" / "final-files" / "modes.json"
+    modes = json.loads(modes_path.read_text(encoding="utf-8"))
+    assert set(modes.values()) == {"0o700"}
