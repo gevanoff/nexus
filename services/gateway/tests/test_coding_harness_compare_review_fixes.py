@@ -305,7 +305,7 @@ print('done')
     assert result["outcome"]["completed"] is True
 
 
-def test_result_records_when_process_output_artifacts_are_truncated(tmp_path: Path) -> None:
+def test_result_redacts_truncated_process_output_when_token_is_in_scope(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
         """#!/usr/bin/env python3
@@ -334,7 +334,7 @@ print('discarded-prefix-' + ('x' * 100_256))
     stdout = Path(result["artifacts"]["stdout"]).read_text(encoding="utf-8")
     assert result["outcome"]["completed"] is True
     assert result["artifacts"]["process_output_truncated"] is True
-    assert len(stdout) == harness.MAX_PROCESS_OUTPUT_CHARS
+    assert stdout == "(redacted)"
     assert "discarded-prefix" not in stdout
 
 
@@ -1315,6 +1315,33 @@ def test_run_process_retains_overlap_for_longest_secret_encoding(tmp_path: Path)
     assert result["stdout"] == "(redacted)"
     assert encoded[-14:] not in result["stdout"]
     assert len(result["stdout"]) <= output_limit
+
+
+def test_truncated_output_with_whitespace_expanded_base64_is_redacted_wholesale(
+    tmp_path: Path,
+) -> None:
+    secret = "nexus-whitespace-expanded-base64-secret-" * 2
+    encoded = harness.base64.b64encode(secret.encode("utf-8")).decode("ascii")
+    expanded = "     ".join(encoded)
+    output = ("p" * 500) + expanded + ("x" * 20)
+
+    result = harness.run_process(
+        [
+            sys.executable,
+            "-c",
+            f"import sys; sys.stdout.write({output!r}); sys.stderr.write('safe stderr')",
+        ],
+        cwd=tmp_path,
+        secrets=[secret],
+        output_limit_chars=64,
+        include_raw_output=True,
+    )
+
+    assert result["ok"] is True
+    assert result["output_truncated"] is True
+    assert result["stdout"] == "(redacted)"
+    assert result["_raw_stdout"] == ""
+    assert result["stderr"] == "safe stderr"
 
 
 def test_output_redaction_preparation_finishes_before_process_launch(

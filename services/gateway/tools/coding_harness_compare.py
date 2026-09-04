@@ -581,6 +581,13 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
         if stderr_truncated:
             clean_stderr = clean_stderr[-output_limit_chars:] if output_limit_chars > 0 else ""
             bounded_raw_stderr = raw_stderr[-output_limit_chars:] if output_limit_chars > 0 else ""
+    if secrets:
+        if stdout_truncated:
+            clean_stdout = "(redacted)" if raw_stdout else ""
+            bounded_raw_stdout = ""
+        if stderr_truncated:
+            clean_stderr = "(redacted)" if raw_stderr else ""
+            bounded_raw_stderr = ""
     if timed_out:
         clean_stderr = f"timeout after {timeout_sec}s\n{clean_stderr}"
     if stream_error:

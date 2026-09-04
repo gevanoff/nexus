@@ -60,7 +60,7 @@ For each run the adapter:
 - copies only explicitly selected evidence into the retained artifact directory;
 - sanitizes disposable Git config and info attributes before snapshotting so agent-defined hooks, filters, and comparison settings cannot execute during evidence collection;
 - enforces aggregate changed-file count, file-byte, diff-size, snapshot-time, trace-entry, trace-file, and trace-time limits before retaining evidence;
-- retains enough pre-tail overlap for the longest protected-value encoding, redacts raw and encoded values before applying the final stdout/stderr tail bound and again across the complete result, and records `artifacts.process_output_truncated` when the retained tails omit earlier data;
+- retains enough pre-tail overlap for ordinary protected-value encodings, redacts raw and encoded values before applying the final stdout/stderr tail bound and again across the complete result, redacts truncated output wholesale whenever protected values are in scope, and records `artifacts.process_output_truncated` when earlier data was omitted;
 - captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home and Python bytecode generation disabled, and sanitizes retained text evidence before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
 - repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;
