@@ -817,6 +817,26 @@ def test_initialize_workspace_force_stages_fixture_files_ignored_by_fixture(
     assert status["stdout"] == ""
 
 
+def test_fragmented_result_fields_are_redacted_before_serialization() -> None:
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    value = {
+        "validation": {
+            "commands": [
+                {
+                    "stdout": token[:32],
+                    "stderr": token[32:],
+                }
+            ]
+        }
+    }
+
+    redacted = harness._redact_fragmented_value(value, [token])
+
+    command = redacted["validation"]["commands"][0]
+    assert command["stdout"] == "(redacted)"
+    assert command["stderr"] == "(redacted)"
+
+
 def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"

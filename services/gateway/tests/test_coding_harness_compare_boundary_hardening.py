@@ -301,6 +301,35 @@ def test_scrub_discards_casefolded_hex_secret_split_across_artifacts(
     assert not any(path.exists() for path in paths)
 
 
+def test_scrub_discards_whitespace_compacted_secret_fragments(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    paths = (artifacts / "stdout.txt", artifacts / "stderr.txt")
+    paths[0].write_text(" ".join(token[:32]), encoding="ascii")
+    paths[1].write_text("\n".join(token[32:]), encoding="ascii")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert set(omitted) == {path.name for path in paths}
+    assert not any(path.exists() for path in paths)
+
+
+def test_scrub_matches_artifact_path_and_body_as_one_aggregate(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    final_files = artifacts / "final-files"
+    final_files.mkdir(parents=True)
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    midpoint = len(token) // 2
+    retained = final_files / token[:midpoint]
+    retained.write_text(token[midpoint:], encoding="ascii")
+
+    omitted = harness.scrub_retained_artifacts(artifacts, [token])
+
+    assert omitted == [f"final-files/{token[:midpoint]}"]
+    assert not retained.exists()
+
+
 def test_scrub_discards_mixed_case_hexadecimal_secrets(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()

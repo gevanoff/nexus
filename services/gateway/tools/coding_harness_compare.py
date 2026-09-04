@@ -1868,27 +1868,41 @@ def _fragmented_secret_indexes(
                 or re.fullmatch(rb"[0-9a-fA-F]+", protected) is not None
             )
             normalized_protected = protected.lower() if case_insensitive else protected
-            normalized_values = [
-                raw_value.lower() if case_insensitive else raw_value
-                for raw_value in values
-            ]
+            normalized_values: list[set[bytes]] = []
+            for raw_value in values:
+                compact = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
+                decoded = _decode_character_escapes(raw_value)
+                decoded_compact = _decode_character_escapes(compact)
+                views = {
+                    raw_value,
+                    compact,
+                    decoded,
+                    decoded_compact,
+                    re.sub(rb"[\t\n\v\f\r ]+", b"", decoded),
+                }
+                if case_insensitive:
+                    views = {view.lower() for view in views}
+                normalized_values.append(views)
             candidates = [
-                (index, raw_value)
-                for index, raw_value in enumerate(normalized_values)
-                if normalized_protected not in raw_value
+                (index, views)
+                for index, views in enumerate(normalized_values)
+                if not any(normalized_protected in view for view in views)
             ]
             implicated: set[int] = set()
             states: dict[int, set[frozenset[int]]] = {0: {frozenset()}}
             for position in range(len(normalized_protected)):
                 current_states = tuple(states.get(position, ()))
                 for used in current_states:
-                    for index, raw_value in candidates:
+                    for index, views in candidates:
                         if index in used:
                             continue
                         end = len(normalized_protected)
                         while (
                             end > position
-                            and normalized_protected[position:end] not in raw_value
+                            and not any(
+                                normalized_protected[position:end] in view
+                                for view in views
+                            )
                         ):
                             end -= 1
                         if end == position:
@@ -1901,13 +1915,56 @@ def _fragmented_secret_indexes(
                         if any(existing <= updated for existing in end_states):
                             continue
                         end_states.difference_update(
-                            existing for existing in end_states if updated < existing
+                            tuple(
+                                existing
+                                for existing in end_states
+                                if updated < existing
+                            )
                         )
                         end_states.add(updated)
                         if sum(len(entries) for entries in states.values()) > 4096:
                             return set(range(len(values)))
             all_implicated.update(implicated)
     return all_implicated
+
+
+def _redact_fragmented_value(value: Any, secrets: Iterable[str]) -> Any:
+    leaves: list[str] = []
+    output_fields = {"stdout", "stderr"}
+
+    def collect(candidate: Any, field: str | None = None) -> None:
+        if isinstance(candidate, str) and field in output_fields:
+            leaves.append(candidate)
+        elif isinstance(candidate, dict):
+            for key, nested in candidate.items():
+                collect(nested, str(key))
+        elif isinstance(candidate, (list, tuple)):
+            for nested in candidate:
+                collect(nested, field)
+
+    collect(value)
+    implicated = _fragmented_secret_indexes(
+        [leaf.encode("utf-8", errors="replace") for leaf in leaves], secrets
+    )
+    leaf_index = 0
+
+    def rebuild(candidate: Any, field: str | None = None) -> Any:
+        nonlocal leaf_index
+        if isinstance(candidate, str) and field in output_fields:
+            replacement = "(redacted)" if leaf_index in implicated else candidate
+            leaf_index += 1
+            return replacement
+        if isinstance(candidate, dict):
+            return {
+                key: rebuild(nested, str(key)) for key, nested in candidate.items()
+            }
+        if isinstance(candidate, list):
+            return [rebuild(nested, field) for nested in candidate]
+        if isinstance(candidate, tuple):
+            return tuple(rebuild(nested, field) for nested in candidate)
+        return candidate
+
+    return rebuild(value)
 
 
 def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[str]:
@@ -1921,9 +1978,18 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
                 raw_artifacts[path] = path.read_bytes()
         except OSError:
             continue
-    raw_paths = list(raw_artifacts)
+    raw_paths: list[Path] = []
+    raw_values: list[bytes] = []
+    for path, raw_value in raw_artifacts.items():
+        raw_paths.extend((path, path))
+        raw_values.extend(
+            (
+                str(path.relative_to(artifacts)).encode("utf-8", errors="replace"),
+                raw_value,
+            )
+        )
     fragmented_indexes = _fragmented_secret_indexes(
-        [raw_artifacts[path] for path in raw_paths], secrets
+        raw_values, secrets
     )
     cross_artifact_secret_paths = {raw_paths[index] for index in fragmented_indexes}
     for path in sorted(artifacts.rglob("*")):
@@ -2117,7 +2183,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             outcome_error = "objective checks failed"
         else:
             outcome_error = None
-        result = redact_value({
+        result = _redact_fragmented_value(redact_value({
             "schema_version": RESULT_SCHEMA_VERSION, "fixture_id": fixture["id"],
             "fixture_description": fixture.get("description", ""), "tags": fixture.get("tags", []),
             "harness": "albatross", "run_id": run_id, "started_at": started_at,
@@ -2141,7 +2207,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
                           "process_output_truncated": bool(process["output_truncated"]),
                           "trace_files": trace["trace_files"], "trace_omissions": trace["trace_omissions"],
                           "omitted_non_text": omitted_artifacts},
-        }, [nexus_token])
+        }, [nexus_token]), [nexus_token])
         result_path = artifacts / "result.json"
         write_json(result_path, result)
         return result, result_path
