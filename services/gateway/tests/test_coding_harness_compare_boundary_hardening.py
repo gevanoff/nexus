@@ -217,6 +217,9 @@ def test_scrub_discards_base85_secret_artifacts(
     "escape",
     [
         lambda value: "".join(f"\\u{ord(character):04x}" for character in value),
+        lambda value: " \t\n".join(
+            f"\\u{ord(character):04x}" for character in value
+        ),
         lambda value: "".join(f"\\x{byte:02x}" for byte in value.encode("utf-8")),
         lambda value: "".join(f"%{byte:02x}" for byte in value.encode("utf-8")),
     ],

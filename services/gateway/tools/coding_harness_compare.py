@@ -1168,8 +1168,9 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
         ):
             return True
         if any(
-            encoded.lower() in lowered
+            encoded.lower() in candidate
             for encoded in _character_escape_secret_variants(secret)
+            for candidate in (lowered, compact_lowered)
         ):
             return True
         raw_secret = secret.encode("utf-8")
