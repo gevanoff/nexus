@@ -1751,7 +1751,7 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                 retained_trace_items.append(retained_items)
     if artifact_dir is not None:
         retained_trace_items = _redact_fragmented_value(
-            retained_trace_items, secrets, fields=None
+            retained_trace_items, secrets, fields=None, include_keys=True
         )
         for retained_path, retained_items in zip(files, retained_trace_items):
             with Path(retained_path).open("w", encoding="utf-8", newline="\n") as handle:
@@ -1869,7 +1869,10 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
 
 
 def _fragmented_secret_indexes(
-    values: list[bytes], secrets: Iterable[str]
+    values: list[bytes],
+    secrets: Iterable[str],
+    *,
+    whole_values: bool = False,
 ) -> set[int]:
     all_implicated: set[int] = set()
     for secret in (str(value) for value in secrets if value):
@@ -1918,7 +1921,11 @@ def _fragmented_secret_indexes(
                         while (
                             end > position
                             and not any(
-                                normalized_protected[position:end] in view
+                                (
+                                    normalized_protected[position:end] == view
+                                    if whole_values
+                                    else normalized_protected[position:end] in view
+                                )
                                 for view in views
                             )
                         ):
@@ -1951,6 +1958,8 @@ def _redact_fragmented_value(
     secrets: Iterable[str],
     *,
     fields: frozenset[str] | None = frozenset({"stdout", "stderr"}),
+    include_keys: bool = False,
+    whole_values: bool = False,
 ) -> Any:
     leaves: list[str] = []
 
@@ -1959,6 +1968,8 @@ def _redact_fragmented_value(
             leaves.append(candidate)
         elif isinstance(candidate, dict):
             for key, nested in candidate.items():
+                if include_keys:
+                    leaves.append(str(key))
                 collect(nested, str(key))
         elif isinstance(candidate, (list, tuple)):
             for nested in candidate:
@@ -1966,7 +1977,9 @@ def _redact_fragmented_value(
 
     collect(value)
     implicated = _fragmented_secret_indexes(
-        [leaf.encode("utf-8", errors="replace") for leaf in leaves], secrets
+        [leaf.encode("utf-8", errors="replace") for leaf in leaves],
+        secrets,
+        whole_values=whole_values,
     )
     leaf_index = 0
 
@@ -1977,9 +1990,15 @@ def _redact_fragmented_value(
             leaf_index += 1
             return replacement
         if isinstance(candidate, dict):
-            return {
-                key: rebuild(nested, str(key)) for key, nested in candidate.items()
-            }
+            rebuilt = {}
+            for key, nested in candidate.items():
+                rebuilt_key = key
+                if include_keys:
+                    if leaf_index in implicated:
+                        rebuilt_key = f"(redacted-key-{leaf_index})"
+                    leaf_index += 1
+                rebuilt[rebuilt_key] = rebuild(nested, str(key))
+            return rebuilt
         if isinstance(candidate, list):
             return [rebuild(nested, field) for nested in candidate]
         if isinstance(candidate, tuple):
@@ -2205,7 +2224,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             outcome_error = "objective checks failed"
         else:
             outcome_error = None
-        result = _redact_fragmented_value(redact_value({
+        result = redact_value({
             "schema_version": RESULT_SCHEMA_VERSION, "fixture_id": fixture["id"],
             "fixture_description": fixture.get("description", ""), "tags": fixture.get("tags", []),
             "harness": "albatross", "run_id": run_id, "started_at": started_at,
@@ -2221,6 +2240,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             "workspace": workspace_info, "validation": validation,
             "trajectory": {"agent_turns": trace["agent_turns"], "agent_steps": trace["agent_steps"],
                            "tool_calls": trace["tool_call_count"], "tool_call_names": trace["tool_calls"],
+                           "file_read_observed": "file_read" in trace["tool_calls"],
                            "context_resets": trace["context_resets"], "malformed_trace_lines": trace["malformed_trace_lines"],
                            "trace_input_bytes": trace["trace_input_bytes"]},
             "objective": objective,
@@ -2229,7 +2249,11 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
                           "process_output_truncated": bool(process["output_truncated"]),
                           "trace_files": trace["trace_files"], "trace_omissions": trace["trace_omissions"],
                           "omitted_non_text": omitted_artifacts},
-        }, [nexus_token]), [nexus_token])
+        }, [nexus_token])
+        result = _redact_fragmented_value(result, [nexus_token])
+        result = _redact_fragmented_value(
+            result, [nexus_token], fields=None, whole_values=True
+        )
         result_path = artifacts / "result.json"
         write_json(result_path, result)
         return result, result_path
@@ -2281,7 +2305,6 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         return redact_value(report, [nexus_token])
     finally:
         fixture_path.unlink(missing_ok=True)
-    tools = result.get("trajectory", {}).get("tool_call_names") or []
     response_marker = "NEXUS_ALBATROSS_PROBE_OK"
     response_output = ""
     try:
@@ -2290,8 +2313,13 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         report["live_error"] = f"could not verify live probe response: {type(exc).__name__}: {exc}"
     response_ok = response_marker in response_output
     chat_ok = result.get("outcome", {}).get("exit_code") == 0 and response_ok
+    trajectory = result.get("trajectory", {})
+    read_tool_observed = trajectory.get("file_read_observed")
+    if read_tool_observed is None:
+        read_tool_observed = "file_read" in (trajectory.get("tool_call_names") or [])
     report["capabilities"].update({"chat": chat_ok, "streaming": None,
-        "tool_calls": "file_read" in tools, "structured_trace": bool(result.get("artifacts", {}).get("trace_files"))})
+        "tool_calls": bool(read_tool_observed),
+        "structured_trace": bool(result.get("artifacts", {}).get("trace_files"))})
     report["live_result"] = str(result_path)
     report["ok"] = bool(chat_ok and report["capabilities"]["tool_calls"] and result.get("objective", {}).get("passed") is True)
     if not response_ok and "live_error" not in report:

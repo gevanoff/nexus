@@ -1639,6 +1639,87 @@ print('done')
         assert fragment not in result_text
 
 
+def test_fragmented_trace_object_keys_are_redacted(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    artifacts = tmp_path / "artifacts"
+    sessions.mkdir()
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    events = [
+        {"turn": 1, "kind": "note", "payload": {token[:32]: "first"}},
+        {"turn": 2, "kind": "note", "payload": {token[32:]: "second"}},
+    ]
+    (sessions / "fragmented.events.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(
+        sessions,
+        artifact_dir=artifacts,
+        secrets=[token],
+    )
+
+    trace_text = Path(result["trace_files"][0]).read_text(encoding="utf-8")
+    assert token[:32] not in trace_text
+    assert token[32:] not in trace_text
+    assert "(redacted-key-" in trace_text
+
+
+def test_final_result_redacts_fragments_across_trace_and_validation(
+    tmp_path: Path,
+) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+token = os.environ['OPENAI_API_KEY']
+sessions = pathlib.Path(os.environ['HOME']) / '.config' / 'albatross' / 'sessions'
+sessions.mkdir(parents=True, exist_ok=True)
+(sessions / 'fragmented.events.jsonl').write_text(
+    json.dumps({'turn': 1, 'kind': 'toolCall', 'name': token[:32]}) + '\\n',
+    encoding='utf-8',
+)
+print('done')
+""",
+    )
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    fixture = _fixture(
+        tmp_path / "fixture.json",
+        files={
+            "app.py": "VALUE = 1\n",
+            "emit.py": f"print({token[32:]!r})\n",
+        },
+        expected={
+            "validation": [["python3", "emit.py"]],
+        },
+    )
+
+    result, result_path = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["trajectory"]["tool_call_names"] == ["(redacted)"]
+    assert result["validation"]["commands"][0]["stdout"] == "(redacted)"
+    result_text = result_path.read_text(encoding="utf-8")
+    assert token[:32] not in result_text
+    assert token[32:] not in result_text
+
+
 def test_list_fixtures_loads_each_fixture_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
