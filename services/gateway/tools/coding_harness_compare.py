@@ -24,6 +24,8 @@ SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 RESERVED_PARTS = {".git", ".albatross", ".small-harness", ".sessions"}
 RESERVED_FILES = {"agent.config.json", ".env"}
 ALBATROSS_TOOLS = "apply_patch,file_read,file_write,file_edit,glob,grep,list_dir,run_tests,update_plan"
+ALBATROSS_READ_ONLY_TOOLS = "file_read,glob,grep,list_dir"
+REQUIRED_PROBE_CAPABILITIES = ("one_shot", "allow_tools")
 
 
 def now_iso() -> str:
@@ -103,9 +105,21 @@ def load_fixture(path: Path) -> dict[str, Any]:
             check["path"] = safe_rel_path(str(check.get("path") or "")).as_posix()
             if not str(check.get("needle") or ""):
                 raise ValueError(f"expected.{key} needle must be non-empty")
-    for command in expected.get("validation") or []:
+    validation = expected.get("validation") or []
+    if "validation" in expected and not isinstance(expected.get("validation"), list):
+        raise ValueError("expected.validation must be an array")
+    for command in validation:
         if not isinstance(command, list) or not command or any(not isinstance(v, str) or not v for v in command):
             raise ValueError("validation commands must be non-empty argv arrays")
+    has_verification = (
+        "files_changed" in expected
+        or "allowed_files_changed" in expected
+        or bool(expected.get("file_contains"))
+        or bool(expected.get("file_not_contains"))
+        or bool(validation)
+    )
+    if not has_verification:
+        raise ValueError("expected must define at least one objective check or validation command")
     limits = fixture.setdefault("limits", {})
     if not isinstance(limits, dict):
         raise ValueError("limits must be an object")
@@ -224,8 +238,9 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
         except (OSError, ValueError):
             pass
     diff_text = "\n".join(v for v in pieces if v)
+    retained_diff = diff_text + ("\n" if diff_text else "")
     artifacts.mkdir(parents=True, exist_ok=True)
-    (artifacts / "final.diff").write_text(diff_text + ("\n" if diff_text else ""), encoding="utf-8")
+    (artifacts / "final.diff").write_text(retained_diff, encoding="utf-8")
     committed_files = [v.strip() for v in committed["stdout"].splitlines() if v.strip()]
     changed = sorted(set(parse_status_files(status["stdout"])) | set(committed_files))
     final_files = artifacts / "final-files"
@@ -241,18 +256,26 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path) -> dict[
             pass
     return {"base_head": baseline, "final_head": head["stdout"].strip(),
             "dirty": bool(parse_status_files(status["stdout"])), "files_changed": changed,
-            "diff_sha256": hashlib.sha256(diff_text.encode()).hexdigest(), "diff_chars": len(diff_text),
-            "git_metadata_retained": False}
+            "diff_sha256": hashlib.sha256(retained_diff.encode()).hexdigest(), "diff_chars": len(retained_diff),
+            "git_metadata_retained": True}
+
+
+def refresh_diff_metadata(workspace_info: dict[str, Any], diff_path: Path) -> None:
+    data = diff_path.read_bytes() if diff_path.exists() else b""
+    workspace_info["diff_sha256"] = hashlib.sha256(data).hexdigest()
+    workspace_info["diff_chars"] = len(data.decode("utf-8", errors="replace"))
 
 
 def build_albatross_env(*, nexus_base_url: str, nexus_token: str, model: str,
-                        workspace: Path, home: Path, temp_dir: Path, max_steps: int) -> dict[str, str]:
+                        workspace: Path, home: Path, temp_dir: Path, max_steps: int,
+                        allow_mutations: bool = True) -> dict[str, str]:
     env = clean_env(home=home, temp_dir=temp_dir)
     env.update({"BACKEND": "openai", "OPENAI_BASE_URL": nexus_base_url.rstrip("/"),
                 "OPENAI_API_KEY": nexus_token, "AGENT_MODEL": model, "WORKSPACE_ROOT": str(workspace),
                 "OUTSIDE_WORKSPACE": "deny", "ALBATROSS_NO_WIZARD": "true",
                 "ALBATROSS_NO_UPDATE_CHECK": "true", "APPROVAL_POLICY": "always",
-                "AGENT_MAX_STEPS": str(max_steps), "AGENT_TOOLS": ALBATROSS_TOOLS,
+                "AGENT_MAX_STEPS": str(max_steps),
+                "AGENT_TOOLS": ALBATROSS_TOOLS if allow_mutations else ALBATROSS_READ_ONLY_TOOLS,
                 "AGENT_TOOL_SELECTION": "fixed", "WARMUP": "false"})
     return env
 
@@ -280,32 +303,48 @@ def parse_trace(session_roots: Path | Iterable[Path]) -> dict[str, Any]:
             continue
         for path in sorted(root.rglob("*.events.jsonl")):
             files.append(str(path))
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                try:
-                    item = json.loads(line)
-                except Exception:
-                    malformed += 1
-                    continue
-                if isinstance(item.get("turn"), int):
-                    turns.add((str(root), item["turn"]))
-                if item.get("kind") == "toolCall" and item.get("name"):
-                    tools.append(str(item["name"]))
-                elif item.get("kind") == "contextCompacted":
-                    resets += 1
-                elif item.get("kind") == "turnSummary":
-                    steps += int(item.get("steps") or 0)
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        item = json.loads(line)
+                    except Exception:
+                        malformed += 1
+                        continue
+                    if isinstance(item.get("turn"), int):
+                        turns.add((str(root), item["turn"]))
+                    if item.get("kind") == "toolCall" and item.get("name"):
+                        tools.append(str(item["name"]))
+                    elif item.get("kind") == "contextCompacted":
+                        resets += 1
+                    elif item.get("kind") == "turnSummary":
+                        steps += int(item.get("steps") or 0)
     return {"tool_calls": tools, "tool_call_count": len(tools), "agent_turns": len(turns),
             "agent_steps": steps, "context_resets": resets, "malformed_trace_lines": malformed,
             "trace_files": files}
 
 
-def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_dir: Path) -> dict[str, Any]:
-    results = []
-    for argv in fixture.get("expected", {}).get("validation") or []:
-        results.append({"argv": argv, **run_process([str(v) for v in argv], cwd=workspace,
-                       env=clean_env(home=home, temp_dir=temp_dir),
-                       timeout_sec=min(300, fixture["limits"]["wall_time_sec"]))})
-    return {"commands": results, "passed": None if not results else all(v["ok"] for v in results)}
+def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_dir: Path,
+                   *, deadline: float) -> dict[str, Any]:
+    commands = fixture.get("expected", {}).get("validation") or []
+    results: list[dict[str, Any]] = []
+    budget_exhausted = False
+    for argv in commands:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            results.append({"argv": argv, "ok": False, "returncode": None, "timed_out": True,
+                            "stdout": "", "stderr": "validation time budget exhausted before command",
+                            "duration_ms": 0.0})
+            budget_exhausted = True
+            break
+        timeout_sec = min(300.0, remaining)
+        result = run_process([str(v) for v in argv], cwd=workspace,
+                             env=clean_env(home=home, temp_dir=temp_dir), timeout_sec=timeout_sec)
+        results.append({"argv": argv, **result})
+        if result["timed_out"]:
+            budget_exhausted = time.monotonic() >= deadline
+            break
+    passed = None if not commands else bool(len(results) == len(commands) and all(v["ok"] for v in results))
+    return {"commands": results, "passed": passed, "budget_exhausted": budget_exhausted}
 
 
 def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str], validation: dict[str, Any]) -> dict[str, Any]:
@@ -368,27 +407,38 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
     baseline = initialize_workspace(workspace, fixture)
     env = build_albatross_env(nexus_base_url=nexus_base_url, nexus_token=nexus_token, model=model,
                               workspace=workspace, home=home, temp_dir=tmp,
-                              max_steps=fixture["limits"]["max_agent_steps"])
+                              max_steps=fixture["limits"]["max_agent_steps"], allow_mutations=allow_mutations)
     argv = [version["executable"], "--print", mission_prompt(fixture, allow_mutations)]
     if allow_mutations:
         argv.append("--allow-tools")
     started_at, started = now_iso(), time.monotonic()
-    process = run_process(argv, cwd=workspace, env=env, timeout_sec=fixture["limits"]["wall_time_sec"], secrets=[nexus_token])
-    duration_ms, finished_at = round((time.monotonic() - started) * 1000.0, 1), now_iso()
+    deadline = started + float(fixture["limits"]["wall_time_sec"])
+    process_timeout = max(0.001, deadline - time.monotonic())
+    process = run_process(argv, cwd=workspace, env=env, timeout_sec=process_timeout, secrets=[nexus_token])
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
     (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
     workspace_info = workspace_snapshot(workspace, baseline, artifacts)
-    validation = run_validation(fixture, workspace, home, tmp)
+    validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
     objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
     try:
         remove_git_metadata(workspace)
+        workspace_info["git_metadata_retained"] = False
     except Exception as exc:
         shutil.rmtree(root, ignore_errors=True)
         raise RuntimeError("could not sanitize retained workspace Git metadata; discarded the run") from exc
     scrub_tree(root, [nexus_token])
+    refresh_diff_metadata(workspace_info, artifacts / "final.diff")
     trace = parse_trace([workspace / ".sessions", home / ".config" / "albatross" / "sessions"])
-    completed = bool(process["ok"] and objective["passed"] is not False)
+    duration_ms, finished_at = round((time.monotonic() - started) * 1000.0, 1), now_iso()
+    run_timed_out = bool(process["timed_out"] or validation["budget_exhausted"])
+    completed = bool(process["ok"] and objective["passed"] is True)
+    if not process["ok"]:
+        outcome_error = process["stderr"] or f"exit {process['returncode']}"
+    elif validation["budget_exhausted"]:
+        outcome_error = "validation time budget exhausted"
+    else:
+        outcome_error = None
     result = redact_value({
         "schema_version": RESULT_SCHEMA_VERSION, "fixture_id": fixture["id"],
         "fixture_description": fixture.get("description", ""), "tags": fixture.get("tags", []),
@@ -399,10 +449,9 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         "model": {"requested": model, "gateway": "nexus", "nexus_base_url": nexus_base_url,
                   "client_backend": "openai", "backend": "", "upstream_model": "",
                   "route_evidence": "not_available_from_albatross_adapter_v1"},
-        "outcome": {"status": "completed" if completed else ("timed_out" if process["timed_out"] else "failed"),
-                    "completed": completed, "interrupted": process["timed_out"],
-                    "exit_code": process["returncode"],
-                    "error": None if process["ok"] else (process["stderr"] or f"exit {process['returncode']}")},
+        "outcome": {"status": "completed" if completed else ("timed_out" if run_timed_out else "failed"),
+                    "completed": completed, "interrupted": run_timed_out,
+                    "exit_code": process["returncode"], "error": outcome_error},
         "workspace": workspace_info, "validation": validation,
         "trajectory": {"agent_turns": trace["agent_turns"], "agent_steps": trace["agent_steps"],
                        "tool_calls": trace["tool_call_count"], "tool_call_names": trace["tool_calls"],
@@ -430,7 +479,10 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
     report["capabilities"] = {"one_shot": "--print" in help_text, "external_eval": "--eval" in help_text,
         "json_eval_output": "--json" in help_text, "allow_tools": "--allow-tools" in help_text,
         "chat": None, "streaming": None, "tool_calls": None, "structured_trace": None}
-    if not live:
+    missing = [name for name in REQUIRED_PROBE_CAPABILITIES if not report["capabilities"].get(name)]
+    report["compatibility"] = {"required": list(REQUIRED_PROBE_CAPABILITIES), "missing": missing}
+    report["ok"] = bool(help_result["ok"] and not missing)
+    if not live or not report["ok"]:
         return report
     if not nexus_token:
         report["ok"] = False
@@ -507,8 +559,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     if args.command == "list-fixtures":
-        values = [{"path": str(p), "id": load_fixture(p)["id"], "description": load_fixture(p).get("description", "")}
-                  for p in bundled_fixture_paths()]
+        values = []
+        for path in bundled_fixture_paths():
+            fixture = load_fixture(path)
+            values.append({"path": str(path), "id": fixture["id"], "description": fixture.get("description", "")})
         print(json.dumps(values, indent=2) if args.json else "\n".join(f"{v['id']}: {v['description']} ({v['path']})" for v in values))
         return 0
     if args.command == "probe":

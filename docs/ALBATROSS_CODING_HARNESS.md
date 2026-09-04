@@ -51,23 +51,29 @@ For each run the adapter:
 - sets `BACKEND=openai` and `OPENAI_BASE_URL` to Nexus;
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
-- bounds wall time and agent steps;
+- bounds the agent and post-run validation under one fixture wall-time deadline;
 - tells Albatross not to commit;
-- excludes `.albatross/` and `.small-harness/` from the fixture Git delta;
-- redacts the Nexus token from captured stdout/stderr/result data and scrubs text artifacts before returning.
+- excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
+- removes retained `.git` metadata before a run can be returned;
+- redacts the Nexus token from captured stdout/stderr/result data and scrubs retained text artifacts before returning;
+- recomputes the retained diff checksum after sanitization so it identifies the actual evidence file.
 
-The adapter's `--allow-tools` mode is appropriate only because the target is a disposable fixture workspace with `OUTSIDE_WORKSPACE=deny`. Do not modify the adapter to point that mode at the live Nexus checkout by default.
+Mutating runs expose a restricted edit/test tool set inside the disposable fixture workspace and omit arbitrary `shell`. Read-only runs, including the live capability probe, expose only `file_read`, `glob`, `grep`, and `list_dir`; write/edit/test tools are removed from the child capability surface rather than relying on prompt compliance.
 
-Fixture validation commands are trusted executable fixture content. Review new fixtures before running them.
+The adapter's `--allow-tools` mode is appropriate only because mutating runs target a disposable fixture workspace with `OUTSIDE_WORKSPACE=deny`. Do not modify the adapter to point that mode at the live Nexus checkout by default.
 
-## Install on ai2
+Fixture validation commands are trusted executable fixture content. Review new fixtures before running them. Every fixture must define at least one objective result check or validation command; a successful Albatross process alone is not sufficient to mark a fixture complete.
 
-Use Albatross's upstream-supported macOS installation separately from Nexus deployment:
+## Install Albatross
+
+On macOS hosts such as ai2, use Albatross's upstream-supported Homebrew installation separately from Nexus deployment:
 
 ```bash
 brew install morganlinton/tap/albatross
 albatross --version
 ```
+
+On other operating systems, use the installation method supported by the upstream Albatross release rather than assuming Homebrew is available.
 
 The tested baseline is `2.4.0`. For a comparison run, record the actual version shown by the adapter. Do not make normal Nexus startup, deployment, or CI install Albatross.
 
@@ -92,7 +98,7 @@ Offline capability inspection:
 python3 services/gateway/tools/coding_harness_compare.py probe
 ```
 
-This checks installation/version and the expected v2.4.0 CLI surfaces.
+This checks installation/version and the CLI surfaces required by this adapter. The probe exits nonzero if the installed binary is missing a required surface rather than merely reporting an incompatible capability while claiming success.
 
 A live, read-only Albatross→Nexus probe is opt-in:
 
@@ -100,7 +106,7 @@ A live, read-only Albatross→Nexus probe is opt-in:
 python3 services/gateway/tools/coding_harness_compare.py probe --live --model coder
 ```
 
-The live probe creates a disposable one-file fixture, asks Albatross to read it, and requires a recorded `file_read` tool call. Successful one-shot execution also exercises Albatross's streaming OpenAI client against Nexus SSE behavior.
+The live probe creates a disposable one-file fixture, asks Albatross to read it, and requires a recorded `file_read` tool call. Its Albatross child receives only the read-only tool surface described above. Successful one-shot execution also exercises Albatross's streaming OpenAI client against Nexus SSE behavior.
 
 ## Bundled fixtures
 
@@ -144,13 +150,15 @@ Artifacts default under:
 ${NEXUS_RUNTIME_ROOT:-.runtime}/coding-harness-evals/
 ```
 
-Each run keeps:
+Each retained run keeps:
 
 - redacted stdout/stderr;
-- final Git diff;
+- the sanitized final Git diff;
 - final copies of changed files (size bounded);
-- Albatross JSONL event traces when emitted;
+- Albatross JSONL event traces from the explicit Albatross session roots when emitted;
 - a common `result.json`.
+
+Git object metadata from the disposable fixture repository is not retained. This prevents an agent-created commit from preserving a secret that was subsequently redacted from ordinary text artifacts.
 
 The common result separates objective evidence from later semantic judgment. It records outcome, elapsed time, requested Nexus alias, workspace delta, post-run validation, tool/step/context-compaction counts, and artifact paths.
 
