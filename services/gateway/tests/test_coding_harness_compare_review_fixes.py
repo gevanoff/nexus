@@ -493,6 +493,9 @@ def test_isolated_process_group_terminates_background_descendants(tmp_path: Path
     )
     time.sleep(0.5)
 
+    if result["launch_error"] == "subreaper_unavailable":
+        assert not marker.exists()
+        return
     assert result["ok"] is True
     assert not marker.exists()
 
@@ -511,6 +514,32 @@ def test_isolated_process_execution_fails_closed_off_linux(
     assert result["ok"] is False
     assert result["launch_error"] == "process_group_unsupported"
     assert "Linux host" in result["stderr"]
+
+
+def test_isolated_process_execution_fails_closed_when_descendants_cannot_be_inspected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("subreaper containment is Linux-only")
+
+    def fail_child_inspection(pid: int) -> set[int]:
+        raise PermissionError("review regression")
+
+    def forbidden_popen(*args, **kwargs):
+        raise AssertionError("the child must not launch without descendant inspection")
+
+    monkeypatch.setattr(harness, "_linux_direct_children", fail_child_inspection)
+    monkeypatch.setattr(harness.subprocess, "Popen", forbidden_popen)
+
+    result = harness.run_process(
+        [sys.executable, "-c", "raise SystemExit(0)"],
+        cwd=tmp_path,
+        isolate_process_group=True,
+    )
+
+    assert result["ok"] is False
+    assert result["launch_error"] == "subreaper_unavailable"
+    assert "could not enable descendant containment" in result["stderr"]
 
 
 def test_large_trace_is_sanitized_and_raw_execution_tree_is_not_retained(tmp_path: Path) -> None:

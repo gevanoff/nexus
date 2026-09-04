@@ -221,10 +221,7 @@ def _terminate_process_group(pgid: int, grace_sec: float = 0.5) -> None:
 
 
 def _linux_direct_children(pid: int) -> set[int]:
-    try:
-        text = Path(f"/proc/{pid}/task/{pid}/children").read_text(encoding="ascii")
-    except OSError:
-        return set()
+    text = Path(f"/proc/{pid}/task/{pid}/children").read_text(encoding="ascii")
     return {int(value) for value in text.split() if value.isdigit()}
 
 
@@ -407,8 +404,8 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
     if isolate_process_group:
         try:
             _terminate_linux_adopted_children(baseline_children)
-        except RuntimeError as exc:
-            containment_error = str(exc)
+        except (OSError, RuntimeError) as exc:
+            containment_error = f"could not verify descendant containment: {exc}"
         finally:
             if not subreaper_was_enabled:
                 try:
