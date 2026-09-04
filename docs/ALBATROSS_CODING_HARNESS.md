@@ -55,6 +55,7 @@ For each run the adapter:
 - launches agent/validation commands in isolated POSIX process groups and terminates descendant processes before collecting final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
+- decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
 - copies only explicitly selected evidence into the retained artifact directory;
 - bounds captured process output and records `artifacts.process_output_truncated` when the retained stdout/stderr tails omit earlier data;
 - sanitizes retained text evidence, including structured trace copies, before returning it;

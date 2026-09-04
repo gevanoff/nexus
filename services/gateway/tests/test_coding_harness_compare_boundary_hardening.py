@@ -102,6 +102,29 @@ def test_workspace_snapshot_preserves_non_ascii_filename_identity(tmp_path: Path
     assert not any("caf\\" in item.get("path", "") for item in snapshot["evidence_omissions"])
 
 
+def test_workspace_snapshot_preserves_non_utf8_filename_bytes(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("non-UTF-8 filename regression requires POSIX surrogateescape")
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    raw_name = b"non-utf8-\xff.txt"
+    name = os.fsdecode(raw_name)
+    (workspace / name).write_text("retained evidence\n", encoding="utf-8")
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+    harness.write_json(tmp_path / "snapshot.json", snapshot)
+
+    assert name in snapshot["files_changed"]
+    assert "\ufffd" not in "".join(snapshot["files_changed"])
+    retained = artifacts / "final-files" / name
+    assert os.fsencode(retained.name) == raw_name
+    assert retained.read_text(encoding="utf-8") == "retained evidence\n"
+
+
 def test_scrub_uses_collision_proof_temporary_files(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()

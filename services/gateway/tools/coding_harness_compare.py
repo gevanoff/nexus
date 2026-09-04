@@ -252,7 +252,8 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 timeout_sec: float = 60.0, secrets: Iterable[str] = (),
                 isolate_process_group: bool = False,
                 output_limit_chars: int | None = MAX_PROCESS_OUTPUT_CHARS,
-                fail_on_output_limit: bool = False) -> dict[str, Any]:
+                fail_on_output_limit: bool = False,
+                decode_errors: str = "replace") -> dict[str, Any]:
     started = time.monotonic()
     if isolate_process_group and os.name != "posix":
         return {"ok": False, "returncode": None, "timed_out": False,
@@ -266,7 +267,7 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
             env=env,
             text=True,
             encoding="utf-8",
-            errors="replace",
+            errors=decode_errors,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=bool(isolate_process_group),
@@ -360,6 +361,7 @@ def git(argv: list[str], *, cwd: Path, evidence: bool = False) -> dict[str, Any]
         env=_git_env(),
         output_limit_chars=MAX_GIT_EVIDENCE_CHARS if evidence else MAX_PROCESS_OUTPUT_CHARS,
         fail_on_output_limit=evidence,
+        decode_errors="surrogateescape",
     )
 
 
