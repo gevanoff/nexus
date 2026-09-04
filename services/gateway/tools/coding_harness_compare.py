@@ -37,6 +37,7 @@ REQUIRED_PROBE_CAPABILITIES = ("one_shot", "allow_tools")
 MAX_FIXTURE_FILE_BYTES = 2_000_000
 MAX_FIXTURE_TOTAL_BYTES = 8_000_000
 MAX_FIXTURE_JSON_BYTES = 10_000_000
+MAX_FIXTURE_FILES = 4096
 MAX_MISSION_BYTES = 64_000
 MAX_OBJECTIVE_FILE_BYTES = 2_000_000
 MAX_PROCESS_OUTPUT_CHARS = 100_000
@@ -139,6 +140,10 @@ def load_fixture(path: Path) -> dict[str, Any]:
     files = repo.get("files") if isinstance(repo, dict) else None
     if not isinstance(files, dict) or not files:
         raise ValueError(f"fixture {fid} repository.files must be non-empty")
+    if len(files) > MAX_FIXTURE_FILES:
+        raise ValueError(
+            f"fixture {fid} repository.files exceeds {MAX_FIXTURE_FILES} entry limit"
+        )
     normalized_files: dict[str, str] = {}
     total_file_bytes = 0
     for raw_path, raw_content in files.items():
@@ -1989,7 +1994,7 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         report["live_error"] = f"could not verify live probe response: {type(exc).__name__}: {exc}"
     response_ok = response_marker in response_output
     chat_ok = result.get("outcome", {}).get("exit_code") == 0 and response_ok
-    report["capabilities"].update({"chat": chat_ok, "streaming": chat_ok,
+    report["capabilities"].update({"chat": chat_ok, "streaming": None,
         "tool_calls": "file_read" in tools, "structured_trace": bool(result.get("artifacts", {}).get("trace_files"))})
     report["live_result"] = str(result_path)
     report["ok"] = bool(chat_ok and report["capabilities"]["tool_calls"] and result.get("objective", {}).get("passed") is True)

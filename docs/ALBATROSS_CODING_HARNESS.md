@@ -122,7 +122,7 @@ A live, read-only Albatross→Nexus probe is opt-in:
 python3 services/gateway/tools/coding_harness_compare.py probe --live --model coder
 ```
 
-The live probe creates a disposable one-file fixture, asks Albatross to read it, and requires a recorded `file_read` tool call. Its Albatross child receives only the read-only tool surface described above. Successful one-shot execution also exercises Albatross's streaming OpenAI client against Nexus SSE behavior.
+The live probe creates a disposable one-file fixture, asks Albatross to read it, and requires a recorded `file_read` tool call. Its Albatross child receives only the read-only tool surface described above. The probe reports streaming capability as unknown because the retained execution evidence does not distinguish SSE transport from a non-streaming completion.
 
 ## Bundled fixtures
 

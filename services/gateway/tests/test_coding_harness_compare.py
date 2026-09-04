@@ -209,7 +209,7 @@ def test_fake_executable_full_run_is_isolated_and_redacted(tmp_path: Path) -> No
     assert token not in Path(result["artifacts"]["stdout"]).read_text(encoding="utf-8")
 
 
-def test_fake_live_probe_requires_read_tool_and_reports_streaming_path(tmp_path: Path) -> None:
+def test_fake_live_probe_requires_read_tool_and_leaves_streaming_unknown(tmp_path: Path) -> None:
     fake = _fake_albatross(tmp_path)
     token = "nexus-live-secret-123456"
     report = harness.probe(
@@ -222,7 +222,7 @@ def test_fake_live_probe_requires_read_tool_and_reports_streaming_path(tmp_path:
     )
     assert report["ok"] is True
     assert report["capabilities"]["chat"] is True
-    assert report["capabilities"]["streaming"] is True
+    assert report["capabilities"]["streaming"] is None
     assert report["capabilities"]["tool_calls"] is True
     assert report["capabilities"]["structured_trace"] is True
     assert token not in json.dumps(report)

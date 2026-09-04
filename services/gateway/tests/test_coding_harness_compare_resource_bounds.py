@@ -75,6 +75,16 @@ def test_fixture_inline_total_size_is_bounded(tmp_path: Path) -> None:
         harness.load_fixture(fixture)
 
 
+def test_fixture_inline_file_count_is_bounded(tmp_path: Path) -> None:
+    fixture = _write_fixture(
+        tmp_path / "fixture.json",
+        files={f"file-{index}.txt": "" for index in range(harness.MAX_FIXTURE_FILES + 1)},
+    )
+
+    with pytest.raises(ValueError, match="repository.files exceeds 4096 entry limit"):
+        harness.load_fixture(fixture)
+
+
 def test_objective_file_content_checks_fail_closed_above_read_limit(tmp_path: Path) -> None:
     large = tmp_path / "large.txt"
     large.write_bytes(b"x" * (harness.MAX_OBJECTIVE_FILE_BYTES + 1))
@@ -176,7 +186,7 @@ print('wrong response')
 
     assert report["capabilities"]["tool_calls"] is True
     assert report["capabilities"]["chat"] is False
-    assert report["capabilities"]["streaming"] is False
+    assert report["capabilities"]["streaming"] is None
     assert report["ok"] is False
     assert "did not contain NEXUS_ALBATROSS_PROBE_OK" in report["live_error"]
 
