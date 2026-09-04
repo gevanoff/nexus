@@ -268,7 +268,8 @@ def test_secret_bearing_changed_filename_is_not_used_as_retained_artifact_path(t
     snapshot = harness.workspace_snapshot(workspace, baseline, artifacts, secrets=[token])
     harness.scrub_retained_artifacts(artifacts, [token])
 
-    assert any("(redacted)" in item["path"] for item in snapshot["final_file_omissions"])
+    assert snapshot["files_changed"] == ["(redacted)"]
+    assert any("(redacted)" in item["path"] for item in snapshot["evidence_omissions"])
     for path in artifacts.rglob("*"):
         assert token not in str(path)
     assert token not in (artifacts / "final.diff").read_text(encoding="utf-8")

@@ -170,6 +170,60 @@ def test_scrub_discards_encoded_secret_artifacts(tmp_path: Path) -> None:
     assert not encoded.exists()
 
 
+def test_encoded_secret_paths_are_never_retained_or_reported(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import base64
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+workspace = pathlib.Path(os.environ['WORKSPACE_ROOT'])
+raw = os.environ['OPENAI_API_KEY'].encode('utf-8')
+(workspace / raw.hex()).write_text('hex path\\n', encoding='utf-8')
+(workspace / base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')).write_text(
+    'base64 path\\n', encoding='utf-8'
+)
+print('done')
+""",
+    )
+    token = "nexus-encoded-path-secret"
+    encoded_names = {
+        token.encode("utf-8").hex(),
+        harness.base64.urlsafe_b64encode(token.encode("utf-8")).decode("ascii").rstrip("="),
+    }
+    fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
+
+    result, result_path = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token=token,
+        model="coder",
+        allow_mutations=True,
+    )
+
+    assert result["outcome"]["completed"] is False
+    assert result["workspace"]["files_changed"] == ["(redacted)"]
+    assert any(
+        item["path"] == "(redacted)" and "encoding" in item["reason"]
+        for item in result["workspace"]["evidence_omissions"]
+    )
+    retained = result_path.parent
+    for path in retained.rglob("*"):
+        assert not any(encoded in str(path.relative_to(retained)) for encoded in encoded_names)
+        if path.is_file():
+            content = path.read_bytes()
+            assert not any(encoded.encode("ascii") in content for encoded in encoded_names)
+
+
 def test_workspace_snapshot_pins_git_work_tree(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     alternate = tmp_path / "alternate"

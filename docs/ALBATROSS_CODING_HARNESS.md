@@ -67,7 +67,7 @@ For each run the adapter:
 - if an unexpected failure occurs before safe retention is established, discards the whole run root and verifies its absence before propagating the failure;
 - recomputes the retained diff checksum after sanitization so it identifies the actual evidence file.
 
-This retention boundary is deliberate. Arbitrary workspace/session files are not considered safe artifacts merely because a best-effort redaction pass ran over them. Non-UTF-8 files copied into the retained evidence area are discarded if they cannot be sanitized safely and are listed in `artifacts.omitted_non_text`.
+This retention boundary is deliberate. Arbitrary workspace/session files are not considered safe artifacts merely because a best-effort redaction pass ran over them. Protected values are checked in raw, UTF, Base64, URL-safe Base64, and hexadecimal forms; encoded values in paths are replaced with generic metadata and are never copied. Non-UTF-8 files copied into the retained evidence area are discarded if they cannot be sanitized safely and are listed in `artifacts.omitted_non_text`.
 
 Mutating runs expose a restricted edit/test tool set inside the disposable fixture workspace and omit arbitrary `shell`. Read-only runs, including the live capability probe, expose only `file_read`, `glob`, `grep`, and `list_dir`; write/edit/test tools are removed from the child capability surface rather than relying on prompt compliance.
 

@@ -465,7 +465,7 @@ def test_workspace_snapshot_redacts_secret_from_git_failure_label_and_detail(
         {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
     )
     secret = "nexus-git-failure-secret"
-    (workspace / f"evidence-{secret}.txt").write_text("content\n", encoding="utf-8")
+    (workspace / "evidence.txt").write_text("content\n", encoding="utf-8")
     original_git = harness.git
 
     def fail_no_index(argv, **kwargs):
@@ -488,7 +488,7 @@ def test_workspace_snapshot_redacts_secret_from_git_failure_label_and_detail(
         harness.workspace_snapshot(workspace, baseline, artifacts, secrets=[secret])
 
     assert secret not in str(raised.value)
-    assert "evidence-(redacted).txt" in str(raised.value)
+    assert "(redacted)" in str(raised.value)
 
 
 def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -812,8 +812,38 @@ def _workspace_regular_file(workspace: Path, rel: str, *, max_bytes: int | None 
         return None, f"could not inspect file: {exc}"
 
 
+def _encoded_secret_variants(secret: str) -> set[bytes]:
+    raw = secret.encode("utf-8")
+    variants = {
+        secret.encode("utf-16-le"),
+        secret.encode("utf-16-be"),
+        secret.encode("utf-32-le"),
+        secret.encode("utf-32-be"),
+    }
+    if len(raw) >= 8:
+        base64_variants = {base64.b64encode(raw), base64.urlsafe_b64encode(raw)}
+        variants.update(base64_variants)
+        variants.update(value.rstrip(b"=") for value in base64_variants)
+        variants.update({raw.hex().encode("ascii"), raw.hex().upper().encode("ascii")})
+    return {value for value in variants if value}
+
+
 def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
-    return any(bool(secret) and str(secret) in rel for secret in secrets)
+    candidate = str(rel)
+    candidate_lower = candidate.lower()
+    for secret in (str(value) for value in secrets if value):
+        if secret in candidate:
+            return True
+        raw = secret.encode("utf-8")
+        if len(raw) < 8:
+            continue
+        if raw.hex() in candidate_lower:
+            return True
+        for encoded in (base64.b64encode(raw), base64.urlsafe_b64encode(raw)):
+            text = encoded.decode("ascii")
+            if text in candidate or text.rstrip("=") in candidate:
+                return True
+    return False
 
 
 def _is_harness_runtime_path(rel: str) -> bool:
@@ -911,20 +941,37 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
         secrets=secrets,
         timeout_sec=_snapshot_timeout(deadline),
     )
-    pieces = [tracked_diff] if tracked_diff else []
-    diff_chars = len(tracked_diff)
-    evidence_omissions: list[dict[str, str]] = []
-    untracked_files = [
+    tracked_files = _parse_nul_paths(tracked["stdout"])
+    raw_untracked_files = [
         rel for rel in _parse_nul_paths(untracked["stdout"])
         if not _is_harness_runtime_path(rel)
     ]
-    changed = sorted(set(_parse_nul_paths(tracked["stdout"])) | set(untracked_files))
-    if len(changed) > MAX_SNAPSHOT_CHANGED_FILES:
+    protected_tracked = {rel for rel in tracked_files if _contains_secret_path(rel, secrets)}
+    protected_untracked = {rel for rel in raw_untracked_files if _contains_secret_path(rel, secrets)}
+    protected_paths = protected_tracked | protected_untracked
+    tracked_files = [rel for rel in tracked_files if rel not in protected_paths]
+    untracked_files = [rel for rel in raw_untracked_files if rel not in protected_paths]
+    safe_changed = sorted(set(tracked_files) | set(untracked_files))
+    changed = safe_changed + (["(redacted)"] if protected_paths else [])
+    if len(safe_changed) + len(protected_paths) > MAX_SNAPSHOT_CHANGED_FILES:
         raise RuntimeError(
             f"workspace snapshot exceeds {MAX_SNAPSHOT_CHANGED_FILES} changed-file limit"
         )
+    pieces = [tracked_diff] if tracked_diff and not protected_tracked else []
+    diff_chars = len(tracked_diff) if pieces else 0
+    evidence_omissions: list[dict[str, str]] = []
+    if protected_paths:
+        evidence_omissions.append({
+            "path": "(redacted)",
+            "reason": "path contains a protected secret encoding",
+        })
+    if protected_tracked:
+        evidence_omissions.append({
+            "path": "final.diff",
+            "reason": "tracked diff omitted because a path contains a protected secret encoding",
+        })
     aggregate_file_bytes = 0
-    for rel in changed:
+    for rel in safe_changed:
         _snapshot_timeout(deadline)
         path, error = _workspace_regular_file(
             workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES
@@ -966,11 +1013,8 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
     (artifacts / "final.diff").write_text(retained_diff, encoding="utf-8")
     final_files = artifacts / "final-files"
     final_file_omissions: list[dict[str, str]] = []
-    for rel in changed:
+    for rel in safe_changed:
         _snapshot_timeout(deadline)
-        if _contains_secret_path(rel, secrets):
-            final_file_omissions.append({"path": "(redacted)", "reason": "path contains a protected secret"})
-            continue
         source, error = _workspace_regular_file(workspace, rel, max_bytes=MAX_FIXTURE_FILE_BYTES)
         if error or source is None:
             final_file_omissions.append({"path": redact_text(rel, secrets), "reason": error or "unsafe file"})
@@ -1277,22 +1321,16 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
     secrets = tuple(str(secret) for secret in secrets if secret)
     encoded_secret_variants: set[bytes] = set()
     for secret in secrets:
-        raw = secret.encode("utf-8")
-        encoded_secret_variants.update({
-            secret.encode("utf-16-le"),
-            secret.encode("utf-16-be"),
-            secret.encode("utf-32-le"),
-            secret.encode("utf-32-be"),
-        })
-        if len(raw) >= 8:
-            encoded_secret_variants.update({
-                base64.b64encode(raw),
-                base64.urlsafe_b64encode(raw),
-                raw.hex().encode("ascii"),
-                raw.hex().upper().encode("ascii"),
-            })
+        encoded_secret_variants.update(_encoded_secret_variants(secret))
     omitted: list[str] = []
     for path in sorted(artifacts.rglob("*")):
+        if _contains_secret_path(str(path.relative_to(artifacts)), secrets):
+            try:
+                discard_path_verified(path)
+                omitted.append("(redacted)")
+            except (OSError, RuntimeError) as exc:
+                raise RuntimeError("could not discard artifact with encoded secret path") from exc
+            continue
         try:
             info = path.lstat()
         except OSError:
