@@ -628,6 +628,23 @@ def test_whitespace_split_hex_secret_is_redacted_from_retained_evidence(
     assert not retained.exists()
 
 
+def test_case_folded_raw_hex_secret_is_redacted_from_retained_evidence(
+    tmp_path: Path,
+) -> None:
+    secret = "0123456789abcdef" * 4
+    evidence = f"prefix:{secret.upper()}:suffix"
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    retained = artifacts / "uppercase-token.txt"
+    retained.write_text(evidence, encoding="utf-8")
+
+    assert harness.redact_text(evidence, [secret]) == "(redacted)"
+    assert harness.scrub_retained_artifacts(artifacts, [secret]) == [
+        "uppercase-token.txt"
+    ]
+    assert not retained.exists()
+
+
 @pytest.mark.parametrize("encoded", [False, True])
 def test_secret_paths_are_detected_across_component_boundaries(encoded: bool) -> None:
     secret = "nexus-path-component-secret-value"
@@ -665,6 +682,33 @@ def test_workspace_snapshot_omits_path_reconstructing_raw_secret(tmp_path: Path)
     assert snapshot["files_changed"] == ["(redacted)"]
     assert snapshot["evidence_omissions"]
     assert not (artifacts / "final-files" / secret[:midpoint]).exists()
+
+
+def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {
+            "repository": {
+                "files": {
+                    ".gitattributes": "*.txt ident\n",
+                    "value.txt": "$Id$\n",
+                }
+            }
+        },
+    )
+    (workspace / "value.txt").write_text("$Id: forged $\n", encoding="utf-8")
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert snapshot["files_changed"] == ["value.txt"]
+    assert "+$Id: forged $" in (artifacts / "final.diff").read_text(
+        encoding="utf-8"
+    )
+    assert (artifacts / "final-files" / "value.txt").read_text(
+        encoding="utf-8"
+    ) == "$Id: forged $\n"
 
 
 def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

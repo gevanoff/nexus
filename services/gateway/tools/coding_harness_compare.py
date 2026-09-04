@@ -983,6 +983,13 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
             and raw_secret in compact_whitespace
         ):
             return True
+        if (
+            len(raw_secret) >= 8
+            and raw_secret not in raw_value
+            and re.fullmatch(rb"[0-9a-fA-F]+", raw_secret)
+            and raw_secret.lower() in compact_lowered
+        ):
+            return True
         hexadecimal = raw_secret.hex().encode("ascii")
         if len(raw_secret) >= 8 and any(
             hexadecimal in candidate for candidate in (lowered, compact_lowered)
@@ -1017,6 +1024,7 @@ def _sanitize_snapshot_git_metadata(workspace: Path) -> None:
         raise RuntimeError("snapshot Git metadata is not a trusted directory")
     config = git_dir / "config"
     info_dir = git_dir / "info"
+    attributes = info_dir / "attributes"
     try:
         if _path_lexists(config):
             discard_path_verified(config)
@@ -1032,6 +1040,9 @@ def _sanitize_snapshot_git_metadata(workspace: Path) -> None:
                 "\tlogallrefupdates = true\n"
             )
         config.chmod(0o600)
+        with attributes.open("x", encoding="utf-8", newline="\n") as handle:
+            handle.write("* -text -crlf -ident -filter !working-tree-encoding\n")
+        attributes.chmod(0o600)
     except (OSError, RuntimeError) as exc:
         raise RuntimeError("could not sanitize snapshot Git metadata") from exc
 

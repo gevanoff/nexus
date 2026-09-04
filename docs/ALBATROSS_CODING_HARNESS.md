@@ -58,7 +58,7 @@ For each run the adapter:
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
 - builds final Git evidence from an independent baseline index with pinned worktree and file-mode settings so agent-controlled assume-unchanged, skip-worktree, local comparison, and ignore settings cannot hide workspace changes;
 - copies only explicitly selected evidence into the retained artifact directory;
-- sanitizes disposable Git config and info attributes before snapshotting so agent-defined hooks, filters, and comparison settings cannot execute during evidence collection;
+- sanitizes disposable Git config and installs highest-priority neutral worktree attributes before snapshotting so agent-defined hooks, filters, encodings, `ident`, and comparison settings cannot execute or hide raw changes during evidence collection;
 - enforces aggregate changed-file count, file-byte, diff-size, snapshot-time, trace-entry, trace-file, and trace-time limits before retaining evidence;
 - retains enough pre-tail overlap for ordinary protected-value encodings, detects raw and hexadecimal values split by permitted whitespace and raw or encoded values reconstructed across path components, redacts raw and encoded values before applying the final stdout/stderr tail bound and again across the complete result, redacts truncated output wholesale whenever protected values are in scope, and records `artifacts.process_output_truncated` when earlier data was omitted;
 - captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home and Python bytecode generation disabled, and sanitizes retained text evidence before returning it;
