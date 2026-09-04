@@ -1674,12 +1674,14 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             allowed={workspace.name, home.name, tmp.name, artifacts.name},
         )
         _prepare_artifacts_root(root, artifacts)
+        trace_started = time.monotonic()
         trace = parse_trace(
             home / ".config" / "albatross" / "sessions",
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
             deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
         )
+        deadline += time.monotonic() - trace_started
         validation = run_validation(
             fixture, workspace, home, tmp, deadline=deadline, secrets=[nexus_token]
         )

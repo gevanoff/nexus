@@ -618,6 +618,64 @@ def test_agent_timeout_gets_a_separate_bounded_trace_budget(
     assert result_path.exists()
 
 
+def test_trace_collection_does_not_consume_validation_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+print('done')
+""",
+    )
+    fixture = _fixture(tmp_path / "fixture.json", expected={"files_changed": []})
+    original_monotonic = harness.time.monotonic
+    original_parse_trace = harness.parse_trace
+    clock_offset = [0.0]
+    validation_remaining: list[float] = []
+
+    monkeypatch.setattr(
+        harness.time,
+        "monotonic",
+        lambda: original_monotonic() + clock_offset[0],
+    )
+
+    def delayed_parse_trace(*args, **kwargs):
+        result = original_parse_trace(*args, **kwargs)
+        clock_offset[0] += 5.0
+        return result
+
+    def capture_validation(*args, deadline, **kwargs):
+        validation_remaining.append(deadline - harness.time.monotonic())
+        return {
+            "commands": [],
+            "passed": True,
+            "budget_exhausted": False,
+            "timed_out": False,
+        }
+
+    monkeypatch.setattr(harness, "parse_trace", delayed_parse_trace)
+    monkeypatch.setattr(harness, "run_validation", capture_validation)
+
+    harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="trace-budget-token",
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert validation_remaining[0] > 28.0
+
+
 def test_workspace_trace_files_are_not_trusted(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
