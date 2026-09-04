@@ -400,3 +400,44 @@ def test_live_probe_uses_unique_ephemeral_fixture_paths(
     assert observed[0] != observed[1]
     assert all(path.name.startswith("read-only-probe-") for path in observed)
     assert all(not path.exists() for path in observed)
+
+
+def test_live_probe_rejects_symlinked_fixture_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "runs"
+    root.mkdir()
+    (root / "probe").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(
+        harness,
+        "albatross_version",
+        lambda executable: {
+            "installed": True,
+            "executable": "/fake/albatross",
+            "version": "2.4.0",
+            "raw": "albatross 2.4.0",
+        },
+    )
+    monkeypatch.setattr(
+        harness,
+        "albatross_capabilities",
+        lambda executable: (
+            {"ok": True, "stdout": "--print --allow-tools", "stderr": ""},
+            {"one_shot": True, "allow_tools": True},
+            [],
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="not a trusted directory"):
+        harness.probe(
+            "albatross",
+            live=True,
+            out_root=root,
+            nexus_base_url="http://ai2:8800/v1",
+            nexus_token="probe-token",
+            model="coder",
+        )
+
+    assert not list(outside.iterdir())

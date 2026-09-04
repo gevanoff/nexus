@@ -492,6 +492,34 @@ def _mkdir_private(path: Path) -> None:
         raise RuntimeError(f"private run directory could not be secured: {path}")
 
 
+def _ensure_private_directory(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not _path_lexists(path):
+        _mkdir_private(path)
+        return
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError(f"private directory path is not a trusted directory: {path}")
+    if os.name == "posix":
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags)
+        try:
+            opened = os.fstat(fd)
+            if not stat.S_ISDIR(opened.st_mode) or opened.st_uid != os.geteuid():
+                raise RuntimeError(f"private directory is not owned by the current user: {path}")
+            os.fchmod(fd, 0o700)
+            if stat.S_IMODE(os.fstat(fd).st_mode) != 0o700:
+                raise RuntimeError(f"private directory mode could not be secured: {path}")
+        finally:
+            os.close(fd)
+    else:
+        os.chmod(path, 0o700)
+        secured = path.lstat()
+        if (stat.S_ISLNK(secured.st_mode) or not stat.S_ISDIR(secured.st_mode)
+                or stat.S_IMODE(secured.st_mode) != 0o700):
+            raise RuntimeError(f"private directory mode could not be secured: {path}")
+
+
 def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
     _mkdir_private(workspace)
     root = workspace.resolve()
@@ -1121,7 +1149,9 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         report["live_error"] = "Nexus bearer token is required for --live"
         return report
     root = (out_root or Path(".runtime/coding-harness-evals")).resolve()
-    fixture_path = root / "probe" / f"read-only-probe-{uuid.uuid4().hex}.json"
+    probe_dir = root / "probe"
+    _ensure_private_directory(probe_dir)
+    fixture_path = probe_dir / f"read-only-probe-{uuid.uuid4().hex}.json"
     write_json(fixture_path, {"schema_version": 1, "id": "read-only-probe",
         "description": "Read-only Albatross through Nexus capability probe.",
         "repository": {"files": {"probe.txt": "NEXUS_ALBATROSS_PROBE_OK\n"}},
