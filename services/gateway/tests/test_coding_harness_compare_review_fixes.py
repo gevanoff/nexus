@@ -611,6 +611,23 @@ def test_whitespace_split_raw_secret_is_redacted_from_retained_evidence(
     assert not retained.exists()
 
 
+def test_whitespace_split_hex_secret_is_redacted_from_retained_evidence(
+    tmp_path: Path,
+) -> None:
+    secret = "nexus-whitespace-split-hex-secret"
+    hexadecimal = secret.encode("utf-8").hex()
+    split_hexadecimal = " \n\t".join(hexadecimal)
+    evidence = f"prefix:{split_hexadecimal}:suffix"
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    retained = artifacts / "hex.txt"
+    retained.write_text(evidence, encoding="utf-8")
+
+    assert harness.redact_text(evidence, [secret]) == "(redacted)"
+    assert harness.scrub_retained_artifacts(artifacts, [secret]) == ["hex.txt"]
+    assert not retained.exists()
+
+
 @pytest.mark.parametrize("encoded", [False, True])
 def test_secret_paths_are_detected_across_component_boundaries(encoded: bool) -> None:
     secret = "nexus-path-component-secret-value"
@@ -799,6 +816,44 @@ def test_validation_scratch_entry_limit_fails_the_command(tmp_path: Path) -> Non
     assert "entry limit" in result["commands"][0]["stderr"]
 
 
+def test_scratch_scan_stops_without_materializing_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    for index in range(8):
+        (scratch / str(index)).touch()
+    real_scandir = os.scandir
+    consumed = 0
+
+    class GuardedScandir:
+        def __init__(self, path: Path) -> None:
+            self.inner = real_scandir(path)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.inner.close()
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            nonlocal consumed
+            consumed += 1
+            if consumed > 4:
+                raise AssertionError("scratch scan consumed entries beyond its limit")
+            return next(self.inner)
+
+    monkeypatch.setattr(harness.os, "scandir", GuardedScandir)
+
+    error = harness._scratch_limit_error(scratch, max_bytes=1024, max_entries=3)
+
+    assert error == "validation scratch exceeded 3 entry limit"
+    assert consumed == 4
+
+
 def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
@@ -829,6 +884,39 @@ def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
 
     assert result["passed"] is True
     assert (temp_dir / "large").stat().st_size <= harness.MAX_VALIDATION_FILE_BYTES
+
+
+def test_validation_process_and_memory_limits_are_inherited(tmp_path: Path) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("validation integration requires Linux")
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("validation integration requires bwrap")
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    code = (
+        "import resource\n"
+        f"assert resource.getrlimit(resource.RLIMIT_NPROC) == ({harness.MAX_VALIDATION_PROCESSES}, {harness.MAX_VALIDATION_PROCESSES})\n"
+        f"assert resource.getrlimit(resource.RLIMIT_AS) == ({harness.MAX_VALIDATION_MEMORY_BYTES}, {harness.MAX_VALIDATION_MEMORY_BYTES})\n"
+        "try:\n"
+        f"    bytearray({harness.MAX_VALIDATION_MEMORY_BYTES + 1})\n"
+        "except MemoryError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise SystemExit('validation memory limit was not enforced')\n"
+    )
+
+    result = harness.run_validation(
+        {"expected": {"validation": [["python3", "-c", code]]}},
+        workspace,
+        home,
+        temp_dir,
+        deadline=time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is True
 
 
 def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:

@@ -52,7 +52,7 @@ For each run the adapter:
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
 - bounds the agent and post-run validation under one fixture wall-time deadline, then gives trace collection a separate ten-second post-run budget so normalized timeout evidence can still be retained;
-- completes output-redaction preparation before launch, launches agent commands under Linux subreaper supervision and post-run validation against a read-only workspace and root inside a Bubblewrap filesystem/network sandbox, limits validation scratch space to 64 MiB and 4,096 entries, terminates complete adopted descendant trees even on operator interruption, and then collects final evidence;
+- completes output-redaction preparation before launch, launches agent commands under Linux subreaper supervision and post-run validation against a read-only workspace and root inside a Bubblewrap filesystem/network sandbox, limits validation scratch space to 64 MiB and 4,096 entries with additional file-size, descriptor, process, and address-space ceilings, terminates complete adopted descendant trees even on operator interruption, and then collects final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
@@ -60,7 +60,7 @@ For each run the adapter:
 - copies only explicitly selected evidence into the retained artifact directory;
 - sanitizes disposable Git config and info attributes before snapshotting so agent-defined hooks, filters, and comparison settings cannot execute during evidence collection;
 - enforces aggregate changed-file count, file-byte, diff-size, snapshot-time, trace-entry, trace-file, and trace-time limits before retaining evidence;
-- retains enough pre-tail overlap for ordinary protected-value encodings, detects raw values split by permitted whitespace and raw or encoded values reconstructed across path components, redacts raw and encoded values before applying the final stdout/stderr tail bound and again across the complete result, redacts truncated output wholesale whenever protected values are in scope, and records `artifacts.process_output_truncated` when earlier data was omitted;
+- retains enough pre-tail overlap for ordinary protected-value encodings, detects raw and hexadecimal values split by permitted whitespace and raw or encoded values reconstructed across path components, redacts raw and encoded values before applying the final stdout/stderr tail bound and again across the complete result, redacts truncated output wholesale whenever protected values are in scope, and records `artifacts.process_output_truncated` when earlier data was omitted;
 - captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home and Python bytecode generation disabled, and sanitizes retained text evidence before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
 - repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;

@@ -56,6 +56,8 @@ MAX_VALIDATION_SCRATCH_BYTES = 64 * 1024 * 1024
 MAX_VALIDATION_SCRATCH_ENTRIES = 4096
 MAX_VALIDATION_FILE_BYTES = 1024 * 1024
 MAX_VALIDATION_OPEN_FILES = 64
+MAX_VALIDATION_PROCESSES = 128
+MAX_VALIDATION_MEMORY_BYTES = 256 * 1024 * 1024
 
 
 def now_iso() -> str:
@@ -257,6 +259,8 @@ def _validation_sandbox_argv(
         prlimit,
         f"--fsize={MAX_VALIDATION_FILE_BYTES}:{MAX_VALIDATION_FILE_BYTES}",
         f"--nofile={MAX_VALIDATION_OPEN_FILES}:{MAX_VALIDATION_OPEN_FILES}",
+        f"--nproc={MAX_VALIDATION_PROCESSES}:{MAX_VALIDATION_PROCESSES}",
+        f"--as={MAX_VALIDATION_MEMORY_BYTES}:{MAX_VALIDATION_MEMORY_BYTES}",
         "--",
         bubblewrap,
         "--unshare-all",
@@ -435,26 +439,32 @@ def _scratch_limit_error(
     while pending:
         directory = pending.pop()
         try:
-            entries = list(os.scandir(directory))
+            entries = os.scandir(directory)
         except FileNotFoundError:
             continue
         except OSError as exc:
             return f"could not inspect validation scratch space: {exc}"
-        for entry in entries:
-            total_entries += 1
-            if total_entries > max_entries:
-                return f"validation scratch exceeded {max_entries} entry limit"
-            try:
-                if entry.is_dir(follow_symlinks=False):
-                    pending.append(Path(entry.path))
-                elif entry.is_file(follow_symlinks=False):
-                    total_bytes += entry.stat(follow_symlinks=False).st_size
-                    if total_bytes > max_bytes:
-                        return f"validation scratch exceeded {max_bytes} byte limit"
-            except FileNotFoundError:
-                continue
-            except OSError as exc:
-                return f"could not inspect validation scratch entry: {exc}"
+        try:
+            with entries:
+                for entry in entries:
+                    total_entries += 1
+                    if total_entries > max_entries:
+                        return f"validation scratch exceeded {max_entries} entry limit"
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            pending.append(Path(entry.path))
+                        elif entry.is_file(follow_symlinks=False):
+                            total_bytes += entry.stat(follow_symlinks=False).st_size
+                            if total_bytes > max_bytes:
+                                return f"validation scratch exceeded {max_bytes} byte limit"
+                    except FileNotFoundError:
+                        continue
+                    except OSError as exc:
+                        return f"could not inspect validation scratch entry: {exc}"
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return f"could not scan validation scratch space: {exc}"
     return None
 
 
@@ -960,6 +970,7 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
         return True
     lowered = raw_value.lower()
     compact_whitespace = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
+    compact_lowered = compact_whitespace.lower()
     for secret in (str(value) for value in secrets if value):
         if any(encoded in raw_value for encoded in _encoded_secret_variants(secret)):
             return True
@@ -972,7 +983,10 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
             and raw_secret in compact_whitespace
         ):
             return True
-        if len(raw_secret) >= 8 and raw_secret.hex().encode("ascii") in lowered:
+        hexadecimal = raw_secret.hex().encode("ascii")
+        if len(raw_secret) >= 8 and any(
+            hexadecimal in candidate for candidate in (lowered, compact_lowered)
+        ):
             return True
     return False
 
