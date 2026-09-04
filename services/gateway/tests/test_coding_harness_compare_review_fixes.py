@@ -493,6 +493,11 @@ def test_workspace_snapshot_redacts_secret_from_git_failure_label_and_detail(
 
 def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixture = {"expected": {"validation": [["first"], ["second"]]}}
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
     observed_timeouts: list[float] = []
     monotonic_values = iter([9.0, 9.4])
 
@@ -512,11 +517,16 @@ def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pyt
         }
 
     monkeypatch.setattr(harness, "run_process", fake_run_process)
+    monkeypatch.setattr(
+        harness,
+        "_validation_sandbox_argv",
+        lambda argv, workspace, home, temp_dir: (argv, {}),
+    )
     result = harness.run_validation(
         fixture,
-        tmp_path,
-        tmp_path / "home",
-        tmp_path / "tmp",
+        workspace,
+        home,
+        temp_dir,
         deadline=10.0,
     )
 
@@ -527,6 +537,11 @@ def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pyt
 def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
     observed_timeouts: list[float] = []
     monkeypatch.setattr(harness.time, "monotonic", lambda: 100.0)
 
@@ -543,11 +558,16 @@ def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
         }
 
     monkeypatch.setattr(harness, "run_process", fake_run_process)
+    monkeypatch.setattr(
+        harness,
+        "_validation_sandbox_argv",
+        lambda argv, workspace, home, temp_dir: (argv, {}),
+    )
     result = harness.run_validation(
         {"expected": {"validation": [["validator"]]}},
-        tmp_path,
-        tmp_path / "home",
-        tmp_path / "tmp",
+        workspace,
+        home,
+        temp_dir,
         deadline=700.0,
     )
 
@@ -556,6 +576,8 @@ def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
 
 
 def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("validation integration requires bwrap")
     fake = _write_executable(
         tmp_path / "albatross",
         """#!/usr/bin/env python3
@@ -593,7 +615,8 @@ print('done')
     run_root = Path(result["artifacts"]["run_root"])
     assert result["outcome"]["completed"] is False
     assert result["validation"]["passed"] is False
-    assert result["validation"]["commands"][0]["launch_error"] == "FileNotFoundError"
+    assert result["validation"]["commands"][0]["returncode"] != 0
+    assert result["validation"]["commands"][0]["launch_error"] is None
     assert not (run_root / "workspace").exists()
     assert not (run_root / "home").exists()
     assert not (run_root / "tmp").exists()

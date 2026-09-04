@@ -193,9 +193,93 @@ def test_workspace_snapshot_pins_git_work_tree(tmp_path: Path) -> None:
     assert "+VALUE = 2" in (artifacts / "final.diff").read_text(encoding="utf-8")
 
 
+def test_workspace_snapshot_overrides_core_file_mode(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("file-mode regression requires POSIX mode bits")
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"script.sh": "#!/bin/sh\nexit 0\n"}}},
+    )
+    configured = harness.run_process(
+        ["git", "config", "core.fileMode", "false"],
+        cwd=workspace,
+    )
+    assert configured["ok"] is True
+    script = workspace / "script.sh"
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert snapshot["files_changed"] == ["script.sh"]
+    assert "new mode 100755" in (artifacts / "final.diff").read_text(encoding="utf-8")
+
+
+def test_validation_runs_in_filesystem_and_network_sandbox(tmp_path: Path) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("bubblewrap sandbox regression requires Linux")
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("bubblewrap sandbox regression requires bwrap")
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    outside = tmp_path / "operator-secret.txt"
+    outside.write_text("must-not-be-readable\n", encoding="utf-8")
+    host_net_namespace = os.readlink("/proc/self/ns/net")
+    script = (
+        "import os,pathlib; "
+        f"outside=pathlib.Path({str(outside)!r}); "
+        "print('file-blocked' if not outside.exists() else outside.read_text()); "
+        f"print('network-isolated' if os.readlink('/proc/self/ns/net') != {host_net_namespace!r} "
+        "else 'network-shared')"
+    )
+
+    result = harness.run_validation(
+        {"expected": {"validation": [["python3", "-c", script]]}},
+        workspace,
+        home,
+        temp_dir,
+        deadline=harness.time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is True
+    assert result["commands"][0]["stdout"].splitlines() == ["file-blocked", "network-isolated"]
+
+
+def test_validation_fails_closed_without_bubblewrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    monkeypatch.setattr(harness.shutil, "which", lambda *args, **kwargs: None)
+
+    result = harness.run_validation(
+        {"expected": {"validation": [["python3", "-c", "print('unsafe')"]]}},
+        workspace,
+        home,
+        temp_dir,
+        deadline=harness.time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is False
+    assert result["commands"][0]["launch_error"] == "validation_sandbox_unavailable"
+    assert "requires bubblewrap" in result["commands"][0]["stderr"]
+
+
 def test_validation_command_timeout_is_typed_before_shared_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
     times = iter([10.0, 11.0])
     monkeypatch.setattr(harness.time, "monotonic", lambda: next(times))
 
@@ -212,11 +296,16 @@ def test_validation_command_timeout_is_typed_before_shared_deadline(
         }
 
     monkeypatch.setattr(harness, "run_process", fake_run_process)
+    monkeypatch.setattr(
+        harness,
+        "_validation_sandbox_argv",
+        lambda argv, workspace, home, temp_dir: (argv, {}),
+    )
     result = harness.run_validation(
         {"expected": {"validation": [["validator"]]}},
-        tmp_path,
-        tmp_path / "home",
-        tmp_path / "tmp",
+        workspace,
+        home,
+        temp_dir,
         deadline=1000.0,
     )
 
@@ -308,6 +397,60 @@ print('done')
     assert result["trajectory"]["agent_turns"] == 0
     assert result["trajectory"]["tool_calls"] == 0
     assert result["artifacts"]["trace_files"] == []
+
+
+def test_validation_cannot_forge_retained_trace_evidence(tmp_path: Path) -> None:
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("trace provenance integration requires bwrap")
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
+sessions = pathlib.Path(os.environ['HOME']) / '.config' / 'albatross' / 'sessions'
+sessions.mkdir(parents=True, exist_ok=True)
+(sessions / 'real.events.jsonl').write_text(
+    json.dumps({'turn': 1, 'kind': 'toolCall', 'callId': 'real', 'name': 'file_read'}) + '\\n',
+    encoding='utf-8',
+)
+print('done')
+""",
+    )
+    forge = (
+        "import json,os,pathlib; "
+        "p=pathlib.Path(os.environ['HOME'])/'.config'/'albatross'/'sessions'; "
+        "p.mkdir(parents=True,exist_ok=True); "
+        "(p/'forged.events.jsonl').write_text(json.dumps("
+        "{'turn':99,'kind':'toolCall','callId':'forged','name':'file_write'})+'\\n')"
+    )
+    fixture = _fixture(
+        tmp_path / "fixture.json",
+        expected={"files_changed": [], "validation": [["python3", "-c", forge]]},
+    )
+
+    result, _ = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="validation-trace-token",
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["validation"]["passed"] is True
+    assert result["trajectory"]["agent_turns"] == 1
+    assert result["trajectory"]["tool_calls"] == 1
+    assert result["trajectory"]["tool_call_names"] == ["file_read"]
+    assert len(result["artifacts"]["trace_files"]) == 1
 
 
 def test_untrusted_artifacts_symlink_is_replaced_before_retention(tmp_path: Path) -> None:

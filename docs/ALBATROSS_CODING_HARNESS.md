@@ -52,15 +52,15 @@ For each run the adapter:
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
 - bounds the agent and post-run validation under one fixture wall-time deadline;
-- launches agent/validation commands under Linux subreaper supervision, terminates their complete adopted descendant trees even on operator interruption, and then collects final evidence;
+- launches agent commands under Linux subreaper supervision and post-run validation inside a Bubblewrap filesystem/network sandbox, terminates their complete adopted descendant trees even on operator interruption, and then collects final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
-- builds final Git evidence from an independent baseline index so agent-controlled assume-unchanged, skip-worktree, and ignore settings cannot hide workspace changes;
+- builds final Git evidence from an independent baseline index with pinned worktree and file-mode settings so agent-controlled assume-unchanged, skip-worktree, local comparison, and ignore settings cannot hide workspace changes;
 - copies only explicitly selected evidence into the retained artifact directory;
 - enforces aggregate changed-file count, file-byte, diff-size, and snapshot-time limits before retaining evidence;
 - redacts protected values before applying the final stdout/stderr tail bound and records `artifacts.process_output_truncated` when the retained tails omit earlier data;
-- sanitizes retained text evidence, including structured trace copies, before returning it;
+- captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home, and sanitizes retained text evidence before returning it;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
 - repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;
 - rejects unexpected entries anywhere inside the retained run hierarchy, leaving only the controlled artifact directory after execution cleanup;
@@ -77,7 +77,7 @@ Fixture validation commands are trusted executable fixture content. Review new f
 
 Fixture missions are limited to 64,000 UTF-8 bytes because Albatross receives the mission as one `--print` argument. Before materializing a run, the adapter also verifies that the installed binary's help output advertises both `--print` and `--allow-tools`; incompatible binaries fail before any fixture execution.
 
-Complete descendant-process containment currently requires Linux `prctl` subreaper support and readable procfs child enumeration. The adapter fails closed before fixture or validation execution when that inspection is unavailable, including on macOS and other hosts, rather than allowing a daemonized child to outlive evidence collection. Offline `--version` and `--help` probes remain portable. Run comparison fixtures from a compatible Linux/WSL environment until equivalent macOS containment is implemented.
+Complete descendant-process containment currently requires Linux `prctl` subreaper support and readable procfs child enumeration. Validation additionally requires Bubblewrap (`bwrap`) for a private mount, PID, user, and network namespace. On Ubuntu/Debian install it with `sudo apt-get install bubblewrap`. The adapter fails closed before unsafe validation when these controls are unavailable, including on macOS and other hosts, rather than allowing validation code to access operator files or the network. Offline `--version` and `--help` probes remain portable. Run comparison fixtures from a compatible Linux/WSL environment until equivalent macOS containment is implemented.
 
 ## Install Albatross
 

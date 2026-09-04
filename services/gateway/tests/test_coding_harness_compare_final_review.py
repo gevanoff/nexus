@@ -176,6 +176,8 @@ def test_binary_git_evidence_never_retains_reconstructable_secret(tmp_path: Path
 
 
 def test_final_snapshot_is_taken_after_validation_mutations(tmp_path: Path) -> None:
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("validation integration requires bwrap")
     fake = _write_executable(
         tmp_path / "albatross",
         """#!/usr/bin/env python3
@@ -196,7 +198,7 @@ print('author complete')
         expected={
             "files_changed": ["app.py"],
             "file_contains": [{"path": "app.py", "needle": "AFTER_VALIDATION"}],
-            "validation": [[sys.executable, "-c", validation_code]],
+            "validation": [["python3", "-c", validation_code]],
         },
     )
 

@@ -194,6 +194,86 @@ def clean_env(*, home: Path | None = None, temp_dir: Path | None = None) -> dict
     return env
 
 
+def _validation_sandbox_argv(
+    argv: list[str], workspace: Path, home: Path, temp_dir: Path
+) -> tuple[list[str], dict[str, str]]:
+    if not sys.platform.startswith("linux"):
+        raise RuntimeError("validation sandbox requires a Linux host")
+    bubblewrap = shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin")
+    if bubblewrap is None:
+        raise RuntimeError("validation sandbox requires bubblewrap (bwrap)")
+
+    trusted: dict[str, Path] = {}
+    for label, path in (
+        ("workspace", workspace),
+        ("agent home", home),
+        ("temporary directory", temp_dir),
+    ):
+        try:
+            info = path.lstat()
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise RuntimeError(f"could not verify validation {label}: {exc}") from exc
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError(f"validation {label} is not a trusted directory")
+        trusted[label] = resolved
+    trusted_paths = list(trusted.values())
+    if any(
+        left == right or left in right.parents or right in left.parents
+        for index, left in enumerate(trusted_paths)
+        for right in trusted_paths[index + 1:]
+    ):
+        raise RuntimeError("validation workspace, agent home, and temporary directory must be disjoint")
+
+    validation_home = Path(tempfile.mkdtemp(prefix=".validation-home-", dir=trusted["temporary directory"]))
+    validation_home.chmod(0o700)
+    child_env = clean_env(home=validation_home, temp_dir=trusted["temporary directory"])
+    child_env = {
+        key: value for key, value in child_env.items()
+        if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "HOME", "TMPDIR", "NO_COLOR"}
+    }
+    child_env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    command = [
+        bubblewrap,
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--cap-drop", "ALL",
+        "--clearenv",
+        "--ro-bind", "/usr", "/usr",
+    ]
+    for system_path in (Path("/bin"), Path("/sbin"), Path("/lib"), Path("/lib64")):
+        if system_path.is_symlink():
+            command.extend(("--symlink", os.readlink(system_path), str(system_path)))
+        elif system_path.is_dir():
+            command.extend(("--ro-bind", str(system_path), str(system_path)))
+    for system_path in (
+        Path("/etc/ld.so.cache"),
+        Path("/etc/ld.so.conf"),
+        Path("/etc/ld.so.conf.d"),
+        Path("/etc/localtime"),
+        Path("/etc/nsswitch.conf"),
+        Path("/etc/passwd"),
+        Path("/etc/group"),
+        Path("/etc/ssl/certs"),
+        Path("/etc/ca-certificates.conf"),
+    ):
+        if system_path.exists():
+            command.extend(("--ro-bind", str(system_path), str(system_path)))
+    command.extend((
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--tmpfs", "/tmp",
+        "--bind", str(trusted["workspace"]), str(trusted["workspace"]),
+        "--bind", str(trusted["temporary directory"]), str(trusted["temporary directory"]),
+    ))
+    for key, value in sorted(child_env.items()):
+        command.extend(("--setenv", key, value))
+    command.extend(("--chdir", str(trusted["workspace"]), "--", *argv))
+    return command, clean_env(home=validation_home, temp_dir=trusted["temporary directory"])
+
+
 def _process_group_alive(pgid: int) -> bool:
     if os.name != "posix":
         return False
@@ -511,7 +591,8 @@ def git(
     if extra_env:
         env.update(extra_env)
     return run_process(
-        ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *argv],
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+         "-c", "core.fileMode=true", *argv],
         cwd=cwd,
         env=env,
         timeout_sec=timeout_sec,
@@ -1107,8 +1188,10 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
 
 
 def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_dir: Path,
-                   *, deadline: float) -> dict[str, Any]:
+                   *, deadline: float, secrets: Iterable[str] = ()) -> dict[str, Any]:
     commands = fixture.get("expected", {}).get("validation") or []
+    if commands:
+        _ensure_private_directory(temp_dir)
     results: list[dict[str, Any]] = []
     budget_exhausted = False
     timed_out = False
@@ -1122,9 +1205,31 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
             timed_out = True
             break
         timeout_sec = remaining
-        result = run_process([str(v) for v in argv], cwd=workspace,
-                             env=clean_env(home=home, temp_dir=temp_dir), timeout_sec=timeout_sec,
-                             isolate_process_group=True)
+        try:
+            sandbox_argv, sandbox_env = _validation_sandbox_argv(
+                [str(v) for v in argv], workspace, home, temp_dir
+            )
+        except RuntimeError as exc:
+            result = {
+                "ok": False,
+                "returncode": None,
+                "timed_out": False,
+                "stdout": "",
+                "stderr": redact_text(str(exc), secrets),
+                "duration_ms": 0.0,
+                "launch_error": "validation_sandbox_unavailable",
+                "output_truncated": False,
+            }
+            results.append({"argv": argv, **result})
+            break
+        result = run_process(
+            sandbox_argv,
+            cwd=workspace,
+            env=sandbox_env,
+            timeout_sec=timeout_sec,
+            secrets=secrets,
+            isolate_process_group=True,
+        )
         results.append({"argv": argv, **result})
         if result["timed_out"]:
             timed_out = True
@@ -1302,7 +1407,6 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         process_timeout = max(0.001, deadline - time.monotonic())
         process = run_process(argv, cwd=workspace, env=env, timeout_sec=process_timeout,
                               secrets=[nexus_token], isolate_process_group=True)
-        validation = run_validation(fixture, workspace, home, tmp, deadline=deadline)
         _require_expected_directory_entries(run_dir, {fixture_dir.name})
         _require_expected_directory_entries(fixture_dir, {root.name})
         _require_expected_directory_entries(
@@ -1311,15 +1415,24 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             allowed={workspace.name, home.name, tmp.name, artifacts.name},
         )
         _prepare_artifacts_root(root, artifacts)
-        (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
-        (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
-        workspace_info = workspace_snapshot(workspace, baseline, artifacts, secrets=[nexus_token])
-        objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
         trace = parse_trace(
             home / ".config" / "albatross" / "sessions",
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
         )
+        validation = run_validation(
+            fixture, workspace, home, tmp, deadline=deadline, secrets=[nexus_token]
+        )
+        _require_expected_directory_entries(run_dir, {fixture_dir.name})
+        _require_expected_directory_entries(fixture_dir, {root.name})
+        _require_expected_directory_entries(
+            root,
+            {workspace.name, home.name, tmp.name, artifacts.name},
+        )
+        (artifacts / "stdout.txt").write_text(process["stdout"], encoding="utf-8")
+        (artifacts / "stderr.txt").write_text(process["stderr"], encoding="utf-8")
+        workspace_info = workspace_snapshot(workspace, baseline, artifacts, secrets=[nexus_token])
+        objective = objective_checks(fixture, workspace, workspace_info["files_changed"], validation)
         omitted_artifacts = scrub_retained_artifacts(artifacts, [nexus_token])
         refresh_diff_metadata(workspace_info, artifacts / "final.diff")
 
