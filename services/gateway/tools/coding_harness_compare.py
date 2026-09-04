@@ -52,6 +52,10 @@ MAX_SNAPSHOT_CHANGED_FILES = 512
 MAX_SNAPSHOT_FILE_BYTES = 16_000_000
 MAX_SNAPSHOT_DIFF_CHARS = 8_000_000
 MAX_SNAPSHOT_SECONDS = 30.0
+MAX_VALIDATION_SCRATCH_BYTES = 64 * 1024 * 1024
+MAX_VALIDATION_SCRATCH_ENTRIES = 4096
+MAX_VALIDATION_FILE_BYTES = 1024 * 1024
+MAX_VALIDATION_OPEN_FILES = 64
 
 
 def now_iso() -> str:
@@ -209,6 +213,9 @@ def _validation_sandbox_argv(
     bubblewrap = shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin")
     if bubblewrap is None:
         raise RuntimeError("validation sandbox requires bubblewrap (bwrap)")
+    prlimit = shutil.which("prlimit", path="/usr/sbin:/usr/bin:/sbin:/bin")
+    if prlimit is None:
+        raise RuntimeError("validation sandbox requires prlimit")
 
     trusted: dict[str, Path] = {}
     for label, path in (
@@ -232,9 +239,13 @@ def _validation_sandbox_argv(
     ):
         raise RuntimeError("validation workspace, agent home, and temporary directory must be disjoint")
 
-    validation_home = Path(tempfile.mkdtemp(prefix=".validation-home-", dir=trusted["temporary directory"]))
-    validation_home.chmod(0o700)
-    child_env = clean_env(home=validation_home, temp_dir=trusted["temporary directory"])
+    host_validation_home = Path(
+        tempfile.mkdtemp(prefix=".validation-home-", dir=trusted["temporary directory"])
+    )
+    host_validation_home.chmod(0o700)
+    validation_home = Path("/tmp") / host_validation_home.name
+    validation_temp = Path("/tmp")
+    child_env = clean_env(home=validation_home, temp_dir=validation_temp)
     child_env = {
         key: value for key, value in child_env.items()
         if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "HOME", "TMPDIR", "NO_COLOR"}
@@ -243,6 +254,10 @@ def _validation_sandbox_argv(
     child_env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     command = [
+        prlimit,
+        f"--fsize={MAX_VALIDATION_FILE_BYTES}:{MAX_VALIDATION_FILE_BYTES}",
+        f"--nofile={MAX_VALIDATION_OPEN_FILES}:{MAX_VALIDATION_OPEN_FILES}",
+        "--",
         bubblewrap,
         "--unshare-all",
         "--die-with-parent",
@@ -272,14 +287,14 @@ def _validation_sandbox_argv(
     command.extend((
         "--dev", "/dev",
         "--proc", "/proc",
-        "--tmpfs", "/tmp",
+        "--bind", str(trusted["temporary directory"]), "/tmp",
         "--ro-bind", str(trusted["workspace"]), str(trusted["workspace"]),
-        "--bind", str(trusted["temporary directory"]), str(trusted["temporary directory"]),
+        "--remount-ro", "/",
     ))
     for key, value in sorted(child_env.items()):
         command.extend(("--setenv", key, value))
     command.extend(("--chdir", str(trusted["workspace"]), "--", *argv))
-    return command, clean_env(home=validation_home, temp_dir=trusted["temporary directory"])
+    return command, clean_env()
 
 
 def _process_group_alive(pgid: int) -> bool:
@@ -411,6 +426,38 @@ def _drain_stream(stream: Any, limit_chars: int | None, state: dict[str, Any],
     state["truncated"] = bool(limit_chars is not None and total > limit_chars)
 
 
+def _scratch_limit_error(
+    root: Path, *, max_bytes: int, max_entries: int
+) -> str | None:
+    total_bytes = 0
+    total_entries = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return f"could not inspect validation scratch space: {exc}"
+        for entry in entries:
+            total_entries += 1
+            if total_entries > max_entries:
+                return f"validation scratch exceeded {max_entries} entry limit"
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    total_bytes += entry.stat(follow_symlinks=False).st_size
+                    if total_bytes > max_bytes:
+                        return f"validation scratch exceeded {max_bytes} byte limit"
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                return f"could not inspect validation scratch entry: {exc}"
+    return None
+
+
 def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None,
                 timeout_sec: float = 60.0, secrets: Iterable[str] = (),
                 isolate_process_group: bool = False,
@@ -418,13 +465,17 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 output_limit_chars: int | None = MAX_PROCESS_OUTPUT_CHARS,
                 fail_on_output_limit: bool = False,
                 decode_errors: str = "replace",
-                include_raw_output: bool = False) -> dict[str, Any]:
+                include_raw_output: bool = False,
+                scratch_dir: Path | None = None,
+                scratch_max_bytes: int | None = None,
+                scratch_max_entries: int | None = None) -> dict[str, Any]:
     started = time.monotonic()
     secrets = tuple(str(secret) for secret in secrets if secret)
     stdout_state: dict[str, Any] = {}
     stderr_state: dict[str, Any] = {}
     stream_threads: list[tuple[Any, Any, dict[str, Any]]] = []
     timed_out = False
+    scratch_error: str | None = None
     containment_error: str | None = None
     redact_overlap_chars = max(
         (
@@ -519,10 +570,38 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
         ]
         for thread, _, _ in stream_threads:
             thread.start()
-        try:
-            proc.wait(timeout=max(0.001, timeout_sec))
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        wait_deadline = time.monotonic() + max(0.001, timeout_sec)
+        while proc.poll() is None:
+            remaining = wait_deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                proc.wait(timeout=min(0.02, remaining))
+            except subprocess.TimeoutExpired:
+                if (
+                    scratch_dir is not None
+                    and scratch_max_bytes is not None
+                    and scratch_max_entries is not None
+                ):
+                    scratch_error = _scratch_limit_error(
+                        scratch_dir,
+                        max_bytes=scratch_max_bytes,
+                        max_entries=scratch_max_entries,
+                    )
+                    if scratch_error:
+                        break
+        if (
+            scratch_error is None
+            and scratch_dir is not None
+            and scratch_max_bytes is not None
+            and scratch_max_entries is not None
+        ):
+            scratch_error = _scratch_limit_error(
+                scratch_dir,
+                max_bytes=scratch_max_bytes,
+                max_entries=scratch_max_entries,
+            )
     finally:
         try:
             if isolate_process_group:
@@ -592,16 +671,19 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
         clean_stderr = f"timeout after {timeout_sec}s\n{clean_stderr}"
     if stream_error:
         clean_stderr = f"stream read error: {stream_error}\n{clean_stderr}"
+    if scratch_error:
+        clean_stderr = f"{scratch_error}\n{clean_stderr}"
     if output_truncated and fail_on_output_limit:
         clean_stderr = f"output exceeded {output_limit_chars} character evidence limit\n{clean_stderr}"
-    ok = bool(not timed_out and not stream_error and proc.returncode == 0
+    ok = bool(not timed_out and not stream_error and not scratch_error and proc.returncode == 0
               and not (output_truncated and fail_on_output_limit))
     result = {"ok": ok, "returncode": None if timed_out else proc.returncode,
               "timed_out": timed_out,
               "stdout": clean_stdout,
               "stderr": clean_stderr,
               "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
-              "launch_error": None, "output_truncated": output_truncated}
+              "launch_error": "scratch_limit_exceeded" if scratch_error else None,
+              "output_truncated": output_truncated}
     if include_raw_output:
         result["_raw_stdout"] = bounded_raw_stdout
         result["_raw_stderr"] = bounded_raw_stderr
@@ -897,10 +979,18 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
 
 def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
     candidate = str(rel)
+    joined_components = re.sub(r"[\\/]+", "", candidate)
+    joined_bytes = joined_components.encode("utf-8", errors="replace")
     for secret in (str(value) for value in secrets if value):
-        if secret in candidate:
+        if secret in candidate or secret in joined_components:
             return True
-    return _contains_encoded_secret_bytes(candidate.encode("utf-8", errors="replace"), secrets)
+        for encoded in _encoded_secret_variants(secret):
+            normalized = encoded.replace(b"/", b"").replace(b"\\", b"")
+            if normalized and normalized in joined_bytes:
+                return True
+    return _contains_encoded_secret_bytes(
+        candidate.encode("utf-8", errors="replace"), secrets
+    ) or _contains_encoded_secret_bytes(joined_bytes, secrets)
 
 
 def _sanitize_snapshot_git_metadata(workspace: Path) -> None:
@@ -1341,7 +1431,8 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
                    *, deadline: float, secrets: Iterable[str] = ()) -> dict[str, Any]:
     commands = fixture.get("expected", {}).get("validation") or []
     if commands:
-        _ensure_private_directory(temp_dir)
+        discard_path_verified(temp_dir)
+        _mkdir_private(temp_dir)
     results: list[dict[str, Any]] = []
     budget_exhausted = False
     timed_out = False
@@ -1379,6 +1470,9 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
             timeout_sec=timeout_sec,
             secrets=secrets,
             isolate_process_group=True,
+            scratch_dir=temp_dir,
+            scratch_max_bytes=MAX_VALIDATION_SCRATCH_BYTES,
+            scratch_max_entries=MAX_VALIDATION_SCRATCH_ENTRIES,
         )
         results.append({"argv": argv, **result})
         if result["timed_out"]:

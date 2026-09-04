@@ -611,6 +611,45 @@ def test_whitespace_split_raw_secret_is_redacted_from_retained_evidence(
     assert not retained.exists()
 
 
+@pytest.mark.parametrize("encoded", [False, True])
+def test_secret_paths_are_detected_across_component_boundaries(encoded: bool) -> None:
+    secret = "nexus-path-component-secret-value"
+    value = (
+        harness.base64.urlsafe_b64encode(secret.encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
+        if encoded
+        else secret
+    )
+    midpoint = len(value) // 2
+
+    assert harness._contains_secret_path(
+        f"prefix/{value[:midpoint]}/{value[midpoint:]}/suffix", [secret]
+    )
+
+
+def test_workspace_snapshot_omits_path_reconstructing_raw_secret(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    secret = "nexus-nested-path-secret"
+    midpoint = len(secret) // 2
+    protected = workspace / secret[:midpoint] / secret[midpoint:]
+    protected.parent.mkdir()
+    protected.write_text("safe content\n", encoding="utf-8")
+
+    snapshot = harness.workspace_snapshot(
+        workspace, baseline, artifacts, secrets=[secret]
+    )
+
+    assert snapshot["files_changed"] == ["(redacted)"]
+    assert snapshot["evidence_omissions"]
+    assert not (artifacts / "final-files" / secret[:midpoint]).exists()
+
+
 def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fixture = {"expected": {"validation": [["first"], ["second"]]}}
     workspace = tmp_path / "workspace"
@@ -623,7 +662,7 @@ def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pyt
 
     monkeypatch.setattr(harness.time, "monotonic", lambda: next(monotonic_values))
 
-    def fake_run_process(argv, *, cwd, env=None, timeout_sec=60.0, secrets=(), isolate_process_group=False):
+    def fake_run_process(argv, *, cwd, env=None, timeout_sec=60.0, secrets=(), isolate_process_group=False, **kwargs):
         observed_timeouts.append(timeout_sec)
         assert isolate_process_group is True
         return {
@@ -665,7 +704,7 @@ def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
     observed_timeouts: list[float] = []
     monkeypatch.setattr(harness.time, "monotonic", lambda: 100.0)
 
-    def fake_run_process(argv, *, cwd, env=None, timeout_sec=60.0, secrets=(), isolate_process_group=False):
+    def fake_run_process(argv, *, cwd, env=None, timeout_sec=60.0, secrets=(), isolate_process_group=False, **kwargs):
         observed_timeouts.append(timeout_sec)
         return {
             "ok": True,
@@ -727,6 +766,69 @@ def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
 
     assert result["passed"] is True
     assert not marker.exists()
+
+
+def test_validation_scratch_entry_limit_fails_the_command(tmp_path: Path) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("validation integration requires Linux")
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("validation integration requires bwrap")
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    code = (
+        "from pathlib import Path\n"
+        "root = Path('/tmp/entries')\n"
+        "root.mkdir()\n"
+        f"for index in range({harness.MAX_VALIDATION_SCRATCH_ENTRIES + 8}):\n"
+        "    (root / str(index)).touch()\n"
+    )
+
+    result = harness.run_validation(
+        {"expected": {"validation": [["python3", "-c", code]]}},
+        workspace,
+        home,
+        temp_dir,
+        deadline=time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is False
+    assert result["commands"][0]["launch_error"] == "scratch_limit_exceeded"
+    assert "entry limit" in result["commands"][0]["stderr"]
+
+
+def test_validation_file_size_limit_is_enforced(tmp_path: Path) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("validation integration requires Linux")
+    if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
+        pytest.skip("validation integration requires bwrap")
+    workspace = tmp_path / "workspace"
+    home = tmp_path / "home"
+    temp_dir = tmp_path / "tmp"
+    for path in (workspace, home, temp_dir):
+        path.mkdir()
+    code = (
+        "from pathlib import Path\n"
+        "try:\n"
+        f"    Path('/tmp/large').write_bytes(b'x' * {harness.MAX_VALIDATION_FILE_BYTES + 1})\n"
+        "except OSError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise SystemExit('validation file limit was not enforced')\n"
+    )
+
+    result = harness.run_validation(
+        {"expected": {"validation": [["python3", "-c", code]]}},
+        workspace,
+        home,
+        temp_dir,
+        deadline=time.monotonic() + 10.0,
+    )
+
+    assert result["passed"] is True
+    assert (temp_dir / "large").stat().st_size <= harness.MAX_VALIDATION_FILE_BYTES
 
 
 def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:
