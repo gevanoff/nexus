@@ -72,6 +72,8 @@ The adapter passes `--allow-tools` for both mutating and read-only runs so non-i
 
 Fixture validation commands are trusted executable fixture content. Review new fixtures before running them. Every fixture must define at least one objective result check or validation command; a successful Albatross process alone is not sufficient to mark a fixture complete. Validation launch failures are recorded as failed validation evidence rather than escaping before sanitization.
 
+Fixture missions are limited to 64,000 UTF-8 bytes because Albatross receives the mission as one `--print` argument. Before materializing a run, the adapter also verifies that the installed binary's help output advertises both `--print` and `--allow-tools`; incompatible binaries fail before any fixture execution.
+
 Process-group isolation currently requires a POSIX host. That covers the intended macOS/ai2 and Linux/WSL environments; the adapter fails closed rather than claiming descendant-process containment on unsupported hosts.
 
 ## Install Albatross

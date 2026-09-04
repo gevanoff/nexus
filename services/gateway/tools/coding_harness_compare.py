@@ -34,6 +34,7 @@ REQUIRED_PROBE_CAPABILITIES = ("one_shot", "allow_tools")
 MAX_FIXTURE_FILE_BYTES = 2_000_000
 MAX_FIXTURE_TOTAL_BYTES = 8_000_000
 MAX_FIXTURE_JSON_BYTES = 10_000_000
+MAX_MISSION_BYTES = 64_000
 MAX_OBJECTIVE_FILE_BYTES = 2_000_000
 MAX_PROCESS_OUTPUT_CHARS = 100_000
 MAX_GIT_EVIDENCE_CHARS = 8_000_000
@@ -102,8 +103,15 @@ def load_fixture(path: Path) -> dict[str, Any]:
     fid = str(fixture.get("id") or "")
     if not SAFE_ID_RE.fullmatch(fid):
         raise ValueError("fixture id contains unsafe characters")
-    if not str(fixture.get("mission") or "").strip():
+    mission = fixture.get("mission")
+    if not isinstance(mission, str) or not mission.strip():
         raise ValueError(f"fixture {fid} has no mission")
+    try:
+        mission_bytes = len(mission.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"fixture {fid} mission must be valid UTF-8 text") from exc
+    if mission_bytes > MAX_MISSION_BYTES:
+        raise ValueError(f"fixture {fid} mission exceeds {MAX_MISSION_BYTES} byte limit")
     repo = fixture.get("repository")
     files = repo.get("files") if isinstance(repo, dict) else None
     if not isinstance(files, dict) or not files:
@@ -602,6 +610,17 @@ def albatross_version(executable: str) -> dict[str, Any]:
             "version": match.group(1) if match else "", "raw": text[:500]}
 
 
+def albatross_capabilities(executable: str) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    help_result = run_process([executable, "--help"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
+                              isolate_process_group=(os.name == "posix"))
+    help_text = help_result["stdout"] + "\n" + help_result["stderr"]
+    capabilities = {"one_shot": "--print" in help_text, "external_eval": "--eval" in help_text,
+        "json_eval_output": "--json" in help_text, "allow_tools": "--allow-tools" in help_text,
+        "chat": None, "streaming": None, "tool_calls": None, "structured_trace": None}
+    missing = [name for name in REQUIRED_PROBE_CAPABILITIES if not capabilities.get(name)]
+    return help_result, capabilities, missing
+
+
 def _trace_files(root: Path) -> list[Path]:
     try:
         root_info = root.lstat()
@@ -848,6 +867,14 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
     fixture, version = load_fixture(fixture_path), albatross_version(executable)
     if not version["installed"]:
         raise RuntimeError("albatross unavailable; install it separately before running this harness")
+    help_result, _, missing_capabilities = albatross_capabilities(version["executable"])
+    if not help_result["ok"]:
+        detail = help_result["stderr"] or help_result["stdout"] or "unknown --help failure"
+        raise RuntimeError(f"could not inspect albatross capabilities: {detail}")
+    if missing_capabilities:
+        raise RuntimeError(
+            "incompatible albatross; missing required capabilities: " + ", ".join(missing_capabilities)
+        )
     if not nexus_token:
         raise RuntimeError("Nexus bearer token is required (NEXUS_API_KEY or GATEWAY_BEARER_TOKEN)")
     run_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
@@ -958,13 +985,7 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         "nexus": {"base_url": nexus_base_url, "model": model}, "capabilities": {}}
     if not version["installed"]:
         return report
-    help_result = run_process([version["executable"], "--help"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
-                              isolate_process_group=(os.name == "posix"))
-    help_text = help_result["stdout"] + "\n" + help_result["stderr"]
-    report["capabilities"] = {"one_shot": "--print" in help_text, "external_eval": "--eval" in help_text,
-        "json_eval_output": "--json" in help_text, "allow_tools": "--allow-tools" in help_text,
-        "chat": None, "streaming": None, "tool_calls": None, "structured_trace": None}
-    missing = [name for name in REQUIRED_PROBE_CAPABILITIES if not report["capabilities"].get(name)]
+    help_result, report["capabilities"], missing = albatross_capabilities(version["executable"])
     report["compatibility"] = {"required": list(REQUIRED_PROBE_CAPABILITIES), "missing": missing}
     report["ok"] = bool(help_result["ok"] and not missing)
     if not live or not report["ok"]:

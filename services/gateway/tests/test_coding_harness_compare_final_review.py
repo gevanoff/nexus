@@ -183,6 +183,9 @@ import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
     raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
 print('author complete')
 """,
     )

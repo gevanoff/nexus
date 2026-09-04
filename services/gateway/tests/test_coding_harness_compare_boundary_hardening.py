@@ -182,6 +182,9 @@ import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
     raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
 print('done')
 """,
     )
@@ -229,6 +232,9 @@ import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
     raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
 workspace = pathlib.Path(os.environ['WORKSPACE_ROOT'])
 link = workspace.parent / 'artifacts'
 link.symlink_to(pathlib.Path({str(outside)!r}), target_is_directory=True)
@@ -268,6 +274,9 @@ import stat
 import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
     raise SystemExit(0)
 workspace = pathlib.Path(os.environ['WORKSPACE_ROOT'])
 root = workspace.parent

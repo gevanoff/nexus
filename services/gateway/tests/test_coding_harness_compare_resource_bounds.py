@@ -150,6 +150,9 @@ import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
     raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
 root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
 secret = os.environ['OPENAI_API_KEY'].encode('utf-8')
 (root / 'leak.bin').write_bytes(b'\\xff\\xfe\\x00' + secret + b'\\x00\\xff')

@@ -31,7 +31,13 @@ def _write_executable(path: Path, body: str) -> Path:
     return path
 
 
-def _fixture(path: Path, *, files: dict[str, str], expected: dict | None = None) -> Path:
+def _fixture(
+    path: Path,
+    *,
+    files: dict[str, str],
+    expected: dict | None = None,
+    mission: object = "Inspect the repository and complete the requested task.",
+) -> Path:
     path.write_text(
         json.dumps(
             {
@@ -39,7 +45,7 @@ def _fixture(path: Path, *, files: dict[str, str], expected: dict | None = None)
                 "id": "review-fix",
                 "description": "review regression fixture",
                 "repository": {"files": files},
-                "mission": "Inspect the repository and complete the requested task.",
+                "mission": mission,
                 "expected": {"files_changed": []} if expected is None else expected,
                 "limits": {"wall_time_sec": 30, "max_agent_steps": 8},
                 "tags": ["review-regression"],
@@ -54,6 +60,17 @@ def test_fixture_requires_objective_or_validation_evidence(tmp_path: Path) -> No
     fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"}, expected={})
 
     with pytest.raises(ValueError, match="objective check or validation"):
+        harness.load_fixture(fixture)
+
+
+def test_fixture_rejects_mission_too_large_for_one_shot_argv(tmp_path: Path) -> None:
+    fixture = _fixture(
+        tmp_path / "fixture.json",
+        files={"app.py": "VALUE = 1\n"},
+        mission="m" * (harness.MAX_MISSION_BYTES + 1),
+    )
+
+    with pytest.raises(ValueError, match=r"mission exceeds 64000 byte limit"):
         harness.load_fixture(fixture)
 
 
@@ -84,6 +101,38 @@ def test_relative_albatross_path_is_resolved_before_workspace_cwd(
     assert Path(version["executable"]) == binary.resolve()
 
 
+def test_run_rejects_binary_missing_required_capability_before_execution(tmp_path: Path) -> None:
+    marker = tmp_path / "executed"
+    fake = _write_executable(
+        tmp_path / "albatross",
+        f"""#!/usr/bin/env python3
+import pathlib
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print')
+    raise SystemExit(0)
+pathlib.Path({str(marker)!r}).write_text('executed', encoding='utf-8')
+""",
+    )
+    fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"})
+
+    with pytest.raises(RuntimeError, match=r"missing required capabilities: allow_tools"):
+        harness.run_albatross_fixture(
+            fixture,
+            out_root=tmp_path / "runs",
+            executable=str(fake),
+            nexus_base_url="http://ai2:8800/v1",
+            nexus_token="review-token",
+            model="coder",
+            allow_mutations=False,
+        )
+
+    assert not marker.exists()
+
+
 def test_read_only_env_removes_mutating_tool_surfaces(tmp_path: Path) -> None:
     env = harness.build_albatross_env(
         nexus_base_url="http://ai2:8800/v1",
@@ -108,6 +157,9 @@ def test_read_only_run_auto_approves_its_restricted_tool_surface(tmp_path: Path)
 import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
     raise SystemExit(0)
 if '--allow-tools' not in sys.argv:
     print('missing non-interactive tool approval', file=sys.stderr)
@@ -137,6 +189,9 @@ def test_result_records_when_process_output_artifacts_are_truncated(tmp_path: Pa
 import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
     raise SystemExit(0)
 print('discarded-prefix-' + ('x' * 100_256))
 """,
@@ -202,6 +257,9 @@ def test_application_events_jsonl_is_not_counted_as_albatross_trace(tmp_path: Pa
 import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
     raise SystemExit(0)
 print('done')
 """,
@@ -337,6 +395,9 @@ import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
     raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
 root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
 (root / 'leak.txt').write_text(os.environ['OPENAI_API_KEY'], encoding='utf-8')
 print('done')
@@ -421,6 +482,9 @@ import sys
 if '--version' in sys.argv:
     print('albatross 2.4.0')
     raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+    raise SystemExit(0)
 root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
 home = pathlib.Path(os.environ['HOME'])
 sessions = home / '.config' / 'albatross' / 'sessions'
@@ -484,6 +548,9 @@ import sys
 
 if '--version' in sys.argv:
     print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --allow-tools')
     raise SystemExit(0)
 
 root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
