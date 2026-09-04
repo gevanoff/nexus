@@ -29,6 +29,16 @@ RESULT_SCHEMA_VERSION = 1
 SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "SSL_CERT_FILE", "SSL_CERT_DIR")
 SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|authorization)")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+CHARACTER_ESCAPE_RE = re.compile(
+    rb"\\[uU]\{([0-9a-fA-F]{1,6})\}"
+    rb"|\\[uU]([0-9a-fA-F]{8})"
+    rb"|\\[uU]([0-9a-fA-F]{4})"
+    rb"|\\[xX]([0-9a-fA-F]{2})"
+    rb"|\\([0-7]{3})"
+    rb"|%([0-9a-fA-F]{2})"
+    rb"|&#([0-9]{1,7});"
+    rb"|&#[xX]([0-9a-fA-F]{1,6});"
+)
 RESERVED_PARTS = {".git", ".albatross", ".small-harness", ".sessions"}
 RESERVED_FILES = {"agent.config.json", ".env"}
 ALBATROSS_TOOLS = "apply_patch,file_read,file_write,file_edit,glob,grep,list_dir,update_plan"
@@ -383,8 +393,19 @@ def _terminate_process_group(pgid: int, grace_sec: float = 0.5) -> None:
 
 
 def _linux_direct_children(pid: int) -> set[int]:
-    text = Path(f"/proc/{pid}/task/{pid}/children").read_text(encoding="ascii")
-    return {int(value) for value in text.split() if value.isdigit()}
+    children: set[int] = set()
+    with os.scandir(f"/proc/{pid}/task") as tasks:
+        for task in tasks:
+            if not task.name.isdigit():
+                continue
+            try:
+                if not task.is_dir(follow_symlinks=False):
+                    continue
+                text = Path(task.path, "children").read_text(encoding="ascii")
+            except FileNotFoundError:
+                continue
+            children.update(int(value) for value in text.split() if value.isdigit())
+    return children
 
 
 def _linux_subreaper_enabled() -> bool:
@@ -1145,12 +1166,40 @@ def _character_escape_secret_variants(secret: str) -> set[bytes]:
     return {value.encode("ascii") for value in variants if value}
 
 
+def _decode_character_escapes(raw_value: bytes) -> bytes:
+    def replace(match: re.Match[bytes]) -> bytes:
+        groups = match.groups()
+        for index in (0, 1, 2, 6, 7):
+            if groups[index] is None:
+                continue
+            base = 10 if index == 6 else 16
+            try:
+                return chr(int(groups[index], base)).encode("utf-8")
+            except (UnicodeEncodeError, ValueError):
+                return match.group(0)
+        for index, base in ((3, 16), (4, 8), (5, 16)):
+            if groups[index] is not None:
+                return bytes((int(groups[index], base),))
+        return match.group(0)
+
+    decoded = raw_value
+    for _ in range(4):
+        updated = CHARACTER_ESCAPE_RE.sub(replace, decoded)
+        if updated == decoded:
+            break
+        decoded = updated
+    return decoded
+
+
 def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> bool:
     if b"\0" in raw_value:
         return True
     lowered = raw_value.lower()
     compact_whitespace = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
     compact_lowered = compact_whitespace.lower()
+    decoded_escapes = _decode_character_escapes(raw_value)
+    decoded_escapes_changed = decoded_escapes != raw_value
+    compact_decoded_escapes = re.sub(rb"[\t\n\v\f\r ]+", b"", decoded_escapes)
     for secret in (str(value) for value in secrets if value):
         if any(encoded in raw_value for encoded in _encoded_secret_variants(secret)):
             return True
@@ -1174,6 +1223,11 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
         ):
             return True
         raw_secret = secret.encode("utf-8")
+        if decoded_escapes_changed and len(raw_secret) >= 8 and any(
+            raw_secret in candidate
+            for candidate in (decoded_escapes, compact_decoded_escapes)
+        ):
+            return True
         if (
             len(raw_secret) >= 8
             and raw_secret not in raw_value

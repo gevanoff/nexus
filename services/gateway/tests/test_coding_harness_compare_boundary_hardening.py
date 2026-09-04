@@ -220,6 +220,10 @@ def test_scrub_discards_base85_secret_artifacts(
         lambda value: " \t\n".join(
             f"\\u{ord(character):04x}" for character in value
         ),
+        lambda value: "".join(
+            character if index % 2 == 0 else f"\\u{ord(character):04x}"
+            for index, character in enumerate(value)
+        ),
         lambda value: "".join(f"\\x{byte:02x}" for byte in value.encode("utf-8")),
         lambda value: "".join(f"%{byte:02x}" for byte in value.encode("utf-8")),
     ],

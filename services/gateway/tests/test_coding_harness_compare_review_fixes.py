@@ -206,6 +206,38 @@ elif '--help' in sys.argv:
     assert not marker.exists()
 
 
+def test_linux_direct_children_includes_subprocesses_from_worker_threads() -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("procfs child enumeration requires Linux")
+    started = harness.threading.Event()
+    release = harness.threading.Event()
+    holder: dict[str, harness.subprocess.Popen] = {}
+
+    def launch_from_worker() -> None:
+        child = harness.subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"]
+        )
+        holder["child"] = child
+        started.set()
+        release.wait(timeout=10.0)
+        child.terminate()
+        child.wait(timeout=5.0)
+
+    worker = harness.threading.Thread(target=launch_from_worker)
+    worker.start()
+    assert started.wait(timeout=5.0)
+    try:
+        assert holder["child"].pid in harness._linux_direct_children(os.getpid())
+    finally:
+        release.set()
+        worker.join(timeout=10.0)
+        child = holder.get("child")
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait(timeout=5.0)
+    assert not worker.is_alive()
+
+
 def test_run_rejects_binary_missing_required_capability_before_execution(tmp_path: Path) -> None:
     marker = tmp_path / "executed"
     fake = _write_executable(
