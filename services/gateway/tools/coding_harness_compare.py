@@ -112,7 +112,9 @@ def load_fixture(path: Path) -> dict[str, Any]:
     total_file_bytes = 0
     for raw_path, raw_content in files.items():
         rel = safe_rel_path(str(raw_path)).as_posix()
-        content = str(raw_content)
+        if not isinstance(raw_content, str):
+            raise ValueError(f"fixture file {rel} content must be a string")
+        content = raw_content
         size = len(content.encode("utf-8"))
         if size > MAX_FIXTURE_FILE_BYTES:
             raise ValueError(f"fixture file {rel} exceeds {MAX_FIXTURE_FILE_BYTES} byte limit")
@@ -475,17 +477,6 @@ def _prepare_artifacts_root(root: Path, artifacts: Path) -> None:
         raise RuntimeError("artifact root is not a trusted directory")
 
 
-def parse_status_files(text: str) -> list[str]:
-    values = []
-    for line in str(text or "").splitlines():
-        if len(line) < 4:
-            continue
-        value = line[3:].strip().split(" -> ")[-1]
-        if value:
-            values.append(value)
-    return sorted(set(values))
-
-
 def _parse_nul_paths(text: str) -> list[str]:
     return sorted(set(value for value in str(text or "").split("\0") if value))
 
@@ -737,7 +728,7 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
             budget_exhausted = True
             timed_out = True
             break
-        timeout_sec = min(300.0, remaining)
+        timeout_sec = remaining
         result = run_process([str(v) for v in argv], cwd=workspace,
                              env=clean_env(home=home, temp_dir=temp_dir), timeout_sec=timeout_sec,
                              isolate_process_group=True)
@@ -876,8 +867,7 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
                                   workspace=workspace, home=home, temp_dir=tmp,
                                   max_steps=fixture["limits"]["max_agent_steps"], allow_mutations=allow_mutations)
         argv = [version["executable"], "--print", mission_prompt(fixture, allow_mutations)]
-        if allow_mutations:
-            argv.append("--allow-tools")
+        argv.append("--allow-tools")
         started_at, started = now_iso(), time.monotonic()
         deadline = started + float(fixture["limits"]["wall_time_sec"])
         process_timeout = max(0.001, deadline - time.monotonic())

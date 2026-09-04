@@ -57,6 +57,17 @@ def test_fixture_requires_objective_or_validation_evidence(tmp_path: Path) -> No
         harness.load_fixture(fixture)
 
 
+@pytest.mark.parametrize("content", [None, 7, {}, []])
+def test_fixture_rejects_non_string_file_content(tmp_path: Path, content) -> None:
+    fixture = _fixture(
+        tmp_path / "fixture.json",
+        files={"app.py": content},
+    )
+
+    with pytest.raises(ValueError, match=r"fixture file app\.py content must be a string"):
+        harness.load_fixture(fixture)
+
+
 def test_relative_albatross_path_is_resolved_before_workspace_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -88,6 +99,35 @@ def test_read_only_env_removes_mutating_tool_surfaces(tmp_path: Path) -> None:
 
     assert "file_read" in tools
     assert tools.isdisjoint({"apply_patch", "file_write", "file_edit", "run_tests", "update_plan", "shell"})
+
+
+def test_read_only_run_auto_approves_its_restricted_tool_surface(tmp_path: Path) -> None:
+    fake = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--allow-tools' not in sys.argv:
+    print('missing non-interactive tool approval', file=sys.stderr)
+    raise SystemExit(9)
+print('done')
+""",
+    )
+    fixture = _fixture(tmp_path / "fixture.json", files={"app.py": "VALUE = 1\n"})
+
+    result, _ = harness.run_albatross_fixture(
+        fixture,
+        out_root=tmp_path / "runs",
+        executable=str(fake),
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="review-token",
+        model="coder",
+        allow_mutations=False,
+    )
+
+    assert result["outcome"]["completed"] is True
 
 
 def test_parse_trace_streams_without_path_read_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,6 +264,37 @@ def test_validation_commands_share_one_deadline(tmp_path: Path, monkeypatch: pyt
 
     assert result["passed"] is True
     assert observed_timeouts == pytest.approx([1.0, 0.6])
+
+
+def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed_timeouts: list[float] = []
+    monkeypatch.setattr(harness.time, "monotonic", lambda: 100.0)
+
+    def fake_run_process(argv, *, cwd, env=None, timeout_sec=60.0, secrets=(), isolate_process_group=False):
+        observed_timeouts.append(timeout_sec)
+        return {
+            "ok": True,
+            "returncode": 0,
+            "timed_out": False,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 0.0,
+            "launch_error": None,
+        }
+
+    monkeypatch.setattr(harness, "run_process", fake_run_process)
+    result = harness.run_validation(
+        {"expected": {"validation": [["validator"]]}},
+        tmp_path,
+        tmp_path / "home",
+        tmp_path / "tmp",
+        deadline=700.0,
+    )
+
+    assert result["passed"] is True
+    assert observed_timeouts == pytest.approx([600.0])
 
 
 def test_missing_validation_executable_is_failed_and_execution_state_is_discarded(tmp_path: Path) -> None:

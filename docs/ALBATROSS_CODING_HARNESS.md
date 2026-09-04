@@ -66,7 +66,7 @@ This retention boundary is deliberate. Arbitrary workspace/session files are not
 
 Mutating runs expose a restricted edit/test tool set inside the disposable fixture workspace and omit arbitrary `shell`. Read-only runs, including the live capability probe, expose only `file_read`, `glob`, `grep`, and `list_dir`; write/edit/test tools are removed from the child capability surface rather than relying on prompt compliance.
 
-The adapter's `--allow-tools` mode is appropriate only because mutating runs target a disposable fixture workspace with `OUTSIDE_WORKSPACE=deny`. Do not modify the adapter to point that mode at the live Nexus checkout by default.
+The adapter passes `--allow-tools` for both mutating and read-only runs so non-interactive tool calls do not block on approval. Authorization still comes from the fixed `AGENT_TOOLS` surface: read-only runs receive only the four inspection tools above, while mutating runs target a disposable fixture workspace with `OUTSIDE_WORKSPACE=deny`. Do not modify the adapter to point mutating tool mode at the live Nexus checkout by default.
 
 Fixture validation commands are trusted executable fixture content. Review new fixtures before running them. Every fixture must define at least one objective result check or validation command; a successful Albatross process alone is not sufficient to mark a fixture complete. Validation launch failures are recorded as failed validation evidence rather than escaping before sanitization.
 
