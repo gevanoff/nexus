@@ -46,8 +46,11 @@ def now_iso() -> str:
 
 
 def safe_rel_path(value: str) -> Path:
-    path = Path(str(value or "").strip())
-    if not str(path) or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    raw = "" if value is None else str(value)
+    if raw == "":
+        raise ValueError(f"unsafe fixture path: {value}")
+    path = Path(raw)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError(f"unsafe fixture path: {value}")
     if any(part in RESERVED_PARTS for part in path.parts) or path.name in RESERVED_FILES:
         raise ValueError(f"fixture path may not override harness state/config: {value}")
@@ -524,15 +527,10 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
     status = _required_git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=workspace)
     head = _required_git(["rev-parse", "HEAD"], cwd=workspace)
     diff_args = ["diff", "--no-ext-diff", "--no-textconv"]
-    committed = _required_git([*diff_args, "--name-only", "-z", f"{baseline}..HEAD"], cwd=workspace)
-    staged = _required_git([*diff_args, "--cached", "--name-only", "-z"], cwd=workspace)
-    unstaged = _required_git([*diff_args, "--name-only", "-z"], cwd=workspace)
+    tracked = _required_git([*diff_args, "--name-only", "-z", baseline], cwd=workspace)
     untracked = _required_git(["ls-files", "-z", "--others", "--exclude-standard"], cwd=workspace)
-    pieces = [
-        _required_git([*diff_args, f"{baseline}..HEAD"], cwd=workspace)["stdout"].strip(),
-        _required_git([*diff_args, "--cached"], cwd=workspace)["stdout"].strip(),
-        _required_git(diff_args, cwd=workspace)["stdout"].strip(),
-    ]
+    tracked_diff = _required_git([*diff_args, baseline], cwd=workspace)["stdout"].strip()
+    pieces = [tracked_diff] if tracked_diff else []
     evidence_omissions: list[dict[str, str]] = []
     untracked_files = _parse_nul_paths(untracked["stdout"])
     for rel in untracked_files:
@@ -549,12 +547,7 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
     retained_diff = diff_text + ("\n" if diff_text else "")
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "final.diff").write_text(retained_diff, encoding="utf-8")
-    changed = sorted(
-        set(_parse_nul_paths(committed["stdout"]))
-        | set(_parse_nul_paths(staged["stdout"]))
-        | set(_parse_nul_paths(unstaged["stdout"]))
-        | set(untracked_files)
-    )
+    changed = sorted(set(_parse_nul_paths(tracked["stdout"])) | set(untracked_files))
     final_files = artifacts / "final-files"
     final_file_omissions: list[dict[str, str]] = []
     for rel in changed:
@@ -603,7 +596,8 @@ def albatross_version(executable: str) -> dict[str, Any]:
     if has_sep:
         resolved = str(Path(executable).expanduser().resolve())
     else:
-        resolved = shutil.which(executable) or ""
+        found = shutil.which(executable) or ""
+        resolved = str(Path(found).resolve()) if found else ""
     if not resolved or not Path(resolved).is_file():
         return {"installed": False, "executable": executable, "version": "", "raw": "albatross unavailable"}
     result = run_process([resolved, "--version"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
@@ -706,7 +700,20 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                         elif item.get("kind") == "contextCompacted":
                             resets += 1
                         elif item.get("kind") == "turnSummary":
-                            steps += int(item.get("steps") or 0)
+                            raw_steps = item.get("steps")
+                            if raw_steps is None:
+                                parsed_steps = 0
+                            elif isinstance(raw_steps, bool):
+                                malformed += 1
+                                continue
+                            elif isinstance(raw_steps, int) and raw_steps >= 0:
+                                parsed_steps = raw_steps
+                            elif isinstance(raw_steps, str) and re.fullmatch(r"\d+", raw_steps):
+                                parsed_steps = int(raw_steps)
+                            else:
+                                malformed += 1
+                                continue
+                            steps += parsed_steps
             finally:
                 if dest_handle is not None:
                     dest_handle.close()
