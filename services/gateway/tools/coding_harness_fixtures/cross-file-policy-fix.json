@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "cross-file-policy-fix",
+  "description": "The visible behavior fails in one file, but the causal default-value bug lives in the shared policy helper.",
+  "repository": {
+    "files": {
+      "policy.py": "DEFAULTS = {\"publish_enabled\": False}\n\n\ndef publish_enabled(settings):\n    return bool(settings.get(\"publish_enabled\", True))\n",
+      "service.py": "from policy import publish_enabled\n\n\ndef publication_state(settings):\n    return \"enabled\" if publish_enabled(settings) else \"disabled\"\n",
+      "test_policy.py": "import unittest\n\nfrom policy import publish_enabled\nfrom service import publication_state\n\n\nclass PolicyTests(unittest.TestCase):\n    def test_absent_setting_uses_declared_default(self):\n        self.assertFalse(publish_enabled({}))\n        self.assertEqual(publication_state({}), \"disabled\")\n\n    def test_explicit_true_still_enables(self):\n        self.assertTrue(publish_enabled({\"publish_enabled\": True}))\n        self.assertEqual(publication_state({\"publish_enabled\": True}), \"enabled\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    }
+  },
+  "mission": "Fix the absent publish_enabled setting so behavior follows the existing DEFAULTS declaration. Repair the causal policy mechanism rather than special-casing service.py. Preserve explicit true behavior and keep the existing unit tests intact.",
+  "expected": {
+    "files_changed": ["policy.py"],
+    "allowed_files_changed": ["policy.py"],
+    "file_contains": [{"path": "policy.py", "needle": "DEFAULTS"}],
+    "validation": [["python3", "-m", "unittest", "-q"]]
+  },
+  "limits": {"wall_time_sec": 210, "max_agent_steps": 16},
+  "tags": ["cross-file", "causal-alignment", "existing-mechanism"]
+}
