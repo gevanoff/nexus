@@ -74,7 +74,7 @@ Fixture validation commands are trusted executable fixture content. Review new f
 
 Fixture missions are limited to 64,000 UTF-8 bytes because Albatross receives the mission as one `--print` argument. Before materializing a run, the adapter also verifies that the installed binary's help output advertises both `--print` and `--allow-tools`; incompatible binaries fail before any fixture execution.
 
-Complete descendant-process containment currently requires Linux `prctl` subreaper support and readable procfs child enumeration. The adapter fails closed before execution when that inspection is unavailable, including on macOS and other hosts, rather than allowing a daemonized child to outlive evidence collection. Run comparison fixtures from a compatible Linux/WSL environment until equivalent macOS containment is implemented.
+Complete descendant-process containment currently requires Linux `prctl` subreaper support and readable procfs child enumeration. The adapter fails closed before fixture or validation execution when that inspection is unavailable, including on macOS and other hosts, rather than allowing a daemonized child to outlive evidence collection. Offline `--version` and `--help` probes remain portable. Run comparison fixtures from a compatible Linux/WSL environment until equivalent macOS containment is implemented.
 
 ## Install Albatross
 

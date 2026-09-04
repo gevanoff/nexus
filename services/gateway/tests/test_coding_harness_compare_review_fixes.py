@@ -101,6 +101,31 @@ def test_relative_albatross_path_is_resolved_before_workspace_cwd(
     assert Path(version["executable"]) == binary.resolve()
 
 
+def test_offline_binary_probes_do_not_require_linux_containment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = _write_executable(
+        tmp_path / "albatross",
+        """#!/usr/bin/env python3
+import sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+elif '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+""",
+    )
+    monkeypatch.setattr(harness.sys, "platform", "darwin")
+
+    version = harness.albatross_version(str(binary))
+    help_result, capabilities, missing = harness.albatross_capabilities(str(binary))
+
+    assert version["installed"] is True
+    assert help_result["ok"] is True
+    assert capabilities["one_shot"] is True
+    assert capabilities["allow_tools"] is True
+    assert missing == []
+
+
 def test_run_rejects_binary_missing_required_capability_before_execution(tmp_path: Path) -> None:
     marker = tmp_path / "executed"
     fake = _write_executable(

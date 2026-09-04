@@ -704,7 +704,7 @@ def albatross_version(executable: str) -> dict[str, Any]:
     if not resolved or not Path(resolved).is_file():
         return {"installed": False, "executable": executable, "version": "", "raw": "albatross unavailable"}
     result = run_process([resolved, "--version"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
-                         isolate_process_group=(os.name == "posix"))
+                         isolate_process_group=False)
     text = (result["stdout"] or result["stderr"]).strip()
     match = re.search(r"(?:albatross\s+)?v?(\d+\.\d+\.\d+)", text, re.I)
     return {"installed": bool(result["ok"]), "executable": resolved,
@@ -713,7 +713,7 @@ def albatross_version(executable: str) -> dict[str, Any]:
 
 def albatross_capabilities(executable: str) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     help_result = run_process([executable, "--help"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
-                              isolate_process_group=(os.name == "posix"))
+                              isolate_process_group=False)
     help_text = help_result["stdout"] + "\n" + help_result["stderr"]
     capabilities = {"one_shot": "--print" in help_text, "external_eval": "--eval" in help_text,
         "json_eval_output": "--json" in help_text, "allow_tools": "--allow-tools" in help_text,
