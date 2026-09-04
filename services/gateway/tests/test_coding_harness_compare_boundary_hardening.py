@@ -282,3 +282,72 @@ print('done')
     modes_path = Path(result["artifacts"]["run_root"]) / "artifacts" / "final-files" / "modes.json"
     modes = json.loads(modes_path.read_text(encoding="utf-8"))
     assert set(modes.values()) == {"0o700"}
+
+
+def test_live_probe_uses_unique_ephemeral_fixture_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[Path] = []
+    monkeypatch.setattr(
+        harness,
+        "albatross_version",
+        lambda executable: {
+            "installed": True,
+            "executable": "/fake/albatross",
+            "version": "2.4.0",
+            "raw": "albatross 2.4.0",
+        },
+    )
+    monkeypatch.setattr(
+        harness,
+        "run_process",
+        lambda *args, **kwargs: {
+            "ok": True,
+            "returncode": 0,
+            "timed_out": False,
+            "stdout": "albatross --print --allow-tools --eval --json",
+            "stderr": "",
+            "duration_ms": 0.0,
+            "launch_error": None,
+            "output_truncated": False,
+        },
+    )
+
+    def fake_run(fixture_path: Path, **kwargs):
+        assert fixture_path.exists()
+        observed.append(fixture_path)
+        return (
+            {
+                "outcome": {"exit_code": 0},
+                "trajectory": {"tool_call_names": ["file_read"]},
+                "objective": {"passed": True},
+                "artifacts": {"trace_files": ["trace.events.jsonl"]},
+            },
+            tmp_path / f"result-{len(observed)}.json",
+        )
+
+    monkeypatch.setattr(harness, "run_albatross_fixture", fake_run)
+
+    first = harness.probe(
+        "albatross",
+        live=True,
+        out_root=tmp_path / "runs",
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="probe-token",
+        model="coder",
+    )
+    second = harness.probe(
+        "albatross",
+        live=True,
+        out_root=tmp_path / "runs",
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="probe-token",
+        model="coder",
+    )
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert len(observed) == 2
+    assert observed[0] != observed[1]
+    assert all(path.name.startswith("read-only-probe-") for path in observed)
+    assert all(not path.exists() for path in observed)
