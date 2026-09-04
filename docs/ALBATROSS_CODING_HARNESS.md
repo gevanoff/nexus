@@ -52,7 +52,7 @@ For each run the adapter:
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
 - bounds the agent and post-run validation under one fixture wall-time deadline;
-- launches agent/validation commands in isolated POSIX process groups and terminates descendant processes before collecting final evidence;
+- launches agent/validation commands under Linux subreaper supervision, terminates their complete adopted descendant trees, and then collects final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
 - decodes raw Git path streams with POSIX `surrogateescape` so non-UTF-8 filename bytes are not replaced before evidence capture;
@@ -74,7 +74,7 @@ Fixture validation commands are trusted executable fixture content. Review new f
 
 Fixture missions are limited to 64,000 UTF-8 bytes because Albatross receives the mission as one `--print` argument. Before materializing a run, the adapter also verifies that the installed binary's help output advertises both `--print` and `--allow-tools`; incompatible binaries fail before any fixture execution.
 
-Process-group isolation currently requires a POSIX host. That covers the intended macOS/ai2 and Linux/WSL environments; the adapter fails closed rather than claiming descendant-process containment on unsupported hosts.
+Complete descendant-process containment currently requires Linux `prctl` subreaper support. The adapter fails closed before execution on macOS and other hosts rather than allowing a daemonized child to outlive evidence collection. Run comparison fixtures from Linux/WSL until equivalent macOS containment is implemented.
 
 ## Install Albatross
 

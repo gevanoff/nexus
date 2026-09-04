@@ -250,6 +250,31 @@ def test_parse_trace_counts_non_object_json_as_malformed(tmp_path: Path) -> None
     assert result["agent_steps"] == 1
 
 
+def test_parse_trace_records_source_open_failure_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    unreadable = session_root / "a.events.jsonl"
+    readable = session_root / "b.events.jsonl"
+    unreadable.write_text(json.dumps({"turn": 1, "kind": "toolCall", "name": "grep"}) + "\n")
+    readable.write_text(json.dumps({"turn": 2, "kind": "toolCall", "name": "file_read"}) + "\n")
+    original_open = Path.open
+
+    def fail_one_open(self: Path, *args, **kwargs):
+        if self == unreadable:
+            raise PermissionError("review regression")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_one_open)
+    result = harness.parse_trace(session_root, artifact_dir=tmp_path / "artifacts")
+
+    assert result["tool_calls"] == ["file_read"]
+    assert len(result["trace_files"]) == 1
+    assert len(result["trace_omissions"]) == 1
+    assert "could not read trace" in result["trace_omissions"][0]["reason"]
+
+
 def test_application_events_jsonl_is_not_counted_as_albatross_trace(tmp_path: Path) -> None:
     fake = _write_executable(
         tmp_path / "albatross",
@@ -445,8 +470,8 @@ def test_discard_repairs_restrictive_permissions_and_verifies_absence(tmp_path: 
 
 
 def test_isolated_process_group_terminates_background_descendants(tmp_path: Path) -> None:
-    if os.name != "posix":
-        pytest.skip("process-group isolation is POSIX-only")
+    if not sys.platform.startswith("linux"):
+        pytest.skip("subreaper containment is Linux-only")
     marker = tmp_path / "late-write.txt"
     child = (
         "import pathlib,time; "
@@ -455,7 +480,8 @@ def test_isolated_process_group_terminates_background_descendants(tmp_path: Path
     )
     parent = (
         "import subprocess,sys; "
-        f"subprocess.Popen([sys.executable, '-c', {child!r}], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, start_new_session=True); "
         "print('parent complete')"
     )
 
@@ -469,6 +495,22 @@ def test_isolated_process_group_terminates_background_descendants(tmp_path: Path
 
     assert result["ok"] is True
     assert not marker.exists()
+
+
+def test_isolated_process_execution_fails_closed_off_linux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(harness.sys, "platform", "darwin")
+
+    result = harness.run_process(
+        [sys.executable, "-c", "raise SystemExit(0)"],
+        cwd=tmp_path,
+        isolate_process_group=True,
+    )
+
+    assert result["ok"] is False
+    assert result["launch_error"] == "process_group_unsupported"
+    assert "Linux host" in result["stderr"]
 
 
 def test_large_trace_is_sanitized_and_raw_execution_tree_is_not_retained(tmp_path: Path) -> None:

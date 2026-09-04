@@ -125,6 +125,23 @@ def test_workspace_snapshot_preserves_non_utf8_filename_bytes(tmp_path: Path) ->
     assert retained.read_text(encoding="utf-8") == "retained evidence\n"
 
 
+def test_workspace_snapshot_safely_recodes_non_utf8_diff_content(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        {"repository": {"files": {"app.py": "VALUE = 1\n"}}},
+    )
+    raw_content = b"invalid text byte: \xff\n"
+    (workspace / "invalid.txt").write_bytes(raw_content)
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert "invalid.txt" in snapshot["files_changed"]
+    assert r"\xff" in (artifacts / "final.diff").read_text(encoding="utf-8")
+    assert (artifacts / "final-files" / "invalid.txt").read_bytes() == raw_content
+
+
 def test_scrub_uses_collision_proof_temporary_files(tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()

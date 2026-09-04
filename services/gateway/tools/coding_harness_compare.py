@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -219,6 +220,66 @@ def _terminate_process_group(pgid: int, grace_sec: float = 0.5) -> None:
         time.sleep(0.02)
 
 
+def _linux_direct_children(pid: int) -> set[int]:
+    try:
+        text = Path(f"/proc/{pid}/task/{pid}/children").read_text(encoding="ascii")
+    except OSError:
+        return set()
+    return {int(value) for value in text.split() if value.isdigit()}
+
+
+def _linux_subreaper_enabled() -> bool:
+    value = ctypes.c_int()
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(37, ctypes.byref(value), 0, 0, 0) != 0:  # PR_GET_CHILD_SUBREAPER
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return bool(value.value)
+
+
+def _set_linux_subreaper(enabled: bool) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(36, int(enabled), 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def _linux_descendant_tree(roots: Iterable[int]) -> set[int]:
+    found: set[int] = set()
+    pending = list(roots)
+    while pending:
+        pid = pending.pop()
+        if pid in found:
+            continue
+        found.add(pid)
+        pending.extend(_linux_direct_children(pid) - found)
+    return found
+
+
+def _terminate_linux_adopted_children(baseline_children: set[int]) -> None:
+    parent_pid = os.getpid()
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            roots = _linux_direct_children(parent_pid) - baseline_children
+            if not roots:
+                return
+            for pid in _linux_descendant_tree(roots):
+                try:
+                    os.kill(pid, signal_number)
+                except ProcessLookupError:
+                    pass
+            for pid in roots:
+                try:
+                    os.waitpid(pid, os.WNOHANG)
+                except (ChildProcessError, ProcessLookupError):
+                    pass
+            time.sleep(0.02)
+    remaining = _linux_direct_children(parent_pid) - baseline_children
+    if remaining:
+        raise RuntimeError(f"descendant processes survived containment: {sorted(remaining)}")
+
+
 def _drain_stream(stream: Any, limit_chars: int | None, state: dict[str, Any]) -> None:
     chunks: deque[str] = deque()
     retained = 0
@@ -263,11 +324,24 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 fail_on_output_limit: bool = False,
                 decode_errors: str = "replace") -> dict[str, Any]:
     started = time.monotonic()
-    if isolate_process_group and os.name != "posix":
+    if isolate_process_group and not sys.platform.startswith("linux"):
         return {"ok": False, "returncode": None, "timed_out": False,
-                "stdout": "", "stderr": "isolated process groups require a POSIX host",
+                "stdout": "", "stderr": "descendant process containment requires a Linux host",
                 "duration_ms": 0.0, "launch_error": "process_group_unsupported",
                 "output_truncated": False}
+    baseline_children: set[int] = set()
+    subreaper_was_enabled = False
+    if isolate_process_group:
+        try:
+            subreaper_was_enabled = _linux_subreaper_enabled()
+            baseline_children = _linux_direct_children(os.getpid())
+            if not subreaper_was_enabled:
+                _set_linux_subreaper(True)
+        except OSError as exc:
+            return {"ok": False, "returncode": None, "timed_out": False,
+                    "stdout": "", "stderr": f"could not enable descendant containment: {exc}",
+                    "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
+                    "launch_error": "subreaper_unavailable", "output_truncated": False}
     try:
         proc = subprocess.Popen(
             argv,
@@ -281,8 +355,17 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
             start_new_session=bool(isolate_process_group),
         )
     except OSError as exc:
+        restore_error: OSError | None = None
+        if isolate_process_group and not subreaper_was_enabled:
+            try:
+                _set_linux_subreaper(False)
+            except OSError as restore_exc:
+                restore_error = restore_exc
+        stderr = redact_text(f"{type(exc).__name__}: {exc}", secrets)
+        if restore_error is not None:
+            stderr += f"\ncould not restore subreaper state: {restore_error}"
         return {"ok": False, "returncode": None, "timed_out": False,
-                "stdout": "", "stderr": redact_text(f"{type(exc).__name__}: {exc}", secrets),
+                "stdout": "", "stderr": stderr,
                 "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
                 "launch_error": type(exc).__name__, "output_truncated": False}
 
@@ -320,6 +403,19 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
         except subprocess.TimeoutExpired:
             pass
 
+    containment_error: str | None = None
+    if isolate_process_group:
+        try:
+            _terminate_linux_adopted_children(baseline_children)
+        except RuntimeError as exc:
+            containment_error = str(exc)
+        finally:
+            if not subreaper_was_enabled:
+                try:
+                    _set_linux_subreaper(False)
+                except OSError as exc:
+                    containment_error = containment_error or f"could not restore subreaper state: {exc}"
+
     for thread, stream, state in (
         (stdout_thread, proc.stdout, stdout_state),
         (stderr_thread, proc.stderr, stderr_state),
@@ -338,7 +434,7 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
     raw_stderr = str(stderr_state.get("text") or "")
     stdout_truncated = bool(stdout_state.get("truncated"))
     stderr_truncated = bool(stderr_state.get("truncated"))
-    stream_error = stdout_state.get("error") or stderr_state.get("error")
+    stream_error = containment_error or stdout_state.get("error") or stderr_state.get("error")
     output_truncated = stdout_truncated or stderr_truncated or bool(stream_error)
     if timed_out:
         raw_stderr = f"timeout after {timeout_sec}s\n{raw_stderr}"
@@ -362,14 +458,16 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-def git(argv: list[str], *, cwd: Path, evidence: bool = False) -> dict[str, Any]:
+def git(
+    argv: list[str], *, cwd: Path, evidence: bool = False, path_output: bool = False
+) -> dict[str, Any]:
     return run_process(
         ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *argv],
         cwd=cwd,
         env=_git_env(),
         output_limit_chars=MAX_GIT_EVIDENCE_CHARS if evidence else MAX_PROCESS_OUTPUT_CHARS,
         fail_on_output_limit=evidence,
-        decode_errors="surrogateescape",
+        decode_errors="surrogateescape" if path_output else "backslashreplace",
     )
 
 
@@ -381,8 +479,10 @@ def _require_result(result: dict[str, Any], label: str, *, allowed_returncodes: 
     return result
 
 
-def _required_git(argv: list[str], *, cwd: Path, label: str | None = None) -> dict[str, Any]:
-    result = git(argv, cwd=cwd, evidence=True)
+def _required_git(
+    argv: list[str], *, cwd: Path, label: str | None = None, path_output: bool = False
+) -> dict[str, Any]:
+    result = git(argv, cwd=cwd, evidence=True, path_output=path_output)
     return _require_result(result, label or f"git {' '.join(argv)}")
 
 
@@ -525,11 +625,15 @@ def _contains_secret_path(rel: str, secrets: Iterable[str]) -> bool:
 
 def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
                        *, secrets: Iterable[str] = ()) -> dict[str, Any]:
-    status = _required_git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=workspace)
+    status = _required_git(
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=workspace, path_output=True
+    )
     head = _required_git(["rev-parse", "HEAD"], cwd=workspace)
     diff_args = ["diff", "--no-ext-diff", "--no-textconv"]
-    tracked = _required_git([*diff_args, "--name-only", "-z", baseline], cwd=workspace)
-    untracked = _required_git(["ls-files", "-z", "--others", "--exclude-standard"], cwd=workspace)
+    tracked = _required_git([*diff_args, "--name-only", "-z", baseline], cwd=workspace, path_output=True)
+    untracked = _required_git(
+        ["ls-files", "-z", "--others", "--exclude-standard"], cwd=workspace, path_output=True
+    )
     tracked_diff = _required_git([*diff_args, baseline], cwd=workspace)["stdout"].removesuffix("\n")
     pieces = [tracked_diff] if tracked_diff else []
     evidence_omissions: list[dict[str, str]] = []
@@ -682,54 +786,85 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                                   "reason": f"trace budget exceeds {MAX_TRACE_TOTAL_BYTES} byte aggregate limit"})
                 continue
             total_trace_bytes += trace_size
+            try:
+                source_handle = path.open("r", encoding="utf-8", errors="replace")
+            except OSError as exc:
+                total_trace_bytes -= trace_size
+                omissions.append({"trace": candidate_label, "reason": f"could not read trace: {exc}"})
+                continue
             dest: Path | None = None
             dest_handle = None
-            if artifact_dir is not None:
-                dest = artifact_dir / f"{root_index}-{trace_index:04d}.events.jsonl"
-                trace_index += 1
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest_handle = dest.open("w", encoding="utf-8", newline="\n")
-                files.append(str(dest))
-            else:
-                files.append(str(path))
+            source_error: OSError | None = None
+            tool_count_before = len(tools)
+            turns_before = set(turns)
+            steps_before, resets_before, malformed_before = steps, resets, malformed
             try:
-                with path.open("r", encoding="utf-8", errors="replace") as handle:
-                    for line in handle:
-                        try:
-                            item = json.loads(line)
-                        except Exception:
+                if artifact_dir is not None:
+                    dest = artifact_dir / f"{root_index}-{trace_index:04d}.events.jsonl"
+                    trace_index += 1
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest_handle = dest.open("w", encoding="utf-8", newline="\n")
+                    files.append(str(dest))
+                else:
+                    files.append(str(path))
+                while True:
+                    try:
+                        line = source_handle.readline()
+                    except OSError as exc:
+                        source_error = exc
+                        break
+                    if line == "":
+                        break
+                    try:
+                        item = json.loads(line)
+                    except Exception:
+                        malformed += 1
+                        continue
+                    if not isinstance(item, dict):
+                        malformed += 1
+                        continue
+                    if dest_handle is not None:
+                        dest_handle.write(json.dumps(redact_value(item, secrets), separators=(",", ":"), sort_keys=True))
+                        dest_handle.write("\n")
+                    if isinstance(item.get("turn"), int):
+                        turns.add((str(root), item["turn"]))
+                    if item.get("kind") == "toolCall" and item.get("name"):
+                        tools.append(str(item["name"]))
+                    elif item.get("kind") == "contextCompacted":
+                        resets += 1
+                    elif item.get("kind") == "turnSummary":
+                        raw_steps = item.get("steps")
+                        if raw_steps is None:
+                            parsed_steps = 0
+                        elif isinstance(raw_steps, bool):
                             malformed += 1
                             continue
-                        if not isinstance(item, dict):
+                        elif isinstance(raw_steps, int) and raw_steps >= 0:
+                            parsed_steps = raw_steps
+                        elif isinstance(raw_steps, str) and re.fullmatch(r"\d+", raw_steps):
+                            parsed_steps = int(raw_steps)
+                        else:
                             malformed += 1
                             continue
-                        if dest_handle is not None:
-                            dest_handle.write(json.dumps(redact_value(item, secrets), separators=(",", ":"), sort_keys=True))
-                            dest_handle.write("\n")
-                        if isinstance(item.get("turn"), int):
-                            turns.add((str(root), item["turn"]))
-                        if item.get("kind") == "toolCall" and item.get("name"):
-                            tools.append(str(item["name"]))
-                        elif item.get("kind") == "contextCompacted":
-                            resets += 1
-                        elif item.get("kind") == "turnSummary":
-                            raw_steps = item.get("steps")
-                            if raw_steps is None:
-                                parsed_steps = 0
-                            elif isinstance(raw_steps, bool):
-                                malformed += 1
-                                continue
-                            elif isinstance(raw_steps, int) and raw_steps >= 0:
-                                parsed_steps = raw_steps
-                            elif isinstance(raw_steps, str) and re.fullmatch(r"\d+", raw_steps):
-                                parsed_steps = int(raw_steps)
-                            else:
-                                malformed += 1
-                                continue
-                            steps += parsed_steps
+                        steps += parsed_steps
             finally:
+                try:
+                    source_handle.close()
+                except OSError as exc:
+                    source_error = source_error or exc
                 if dest_handle is not None:
                     dest_handle.close()
+            if source_error is not None:
+                del tools[tool_count_before:]
+                turns = turns_before
+                steps, resets, malformed = steps_before, resets_before, malformed_before
+                total_trace_bytes -= trace_size
+                omissions.append({"trace": candidate_label, "reason": f"could not read trace: {source_error}"})
+                retained_path = str(dest if dest is not None else path)
+                if retained_path in files:
+                    files.remove(retained_path)
+                if dest is not None:
+                    dest.unlink(missing_ok=True)
     return {"tool_calls": tools, "tool_call_count": len(tools), "agent_turns": len(turns),
             "agent_steps": steps, "context_resets": resets, "malformed_trace_lines": malformed,
             "trace_files": files, "trace_omissions": omissions, "trace_input_bytes": total_trace_bytes}
