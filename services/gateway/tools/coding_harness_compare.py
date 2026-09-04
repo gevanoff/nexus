@@ -419,6 +419,22 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 include_raw_output: bool = False) -> dict[str, Any]:
     started = time.monotonic()
     secrets = tuple(str(secret) for secret in secrets if secret)
+    stdout_state: dict[str, Any] = {}
+    stderr_state: dict[str, Any] = {}
+    stream_threads: list[tuple[Any, Any, dict[str, Any]]] = []
+    timed_out = False
+    containment_error: str | None = None
+    redact_overlap_chars = max(
+        (
+            length
+            for secret in secrets
+            for length in (
+                len(secret),
+                *(len(encoded) for encoded in _encoded_secret_variants(secret)),
+            )
+        ),
+        default=0,
+    )
     if isolate_process_group and not sys.platform.startswith("linux"):
         return {"ok": False, "returncode": None, "timed_out": False,
                 "stdout": "", "stderr": "descendant process containment requires a Linux host",
@@ -480,22 +496,6 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
             raise RuntimeError(f"SECURITY: {containment_error}") from launch_exc
         raise
 
-    stdout_state: dict[str, Any] = {}
-    stderr_state: dict[str, Any] = {}
-    stream_threads: list[tuple[Any, Any, dict[str, Any]]] = []
-    timed_out = False
-    containment_error: str | None = None
-    redact_overlap_chars = max(
-        (
-            length
-            for secret in secrets
-            for length in (
-                len(secret),
-                *(len(encoded) for encoded in _encoded_secret_variants(secret)),
-            )
-        ),
-        default=0,
-    )
     try:
         stream_threads = [
             (threading.Thread(

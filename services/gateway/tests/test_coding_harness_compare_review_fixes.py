@@ -1248,6 +1248,32 @@ def test_run_process_retains_overlap_for_longest_secret_encoding(tmp_path: Path)
     assert len(result["stdout"]) <= output_limit
 
 
+def test_output_redaction_preparation_finishes_before_process_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launched = False
+
+    def interrupt_preparation(secret: str):
+        raise KeyboardInterrupt
+
+    def forbidden_popen(*args, **kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("process started before redaction preparation completed")
+
+    monkeypatch.setattr(harness, "_encoded_secret_variants", interrupt_preparation)
+    monkeypatch.setattr(harness.subprocess, "Popen", forbidden_popen)
+
+    with pytest.raises(KeyboardInterrupt):
+        harness.run_process(
+            [sys.executable, "-c", "pass"],
+            cwd=tmp_path,
+            secrets=["nexus-prelaunch-preparation-secret"],
+        )
+
+    assert launched is False
+
+
 def test_required_workspace_git_failures_redact_secrets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
