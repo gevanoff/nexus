@@ -238,6 +238,18 @@ def test_linux_direct_children_includes_subprocesses_from_worker_threads() -> No
     assert not worker.is_alive()
 
 
+def test_linux_direct_children_fails_closed_for_live_task_without_children(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task_root = tmp_path / "task"
+    (task_root / "123").mkdir(parents=True)
+    real_scandir = os.scandir
+    monkeypatch.setattr(harness.os, "scandir", lambda path: real_scandir(task_root))
+
+    with pytest.raises(FileNotFoundError):
+        harness._linux_direct_children(456)
+
+
 def test_run_rejects_binary_missing_required_capability_before_execution(tmp_path: Path) -> None:
     marker = tmp_path / "executed"
     fake = _write_executable(

@@ -403,7 +403,11 @@ def _linux_direct_children(pid: int) -> set[int]:
                     continue
                 text = Path(task.path, "children").read_text(encoding="ascii")
             except FileNotFoundError:
-                continue
+                try:
+                    os.stat(task.path, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                raise
             children.update(int(value) for value in text.split() if value.isdigit())
     return children
 
@@ -1198,7 +1202,11 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
     compact_whitespace = re.sub(rb"[\t\n\v\f\r ]+", b"", raw_value)
     compact_lowered = compact_whitespace.lower()
     decoded_escapes = _decode_character_escapes(raw_value)
-    decoded_escapes_changed = decoded_escapes != raw_value
+    decoded_compact_escapes = _decode_character_escapes(compact_whitespace)
+    decoded_escapes_changed = (
+        decoded_escapes != raw_value
+        or decoded_compact_escapes != compact_whitespace
+    )
     compact_decoded_escapes = re.sub(rb"[\t\n\v\f\r ]+", b"", decoded_escapes)
     for secret in (str(value) for value in secrets if value):
         if any(encoded in raw_value for encoded in _encoded_secret_variants(secret)):
@@ -1225,7 +1233,11 @@ def _contains_encoded_secret_bytes(raw_value: bytes, secrets: Iterable[str]) -> 
         raw_secret = secret.encode("utf-8")
         if decoded_escapes_changed and len(raw_secret) >= 8 and any(
             raw_secret in candidate
-            for candidate in (decoded_escapes, compact_decoded_escapes)
+            for candidate in (
+                decoded_escapes,
+                compact_decoded_escapes,
+                decoded_compact_escapes,
+            )
         ):
             return True
         if (
