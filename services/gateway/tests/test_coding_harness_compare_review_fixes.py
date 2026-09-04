@@ -114,7 +114,12 @@ elif '--help' in sys.argv:
     print('albatross --print --allow-tools')
 """,
     )
-    monkeypatch.setattr(harness.sys, "platform", "darwin")
+    monkeypatch.setattr(harness.sys, "platform", "linux")
+
+    def unavailable_procfs(pid: int):
+        raise OSError("restricted procfs")
+
+    monkeypatch.setattr(harness, "_linux_direct_children", unavailable_procfs)
 
     version = harness.albatross_version(str(binary))
     help_result, capabilities, missing = harness.albatross_capabilities(str(binary))
@@ -124,6 +129,45 @@ elif '--help' in sys.argv:
     assert capabilities["one_shot"] is True
     assert capabilities["allow_tools"] is True
     assert missing == []
+
+
+def test_offline_probe_fallback_reaps_process_group_children(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not sys.platform.startswith("linux"):
+        pytest.skip("process-group cleanup regression requires Linux")
+    marker = tmp_path / "fallback-late-write.txt"
+    child = (
+        "import pathlib,time; "
+        "time.sleep(0.5); "
+        f"pathlib.Path({str(marker)!r}).write_text('late', encoding='utf-8')"
+    )
+    binary = _write_executable(
+        tmp_path / "albatross",
+        f"""#!/usr/bin/env python3
+import subprocess
+import sys
+subprocess.Popen([sys.executable, '-c', {child!r}])
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+elif '--help' in sys.argv:
+    print('albatross --print --allow-tools')
+""",
+    )
+
+    def unavailable_procfs(pid: int):
+        raise OSError("restricted procfs")
+
+    monkeypatch.setattr(harness, "_linux_direct_children", unavailable_procfs)
+
+    version = harness.albatross_version(str(binary))
+    help_result, _, missing = harness.albatross_capabilities(str(binary))
+    time.sleep(0.7)
+
+    assert version["installed"] is True
+    assert help_result["ok"] is True
+    assert missing == []
+    assert not marker.exists()
 
 
 def test_linux_binary_probes_contain_detached_descendants(tmp_path: Path) -> None:
@@ -389,6 +433,31 @@ def test_parse_trace_rejects_boolean_turn_identifiers(tmp_path: Path) -> None:
     assert result["agent_steps"] == 1
     assert result["tool_calls"] == []
     assert result["malformed_trace_lines"] == 2
+
+
+def test_parse_trace_requires_bounded_integer_turns_for_all_metrics(tmp_path: Path) -> None:
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    records = [
+        {"kind": "toolCall", "name": "missing"},
+        {"turn": "forged", "kind": "toolCall", "name": "string"},
+        {"turn": 1.5, "kind": "contextCompacted"},
+        {"turn": -1, "kind": "turnSummary", "steps": 9},
+        {"turn": 10 ** 100, "kind": "toolCall", "name": "huge"},
+        {"turn": 2, "kind": "toolCall", "name": "file_read"},
+    ]
+    (session_root / "one.events.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    result = harness.parse_trace(session_root)
+
+    assert result["agent_turns"] == 1
+    assert result["agent_steps"] == 0
+    assert result["tool_calls"] == ["file_read"]
+    assert result["context_resets"] == 0
+    assert result["malformed_trace_lines"] == 5
 
 
 def test_parse_trace_records_source_open_failure_and_continues(

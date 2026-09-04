@@ -44,6 +44,7 @@ MAX_GIT_EVIDENCE_CHARS = 8_000_000
 MAX_TRACE_FILE_BYTES = 8_000_000
 MAX_TRACE_TOTAL_BYTES = 16_000_000
 MAX_TRACE_STEP_DIGITS = 18
+MAX_TRACE_TURN_DIGITS = 18
 MAX_TRACE_FILES = 256
 MAX_TRACE_ENTRIES = 4096
 MAX_TRACE_PARSE_SECONDS = 10.0
@@ -413,6 +414,7 @@ def _drain_stream(stream: Any, limit_chars: int | None, state: dict[str, Any],
 def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None,
                 timeout_sec: float = 60.0, secrets: Iterable[str] = (),
                 isolate_process_group: bool = False,
+                require_descendant_containment: bool = True,
                 output_limit_chars: int | None = MAX_PROCESS_OUTPUT_CHARS,
                 fail_on_output_limit: bool = False,
                 decode_errors: str = "replace",
@@ -442,17 +444,23 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 "output_truncated": False}
     baseline_children: set[int] = set()
     subreaper_was_enabled = False
+    adopted_containment_enabled = False
     if isolate_process_group:
         try:
             subreaper_was_enabled = _linux_subreaper_enabled()
             baseline_children = _linux_direct_children(os.getpid())
             if not subreaper_was_enabled:
                 _set_linux_subreaper(True)
+            adopted_containment_enabled = True
         except OSError as exc:
-            return {"ok": False, "returncode": None, "timed_out": False,
-                    "stdout": "", "stderr": f"could not enable descendant containment: {exc}",
-                    "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
-                    "launch_error": "subreaper_unavailable", "output_truncated": False}
+            if not subreaper_was_enabled:
+                with contextlib.suppress(OSError):
+                    _set_linux_subreaper(False)
+            if require_descendant_containment:
+                return {"ok": False, "returncode": None, "timed_out": False,
+                        "stdout": "", "stderr": f"could not enable descendant containment: {exc}",
+                        "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
+                        "launch_error": "subreaper_unavailable", "output_truncated": False}
     try:
         proc = subprocess.Popen(
             argv,
@@ -467,7 +475,7 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
         )
     except OSError as exc:
         restore_error: OSError | None = None
-        if isolate_process_group and not subreaper_was_enabled:
+        if adopted_containment_enabled and not subreaper_was_enabled:
             try:
                 _set_linux_subreaper(False)
             except OSError as restore_exc:
@@ -481,7 +489,7 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 "launch_error": type(exc).__name__, "output_truncated": False}
     except BaseException as launch_exc:
         containment_error: str | None = None
-        if isolate_process_group:
+        if adopted_containment_enabled:
             try:
                 _terminate_linux_adopted_children(baseline_children)
             except (OSError, RuntimeError) as exc:
@@ -530,7 +538,7 @@ def run_process(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
                 except subprocess.TimeoutExpired:
                     pass
         finally:
-            if isolate_process_group:
+            if adopted_containment_enabled:
                 try:
                     _terminate_linux_adopted_children(baseline_children)
                 except (OSError, RuntimeError) as exc:
@@ -1128,7 +1136,8 @@ def albatross_version(executable: str) -> dict[str, Any]:
     if not resolved or not Path(resolved).is_file():
         return {"installed": False, "executable": executable, "version": "", "raw": "albatross unavailable"}
     result = run_process([resolved, "--version"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
-                         isolate_process_group=sys.platform.startswith("linux"))
+                         isolate_process_group=sys.platform.startswith("linux"),
+                         require_descendant_containment=False)
     text = (result["stdout"] or result["stderr"]).strip()
     match = re.search(r"(?:albatross\s+)?v?(\d+\.\d+\.\d+)", text, re.I)
     return {"installed": bool(result["ok"]), "executable": resolved,
@@ -1137,7 +1146,8 @@ def albatross_version(executable: str) -> dict[str, Any]:
 
 def albatross_capabilities(executable: str) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
     help_result = run_process([executable, "--help"], cwd=Path.cwd(), env=clean_env(), timeout_sec=15,
-                              isolate_process_group=sys.platform.startswith("linux"))
+                              isolate_process_group=sys.platform.startswith("linux"),
+                              require_descendant_containment=False)
     help_text = help_result["stdout"] + "\n" + help_result["stderr"]
     capabilities = {"one_shot": "--print" in help_text, "external_eval": "--eval" in help_text,
         "json_eval_output": "--json" in help_text, "allow_tools": "--allow-tools" in help_text,
@@ -1263,11 +1273,12 @@ def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | No
                         dest_handle.write(json.dumps(redact_value(item, secrets), separators=(",", ":"), sort_keys=True))
                         dest_handle.write("\n")
                     raw_turn = item.get("turn")
-                    if isinstance(raw_turn, bool):
+                    if (isinstance(raw_turn, bool)
+                            or not isinstance(raw_turn, int)
+                            or not 0 <= raw_turn < 10 ** MAX_TRACE_TURN_DIGITS):
                         malformed += 1
                         continue
-                    if isinstance(raw_turn, int):
-                        turns.add((candidate_label, raw_turn))
+                    turns.add((candidate_label, raw_turn))
                     if item.get("kind") == "toolCall" and item.get("name"):
                         tools.append(str(item["name"]))
                     elif item.get("kind") == "contextCompacted":
