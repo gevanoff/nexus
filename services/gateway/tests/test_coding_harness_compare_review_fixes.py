@@ -877,6 +877,26 @@ def test_labeled_fragments_in_one_value_are_redacted_everywhere(
     assert not retained.exists()
 
 
+def test_single_byte_fragments_in_one_value_are_redacted_everywhere(
+    tmp_path: Path,
+) -> None:
+    token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    evidence = ",".join(token)
+
+    assert harness.redact_text(evidence, [token]) == "(redacted)"
+    assert harness._redact_fragmented_value(
+        {"stdout": evidence}, [token]
+    ) == {"stdout": "(redacted)"}
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    retained = artifacts / "stdout.txt"
+    retained.write_text(evidence, encoding="utf-8")
+
+    assert harness.scrub_retained_artifacts(artifacts, [token]) == ["stdout.txt"]
+    assert not retained.exists()
+
+
 def test_workspace_snapshot_neutralizes_worktree_ident_attributes(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"

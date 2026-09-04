@@ -1894,7 +1894,7 @@ def _contains_ordered_secret_fragments(
     *,
     min_fragment_bytes: int,
 ) -> bool:
-    minimum = max(2, min_fragment_bytes)
+    minimum = max(1, min_fragment_bytes)
     if len(protected) < minimum * 2:
         return False
     states = {(0, 0, 0)}
