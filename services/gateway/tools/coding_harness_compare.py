@@ -2644,14 +2644,25 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
             deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
             max_agent_steps=fixture["limits"]["max_agent_steps"],
         )
-        if not trace["trace_files"]:
-            trace = parse_session_transcripts(
+        if trace["agent_turns"] == 0:
+            fallback_trace = parse_session_transcripts(
                 trace_root,
                 artifact_dir=artifacts / "traces",
                 secrets=[nexus_token],
                 deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
                 max_agent_steps=fixture["limits"]["max_agent_steps"],
             )
+            fallback_trace["trace_files"] = (
+                trace["trace_files"] + fallback_trace["trace_files"]
+            )
+            fallback_trace["trace_omissions"] = (
+                trace["trace_omissions"] + fallback_trace["trace_omissions"]
+            )
+            fallback_trace["malformed_trace_lines"] += trace[
+                "malformed_trace_lines"
+            ]
+            fallback_trace["trace_input_bytes"] += trace["trace_input_bytes"]
+            trace = fallback_trace
         deadline += time.monotonic() - trace_started
         validation = run_validation(
             fixture, workspace, home, tmp, deadline=deadline, secrets=[nexus_token]
@@ -2792,7 +2803,7 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         read_tool_observed = "file_read" in (trajectory.get("tool_call_names") or [])
     report["capabilities"].update({"chat": chat_ok, "streaming": None,
         "tool_calls": bool(read_tool_observed),
-        "structured_trace": bool(result.get("artifacts", {}).get("trace_files"))})
+        "structured_trace": bool(trajectory.get("agent_turns"))})
     report["live_result"] = str(result_path)
     report["ok"] = bool(chat_ok and report["capabilities"]["tool_calls"] and result.get("objective", {}).get("passed") is True)
     if not response_ok and "live_error" not in report:

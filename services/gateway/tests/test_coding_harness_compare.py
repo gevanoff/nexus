@@ -92,6 +92,7 @@ root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
 config = json.loads((root / 'agent.config.json').read_text())
 sessions = pathlib.Path(config['sessionDir'])
 sessions.mkdir(parents=True, exist_ok=True)
+(sessions / 'fake.events.jsonl').write_text('not-json\\n')
 call_id = 'call-1'
 messages = [
     {'role': 'system', 'content': 'system'},
@@ -382,3 +383,10 @@ def test_fake_live_probe_accepts_private_session_transcript_fallback(
     assert report["ok"] is True
     assert report["capabilities"]["tool_calls"] is True
     assert report["capabilities"]["structured_trace"] is True
+    result = json.loads(Path(report["live_result"]).read_text(encoding="utf-8"))
+    assert result["trajectory"]["agent_steps"] == 2
+    assert result["trajectory"]["malformed_trace_lines"] == 1
+    assert any(
+        Path(path).name.startswith("session-")
+        for path in result["artifacts"]["trace_files"]
+    )
