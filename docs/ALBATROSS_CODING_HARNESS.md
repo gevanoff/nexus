@@ -62,6 +62,8 @@ For each run the adapter:
 - enforces aggregate changed-file count, file-byte, diff-size, snapshot-time, trace-entry, trace-file, trace-time, and fixture-configured trace-step limits before retaining evidence;
 - retains enough pre-tail overlap for ordinary protected-value encodings, detects raw and hexadecimal values split by permitted whitespace and raw or encoded values reconstructed across path components, redacts raw and encoded values before applying the final stdout/stderr tail bound and again across the complete result, redacts truncated output wholesale whenever protected values are in scope, and records `artifacts.process_output_truncated` when earlier data was omitted;
 - captures structured traces from the isolated Albatross home before validation, runs validation with a separate sandbox home and Python bytecode generation disabled, and sanitizes retained text evidence before returning it;
+- writes a harness-owned `agent.config.json` before launch that directs Albatross's `sessionDir` into that isolated home, keeping trace evidence outside the agent-writable workspace while excluding the temporary config from the measured Git delta;
+- prefers Albatross event sidecars and, because tested v2.4.0 one-shot runs do not wire the primary agent trace into those sidecars, otherwise derives only completed tool names and step counts from the private structured session transcript; retained fallback evidence contains no prompt, tool arguments, tool output, or response text;
 - **discards the raw execution workspace, isolated HOME, TMPDIR, and all Git object metadata before a run is returned**;
 - repairs restrictive owner permissions when deleting execution state and verifies those paths are absent;
 - rejects unexpected entries anywhere inside the retained run hierarchy, leaving only the controlled artifact directory after execution cleanup;
@@ -172,7 +174,7 @@ Each retained run keeps only selected evidence:
 - redacted stdout/stderr;
 - the sanitized final Git diff;
 - sanitized final copies of changed text files up to the capture limit;
-- sanitized copies of valid structured Albatross JSONL trace events from explicit Albatross session roots;
+- sanitized copies of valid structured Albatross JSONL trace events from explicit Albatross session roots, or a minimal normalized event record derived from the private session transcript when the tested one-shot trace sidecar is absent;
 - a common `result.json`.
 
 The disposable repository, `.git` objects, Albatross HOME/session source tree, and temporary directory are deleted before `result.json` is returned. This prevents an agent-created commit, oversized workspace file, or raw session artifact from silently preserving the Gateway bearer outside the controlled artifact surface.

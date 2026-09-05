@@ -1000,7 +1000,13 @@ def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
         if not result["ok"]:
             raise RuntimeError(f"git {' '.join(argv)} failed: {result['stderr'] or result['stdout']}")
     with (workspace / ".git" / "info" / "exclude").open("a", encoding="utf-8") as handle:
-        handle.write("\n# Nexus harness runtime\n.albatross/\n.small-harness/\n.sessions/\n")
+        handle.write(
+            "\n# Nexus harness runtime\n"
+            ".albatross/\n"
+            ".small-harness/\n"
+            ".sessions/\n"
+            "/agent.config.json\n"
+        )
     head = git(["rev-parse", "HEAD"], cwd=workspace)
     if not head["ok"]:
         raise RuntimeError("could not determine fixture baseline")
@@ -1339,7 +1345,7 @@ def _is_harness_runtime_path(rel: str) -> bool:
     parts = Path(str(rel or "")).parts
     if not parts:
         return False
-    return parts[0] in RESERVED_PARTS
+    return parts[0] in RESERVED_PARTS or parts == ("agent.config.json",)
 
 
 def _snapshot_timeout(deadline: float) -> float:
@@ -1631,6 +1637,301 @@ def _trace_files(root: Path, *, deadline: float) -> list[Path]:
                         raise RuntimeError(f"trace enumeration exceeds {MAX_TRACE_FILES} file limit")
         pending.extend(sorted(child_dirs, reverse=True))
     return sorted(found)
+
+
+def _session_transcript_files(root: Path, *, deadline: float) -> list[Path]:
+    try:
+        root_info = root.lstat()
+    except OSError:
+        return []
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        return []
+    found: list[Path] = []
+    pending = [root]
+    entry_count = 0
+    while pending:
+        _trace_deadline(deadline)
+        current = pending.pop()
+        child_dirs: list[Path] = []
+        try:
+            scan = os.scandir(current)
+        except OSError:
+            continue
+        with scan:
+            for entry in scan:
+                _trace_deadline(deadline)
+                entry_count += 1
+                if entry_count > MAX_TRACE_ENTRIES:
+                    raise RuntimeError(
+                        f"session transcript enumeration exceeds {MAX_TRACE_ENTRIES} entry limit"
+                    )
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                path = Path(entry.path)
+                if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                    child_dirs.append(path)
+                elif (
+                    entry.name.endswith(".jsonl")
+                    and not entry.name.endswith(".events.jsonl")
+                    and stat.S_ISREG(info.st_mode)
+                    and not stat.S_ISLNK(info.st_mode)
+                ):
+                    found.append(path)
+                    if len(found) > MAX_TRACE_FILES:
+                        raise RuntimeError(
+                            f"session transcript enumeration exceeds {MAX_TRACE_FILES} file limit"
+                        )
+        pending.extend(sorted(child_dirs, reverse=True))
+    return sorted(found)
+
+
+def parse_session_transcripts(
+    session_root: Path,
+    *,
+    artifact_dir: Path | None = None,
+    secrets: Iterable[str] = (),
+    deadline: float | None = None,
+    max_agent_steps: int = MAX_TRACE_AGENT_STEPS,
+    max_files: int = MAX_TRACE_FILES,
+    max_total_bytes: int = MAX_TRACE_TOTAL_BYTES,
+) -> dict[str, Any]:
+    """Normalize trusted Albatross session JSONL when one-shot event logs are absent."""
+    if (
+        isinstance(max_agent_steps, bool)
+        or not isinstance(max_agent_steps, int)
+        or not 1 <= max_agent_steps <= MAX_TRACE_AGENT_STEPS
+    ):
+        raise ValueError(
+            f"max_agent_steps must be between 1 and {MAX_TRACE_AGENT_STEPS}"
+        )
+    if (
+        isinstance(max_files, bool)
+        or not isinstance(max_files, int)
+        or not 0 <= max_files <= MAX_TRACE_FILES
+    ):
+        raise ValueError(f"max_files must be between 0 and {MAX_TRACE_FILES}")
+    if (
+        isinstance(max_total_bytes, bool)
+        or not isinstance(max_total_bytes, int)
+        or not 0 <= max_total_bytes <= MAX_TRACE_TOTAL_BYTES
+    ):
+        raise ValueError(
+            "max_total_bytes must be between 0 and "
+            f"{MAX_TRACE_TOTAL_BYTES}"
+        )
+    deadline = (
+        time.monotonic() + MAX_TRACE_PARSE_SECONDS
+        if deadline is None
+        else deadline
+    )
+    if artifact_dir is not None:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+    tools: list[str] = []
+    turns = 0
+    steps = 0
+    malformed = 0
+    files: list[str] = []
+    omissions: list[dict[str, Any]] = []
+    total_input_bytes = 0
+    transcript_index = 0
+    for candidate_index, path in enumerate(
+        _session_transcript_files(session_root, deadline=deadline)
+    ):
+        _trace_deadline(deadline)
+        candidate_label = f"session:{candidate_index}"
+        if len(files) >= max_files:
+            omissions.append(
+                {
+                    "trace": candidate_label,
+                    "reason": "session transcript file budget exhausted",
+                }
+            )
+            continue
+        try:
+            transcript_size = path.lstat().st_size
+        except OSError as exc:
+            omissions.append(
+                {
+                    "trace": candidate_label,
+                    "reason": f"could not stat session transcript: {exc}",
+                }
+            )
+            continue
+        if transcript_size > MAX_TRACE_FILE_BYTES:
+            omissions.append(
+                {
+                    "trace": candidate_label,
+                    "reason": (
+                        f"session transcript exceeds {MAX_TRACE_FILE_BYTES} "
+                        "byte per-file limit"
+                    ),
+                }
+            )
+            continue
+        if total_input_bytes + transcript_size > max_total_bytes:
+            omissions.append(
+                {
+                    "trace": candidate_label,
+                    "reason": (
+                        f"session transcript budget exceeds {max_total_bytes} "
+                        "byte aggregate limit"
+                    ),
+                }
+            )
+            continue
+        try:
+            source_handle = path.open("r", encoding="utf-8", errors="replace")
+        except OSError as exc:
+            omissions.append(
+                {
+                    "trace": candidate_label,
+                    "reason": f"could not read session transcript: {exc}",
+                }
+            )
+            continue
+        total_input_bytes += transcript_size
+        candidate_steps = 0
+        candidate_malformed = 0
+        pending_calls: dict[str, str] = {}
+        seen_call_ids: set[str] = set()
+        completed_tools: list[str] = []
+        source_error: OSError | None = None
+        try:
+            while True:
+                _trace_deadline(deadline)
+                try:
+                    line = source_handle.readline()
+                except OSError as exc:
+                    source_error = exc
+                    break
+                if line == "":
+                    break
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    candidate_malformed += 1
+                    continue
+                message = item.get("message") if isinstance(item, dict) else None
+                if not isinstance(message, dict):
+                    candidate_malformed += 1
+                    continue
+                role = message.get("role")
+                if role == "assistant":
+                    if candidate_steps >= max_agent_steps - steps:
+                        candidate_malformed += 1
+                        continue
+                    candidate_steps += 1
+                    raw_calls = message.get("tool_calls", [])
+                    if not isinstance(raw_calls, list):
+                        candidate_malformed += 1
+                        continue
+                    for raw_call in raw_calls:
+                        function = (
+                            raw_call.get("function")
+                            if isinstance(raw_call, dict)
+                            else None
+                        )
+                        call_id = raw_call.get("id") if isinstance(raw_call, dict) else None
+                        name = function.get("name") if isinstance(function, dict) else None
+                        if (
+                            not isinstance(call_id, str)
+                            or not call_id
+                            or len(call_id) > 1024
+                            or call_id in seen_call_ids
+                            or raw_call.get("type") != "function"
+                            or not isinstance(name, str)
+                            or not name
+                            or len(name) > 256
+                            or not isinstance(function.get("arguments"), str)
+                        ):
+                            candidate_malformed += 1
+                            continue
+                        if len(seen_call_ids) >= MAX_TRACE_ENTRIES:
+                            raise RuntimeError(
+                                "session transcript tool calls exceed "
+                                f"{MAX_TRACE_ENTRIES} entry limit"
+                            )
+                        seen_call_ids.add(call_id)
+                        pending_calls[call_id] = name
+                elif role == "tool":
+                    call_id = message.get("tool_call_id")
+                    if (
+                        not isinstance(call_id, str)
+                        or call_id not in pending_calls
+                        or not isinstance(message.get("content"), str)
+                    ):
+                        candidate_malformed += 1
+                        continue
+                    completed_tools.append(pending_calls.pop(call_id))
+                elif role not in {"system", "user"}:
+                    candidate_malformed += 1
+        finally:
+            try:
+                source_handle.close()
+            except OSError as exc:
+                source_error = source_error or exc
+        if source_error is not None:
+            total_input_bytes -= transcript_size
+            omissions.append(
+                {
+                    "trace": candidate_label,
+                    "reason": f"could not read session transcript: {source_error}",
+                }
+            )
+            continue
+        if candidate_steps == 0:
+            malformed += candidate_malformed
+            continue
+        turns += 1
+        steps += candidate_steps
+        malformed += candidate_malformed + len(pending_calls)
+        tools.extend(completed_tools)
+        if artifact_dir is not None:
+            artifact_path = (
+                artifact_dir / f"session-{transcript_index:04d}.events.jsonl"
+            )
+            transcript_index += 1
+            normalized: list[dict[str, Any]] = [
+                {
+                    "turn": 1,
+                    "kind": "toolCall",
+                    "name": name,
+                    "source": "albatross_session_transcript",
+                }
+                for name in completed_tools
+            ]
+            normalized.append(
+                {
+                    "turn": 1,
+                    "kind": "turnSummary",
+                    "steps": candidate_steps,
+                    "source": "albatross_session_transcript",
+                }
+            )
+            normalized = redact_value(normalized, secrets)
+            with artifact_path.open("x", encoding="utf-8", newline="\n") as handle:
+                for event in normalized:
+                    handle.write(
+                        json.dumps(event, separators=(",", ":"), sort_keys=True)
+                    )
+                    handle.write("\n")
+            files.append(str(artifact_path))
+        else:
+            files.append(str(path))
+    tools = _redact_fragmented_value(tools, secrets, fields=None)
+    return {
+        "tool_calls": tools,
+        "tool_call_count": len(tools),
+        "agent_turns": turns,
+        "agent_steps": steps,
+        "context_resets": 0,
+        "malformed_trace_lines": malformed,
+        "trace_files": files,
+        "trace_omissions": omissions,
+        "trace_input_bytes": total_input_bytes,
+    }
 
 
 def parse_trace(session_roots: Path | Iterable[Path], *, artifact_dir: Path | None = None,
@@ -2297,6 +2598,19 @@ def mission_prompt(fixture: dict[str, Any], allow_mutations: bool) -> str:
             "Do not commit or push. Use repository tools rather than guessing file contents.")
 
 
+def _write_albatross_runtime_config(workspace: Path, trace_root: Path) -> None:
+    target = workspace / "agent.config.json"
+    if _path_lexists(target):
+        raise RuntimeError("Albatross runtime config path is not empty")
+    try:
+        with target.open("x", encoding="utf-8", newline="\n") as handle:
+            json.dump({"sessionDir": str(trace_root.resolve())}, handle, indent=2)
+            handle.write("\n")
+        target.chmod(0o600)
+    except OSError as exc:
+        raise RuntimeError("could not write Albatross runtime config") from exc
+
+
 def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str,
                           nexus_base_url: str, nexus_token: str, model: str = "coder",
                           allow_mutations: bool = True) -> tuple[dict[str, Any], Path]:
@@ -2327,6 +2641,8 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         _mkdir_private(home)
         _mkdir_private(tmp)
         baseline = initialize_workspace(workspace, fixture)
+        trace_root = home / ".config" / "albatross" / "sessions"
+        _write_albatross_runtime_config(workspace, trace_root)
         env = build_albatross_env(nexus_base_url=nexus_base_url, nexus_token=nexus_token, model=model,
                                   workspace=workspace, home=home, temp_dir=tmp,
                                   max_steps=fixture["limits"]["max_agent_steps"], allow_mutations=allow_mutations)
@@ -2346,13 +2662,37 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         )
         _prepare_artifacts_root(root, artifacts)
         trace_started = time.monotonic()
+        trace_deadline = time.monotonic() + MAX_TRACE_PARSE_SECONDS
         trace = parse_trace(
-            home / ".config" / "albatross" / "sessions",
+            trace_root,
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
-            deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
+            deadline=trace_deadline,
             max_agent_steps=fixture["limits"]["max_agent_steps"],
         )
+        if trace["agent_turns"] == 0:
+            fallback_trace = parse_session_transcripts(
+                trace_root,
+                artifact_dir=artifacts / "traces",
+                secrets=[nexus_token],
+                deadline=trace_deadline,
+                max_agent_steps=fixture["limits"]["max_agent_steps"],
+                max_files=max(0, MAX_TRACE_FILES - len(trace["trace_files"])),
+                max_total_bytes=max(
+                    0, MAX_TRACE_TOTAL_BYTES - trace["trace_input_bytes"]
+                ),
+            )
+            fallback_trace["trace_files"] = (
+                trace["trace_files"] + fallback_trace["trace_files"]
+            )
+            fallback_trace["trace_omissions"] = (
+                trace["trace_omissions"] + fallback_trace["trace_omissions"]
+            )
+            fallback_trace["malformed_trace_lines"] += trace[
+                "malformed_trace_lines"
+            ]
+            fallback_trace["trace_input_bytes"] += trace["trace_input_bytes"]
+            trace = fallback_trace
         deadline += time.monotonic() - trace_started
         validation = run_validation(
             fixture, workspace, home, tmp, deadline=deadline, secrets=[nexus_token]
@@ -2493,7 +2833,7 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
         read_tool_observed = "file_read" in (trajectory.get("tool_call_names") or [])
     report["capabilities"].update({"chat": chat_ok, "streaming": None,
         "tool_calls": bool(read_tool_observed),
-        "structured_trace": bool(result.get("artifacts", {}).get("trace_files"))})
+        "structured_trace": bool(trajectory.get("agent_turns"))})
     report["live_result"] = str(result_path)
     report["ok"] = bool(chat_ok and report["capabilities"]["tool_calls"] and result.get("objective", {}).get("passed") is True)
     if not response_ok and "live_error" not in report:
