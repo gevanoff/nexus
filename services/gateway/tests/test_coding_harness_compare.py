@@ -58,8 +58,8 @@ if '--help' in sys.argv:
     print('albatross --print --eval --json --allow-tools')
     raise SystemExit(0)
 root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
-home = pathlib.Path(os.environ['HOME'])
-events = home / '.config' / 'albatross' / 'sessions' / 'fake.events.jsonl'
+config = json.loads((root / 'agent.config.json').read_text())
+events = pathlib.Path(config['sessionDir']) / 'fake.events.jsonl'
 events.parent.mkdir(parents=True, exist_ok=True)
 if (root / 'probe.txt').exists():
     events.write_text(json.dumps({'turn': 1, 'kind': 'toolCall', 'callId': '1', 'name': 'file_read', 'args': {'path': 'probe.txt'}, 'depth': 0}) + '\\n' + json.dumps({'turn': 1, 'kind': 'turnSummary', 'steps': 1, 'modelMs': 1, 'toolMs': 1, 'approvalMs': 0, 'totalMs': 2, 'hitStepLimit': False}) + '\\n')
@@ -70,6 +70,43 @@ if app.exists():
     app.write_text(app.read_text().replace('broken', 'fixed'))
 events.write_text(json.dumps({'turn': 1, 'kind': 'toolCall', 'callId': '1', 'name': 'file_edit', 'args': {'path': 'app.py'}, 'depth': 0}) + '\\n' + json.dumps({'turn': 1, 'kind': 'turnSummary', 'steps': 2, 'modelMs': 1, 'toolMs': 1, 'approvalMs': 0, 'totalMs': 2, 'hitStepLimit': False}) + '\\n')
 print('done')
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+def _fake_albatross_with_session_transcript(tmp_path: Path) -> Path:
+    path = tmp_path / "albatross-session"
+    path.write_text(
+        """#!/usr/bin/env python3
+import datetime, json, os, pathlib, sys
+if '--version' in sys.argv:
+    print('albatross 2.4.0')
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    print('albatross --print --eval --json --allow-tools')
+    raise SystemExit(0)
+root = pathlib.Path(os.environ['WORKSPACE_ROOT'])
+config = json.loads((root / 'agent.config.json').read_text())
+sessions = pathlib.Path(config['sessionDir'])
+sessions.mkdir(parents=True, exist_ok=True)
+call_id = 'call-1'
+messages = [
+    {'role': 'system', 'content': 'system'},
+    {'role': 'user', 'content': 'read the probe'},
+    {'role': 'assistant', 'content': None, 'tool_calls': [{
+        'id': call_id, 'type': 'function',
+        'function': {'name': 'file_read', 'arguments': '{"path":"probe.txt"}'},
+    }]},
+    {'role': 'tool', 'tool_call_id': call_id, 'content': (root / 'probe.txt').read_text()},
+    {'role': 'assistant', 'content': 'done'},
+]
+with (sessions / 'fake.jsonl').open('w') as handle:
+    for message in messages:
+        handle.write(json.dumps({'timestamp': datetime.datetime.now().isoformat(), 'message': message}) + '\\n')
+print((root / 'probe.txt').read_text().strip())
 """,
         encoding="utf-8",
     )
@@ -136,6 +173,25 @@ def test_initialized_workspace_is_clean_and_ignores_albatross(tmp_path: Path) ->
     assert status["stdout"].strip() == ""
 
 
+def test_runtime_config_pins_private_trace_dir_and_is_not_evidence(tmp_path: Path) -> None:
+    fixture = harness.load_fixture(_fixture(tmp_path))
+    work = tmp_path / "work"
+    harness.initialize_workspace(work, fixture)
+    trace_root = tmp_path / "private-home" / ".config" / "albatross" / "sessions"
+
+    harness._write_albatross_runtime_config(work, trace_root)
+
+    config_path = work / "agent.config.json"
+    assert json.loads(config_path.read_text()) == {
+        "sessionDir": str(trace_root.resolve())
+    }
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+    status = harness.git(
+        ["status", "--porcelain=v1", "--untracked-files=all"], cwd=work
+    )
+    assert status["stdout"].strip() == ""
+
+
 def test_parse_trace_extracts_tools_steps_and_compaction(tmp_path: Path) -> None:
     trace = tmp_path / "one.events.jsonl"
     trace.write_text(
@@ -155,6 +211,78 @@ def test_parse_trace_extracts_tools_steps_and_compaction(tmp_path: Path) -> None
     assert result["agent_steps"] == 3
     assert result["context_resets"] == 1
     assert result["malformed_trace_lines"] == 1
+
+
+def test_session_transcript_fallback_requires_matching_tool_result(
+    tmp_path: Path,
+) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    transcript = sessions / "one.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "now",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "matched",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "file_read",
+                                        "arguments": "{}",
+                                    },
+                                },
+                                {
+                                    "id": "unmatched",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "file_write",
+                                        "arguments": "{}",
+                                    },
+                                },
+                            ],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "now",
+                        "message": {
+                            "role": "tool",
+                            "tool_call_id": "matched",
+                            "content": "contents",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "now",
+                        "message": {"role": "assistant", "content": "done"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = harness.parse_session_transcripts(
+        sessions, artifact_dir=tmp_path / "artifacts"
+    )
+
+    assert result["tool_calls"] == ["file_read"]
+    assert result["agent_turns"] == 1
+    assert result["agent_steps"] == 2
+    assert result["malformed_trace_lines"] == 1
+    assert len(result["trace_files"]) == 1
+    retained = Path(result["trace_files"][0]).read_text(encoding="utf-8")
+    assert "file_read" in retained
+    assert "contents" not in retained
 
 
 def test_objective_checks_reject_extra_changed_file(tmp_path: Path) -> None:
@@ -228,3 +356,21 @@ def test_fake_live_probe_requires_read_tool_and_leaves_streaming_unknown(tmp_pat
     assert report["capabilities"]["tool_calls"] is True
     assert report["capabilities"]["structured_trace"] is True
     assert token not in json.dumps(report)
+
+
+@pytest.mark.requires_linux_process_containment
+def test_fake_live_probe_accepts_private_session_transcript_fallback(
+    tmp_path: Path,
+) -> None:
+    fake = _fake_albatross_with_session_transcript(tmp_path)
+    report = harness.probe(
+        str(fake),
+        live=True,
+        out_root=tmp_path / "probe-results",
+        nexus_base_url="http://ai2:8800/v1",
+        nexus_token="nexus-live-secret-123456",
+        model="coder",
+    )
+    assert report["ok"] is True
+    assert report["capabilities"]["tool_calls"] is True
+    assert report["capabilities"]["structured_trace"] is True
