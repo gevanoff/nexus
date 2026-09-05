@@ -294,6 +294,42 @@ def test_session_transcript_fallback_requires_matching_tool_result(
     assert "contents" not in retained
 
 
+def test_session_transcript_fallback_respects_remaining_shared_budgets(
+    tmp_path: Path,
+) -> None:
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    transcript = sessions / "one.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "timestamp": "now",
+                "message": {"role": "assistant", "content": "done"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    no_files = harness.parse_session_transcripts(sessions, max_files=0)
+    assert no_files["agent_turns"] == 0
+    assert no_files["trace_files"] == []
+    assert no_files["trace_input_bytes"] == 0
+    assert no_files["trace_omissions"][0]["reason"] == (
+        "session transcript file budget exhausted"
+    )
+
+    no_bytes = harness.parse_session_transcripts(
+        sessions,
+        max_files=1,
+        max_total_bytes=transcript.stat().st_size - 1,
+    )
+    assert no_bytes["agent_turns"] == 0
+    assert no_bytes["trace_files"] == []
+    assert no_bytes["trace_input_bytes"] == 0
+    assert "byte aggregate limit" in no_bytes["trace_omissions"][0]["reason"]
+
+
 def test_objective_checks_reject_extra_changed_file(tmp_path: Path) -> None:
     fixture = harness.load_fixture(_fixture(tmp_path))
     work = tmp_path / "work"
@@ -370,8 +406,23 @@ def test_fake_live_probe_requires_read_tool_and_leaves_streaming_unknown(tmp_pat
 @pytest.mark.requires_linux_process_containment
 def test_fake_live_probe_accepts_private_session_transcript_fallback(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _fake_albatross_with_session_transcript(tmp_path)
+    parse_trace = harness.parse_trace
+    parse_session_transcripts = harness.parse_session_transcripts
+    parser_calls: dict[str, dict] = {}
+
+    def capture_trace(*args, **kwargs):
+        parser_calls["native"] = kwargs.copy()
+        return parse_trace(*args, **kwargs)
+
+    def capture_session(*args, **kwargs):
+        parser_calls["session"] = kwargs.copy()
+        return parse_session_transcripts(*args, **kwargs)
+
+    monkeypatch.setattr(harness, "parse_trace", capture_trace)
+    monkeypatch.setattr(harness, "parse_session_transcripts", capture_session)
     report = harness.probe(
         str(fake),
         live=True,
@@ -386,6 +437,11 @@ def test_fake_live_probe_accepts_private_session_transcript_fallback(
     result = json.loads(Path(report["live_result"]).read_text(encoding="utf-8"))
     assert result["trajectory"]["agent_steps"] == 2
     assert result["trajectory"]["malformed_trace_lines"] == 1
+    assert parser_calls["session"]["deadline"] == parser_calls["native"]["deadline"]
+    assert parser_calls["session"]["max_files"] == harness.MAX_TRACE_FILES - 1
+    assert parser_calls["session"]["max_total_bytes"] == (
+        harness.MAX_TRACE_TOTAL_BYTES - len(b"not-json\n")
+    )
     assert any(
         Path(path).name.startswith("session-")
         for path in result["artifacts"]["trace_files"]

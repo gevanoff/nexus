@@ -1694,6 +1694,8 @@ def parse_session_transcripts(
     secrets: Iterable[str] = (),
     deadline: float | None = None,
     max_agent_steps: int = MAX_TRACE_AGENT_STEPS,
+    max_files: int = MAX_TRACE_FILES,
+    max_total_bytes: int = MAX_TRACE_TOTAL_BYTES,
 ) -> dict[str, Any]:
     """Normalize trusted Albatross session JSONL when one-shot event logs are absent."""
     if (
@@ -1703,6 +1705,21 @@ def parse_session_transcripts(
     ):
         raise ValueError(
             f"max_agent_steps must be between 1 and {MAX_TRACE_AGENT_STEPS}"
+        )
+    if (
+        isinstance(max_files, bool)
+        or not isinstance(max_files, int)
+        or not 0 <= max_files <= MAX_TRACE_FILES
+    ):
+        raise ValueError(f"max_files must be between 0 and {MAX_TRACE_FILES}")
+    if (
+        isinstance(max_total_bytes, bool)
+        or not isinstance(max_total_bytes, int)
+        or not 0 <= max_total_bytes <= MAX_TRACE_TOTAL_BYTES
+    ):
+        raise ValueError(
+            "max_total_bytes must be between 0 and "
+            f"{MAX_TRACE_TOTAL_BYTES}"
         )
     deadline = (
         time.monotonic() + MAX_TRACE_PARSE_SECONDS
@@ -1724,6 +1741,14 @@ def parse_session_transcripts(
     ):
         _trace_deadline(deadline)
         candidate_label = f"session:{candidate_index}"
+        if len(files) >= max_files:
+            omissions.append(
+                {
+                    "trace": candidate_label,
+                    "reason": "session transcript file budget exhausted",
+                }
+            )
+            continue
         try:
             transcript_size = path.lstat().st_size
         except OSError as exc:
@@ -1745,12 +1770,12 @@ def parse_session_transcripts(
                 }
             )
             continue
-        if total_input_bytes + transcript_size > MAX_TRACE_TOTAL_BYTES:
+        if total_input_bytes + transcript_size > max_total_bytes:
             omissions.append(
                 {
                     "trace": candidate_label,
                     "reason": (
-                        f"session transcript budget exceeds {MAX_TRACE_TOTAL_BYTES} "
+                        f"session transcript budget exceeds {max_total_bytes} "
                         "byte aggregate limit"
                     ),
                 }
@@ -2637,11 +2662,12 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
         )
         _prepare_artifacts_root(root, artifacts)
         trace_started = time.monotonic()
+        trace_deadline = time.monotonic() + MAX_TRACE_PARSE_SECONDS
         trace = parse_trace(
             trace_root,
             artifact_dir=artifacts / "traces",
             secrets=[nexus_token],
-            deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
+            deadline=trace_deadline,
             max_agent_steps=fixture["limits"]["max_agent_steps"],
         )
         if trace["agent_turns"] == 0:
@@ -2649,8 +2675,12 @@ def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str
                 trace_root,
                 artifact_dir=artifacts / "traces",
                 secrets=[nexus_token],
-                deadline=time.monotonic() + MAX_TRACE_PARSE_SECONDS,
+                deadline=trace_deadline,
                 max_agent_steps=fixture["limits"]["max_agent_steps"],
+                max_files=max(0, MAX_TRACE_FILES - len(trace["trace_files"])),
+                max_total_bytes=max(
+                    0, MAX_TRACE_TOTAL_BYTES - trace["trace_input_bytes"]
+                ),
             )
             fallback_trace["trace_files"] = (
                 trace["trace_files"] + fallback_trace["trace_files"]
