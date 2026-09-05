@@ -191,6 +191,14 @@ def test_runtime_config_pins_private_trace_dir_and_is_not_evidence(tmp_path: Pat
     )
     assert status["stdout"].strip() == ""
 
+    nested_config = work / "nested" / "agent.config.json"
+    nested_config.parent.mkdir()
+    nested_config.write_text("{}\n", encoding="utf-8")
+    status = harness.git(
+        ["status", "--porcelain=v1", "--untracked-files=all"], cwd=work
+    )
+    assert status["stdout"].splitlines() == ["?? nested/agent.config.json"]
+
 
 def test_parse_trace_extracts_tools_steps_and_compaction(tmp_path: Path) -> None:
     trace = tmp_path / "one.events.jsonl"

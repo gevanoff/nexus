@@ -1005,7 +1005,7 @@ def initialize_workspace(workspace: Path, fixture: dict[str, Any]) -> str:
             ".albatross/\n"
             ".small-harness/\n"
             ".sessions/\n"
-            "agent.config.json\n"
+            "/agent.config.json\n"
         )
     head = git(["rev-parse", "HEAD"], cwd=workspace)
     if not head["ok"]:
