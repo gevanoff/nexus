@@ -2944,6 +2944,7 @@ def _nexus_final_file_reader(
     token: str,
     cache: dict[str, tuple[str | None, str | None]],
     non_text_paths: set[str],
+    deadline: float,
 ) -> Any:
     aggregate_bytes = 0
 
@@ -2952,12 +2953,13 @@ def _nexus_final_file_reader(
         if rel in cache:
             return cache[rel]
         try:
+            timeout_sec = min(30.0, _snapshot_timeout(deadline))
             payload = nexus_api_request(
                 "GET",
                 base_url,
                 f"/coding/harness/tasks/{quote(task_id, safe='')}/file?path={quote(rel, safe='')}",
                 token=token,
-                timeout_sec=30.0,
+                timeout_sec=timeout_sec,
             )
             response_path = payload.get("path")
             size = payload.get("size")
@@ -3080,12 +3082,14 @@ def run_nexus_fixture(
             token=nexus_token,
             deadline=deadline,
         )
+        evidence_started = time.monotonic()
+        evidence_deadline = evidence_started + MAX_SNAPSHOT_SECONDS
         diff_payload = nexus_api_request(
             "GET",
             nexus_base_url,
             f"/coding/harness/tasks/{quote(task_id, safe='')}/diff",
             token=nexus_token,
-            timeout_sec=30.0,
+            timeout_sec=min(30.0, _snapshot_timeout(evidence_deadline)),
         )
         if diff_payload.get("ok") is not True:
             raise NexusApiError(str(diff_payload.get("error") or "Nexus harness diff collection failed"))
@@ -3094,7 +3098,7 @@ def run_nexus_fixture(
             nexus_base_url,
             f"/coding/harness/tasks/{quote(task_id, safe='')}/changes",
             token=nexus_token,
-            timeout_sec=30.0,
+            timeout_sec=min(30.0, _snapshot_timeout(evidence_deadline)),
         )
         pending_changes = changes_payload.get("result")
         if not isinstance(pending_changes, dict) or pending_changes.get("ok") is not True:
@@ -3152,6 +3156,7 @@ def run_nexus_fixture(
             token=nexus_token,
             cache=cache,
             non_text_paths=non_text_paths,
+            deadline=evidence_deadline,
         )
         expected_paths = {
             str(spec.get("path") or "")
@@ -3162,6 +3167,7 @@ def run_nexus_fixture(
         for rel in sorted(set(safe_changed) | expected_paths):
             read_content(rel)
 
+        _snapshot_timeout(evidence_deadline)
         if protected:
             diff_text = ""
         else:
@@ -3185,6 +3191,7 @@ def run_nexus_fixture(
         final_files = artifacts / "final-files"
         final_file_omissions: list[dict[str, str]] = []
         for rel in safe_changed:
+            _snapshot_timeout(evidence_deadline)
             content, error = cache.get(rel, (None, "file was not fetched"))
             if error or content is None:
                 final_file_omissions.append({"path": rel, "reason": error or "file unavailable"})
@@ -3193,6 +3200,8 @@ def run_nexus_fixture(
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(redact_text(content, [nexus_token]), encoding="utf-8")
 
+        _snapshot_timeout(evidence_deadline)
+        deadline += time.monotonic() - evidence_started
         validation = run_nexus_validation(
             fixture,
             task_id,

@@ -236,6 +236,7 @@ def test_nexus_file_reader_enforces_aggregate_budget_before_caching(monkeypatch)
         token="token",
         cache=cache,
         non_text_paths=non_text_paths,
+        deadline=harness.time.monotonic() + 10,
     )
 
     assert read_content("a.txt") == ("abc", None)
@@ -245,6 +246,89 @@ def test_nexus_file_reader_enforces_aggregate_budget_before_caching(monkeypatch)
     assert cache == {"a.txt": ("abc", None)}
     assert non_text_paths == set()
     assert all("/coding/harness/tasks/" in path for path in calls)
+
+
+def test_nexus_file_reader_stops_when_snapshot_deadline_is_exhausted(monkeypatch):
+    called = False
+
+    def fake_request(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("request must not start after the snapshot deadline")
+
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+    read_content = harness._nexus_final_file_reader(
+        "code_abcdef123456",
+        base_url="http://gateway/v1",
+        token="token",
+        cache={},
+        non_text_paths=set(),
+        deadline=harness.time.monotonic() - 1,
+    )
+
+    with pytest.raises(RuntimeError, match="snapshot time budget exhausted"):
+        read_content("a.txt")
+    assert called is False
+
+
+def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch, tmp_path):
+    task = _completed_task()
+    clock = {"now": 100.0}
+    evidence_timeouts = []
+    validation_deadline = []
+
+    def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
+        if method == "POST" and path == "/coding/harness/runs":
+            return {"task": {**task, "agent": {"status": "queued"}}}
+        if method == "GET" and path.endswith("/diff"):
+            evidence_timeouts.append(timeout_sec)
+            clock["now"] += 2
+            return {
+                "ok": True,
+                "merge_base": "a" * 40,
+                "compare_ref": "main",
+                "changes": {"files": [{"path": "app.py", "kind": "modified"}]},
+                "diff": {
+                    "stdout": "diff --git a/app.py b/app.py\n-VALUE = 'broken'\n+VALUE = 'fixed'\n",
+                    "stdout_truncated": False,
+                },
+            }
+        if method == "GET" and path.endswith("/changes"):
+            evidence_timeouts.append(timeout_sec)
+            clock["now"] += 2
+            return {"result": {"ok": True, "files": []}}
+        if method == "GET" and "/file?path=app.py" in path:
+            evidence_timeouts.append(timeout_sec)
+            clock["now"] += 2
+            return {
+                "path": "app.py",
+                "size": 16,
+                "encoding": "utf-8",
+                "content": "VALUE = 'fixed'\n",
+            }
+        if method == "DELETE" and path.startswith("/coding/harness/tasks/"):
+            return {"result": {"ok": True, "task_id": task["id"]}}
+        raise AssertionError((method, path, body))
+
+    def fake_validation(fixture, task_id, *, base_url, token, deadline):
+        validation_deadline.append(deadline)
+        return {"commands": [], "passed": True, "budget_exhausted": False, "timed_out": False}
+
+    monkeypatch.setattr(harness.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+    monkeypatch.setattr(harness, "_wait_for_nexus_task", lambda *args, **kwargs: (task, False))
+    monkeypatch.setattr(harness, "run_nexus_validation", fake_validation)
+
+    result, _ = harness.run_nexus_fixture(
+        _fixture(tmp_path),
+        out_root=tmp_path / "results",
+        nexus_base_url="http://gateway/v1",
+        nexus_token="secret-token-value",
+    )
+
+    assert result["outcome"]["completed"] is True
+    assert evidence_timeouts == [30.0, 28.0, 26.0]
+    assert validation_deadline == [166.0]
 
 
 def test_run_nexus_fixture_omits_binary_untracked_content(monkeypatch, tmp_path):

@@ -178,12 +178,12 @@ def test_harness_git_evidence_requests_one_over_changed_file_limit(monkeypatch):
     )
     captured = {}
 
-    def fake_diff(task_id, *, change_limit):
-        captured["diff"] = (task_id, change_limit)
+    def fake_diff(task_id, *, change_limit, nul_paths):
+        captured["diff"] = (task_id, change_limit, nul_paths)
         return {"ok": True}
 
-    def fake_changes(task_id, *, limit):
-        captured["changes"] = (task_id, limit)
+    def fake_changes(task_id, *, limit, nul_paths):
+        captured["changes"] = (task_id, limit, nul_paths)
         return {"ok": True}
 
     monkeypatch.setattr(cw, "git_diff", fake_diff)
@@ -192,9 +192,54 @@ def test_harness_git_evidence_requests_one_over_changed_file_limit(monkeypatch):
     assert cw.harness_git_diff("code_abcdef123456") == {"ok": True}
     assert cw.harness_git_changes("code_abcdef123456") == {"ok": True}
     assert captured == {
-        "diff": ("code_abcdef123456", 513),
-        "changes": ("code_abcdef123456", 513),
+        "diff": ("code_abcdef123456", 513, True),
+        "changes": ("code_abcdef123456", 513, True),
     }
+
+
+def test_harness_limits_do_not_depend_on_normal_coding_file_cap(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(cw, "file_max_bytes", lambda: 1)
+
+    task = cw.create_harness_task(
+        fixture_id="shared-limit",
+        files={"value.txt": "valid fixture content"},
+        prompt="Inspect the fixture.",
+        owner="test",
+    )
+
+    evidence = cw.read_harness_file_evidence(task["id"], path="value.txt")
+    assert evidence["encoding"] == "utf-8"
+    assert evidence["content"] == "valid fixture content"
+
+
+def test_harness_git_evidence_preserves_literal_paths_and_rename_targets(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="literal-paths",
+        files={"café.txt": "old\n", "old name.txt": "rename me\n"},
+        prompt="Change files with unusual names.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    (repo / "café.txt").write_text("new\n", encoding="utf-8")
+    (repo / 'quote"file.txt').write_text("added\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "mv", "old name.txt", "new name.txt"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    changed = cw.harness_git_changes(task["id"])["files"]
+    diff_changed = cw.harness_git_diff(task["id"])["changes"]["files"]
+
+    expected = {"café.txt", 'quote"file.txt', "new name.txt"}
+    assert {item["path"] for item in changed} == expected
+    assert {item["path"] for item in diff_changed} == expected - {'quote"file.txt'}
+    rename = next(item for item in changed if item["kind"] == "renamed")
+    assert rename["path"] == "new name.txt"
+    assert rename["previous_path"] == "old name.txt"
 
 
 def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tmp_path):

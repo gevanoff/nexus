@@ -1543,7 +1543,7 @@ def _normalize_harness_fixture_files(
 
     normalized: Dict[str, str] = {}
     total_bytes = 0
-    per_file_limit = min(_HARNESS_MAX_FILE_BYTES, file_max_bytes())
+    per_file_limit = _HARNESS_MAX_FILE_BYTES
     for raw_path, raw_content in files.items():
         path = str(raw_path or "")
         if (
@@ -2136,19 +2136,44 @@ def workspace_progress_fingerprint(task_id: str) -> str:
     return digest.hexdigest()
 
 
-def git_change_summary(task_id: str, *, limit: int = 500) -> Dict[str, Any]:
+def git_change_summary(
+    task_id: str,
+    *,
+    limit: int = 500,
+    nul_paths: bool = False,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
-    result = _run_process(["git", "status", "--porcelain"], cwd=repo)
+    argv = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
+    if nul_paths:
+        argv.append("-z")
+    result = _run_process(argv, cwd=repo)
     counts = {"added": 0, "modified": 0, "removed": 0, "renamed": 0, "untracked": 0, "other": 0, "total": 0}
     files: List[Dict[str, Any]] = []
     if result.get("ok"):
-        for raw_line in str(result.get("stdout") or "").splitlines():
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            code = line[:2]
-            path = line[3:] if len(line) > 3 else ""
+        raw_output = str(result.get("stdout") or "")
+        records: List[Tuple[str, str, Optional[str]]] = []
+        if nul_paths:
+            tokens = raw_output.split("\0")
+            if tokens and tokens[-1] == "":
+                tokens.pop()
+            index = 0
+            while index < len(tokens):
+                record = tokens[index]
+                index += 1
+                code = record[:2]
+                path = record[3:] if len(record) > 3 else ""
+                previous_path = None
+                if any(marker in code for marker in ("R", "C")) and index < len(tokens):
+                    previous_path = tokens[index]
+                    index += 1
+                records.append((code, path, previous_path))
+        else:
+            for raw_line in raw_output.splitlines():
+                line = raw_line.rstrip()
+                if line:
+                    records.append((line[:2], line[3:] if len(line) > 3 else "", None))
+        for code, path, previous_path in records:
             x = code[0] if len(code) > 0 else " "
             y = code[1] if len(code) > 1 else " "
             if code == "??":
@@ -2172,7 +2197,10 @@ def git_change_summary(task_id: str, *, limit: int = 500) -> Dict[str, Any]:
                 kind = "other"
                 counts["other"] += 1
             counts["total"] += 1
-            files.append({"path": path, "status": code, "kind": kind})
+            item = {"path": path, "status": code, "kind": kind}
+            if previous_path is not None:
+                item["previous_path"] = previous_path
+            files.append(item)
     max_files = max(1, min(int(limit or 500), 2000))
     return {
         "ok": bool(result.get("ok")),
@@ -2221,15 +2249,39 @@ def _git_name_status_summary(
     result = _run_process(list(argv), cwd=repo)
     files: List[Dict[str, Any]] = []
     if result.get("ok"):
-        for raw_line in str(result.get("stdout") or "").splitlines():
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            parts = line.split("\t")
-            status = str(parts[0] if parts else "").strip()
+        raw_output = str(result.get("stdout") or "")
+        parsed: List[Tuple[str, str, Optional[str]]] = []
+        if "-z" in argv:
+            tokens = raw_output.split("\0")
+            if tokens and tokens[-1] == "":
+                tokens.pop()
+            index = 0
+            while index < len(tokens):
+                status = tokens[index].strip()
+                index += 1
+                kind = _diff_kind_from_status(status)
+                if kind == "renamed" or status[:1].upper() == "C":
+                    previous_path = tokens[index] if index < len(tokens) else None
+                    index += 1
+                    path = tokens[index] if index < len(tokens) else ""
+                    index += 1
+                else:
+                    previous_path = None
+                    path = tokens[index] if index < len(tokens) else ""
+                    index += 1
+                parsed.append((status, path, previous_path))
+        else:
+            for raw_line in raw_output.splitlines():
+                line = raw_line.rstrip()
+                if not line:
+                    continue
+                parts = line.split("\t")
+                status = str(parts[0] if parts else "").strip()
+                path = str(parts[-1] if len(parts) >= 2 else "").strip()
+                previous_path = str(parts[1] if len(parts) >= 3 else "").strip() or None
+                parsed.append((status, path, previous_path))
+        for status, path, previous_path in parsed:
             kind = _diff_kind_from_status(status)
-            path = str(parts[-1] if len(parts) >= 2 else "").strip()
-            previous_path = str(parts[1] if len(parts) >= 3 else "").strip() or None
             files.append(
                 {
                     "path": path,
@@ -2261,6 +2313,7 @@ def _git_base_branch_diff(
     *,
     base_branch: str,
     change_limit: int = 500,
+    nul_paths: bool = False,
 ) -> Dict[str, Any]:
     base = _base_branch(base_branch)
     base_ref = ""
@@ -2283,14 +2336,22 @@ def _git_base_branch_diff(
     diff = _run_process(["git", "diff", compare_ref, "--"], cwd=repo)
     workspace_changes = _git_name_status_summary(
         repo,
-        ["git", "diff", "--name-status", compare_ref, "--"],
+        ["git", "diff", "--name-status", *(["-z"] if nul_paths else []), compare_ref, "--"],
         limit=change_limit,
     )
     committed_stat = _run_process(["git", "diff", "--stat", compare_ref, "HEAD", "--"], cwd=repo)
     committed_diff = _run_process(["git", "diff", compare_ref, "HEAD", "--"], cwd=repo)
     committed_changes = _git_name_status_summary(
         repo,
-        ["git", "diff", "--name-status", compare_ref, "HEAD", "--"],
+        [
+            "git",
+            "diff",
+            "--name-status",
+            *(["-z"] if nul_paths else []),
+            compare_ref,
+            "HEAD",
+            "--",
+        ],
         limit=change_limit,
     )
     return {
@@ -2423,7 +2484,12 @@ def apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -
                 pass
 
 
-def git_diff(task_id: str, *, change_limit: int = 500) -> Dict[str, Any]:
+def git_diff(
+    task_id: str,
+    *,
+    change_limit: int = 500,
+    nul_paths: bool = False,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     branch = str(task.get("branch_name") or "").strip()
@@ -2432,6 +2498,7 @@ def git_diff(task_id: str, *, change_limit: int = 500) -> Dict[str, Any]:
         repo,
         base_branch=base_branch,
         change_limit=change_limit,
+        nul_paths=nul_paths,
     )
     worktree_stat = _run_process(["git", "diff", "--stat"], cwd=repo)
     worktree_diff = _run_process(["git", "diff", "--"], cwd=repo)
@@ -2478,14 +2545,22 @@ def harness_git_diff(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness diff requires a harness task")
-    return git_diff(task_id, change_limit=_HARNESS_MAX_CHANGED_FILES + 1)
+    return git_diff(
+        task_id,
+        change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+        nul_paths=True,
+    )
 
 
 def harness_git_changes(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness changes require a harness task")
-    return git_change_summary(task_id, limit=_HARNESS_MAX_CHANGED_FILES + 1)
+    return git_change_summary(
+        task_id,
+        limit=_HARNESS_MAX_CHANGED_FILES + 1,
+        nul_paths=True,
+    )
 
 
 def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
@@ -3027,7 +3102,7 @@ def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     size = target.stat().st_size
-    if size > file_max_bytes():
+    if size > _HARNESS_MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="file is too large for the coding file API")
     raw = target.read_bytes()
     try:
