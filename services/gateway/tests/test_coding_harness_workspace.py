@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import threading
@@ -656,6 +657,56 @@ def test_harness_deletion_waits_for_automatic_checkpoint_worker(monkeypatch, tmp
     assert saved["stop_reason_code"] == "run_timeout"
     assert saved["last_checkpoint_run_id"] == "run-1"
     assert saved["last_checkpoint_cycle"] == 3
+    assert cw.delete_harness_task(task["id"])["ok"] is True
+
+
+def test_harness_deletion_rechecks_active_status_under_guard(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="active-delete-check",
+        files={"app.py": "value\n"},
+        prompt="Run the fixture.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="queued"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        cw.delete_harness_task(task["id"])
+
+    assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_harness_run_start_is_serialized_with_deletion(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="run-start-delete-race",
+        files={"app.py": "value\n"},
+        prompt="Start the fixture.",
+        owner="test",
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_start_impl(task_id, **kwargs):
+        started.set()
+        await release.wait()
+        return {"id": task_id, "kind": "harness_eval", "agent_status": "idle"}
+
+    monkeypatch.setattr(ca, "_start_agent_run_impl", fake_start_impl)
+    run = asyncio.create_task(ca.start_agent_run(task["id"]))
+    await asyncio.wait_for(started.wait(), timeout=5)
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            cw.delete_harness_task(task["id"])
+        assert exc_info.value.status_code == 409
+    finally:
+        release.set()
+        await asyncio.wait_for(run, timeout=5)
+
     assert cw.delete_harness_task(task["id"])["ok"] is True
 
 

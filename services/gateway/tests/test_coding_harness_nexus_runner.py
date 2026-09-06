@@ -20,6 +20,31 @@ def _load_module():
 harness = _load_module()
 
 
+def test_untracked_text_diff_uses_git_equivalent_output():
+    deadline = harness.time.monotonic() + 10
+
+    patch = harness._untracked_text_diff(
+        "nested/new.py",
+        "CREATED = True\n",
+        "100755",
+        deadline=deadline,
+    )
+
+    assert patch.count("diff --git a/nested/new.py b/nested/new.py") == 1
+    assert "new file mode 100755\n" in patch
+    assert "index 0000000.." in patch
+    assert "+CREATED = True\n" in patch
+    empty_patch = harness._untracked_text_diff(
+        "empty.txt",
+        "",
+        "100644",
+        deadline=deadline,
+    )
+    assert "diff --git a/empty.txt b/empty.txt\n" in empty_patch
+    assert "new file mode 100644\n" in empty_patch
+    assert "index 0000000..e69de29\n" in empty_patch
+
+
 def _fixture(tmp_path: Path) -> Path:
     fixture = {
         "schema_version": 1,

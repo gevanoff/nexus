@@ -64,6 +64,7 @@ _HARNESS_VALIDATIONS_GUARD = threading.Lock()
 _ACTIVE_HARNESS_VALIDATIONS: set[str] = set()
 _ACTIVE_HARNESS_AGENT_TOOLS: Dict[str, int] = {}
 _ACTIVE_HARNESS_EVIDENCE_READS: Dict[str, int] = {}
+_ACTIVE_HARNESS_RUN_STARTS: set[str] = set()
 
 
 def coding_enabled() -> bool:
@@ -2092,6 +2093,8 @@ def run_harness_validation_command(
     with _HARNESS_VALIDATIONS_GUARD:
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is already active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
         if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
             raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
         if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
@@ -2143,6 +2146,8 @@ def begin_harness_agent_tool(task_id: str) -> bool:
             return False
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
         if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
             raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
         _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = (
@@ -2166,6 +2171,8 @@ def begin_harness_evidence_read(task_id: str) -> None:
     with _HARNESS_VALIDATIONS_GUARD:
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
         if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
             raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
         _ACTIVE_HARNESS_EVIDENCE_READS[task_id] = (
@@ -2180,6 +2187,31 @@ def end_harness_evidence_read(task_id: str) -> None:
             _ACTIVE_HARNESS_EVIDENCE_READS[task_id] = remaining
         else:
             _ACTIVE_HARNESS_EVIDENCE_READS.pop(task_id, None)
+
+
+def begin_harness_agent_run_start(task_id: str) -> bool:
+    """Serialize a harness run transition with evidence, validation, and deletion."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            return False
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is already starting")
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        _ACTIVE_HARNESS_RUN_STARTS.add(task_id)
+        return True
+
+
+def end_harness_agent_run_start(task_id: str, *, registered: bool) -> None:
+    if not registered:
+        return
+    with _HARNESS_VALIDATIONS_GUARD:
+        _ACTIVE_HARNESS_RUN_STARTS.discard(task_id)
 
 
 def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
@@ -3557,6 +3589,8 @@ def delete_task(task_id: str) -> Dict[str, Any]:
 def delete_harness_task(task_id: str) -> Dict[str, Any]:
     """Atomically refuse deletion while a harness validation command is active."""
     with _HARNESS_VALIDATIONS_GUARD:
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
         if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
@@ -3566,6 +3600,9 @@ def delete_harness_task(task_id: str) -> Dict[str, Any]:
         task = load_task(task_id)
         if str(task.get("kind") or "") != "harness_eval":
             raise HTTPException(status_code=403, detail="only coding harness tasks may be deleted here")
+        agent_status = str(task.get("agent_status") or "idle").strip().lower()
+        if agent_status in {"queued", "running", "stopping", "pausing"}:
+            raise HTTPException(status_code=409, detail="coding harness task is still active")
         return delete_task(task_id)
 
 

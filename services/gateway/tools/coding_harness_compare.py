@@ -5,7 +5,6 @@ import argparse
 import base64
 import contextlib
 import ctypes
-import difflib
 import hashlib
 import json
 import os
@@ -3066,27 +3065,44 @@ def _nexus_final_file_reader(
     return read_content
 
 
-def _untracked_text_diff(rel: str, content: str, mode: str) -> str:
-    """Render a deterministic unified patch for a text-only untracked file."""
-    safe = safe_rel_path(rel).as_posix()
-    lines = content.splitlines(keepends=True)
-    missing_final_newline = bool(content and not content.endswith(("\n", "\r")))
-    if missing_final_newline:
-        lines[-1] += "\n"
-    patch = "".join(
-        difflib.unified_diff(
-            [],
-            lines,
-            fromfile="/dev/null",
-            tofile=f"b/{safe}",
-            lineterm="\n",
-        )
-    )
-    if missing_final_newline:
-        patch += "\\ No newline at end of file\n"
+def _untracked_text_diff(
+    rel: str,
+    content: str,
+    mode: str,
+    *,
+    deadline: float,
+) -> str:
+    """Render an untracked patch through the same Git operation as Albatross."""
     if mode not in {"100644", "100755"}:
         raise ValueError(f"unsupported untracked Git file mode: {mode}")
-    return f"diff --git a/{safe} b/{safe}\nnew file mode {mode}\n{patch}"
+    safe = safe_rel_path(rel)
+    with tempfile.TemporaryDirectory(prefix="nexus-harness-untracked-") as raw_root:
+        root = Path(raw_root)
+        target = root / safe
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content.encode("utf-8"))
+        target.chmod(0o755 if mode == "100755" else 0o644)
+        patch = git(
+            [
+                "diff",
+                "--no-index",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                "/dev/null",
+                safe.as_posix(),
+            ],
+            cwd=root,
+            evidence=True,
+            include_raw_output=True,
+            timeout_sec=_snapshot_timeout(deadline),
+        )
+        _require_result(
+            patch,
+            f"git diff --no-index {rel}",
+            allowed_returncodes=(0, 1),
+        )
+        return str(patch.pop("_raw_stdout", patch.get("stdout") or ""))
 
 
 def run_nexus_fixture(
@@ -3258,7 +3274,12 @@ def run_nexus_fixture(
                     )
                 if diff_text and not diff_text.endswith("\n"):
                     diff_text += "\n"
-                diff_text += _untracked_text_diff(rel, content, file_modes[rel])
+                diff_text += _untracked_text_diff(
+                    rel,
+                    content,
+                    file_modes[rel],
+                    deadline=evidence_deadline,
+                )
         diff_text = redact_text(diff_text, [nexus_token])
         if len(diff_text) > MAX_SNAPSHOT_DIFF_CHARS:
             raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_DIFF_CHARS} character diff limit")

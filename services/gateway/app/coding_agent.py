@@ -2543,7 +2543,7 @@ async def resume_interrupted_agent_runs(task_ids: Sequence[str]) -> Dict[str, An
     return {"ok": not failures, "resumed": len(resumed), "tasks": resumed, "failures": failures}
 
 
-async def start_agent_run(
+async def _start_agent_run_impl(
     task_id: str,
     *,
     git_token_value: Optional[str] = None,
@@ -2749,6 +2749,39 @@ async def start_agent_run(
     job.add_done_callback(_cleanup)
     fresh = await asyncio.to_thread(cw.load_task, task_id)
     return cw.public_task(fresh)
+
+
+async def start_agent_run(
+    task_id: str,
+    *,
+    git_token_value: Optional[str] = None,
+    coding_model: Optional[str] = None,
+    prompt: Optional[str] = None,
+    auto_commit: bool = False,
+    commit_message: Optional[str] = None,
+    actor: Optional[str] = None,
+    max_cycles: Optional[int] = None,
+    max_runtime_sec: Optional[int] = None,
+    context_reset_cycles: Optional[int] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    registered = await asyncio.to_thread(cw.begin_harness_agent_run_start, task_id)
+    try:
+        return await _start_agent_run_impl(
+            task_id,
+            git_token_value=git_token_value,
+            coding_model=coding_model,
+            prompt=prompt,
+            auto_commit=auto_commit,
+            commit_message=commit_message,
+            actor=actor,
+            max_cycles=max_cycles,
+            max_runtime_sec=max_runtime_sec,
+            context_reset_cycles=context_reset_cycles,
+            mission_overrides=mission_overrides,
+        )
+    finally:
+        cw.end_harness_agent_run_start(task_id, registered=registered)
 
 
 async def create_and_start_agent_run(
