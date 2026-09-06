@@ -94,6 +94,10 @@ MAX_VALIDATION_PROCESSES = 128
 MAX_VALIDATION_MEMORY_BYTES = 16 * 1024 * 1024 * 1024
 MAX_VALIDATION_AGGREGATE_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
 MAX_NEXUS_API_RESPONSE_BYTES = 8_000_000
+# A complete bounded diff can expand sixfold under JSON escaping, with bounded
+# stat and changed-path evidence in the same response. Other endpoints retain
+# the smaller generic cap.
+MAX_NEXUS_DIFF_RESPONSE_BYTES = 12 * MAX_SNAPSHOT_DIFF_CHARS
 NEXUS_POLL_INTERVAL_SEC = 2.0
 NEXUS_MIN_AGENT_STEPS = 4
 NEXUS_MIN_WALL_TIME_SEC = 60
@@ -2752,10 +2756,16 @@ def nexus_api_request(
         headers=headers,
         method=str(method or "GET").upper(),
     )
+    endpoint = str(path or "").partition("?")[0]
+    response_limit = (
+        MAX_NEXUS_DIFF_RESPONSE_BYTES
+        if endpoint.startswith("/coding/harness/tasks/") and endpoint.endswith("/diff")
+        else MAX_NEXUS_API_RESPONSE_BYTES
+    )
     try:
         opener = urlrequest.build_opener(_NoRedirectHandler())
         with opener.open(request, timeout=max(0.1, float(timeout_sec))) as response:
-            raw = response.read(MAX_NEXUS_API_RESPONSE_BYTES + 1)
+            raw = response.read(response_limit + 1)
     except urlerror.HTTPError as exc:
         detail = exc.read(min(MAX_NEXUS_API_RESPONSE_BYTES, 64_000)).decode("utf-8", errors="replace")
         raise NexusApiError(
@@ -2764,7 +2774,7 @@ def nexus_api_request(
         ) from exc
     except (urlerror.URLError, TimeoutError, OSError) as exc:
         raise NexusApiError(redact_text(f"Nexus API request failed: {exc}", [token])) from exc
-    if len(raw) > MAX_NEXUS_API_RESPONSE_BYTES:
+    if len(raw) > response_limit:
         raise NexusApiError("Nexus API response exceeded the harness size limit")
     try:
         payload = json.loads(raw.decode("utf-8"))

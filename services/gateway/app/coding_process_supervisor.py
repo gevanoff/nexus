@@ -11,6 +11,7 @@ from typing import NoReturn, Sequence
 
 
 _CONTAINMENT_ERROR_EXIT = 125
+_DESCENDANT_QUIET_SEC = 0.25
 _PR_SET_CHILD_SUBREAPER = 36
 
 
@@ -84,10 +85,17 @@ def _terminate_descendants(root_pgid: int) -> None:
         pass
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
         deadline = time.monotonic() + 0.75
+        quiet_since: float | None = None
         while time.monotonic() < deadline:
             roots = _direct_children(os.getpid())
             if not roots:
-                return
+                _reap_children()
+                quiet_since = quiet_since or time.monotonic()
+                if time.monotonic() - quiet_since >= _DESCENDANT_QUIET_SEC:
+                    return
+                time.sleep(0.02)
+                continue
+            quiet_since = None
             _signal_processes(_descendant_tree(roots), signal_number)
             _reap_children()
             time.sleep(0.02)

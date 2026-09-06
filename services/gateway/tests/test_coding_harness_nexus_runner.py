@@ -20,6 +20,52 @@ def _load_module():
 harness = _load_module()
 
 
+def test_nexus_diff_response_allows_bounded_json_expansion(monkeypatch):
+    raw = json.dumps(
+        {"ok": True, "diff": {"stdout": "\\" * 4_100_000}},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert len(raw) > harness.MAX_NEXUS_API_RESPONSE_BYTES
+    observed_limits = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, limit):
+            observed_limits.append(limit)
+            return raw[:limit]
+
+    class FakeOpener:
+        def open(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(harness.urlrequest, "build_opener", lambda *_args: FakeOpener())
+
+    with pytest.raises(harness.NexusApiError, match="response exceeded"):
+        harness.nexus_api_request(
+            "GET",
+            "http://gateway/v1",
+            "/coding/tasks/code_abcdef123456",
+            token="test-token",
+        )
+    result = harness.nexus_api_request(
+        "GET",
+        "http://gateway/v1",
+        "/coding/harness/tasks/code_abcdef123456/diff?evidence_lease_id=lease-test",
+        token="test-token",
+    )
+
+    assert len(result["diff"]["stdout"]) == 4_100_000
+    assert observed_limits == [
+        harness.MAX_NEXUS_API_RESPONSE_BYTES + 1,
+        harness.MAX_NEXUS_DIFF_RESPONSE_BYTES + 1,
+    ]
+
+
 def test_untracked_text_diff_uses_git_equivalent_output():
     deadline = harness.time.monotonic() + 10
 
