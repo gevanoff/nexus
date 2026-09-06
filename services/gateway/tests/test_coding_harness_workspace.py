@@ -611,6 +611,18 @@ def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
             new_text="changed",
         ),
         lambda: cw.write_file(task["id"], path="app.py", content="changed\n"),
+        lambda: cw.apply_unified_patch(
+            task["id"],
+            patch=(
+                "diff --git a/app.py b/app.py\n"
+                "--- a/app.py\n"
+                "+++ b/app.py\n"
+                "@@ -1 +1 @@\n"
+                "-value\n"
+                "+changed\n"
+            ),
+        ),
+        lambda: cw.commit_task(task["id"], message="must not commit"),
     ):
         with pytest.raises(HTTPException) as mutation_error:
             mutate()
@@ -621,6 +633,12 @@ def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
     with pytest.raises(HTTPException) as delete_error:
         cw.delete_harness_task(task["id"])
     assert delete_error.value.status_code == 409
+    with pytest.raises(HTTPException) as generic_delete_error:
+        cw.delete_task(task["id"])
+    assert generic_delete_error.value.status_code == 403
+    with pytest.raises(HTTPException) as archive_error:
+        cw.archive_task(task["id"], actor="test", reason="must-not-move")
+    assert archive_error.value.status_code == 403
 
     monkeypatch.setattr(
         cw,

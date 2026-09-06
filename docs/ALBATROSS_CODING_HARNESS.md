@@ -175,13 +175,13 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
   validation, an agent-run start transition, an agent tool worker, or an
   automatic checkpoint worker remains active;
 - grants a bounded evidence lease only after active workers have settled; the
-  lease blocks resume, agent tools, generic command/file mutations, unrelated
-  validation, and unrelated deletion across the complete
+  lease blocks resume, agent tools, generic command/file/patch mutations,
+  unrelated validation, and unrelated deletion across the complete
   diff/change/file/validation snapshot, expires after a client disconnect, and
   is consumed by matching atomic deletion;
 - exposes strict text-or-binary file evidence using the same 2 MB per-file cap
   as the shared fixture schema;
-- permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task.
+- permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task, while generic delete and archive operations reject disposable harness tasks.
 
 The client collects the baseline diff, selected final text files, post-run validation, persisted route/run evidence, and then deletes the server-side task and Git workspace. It rejects a truncated Gateway diff instead of hashing partial evidence, parses change paths from NUL-delimited Git output, deduplicates paths before enforcing the changed-file limit, and generates text-only untracked patches through the same `git diff --no-index` operation as the Albatross side, including the real executable mode. A harness-only file endpoint preserves exact whitespace in paths and uses strict UTF-8 decoding; binary files and paths containing symlinks are identified and recorded as evidence omissions instead of being replacement-decoded or dereferenced into fabricated evidence. Repository paths containing non-UTF-8 bytes are rejected as explicitly unsupported before any such path can enter an API JSON response. Diff, change, and file endpoints return a conflict rather than sample an active worker's changing worktree. The client acquires one server-side evidence lease before the diff and retains it through change/file collection and validation, so a resumed agent cannot split the snapshot across worktree states. Final-file collection has a 30-second aggregate time bound after any guarded worker has settled; that bound is excluded from the validation budget, and its 16 MB aggregate byte budget is enforced before each response is cached. The client does not report `execution_workspace_retained: false` until deletion is confirmed, and cleanup retries conflicts through at least the Gateway's default 120-second command lifetime. A failed client run also discards its partial local evidence. If server-side deletion cannot be confirmed, the command fails closed with a `SECURITY` error.
 

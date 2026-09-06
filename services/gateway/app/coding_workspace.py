@@ -2639,7 +2639,17 @@ def search_text(
     }
 
 
-def apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -> Dict[str, Any]:
+def apply_unified_patch(
+    task_id: str,
+    *,
+    patch: str,
+    check_only: bool = False,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _apply_unified_patch(task_id, patch=patch, check_only=check_only)
+
+
+def _apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -> Dict[str, Any]:
     raw = str(patch or "")
     if not raw.strip():
         raise HTTPException(status_code=400, detail="patch is required")
@@ -2956,6 +2966,11 @@ def harness_git_changes(task_id: str) -> Dict[str, Any]:
 
 
 def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _commit_task(task_id, message=message)
+
+
+def _commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
     msg = str(message or "").strip()
     if not msg:
         raise HTTPException(status_code=400, detail="commit message is required")
@@ -3650,8 +3665,13 @@ def write_file(task_id: str, *, path: str, content: str) -> Dict[str, Any]:
         return {"ok": True, "path": rel, "bytes": len(data)}
 
 
-def delete_task(task_id: str) -> Dict[str, Any]:
+def delete_task(task_id: str, *, _allow_harness: bool = False) -> Dict[str, Any]:
     task = load_task(task_id)
+    if str(task.get("kind") or "") == "harness_eval" and not _allow_harness:
+        raise HTTPException(
+            status_code=403,
+            detail="harness tasks require the guarded harness deletion endpoint",
+        )
     path = _task_workspace(task_id)
     root = workspace_root()
     _ensure_inside(root, path)
@@ -3690,7 +3710,7 @@ def delete_harness_task(
         agent_status = str(task.get("agent_status") or "idle").strip().lower()
         if agent_status in {"queued", "running", "stopping", "pausing"}:
             raise HTTPException(status_code=409, detail="coding harness task is still active")
-        result = delete_task(task_id)
+        result = delete_task(task_id, _allow_harness=True)
         if active_lease:
             _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(active_lease, None)
         return result
@@ -3746,6 +3766,11 @@ def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, A
 
 def archive_task(task_id: str, *, actor: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
     task = load_task(task_id)
+    if str(task.get("kind") or "") == "harness_eval":
+        raise HTTPException(
+            status_code=403,
+            detail="disposable harness tasks cannot be archived",
+        )
     task_path = _task_path(task_id)
     workspace_path = _task_workspace(task_id)
     archive_id = f"{task_id}.{int(_now())}.{secrets.token_hex(4)}"
