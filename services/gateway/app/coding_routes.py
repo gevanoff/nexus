@@ -890,6 +890,11 @@ async def v1_coding_harness_acquire_evidence_lease(
     body: CodingHarnessEvidenceLeaseRequest,
 ) -> Dict[str, Any]:
     _require_coding_api(req)
+    if ca.agent_run_active(task_id):
+        raise HTTPException(
+            status_code=409,
+            detail="coding harness agent runner is still active",
+        )
     lease = await _to_thread(
         cw.acquire_harness_evidence_lease,
         task_id,

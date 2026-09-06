@@ -175,9 +175,10 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
   validation, an agent-run start transition, an agent tool worker, or an
   automatic checkpoint worker remains active;
 - grants a bounded evidence lease only after active workers have settled; the
-  lease blocks resume, tool mutation, unrelated validation, and unrelated
-  deletion across the complete diff/change/file/validation snapshot, expires
-  after a client disconnect, and is consumed by matching atomic deletion;
+  lease blocks resume, agent tools, generic command/file mutations, unrelated
+  validation, and unrelated deletion across the complete
+  diff/change/file/validation snapshot, expires after a client disconnect, and
+  is consumed by matching atomic deletion;
 - exposes strict text-or-binary file evidence using the same 2 MB per-file cap
   as the shared fixture schema;
 - permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task.

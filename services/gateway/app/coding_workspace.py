@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib import error as urlerror
@@ -2065,25 +2066,26 @@ def run_task_command(
     timeout_sec: Optional[float] = None,
     git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
-    task = load_task(task_id)
-    repo = _repo_path(task)
-    command = validate_command(argv)
-    run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
-    if not run_cwd.exists() or not run_cwd.is_dir():
-        raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
-    cmd = Path(command[0]).name.lower()
-    result = _run_process(
-        command,
-        cwd=run_cwd,
-        timeout_sec=timeout_sec,
-        use_git_credentials=cmd in {"git", "gh"},
-        git_token_value=git_token_value,
-    )
-    mutate_task(
-        task_id,
-        lambda current: _append_command(current, result, label="command"),
-    )
-    return result
+    with _harness_mutation_guard(task_id):
+        task = load_task(task_id)
+        repo = _repo_path(task)
+        command = validate_command(argv)
+        run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
+        if not run_cwd.exists() or not run_cwd.is_dir():
+            raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
+        cmd = Path(command[0]).name.lower()
+        result = _run_process(
+            command,
+            cwd=run_cwd,
+            timeout_sec=timeout_sec,
+            use_git_credentials=cmd in {"git", "gh"},
+            git_token_value=git_token_value,
+        )
+        mutate_task(
+            task_id,
+            lambda current: _append_command(current, result, label="command"),
+        )
+        return result
 
 
 def run_harness_validation_command(
@@ -2175,6 +2177,16 @@ def end_harness_agent_tool(task_id: str, *, registered: bool) -> None:
             _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = remaining
         else:
             _ACTIVE_HARNESS_AGENT_TOOLS.pop(task_id, None)
+
+
+@contextmanager
+def _harness_mutation_guard(task_id: str):
+    """Serialize generic workspace mutations with harness evidence leases."""
+    registered = begin_harness_agent_tool(task_id)
+    try:
+        yield
+    finally:
+        end_harness_agent_tool(task_id, registered=registered)
 
 
 def begin_harness_evidence_read(task_id: str) -> None:
@@ -3590,50 +3602,52 @@ def replace_text(
     new_text: str,
     expected_replacements: Optional[int] = 1,
 ) -> Dict[str, Any]:
-    task = load_task(task_id)
-    rel = str(path or "").strip()
-    if not rel:
-        raise HTTPException(status_code=400, detail="path is required")
-    old = str(old_text or "")
-    if not old:
-        raise HTTPException(status_code=400, detail="old_text is required")
-    target = _resolve_repo_child(task, rel)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="file not found")
-    size = target.stat().st_size
-    if size > file_max_bytes():
-        raise HTTPException(status_code=413, detail="file is too large for the coding file API")
-    text = target.read_text(encoding="utf-8", errors="replace")
-    count = text.count(old)
-    if count <= 0:
-        return {"ok": False, "path": rel, "replacements": 0, "error": "old_text was not found"}
-    expected = None if expected_replacements is None else int(expected_replacements)
-    if expected is not None and expected >= 0 and count != expected:
-        return {"ok": False, "path": rel, "replacements": count, "expected_replacements": expected, "error": "replacement count did not match expected_replacements"}
-    updated = text.replace(old, str(new_text or ""))
-    data = updated.encode("utf-8")
-    if len(data) > file_max_bytes():
-        raise HTTPException(status_code=413, detail="replacement result is too large")
-    target.write_bytes(data)
-    task["last_file_write_at"] = _now()
-    save_task(task)
-    return {"ok": True, "path": rel, "replacements": count, "bytes": len(data)}
+    with _harness_mutation_guard(task_id):
+        task = load_task(task_id)
+        rel = str(path or "").strip()
+        if not rel:
+            raise HTTPException(status_code=400, detail="path is required")
+        old = str(old_text or "")
+        if not old:
+            raise HTTPException(status_code=400, detail="old_text is required")
+        target = _resolve_repo_child(task, rel)
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        size = target.stat().st_size
+        if size > file_max_bytes():
+            raise HTTPException(status_code=413, detail="file is too large for the coding file API")
+        text = target.read_text(encoding="utf-8", errors="replace")
+        count = text.count(old)
+        if count <= 0:
+            return {"ok": False, "path": rel, "replacements": 0, "error": "old_text was not found"}
+        expected = None if expected_replacements is None else int(expected_replacements)
+        if expected is not None and expected >= 0 and count != expected:
+            return {"ok": False, "path": rel, "replacements": count, "expected_replacements": expected, "error": "replacement count did not match expected_replacements"}
+        updated = text.replace(old, str(new_text or ""))
+        data = updated.encode("utf-8")
+        if len(data) > file_max_bytes():
+            raise HTTPException(status_code=413, detail="replacement result is too large")
+        target.write_bytes(data)
+        task["last_file_write_at"] = _now()
+        save_task(task)
+        return {"ok": True, "path": rel, "replacements": count, "bytes": len(data)}
 
 
 def write_file(task_id: str, *, path: str, content: str) -> Dict[str, Any]:
-    task = load_task(task_id)
-    rel = str(path or "").strip()
-    if not rel:
-        raise HTTPException(status_code=400, detail="path is required")
-    target = _resolve_repo_child(task, rel)
-    data = str(content or "").encode("utf-8")
-    if len(data) > file_max_bytes():
-        raise HTTPException(status_code=413, detail="content is too large for the coding file API")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-    task["last_file_write_at"] = _now()
-    save_task(task)
-    return {"ok": True, "path": rel, "bytes": len(data)}
+    with _harness_mutation_guard(task_id):
+        task = load_task(task_id)
+        rel = str(path or "").strip()
+        if not rel:
+            raise HTTPException(status_code=400, detail="path is required")
+        target = _resolve_repo_child(task, rel)
+        data = str(content or "").encode("utf-8")
+        if len(data) > file_max_bytes():
+            raise HTTPException(status_code=413, detail="content is too large for the coding file API")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        task["last_file_write_at"] = _now()
+        save_task(task)
+        return {"ok": True, "path": rel, "bytes": len(data)}
 
 
 def delete_task(task_id: str) -> Dict[str, Any]:

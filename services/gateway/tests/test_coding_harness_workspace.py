@@ -602,6 +602,19 @@ def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
     with pytest.raises(HTTPException) as tool_error:
         cw.begin_harness_agent_tool(task["id"])
     assert tool_error.value.status_code == 409
+    for mutate in (
+        lambda: cw.run_task_command(task["id"], argv=["python3", "-V"]),
+        lambda: cw.replace_text(
+            task["id"],
+            path="app.py",
+            old_text="value",
+            new_text="changed",
+        ),
+        lambda: cw.write_file(task["id"], path="app.py", content="changed\n"),
+    ):
+        with pytest.raises(HTTPException) as mutation_error:
+            mutate()
+        assert mutation_error.value.status_code == 409
     with pytest.raises(HTTPException) as validation_error:
         cw.run_harness_validation_command(task["id"], argv=["python3", "-V"])
     assert validation_error.value.status_code == 409
@@ -663,6 +676,64 @@ def test_expired_harness_evidence_lease_no_longer_blocks_resume(
     assert registered is True
     assert lease["lease_id"] not in cw._ACTIVE_HARNESS_EVIDENCE_LEASES
     assert cw.delete_harness_task(task["id"])["ok"] is True
+
+
+def test_generic_harness_command_blocks_evidence_lease_until_settled(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="generic-command-evidence-race",
+        files={"app.py": "value\n"},
+        prompt="Serialize a generic command with evidence.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    started = threading.Event()
+    release = threading.Event()
+    failures = []
+
+    def fake_run_process(argv, **kwargs):
+        started.set()
+        assert release.wait(timeout=5)
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+            "argv": list(argv),
+            "duration_ms": 1,
+        }
+
+    def run_command():
+        try:
+            cw.run_task_command(task["id"], argv=["python3", "-V"])
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(cw, "_run_process", fake_run_process)
+    worker = threading.Thread(target=run_command)
+    worker.start()
+    assert started.wait(timeout=5)
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+        assert exc_info.value.status_code == 409
+    finally:
+        release.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert failures == []
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+    assert cw.delete_harness_task(
+        task["id"],
+        evidence_lease_id=lease["lease_id"],
+    )["ok"] is True
 
 
 def test_harness_deletion_waits_for_cancelled_agent_tool_worker(monkeypatch, tmp_path):
@@ -999,6 +1070,7 @@ async def test_harness_evidence_lease_routes_delegate_to_guarded_workspace(
 ):
     captured = []
     monkeypatch.setattr(coding_routes, "_require_coding_api", lambda req: None)
+    monkeypatch.setattr(coding_routes.ca, "agent_run_active", lambda task_id: False)
     monkeypatch.setattr(
         coding_routes.cw,
         "acquire_harness_evidence_lease",
@@ -1029,6 +1101,26 @@ async def test_harness_evidence_lease_routes_delegate_to_guarded_workspace(
         ("acquire", "code_abcdef123456", {"ttl_sec": 450.0}),
         ("release", "code_abcdef123456", {"lease_id": "lease-test-123"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_harness_evidence_lease_route_waits_for_live_runner(monkeypatch):
+    monkeypatch.setattr(coding_routes, "_require_coding_api", lambda req: None)
+    monkeypatch.setattr(coding_routes.ca, "agent_run_active", lambda task_id: True)
+    monkeypatch.setattr(
+        coding_routes.cw,
+        "acquire_harness_evidence_lease",
+        lambda *args, **kwargs: pytest.fail("lease must wait for the live runner"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await coding_routes.v1_coding_harness_acquire_evidence_lease(
+            SimpleNamespace(),
+            "code_abcdef123456",
+            coding_routes.CodingHarnessEvidenceLeaseRequest(ttl_sec=300),
+        )
+
+    assert exc_info.value.status_code == 409
 
 
 @pytest.mark.asyncio
