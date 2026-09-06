@@ -124,8 +124,25 @@ def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monke
         prompt="Change value.",
         owner="test",
     )
+    finalization_failures = [
+        (
+            cw.create_harness_task(
+                fixture_id=status,
+                files={"app.py": "value\n"},
+                prompt="Change value.",
+                owner="test",
+            ),
+            status,
+        )
+        for status in ("failed_finalization", "failed_publish")
+    ]
     now = 2_000_000_000.0
-    for task_id, status in ((terminal["id"], "completed"), (active["id"], "running")):
+    statuses = [
+        (terminal["id"], "completed"),
+        (active["id"], "running"),
+        *((task["id"], status) for task, status in finalization_failures),
+    ]
+    for task_id, status in statuses:
         raw = cw.load_task(task_id)
         raw["harness_expires_at"] = now - 100
         raw["agent_status"] = status
@@ -139,10 +156,15 @@ def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monke
 
     result = cw.cleanup_expired_harness_tasks(now=now)
 
+    expected_purged = {
+        terminal["id"],
+        initialization_error["id"],
+        *(task["id"] for task, _ in finalization_failures),
+    }
     assert result["ok"] is True
-    assert set(result["purged"]) == {terminal["id"], initialization_error["id"]}
+    assert set(result["purged"]) == expected_purged
     assert result["failures"] == {}
-    for task_id in (terminal["id"], initialization_error["id"]):
+    for task_id in expected_purged:
         with pytest.raises(HTTPException) as missing:
             cw.load_task(task_id)
         assert missing.value.status_code == 404

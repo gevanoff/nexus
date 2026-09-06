@@ -3029,6 +3029,8 @@ def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, A
     terminal_statuses = {
         "completed",
         "failed",
+        "failed_finalization",
+        "failed_publish",
         "paused",
         "stopped",
         "interrupted",

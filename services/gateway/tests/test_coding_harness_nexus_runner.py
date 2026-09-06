@@ -109,6 +109,11 @@ def test_validation_fixture_guards_non_string_numeric_compatibility():
 def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, tmp_path):
     calls: list[tuple[str, str, dict | None]] = []
     task = _completed_task()
+    fixture_path = _fixture(tmp_path)
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture["expected"]["files_changed"] = ["app.py", "new.py"]
+    fixture["expected"]["allowed_files_changed"] = ["app.py", "new.py"]
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
 
     def fake_request(method, base_url, path, *, token, body=None, timeout_sec=30.0):
         calls.append((method, path, body))
@@ -122,10 +127,19 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
                 "changes": {"files": [{"path": "app.py", "kind": "modified"}]},
                 "diff": {
                     "stdout": "diff --git a/app.py b/app.py\n-VALUE = 'broken'\n+VALUE = 'fixed'\n"
-                },
+                    },
+                }
+        if method == "GET" and path.startswith("/coding/tasks/") and path.endswith("/changes"):
+            return {
+                "result": {
+                    "ok": True,
+                    "files": [{"path": "new.py", "status": "??", "kind": "untracked"}],
+                }
             }
         if method == "GET" and "/file?path=app.py" in path:
             return {"path": "app.py", "size": 16, "content": "VALUE = 'fixed'\n"}
+        if method == "GET" and "/file?path=new.py" in path:
+            return {"path": "new.py", "size": 14, "content": "CREATED = True\n"}
         if method == "GET" and path.startswith("/coding/tasks/"):
             return {"task": task}
         if method == "POST" and path.endswith("/command"):
@@ -145,7 +159,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     monkeypatch.setattr(harness, "nexus_api_request", fake_request)
 
     result, result_path = harness.run_nexus_fixture(
-        _fixture(tmp_path),
+        fixture_path,
         out_root=tmp_path / "results",
         nexus_base_url="http://gateway/v1",
         nexus_token="secret-token-value",
@@ -174,10 +188,16 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     assert result["trajectory"]["context_resets"] == 1
     assert result["objective"]["passed"] is True
     assert result["validation"]["passed"] is True
-    assert result["workspace"]["files_changed"] == ["app.py"]
+    assert result["workspace"]["files_changed"] == ["app.py", "new.py"]
     assert result["workspace"]["git_metadata_retained"] is False
     assert result["workspace"]["execution_workspace_retained"] is False
     assert Path(result["artifacts"]["diff"]).read_text(encoding="utf-8").endswith("+VALUE = 'fixed'\n")
+    assert (
+        Path(result["artifacts"]["run_root"])
+        / "artifacts"
+        / "final-files"
+        / "new.py"
+    ).read_text(encoding="utf-8") == "CREATED = True\n"
     assert any(method == "DELETE" for method, _, _ in calls)
 
 
@@ -259,6 +279,26 @@ def test_delete_nexus_harness_task_retries_active_runner(monkeypatch):
 
 def test_wait_for_nexus_task_preserves_interrupted_terminal_status(monkeypatch):
     task = {"id": "code_abcdef123456", "agent": {"status": "interrupted"}}
+    monkeypatch.setattr(
+        harness,
+        "nexus_api_request",
+        lambda *args, **kwargs: {"task": task},
+    )
+
+    observed, timed_out = harness._wait_for_nexus_task(
+        task["id"],
+        base_url="http://gateway/v1",
+        token="token",
+        deadline=harness.time.monotonic() + 1.0,
+    )
+
+    assert observed is task
+    assert timed_out is False
+
+
+@pytest.mark.parametrize("status", ["failed_finalization", "failed_publish"])
+def test_wait_for_nexus_task_recognizes_controller_terminal_failures(monkeypatch, status):
+    task = {"id": "code_abcdef123456", "agent": {"status": status}}
     monkeypatch.setattr(
         harness,
         "nexus_api_request",

@@ -97,7 +97,16 @@ NEXUS_POLL_INTERVAL_SEC = 2.0
 NEXUS_MIN_AGENT_STEPS = 4
 NEXUS_MIN_WALL_TIME_SEC = 60
 NEXUS_TERMINAL_STATUSES = frozenset(
-    {"completed", "failed", "paused", "stopped", "interrupted", "idle_waiting"}
+    {
+        "completed",
+        "failed",
+        "failed_finalization",
+        "failed_publish",
+        "paused",
+        "stopped",
+        "interrupted",
+        "idle_waiting",
+    }
 )
 
 
@@ -3019,10 +3028,25 @@ def run_nexus_fixture(
         )
         if diff_payload.get("ok") is not True:
             raise NexusApiError(str(diff_payload.get("error") or "Nexus harness diff collection failed"))
+        changes_payload = nexus_api_request(
+            "GET",
+            nexus_base_url,
+            f"/coding/tasks/{quote(task_id, safe='')}/changes",
+            token=nexus_token,
+            timeout_sec=30.0,
+        )
+        pending_changes = changes_payload.get("result")
+        if not isinstance(pending_changes, dict) or pending_changes.get("ok") is not True:
+            raise NexusApiError("Nexus harness worktree change collection failed")
         change_items = [
             item for item in ((diff_payload.get("changes") or {}).get("files") or [])
             if isinstance(item, dict)
         ]
+        change_items.extend(
+            item
+            for item in (pending_changes.get("files") or [])
+            if isinstance(item, dict)
+        )
         raw_changed = [str(item.get("path") or "") for item in change_items if str(item.get("path") or "")]
         if len(raw_changed) > MAX_SNAPSHOT_CHANGED_FILES:
             raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_CHANGED_FILES} changed-file limit")
