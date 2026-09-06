@@ -175,8 +175,8 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
   validation, an agent-run start transition, an agent tool worker, or an
   automatic checkpoint worker remains active;
 - grants a bounded evidence lease only after active workers have settled; the
-  lease blocks resume, agent tools, generic command/file/patch mutations and
-  persistent generic search/diff reads,
+  lease blocks resume, agent tools, generic command/file/patch/push/PR
+  mutations, and persistent generic search/diff/message/model/plan updates,
   unrelated validation, and unrelated deletion across the complete
   diff/change/file/validation snapshot, expires after a client disconnect, and
   is consumed by matching atomic deletion;

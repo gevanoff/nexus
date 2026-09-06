@@ -606,6 +606,26 @@ def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
         lambda: cw.run_task_command(task["id"], argv=["python3", "-V"]),
         lambda: cw.git_diff(task["id"]),
         lambda: cw.search_text(task["id"], query="value"),
+        lambda: cw.push_task(task["id"]),
+        lambda: cw.create_pull_request(
+            task["id"],
+            title="must not create",
+            body="",
+        ),
+        lambda: cw.append_guidance_message(
+            task["id"],
+            message="must not persist",
+            actor="test",
+        ),
+        lambda: cw.set_task_coding_model(
+            task["id"],
+            coding_model="coder",
+        ),
+        lambda: cw.update_project_plan(
+            task["id"],
+            note="must not persist",
+            actor="test",
+        ),
         lambda: cw.replace_text(
             task["id"],
             path="app.py",
@@ -748,15 +768,17 @@ def test_expired_harness_evidence_lease_no_longer_blocks_resume(
     assert cw.delete_harness_task(task["id"])["ok"] is True
 
 
-def test_generic_harness_command_blocks_evidence_lease_until_settled(
+@pytest.mark.parametrize("operation_name", ["command", "push"])
+def test_generic_persistent_harness_operation_blocks_evidence_lease_until_settled(
     monkeypatch,
     tmp_path,
+    operation_name,
 ):
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
-        fixture_id="generic-command-evidence-race",
+        fixture_id=f"generic-{operation_name}-evidence-race",
         files={"app.py": "value\n"},
-        prompt="Serialize a generic command with evidence.",
+        prompt="Serialize a generic persistent operation with evidence.",
         owner="test",
     )
     cw.mutate_task(
@@ -779,14 +801,17 @@ def test_generic_harness_command_blocks_evidence_lease_until_settled(
             "duration_ms": 1,
         }
 
-    def run_command():
+    def run_operation():
         try:
-            cw.run_task_command(task["id"], argv=["python3", "-V"])
+            if operation_name == "command":
+                cw.run_task_command(task["id"], argv=["python3", "-V"])
+            else:
+                cw.push_task(task["id"])
         except BaseException as exc:
             failures.append(exc)
 
     monkeypatch.setattr(cw, "_run_process", fake_run_process)
-    worker = threading.Thread(target=run_command)
+    worker = threading.Thread(target=run_operation)
     worker.start()
     assert started.wait(timeout=5)
     try:

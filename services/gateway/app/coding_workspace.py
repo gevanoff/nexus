@@ -905,6 +905,24 @@ def update_project_plan(
     note: Optional[str] = None,
     actor: Optional[str] = None,
 ) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _update_project_plan(
+            task_id,
+            goal=goal,
+            items=items,
+            note=note,
+            actor=actor,
+        )
+
+
+def _update_project_plan(
+    task_id: str,
+    *,
+    goal: Optional[str] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    note: Optional[str] = None,
+    actor: Optional[str] = None,
+) -> Dict[str, Any]:
     if goal is None and items is None and note is None:
         raise HTTPException(status_code=400, detail="plan update requires goal, items, or note")
     if items is not None and not isinstance(items, list):
@@ -929,6 +947,22 @@ def update_project_plan(
 
 
 def append_guidance_message(
+    task_id: str,
+    *,
+    message: str,
+    actor: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _append_guidance_message(
+            task_id,
+            message=message,
+            actor=actor,
+            run_id=run_id,
+        )
+
+
+def _append_guidance_message(
     task_id: str,
     *,
     message: str,
@@ -960,7 +994,20 @@ def append_guidance_message(
     return public_task(task)
 
 
-def set_task_coding_model(task_id: str, *, coding_model: Optional[str]) -> Dict[str, Any]:
+def set_task_coding_model(
+    task_id: str,
+    *,
+    coding_model: Optional[str],
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _set_task_coding_model(task_id, coding_model=coding_model)
+
+
+def _set_task_coding_model(
+    task_id: str,
+    *,
+    coding_model: Optional[str],
+) -> Dict[str, Any]:
     next_model = str(coding_model or "").strip()
     def apply(task: Dict[str, Any]) -> None:
         agent_status = str(task.get("agent_status") or "").strip().lower()
@@ -3114,7 +3161,26 @@ def checkpoint_task(
     }
 
 
-def push_task(task_id: str, *, remote: Optional[str] = None, git_token_value: Optional[str] = None) -> Dict[str, Any]:
+def push_task(
+    task_id: str,
+    *,
+    remote: Optional[str] = None,
+    git_token_value: Optional[str] = None,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _push_task(
+            task_id,
+            remote=remote,
+            git_token_value=git_token_value,
+        )
+
+
+def _push_task(
+    task_id: str,
+    *,
+    remote: Optional[str] = None,
+    git_token_value: Optional[str] = None,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     remote_name = str(remote or "origin").strip() or "origin"
@@ -3369,6 +3435,26 @@ def _attach_model_integration_remote(
 
 
 def create_pull_request(
+    task_id: str,
+    *,
+    title: str,
+    body: Optional[str],
+    draft: bool = True,
+    base_branch: Optional[str] = None,
+    git_token_value: Optional[str] = None,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _create_pull_request(
+            task_id,
+            title=title,
+            body=body,
+            draft=draft,
+            base_branch=base_branch,
+            git_token_value=git_token_value,
+        )
+
+
+def _create_pull_request(
     task_id: str,
     *,
     title: str,
