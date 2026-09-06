@@ -2285,6 +2285,25 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
     raise HTTPException(status_code=400, detail=f"unknown coding tool: {name}")
 
 
+def _run_tool_worker(
+    task_id: str,
+    name: str,
+    args: Dict[str, Any],
+    *,
+    git_token_value: Optional[str],
+) -> Dict[str, Any]:
+    registered = cw.begin_harness_agent_tool(task_id)
+    try:
+        return _run_tool(
+            task_id,
+            name,
+            args,
+            git_token_value=git_token_value,
+        )
+    finally:
+        cw.end_harness_agent_tool(task_id, registered=registered)
+
+
 def _checkpoint_enabled() -> bool:
     return bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True))
 
@@ -3393,7 +3412,13 @@ async def _run_agent(
                     )
                 else:
                     try:
-                        result = await asyncio.to_thread(_run_tool, task_id, name, args, git_token_value=git_token_value)
+                        result = await asyncio.to_thread(
+                            _run_tool_worker,
+                            task_id,
+                            name,
+                            args,
+                            git_token_value=git_token_value,
+                        )
                     except HTTPException as exc:
                         result = {"ok": False, "error": exc.detail}
                     except Exception as exc:

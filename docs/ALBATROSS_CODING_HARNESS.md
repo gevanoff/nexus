@@ -168,7 +168,7 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
   agent startup;
 - exposes a harness-only validation route that honors the accepted run budget
   (up to one hour) without attaching Git credentials, and blocks deletion while
-  validation remains active;
+  validation or an agent tool worker remains active;
 - exposes strict text-or-binary file evidence using the same 2 MB per-file cap
   as the shared fixture schema;
 - permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task.

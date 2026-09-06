@@ -852,7 +852,7 @@ async def v1_coding_harness_create_and_run(
         )
     except BaseException:
         if task_id and not ca.agent_run_active(task_id):
-            await _to_thread(cw.delete_task, task_id)
+            await _to_thread(cw.delete_harness_task, task_id)
         raise
     return {"task": task}
 

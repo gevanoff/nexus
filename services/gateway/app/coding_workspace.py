@@ -62,6 +62,7 @@ _WORKSPACE_LOCKS_GUARD = threading.Lock()
 _WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
 _HARNESS_VALIDATIONS_GUARD = threading.Lock()
 _ACTIVE_HARNESS_VALIDATIONS: set[str] = set()
+_ACTIVE_HARNESS_AGENT_TOOLS: Dict[str, int] = {}
 
 
 def coding_enabled() -> bool:
@@ -2088,6 +2089,8 @@ def run_harness_validation_command(
     with _HARNESS_VALIDATIONS_GUARD:
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is already active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
         _ACTIVE_HARNESS_VALIDATIONS.add(task_id)
     try:
         task = load_task(task_id)
@@ -2119,6 +2122,31 @@ def run_harness_validation_command(
     finally:
         with _HARNESS_VALIDATIONS_GUARD:
             _ACTIVE_HARNESS_VALIDATIONS.discard(task_id)
+
+
+def begin_harness_agent_tool(task_id: str) -> bool:
+    """Register a harness tool worker before it can mutate task state."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            return False
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = (
+            _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) + 1
+        )
+        return True
+
+
+def end_harness_agent_tool(task_id: str, *, registered: bool) -> None:
+    if not registered:
+        return
+    with _HARNESS_VALIDATIONS_GUARD:
+        remaining = _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) - 1
+        if remaining > 0:
+            _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = remaining
+        else:
+            _ACTIVE_HARNESS_AGENT_TOOLS.pop(task_id, None)
 
 
 def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
@@ -3440,6 +3468,8 @@ def delete_harness_task(task_id: str) -> Dict[str, Any]:
     with _HARNESS_VALIDATIONS_GUARD:
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
         task = load_task(task_id)
         if str(task.get("kind") or "") != "harness_eval":
             raise HTTPException(status_code=403, detail="only coding harness tasks may be deleted here")

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_routes
+from app import coding_agent as ca
 from app import coding_workspace as cw
 
 
@@ -484,6 +485,55 @@ def test_harness_deletion_refuses_an_active_validation(monkeypatch, tmp_path):
     assert cw.delete_harness_task(task["id"])["ok"] is True
 
 
+def test_harness_deletion_waits_for_cancelled_agent_tool_worker(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="agent-tool-delete-race",
+        files={"app.py": "value\n"},
+        prompt="Run a blocking command.",
+        owner="test",
+    )
+    started = threading.Event()
+    release = threading.Event()
+    failures = []
+
+    def fake_run_task_command(task_id, **kwargs):
+        started.set()
+        assert release.wait(timeout=30)
+        stale = cw.load_task(task_id)
+        stale["worker_finished"] = True
+        cw.save_task(stale)
+        return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    def run_tool():
+        try:
+            ca._run_tool_worker(
+                task["id"],
+                "coding_run_command",
+                {"argv": ["python3", "-V"]},
+                git_token_value=None,
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(cw, "run_task_command", fake_run_task_command)
+    worker = threading.Thread(target=run_tool)
+    worker.start()
+    assert started.wait(timeout=30)
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            cw.delete_harness_task(task["id"])
+        assert exc_info.value.status_code == 409
+    finally:
+        release.set()
+        worker.join(timeout=30)
+
+    assert not worker.is_alive()
+    assert failures == []
+    assert cw.load_task(task["id"])["worker_finished"] is True
+    assert cw.delete_harness_task(task["id"])["ok"] is True
+
+
 @pytest.mark.asyncio
 async def test_harness_route_uses_durable_agent_runner(monkeypatch):
     user = SimpleNamespace(id=7, username="tester")
@@ -569,7 +619,7 @@ async def test_harness_route_deletes_workspace_when_agent_start_fails(monkeypatc
     monkeypatch.setattr(coding_routes.ca, "agent_run_active", lambda task_id: False)
     monkeypatch.setattr(
         coding_routes.cw,
-        "delete_task",
+        "delete_harness_task",
         lambda task_id: deleted.append(task_id) or {"ok": True},
     )
 
