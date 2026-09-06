@@ -869,6 +869,35 @@ async def v1_coding_harness_delete_task(req: Request, task_id: str) -> Dict[str,
     return {"result": await _to_thread(cw.delete_task, task_id)}
 
 
+@router.post("/v1/coding/harness/tasks/{task_id}/validation")
+async def v1_coding_harness_validation(
+    req: Request,
+    task_id: str,
+    body: CodingCommandRequest,
+) -> Dict[str, Any]:
+    _require_coding_api(req)
+    result = await _to_thread(
+        cw.run_harness_validation_command,
+        task_id,
+        argv=body.argv,
+        cwd=body.cwd,
+        timeout_sec=body.timeout_sec,
+    )
+    return {"result": result}
+
+
+@router.get("/v1/coding/harness/tasks/{task_id}/diff")
+async def v1_coding_harness_diff(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return await _to_thread(cw.harness_git_diff, task_id)
+
+
+@router.get("/v1/coding/harness/tasks/{task_id}/changes")
+async def v1_coding_harness_changes(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_api(req)
+    return {"result": await _to_thread(cw.harness_git_changes, task_id)}
+
+
 @router.get("/v1/coding/tasks/{task_id}")
 async def v1_coding_get_task(req: Request, task_id: str) -> Dict[str, Any]:
     _require_coding_api(req)

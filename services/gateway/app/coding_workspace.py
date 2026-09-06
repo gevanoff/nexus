@@ -55,6 +55,7 @@ _HARNESS_MAX_FILES = 4096
 _HARNESS_MAX_FILE_BYTES = 2_000_000
 _HARNESS_MAX_TOTAL_BYTES = 8_000_000
 _HARNESS_MAX_PROMPT_BYTES = 64_000
+_HARNESS_MAX_CHANGED_FILES = 512
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
 _WORKSPACE_LOCKS_GUARD = threading.Lock()
@@ -1346,11 +1347,22 @@ def _run_process(
     *,
     cwd: Path,
     timeout_sec: Optional[float] = None,
+    timeout_limit_sec: Optional[float] = None,
     use_git_credentials: bool = False,
     git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     limit = max_output_chars()
+    if timeout_limit_sec is None:
+        effective_timeout_sec = command_timeout_sec(timeout_sec)
+    else:
+        try:
+            timeout_limit = max(1.0, min(float(timeout_limit_sec), 3600.0))
+            requested_timeout = timeout_limit if timeout_sec is None else float(timeout_sec)
+        except Exception:
+            timeout_limit = 3600.0
+            requested_timeout = timeout_limit
+        effective_timeout_sec = max(1.0, min(requested_timeout, timeout_limit, 3600.0))
     env = _base_env()
     redaction_tokens = [_effective_git_token(git_token_value)] if use_git_credentials else []
     effective_argv = _argv_with_git_safe_directory(argv, cwd=cwd)
@@ -1363,7 +1375,7 @@ def _run_process(
                 env=env,
                 text=True,
                 capture_output=True,
-                timeout=command_timeout_sec(timeout_sec),
+                timeout=effective_timeout_sec,
             )
             stdout, stdout_truncated = _truncate(proc.stdout or "", limit, extra_tokens=redaction_tokens)
             stderr, stderr_truncated = _truncate(proc.stderr or "", limit, extra_tokens=redaction_tokens)
@@ -1385,7 +1397,7 @@ def _run_process(
                 "ok": False,
                 "returncode": None,
                 "stdout": stdout,
-                "stderr": stderr or f"timeout after {command_timeout_sec(timeout_sec):.0f}s",
+                "stderr": stderr or f"timeout after {effective_timeout_sec:.0f}s",
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
                 "argv": _redact_argv(argv, extra_tokens=redaction_tokens),
@@ -2055,6 +2067,42 @@ def run_task_command(
     return result
 
 
+def run_harness_validation_command(
+    task_id: str,
+    *,
+    argv: Sequence[str],
+    cwd: Optional[str] = None,
+    timeout_sec: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Run trusted fixture validation with the harness run budget as its timeout cap."""
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="harness validation requires a harness task")
+    agent_status = str(task.get("agent_status") or "idle").strip().lower()
+    if agent_status in {"queued", "running", "stopping", "pausing"}:
+        raise HTTPException(status_code=409, detail="coding harness task is still active")
+    repo = _repo_path(task)
+    command = validate_command(argv)
+    run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
+    if not run_cwd.exists() or not run_cwd.is_dir():
+        raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
+    mission = normalize_coding_mission(task)
+    timeout_limit = max(
+        1.0,
+        min(float(mission["budget_policy"]["max_runtime_sec"]), 3600.0),
+    )
+    result = _run_process(
+        command,
+        cwd=run_cwd,
+        timeout_sec=timeout_sec,
+        timeout_limit_sec=timeout_limit,
+        use_git_credentials=False,
+    )
+    _append_command(task, result, label="harness-validation")
+    save_task(task)
+    return result
+
+
 def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
     result = run_task_command(task_id, argv=["git", "status", "--short", "--branch"], git_token_value=git_token_value)
     return result
@@ -2088,7 +2136,7 @@ def workspace_progress_fingerprint(task_id: str) -> str:
     return digest.hexdigest()
 
 
-def git_change_summary(task_id: str) -> Dict[str, Any]:
+def git_change_summary(task_id: str, *, limit: int = 500) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     result = _run_process(["git", "status", "--porcelain"], cwd=repo)
@@ -2125,7 +2173,14 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
                 counts["other"] += 1
             counts["total"] += 1
             files.append({"path": path, "status": code, "kind": kind})
-    return {"ok": bool(result.get("ok")), "counts": counts, "files": files[:500], "truncated": len(files) > 500, "raw": result}
+    max_files = max(1, min(int(limit or 500), 2000))
+    return {
+        "ok": bool(result.get("ok")),
+        "counts": counts,
+        "files": files[:max_files],
+        "truncated": bool(result.get("stdout_truncated") or len(files) > max_files),
+        "raw": result,
+    }
 
 
 def _diff_kind_from_status(status: str) -> str:
@@ -2157,7 +2212,12 @@ def _counts_for_change_files(files: Sequence[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def _git_name_status_summary(repo: Path, argv: Sequence[str]) -> Dict[str, Any]:
+def _git_name_status_summary(
+    repo: Path,
+    argv: Sequence[str],
+    *,
+    limit: int = 500,
+) -> Dict[str, Any]:
     result = _run_process(list(argv), cwd=repo)
     files: List[Dict[str, Any]] = []
     if result.get("ok"):
@@ -2178,11 +2238,12 @@ def _git_name_status_summary(repo: Path, argv: Sequence[str]) -> Dict[str, Any]:
                     "kind": kind,
                 }
             )
+    max_files = max(1, min(int(limit or 500), 2000))
     return {
         "ok": bool(result.get("ok")),
         "counts": _counts_for_change_files(files),
-        "files": files[:500],
-        "truncated": len(files) > 500,
+        "files": files[:max_files],
+        "truncated": bool(result.get("stdout_truncated") or len(files) > max_files),
         "raw": result,
     }
 
@@ -2195,7 +2256,12 @@ def _git_ref_exists(repo: Path, ref: str) -> bool:
     return bool(result.get("ok"))
 
 
-def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
+def _git_base_branch_diff(
+    repo: Path,
+    *,
+    base_branch: str,
+    change_limit: int = 500,
+) -> Dict[str, Any]:
     base = _base_branch(base_branch)
     base_ref = ""
     for candidate in (f"origin/{base}", base):
@@ -2215,10 +2281,18 @@ def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
     compare_ref = merge_base or base_ref
     stat = _run_process(["git", "diff", "--stat", compare_ref, "--"], cwd=repo)
     diff = _run_process(["git", "diff", compare_ref, "--"], cwd=repo)
-    workspace_changes = _git_name_status_summary(repo, ["git", "diff", "--name-status", compare_ref, "--"])
+    workspace_changes = _git_name_status_summary(
+        repo,
+        ["git", "diff", "--name-status", compare_ref, "--"],
+        limit=change_limit,
+    )
     committed_stat = _run_process(["git", "diff", "--stat", compare_ref, "HEAD", "--"], cwd=repo)
     committed_diff = _run_process(["git", "diff", compare_ref, "HEAD", "--"], cwd=repo)
-    committed_changes = _git_name_status_summary(repo, ["git", "diff", "--name-status", compare_ref, "HEAD", "--"])
+    committed_changes = _git_name_status_summary(
+        repo,
+        ["git", "diff", "--name-status", compare_ref, "HEAD", "--"],
+        limit=change_limit,
+    )
     return {
         "ok": bool(
             stat.get("ok")
@@ -2349,12 +2423,16 @@ def apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -
                 pass
 
 
-def git_diff(task_id: str) -> Dict[str, Any]:
+def git_diff(task_id: str, *, change_limit: int = 500) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     branch = str(task.get("branch_name") or "").strip()
     base_branch = str(task.get("base_branch") or "main").strip()
-    base_diff = _git_base_branch_diff(repo, base_branch=base_branch)
+    base_diff = _git_base_branch_diff(
+        repo,
+        base_branch=base_branch,
+        change_limit=change_limit,
+    )
     worktree_stat = _run_process(["git", "diff", "--stat"], cwd=repo)
     worktree_diff = _run_process(["git", "diff", "--"], cwd=repo)
     staged_stat = _run_process(["git", "diff", "--cached", "--stat"], cwd=repo)
@@ -2394,6 +2472,20 @@ def git_diff(task_id: str) -> Dict[str, Any]:
     )
     save_task(task)
     return result
+
+
+def harness_git_diff(task_id: str) -> Dict[str, Any]:
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="harness diff requires a harness task")
+    return git_diff(task_id, change_limit=_HARNESS_MAX_CHANGED_FILES + 1)
+
+
+def harness_git_changes(task_id: str) -> Dict[str, Any]:
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="harness changes require a harness task")
+    return git_change_summary(task_id, limit=_HARNESS_MAX_CHANGED_FILES + 1)
 
 
 def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:

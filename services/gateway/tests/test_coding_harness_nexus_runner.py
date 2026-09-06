@@ -119,7 +119,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
         calls.append((method, path, body))
         if method == "POST" and path == "/coding/harness/runs":
             return {"task": {**task, "agent": {"status": "queued"}}}
-        if method == "GET" and path.startswith("/coding/tasks/") and path.endswith("/diff"):
+        if method == "GET" and path.startswith("/coding/harness/tasks/") and path.endswith("/diff"):
             return {
                 "ok": True,
                 "merge_base": "a" * 40,
@@ -129,11 +129,14 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
                     "stdout": "diff --git a/app.py b/app.py\n-VALUE = 'broken'\n+VALUE = 'fixed'\n"
                     },
                 }
-        if method == "GET" and path.startswith("/coding/tasks/") and path.endswith("/changes"):
+        if method == "GET" and path.startswith("/coding/harness/tasks/") and path.endswith("/changes"):
             return {
                 "result": {
                     "ok": True,
-                    "files": [{"path": "new.py", "status": "??", "kind": "untracked"}],
+                    "files": [
+                        {"path": "app.py", "status": " M", "kind": "modified"},
+                        {"path": "new.py", "status": "??", "kind": "untracked"},
+                    ],
                 }
             }
         if method == "GET" and "/file?path=app.py" in path:
@@ -142,7 +145,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
             return {"path": "new.py", "size": 14, "content": "CREATED = True\n"}
         if method == "GET" and path.startswith("/coding/tasks/"):
             return {"task": task}
-        if method == "POST" and path.endswith("/command"):
+        if method == "POST" and path.endswith("/validation"):
             return {
                 "result": {
                     "ok": True,
@@ -157,6 +160,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
         raise AssertionError((method, path, body))
 
     monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+    monkeypatch.setattr(harness, "MAX_SNAPSHOT_CHANGED_FILES", 2)
 
     result, result_path = harness.run_nexus_fixture(
         fixture_path,
@@ -191,7 +195,10 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     assert result["workspace"]["files_changed"] == ["app.py", "new.py"]
     assert result["workspace"]["git_metadata_retained"] is False
     assert result["workspace"]["execution_workspace_retained"] is False
-    assert Path(result["artifacts"]["diff"]).read_text(encoding="utf-8").endswith("+VALUE = 'fixed'\n")
+    diff_text = Path(result["artifacts"]["diff"]).read_text(encoding="utf-8")
+    assert "+VALUE = 'fixed'\n" in diff_text
+    assert "diff --git a/new.py b/new.py" in diff_text
+    assert "+CREATED = True\n" in diff_text
     assert (
         Path(result["artifacts"]["run_root"])
         / "artifacts"
@@ -253,6 +260,75 @@ def test_run_nexus_fixture_rejects_limits_it_cannot_apply_exactly(monkeypatch, t
         )
 
     assert not (tmp_path / "results").exists()
+
+
+def test_run_nexus_fixture_rejects_truncated_diff_and_cleans_up(monkeypatch, tmp_path):
+    deleted = []
+    task = _completed_task()
+
+    def fake_request(method, base_url, path, *, token, body=None, timeout_sec=30.0):
+        if method == "POST" and path == "/coding/harness/runs":
+            return {"task": {**task, "agent": {"status": "queued"}}}
+        if method == "GET" and path.endswith("/diff"):
+            return {
+                "ok": True,
+                "changes": {"files": [{"path": "app.py", "kind": "modified"}]},
+                "diff": {"stdout": "partial", "stdout_truncated": True},
+            }
+        if method == "GET" and path.endswith("/changes"):
+            return {"result": {"ok": True, "files": []}}
+        if method == "GET" and path.startswith("/coding/tasks/"):
+            return {"task": task}
+        if method == "DELETE":
+            deleted.append(path)
+            return {"result": {"ok": True}}
+        raise AssertionError((method, path))
+
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+
+    with pytest.raises(harness.NexusApiError, match="diff evidence was truncated"):
+        harness.run_nexus_fixture(
+            _fixture(tmp_path),
+            out_root=tmp_path / "results",
+            nexus_base_url="http://gateway/v1",
+            nexus_token="secret-token-value",
+        )
+
+    assert deleted == ["/coding/harness/tasks/code_abcdef123456"]
+    assert list((tmp_path / "results").iterdir()) == []
+
+
+def test_run_nexus_validation_uses_harness_budget_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_request(method, base_url, path, *, token, body=None, timeout_sec=30.0):
+        captured.update({"method": method, "path": path, "body": body, "timeout": timeout_sec})
+        return {
+            "result": {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "",
+                "stderr": "",
+                "duration_ms": 1,
+            }
+        }
+
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+    fixture = {
+        "expected": {"validation": [["python3", "-m", "unittest", "-q"]]},
+    }
+
+    result = harness.run_nexus_validation(
+        fixture,
+        "code_abcdef123456",
+        base_url="http://gateway/v1",
+        token="token",
+        deadline=harness.time.monotonic() + 180,
+    )
+
+    assert result["passed"] is True
+    assert captured["path"] == "/coding/harness/tasks/code_abcdef123456/validation"
+    assert captured["body"]["timeout_sec"] > 120
 
 
 def test_delete_nexus_harness_task_retries_active_runner(monkeypatch):

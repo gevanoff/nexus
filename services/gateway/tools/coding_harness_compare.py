@@ -5,6 +5,7 @@ import argparse
 import base64
 import contextlib
 import ctypes
+import difflib
 import hashlib
 import json
 import os
@@ -2835,7 +2836,7 @@ def run_nexus_validation(
         payload = nexus_api_request(
             "POST",
             base_url,
-            f"/coding/tasks/{quote(task_id, safe='')}/command",
+            f"/coding/harness/tasks/{quote(task_id, safe='')}/validation",
             token=token,
             body={"argv": argv, "timeout_sec": remaining},
             timeout_sec=remaining + 5.0,
@@ -2954,6 +2955,27 @@ def _nexus_final_file_reader(
     return read_content
 
 
+def _untracked_text_diff(rel: str, content: str) -> str:
+    """Render a deterministic unified patch for a text-only untracked file."""
+    safe = safe_rel_path(rel).as_posix()
+    lines = content.splitlines(keepends=True)
+    missing_final_newline = bool(content and not content.endswith(("\n", "\r")))
+    if missing_final_newline:
+        lines[-1] += "\n"
+    patch = "".join(
+        difflib.unified_diff(
+            [],
+            lines,
+            fromfile="/dev/null",
+            tofile=f"b/{safe}",
+            lineterm="\n",
+        )
+    )
+    if missing_final_newline:
+        patch += "\\ No newline at end of file\n"
+    return f"diff --git a/{safe} b/{safe}\nnew file mode 100644\n{patch}"
+
+
 def run_nexus_fixture(
     fixture_path: Path,
     *,
@@ -3022,7 +3044,7 @@ def run_nexus_fixture(
         diff_payload = nexus_api_request(
             "GET",
             nexus_base_url,
-            f"/coding/tasks/{quote(task_id, safe='')}/diff",
+            f"/coding/harness/tasks/{quote(task_id, safe='')}/diff",
             token=nexus_token,
             timeout_sec=30.0,
         )
@@ -3031,15 +3053,20 @@ def run_nexus_fixture(
         changes_payload = nexus_api_request(
             "GET",
             nexus_base_url,
-            f"/coding/tasks/{quote(task_id, safe='')}/changes",
+            f"/coding/harness/tasks/{quote(task_id, safe='')}/changes",
             token=nexus_token,
             timeout_sec=30.0,
         )
         pending_changes = changes_payload.get("result")
         if not isinstance(pending_changes, dict) or pending_changes.get("ok") is not True:
             raise NexusApiError("Nexus harness worktree change collection failed")
+        diff_changes = diff_payload.get("changes")
+        if not isinstance(diff_changes, dict):
+            raise NexusApiError("Nexus harness diff response omitted change evidence")
+        if diff_changes.get("truncated") or pending_changes.get("truncated"):
+            raise NexusApiError("Nexus harness changed-file evidence was truncated")
         change_items = [
-            item for item in ((diff_payload.get("changes") or {}).get("files") or [])
+            item for item in (diff_changes.get("files") or [])
             if isinstance(item, dict)
         ]
         change_items.extend(
@@ -3047,22 +3074,36 @@ def run_nexus_fixture(
             for item in (pending_changes.get("files") or [])
             if isinstance(item, dict)
         )
-        raw_changed = [str(item.get("path") or "") for item in change_items if str(item.get("path") or "")]
+        raw_changed = sorted({
+            str(item.get("path") or "")
+            for item in change_items
+            if str(item.get("path") or "")
+        })
         if len(raw_changed) > MAX_SNAPSHOT_CHANGED_FILES:
             raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_CHANGED_FILES} changed-file limit")
+        raw_untracked = {
+            str(item.get("path") or "")
+            for item in (pending_changes.get("files") or [])
+            if isinstance(item, dict)
+            and (
+                str(item.get("kind") or "").strip().lower() == "untracked"
+                or str(item.get("status") or "").strip() == "??"
+            )
+            and str(item.get("path") or "")
+        }
         protected = {
             rel for rel in raw_changed
             if _contains_secret_path(rel, [nexus_token])
         }
         safe_changed = sorted(set(raw_changed) - protected)
+        safe_untracked = sorted(raw_untracked - protected)
         changed = safe_changed + (["(redacted)"] if protected else [])
-        diff_text = str(((diff_payload.get("diff") or {}).get("stdout") or ""))
-        if protected:
-            diff_text = ""
-        diff_text = redact_text(diff_text, [nexus_token])
-        if len(diff_text) > MAX_SNAPSHOT_DIFF_CHARS:
-            raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_DIFF_CHARS} character diff limit")
-        (artifacts / "final.diff").write_text(diff_text, encoding="utf-8")
+        diff_result = diff_payload.get("diff")
+        if not isinstance(diff_result, dict):
+            raise NexusApiError("Nexus harness diff response omitted diff evidence")
+        if diff_result.get("stdout_truncated"):
+            raise NexusApiError("Nexus harness diff evidence was truncated")
+        diff_text = str(diff_result.get("stdout") or "")
 
         cache: dict[str, tuple[str | None, str | None]] = {}
         read_content = _nexus_final_file_reader(
@@ -3079,6 +3120,24 @@ def run_nexus_fixture(
         }
         for rel in sorted(set(safe_changed) | expected_paths):
             read_content(rel)
+
+        if protected:
+            diff_text = ""
+        else:
+            for rel in safe_untracked:
+                content, error = cache.get(rel, (None, "file was not fetched"))
+                if error or content is None:
+                    raise RuntimeError(
+                        f"could not collect complete untracked diff evidence for {rel}: "
+                        f"{error or 'file unavailable'}"
+                    )
+                if diff_text and not diff_text.endswith("\n"):
+                    diff_text += "\n"
+                diff_text += _untracked_text_diff(rel, content)
+        diff_text = redact_text(diff_text, [nexus_token])
+        if len(diff_text) > MAX_SNAPSHOT_DIFF_CHARS:
+            raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_DIFF_CHARS} character diff limit")
+        (artifacts / "final.diff").write_text(diff_text, encoding="utf-8")
 
         final_files = artifacts / "final-files"
         final_file_omissions: list[dict[str, str]] = []

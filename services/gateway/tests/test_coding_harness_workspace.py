@@ -104,6 +104,99 @@ def test_create_harness_task_enforces_aggregate_limit(monkeypatch, tmp_path):
     assert "aggregate" in str(exc_info.value.detail)
 
 
+def test_harness_validation_uses_mission_timeout_without_git_credentials(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="long-validation",
+        files={"test_app.py": "pass\n"},
+        prompt="Validate the fixture.",
+        owner="test",
+        mission_overrides=cw.coding_mission_overrides(max_runtime_sec=300),
+    )
+    captured = {}
+
+    def fake_run_process(argv, **kwargs):
+        captured.update({"argv": list(argv), **kwargs})
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+            "argv": list(argv),
+            "duration_ms": 1,
+        }
+
+    monkeypatch.setattr(cw, "_run_process", fake_run_process)
+
+    result = cw.run_harness_validation_command(
+        task["id"],
+        argv=["git", "status", "--short"],
+        timeout_sec=250,
+    )
+
+    assert result["ok"] is True
+    assert captured["timeout_sec"] == 250
+    assert captured["timeout_limit_sec"] == 300
+    assert captured["use_git_credentials"] is False
+
+
+def test_harness_validation_rejects_normal_workspace(monkeypatch):
+    monkeypatch.setattr(cw, "load_task", lambda task_id: {"id": task_id, "kind": "workspace"})
+
+    with pytest.raises(HTTPException) as exc_info:
+        cw.run_harness_validation_command("code_abcdef123456", argv=["python3", "-m", "unittest"])
+
+    assert exc_info.value.status_code == 403
+
+
+def test_run_process_timeout_override_is_bounded_but_can_exceed_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(cw.S, "CODING_COMMAND_TIMEOUT_SEC", 120)
+    observed = []
+
+    def fake_run(*args, **kwargs):
+        observed.append(kwargs["timeout"])
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cw.subprocess, "run", fake_run)
+
+    cw._run_process(["python3", "--version"], cwd=tmp_path, timeout_sec=250)
+    cw._run_process(
+        ["python3", "--version"],
+        cwd=tmp_path,
+        timeout_sec=250,
+        timeout_limit_sec=300,
+    )
+
+    assert observed == [120, 250]
+
+
+def test_harness_git_evidence_requests_one_over_changed_file_limit(monkeypatch):
+    monkeypatch.setattr(
+        cw,
+        "load_task",
+        lambda task_id: {"id": task_id, "kind": "harness_eval"},
+    )
+    captured = {}
+
+    def fake_diff(task_id, *, change_limit):
+        captured["diff"] = (task_id, change_limit)
+        return {"ok": True}
+
+    def fake_changes(task_id, *, limit):
+        captured["changes"] = (task_id, limit)
+        return {"ok": True}
+
+    monkeypatch.setattr(cw, "git_diff", fake_diff)
+    monkeypatch.setattr(cw, "git_change_summary", fake_changes)
+
+    assert cw.harness_git_diff("code_abcdef123456") == {"ok": True}
+    assert cw.harness_git_changes("code_abcdef123456") == {"ok": True}
+    assert captured == {
+        "diff": ("code_abcdef123456", 513),
+        "changes": ("code_abcdef123456", 513),
+    }
+
+
 def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     terminal = cw.create_harness_task(
@@ -209,6 +302,34 @@ async def test_harness_route_uses_durable_agent_runner(monkeypatch):
     assert captured["create"]["files"] == {"app.py": "broken\n"}
     assert captured["start"]["task_id"] == "code_abcdef123456"
     assert captured["start"]["auto_commit"] is True
+
+
+@pytest.mark.asyncio
+async def test_harness_validation_route_uses_dedicated_runner(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(coding_routes, "_require_coding_api", lambda req: SimpleNamespace(id=7))
+
+    def fake_validation(task_id, **kwargs):
+        captured.update({"task_id": task_id, **kwargs})
+        return {"ok": True, "returncode": 0}
+
+    monkeypatch.setattr(coding_routes.cw, "run_harness_validation_command", fake_validation)
+    response = await coding_routes.v1_coding_harness_validation(
+        SimpleNamespace(),
+        "code_abcdef123456",
+        coding_routes.CodingCommandRequest(
+            argv=["python3", "-m", "unittest"],
+            timeout_sec=250,
+        ),
+    )
+
+    assert response == {"result": {"ok": True, "returncode": 0}}
+    assert captured == {
+        "task_id": "code_abcdef123456",
+        "argv": ["python3", "-m", "unittest"],
+        "cwd": None,
+        "timeout_sec": 250,
+    }
 
 
 @pytest.mark.asyncio
