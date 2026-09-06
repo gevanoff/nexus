@@ -232,7 +232,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     assert result["workspace"]["execution_workspace_retained"] is False
     diff_text = Path(result["artifacts"]["diff"]).read_text(encoding="utf-8")
     assert "+VALUE = 'fixed'\n" in diff_text
-    assert "diff --git a/new.py b/new.py" in diff_text
+    assert diff_text.count("diff --git a/new.py b/new.py") == 1
     assert "new file mode 100755" in diff_text
     assert "+CREATED = True\n" in diff_text
     assert (

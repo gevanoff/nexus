@@ -2730,10 +2730,6 @@ def _harness_neutral_git_snapshot(
             "--no-textconv",
             "--find-renames",
         ]
-        stat = _run_process(
-            [*diff_argv, "--stat", baseline, "--"], cwd=repo, env_overrides=env
-        )
-        diff = _run_process([*diff_argv, baseline, "--"], cwd=repo, env_overrides=env)
         tracked = _git_name_status_summary(
             repo,
             [*diff_argv, "--name-status", "-z", baseline, "--"],
@@ -2759,6 +2755,30 @@ def _harness_neutral_git_snapshot(
             for path in untracked_paths
             if path not in preserved_tracked_paths
         ]
+        synthetic_untracked_paths = [
+            str(item.get("path") or "")
+            for item in changed_files
+            if isinstance(item, dict)
+            and str(item.get("kind") or "").strip().lower() == "untracked"
+            and str(item.get("path") or "")
+        ]
+        diff_pathspecs = [
+            ".",
+            *[
+                f":(exclude,literal){path}"
+                for path in synthetic_untracked_paths
+            ],
+        ]
+        stat = _run_process(
+            [*diff_argv, "--stat", baseline, "--", *diff_pathspecs],
+            cwd=repo,
+            env_overrides=env,
+        )
+        diff = _run_process(
+            [*diff_argv, baseline, "--", *diff_pathspecs],
+            cwd=repo,
+            env_overrides=env,
+        )
         changes = {
             "ok": bool(
                 intent_to_add.get("ok")
@@ -2867,31 +2887,45 @@ def checkpoint_task(
         msg = msg[:2000]
     task = load_task(task_id)
     repo = _repo_path(task)
+    command_results: List[Tuple[Dict[str, Any], str]] = []
+
+    def persist_checkpoint(*, updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        def apply(current: Dict[str, Any]) -> None:
+            for result, label in command_results:
+                _append_command(current, result, label=label)
+            if updates:
+                current.update(updates)
+
+        return mutate_task(task_id, apply)
+
     status = _run_process(["git", "status", "--porcelain"], cwd=repo)
     if not status.get("ok"):
-        _append_command(task, status, label="checkpoint-status")
-        save_task(task)
+        command_results.append((status, "checkpoint-status"))
+        persist_checkpoint()
         return {"ok": False, "changed": False, "status": status, "error": "git status failed"}
     if not str(status.get("stdout") or "").strip():
-        save_task(task)
+        persist_checkpoint()
         return {"ok": True, "changed": False, "status": status, "message": "no changes to checkpoint"}
     add = _run_process(["git", "add", "-A"], cwd=repo)
-    _append_command(task, add, label="checkpoint-add")
+    command_results.append((add, "checkpoint-add"))
     if not add.get("ok"):
-        save_task(task)
+        persist_checkpoint()
         return {"ok": False, "changed": True, "add": add, "error": "git add failed"}
     commit = _run_process(["git", "commit", "-m", msg], cwd=repo)
-    _append_command(task, commit, label="checkpoint-commit")
+    command_results.append((commit, "checkpoint-commit"))
     rev = {"ok": False, "stdout": ""}
+    updates: Dict[str, Any] = {}
     if commit.get("ok"):
         rev = _run_process(["git", "rev-parse", "HEAD"], cwd=repo)
         commit_hash = str(rev.get("stdout") or "").strip()
-        task["last_commit"] = commit_hash
-        task["last_checkpoint_commit"] = commit_hash
-        task["last_checkpoint_at"] = _now()
-        task["last_checkpoint_run_id"] = str(run_id or "").strip()
-        task["last_checkpoint_cycle"] = int(cycle or 0)
-    save_task(task)
+        updates = {
+            "last_commit": commit_hash,
+            "last_checkpoint_commit": commit_hash,
+            "last_checkpoint_at": _now(),
+            "last_checkpoint_run_id": str(run_id or "").strip(),
+            "last_checkpoint_cycle": int(cycle or 0),
+        }
+    persisted = persist_checkpoint(updates=updates)
     return {
         "ok": bool(commit.get("ok")),
         "changed": True,
@@ -2899,7 +2933,7 @@ def checkpoint_task(
         "add": add,
         "commit": commit,
         "rev": rev,
-        "last_commit": task.get("last_commit"),
+        "last_commit": persisted.get("last_commit"),
     }
 
 

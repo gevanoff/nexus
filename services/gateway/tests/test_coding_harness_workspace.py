@@ -334,7 +334,8 @@ def test_harness_git_evidence_preserves_literal_paths_and_rename_targets(monkeyp
     )
 
     changed = cw.harness_git_changes(task["id"])["files"]
-    diff_changed = cw.harness_git_diff(task["id"])["changes"]["files"]
+    diff = cw.harness_git_diff(task["id"])
+    diff_changed = diff["changes"]["files"]
 
     expected = {"café.txt", 'quote"file.txt', "new name.txt"}
     assert {item["path"] for item in changed} == expected
@@ -342,6 +343,7 @@ def test_harness_git_evidence_preserves_literal_paths_and_rename_targets(monkeyp
     rename = next(item for item in changed if item["kind"] == "renamed")
     assert rename["path"] == "new name.txt"
     assert rename["previous_path"] == "old name.txt"
+    assert 'quote"file.txt' not in diff["diff"]["stdout"]
 
 
 def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tmp_path):
@@ -363,6 +365,9 @@ def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tm
     assert changes["binary.dat"]["status"] == "??"
     assert changes["link.txt"]["kind"] == "untracked"
     assert changes["link.txt"]["status"] == "??"
+    diff_text = cw.harness_git_diff(task["id"])["diff"]["stdout"]
+    assert "binary.dat" not in diff_text
+    assert "link.txt" not in diff_text
 
     assert cw.read_harness_file_evidence(task["id"], path="text.txt") == {
         "path": "text.txt",
@@ -591,6 +596,66 @@ def test_harness_deletion_waits_for_cancelled_agent_tool_worker(monkeypatch, tmp
     assert not worker.is_alive()
     assert failures == []
     assert cw.load_task(task["id"])["worker_finished"] is True
+    assert cw.delete_harness_task(task["id"])["ok"] is True
+
+
+def test_harness_deletion_waits_for_automatic_checkpoint_worker(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="automatic-checkpoint-delete-race",
+        files={"app.py": "before\n"},
+        prompt="Modify and checkpoint the fixture.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    (repo / "app.py").write_text("after\n", encoding="utf-8")
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="running"),
+    )
+    started = threading.Event()
+    release = threading.Event()
+    failures = []
+    real_run_process = cw._run_process
+
+    def blocking_run_process(argv, **kwargs):
+        if list(argv) == ["git", "status", "--porcelain"]:
+            started.set()
+            assert release.wait(timeout=30)
+        return real_run_process(argv, **kwargs)
+
+    def checkpoint():
+        try:
+            ca._checkpoint_after_cycle(task["id"], run_id="run-1", cycle=3)
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(cw, "_run_process", blocking_run_process)
+    worker = threading.Thread(target=checkpoint)
+    worker.start()
+    assert started.wait(timeout=30)
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(
+            agent_status="paused",
+            stop_reason_code="run_timeout",
+        ),
+    )
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            cw.delete_harness_task(task["id"])
+        assert exc_info.value.status_code == 409
+    finally:
+        release.set()
+        worker.join(timeout=30)
+
+    assert not worker.is_alive()
+    assert failures == []
+    saved = cw.load_task(task["id"])
+    assert saved["agent_status"] == "paused"
+    assert saved["stop_reason_code"] == "run_timeout"
+    assert saved["last_checkpoint_run_id"] == "run-1"
+    assert saved["last_checkpoint_cycle"] == 3
     assert cw.delete_harness_task(task["id"])["ok"] is True
 
 

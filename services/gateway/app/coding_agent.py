@@ -2310,7 +2310,11 @@ def _checkpoint_enabled() -> bool:
 
 def _checkpoint_after_cycle(task_id: str, *, run_id: str, cycle: int) -> Dict[str, Any]:
     msg = f"Nexus checkpoint: {task_id} cycle {cycle}"
-    return cw.checkpoint_task(task_id, message=msg, run_id=run_id, cycle=cycle)
+    registered = cw.begin_harness_agent_tool(task_id)
+    try:
+        return cw.checkpoint_task(task_id, message=msg, run_id=run_id, cycle=cycle)
+    finally:
+        cw.end_harness_agent_tool(task_id, registered=registered)
 
 
 def _mission_requires_workspace_edits(task: Dict[str, Any]) -> bool:
