@@ -5,8 +5,10 @@ import json
 import os
 import re
 import secrets
+import signal
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -1423,6 +1425,88 @@ def _argv_with_git_safe_directory(argv: Sequence[str], *, cwd: Path) -> List[str
     return [str(argv[0]), "-c", f"safe.directory={safe_directory}", *[str(item) for item in argv[1:]]]
 
 
+def _process_group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _terminate_process_group(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    # The supervisor may need both a graceful and forced descendant sweep.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if not _process_group_alive(pgid):
+            return
+        time.sleep(0.02)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline and _process_group_alive(pgid):
+        time.sleep(0.02)
+
+
+def _run_contained_process(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Dict[str, str],
+    timeout_sec: float,
+    decode_errors: str,
+) -> Tuple[Optional[int], str, str, bool, str]:
+    if os.name != "posix" or not sys.platform.startswith("linux"):
+        return None, "", "", False, "descendant process containment requires a Linux host"
+    supervisor = Path(__file__).with_name("coding_process_supervisor.py")
+    proc: Optional[subprocess.Popen[bytes]] = None
+    timed_out = False
+    containment_error = ""
+    stdout = ""
+    stderr = ""
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(mode="w+b") as stderr_file:
+            proc = subprocess.Popen(
+                [sys.executable, str(supervisor), *[str(item) for item in argv]],
+                cwd=str(cwd),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                start_new_session=True,
+            )
+            try:
+                proc.wait(timeout=timeout_sec)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _terminate_process_group(proc.pid)
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=1.0)
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            stdout = stdout_file.read().decode("utf-8", errors=decode_errors)
+            stderr = stderr_file.read().decode("utf-8", errors=decode_errors)
+            if proc.returncode == 125 and "NEXUS_CONTAINMENT_ERROR:" in stderr:
+                containment_error = "validation process containment failed"
+    except OSError as exc:
+        containment_error = f"could not launch contained process: {exc}"
+    return (
+        None if timed_out or proc is None else proc.returncode,
+        stdout,
+        stderr,
+        timed_out,
+        containment_error,
+    )
+
+
 def _run_process(
     argv: Sequence[str],
     *,
@@ -1434,6 +1518,7 @@ def _run_process(
     env_overrides: Optional[Dict[str, str]] = None,
     decode_errors: str = "strict",
     output_limit_chars: Optional[int] = None,
+    isolate_process_group: bool = False,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     if output_limit_chars is None:
@@ -1460,6 +1545,31 @@ def _run_process(
         env.update(extra_env)
         if env_overrides:
             env.update({str(key): str(value) for key, value in env_overrides.items()})
+        if isolate_process_group:
+            returncode, raw_stdout, raw_stderr, timed_out, containment_error = _run_contained_process(
+                effective_argv,
+                cwd=cwd,
+                env=env,
+                timeout_sec=effective_timeout_sec,
+                decode_errors=decode_errors,
+            )
+            stdout, stdout_truncated = _truncate(raw_stdout, limit, extra_tokens=redaction_tokens)
+            stderr, stderr_truncated = _truncate(raw_stderr, limit, extra_tokens=redaction_tokens)
+            if timed_out:
+                stderr = stderr or f"timeout after {effective_timeout_sec:.0f}s"
+            if containment_error:
+                stderr = f"{containment_error}\n{stderr}".rstrip()
+            return {
+                "ok": bool(returncode == 0 and not timed_out and not containment_error),
+                "returncode": returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "stdout_truncated": stdout_truncated,
+                "stderr_truncated": stderr_truncated,
+                "argv": _redact_argv(argv, extra_tokens=redaction_tokens),
+                "cwd": str(cwd),
+                "duration_ms": round((time.perf_counter() - started) * 1000.0, 1),
+            }
         try:
             proc = subprocess.run(
                 effective_argv,
@@ -2214,6 +2324,7 @@ def run_harness_validation_command(
             timeout_sec=timeout_sec,
             timeout_limit_sec=timeout_limit,
             use_git_credentials=False,
+            isolate_process_group=True,
         )
         mutate_task(
             task_id,
@@ -3068,10 +3179,6 @@ def _harness_neutral_git_snapshot(
             "stat": stat,
             "diff": diff,
             "changes": changes,
-            "worktree_stat": stat,
-            "worktree_diff": diff,
-            "staged_stat": {"ok": True, "stdout": "", "stderr": ""},
-            "staged_diff": {"ok": True, "stdout": "", "stderr": ""},
         }
         return {"diff": diff_result, "changes": changes}
 

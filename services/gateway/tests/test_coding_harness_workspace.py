@@ -4,7 +4,9 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -146,7 +148,74 @@ def test_harness_validation_uses_mission_timeout_without_git_credentials(monkeyp
     assert captured["timeout_sec"] == 250
     assert captured["timeout_limit_sec"] == 300
     assert captured["use_git_credentials"] is False
+    assert captured["isolate_process_group"] is True
     assert cw.load_task(task["id"])["validation_observer"] == "newer-state"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux containment required")
+def test_harness_validation_contains_detached_descendant(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="validation-descendant",
+        files={"test_app.py": "pass\n"},
+        prompt="Contain validation descendants.",
+        owner="test",
+    )
+    marker = tmp_path / "descendant-wrote"
+    child = (
+        "import time; from pathlib import Path; "
+        f"time.sleep(0.5); Path({str(marker)!r}).write_text('escaped', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess, sys; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, start_new_session=True)"
+    )
+
+    result = cw.run_harness_validation_command(
+        task["id"],
+        argv=["python3", "-c", parent],
+        timeout_sec=5,
+    )
+
+    assert result["ok"] is True
+    time.sleep(0.7)
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux containment required")
+def test_harness_validation_timeout_contains_detached_descendant(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="validation-timeout-descendant",
+        files={"test_app.py": "pass\n"},
+        prompt="Contain validation descendants after a timeout.",
+        owner="test",
+        mission_overrides=cw.coding_mission_overrides(max_runtime_sec=1),
+    )
+    marker = tmp_path / "timeout-descendant-wrote"
+    child = (
+        "import time; from pathlib import Path; "
+        f"time.sleep(1.5); Path({str(marker)!r}).write_text('escaped', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, start_new_session=True); time.sleep(5)"
+    )
+
+    result = cw.run_harness_validation_command(
+        task["id"],
+        argv=["python3", "-c", parent],
+        timeout_sec=1,
+    )
+
+    assert result["ok"] is False
+    assert result["returncode"] is None
+    time.sleep(0.7)
+    assert not marker.exists()
 
 
 def test_harness_validation_preserves_argument_whitespace(monkeypatch, tmp_path):
@@ -290,6 +359,8 @@ def test_harness_git_diff_uses_harness_output_bound(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert result["diff"]["stdout_truncated"] is False
     assert len(result["diff"]["stdout"]) > 40_000
+    assert "worktree_diff" not in result
+    assert "worktree_stat" not in result
     assert observed_limits == {
         "untracked": cw._HARNESS_MAX_DIFF_CHARS,
         "tracked": cw._HARNESS_MAX_DIFF_CHARS,
