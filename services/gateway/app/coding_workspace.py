@@ -60,6 +60,13 @@ _HARNESS_MAX_TOTAL_BYTES = 8_000_000
 _HARNESS_MAX_PROMPT_BYTES = 64_000
 _HARNESS_MAX_CHANGED_FILES = 512
 _HARNESS_MAX_DIFF_CHARS = 8_000_000
+_HARNESS_VALIDATION_FILE_BYTES = 1_024 * 1_024
+_HARNESS_VALIDATION_OPEN_FILES = 64
+_HARNESS_VALIDATION_PROCESSES = 128
+_HARNESS_VALIDATION_MEMORY_BYTES = 16 * 1_024 * 1_024 * 1_024
+_HARNESS_VALIDATION_AGGREGATE_MEMORY_BYTES = 2 * 1_024 * 1_024 * 1_024
+_HARNESS_VALIDATION_SCRATCH_BYTES = 64 * 1_024 * 1_024
+_HARNESS_VALIDATION_SCRATCH_ENTRIES = 4_096
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
 _DELETED_TASKS_GUARD = threading.Lock()
@@ -1517,11 +1524,29 @@ def _run_contained_process(
     stdout_capture = _BoundedPipeCapture(capture_limit_bytes)
     stderr_capture = _BoundedPipeCapture(capture_limit_bytes)
     capture_threads: List[threading.Thread] = []
+    scratch: Optional[tempfile.TemporaryDirectory[str]] = None
     try:
+        scratch = tempfile.TemporaryDirectory(prefix="nexus-validation-")
+        scratch_path = str(Path(scratch.name).resolve())
+        contained_env = dict(env)
+        contained_env.update({
+            "HOME": scratch_path,
+            "TMPDIR": scratch_path,
+            "NEXUS_VALIDATION_SCRATCH": scratch_path,
+            "NEXUS_VALIDATION_FILE_BYTES": str(_HARNESS_VALIDATION_FILE_BYTES),
+            "NEXUS_VALIDATION_OPEN_FILES": str(_HARNESS_VALIDATION_OPEN_FILES),
+            "NEXUS_VALIDATION_PROCESSES": str(_HARNESS_VALIDATION_PROCESSES),
+            "NEXUS_VALIDATION_MEMORY_BYTES": str(_HARNESS_VALIDATION_MEMORY_BYTES),
+            "NEXUS_VALIDATION_AGGREGATE_MEMORY_BYTES": str(
+                _HARNESS_VALIDATION_AGGREGATE_MEMORY_BYTES
+            ),
+            "NEXUS_VALIDATION_SCRATCH_BYTES": str(_HARNESS_VALIDATION_SCRATCH_BYTES),
+            "NEXUS_VALIDATION_SCRATCH_ENTRIES": str(_HARNESS_VALIDATION_SCRATCH_ENTRIES),
+        })
         proc = subprocess.Popen(
             [sys.executable, str(supervisor), *[str(item) for item in argv]],
             cwd=str(cwd),
-            env=env,
+            env=contained_env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1556,8 +1581,14 @@ def _run_contained_process(
             containment_error = containment_error or "could not drain validation output safely"
         if proc.returncode == 125 and "NEXUS_CONTAINMENT_ERROR:" in stderr:
             containment_error = "validation process containment failed"
-    except OSError as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         containment_error = f"could not launch contained process: {exc}"
+    finally:
+        if scratch is not None:
+            try:
+                scratch.cleanup()
+            except OSError as exc:
+                containment_error = containment_error or f"could not clean validation scratch: {exc}"
     return (
         None if timed_out or proc is None else proc.returncode,
         stdout,

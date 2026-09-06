@@ -21,9 +21,19 @@ from app import coding_process_supervisor as supervisor
 from app import coding_workspace as cw
 
 
-_LINUX_PROCESS_CONTAINMENT_AVAILABLE = bool(
-    sys.platform.startswith("linux") and Path(f"/proc/{os.getpid()}/task").is_dir()
-)
+def _linux_process_containment_available() -> bool:
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children").read_text(
+            encoding="ascii"
+        )
+        return True
+    except OSError:
+        return False
+
+
+_LINUX_PROCESS_CONTAINMENT_AVAILABLE = _linux_process_containment_available()
 
 
 def _configure_roots(monkeypatch, tmp_path):
@@ -270,6 +280,86 @@ def test_process_supervisor_fails_closed_without_procfs(monkeypatch):
 
     with pytest.raises(RuntimeError, match="procfs child enumeration is unavailable"):
         supervisor._direct_children(os.getpid(), required=True)
+
+
+def test_process_supervisor_applies_child_resource_limits(monkeypatch):
+    limits = []
+    identity_calls = []
+    monkeypatch.setattr(
+        supervisor.resource,
+        "setrlimit",
+        lambda kind, value: limits.append((kind, value)),
+    )
+    monkeypatch.setattr(
+        supervisor.resource,
+        "getrlimit",
+        lambda _kind: (
+            supervisor.resource.RLIM_INFINITY,
+            supervisor.resource.RLIM_INFINITY,
+        ),
+    )
+    monkeypatch.setattr(supervisor.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        supervisor.os,
+        "setgroups",
+        lambda value: identity_calls.append(("groups", value)),
+    )
+    monkeypatch.setattr(
+        supervisor.os,
+        "setgid",
+        lambda value: identity_calls.append(("gid", value)),
+    )
+    monkeypatch.setattr(
+        supervisor.os,
+        "setuid",
+        lambda value: identity_calls.append(("uid", value)),
+    )
+
+    supervisor._apply_child_limits(
+        uid=65_534,
+        gid=65_534,
+        file_bytes=1_024,
+        open_files=64,
+        processes=128,
+        memory_bytes=2_048,
+    )
+
+    assert limits == [
+        (supervisor.resource.RLIMIT_FSIZE, (1_024, 1_024)),
+        (supervisor.resource.RLIMIT_NOFILE, (64, 64)),
+        (supervisor.resource.RLIMIT_NPROC, (128, 128)),
+        (supervisor.resource.RLIMIT_AS, (2_048, 2_048)),
+    ]
+    assert identity_calls == [("groups", []), ("gid", 65_534), ("uid", 65_534)]
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
+def test_harness_validation_enforces_file_size_limit(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(cw, "_HARNESS_VALIDATION_FILE_BYTES", 1_024)
+    task = cw.create_harness_task(
+        fixture_id="validation-file-limit",
+        files={"test_app.py": "pass\n"},
+        prompt="Enforce validation file limits.",
+        owner="test",
+    )
+
+    result = cw.run_harness_validation_command(
+        task["id"],
+        argv=[
+            "python3",
+            "-c",
+            "import os; from pathlib import Path; "
+            "Path(os.environ['TMPDIR'] + '/large').write_bytes(b'x' * 2048)",
+        ],
+        timeout_sec=5,
+    )
+
+    assert result["ok"] is False
+    assert result["returncode"] != 0
 
 
 def test_harness_validation_preserves_argument_whitespace(monkeypatch, tmp_path):
