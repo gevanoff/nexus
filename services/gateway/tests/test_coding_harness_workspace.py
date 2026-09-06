@@ -740,6 +740,97 @@ def test_harness_evidence_requests_reject_stale_lease_after_restart(
     assert cw.delete_harness_task(task["id"])["ok"] is True
 
 
+def test_deleted_harness_tombstone_rejects_delayed_direct_save(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="delayed-direct-save",
+        files={"app.py": "value\n"},
+        prompt="Do not recreate deleted metadata.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    stale = cw.load_task(task["id"])
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+    assert cw.delete_harness_task(
+        task["id"],
+        evidence_lease_id=lease["lease_id"],
+    )["ok"] is True
+
+    stale["agent_summary"] = "late notification save"
+    with pytest.raises(HTTPException) as save_error:
+        cw.save_task(stale)
+    assert save_error.value.status_code == 409
+    assert save_error.value.detail == "coding task has been deleted"
+    assert not (tmp_path / "tasks" / f"{task['id']}.json").exists()
+
+
+def test_harness_delete_serializes_with_direct_task_store_mutation(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="direct-store-delete-race",
+        files={"app.py": "value\n"},
+        prompt="Serialize direct task-store updates.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+    started = threading.Event()
+    release = threading.Event()
+    deleted = threading.Event()
+    failures = []
+
+    def apply(current):
+        started.set()
+        assert release.wait(timeout=5)
+        current["agent_summary"] = "direct store update completed"
+
+    def mutate_directly():
+        try:
+            cw.mutate_task(task["id"], apply)
+        except BaseException as exc:
+            failures.append(exc)
+
+    def delete_with_lease():
+        try:
+            cw.delete_harness_task(
+                task["id"],
+                evidence_lease_id=lease["lease_id"],
+            )
+            deleted.set()
+        except BaseException as exc:
+            failures.append(exc)
+
+    mutation_worker = threading.Thread(target=mutate_directly)
+    deletion_worker = threading.Thread(target=delete_with_lease)
+    mutation_worker.start()
+    assert started.wait(timeout=5)
+    deletion_worker.start()
+    assert deleted.wait(timeout=0.1) is False
+    release.set()
+    mutation_worker.join(timeout=5)
+    deletion_worker.join(timeout=5)
+
+    assert not mutation_worker.is_alive()
+    assert not deletion_worker.is_alive()
+    assert failures == []
+    assert deleted.is_set()
+    with pytest.raises(HTTPException) as missing:
+        cw.load_task(task["id"])
+    assert missing.value.status_code == 404
+
+
 def test_expired_harness_evidence_lease_no_longer_blocks_resume(
     monkeypatch,
     tmp_path,

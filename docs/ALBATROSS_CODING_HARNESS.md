@@ -180,6 +180,9 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
   unrelated validation, and unrelated deletion across the complete
   diff/change/file/validation snapshot, expires after a client disconnect, and
   is consumed by matching atomic deletion;
+- serializes task metadata deletion with the shared JSON transaction lock and
+  retains an in-process deletion tombstone, so delayed direct task-store
+  saves from notification or Agent API callers cannot recreate deleted metadata;
 - exposes strict text-or-binary file evidence using the same 2 MB per-file cap
   as the shared fixture schema;
 - permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task, while generic delete and archive operations reject disposable harness tasks.

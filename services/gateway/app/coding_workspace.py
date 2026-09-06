@@ -59,6 +59,8 @@ _HARNESS_MAX_PROMPT_BYTES = 64_000
 _HARNESS_MAX_CHANGED_FILES = 512
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
+_DELETED_TASKS_GUARD = threading.Lock()
+_DELETED_TASK_TOMBSTONES: set[str] = set()
 _WORKSPACE_LOCKS_GUARD = threading.Lock()
 _WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
 _HARNESS_VALIDATIONS_GUARD = threading.Lock()
@@ -140,6 +142,25 @@ def _task_path(task_id: str) -> Path:
     if not _SAFE_TASK_RE.match(task_id):
         raise HTTPException(status_code=404, detail="coding task not found")
     return tasks_dir().joinpath(f"{task_id}.json").resolve()
+
+
+def _task_tombstone_key(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except Exception:
+        return str(path)
+
+
+def _mark_task_deleted(path: Path) -> None:
+    with _DELETED_TASKS_GUARD:
+        _DELETED_TASK_TOMBSTONES.add(_task_tombstone_key(path))
+
+
+def _raise_if_task_deleted(path: Path) -> None:
+    with _DELETED_TASKS_GUARD:
+        deleted = _task_tombstone_key(path) in _DELETED_TASK_TOMBSTONES
+    if deleted:
+        raise HTTPException(status_code=409, detail="coding task has been deleted")
 
 
 def _corrupt_tasks_dir() -> Path:
@@ -833,9 +854,12 @@ def coding_mission_overrides(
 
 
 def save_task(task: Dict[str, Any]) -> Dict[str, Any]:
-    task["updated_at"] = _now()
-    _write_json(_task_path(str(task.get("id") or "")), task)
-    return task
+    path = _task_path(str(task.get("id") or ""))
+    with _json_lock(path):
+        _raise_if_task_deleted(path)
+        task["updated_at"] = _now()
+        _write_json(path, task)
+        return task
 
 
 def mutate_task(task_id: str, mutator: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
@@ -850,6 +874,7 @@ def mutate_task(task_id: str, mutator: Callable[[Dict[str, Any]], None]) -> Dict
     with _json_lock(path):
         task = _read_json(path)
         mutator(task)
+        _raise_if_task_deleted(path)
         task["updated_at"] = _now()
         _write_json(path, task)
         return task
@@ -3816,16 +3841,18 @@ def delete_task(task_id: str, *, _allow_harness: bool = False) -> Dict[str, Any]
             status_code=403,
             detail="harness tasks require the guarded harness deletion endpoint",
         )
-    path = _task_workspace(task_id)
-    root = workspace_root()
-    _ensure_inside(root, path)
-    if path.exists():
-        shutil.rmtree(path)
     meta = _task_path(task_id)
-    try:
-        meta.unlink()
-    except FileNotFoundError:
-        pass
+    with _json_lock(meta):
+        path = _task_workspace(task_id)
+        root = workspace_root()
+        _ensure_inside(root, path)
+        if path.exists():
+            shutil.rmtree(path)
+        _mark_task_deleted(meta)
+        try:
+            meta.unlink()
+        except FileNotFoundError:
+            pass
     return {"ok": True, "task_id": task_id, "deleted_workspace": str(path), "repo_url": redact_repo_url(str(task.get("repo_url") or ""))}
 
 
