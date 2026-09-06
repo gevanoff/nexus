@@ -169,8 +169,8 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     task = _completed_task()
     fixture_path = _fixture(tmp_path)
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
-    fixture["expected"]["files_changed"] = ["app.py", "new.py"]
-    fixture["expected"]["allowed_files_changed"] = ["app.py", "new.py"]
+    fixture["expected"]["files_changed"] = ["app.py", "new.py", "(redacted)"]
+    fixture["expected"]["allowed_files_changed"] = ["app.py", "new.py", "(redacted)"]
     fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
 
     def fake_request(method, base_url, path, *, token, body=None, timeout_sec=30.0):
@@ -196,6 +196,11 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
                     "files": [
                         {"path": "app.py", "status": " M", "kind": "modified"},
                         {"path": "new.py", "status": "??", "kind": "untracked"},
+                        {
+                            "path": "secret-token-value.txt",
+                            "status": "??",
+                            "kind": "untracked",
+                        },
                     ],
                 }
             }
@@ -232,7 +237,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
         raise AssertionError((method, path, body))
 
     monkeypatch.setattr(harness, "nexus_api_request", fake_request)
-    monkeypatch.setattr(harness, "MAX_SNAPSHOT_CHANGED_FILES", 2)
+    monkeypatch.setattr(harness, "MAX_SNAPSHOT_CHANGED_FILES", 3)
 
     result, result_path = harness.run_nexus_fixture(
         fixture_path,
@@ -264,11 +269,16 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     assert result["trajectory"]["context_resets"] == 1
     assert result["objective"]["passed"] is True
     assert result["validation"]["passed"] is True
-    assert result["workspace"]["files_changed"] == ["app.py", "new.py"]
+    assert result["workspace"]["files_changed"] == [
+        "app.py",
+        "new.py",
+        "(redacted)",
+    ]
     assert result["workspace"]["git_metadata_retained"] is False
     assert result["workspace"]["execution_workspace_retained"] is False
     diff_text = Path(result["artifacts"]["diff"]).read_text(encoding="utf-8")
     assert "+VALUE = 'fixed'\n" in diff_text
+    assert "secret-token-value" not in diff_text
     assert diff_text.count("diff --git a/new.py b/new.py") == 1
     assert "new file mode 100755" in diff_text
     assert "+CREATED = True\n" in diff_text

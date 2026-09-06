@@ -57,6 +57,7 @@ _HARNESS_MAX_FILE_BYTES = 2_000_000
 _HARNESS_MAX_TOTAL_BYTES = 8_000_000
 _HARNESS_MAX_PROMPT_BYTES = 64_000
 _HARNESS_MAX_CHANGED_FILES = 512
+_HARNESS_MAX_DIFF_CHARS = 8_000_000
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
 _DELETED_TASKS_GUARD = threading.Lock()
@@ -1432,9 +1433,16 @@ def _run_process(
     git_token_value: Optional[str] = None,
     env_overrides: Optional[Dict[str, str]] = None,
     decode_errors: str = "strict",
+    output_limit_chars: Optional[int] = None,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
-    limit = max_output_chars()
+    if output_limit_chars is None:
+        limit = max_output_chars()
+    else:
+        try:
+            limit = max(1_000, min(_HARNESS_MAX_DIFF_CHARS, int(output_limit_chars)))
+        except Exception:
+            limit = max_output_chars()
     if timeout_limit_sec is None:
         effective_timeout_sec = command_timeout_sec(timeout_sec)
     else:
@@ -2364,6 +2372,8 @@ def begin_harness_agent_run_start(task_id: str) -> bool:
         task = load_task(task_id)
         if str(task.get("kind") or "") != "harness_eval":
             return False
+        if str(task.get("status") or "").strip().lower() == "initializing":
+            raise HTTPException(status_code=409, detail="coding harness task is still initializing")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
             raise HTTPException(status_code=409, detail="coding harness agent run is already starting")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
@@ -3012,11 +3022,13 @@ def _harness_neutral_git_snapshot(
             [*diff_argv, "--stat", baseline, "--", *diff_pathspecs],
             cwd=repo,
             env_overrides=env,
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
         )
         diff = _run_process(
             [*diff_argv, baseline, "--", *diff_pathspecs],
             cwd=repo,
             env_overrides=env,
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
         )
         changes = {
             "ok": bool(

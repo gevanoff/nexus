@@ -262,6 +262,25 @@ def test_harness_git_evidence_ignores_repository_git_controls(monkeypatch, tmp_p
     assert "+VALUE = 2" in diff["diff"]["stdout"]
 
 
+def test_harness_git_diff_uses_harness_output_bound(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(cw, "max_output_chars", lambda: 40_000)
+    task = cw.create_harness_task(
+        fixture_id="large-neutral-diff",
+        files={"large.txt": "original\n"},
+        prompt="Create a large but valid textual diff.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    (repo / "large.txt").write_text("changed\n" * 10_000, encoding="utf-8")
+
+    result = cw.harness_git_diff(task["id"])
+
+    assert result["ok"] is True
+    assert result["diff"]["stdout_truncated"] is False
+    assert len(result["diff"]["stdout"]) > 40_000
+
+
 def test_harness_limits_do_not_depend_on_normal_coding_file_cap(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(cw, "file_max_bytes", lambda: 1)
@@ -883,6 +902,10 @@ def test_harness_initialization_rejects_lease_and_delete_until_ready(
         cw.delete_harness_task(task_id)
     assert delete_error.value.status_code == 409
     assert delete_error.value.detail == "coding task is still initializing"
+    with pytest.raises(HTTPException) as run_start_error:
+        cw.begin_harness_agent_run_start(task_id)
+    assert run_start_error.value.status_code == 409
+    assert run_start_error.value.detail == "coding harness task is still initializing"
 
     release.set()
     creator.join(timeout=5)

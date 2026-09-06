@@ -3325,6 +3325,7 @@ def run_nexus_fixture(
             rel for rel in raw_changed
             if _contains_secret_path(rel, [nexus_token])
         }
+        protected_tracked = protected - raw_untracked
         safe_changed = sorted(set(raw_changed) - protected)
         safe_untracked = sorted(raw_untracked - protected)
         changed = safe_changed + (["(redacted)"] if protected else [])
@@ -3358,7 +3359,7 @@ def run_nexus_fixture(
             read_content(rel)
 
         _snapshot_timeout(evidence_deadline)
-        if protected:
+        if protected_tracked:
             diff_text = ""
         else:
             for rel in safe_untracked:
