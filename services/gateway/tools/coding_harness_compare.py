@@ -2616,6 +2616,20 @@ def scrub_retained_artifacts(artifacts: Path, secrets: Iterable[str]) -> list[st
     return omitted
 
 
+def _redact_omitted_artifact_paths(
+    paths: Iterable[str], secrets: Iterable[str]
+) -> list[str]:
+    protected = tuple(str(secret) for secret in secrets if secret)
+    redacted = redact_value(list(paths), protected)
+    fragmented = _redact_fragmented_value(
+        redacted,
+        protected,
+        fields=None,
+        min_fragment_bytes=1,
+    )
+    return [str(path) for path in fragmented]
+
+
 def mission_prompt(fixture: dict[str, Any], allow_mutations: bool) -> str:
     mode = (
         "You may edit files. No command-execution tool is exposed, so do not attempt "
@@ -2929,24 +2943,49 @@ def _nexus_final_file_reader(
     base_url: str,
     token: str,
     cache: dict[str, tuple[str | None, str | None]],
+    non_text_paths: set[str],
 ) -> Any:
+    aggregate_bytes = 0
+
     def read_content(rel: str) -> tuple[str | None, str | None]:
+        nonlocal aggregate_bytes
         if rel in cache:
             return cache[rel]
         try:
             payload = nexus_api_request(
                 "GET",
                 base_url,
-                f"/coding/tasks/{quote(task_id, safe='')}/file?path={quote(rel, safe='')}",
+                f"/coding/harness/tasks/{quote(task_id, safe='')}/file?path={quote(rel, safe='')}",
                 token=token,
                 timeout_sec=30.0,
             )
+            response_path = payload.get("path")
+            size = payload.get("size")
+            encoding = payload.get("encoding")
             content = payload.get("content")
-            if not isinstance(content, str):
+            if response_path != rel:
+                cache[rel] = (None, "file response path did not match the request")
+            elif isinstance(size, bool) or not isinstance(size, int) or size < 0:
+                cache[rel] = (None, "file response omitted a valid byte size")
+            elif size > MAX_OBJECTIVE_FILE_BYTES:
+                cache[rel] = (
+                    None,
+                    f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit",
+                )
+            elif aggregate_bytes + size > MAX_SNAPSHOT_FILE_BYTES:
+                raise RuntimeError(
+                    f"workspace snapshot exceeds {MAX_SNAPSHOT_FILE_BYTES} byte file-evidence limit"
+                )
+            elif encoding == "binary" and content is None:
+                aggregate_bytes += size
+                non_text_paths.add(rel)
+                cache[rel] = (None, "binary file content omitted")
+            elif encoding != "utf-8" or not isinstance(content, str):
                 cache[rel] = (None, "file response omitted text content")
-            elif len(content.encode("utf-8")) > MAX_OBJECTIVE_FILE_BYTES:
-                cache[rel] = (None, f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit")
+            elif len(content.encode("utf-8")) != size:
+                cache[rel] = (None, "file response byte size did not match its text content")
             else:
+                aggregate_bytes += size
                 cache[rel] = (content, None)
         except NexusApiError as exc:
             cache[rel] = (None, str(exc))
@@ -3106,11 +3145,13 @@ def run_nexus_fixture(
         diff_text = str(diff_result.get("stdout") or "")
 
         cache: dict[str, tuple[str | None, str | None]] = {}
+        non_text_paths: set[str] = set()
         read_content = _nexus_final_file_reader(
             task_id,
             base_url=nexus_base_url,
             token=nexus_token,
             cache=cache,
+            non_text_paths=non_text_paths,
         )
         expected_paths = {
             str(spec.get("path") or "")
@@ -3126,6 +3167,8 @@ def run_nexus_fixture(
         else:
             for rel in safe_untracked:
                 content, error = cache.get(rel, (None, "file was not fetched"))
+                if rel in non_text_paths:
+                    continue
                 if error or content is None:
                     raise RuntimeError(
                         f"could not collect complete untracked diff evidence for {rel}: "
@@ -3141,15 +3184,11 @@ def run_nexus_fixture(
 
         final_files = artifacts / "final-files"
         final_file_omissions: list[dict[str, str]] = []
-        aggregate_bytes = 0
         for rel in safe_changed:
             content, error = cache.get(rel, (None, "file was not fetched"))
             if error or content is None:
                 final_file_omissions.append({"path": rel, "reason": error or "file unavailable"})
                 continue
-            aggregate_bytes += len(content.encode("utf-8"))
-            if aggregate_bytes > MAX_SNAPSHOT_FILE_BYTES:
-                raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_FILE_BYTES} byte file-evidence limit")
             target = final_files / safe_rel_path(rel)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(redact_text(content, [nexus_token]), encoding="utf-8")
@@ -3204,8 +3243,13 @@ def run_nexus_fixture(
             "diff_sha256": hashlib.sha256(diff_text.encode("utf-8")).hexdigest(),
             "diff_chars": len(diff_text),
             "evidence_omissions": (
-                [{"path": "(redacted)", "reason": "path contains a protected secret encoding"}]
-                if protected else []
+                ([{"path": "(redacted)", "reason": "path contains a protected secret encoding"}]
+                 if protected else [])
+                + [
+                    {"path": rel, "reason": "binary untracked patch omitted"}
+                    for rel in safe_untracked
+                    if rel in non_text_paths
+                ]
             ),
             "final_file_omissions": final_file_omissions,
             "git_metadata_retained": True,
@@ -3266,9 +3310,20 @@ def run_nexus_fixture(
             embedded_raw_only=True,
             min_fragment_bytes=MIN_CROSS_FIELD_FRAGMENT_BYTES,
         )
-        omitted = scrub_retained_artifacts(artifacts, [nexus_token])
+        omitted = _redact_omitted_artifact_paths(
+            scrub_retained_artifacts(artifacts, [nexus_token]),
+            [nexus_token],
+        )
         result["artifacts"]["omitted_non_text"] = omitted
         refresh_diff_metadata(result["workspace"], artifacts / "final.diff")
+        result = _redact_fragmented_value(result, [nexus_token])
+        result = _redact_fragmented_value(
+            result,
+            [nexus_token],
+            fields=RESULT_CHILD_CONTROLLED_FIELDS,
+            embedded_raw_only=True,
+            min_fragment_bytes=MIN_CROSS_FIELD_FRAGMENT_BYTES,
+        )
     except BaseException as exc:
         failure = exc
     finally:

@@ -197,6 +197,44 @@ def test_harness_git_evidence_requests_one_over_changed_file_limit(monkeypatch):
     }
 
 
+def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="file-evidence",
+        files={"text.txt": "hello\n"},
+        prompt="Inspect evidence.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    (repo / "binary.dat").write_bytes(b"\xff\x00payload")
+
+    assert cw.read_harness_file_evidence(task["id"], path="text.txt") == {
+        "path": "text.txt",
+        "size": 6,
+        "encoding": "utf-8",
+        "content": "hello\n",
+    }
+    assert cw.read_harness_file_evidence(task["id"], path="binary.dat") == {
+        "path": "binary.dat",
+        "size": 9,
+        "encoding": "binary",
+        "content": None,
+    }
+
+
+def test_harness_file_evidence_rejects_normal_workspace(monkeypatch):
+    monkeypatch.setattr(
+        cw,
+        "load_task",
+        lambda task_id: {"id": task_id, "kind": "workspace"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        cw.read_harness_file_evidence("code_abcdef123456", path="app.py")
+
+    assert exc_info.value.status_code == 403
+
+
 def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     terminal = cw.create_harness_task(

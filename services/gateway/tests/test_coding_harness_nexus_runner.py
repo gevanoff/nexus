@@ -140,9 +140,19 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
                 }
             }
         if method == "GET" and "/file?path=app.py" in path:
-            return {"path": "app.py", "size": 16, "content": "VALUE = 'fixed'\n"}
+            return {
+                "path": "app.py",
+                "size": 16,
+                "encoding": "utf-8",
+                "content": "VALUE = 'fixed'\n",
+            }
         if method == "GET" and "/file?path=new.py" in path:
-            return {"path": "new.py", "size": 14, "content": "CREATED = True\n"}
+            return {
+                "path": "new.py",
+                "size": 15,
+                "encoding": "utf-8",
+                "content": "CREATED = True\n",
+            }
         if method == "GET" and path.startswith("/coding/tasks/"):
             return {"task": task}
         if method == "POST" and path.endswith("/validation"):
@@ -206,6 +216,111 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
         / "new.py"
     ).read_text(encoding="utf-8") == "CREATED = True\n"
     assert any(method == "DELETE" for method, _, _ in calls)
+
+
+def test_nexus_file_reader_enforces_aggregate_budget_before_caching(monkeypatch):
+    calls = []
+
+    def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
+        calls.append(path)
+        rel = "a.txt" if "a.txt" in path else "b.txt"
+        return {"path": rel, "size": 3, "encoding": "utf-8", "content": "abc"}
+
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+    monkeypatch.setattr(harness, "MAX_SNAPSHOT_FILE_BYTES", 5)
+    cache = {}
+    non_text_paths = set()
+    read_content = harness._nexus_final_file_reader(
+        "code_abcdef123456",
+        base_url="http://gateway/v1",
+        token="token",
+        cache=cache,
+        non_text_paths=non_text_paths,
+    )
+
+    assert read_content("a.txt") == ("abc", None)
+    with pytest.raises(RuntimeError, match="file-evidence limit"):
+        read_content("b.txt")
+
+    assert cache == {"a.txt": ("abc", None)}
+    assert non_text_paths == set()
+    assert all("/coding/harness/tasks/" in path for path in calls)
+
+
+def test_run_nexus_fixture_omits_binary_untracked_content(monkeypatch, tmp_path):
+    task = _completed_task()
+    fixture_path = _fixture(tmp_path)
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture["expected"] = {
+        "files_changed": ["blob.bin"],
+        "allowed_files_changed": ["blob.bin"],
+        "validation": [],
+    }
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
+        if method == "POST" and path == "/coding/harness/runs":
+            return {"task": {**task, "agent": {"status": "queued"}}}
+        if method == "GET" and path.endswith("/diff"):
+            return {
+                "ok": True,
+                "merge_base": "a" * 40,
+                "compare_ref": "main",
+                "changes": {"files": []},
+                "diff": {"stdout": "", "stdout_truncated": False},
+            }
+        if method == "GET" and path.endswith("/changes"):
+            return {
+                "result": {
+                    "ok": True,
+                    "files": [{"path": "blob.bin", "status": "??", "kind": "untracked"}],
+                }
+            }
+        if method == "GET" and "/file?path=blob.bin" in path:
+            return {
+                "path": "blob.bin",
+                "size": 4,
+                "encoding": "binary",
+                "content": None,
+            }
+        if method == "GET" and path.startswith("/coding/tasks/"):
+            return {"task": task}
+        if method == "DELETE" and path.startswith("/coding/harness/tasks/"):
+            return {"result": {"ok": True, "task_id": task["id"]}}
+        raise AssertionError((method, path, body))
+
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+
+    result, _ = harness.run_nexus_fixture(
+        fixture_path,
+        out_root=tmp_path / "results",
+        nexus_base_url="http://gateway/v1",
+        nexus_token="secret-token-value",
+    )
+
+    assert result["outcome"]["completed"] is True
+    assert result["workspace"]["evidence_omissions"] == [
+        {"path": "blob.bin", "reason": "binary untracked patch omitted"}
+    ]
+    assert result["workspace"]["final_file_omissions"] == [
+        {"path": "blob.bin", "reason": "binary file content omitted"}
+    ]
+    assert Path(result["artifacts"]["diff"]).read_text(encoding="utf-8") == ""
+    assert not (
+        Path(result["artifacts"]["run_root"])
+        / "artifacts"
+        / "final-files"
+        / "blob.bin"
+    ).exists()
+
+
+def test_omitted_artifact_paths_redact_single_byte_cross_file_fragments():
+    token = "secret-token-value"
+
+    redacted = harness._redact_omitted_artifact_paths(list(token), [token])
+
+    assert token not in "".join(redacted)
+    assert set(redacted) == {"(redacted)"}
 
 
 def test_run_nexus_fixture_deletes_failed_workspace(monkeypatch, tmp_path):

@@ -3018,6 +3018,27 @@ def read_file(task_id: str, *, path: str) -> Dict[str, Any]:
     return {"path": str(path), "size": size, "content": text}
 
 
+def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
+    """Read exact text evidence without lossy decoding for disposable harness tasks."""
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="only coding harness tasks may be read here")
+    target = _resolve_repo_child(task, path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    size = target.stat().st_size
+    if size > file_max_bytes():
+        raise HTTPException(status_code=413, detail="file is too large for the coding file API")
+    raw = target.read_bytes()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        content = None
+    if content is None or "\x00" in content:
+        return {"path": str(path), "size": size, "encoding": "binary", "content": None}
+    return {"path": str(path), "size": size, "encoding": "utf-8", "content": content}
+
+
 def read_file_lines(task_id: str, *, path: str, start_line: int = 1, line_count: int = 200) -> Dict[str, Any]:
     task = load_task(task_id)
     target = _resolve_repo_child(task, path)
