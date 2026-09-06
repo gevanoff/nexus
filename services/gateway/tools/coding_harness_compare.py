@@ -97,6 +97,7 @@ MAX_NEXUS_API_RESPONSE_BYTES = 8_000_000
 NEXUS_POLL_INTERVAL_SEC = 2.0
 NEXUS_MIN_AGENT_STEPS = 4
 NEXUS_MIN_WALL_TIME_SEC = 60
+NEXUS_GUARDED_WORKER_TIMEOUT_SEC = 120.0
 NEXUS_TERMINAL_STATUSES = frozenset(
     {
         "completed",
@@ -2816,16 +2817,58 @@ def _wait_for_nexus_task(
         time.sleep(min(NEXUS_POLL_INTERVAL_SEC, max(0.05, remaining)))
 
 
-def _delete_nexus_harness_task(task_id: str, *, base_url: str, token: str) -> None:
+def _nexus_harness_diff_after_workers(
+    task_id: str,
+    *,
+    base_url: str,
+    token: str,
+    wait_timeout_sec: float,
+) -> tuple[dict[str, Any], float]:
+    deadline = time.monotonic() + max(0.1, float(wait_timeout_sec))
     last_error: NexusApiError | None = None
-    for attempt in range(100):
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise NexusApiError(
+                f"Nexus harness evidence remained active: {last_error}"
+            )
+        attempt_started = time.monotonic()
+        try:
+            payload = nexus_api_request(
+                "GET",
+                base_url,
+                f"/coding/harness/tasks/{quote(task_id, safe='')}/diff",
+                token=token,
+                timeout_sec=min(30.0, max(0.1, remaining)),
+            )
+            return payload, attempt_started
+        except NexusApiError as exc:
+            last_error = exc
+            if exc.status != 409:
+                raise
+            time.sleep(min(0.25, max(0.01, remaining)))
+
+
+def _delete_nexus_harness_task(
+    task_id: str,
+    *,
+    base_url: str,
+    token: str,
+    wait_timeout_sec: float = NEXUS_GUARDED_WORKER_TIMEOUT_SEC,
+) -> None:
+    last_error: NexusApiError | None = None
+    deadline = time.monotonic() + max(0.1, float(wait_timeout_sec))
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
             payload = nexus_api_request(
                 "DELETE",
                 base_url,
                 f"/coding/harness/tasks/{quote(task_id, safe='')}",
                 token=token,
-                timeout_sec=15.0,
+                timeout_sec=min(15.0, max(0.1, remaining)),
             )
             result = payload.get("result")
             if not isinstance(result, dict) or result.get("ok") is not True:
@@ -2833,9 +2876,9 @@ def _delete_nexus_harness_task(task_id: str, *, base_url: str, token: str) -> No
             return
         except NexusApiError as exc:
             last_error = exc
-            if exc.status != 409 or attempt == 99:
+            if exc.status != 409:
                 break
-            time.sleep(0.1)
+            time.sleep(min(0.25, max(0.01, remaining)))
     raise NexusApiError(f"could not delete Nexus harness task: {last_error}")
 
 
@@ -3111,15 +3154,17 @@ def run_nexus_fixture(
             token=nexus_token,
             deadline=deadline,
         )
-        evidence_started = time.monotonic()
-        evidence_deadline = evidence_started + MAX_SNAPSHOT_SECONDS
-        diff_payload = nexus_api_request(
-            "GET",
-            nexus_base_url,
-            f"/coding/harness/tasks/{quote(task_id, safe='')}/diff",
-            token=nexus_token,
-            timeout_sec=min(30.0, _snapshot_timeout(evidence_deadline)),
+        worker_wait_timeout = max(
+            NEXUS_GUARDED_WORKER_TIMEOUT_SEC,
+            float(fixture["limits"]["wall_time_sec"]),
         )
+        diff_payload, evidence_started = _nexus_harness_diff_after_workers(
+            task_id,
+            base_url=nexus_base_url,
+            token=nexus_token,
+            wait_timeout_sec=worker_wait_timeout,
+        )
+        evidence_deadline = evidence_started + MAX_SNAPSHOT_SECONDS
         if diff_payload.get("ok") is not True:
             raise NexusApiError(str(diff_payload.get("error") or "Nexus harness diff collection failed"))
         changes_payload = nexus_api_request(
@@ -3372,7 +3417,15 @@ def run_nexus_fixture(
     finally:
         if task_id:
             try:
-                _delete_nexus_harness_task(task_id, base_url=nexus_base_url, token=nexus_token)
+                _delete_nexus_harness_task(
+                    task_id,
+                    base_url=nexus_base_url,
+                    token=nexus_token,
+                    wait_timeout_sec=max(
+                        NEXUS_GUARDED_WORKER_TIMEOUT_SEC,
+                        float(fixture["limits"]["wall_time_sec"]),
+                    ),
+                )
                 cleanup_ok = True
             except BaseException as cleanup_exc:
                 if _path_lexists(run_dir):

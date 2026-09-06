@@ -63,6 +63,7 @@ _WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
 _HARNESS_VALIDATIONS_GUARD = threading.Lock()
 _ACTIVE_HARNESS_VALIDATIONS: set[str] = set()
 _ACTIVE_HARNESS_AGENT_TOOLS: Dict[str, int] = {}
+_ACTIVE_HARNESS_EVIDENCE_READS: Dict[str, int] = {}
 
 
 def coding_enabled() -> bool:
@@ -2091,6 +2092,8 @@ def run_harness_validation_command(
             raise HTTPException(status_code=409, detail="coding harness validation is already active")
         if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
             raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
         _ACTIVE_HARNESS_VALIDATIONS.add(task_id)
     try:
         task = load_task(task_id)
@@ -2132,6 +2135,8 @@ def begin_harness_agent_tool(task_id: str) -> bool:
             return False
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
         _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = (
             _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) + 1
         )
@@ -2147,6 +2152,26 @@ def end_harness_agent_tool(task_id: str, *, registered: bool) -> None:
             _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = remaining
         else:
             _ACTIVE_HARNESS_AGENT_TOOLS.pop(task_id, None)
+
+
+def begin_harness_evidence_read(task_id: str) -> None:
+    with _HARNESS_VALIDATIONS_GUARD:
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        _ACTIVE_HARNESS_EVIDENCE_READS[task_id] = (
+            _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) + 1
+        )
+
+
+def end_harness_evidence_read(task_id: str) -> None:
+    with _HARNESS_VALIDATIONS_GUARD:
+        remaining = _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) - 1
+        if remaining > 0:
+            _ACTIVE_HARNESS_EVIDENCE_READS[task_id] = remaining
+        else:
+            _ACTIVE_HARNESS_EVIDENCE_READS.pop(task_id, None)
 
 
 def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
@@ -2761,20 +2786,28 @@ def harness_git_diff(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness diff requires a harness task")
-    return _harness_neutral_git_snapshot(
-        task,
-        change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
-    )["diff"]
+    begin_harness_evidence_read(task_id)
+    try:
+        return _harness_neutral_git_snapshot(
+            task,
+            change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+        )["diff"]
+    finally:
+        end_harness_evidence_read(task_id)
 
 
 def harness_git_changes(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness changes require a harness task")
-    return _harness_neutral_git_snapshot(
-        task,
-        change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
-    )["changes"]
+    begin_harness_evidence_read(task_id)
+    try:
+        return _harness_neutral_git_snapshot(
+            task,
+            change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+        )["changes"]
+    finally:
+        end_harness_evidence_read(task_id)
 
 
 def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
@@ -3331,11 +3364,7 @@ def _resolve_harness_evidence_path(
     return target, None
 
 
-def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
-    """Read exact text evidence without lossy decoding for disposable harness tasks."""
-    task = load_task(task_id)
-    if str(task.get("kind") or "") != "harness_eval":
-        raise HTTPException(status_code=403, detail="only coding harness tasks may be read here")
+def _read_harness_file_evidence(task: Dict[str, Any], *, path: str) -> Dict[str, Any]:
     target, symlink_size = _resolve_harness_evidence_path(task, path)
     if symlink_size is not None:
         return {
@@ -3365,6 +3394,18 @@ def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
         "encoding": "utf-8",
         "content": content,
     }
+
+
+def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
+    """Read exact text evidence without lossy decoding for disposable harness tasks."""
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="only coding harness tasks may be read here")
+    begin_harness_evidence_read(task_id)
+    try:
+        return _read_harness_file_evidence(task, path=path)
+    finally:
+        end_harness_evidence_read(task_id)
 
 
 def read_file_lines(task_id: str, *, path: str, start_line: int = 1, line_count: int = 200) -> Dict[str, Any]:
@@ -3470,6 +3511,8 @@ def delete_harness_task(task_id: str) -> Dict[str, Any]:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
         if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
             raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
         task = load_task(task_id)
         if str(task.get("kind") or "") != "harness_eval":
             raise HTTPException(status_code=403, detail="only coding harness tasks may be deleted here")

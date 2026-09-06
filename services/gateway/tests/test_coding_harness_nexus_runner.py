@@ -591,6 +591,55 @@ def test_delete_nexus_harness_task_retries_active_runner(monkeypatch):
     assert attempts == 3
 
 
+def test_delete_nexus_harness_task_retries_beyond_previous_fixed_attempt_cap(
+    monkeypatch,
+):
+    attempts = 0
+
+    def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 100:
+            raise harness.NexusApiError("active", status=409)
+        return {"result": {"ok": True}}
+
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+
+    harness._delete_nexus_harness_task(
+        "code_abcdef123456",
+        base_url="http://gateway/v1",
+        token="token",
+    )
+
+    assert attempts == 101
+
+
+def test_nexus_diff_waits_for_guarded_worker_conflicts(monkeypatch):
+    attempts = 0
+
+    def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise harness.NexusApiError("active worker", status=409)
+        return {"ok": True, "diff": {"stdout": ""}, "changes": {"files": []}}
+
+    monkeypatch.setattr(harness, "nexus_api_request", fake_request)
+    monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
+
+    payload, request_started = harness._nexus_harness_diff_after_workers(
+        "code_abcdef123456",
+        base_url="http://gateway/v1",
+        token="token",
+        wait_timeout_sec=120,
+    )
+
+    assert payload["ok"] is True
+    assert request_started <= harness.time.monotonic()
+    assert attempts == 3
+
+
 def test_wait_for_nexus_task_preserves_interrupted_terminal_status(monkeypatch):
     task = {"id": "code_abcdef123456", "agent": {"status": "interrupted"}}
     monkeypatch.setattr(

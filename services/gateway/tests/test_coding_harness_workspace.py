@@ -521,6 +521,14 @@ def test_harness_deletion_waits_for_cancelled_agent_tool_worker(monkeypatch, tmp
     worker.start()
     assert started.wait(timeout=30)
     try:
+        for collect in (
+            lambda: cw.harness_git_diff(task["id"]),
+            lambda: cw.harness_git_changes(task["id"]),
+            lambda: cw.read_harness_file_evidence(task["id"], path="app.py"),
+        ):
+            with pytest.raises(HTTPException) as evidence_error:
+                collect()
+            assert evidence_error.value.status_code == 409
         with pytest.raises(HTTPException) as exc_info:
             cw.delete_harness_task(task["id"])
         assert exc_info.value.status_code == 409
