@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,13 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_routes
 from app import coding_agent as ca
+from app import coding_process_supervisor as supervisor
 from app import coding_workspace as cw
+
+
+_LINUX_PROCESS_CONTAINMENT_AVAILABLE = bool(
+    sys.platform.startswith("linux") and Path(f"/proc/{os.getpid()}/task").is_dir()
+)
 
 
 def _configure_roots(monkeypatch, tmp_path):
@@ -152,7 +159,10 @@ def test_harness_validation_uses_mission_timeout_without_git_credentials(monkeyp
     assert cw.load_task(task["id"])["validation_observer"] == "newer-state"
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux containment required")
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
 def test_harness_validation_contains_detached_descendant(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
@@ -184,7 +194,10 @@ def test_harness_validation_contains_detached_descendant(monkeypatch, tmp_path):
     assert not marker.exists()
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux containment required")
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
 def test_harness_validation_timeout_contains_detached_descendant(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
@@ -216,6 +229,47 @@ def test_harness_validation_timeout_contains_detached_descendant(monkeypatch, tm
     assert result["returncode"] is None
     time.sleep(0.7)
     assert not marker.exists()
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
+def test_harness_validation_bounds_noisy_output_while_running(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(cw, "max_output_chars", lambda: 2_000)
+    task = cw.create_harness_task(
+        fixture_id="validation-noisy-output",
+        files={"test_app.py": "pass\n"},
+        prompt="Bound noisy validation output.",
+        owner="test",
+    )
+
+    result = cw.run_harness_validation_command(
+        task["id"],
+        argv=[
+            "python3",
+            "-c",
+            "import sys; print('o' * 2000000); print('e' * 2000000, file=sys.stderr)",
+        ],
+        timeout_sec=5,
+    )
+
+    assert result["ok"] is True
+    assert result["stdout_truncated"] is True
+    assert result["stderr_truncated"] is True
+    assert len(result["stdout"]) < 3_000
+    assert len(result["stderr"]) < 3_000
+
+
+def test_process_supervisor_fails_closed_without_procfs(monkeypatch):
+    def unavailable(_path):
+        raise FileNotFoundError("procfs unavailable")
+
+    monkeypatch.setattr(supervisor.os, "scandir", unavailable)
+
+    with pytest.raises(RuntimeError, match="procfs child enumeration is unavailable"):
+        supervisor._direct_children(os.getpid(), required=True)
 
 
 def test_harness_validation_preserves_argument_whitespace(monkeypatch, tmp_path):

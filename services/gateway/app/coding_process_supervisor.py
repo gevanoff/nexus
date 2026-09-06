@@ -30,12 +30,15 @@ def _set_child_subreaper() -> None:
         raise OSError(error, os.strerror(error))
 
 
-def _direct_children(pid: int) -> set[int]:
+def _direct_children(pid: int, *, required: bool = False) -> set[int]:
     children: set[int] = set()
     try:
         tasks = os.scandir(f"/proc/{pid}/task")
-    except FileNotFoundError:
+    except OSError as exc:
+        if required:
+            raise RuntimeError("procfs child enumeration is unavailable") from exc
         return children
+    observed_task = False
     with tasks:
         for task in tasks:
             if not task.name.isdigit():
@@ -44,7 +47,10 @@ def _direct_children(pid: int) -> set[int]:
                 text = Path(task.path, "children").read_text(encoding="ascii")
             except (FileNotFoundError, ProcessLookupError):
                 continue
+            observed_task = True
             children.update(int(value) for value in text.split() if value.isdigit())
+    if required and not observed_task:
+        raise RuntimeError("procfs child enumeration is unavailable")
     return children
 
 
@@ -87,7 +93,7 @@ def _terminate_descendants(root_pgid: int) -> None:
         deadline = time.monotonic() + 0.75
         quiet_since: float | None = None
         while time.monotonic() < deadline:
-            roots = _direct_children(os.getpid())
+            roots = _direct_children(os.getpid(), required=True)
             if not roots:
                 _reap_children()
                 quiet_since = quiet_since or time.monotonic()
@@ -99,7 +105,7 @@ def _terminate_descendants(root_pgid: int) -> None:
             _signal_processes(_descendant_tree(roots), signal_number)
             _reap_children()
             time.sleep(0.02)
-    remaining = _direct_children(os.getpid())
+    remaining = _direct_children(os.getpid(), required=True)
     if remaining:
         raise RuntimeError(f"descendant processes survived containment: {sorted(remaining)}")
 
@@ -114,6 +120,7 @@ def main(argv: Sequence[str]) -> int:
     if not argv:
         raise ValueError("missing validation command")
     _set_child_subreaper()
+    _direct_children(os.getpid(), required=True)
     signal.signal(signal.SIGTERM, _request_termination)
     signal.signal(signal.SIGINT, _request_termination)
     process: subprocess.Popen[bytes] | None = None

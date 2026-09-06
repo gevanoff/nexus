@@ -1455,6 +1455,47 @@ def _terminate_process_group(pgid: int) -> None:
         time.sleep(0.02)
 
 
+class _BoundedPipeCapture:
+    def __init__(self, limit_bytes: int) -> None:
+        self.limit_bytes = max(1_000, int(limit_bytes))
+        self.head_limit = self.limit_bytes // 2
+        self.tail_limit = self.limit_bytes - self.head_limit
+        self.head = bytearray()
+        self.tail = bytearray()
+        self.total_bytes = 0
+        self.error = ""
+
+    def drain(self, stream: Any) -> None:
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                self.total_bytes += len(chunk)
+                head_remaining = self.head_limit - len(self.head)
+                if head_remaining > 0:
+                    self.head.extend(chunk[:head_remaining])
+                    chunk = chunk[head_remaining:]
+                if chunk and self.tail_limit > 0:
+                    self.tail.extend(chunk)
+                    if len(self.tail) > self.tail_limit:
+                        del self.tail[: len(self.tail) - self.tail_limit]
+        except (OSError, ValueError) as exc:
+            self.error = str(exc)
+
+    @property
+    def truncated(self) -> bool:
+        return self.total_bytes > self.limit_bytes
+
+    def text(self, *, decode_errors: str) -> str:
+        if not self.truncated:
+            return bytes(self.head + self.tail).decode("utf-8", errors=decode_errors)
+        head = bytes(self.head).decode("utf-8", errors="replace")
+        tail = bytes(self.tail).decode("utf-8", errors="replace")
+        omitted = self.total_bytes - self.limit_bytes
+        return f"{head}\n\n[... truncated {omitted} output bytes ...]\n\n{tail}"
+
+
 def _run_contained_process(
     argv: Sequence[str],
     *,
@@ -1462,40 +1503,59 @@ def _run_contained_process(
     env: Dict[str, str],
     timeout_sec: float,
     decode_errors: str,
-) -> Tuple[Optional[int], str, str, bool, str]:
+    output_limit_chars: int,
+) -> Tuple[Optional[int], str, str, bool, str, bool, bool]:
     if os.name != "posix" or not sys.platform.startswith("linux"):
-        return None, "", "", False, "descendant process containment requires a Linux host"
+        return None, "", "", False, "descendant process containment requires a Linux host", False, False
     supervisor = Path(__file__).with_name("coding_process_supervisor.py")
     proc: Optional[subprocess.Popen[bytes]] = None
     timed_out = False
     containment_error = ""
     stdout = ""
     stderr = ""
+    capture_limit_bytes = max(4_096, int(output_limit_chars) * 4)
+    stdout_capture = _BoundedPipeCapture(capture_limit_bytes)
+    stderr_capture = _BoundedPipeCapture(capture_limit_bytes)
+    capture_threads: List[threading.Thread] = []
     try:
-        with tempfile.TemporaryFile(mode="w+b") as stdout_file, tempfile.TemporaryFile(mode="w+b") as stderr_file:
-            proc = subprocess.Popen(
-                [sys.executable, str(supervisor), *[str(item) for item in argv]],
-                cwd=str(cwd),
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                start_new_session=True,
-            )
-            try:
-                proc.wait(timeout=timeout_sec)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                _terminate_process_group(proc.pid)
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait(timeout=1.0)
-            stdout_file.seek(0)
-            stderr_file.seek(0)
-            stdout = stdout_file.read().decode("utf-8", errors=decode_errors)
-            stderr = stderr_file.read().decode("utf-8", errors=decode_errors)
-            if proc.returncode == 125 and "NEXUS_CONTAINMENT_ERROR:" in stderr:
-                containment_error = "validation process containment failed"
+        proc = subprocess.Popen(
+            [sys.executable, str(supervisor), *[str(item) for item in argv]],
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        assert proc.stdout is not None and proc.stderr is not None
+        capture_threads = [
+            threading.Thread(target=stdout_capture.drain, args=(proc.stdout,), daemon=True),
+            threading.Thread(target=stderr_capture.drain, args=(proc.stderr,), daemon=True),
+        ]
+        for thread in capture_threads:
+            thread.start()
+        try:
+            proc.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _terminate_process_group(proc.pid)
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=1.0)
+        for thread in capture_threads:
+            thread.join(timeout=1.0)
+        if any(thread.is_alive() for thread in capture_threads):
+            proc.stdout.close()
+            proc.stderr.close()
+            for thread in capture_threads:
+                thread.join(timeout=0.5)
+            containment_error = "validation output streams remained open after containment"
+        stdout = stdout_capture.text(decode_errors=decode_errors)
+        stderr = stderr_capture.text(decode_errors=decode_errors)
+        if stdout_capture.error or stderr_capture.error:
+            containment_error = containment_error or "could not drain validation output safely"
+        if proc.returncode == 125 and "NEXUS_CONTAINMENT_ERROR:" in stderr:
+            containment_error = "validation process containment failed"
     except OSError as exc:
         containment_error = f"could not launch contained process: {exc}"
     return (
@@ -1504,6 +1564,8 @@ def _run_contained_process(
         stderr,
         timed_out,
         containment_error,
+        stdout_capture.truncated,
+        stderr_capture.truncated,
     )
 
 
@@ -1546,15 +1608,26 @@ def _run_process(
         if env_overrides:
             env.update({str(key): str(value) for key, value in env_overrides.items()})
         if isolate_process_group:
-            returncode, raw_stdout, raw_stderr, timed_out, containment_error = _run_contained_process(
+            (
+                returncode,
+                raw_stdout,
+                raw_stderr,
+                timed_out,
+                containment_error,
+                stdout_capture_truncated,
+                stderr_capture_truncated,
+            ) = _run_contained_process(
                 effective_argv,
                 cwd=cwd,
                 env=env,
                 timeout_sec=effective_timeout_sec,
                 decode_errors=decode_errors,
+                output_limit_chars=limit,
             )
             stdout, stdout_truncated = _truncate(raw_stdout, limit, extra_tokens=redaction_tokens)
             stderr, stderr_truncated = _truncate(raw_stderr, limit, extra_tokens=redaction_tokens)
+            stdout_truncated = bool(stdout_truncated or stdout_capture_truncated)
+            stderr_truncated = bool(stderr_truncated or stderr_capture_truncated)
             if timed_out:
                 stderr = stderr or f"timeout after {effective_timeout_sec:.0f}s"
             if containment_error:
