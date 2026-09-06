@@ -1544,6 +1544,22 @@ def workspace_snapshot(workspace: Path, baseline: str, artifacts: Path,
         if error or path is None:
             evidence_omissions.append({"path": redact_text(rel, secrets), "reason": error or "unsafe file"})
             continue
+        try:
+            raw_content = path.read_bytes()
+            try:
+                text_content = raw_content.decode("utf-8")
+            except UnicodeDecodeError:
+                text_content = None
+        except OSError as exc:
+            raise RuntimeError(
+                f"could not inspect untracked file evidence for {redact_text(rel, secrets)}: {exc}"
+            ) from exc
+        if text_content is None or "\x00" in text_content:
+            evidence_omissions.append({
+                "path": redact_text(rel, secrets),
+                "reason": "binary file content omitted; untracked patch omitted",
+            })
+            continue
         patch = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--", "/dev/null", rel],
                     cwd=workspace, evidence=True, secrets=secrets, include_raw_output=True,
                     timeout_sec=_snapshot_timeout(deadline))
@@ -3259,12 +3275,21 @@ def run_nexus_fixture(
             NEXUS_GUARDED_WORKER_TIMEOUT_SEC,
             float(fixture["limits"]["wall_time_sec"]),
         )
-        evidence_lease_id, evidence_started = _acquire_nexus_harness_evidence_lease(
+        evidence_lease_id, _ = _acquire_nexus_harness_evidence_lease(
             task_id,
             base_url=nexus_base_url,
             token=nexus_token,
             wait_timeout_sec=worker_wait_timeout,
         )
+        validation = run_nexus_validation(
+            fixture,
+            task_id,
+            base_url=nexus_base_url,
+            token=nexus_token,
+            deadline=deadline,
+            evidence_lease_id=evidence_lease_id,
+        )
+        evidence_started = time.monotonic()
         evidence_deadline = evidence_started + MAX_SNAPSHOT_SECONDS
         diff_payload = nexus_api_request(
             "GET",
@@ -3321,7 +3346,14 @@ def run_nexus_fixture(
             )
             and str(item.get("path") or "")
         }
-        protected = {
+        fragmented_path_indexes = _fragmented_secret_indexes(
+            [rel.encode("utf-8", errors="replace") for rel in raw_changed],
+            [nexus_token],
+        )
+        fragmented_paths = {
+            raw_changed[index] for index in fragmented_path_indexes
+        }
+        protected = fragmented_paths | {
             rel for rel in raw_changed
             if _contains_secret_path(rel, [nexus_token])
         }
@@ -3396,16 +3428,6 @@ def run_nexus_fixture(
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(redact_text(content, [nexus_token]), encoding="utf-8")
 
-        _snapshot_timeout(evidence_deadline)
-        deadline += time.monotonic() - evidence_started
-        validation = run_nexus_validation(
-            fixture,
-            task_id,
-            base_url=nexus_base_url,
-            token=nexus_token,
-            deadline=deadline,
-            evidence_lease_id=evidence_lease_id,
-        )
         objective = _objective_checks_with_reader(fixture, changed, validation, read_content)
         agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
         run_history = [item for item in (task.get("agent_runs") or []) if isinstance(item, dict)]
@@ -3788,7 +3810,10 @@ def probe(executable: str, *, live: bool = False, out_root: Path | None = None,
     response_marker = "NEXUS_ALBATROSS_PROBE_OK"
     response_output = ""
     try:
-        response_output = Path(result["artifacts"]["stdout"]).read_text(encoding="utf-8")
+        response_path = result_path.parent / "stdout.txt"
+        if not response_path.is_file():
+            response_path = Path(result["artifacts"]["stdout"])
+        response_output = response_path.read_text(encoding="utf-8")
     except (KeyError, OSError, TypeError) as exc:
         report["live_error"] = f"could not verify live probe response: {type(exc).__name__}: {exc}"
     response_ok = response_marker in response_output

@@ -2536,8 +2536,14 @@ def _git_name_status_summary(
     *,
     limit: int = 500,
     env_overrides: Optional[Dict[str, str]] = None,
+    output_limit_chars: Optional[int] = None,
 ) -> Dict[str, Any]:
-    result = _run_process(list(argv), cwd=repo, env_overrides=env_overrides)
+    result = _run_process(
+        list(argv),
+        cwd=repo,
+        env_overrides=env_overrides,
+        output_limit_chars=output_limit_chars,
+    )
     files: List[Dict[str, Any]] = []
     if result.get("ok"):
         raw_output = str(result.get("stdout") or "")
@@ -2961,6 +2967,7 @@ def _harness_neutral_git_snapshot(
             cwd=repo,
             env_overrides=env,
             decode_errors="surrogateescape",
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
         )
         untracked_stdout = str(untracked_result.get("stdout") or "")
         if any(0xD800 <= ord(char) <= 0xDFFF for char in untracked_stdout):
@@ -2992,6 +2999,7 @@ def _harness_neutral_git_snapshot(
             [*diff_argv, "--name-status", "-z", baseline, "--"],
             limit=max_files,
             env_overrides=env,
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
         )
         tracked_files = list(tracked.get("files") or [])
         tracked_paths = {

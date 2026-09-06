@@ -197,7 +197,12 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
                         {"path": "app.py", "status": " M", "kind": "modified"},
                         {"path": "new.py", "status": "??", "kind": "untracked"},
                         {
-                            "path": "secret-token-value.txt",
+                            "path": "secret-",
+                            "status": "??",
+                            "kind": "untracked",
+                        },
+                        {
+                            "path": "token-value.txt",
                             "status": "??",
                             "kind": "untracked",
                         },
@@ -237,7 +242,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
         raise AssertionError((method, path, body))
 
     monkeypatch.setattr(harness, "nexus_api_request", fake_request)
-    monkeypatch.setattr(harness, "MAX_SNAPSHOT_CHANGED_FILES", 3)
+    monkeypatch.setattr(harness, "MAX_SNAPSHOT_CHANGED_FILES", 4)
 
     result, result_path = harness.run_nexus_fixture(
         fixture_path,
@@ -278,7 +283,8 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     assert result["workspace"]["execution_workspace_retained"] is False
     diff_text = Path(result["artifacts"]["diff"]).read_text(encoding="utf-8")
     assert "+VALUE = 'fixed'\n" in diff_text
-    assert "secret-token-value" not in diff_text
+    assert "secret-" not in diff_text
+    assert "token-value" not in diff_text
     assert diff_text.count("diff --git a/new.py b/new.py") == 1
     assert "new file mode 100755" in diff_text
     assert "+CREATED = True\n" in diff_text
@@ -310,9 +316,9 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     )
     assert (
         lease_index
+        < validation_index
         < diff_index
         < changes_index
-        < validation_index
         < delete_index
     )
 
@@ -451,7 +457,7 @@ def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch
 
     assert result["outcome"]["completed"] is True
     assert evidence_timeouts == [30.0, 28.0, 26.0]
-    assert validation_deadline == [166.0]
+    assert validation_deadline == [160.0]
 
 
 @pytest.mark.parametrize("encoding", ["binary", "symlink"])
@@ -599,6 +605,16 @@ def test_run_nexus_fixture_rejects_truncated_diff_and_cleans_up(monkeypatch, tmp
             return {"task": {**task, "agent": {"status": "queued"}}}
         if method == "POST" and path.endswith("/evidence-lease"):
             return _evidence_lease(task["id"])
+        if method == "POST" and "/validation?evidence_lease_id=" in path:
+            return {
+                "result": {
+                    "ok": True,
+                    "returncode": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "duration_ms": 1,
+                }
+            }
         if method == "GET" and "/diff?evidence_lease_id=lease-test-123" in path:
             return {
                 "ok": True,

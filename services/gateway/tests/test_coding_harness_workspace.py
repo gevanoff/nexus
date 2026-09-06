@@ -265,6 +265,17 @@ def test_harness_git_evidence_ignores_repository_git_controls(monkeypatch, tmp_p
 def test_harness_git_diff_uses_harness_output_bound(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(cw, "max_output_chars", lambda: 40_000)
+    real_run_process = cw._run_process
+    observed_limits = {}
+
+    def capturing_run_process(argv, **kwargs):
+        if "ls-files" in argv:
+            observed_limits["untracked"] = kwargs.get("output_limit_chars")
+        if "--name-status" in argv:
+            observed_limits["tracked"] = kwargs.get("output_limit_chars")
+        return real_run_process(argv, **kwargs)
+
+    monkeypatch.setattr(cw, "_run_process", capturing_run_process)
     task = cw.create_harness_task(
         fixture_id="large-neutral-diff",
         files={"large.txt": "original\n"},
@@ -279,6 +290,10 @@ def test_harness_git_diff_uses_harness_output_bound(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert result["diff"]["stdout_truncated"] is False
     assert len(result["diff"]["stdout"]) > 40_000
+    assert observed_limits == {
+        "untracked": cw._HARNESS_MAX_DIFF_CHARS,
+        "tracked": cw._HARNESS_MAX_DIFF_CHARS,
+    }
 
 
 def test_harness_limits_do_not_depend_on_normal_coding_file_cap(monkeypatch, tmp_path):

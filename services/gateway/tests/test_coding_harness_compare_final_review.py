@@ -261,6 +261,27 @@ def test_workspace_snapshot_preserves_trailing_whitespace_in_git_diff(tmp_path: 
     assert "+VALUE = 2  \n+   \n" in retained
 
 
+def test_workspace_snapshot_omits_binary_untracked_patch(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        _workspace_fixture({"app.py": "VALUE = 1\n"}),
+    )
+    (workspace / "blob.bin").write_bytes(b"binary\x00content")
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert snapshot["files_changed"] == ["blob.bin"]
+    assert snapshot["evidence_omissions"] == [
+        {
+            "path": "blob.bin",
+            "reason": "binary file content omitted; untracked patch omitted",
+        }
+    ]
+    assert (artifacts / "final.diff").read_text(encoding="utf-8") == ""
+
+
 def test_secret_bearing_changed_filename_is_not_used_as_retained_artifact_path(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"
