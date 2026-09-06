@@ -141,6 +141,37 @@ def test_harness_validation_uses_mission_timeout_without_git_credentials(monkeyp
     assert captured["use_git_credentials"] is False
 
 
+def test_harness_validation_preserves_argument_whitespace(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="validation-whitespace",
+        files={"test_app.py": "pass\n"},
+        prompt="Validate exact argument data.",
+        owner="test",
+    )
+    captured = {}
+
+    def fake_run_process(argv, **kwargs):
+        captured["argv"] = list(argv)
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+            "argv": list(argv),
+            "duration_ms": 1,
+        }
+
+    monkeypatch.setattr(cw, "_run_process", fake_run_process)
+
+    cw.run_harness_validation_command(
+        task["id"],
+        argv=["python3", "-c", "import sys; assert sys.argv[1] == '  '", "  "],
+    )
+
+    assert captured["argv"][-1] == "  "
+
+
 def test_harness_validation_rejects_normal_workspace(monkeypatch):
     monkeypatch.setattr(cw, "load_task", lambda task_id: {"id": task_id, "kind": "workspace"})
 
@@ -179,23 +210,48 @@ def test_harness_git_evidence_requests_one_over_changed_file_limit(monkeypatch):
     )
     captured = {}
 
-    def fake_diff(task_id, *, change_limit, nul_paths):
-        captured["diff"] = (task_id, change_limit, nul_paths)
-        return {"ok": True}
+    def fake_snapshot(task, *, change_limit):
+        captured.setdefault("calls", []).append((task["id"], change_limit))
+        return {"diff": {"ok": True}, "changes": {"ok": True}}
 
-    def fake_changes(task_id, *, limit, nul_paths):
-        captured["changes"] = (task_id, limit, nul_paths)
-        return {"ok": True}
-
-    monkeypatch.setattr(cw, "git_diff", fake_diff)
-    monkeypatch.setattr(cw, "git_change_summary", fake_changes)
+    monkeypatch.setattr(cw, "_harness_neutral_git_snapshot", fake_snapshot)
 
     assert cw.harness_git_diff("code_abcdef123456") == {"ok": True}
     assert cw.harness_git_changes("code_abcdef123456") == {"ok": True}
-    assert captured == {
-        "diff": ("code_abcdef123456", 513, True),
-        "changes": ("code_abcdef123456", 513, True),
-    }
+    assert captured == {"calls": [("code_abcdef123456", 513)] * 2}
+
+
+def test_harness_git_evidence_ignores_repository_git_controls(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="neutral-git-evidence",
+        files={".gitattributes": "*.py -diff\n", "app.py": "VALUE = 1\n"},
+        prompt="Change the value.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    (repo / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "config", "diff.external", "false"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "update-index", "--assume-unchanged", "app.py"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    changes = cw.harness_git_changes(task["id"])
+    diff = cw.harness_git_diff(task["id"])
+
+    assert changes["ok"] is True
+    assert {item["path"] for item in changes["files"]} == {"app.py"}
+    assert diff["ok"] is True
+    assert {item["path"] for item in diff["changes"]["files"]} == {"app.py"}
+    assert "+VALUE = 2" in diff["diff"]["stdout"]
 
 
 def test_harness_limits_do_not_depend_on_normal_coding_file_cap(monkeypatch, tmp_path):
@@ -237,7 +293,7 @@ def test_harness_git_evidence_preserves_literal_paths_and_rename_targets(monkeyp
 
     expected = {"café.txt", 'quote"file.txt', "new name.txt"}
     assert {item["path"] for item in changed} == expected
-    assert {item["path"] for item in diff_changed} == expected - {'quote"file.txt'}
+    assert {item["path"] for item in diff_changed} == expected
     rename = next(item for item in changed if item["kind"] == "renamed")
     assert rename["path"] == "new name.txt"
     assert rename["previous_path"] == "old name.txt"
@@ -316,6 +372,12 @@ def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monke
         prompt="Change value.",
         owner="test",
     )
+    abandoned_initializing = cw.create_harness_task(
+        fixture_id="abandoned-initializing",
+        files={"app.py": "value\n"},
+        prompt="Change value.",
+        owner="test",
+    )
     finalization_failures = [
         (
             cw.create_harness_task(
@@ -349,12 +411,19 @@ def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monke
     raw_abandoned["harness_expires_at"] = now - 100
     raw_abandoned["updated_at"] = now - 60
     cw.save_task(raw_abandoned)
+    raw_initializing = cw.load_task(abandoned_initializing["id"])
+    raw_initializing["harness_expires_at"] = now - 100
+    raw_initializing["status"] = "initializing"
+    raw_initializing["agent_status"] = "idle"
+    raw_initializing["updated_at"] = now - 60
+    cw.save_task(raw_initializing)
 
     result = cw.cleanup_expired_harness_tasks(now=now)
 
     expected_purged = {
         terminal["id"],
         abandoned["id"],
+        abandoned_initializing["id"],
         initialization_error["id"],
         *(task["id"] for task, _ in finalization_failures),
     }

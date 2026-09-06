@@ -152,6 +152,9 @@ The schema is JSON and intentionally harness-neutral. A fixture contains:
 - tags for later analysis.
 
 The current v1 schema uses inline files specifically to prevent an eval fixture from silently pointing Albatross at a live checkout.
+Fixture paths are validated once by the shared loader before either harness starts;
+backslashes, control characters, empty path components, traversal components, and
+harness-owned metadata paths are rejected consistently.
 
 The Nexus runner submits those same inline files to the bearer-authenticated `POST /v1/coding/harness/runs` endpoint. That endpoint:
 
@@ -161,7 +164,8 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
 - starts the normal durable Coding Workspace runner and finalization path;
 - gives the disposable task an expiry lease equal to its run budget plus 15
   minutes (capped at 24 hours), after which monitoring removes settled terminal
-  evaluations and ready/idle evaluations abandoned before agent startup;
+  evaluations and initializing/idle or ready/idle evaluations abandoned before
+  agent startup;
 - exposes a harness-only validation route that honors the accepted run budget
   (up to one hour) without attaching Git credentials, and blocks deletion while
   validation remains active;
@@ -170,6 +174,12 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
 - permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task.
 
 The client collects the baseline diff, selected final text files, post-run validation, persisted route/run evidence, and then deletes the server-side task and Git workspace. It rejects a truncated Gateway diff instead of hashing partial evidence, parses change paths from NUL-delimited Git output, deduplicates paths before enforcing the changed-file limit, and adds deterministic unified patches with the real executable mode for text-only untracked files. A harness-only file endpoint preserves exact whitespace in paths and uses strict UTF-8 decoding; binary files and paths containing symlinks are identified and recorded as evidence omissions instead of being replacement-decoded or dereferenced into fabricated evidence. Final-file collection has a 30-second aggregate time bound that is excluded from the validation budget, and its 16 MB aggregate byte budget is enforced before each response is cached. The client does not report `execution_workspace_retained: false` until deletion is confirmed. A failed client run also discards its partial local evidence. If server-side deletion cannot be confirmed, the command fails closed with a `SECURITY` error.
+
+Native harness Git evidence is collected through a disposable Git directory and
+independent baseline index. Repository/global Git config, worktree attributes,
+and agent-controlled index flags therefore cannot hide or transform edits relative
+to the Albatross snapshot. Validation argv payloads are likewise preserved exactly;
+only the executable name and command policy are normalized for authorization.
 
 Coding Workspace validation uses the existing task command policy and execution environment; it is not the Bubblewrap sandbox used for the external Albatross child. Fixture validation commands are trusted executable content on both paths and must be reviewed before use.
 

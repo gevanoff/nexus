@@ -43,7 +43,7 @@ CHARACTER_ESCAPE_RE = re.compile(
     rb"|&#([0-9]{1,7});"
     rb"|&#[xX]([0-9a-fA-F]{1,6});"
 )
-RESERVED_PARTS = {".git", ".albatross", ".small-harness", ".sessions"}
+RESERVED_PARTS = {".git", ".nexus", ".albatross", ".small-harness", ".sessions"}
 RESERVED_FILES = {"agent.config.json", ".env"}
 ALBATROSS_TOOLS = "apply_patch,file_read,file_write,file_edit,glob,grep,list_dir,update_plan"
 ALBATROSS_READ_ONLY_TOOLS = "file_read,glob,grep,list_dir"
@@ -117,14 +117,34 @@ def now_iso() -> str:
 
 def safe_rel_path(value: str) -> Path:
     raw = "" if value is None else str(value)
-    if raw == "":
+    raw_parts = raw.split("/")
+    if (
+        raw == ""
+        or len(raw.encode("utf-8", errors="surrogateescape")) > 4096
+        or any(part in {"", ".", ".."} for part in raw_parts)
+        or "\\" in raw
+        or "\x00" in raw
+        or any(ord(char) < 32 for char in raw)
+    ):
         raise ValueError(f"unsafe fixture path: {value}")
-    path = Path(raw)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    path = Path(*raw_parts)
+    if path.is_absolute():
         raise ValueError(f"unsafe fixture path: {value}")
-    if any(part in RESERVED_PARTS for part in path.parts) or path.name in RESERVED_FILES:
+    if (
+        any(part.casefold() in RESERVED_PARTS for part in path.parts)
+        or path.name.casefold() in RESERVED_FILES
+    ):
         raise ValueError(f"fixture path may not override harness state/config: {value}")
     return path
+
+
+def fixture_rel_path(value: str) -> Path:
+    raw = "" if value is None else str(value)
+    try:
+        raw.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"unsafe fixture path: {value}") from exc
+    return safe_rel_path(raw)
 
 
 def read_json(path: Path) -> Any:
@@ -199,7 +219,7 @@ def load_fixture(path: Path) -> dict[str, Any]:
     normalized_files: dict[str, str] = {}
     total_file_bytes = 0
     for raw_path, raw_content in files.items():
-        rel = safe_rel_path(str(raw_path)).as_posix()
+        rel = fixture_rel_path(str(raw_path)).as_posix()
         if not isinstance(raw_content, str):
             raise ValueError(f"fixture file {rel} content must be a string")
         content = raw_content
@@ -218,7 +238,7 @@ def load_fixture(path: Path) -> dict[str, Any]:
         if key in expected:
             if not isinstance(expected[key], list):
                 raise ValueError(f"expected.{key} must be an array")
-            expected[key] = [safe_rel_path(str(v)).as_posix() for v in expected[key]]
+            expected[key] = [fixture_rel_path(str(v)).as_posix() for v in expected[key]]
     content_check_count = 0
     for key in ("file_contains", "file_not_contains"):
         checks = expected.get(key) or []
@@ -232,7 +252,7 @@ def load_fixture(path: Path) -> dict[str, Any]:
         for check in checks:
             if not isinstance(check, dict):
                 raise ValueError(f"expected.{key} entries must be objects")
-            check["path"] = safe_rel_path(str(check.get("path") or "")).as_posix()
+            check["path"] = fixture_rel_path(str(check.get("path") or "")).as_posix()
             if not str(check.get("needle") or ""):
                 raise ValueError(f"expected.{key} needle must be non-empty")
     validation = expected.get("validation") or []
@@ -1355,7 +1375,9 @@ def _sanitize_snapshot_git_metadata(workspace: Path) -> None:
             )
         config.chmod(0o600)
         with attributes.open("x", encoding="utf-8", newline="\n") as handle:
-            handle.write("* -text -crlf -ident -filter !working-tree-encoding\n")
+            handle.write(
+                "* -text -crlf -ident -filter !working-tree-encoding !diff\n"
+            )
         attributes.chmod(0o600)
     except (OSError, RuntimeError) as exc:
         raise RuntimeError("could not sanitize snapshot Git metadata") from exc

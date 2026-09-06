@@ -106,6 +106,29 @@ def test_validation_fixture_guards_non_string_numeric_compatibility():
     assert "normalize_port(4.5), 4" in fixture["repository"]["files"]["test_ports.py"]
 
 
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "back\\slash.py",
+        "control\nname.py",
+        ".nexus/state.json",
+        ".GIT/config",
+        "nested//name.py",
+    ],
+)
+def test_fixture_loader_rejects_paths_the_native_server_cannot_materialize(
+    tmp_path: Path,
+    unsafe_path: str,
+):
+    fixture_path = _fixture(tmp_path)
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture["repository"]["files"] = {unsafe_path: "content\n"}
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="fixture path"):
+        harness.load_fixture(fixture_path)
+
+
 def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, tmp_path):
     calls: list[tuple[str, str, dict | None]] = []
     task = _completed_task()

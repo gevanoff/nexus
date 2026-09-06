@@ -1352,6 +1352,7 @@ def _run_process(
     timeout_limit_sec: Optional[float] = None,
     use_git_credentials: bool = False,
     git_token_value: Optional[str] = None,
+    env_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     limit = max_output_chars()
@@ -1370,6 +1371,8 @@ def _run_process(
     effective_argv = _argv_with_git_safe_directory(argv, cwd=cwd)
     with _GitCredentialEnv(use_git_credentials, git_token_value=git_token_value) as extra_env:
         env.update(extra_env)
+        if env_overrides:
+            env.update({str(key): str(value) for key, value in env_overrides.items()})
         try:
             proc = subprocess.run(
                 effective_argv,
@@ -1984,7 +1987,7 @@ def validate_command(argv: Sequence[str]) -> List[str]:
     for item in argv:
         if not isinstance(item, str):
             raise HTTPException(status_code=400, detail="argv entries must be strings")
-        value = item.strip()
+        value = item
         if not value:
             raise HTTPException(status_code=400, detail="argv entries must be non-empty")
         if "\x00" in value:
@@ -1992,6 +1995,11 @@ def validate_command(argv: Sequence[str]) -> List[str]:
         if len(value) > 4096:
             raise HTTPException(status_code=400, detail="argv entry is too long")
         out.append(value)
+    if out[0] != out[0].strip():
+        raise HTTPException(
+            status_code=400,
+            detail="command name cannot have leading or trailing whitespace",
+        )
     cmd = Path(out[0]).name.lower()
     if out[0] != Path(out[0]).name:
         raise HTTPException(status_code=403, detail="commands must be invoked by name, not path")
@@ -2255,8 +2263,9 @@ def _git_name_status_summary(
     argv: Sequence[str],
     *,
     limit: int = 500,
+    env_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    result = _run_process(list(argv), cwd=repo)
+    result = _run_process(list(argv), cwd=repo, env_overrides=env_overrides)
     files: List[Dict[str, Any]] = []
     if result.get("ok"):
         raw_output = str(result.get("stdout") or "")
@@ -2551,26 +2560,193 @@ def git_diff(
     return result
 
 
+def _harness_neutral_git_snapshot(
+    task: Dict[str, Any],
+    *,
+    change_limit: int,
+) -> Dict[str, Any]:
+    """Collect fixture evidence without trusting the agent-mutated index or Git config."""
+    repo = _repo_path(task)
+    source_git_dir = repo / ".git"
+    source_objects = source_git_dir / "objects"
+    baseline = str(task.get("harness_baseline_commit") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", baseline):
+        raise HTTPException(status_code=409, detail="harness baseline commit is unavailable")
+    if (
+        not source_git_dir.is_dir()
+        or source_git_dir.is_symlink()
+        or not source_objects.is_dir()
+        or source_objects.is_symlink()
+    ):
+        raise HTTPException(status_code=409, detail="harness Git metadata is unavailable")
+
+    max_files = max(1, min(int(change_limit or 500), 2000))
+    with tempfile.TemporaryDirectory(prefix="nexus-harness-git-") as temp_root_raw:
+        temp_root = Path(temp_root_raw)
+        neutral_git_dir = temp_root / "git"
+        home_dir = temp_root / "home"
+        home_dir.mkdir(mode=0o700)
+        initialized = _run_process(
+            ["git", "init", "--bare", str(neutral_git_dir)],
+            cwd=repo,
+            use_git_credentials=False,
+        )
+        if not initialized.get("ok"):
+            return {
+                "diff": {"ok": False, "error": "could not initialize neutral Git evidence"},
+                "changes": {"ok": False, "files": [], "counts": _counts_for_change_files([])},
+            }
+        (neutral_git_dir / "config").write_text(
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfilemode = true\n",
+            encoding="utf-8",
+        )
+        info_dir = neutral_git_dir / "info"
+        info_dir.mkdir(mode=0o700, exist_ok=True)
+        (info_dir / "attributes").write_text(
+            "* -text -crlf -ident -filter !working-tree-encoding !diff\n",
+            encoding="utf-8",
+        )
+        (info_dir / "exclude").write_text("/.git/\n", encoding="utf-8")
+        env = {
+            "GIT_DIR": str(neutral_git_dir),
+            "GIT_INDEX_FILE": str(temp_root / "index"),
+            "GIT_WORK_TREE": str(repo),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(source_objects),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_ATTR_NOSYSTEM": "1",
+            "HOME": str(home_dir),
+        }
+        read_tree = _run_process(
+            ["git", "read-tree", baseline],
+            cwd=repo,
+            use_git_credentials=False,
+            env_overrides=env,
+        )
+        if not read_tree.get("ok"):
+            error = str(read_tree.get("stderr") or "could not load harness baseline")
+            return {
+                "diff": {"ok": False, "error": error},
+                "changes": {"ok": False, "files": [], "counts": _counts_for_change_files([])},
+            }
+
+        untracked_result = _run_process(
+            [
+                "git",
+                "ls-files",
+                "-z",
+                "--others",
+                "--exclude=.git",
+                "--exclude=.git/**",
+            ],
+            cwd=repo,
+            env_overrides=env,
+        )
+        untracked_paths = [
+            path
+            for path in str(untracked_result.get("stdout") or "").split("\0")
+            if path and path != ".git" and not path.startswith(".git/")
+        ]
+        intent_to_add = _run_process(
+            [
+                "git",
+                "add",
+                "--intent-to-add",
+                "--force",
+                "--",
+                ".",
+                ":(exclude).git",
+                ":(exclude).git/**",
+            ],
+            cwd=repo,
+            env_overrides=env,
+        )
+        diff_argv = [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--find-renames",
+        ]
+        stat = _run_process(
+            [*diff_argv, "--stat", baseline, "--"], cwd=repo, env_overrides=env
+        )
+        diff = _run_process([*diff_argv, baseline, "--"], cwd=repo, env_overrides=env)
+        tracked = _git_name_status_summary(
+            repo,
+            [*diff_argv, "--name-status", "-z", baseline, "--"],
+            limit=max_files,
+            env_overrides=env,
+        )
+        tracked_files = list(tracked.get("files") or [])
+        tracked_paths = {
+            str(item.get("path") or "")
+            for item in tracked_files
+            if isinstance(item, dict)
+        }
+        changed_files = tracked_files + [
+            {"path": path, "status": "??", "kind": "untracked"}
+            for path in untracked_paths
+            if path not in tracked_paths
+        ]
+        changes = {
+            "ok": bool(
+                intent_to_add.get("ok")
+                and tracked.get("ok")
+                and untracked_result.get("ok")
+            ),
+            "counts": _counts_for_change_files(changed_files),
+            "files": changed_files[:max_files],
+            "truncated": bool(
+                tracked.get("truncated")
+                or untracked_result.get("stdout_truncated")
+                or len(changed_files) > max_files
+            ),
+            "raw": untracked_result,
+        }
+        diff_result = {
+            "ok": bool(
+                intent_to_add.get("ok")
+                and stat.get("ok")
+                and diff.get("ok")
+                and tracked.get("ok")
+            ),
+            "scope": "harness_baseline",
+            "base_branch": str(task.get("base_branch") or "main"),
+            "branch_name": str(task.get("branch_name") or ""),
+            "base_ref": baseline,
+            "merge_base": baseline,
+            "compare_ref": baseline,
+            "stat": stat,
+            "diff": diff,
+            "changes": tracked,
+            "worktree_stat": stat,
+            "worktree_diff": diff,
+            "staged_stat": {"ok": True, "stdout": "", "stderr": ""},
+            "staged_diff": {"ok": True, "stdout": "", "stderr": ""},
+        }
+        return {"diff": diff_result, "changes": changes}
+
+
 def harness_git_diff(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness diff requires a harness task")
-    return git_diff(
-        task_id,
+    return _harness_neutral_git_snapshot(
+        task,
         change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
-        nul_paths=True,
-    )
+    )["diff"]
 
 
 def harness_git_changes(task_id: str) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness changes require a harness task")
-    return git_change_summary(
-        task_id,
-        limit=_HARNESS_MAX_CHANGED_FILES + 1,
-        nul_paths=True,
-    )
+    return _harness_neutral_git_snapshot(
+        task,
+        change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+    )["changes"]
 
 
 def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
@@ -3295,14 +3471,16 @@ def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, A
             agent_status = str(task.get("agent_status") or "idle").strip().lower()
             task_status = str(task.get("status") or "").strip().lower()
             finished_at = float(task.get("agent_finished_at") or task.get("updated_at") or 0)
-            abandoned_ready = task_status == "ready" and agent_status == "idle"
+            abandoned_idle = (
+                task_status in {"initializing", "ready"} and agent_status == "idle"
+            )
             if (
                 expires_at <= 0
                 or expires_at > current
                 or (
                     task_status != "error"
                     and agent_status not in terminal_statuses
-                    and not abandoned_ready
+                    and not abandoned_idle
                 )
                 or finished_at <= 0
                 or current - finished_at < 30.0
