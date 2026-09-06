@@ -119,6 +119,10 @@ def test_harness_validation_uses_mission_timeout_without_git_credentials(monkeyp
 
     def fake_run_process(argv, **kwargs):
         captured.update({"argv": list(argv), **kwargs})
+        cw.mutate_task(
+            task["id"],
+            lambda current: current.update(validation_observer="newer-state"),
+        )
         return {
             "ok": True,
             "returncode": 0,
@@ -140,6 +144,7 @@ def test_harness_validation_uses_mission_timeout_without_git_credentials(monkeyp
     assert captured["timeout_sec"] == 250
     assert captured["timeout_limit_sec"] == 300
     assert captured["use_git_credentials"] is False
+    assert cw.load_task(task["id"])["validation_observer"] == "newer-state"
 
 
 def test_harness_validation_preserves_argument_whitespace(monkeypatch, tmp_path):
@@ -271,6 +276,45 @@ def test_harness_limits_do_not_depend_on_normal_coding_file_cap(monkeypatch, tmp
     assert evidence["content"] == "valid fixture content"
 
 
+def test_run_task_command_preserves_newer_terminal_lifecycle_state(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="command-terminal-race",
+        files={"app.py": "value\n"},
+        prompt="Run a command.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="running"),
+    )
+
+    def fake_run_process(argv, **kwargs):
+        cw.mutate_task(
+            task["id"],
+            lambda current: current.update(
+                agent_status="paused",
+                stop_reason_code="run_timeout",
+            ),
+        )
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "done\n",
+            "stderr": "",
+            "argv": list(argv),
+            "duration_ms": 1,
+        }
+
+    monkeypatch.setattr(cw, "_run_process", fake_run_process)
+
+    assert cw.run_task_command(task["id"], argv=["python3", "-V"])["ok"] is True
+    saved = cw.load_task(task["id"])
+    assert saved["agent_status"] == "paused"
+    assert saved["stop_reason_code"] == "run_timeout"
+    assert saved["commands"][-1]["label"] == "command"
+
+
 def test_harness_git_evidence_preserves_literal_paths_and_rename_targets(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
@@ -311,6 +355,14 @@ def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tm
     repo = tmp_path / "workspaces" / task["id"] / "repo"
     (repo / "binary.dat").write_bytes(b"\xff\x00payload")
     (repo / "link.txt").symlink_to("text.txt")
+
+    changes = {
+        item["path"]: item for item in cw.harness_git_changes(task["id"])["files"]
+    }
+    assert changes["binary.dat"]["kind"] == "untracked"
+    assert changes["binary.dat"]["status"] == "??"
+    assert changes["link.txt"]["kind"] == "untracked"
+    assert changes["link.txt"]["status"] == "??"
 
     assert cw.read_harness_file_evidence(task["id"], path="text.txt") == {
         "path": "text.txt",

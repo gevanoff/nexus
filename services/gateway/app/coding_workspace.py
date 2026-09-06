@@ -2074,8 +2074,10 @@ def run_task_command(
         use_git_credentials=cmd in {"git", "gh"},
         git_token_value=git_token_value,
     )
-    _append_command(task, result, label="command")
-    save_task(task)
+    mutate_task(
+        task_id,
+        lambda current: _append_command(current, result, label="command"),
+    )
     return result
 
 
@@ -2119,8 +2121,14 @@ def run_harness_validation_command(
             timeout_limit_sec=timeout_limit,
             use_git_credentials=False,
         )
-        _append_command(task, result, label="harness-validation")
-        save_task(task)
+        mutate_task(
+            task_id,
+            lambda current: _append_command(
+                current,
+                result,
+                label="harness-validation",
+            ),
+        )
         return result
     finally:
         with _HARNESS_VALIDATIONS_GUARD:
@@ -2733,15 +2741,23 @@ def _harness_neutral_git_snapshot(
             env_overrides=env,
         )
         tracked_files = list(tracked.get("files") or [])
-        tracked_paths = {
-            str(item.get("path") or "")
+        untracked_path_set = set(untracked_paths)
+        preserved_tracked_files = [
+            item
             for item in tracked_files
+            if not isinstance(item, dict)
+            or str(item.get("path") or "") not in untracked_path_set
+            or str(item.get("kind") or "").strip().lower() != "added"
+        ]
+        preserved_tracked_paths = {
+            str(item.get("path") or "")
+            for item in preserved_tracked_files
             if isinstance(item, dict)
         }
-        changed_files = tracked_files + [
+        changed_files = preserved_tracked_files + [
             {"path": path, "status": "??", "kind": "untracked"}
             for path in untracked_paths
-            if path not in tracked_paths
+            if path not in preserved_tracked_paths
         ]
         changes = {
             "ok": bool(
