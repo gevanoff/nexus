@@ -2321,6 +2321,8 @@ def acquire_harness_evidence_lease(
         task = load_task(task_id)
         if str(task.get("kind") or "") != "harness_eval":
             raise HTTPException(status_code=403, detail="evidence lease requires a harness task")
+        if str(task.get("status") or "").strip().lower() == "initializing":
+            raise HTTPException(status_code=409, detail="coding harness task is still initializing")
         if _active_harness_evidence_lease_locked(task_id):
             raise HTTPException(status_code=409, detail="coding harness evidence lease is already active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
@@ -3834,8 +3836,18 @@ def write_file(task_id: str, *, path: str, content: str) -> Dict[str, Any]:
         return {"ok": True, "path": rel, "bytes": len(data)}
 
 
-def delete_task(task_id: str, *, _allow_harness: bool = False) -> Dict[str, Any]:
+def delete_task(
+    task_id: str,
+    *,
+    _allow_harness: bool = False,
+    _allow_initializing: bool = False,
+) -> Dict[str, Any]:
     task = load_task(task_id)
+    if (
+        str(task.get("status") or "").strip().lower() == "initializing"
+        and not _allow_initializing
+    ):
+        raise HTTPException(status_code=409, detail="coding task is still initializing")
     if str(task.get("kind") or "") == "harness_eval" and not _allow_harness:
         raise HTTPException(
             status_code=403,
@@ -3860,6 +3872,7 @@ def delete_harness_task(
     task_id: str,
     *,
     evidence_lease_id: Optional[str] = None,
+    _allow_initializing: bool = False,
 ) -> Dict[str, Any]:
     """Atomically refuse deletion while a harness validation command is active."""
     with _HARNESS_VALIDATIONS_GUARD:
@@ -3881,7 +3894,11 @@ def delete_harness_task(
         agent_status = str(task.get("agent_status") or "idle").strip().lower()
         if agent_status in {"queued", "running", "stopping", "pausing"}:
             raise HTTPException(status_code=409, detail="coding harness task is still active")
-        result = delete_task(task_id, _allow_harness=True)
+        result = delete_task(
+            task_id,
+            _allow_harness=True,
+            _allow_initializing=_allow_initializing,
+        )
         if active_lease:
             _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(active_lease, None)
         return result
@@ -3928,7 +3945,7 @@ def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, A
             ):
                 continue
             task_id = str(task.get("id") or path.stem)
-            delete_harness_task(task_id)
+            delete_harness_task(task_id, _allow_initializing=abandoned_idle)
             purged.append(task_id)
         except Exception as exc:
             failures[path.stem] = f"{type(exc).__name__}: {_redact_text(str(exc))}"

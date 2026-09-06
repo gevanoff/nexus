@@ -831,6 +831,78 @@ def test_harness_delete_serializes_with_direct_task_store_mutation(
     assert missing.value.status_code == 404
 
 
+def test_harness_initialization_rejects_lease_and_delete_until_ready(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_roots(monkeypatch, tmp_path)
+    initial_saved = threading.Event()
+    release = threading.Event()
+    failures = []
+    created = []
+    real_save_task = cw.save_task
+
+    def blocking_initial_save(task):
+        result = real_save_task(task)
+        if (
+            str(task.get("kind") or "") == "harness_eval"
+            and str(task.get("status") or "") == "initializing"
+            and not initial_saved.is_set()
+        ):
+            initial_saved.set()
+            assert release.wait(timeout=5)
+        return result
+
+    def create():
+        try:
+            created.append(
+                cw.create_harness_task(
+                    fixture_id="initialization-delete-race",
+                    files={"app.py": "value\n"},
+                    prompt="Finish initialization before lifecycle operations.",
+                    owner="test",
+                )
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(cw, "save_task", blocking_initial_save)
+    creator = threading.Thread(target=create)
+    creator.start()
+    assert initial_saved.wait(timeout=5)
+    task_id = next(
+        path.stem for path in (tmp_path / "tasks").glob("code_*.json")
+    )
+    assert not (tmp_path / "workspaces" / task_id).exists()
+
+    with pytest.raises(HTTPException) as lease_error:
+        cw.acquire_harness_evidence_lease(task_id, ttl_sec=300)
+    assert lease_error.value.status_code == 409
+    assert lease_error.value.detail == "coding harness task is still initializing"
+    with pytest.raises(HTTPException) as delete_error:
+        cw.delete_harness_task(task_id)
+    assert delete_error.value.status_code == 409
+    assert delete_error.value.detail == "coding task is still initializing"
+
+    release.set()
+    creator.join(timeout=5)
+    assert not creator.is_alive()
+    assert failures == []
+    assert created[0]["status"] == "ready"
+    assert (tmp_path / "workspaces" / task_id / "repo" / "app.py").is_file()
+
+    cw.mutate_task(
+        task_id,
+        lambda current: current.update(agent_status="completed"),
+    )
+    lease = cw.acquire_harness_evidence_lease(task_id, ttl_sec=300)
+    assert cw.delete_harness_task(
+        task_id,
+        evidence_lease_id=lease["lease_id"],
+    )["ok"] is True
+    assert not (tmp_path / "workspaces" / task_id).exists()
+
+
 def test_expired_harness_evidence_lease_no_longer_blocks_resume(
     monkeypatch,
     tmp_path,
