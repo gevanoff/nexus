@@ -82,6 +82,11 @@ def _active_runner(task_id: str) -> Optional[asyncio.Task[Any]]:
     return None
 
 
+def agent_run_active(task_id: str) -> bool:
+    """Return whether this process still owns a live runner for the task."""
+    return _active_runner(task_id) is not None
+
+
 def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     task = task if isinstance(task, dict) else cw.load_task(task_id)
     previous_status = str(task.get("agent_status") or "").strip().lower()

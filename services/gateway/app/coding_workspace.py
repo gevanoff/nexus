@@ -49,6 +49,12 @@ _ARCHIVE_ANALYSIS_MODES = {"manual", "idle", "immediate"}
 _ARCHIVE_ANALYSIS_TARGETS = {"local", "external", "human", "none"}
 _FINDING_REVIEW_VERDICTS = {"invalid", "superseded"}
 _PROJECT_PLAN_STATUSES = {"pending", "in_progress", "completed", "blocked", "skipped"}
+_HARNESS_FIXTURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+_HARNESS_RESERVED_PATH_PARTS = {".git", ".nexus"}
+_HARNESS_MAX_FILES = 4096
+_HARNESS_MAX_FILE_BYTES = 2_000_000
+_HARNESS_MAX_TOTAL_BYTES = 8_000_000
+_HARNESS_MAX_PROMPT_BYTES = 64_000
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
 _WORKSPACE_LOCKS_GUARD = threading.Lock()
@@ -1511,6 +1517,159 @@ def create_task(
         return public_task(task)
 
 
+def _normalize_harness_fixture_files(
+    fixture_id: str,
+    files: Dict[str, str],
+) -> Tuple[str, Dict[str, str]]:
+    normalized_id = str(fixture_id or "").strip()
+    if not _HARNESS_FIXTURE_ID_RE.fullmatch(normalized_id):
+        raise HTTPException(status_code=400, detail="invalid harness fixture_id")
+    if not isinstance(files, dict) or not files:
+        raise HTTPException(status_code=400, detail="harness fixture files must be a non-empty object")
+    if len(files) > _HARNESS_MAX_FILES:
+        raise HTTPException(status_code=413, detail="harness fixture has too many files")
+
+    normalized: Dict[str, str] = {}
+    total_bytes = 0
+    per_file_limit = min(_HARNESS_MAX_FILE_BYTES, file_max_bytes())
+    for raw_path, raw_content in files.items():
+        path = str(raw_path or "")
+        if (
+            not path
+            or len(path.encode("utf-8")) > 4096
+            or path.startswith("/")
+            or "\\" in path
+            or "\x00" in path
+            or any(ord(char) < 32 for char in path)
+        ):
+            raise HTTPException(status_code=400, detail=f"unsafe harness fixture path: {raw_path}")
+        parts = path.split("/")
+        if any(
+            not part
+            or part in {".", ".."}
+            or part.casefold() in _HARNESS_RESERVED_PATH_PARTS
+            for part in parts
+        ):
+            raise HTTPException(status_code=400, detail=f"unsafe harness fixture path: {raw_path}")
+        if not isinstance(raw_content, str):
+            raise HTTPException(status_code=400, detail=f"harness fixture file must contain text: {path}")
+        size = len(raw_content.encode("utf-8"))
+        if size > per_file_limit:
+            raise HTTPException(status_code=413, detail=f"harness fixture file is too large: {path}")
+        total_bytes += size
+        if total_bytes > _HARNESS_MAX_TOTAL_BYTES:
+            raise HTTPException(status_code=413, detail="harness fixture files are too large in aggregate")
+        normalized[path] = raw_content
+    return normalized_id, normalized
+
+
+def create_harness_task(
+    *,
+    fixture_id: str,
+    files: Dict[str, str],
+    prompt: str,
+    owner: Optional[str],
+    owner_user_id: Optional[int] = None,
+    coding_model: Optional[str] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Create a local-only disposable Git workspace for a coding harness fixture."""
+    _ensure_enabled()
+    normalized_id, normalized_files = _normalize_harness_fixture_files(fixture_id, files)
+    normalized_prompt = str(prompt or "").strip()
+    if not normalized_prompt:
+        raise HTTPException(status_code=400, detail="harness fixture prompt is required")
+    if len(normalized_prompt.encode("utf-8")) > _HARNESS_MAX_PROMPT_BYTES:
+        raise HTTPException(status_code=413, detail="harness fixture prompt is too large")
+
+    _ensure_dirs()
+    task_id = new_task_id()
+    base = "main"
+    branch = f"nexus-coding-harness/{task_id}"
+    workspace = _task_workspace(task_id)
+    repo_path = _repo_path_for(task_id)
+    task = {
+        "schema": SCHEMA,
+        "id": task_id,
+        "kind": "harness_eval",
+        "status": "initializing",
+        "created_at": _now(),
+        "updated_at": _now(),
+        "owner": owner or "unknown",
+        "owner_user_id": owner_user_id,
+        "repo_url": f"harness-fixture://{normalized_id}",
+        "base_branch": base,
+        "branch_name": branch,
+        "prompt": normalized_prompt,
+        "coding_model": str(coding_model or "").strip(),
+        "workspace_path": str(workspace),
+        "repo_path": str(repo_path),
+        "seed_files": sorted(normalized_files),
+        "harness_fixture": {
+            "id": normalized_id,
+            "file_count": len(normalized_files),
+            "total_bytes": sum(len(content.encode("utf-8")) for content in normalized_files.values()),
+        },
+        "commands": [],
+        "project_plan": normalize_project_plan({"goal": normalized_prompt, "items": []}),
+        "agent_runs": [],
+    }
+    task["mission"] = normalize_coding_mission(task, mission_overrides)
+    task["harness_expires_at"] = int(
+        task["created_at"]
+        + min(
+            86_400,
+            max(900, int(task["mission"]["budget_policy"]["max_runtime_sec"]) + 900),
+        )
+    )
+    save_task(task)
+
+    try:
+        workspace.mkdir(parents=True, exist_ok=False)
+        repo_path.mkdir()
+        root = repo_path.resolve()
+        for rel, content in normalized_files.items():
+            target = repo_path.joinpath(*rel.split("/")).resolve()
+            _ensure_inside(root, target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content.encode("utf-8"))
+
+        commands = (
+            ("harness-git-init", ["git", "init"]),
+            ("harness-base-branch", ["git", "checkout", "-b", base]),
+            ("harness-git-add", ["git", "add", "--force", "."]),
+            ("harness-baseline-commit", ["git", "commit", "-m", "coding harness fixture baseline", "--allow-empty"]),
+            ("harness-work-branch", ["git", "switch", "-c", branch]),
+        )
+        for label, argv in commands:
+            result = _run_process(argv, cwd=repo_path)
+            _append_command(task, result, label=label)
+            if not result.get("ok"):
+                task["status"] = "error"
+                task["error"] = f"{label} failed"
+                save_task(task)
+                return public_task(task)
+        head = _run_process(["git", "rev-parse", "HEAD"], cwd=repo_path)
+        _append_command(task, head, label="harness-baseline-head")
+        if not head.get("ok"):
+            task["status"] = "error"
+            task["error"] = "could not determine harness fixture baseline"
+            save_task(task)
+            return public_task(task)
+
+        task["harness_baseline_commit"] = str(head.get("stdout") or "").strip()
+        task["status"] = "ready"
+        task.pop("error", None)
+        save_task(task)
+        return public_task(task)
+    except Exception as exc:
+        logger.warning("coding harness task create failed id=%s error=%s", task_id, exc)
+        task["status"] = "error"
+        task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc))}"
+        save_task(task)
+        return public_task(task)
+
+
 def create_model_integration_task(
     *,
     model: str,
@@ -2863,6 +3022,45 @@ def delete_task(task_id: str) -> Dict[str, Any]:
     return {"ok": True, "task_id": task_id, "deleted_workspace": str(path), "repo_url": redact_repo_url(str(task.get("repo_url") or ""))}
 
 
+def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, Any]:
+    """Remove expired terminal eval workspaces left by a disconnected client."""
+    _ensure_enabled()
+    current = float(now if now is not None else _now())
+    terminal_statuses = {
+        "completed",
+        "failed",
+        "paused",
+        "stopped",
+        "interrupted",
+        "idle_waiting",
+    }
+    purged: List[str] = []
+    failures: Dict[str, str] = {}
+    for path in tasks_dir().glob("code_*.json"):
+        try:
+            task = _read_json(path)
+            if str(task.get("kind") or "") != "harness_eval":
+                continue
+            expires_at = float(task.get("harness_expires_at") or 0)
+            agent_status = str(task.get("agent_status") or "idle").strip().lower()
+            task_status = str(task.get("status") or "").strip().lower()
+            finished_at = float(task.get("agent_finished_at") or task.get("updated_at") or 0)
+            if (
+                expires_at <= 0
+                or expires_at > current
+                or (task_status != "error" and agent_status not in terminal_statuses)
+                or finished_at <= 0
+                or current - finished_at < 30.0
+            ):
+                continue
+            task_id = str(task.get("id") or path.stem)
+            delete_task(task_id)
+            purged.append(task_id)
+        except Exception as exc:
+            failures[path.stem] = f"{type(exc).__name__}: {_redact_text(str(exc))}"
+    return {"ok": not failures, "purged": purged, "failures": failures}
+
+
 def archive_task(task_id: str, *, actor: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
     task = load_task(task_id)
     task_path = _task_path(task_id)
@@ -3593,6 +3791,7 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
 
 def monitor_tasks(*, limit: int = 20, only_attention: bool = False, stalled_after_sec: float = 900.0) -> Dict[str, Any]:
     _ensure_enabled()
+    cleanup_expired_harness_tasks()
     items: List[Dict[str, Any]] = []
     for public in list_tasks(limit=max(1, min(int(limit or 20), 100))):
         task_id = str(public.get("id") or "")

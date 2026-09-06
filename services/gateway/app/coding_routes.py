@@ -48,6 +48,17 @@ class CodingCreateAndRunRequest(BaseModel):
     context_reset_cycles: Optional[int] = Field(default=None, ge=0, le=100)
 
 
+class CodingHarnessRunRequest(BaseModel):
+    fixture_id: str
+    files: Dict[str, str]
+    prompt: str
+    coding_model: Optional[str] = None
+    commit_message: Optional[str] = None
+    max_cycles: Optional[int] = Field(default=None, ge=4, le=1000)
+    max_runtime_sec: Optional[int] = Field(default=None, ge=60, le=3600)
+    context_reset_cycles: Optional[int] = Field(default=None, ge=0, le=100)
+
+
 class CodingModelIntegrationCreateRequest(BaseModel):
     model: str
     repo_url: Optional[str] = None
@@ -796,6 +807,66 @@ async def v1_coding_create_and_run(req: Request, body: CodingCreateAndRunRequest
         **_run_horizon_kwargs(body),
     )
     return {"task": task}
+
+
+@router.post("/v1/coding/harness/runs")
+async def v1_coding_harness_create_and_run(
+    req: Request,
+    body: CodingHarnessRunRequest,
+) -> Dict[str, Any]:
+    user = _require_coding_api(req)
+    model = (
+        _coding_model_for_user(user, body.coding_model)
+        if user is not None
+        else str(body.coding_model or "").strip() or "coder"
+    )
+    mission_overrides = cw.coding_mission_overrides(
+        commit_policy="always_on_success",
+        push_on_success=False,
+        draft_pr_on_success=False,
+        max_cycles=body.max_cycles,
+        max_runtime_sec=body.max_runtime_sec,
+        context_reset_cycles=body.context_reset_cycles,
+    )
+    task = await _to_thread(
+        cw.create_harness_task,
+        fixture_id=body.fixture_id,
+        files=body.files,
+        prompt=body.prompt,
+        owner=_actor_from_user(user) if user is not None else "coding-harness",
+        owner_user_id=_user_id(user),
+        coding_model=model,
+        mission_overrides=mission_overrides,
+    )
+    if task.get("status") == "error":
+        return {"task": task}
+    task_id = str(task.get("id") or "")
+    try:
+        task = await ca.start_agent_run(
+            task_id,
+            coding_model=model,
+            auto_commit=True,
+            commit_message=body.commit_message or f"Complete coding harness fixture {body.fixture_id}",
+            actor=_actor_from_user(user) if user is not None else "coding-harness",
+            **_run_horizon_kwargs(body),
+        )
+    except BaseException:
+        if task_id and not ca.agent_run_active(task_id):
+            await _to_thread(cw.delete_task, task_id)
+        raise
+    return {"task": task}
+
+
+@router.delete("/v1/coding/harness/tasks/{task_id}")
+async def v1_coding_harness_delete_task(req: Request, task_id: str) -> Dict[str, Any]:
+    _require_coding_api(req)
+    task = await _to_thread(cw.load_task, task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="only coding harness tasks may be deleted here")
+    agent_status = str(task.get("agent_status") or "idle").strip().lower()
+    if agent_status in {"queued", "running", "stopping", "pausing"} or ca.agent_run_active(task_id):
+        raise HTTPException(status_code=409, detail="coding harness task is still active")
+    return {"result": await _to_thread(cw.delete_task, task_id)}
 
 
 @router.get("/v1/coding/tasks/{task_id}")

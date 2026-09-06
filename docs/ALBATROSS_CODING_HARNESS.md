@@ -1,6 +1,6 @@
 # Albatross as a Nexus Coding-Harness Control
 
-This document describes the first-stage integration of [Albatross](https://github.com/morganlinton/Albatross) (formerly Small Harness) as an **optional external comparison harness** for the Nexus Coding Workspace.
+This document describes the integration of [Albatross](https://github.com/morganlinton/Albatross) (formerly Small Harness) as an **optional external comparison harness** for the Nexus Coding Workspace.
 
 Albatross is not a production Nexus backend and does not replace Coding Workspace control, mission acceptance, validation gates, resumability, finalization, or publication. Its purpose here is experimental: hold the repository task and Nexus inference plane as constant as practical while changing the agent harness.
 
@@ -35,7 +35,7 @@ Albatross v2.4.0 supports an OpenAI-compatible provider via `OPENAI_BASE_URL`, o
                     MLX / vLLM / ...
 ```
 
-The initial adapter only automates the Albatross side. It emits a harness-neutral result record that can be compared with a Nexus Coding Workspace result once the latter is normalized into the same schema. It intentionally does **not** fake Coding Workspace automation with the existing direct model-eval tool.
+The adapter automates both sides and emits the same harness-neutral result schema. The Nexus side creates a durable Coding Workspace task through the Coding API, executes the normal agent and finalization lifecycle, and normalizes its persisted run evidence. It intentionally does **not** fake Coding Workspace automation with the existing direct model-eval tool.
 
 ## Security model
 
@@ -138,7 +138,7 @@ python3 services/gateway/tools/coding_harness_compare.py list-fixtures
 The first corpus includes:
 
 - `failure-path-management-link` — modeled on the InvokeAI management-link failure shape; a success-path-only fix is insufficient;
-- `validation-after-edit` — a small mutation that needs a targeted post-edit test;
+- `validation-after-edit` — a small mutation that needs a targeted post-edit test and preserves non-string numeric compatibility;
 - `cross-file-policy-fix` — the visible behavior is in one file but the causal default belongs in another.
 
 The schema is JSON and intentionally harness-neutral. A fixture contains:
@@ -152,6 +152,23 @@ The schema is JSON and intentionally harness-neutral. A fixture contains:
 - tags for later analysis.
 
 The current v1 schema uses inline files specifically to prevent an eval fixture from silently pointing Albatross at a live checkout.
+
+The Nexus runner submits those same inline files to the bearer-authenticated `POST /v1/coding/harness/runs` endpoint. That endpoint:
+
+- accepts only bounded text files with safe repository-relative paths;
+- creates a local-only Git repository with a `main` baseline and no remote;
+- marks the task as `harness_eval` and forces publication off;
+- starts the normal durable Coding Workspace runner and finalization path;
+- gives the disposable task an expiry lease equal to its run budget plus 15
+  minutes (capped at 24 hours), after which monitoring removes settled terminal
+  evaluations left behind by disconnected clients;
+- permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task.
+
+The client collects the baseline diff, selected final text files, post-run validation, persisted route/run evidence, and then deletes the server-side task and Git workspace. It does not report `execution_workspace_retained: false` until deletion is confirmed. A failed client run also discards its partial local evidence. If server-side deletion cannot be confirmed, the command fails closed with a `SECURITY` error.
+
+Coding Workspace validation uses the existing task command policy and execution environment; it is not the Bubblewrap sandbox used for the external Albatross child. Fixture validation commands are trusted executable content on both paths and must be reviewed before use.
+
+Coding Workspace enforces a minimum run horizon of four agent cycles and 60 seconds. Native and paired commands reject fixtures below either minimum instead of silently widening one side of the comparison.
 
 ## Run Albatross through Nexus
 
@@ -181,9 +198,39 @@ The disposable repository, `.git` objects, Albatross HOME/session source tree, a
 
 The common result separates objective evidence from later semantic judgment. It records outcome, elapsed time, requested Nexus alias, workspace delta, post-run validation, tool/step/context-compaction counts, and artifact paths.
 
-## Compare results
+## Run Nexus Coding Workspace
 
-The first-stage adapter compares already-normalized results:
+The native runner requires a Gateway deployment that includes the harness endpoints:
+
+```bash
+python3 services/gateway/tools/coding_harness_compare.py run-nexus \
+  --fixture services/gateway/tools/coding_harness_fixtures/failure-path-management-link.json \
+  --model coder
+```
+
+The Gateway bearer token is read from the same `NEXUS_API_KEY` or `GATEWAY_BEARER_TOKEN` variables. The normalized result records `backend` and `upstream_model` from the durable run record and includes bounded start/reroute history from Coding Workspace events. Its `route_evidence` value is:
+
+```text
+coding_workspace_persisted_run_record
+```
+
+Coding Workspace exposes the last 80 public events rather than a raw harness trace. The result labels that event-window limit explicitly; step count and final route still come from the durable run record.
+
+## Run a paired comparison
+
+One command can materialize and execute the same fixture through both harnesses:
+
+```bash
+python3 services/gateway/tools/coding_harness_compare.py run-paired \
+  --fixture services/gateway/tools/coding_harness_fixtures/failure-path-management-link.json \
+  --model coder
+```
+
+The command creates a pair directory, writes both normalized `result.json` files, prints the comparison table, and writes `comparison.json` with both result paths. It exits successfully only when both objective-normalized runs complete. Use `--json` for machine-readable combined output.
+
+## Compare saved results
+
+The adapter can also compare already-normalized saved results:
 
 ```bash
 python3 services/gateway/tools/coding_harness_compare.py compare-results \
@@ -191,11 +238,7 @@ python3 services/gateway/tools/coding_harness_compare.py compare-results \
   path/to/albatross-result.json
 ```
 
-It is intentionally not yet wired directly to the Coding Workspace API. Automating that side requires preserving Coding Workspace's durable mission/run semantics rather than approximating them with `coding_model_eval.py`.
-
-The next integration step is a **Nexus Coding Workspace result normalizer/runner** that maps one completed or interrupted workspace run into the same result schema, including actual Gateway route evidence. Once that exists, a single command can materialize one fixture twice from the same baseline and execute both harnesses.
-
-## Known first-stage limitation: route receipts
+## Known limitation: Albatross route receipts
 
 Albatross knows that it requested model alias `coder` through the OpenAI-compatible Nexus endpoint, but its process does not know which Nexus backend/upstream model ultimately served each request. The result therefore leaves `backend` and `upstream_model` empty and explicitly records:
 
@@ -203,7 +246,7 @@ Albatross knows that it requested model alias `coder` through the OpenAI-compati
 route_evidence = not_available_from_albatross_adapter_v1
 ```
 
-Do not fill these fields from assumptions. A later Nexus-side request/run correlation mechanism should attach authoritative route receipts.
+Do not fill these fields from assumptions. The native Coding Workspace result has authoritative persisted route evidence, but a later Nexus-side request/run correlation mechanism is still needed to attach equivalent receipts to the Albatross result.
 
 ## Selective Albatross architecture review
 
@@ -234,7 +277,7 @@ A useful A/B comparison must control what it can:
 2. same substantive mission;
 3. same requested Nexus model alias;
 4. recorded Albatross/Nexus versions;
-5. recorded actual Nexus route when route correlation becomes available;
+5. recorded actual Nexus route for Coding Workspace, with the Albatross route left explicitly unavailable until request correlation exists;
 6. objective final tests/diff evidence kept separately from model-generated quality judgments.
 
 If the two harnesses use different upstream routes, that run can still be informative, but it is not a clean harness-only comparison and must be labeled accordingly.

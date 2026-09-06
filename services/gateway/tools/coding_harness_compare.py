@@ -21,6 +21,9 @@ import uuid
 from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
+from urllib import error as urlerror
+from urllib import request as urlrequest
+from urllib.parse import quote, urlsplit, urlunsplit
 
 ALBATROSS_TESTED_VERSION = "2.4.0"
 ALBATROSS_TESTED_COMMIT = "6f20178d81c6f0fdbb97ccf826b0d56f04a77faf"
@@ -89,6 +92,13 @@ MAX_VALIDATION_OPEN_FILES = 64
 MAX_VALIDATION_PROCESSES = 128
 MAX_VALIDATION_MEMORY_BYTES = 16 * 1024 * 1024 * 1024
 MAX_VALIDATION_AGGREGATE_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
+MAX_NEXUS_API_RESPONSE_BYTES = 8_000_000
+NEXUS_POLL_INTERVAL_SEC = 2.0
+NEXUS_MIN_AGENT_STEPS = 4
+NEXUS_MIN_WALL_TIME_SEC = 60
+NEXUS_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "paused", "stopped", "interrupted", "idle_waiting"}
+)
 
 
 def now_iso() -> str:
@@ -2150,7 +2160,12 @@ def run_validation(fixture: dict[str, Any], workspace: Path, home: Path, temp_di
             "timed_out": timed_out}
 
 
-def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str], validation: dict[str, Any]) -> dict[str, Any]:
+def _objective_checks_with_reader(
+    fixture: dict[str, Any],
+    changed: list[str],
+    validation: dict[str, Any],
+    read_content: Any,
+) -> dict[str, Any]:
     expected, checks = fixture.get("expected", {}), []
     content_cache: dict[str, tuple[str | None, str | None]] = {}
     if "files_changed" in expected:
@@ -2165,22 +2180,7 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
         for spec in expected.get(key) or []:
             rel = str(spec["path"])
             if rel not in content_cache:
-                path, error = _workspace_regular_file(
-                    workspace, rel, max_bytes=MAX_OBJECTIVE_FILE_BYTES
-                )
-                text: str | None = None
-                if error == f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte limit":
-                    error = (
-                        f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"
-                    )
-                if error is None and path is not None:
-                    try:
-                        text = path.read_text(encoding="utf-8", errors="replace")
-                    except OSError as exc:
-                        error = f"could not read file: {exc}"
-                elif error is None:
-                    error = "unsafe file"
-                content_cache[rel] = (text, error)
+                content_cache[rel] = read_content(rel)
             text, error = content_cache[rel]
             if error or text is None:
                 checks.append({"kind": key, "path": spec["path"], "needle": spec["needle"],
@@ -2192,6 +2192,26 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
     if validation.get("passed") is not None:
         checks.append({"kind": "validation", "passed": bool(validation["passed"])})
     return {"passed": None if not checks else all(v["passed"] for v in checks), "checks": checks}
+
+
+def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str], validation: dict[str, Any]) -> dict[str, Any]:
+    def read_content(rel: str) -> tuple[str | None, str | None]:
+        path, error = _workspace_regular_file(
+            workspace, rel, max_bytes=MAX_OBJECTIVE_FILE_BYTES
+        )
+        text: str | None = None
+        if error == f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte limit":
+            error = f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"
+        if error is None and path is not None:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                error = f"could not read file: {exc}"
+        elif error is None:
+            error = "unsafe file"
+        return text, error
+
+    return _objective_checks_with_reader(fixture, changed, validation, read_content)
 
 
 def _contains_ordered_secret_fragments(
@@ -2611,6 +2631,596 @@ def _write_albatross_runtime_config(workspace: Path, trace_root: Path) -> None:
         raise RuntimeError("could not write Albatross runtime config") from exc
 
 
+class NexusApiError(RuntimeError):
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+def _nexus_api_url(base_url: str, path: str) -> str:
+    root = str(base_url or "").strip().rstrip("/")
+    if not root:
+        raise ValueError("Nexus base URL is required")
+    parsed = urlsplit(root)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Nexus base URL must be an HTTP(S) URL without credentials, query, or fragment")
+    suffix = "/" + str(path or "").lstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/") + suffix, "", ""))
+
+
+class _NoRedirectHandler(urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        return None
+
+
+def nexus_api_request(
+    method: str,
+    base_url: str,
+    path: str,
+    *,
+    token: str,
+    body: dict[str, Any] | None = None,
+    timeout_sec: float = 30.0,
+) -> dict[str, Any]:
+    if not token:
+        raise NexusApiError("Nexus bearer token is required")
+    raw_body = None
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    if body is not None:
+        raw_body = json.dumps(body, separators=(",", ":")).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urlrequest.Request(
+        _nexus_api_url(base_url, path),
+        data=raw_body,
+        headers=headers,
+        method=str(method or "GET").upper(),
+    )
+    try:
+        opener = urlrequest.build_opener(_NoRedirectHandler())
+        with opener.open(request, timeout=max(0.1, float(timeout_sec))) as response:
+            raw = response.read(MAX_NEXUS_API_RESPONSE_BYTES + 1)
+    except urlerror.HTTPError as exc:
+        detail = exc.read(min(MAX_NEXUS_API_RESPONSE_BYTES, 64_000)).decode("utf-8", errors="replace")
+        raise NexusApiError(
+            redact_text(f"Nexus API HTTP {exc.code}: {detail}", [token]),
+            status=int(exc.code),
+        ) from exc
+    except (urlerror.URLError, TimeoutError, OSError) as exc:
+        raise NexusApiError(redact_text(f"Nexus API request failed: {exc}", [token])) from exc
+    if len(raw) > MAX_NEXUS_API_RESPONSE_BYTES:
+        raise NexusApiError("Nexus API response exceeded the harness size limit")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise NexusApiError("Nexus API returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise NexusApiError("Nexus API response must be a JSON object")
+    return payload
+
+
+def _task_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    task = payload.get("task")
+    if not isinstance(task, dict):
+        raise NexusApiError("Nexus Coding API response omitted task state")
+    return task
+
+
+def _nexus_agent_status(task: dict[str, Any]) -> str:
+    agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
+    return str(agent.get("status") or "idle").strip().lower()
+
+
+def _wait_for_nexus_task(
+    task_id: str,
+    *,
+    base_url: str,
+    token: str,
+    deadline: float,
+) -> tuple[dict[str, Any], bool]:
+    last_task: dict[str, Any] = {}
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            try:
+                pause = nexus_api_request(
+                    "POST",
+                    base_url,
+                    f"/coding/tasks/{quote(task_id, safe='')}/agent-pause",
+                    token=token,
+                    body={},
+                    timeout_sec=10.0,
+                )
+                last_task = _task_from_payload(pause)
+            except NexusApiError:
+                pass
+            settle_deadline = time.monotonic() + 10.0
+            while _nexus_agent_status(last_task) not in NEXUS_TERMINAL_STATUSES:
+                if time.monotonic() >= settle_deadline:
+                    break
+                try:
+                    payload = nexus_api_request(
+                        "GET",
+                        base_url,
+                        f"/coding/tasks/{quote(task_id, safe='')}",
+                        token=token,
+                        timeout_sec=2.0,
+                    )
+                    last_task = _task_from_payload(payload)
+                except NexusApiError:
+                    break
+                time.sleep(0.1)
+            return last_task, True
+        payload = nexus_api_request(
+            "GET",
+            base_url,
+            f"/coding/tasks/{quote(task_id, safe='')}",
+            token=token,
+            timeout_sec=min(30.0, max(1.0, remaining)),
+        )
+        last_task = _task_from_payload(payload)
+        if _nexus_agent_status(last_task) in NEXUS_TERMINAL_STATUSES:
+            return last_task, False
+        time.sleep(min(NEXUS_POLL_INTERVAL_SEC, max(0.05, remaining)))
+
+
+def _delete_nexus_harness_task(task_id: str, *, base_url: str, token: str) -> None:
+    last_error: NexusApiError | None = None
+    for attempt in range(100):
+        try:
+            payload = nexus_api_request(
+                "DELETE",
+                base_url,
+                f"/coding/harness/tasks/{quote(task_id, safe='')}",
+                token=token,
+                timeout_sec=15.0,
+            )
+            result = payload.get("result")
+            if not isinstance(result, dict) or result.get("ok") is not True:
+                raise NexusApiError("Nexus Coding API did not confirm harness task deletion")
+            return
+        except NexusApiError as exc:
+            last_error = exc
+            if exc.status != 409 or attempt == 99:
+                break
+            time.sleep(0.1)
+    raise NexusApiError(f"could not delete Nexus harness task: {last_error}")
+
+
+def run_nexus_validation(
+    fixture: dict[str, Any],
+    task_id: str,
+    *,
+    base_url: str,
+    token: str,
+    deadline: float,
+) -> dict[str, Any]:
+    commands = fixture.get("expected", {}).get("validation") or []
+    results: list[dict[str, Any]] = []
+    budget_exhausted = False
+    timed_out = False
+    for raw_argv in commands:
+        argv = [str(value) for value in raw_argv]
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            results.append({
+                "argv": argv,
+                "ok": False,
+                "returncode": None,
+                "timed_out": True,
+                "stdout": "",
+                "stderr": "validation time budget exhausted before command",
+                "duration_ms": 0.0,
+                "launch_error": None,
+                "output_truncated": False,
+            })
+            budget_exhausted = True
+            timed_out = True
+            break
+        payload = nexus_api_request(
+            "POST",
+            base_url,
+            f"/coding/tasks/{quote(task_id, safe='')}/command",
+            token=token,
+            body={"argv": argv, "timeout_sec": remaining},
+            timeout_sec=remaining + 5.0,
+        )
+        raw_result = payload.get("result")
+        if not isinstance(raw_result, dict):
+            raise NexusApiError("Nexus validation response omitted command result")
+        stderr = redact_text(str(raw_result.get("stderr") or ""), [token])
+        command_timed_out = bool(
+            raw_result.get("returncode") is None and "timeout" in stderr.lower()
+        )
+        normalized = {
+            "argv": argv,
+            "ok": bool(raw_result.get("ok")),
+            "returncode": raw_result.get("returncode"),
+            "timed_out": command_timed_out,
+            "stdout": redact_text(str(raw_result.get("stdout") or ""), [token]),
+            "stderr": stderr,
+            "duration_ms": float(raw_result.get("duration_ms") or 0.0),
+            "launch_error": (
+                "command_failed_to_launch"
+                if raw_result.get("returncode") is None and not command_timed_out
+                else None
+            ),
+            "output_truncated": bool(
+                raw_result.get("stdout_truncated") or raw_result.get("stderr_truncated")
+            ),
+        }
+        results.append(normalized)
+        if command_timed_out:
+            timed_out = True
+            budget_exhausted = time.monotonic() >= deadline
+            break
+    passed = None if not commands else bool(len(results) == len(commands) and all(item["ok"] for item in results))
+    return {
+        "commands": results,
+        "passed": passed,
+        "budget_exhausted": budget_exhausted,
+        "timed_out": timed_out,
+    }
+
+
+def _nexus_trajectory(task: dict[str, Any]) -> dict[str, Any]:
+    agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
+    events = [item for item in (agent.get("events") or []) if isinstance(item, dict)]
+    tool_names = [
+        str(item.get("name") or "")
+        for item in events
+        if str(item.get("type") or "") == "tool_finished" and str(item.get("name") or "")
+    ]
+    route_history: list[dict[str, Any]] = []
+    for item in events:
+        event_type = str(item.get("type") or "")
+        if event_type == "started":
+            route_history.append({
+                "event": "started",
+                "backend": str(item.get("backend") or ""),
+                "upstream_model": str(item.get("upstream_model") or ""),
+                "reason": str(item.get("route_reason") or ""),
+            })
+        elif event_type == "semantic_reroute":
+            route_history.append({
+                "event": "semantic_reroute",
+                "backend": str(item.get("backend") or ""),
+                "upstream_model": str(item.get("upstream_model") or ""),
+                "previous_backend": str(item.get("previous_backend") or ""),
+                "previous_upstream_model": str(item.get("previous_upstream_model") or ""),
+            })
+    return {
+        "agent_turns": sum(1 for item in events if str(item.get("type") or "") == "assistant"),
+        "agent_steps": int(agent.get("cycle") or 0),
+        "tool_calls": len(tool_names),
+        "tool_call_names": tool_names,
+        "file_read_observed": any(name in {"coding_read_file", "coding_read_file_lines"} for name in tool_names),
+        "context_resets": sum(1 for item in events if str(item.get("type") or "") == "context_reset"),
+        "malformed_trace_lines": sum(
+            1
+            for item in events
+            if str(item.get("type") or "") == "no_tool_call" and item.get("malformed_text_tool_call") is True
+        ),
+        "trace_input_bytes": 0,
+        "event_window": "public_task_last_80",
+        "route_history": route_history,
+    }
+
+
+def _nexus_final_file_reader(
+    task_id: str,
+    *,
+    base_url: str,
+    token: str,
+    cache: dict[str, tuple[str | None, str | None]],
+) -> Any:
+    def read_content(rel: str) -> tuple[str | None, str | None]:
+        if rel in cache:
+            return cache[rel]
+        try:
+            payload = nexus_api_request(
+                "GET",
+                base_url,
+                f"/coding/tasks/{quote(task_id, safe='')}/file?path={quote(rel, safe='')}",
+                token=token,
+                timeout_sec=30.0,
+            )
+            content = payload.get("content")
+            if not isinstance(content, str):
+                cache[rel] = (None, "file response omitted text content")
+            elif len(content.encode("utf-8")) > MAX_OBJECTIVE_FILE_BYTES:
+                cache[rel] = (None, f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit")
+            else:
+                cache[rel] = (content, None)
+        except NexusApiError as exc:
+            cache[rel] = (None, str(exc))
+        return cache[rel]
+
+    return read_content
+
+
+def run_nexus_fixture(
+    fixture_path: Path,
+    *,
+    out_root: Path,
+    nexus_base_url: str,
+    nexus_token: str,
+    model: str = "coder",
+) -> tuple[dict[str, Any], Path]:
+    fixture = load_fixture(fixture_path)
+    if not nexus_token:
+        raise RuntimeError("Nexus bearer token is required (NEXUS_API_KEY or GATEWAY_BEARER_TOKEN)")
+    if (
+        int(fixture["limits"]["max_agent_steps"]) < NEXUS_MIN_AGENT_STEPS
+        or int(fixture["limits"]["wall_time_sec"]) < NEXUS_MIN_WALL_TIME_SEC
+    ):
+        raise ValueError(
+            "Nexus Coding Workspace fixtures require max_agent_steps >= "
+            f"{NEXUS_MIN_AGENT_STEPS} and wall_time_sec >= {NEXUS_MIN_WALL_TIME_SEC}"
+        )
+    run_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
+    out_root_resolved = out_root.resolve()
+    out_root_resolved.mkdir(parents=True, exist_ok=True)
+    run_dir = out_root_resolved / run_id
+    fixture_dir = run_dir / fixture["id"]
+    root = fixture_dir / "nexus"
+    artifacts = root / "artifacts"
+    task_id = ""
+    result: dict[str, Any] | None = None
+    result_path = artifacts / "result.json"
+    cleanup_ok = False
+    failure: BaseException | None = None
+    try:
+        for directory in (run_dir, fixture_dir, root, artifacts):
+            _mkdir_private(directory)
+        started_at = now_iso()
+        started = time.monotonic()
+        deadline = started + float(fixture["limits"]["wall_time_sec"])
+        payload = nexus_api_request(
+            "POST",
+            nexus_base_url,
+            "/coding/harness/runs",
+            token=nexus_token,
+            body={
+                "fixture_id": fixture["id"],
+                "files": fixture["repository"]["files"],
+                "prompt": fixture["mission"],
+                "coding_model": model,
+                "commit_message": f"Complete coding harness fixture {fixture['id']}",
+                "max_cycles": int(fixture["limits"]["max_agent_steps"]),
+                "max_runtime_sec": int(fixture["limits"]["wall_time_sec"]),
+            },
+            timeout_sec=min(60.0, max(5.0, deadline - time.monotonic())),
+        )
+        task = _task_from_payload(payload)
+        task_id = str(task.get("id") or "")
+        if not task_id:
+            raise NexusApiError("Nexus Coding API returned a task without an id")
+        if str(task.get("status") or "") == "error":
+            raise NexusApiError(str(task.get("error") or "Nexus harness workspace creation failed"))
+        task, run_timed_out = _wait_for_nexus_task(
+            task_id,
+            base_url=nexus_base_url,
+            token=nexus_token,
+            deadline=deadline,
+        )
+        diff_payload = nexus_api_request(
+            "GET",
+            nexus_base_url,
+            f"/coding/tasks/{quote(task_id, safe='')}/diff",
+            token=nexus_token,
+            timeout_sec=30.0,
+        )
+        if diff_payload.get("ok") is not True:
+            raise NexusApiError(str(diff_payload.get("error") or "Nexus harness diff collection failed"))
+        change_items = [
+            item for item in ((diff_payload.get("changes") or {}).get("files") or [])
+            if isinstance(item, dict)
+        ]
+        raw_changed = [str(item.get("path") or "") for item in change_items if str(item.get("path") or "")]
+        if len(raw_changed) > MAX_SNAPSHOT_CHANGED_FILES:
+            raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_CHANGED_FILES} changed-file limit")
+        protected = {
+            rel for rel in raw_changed
+            if _contains_secret_path(rel, [nexus_token])
+        }
+        safe_changed = sorted(set(raw_changed) - protected)
+        changed = safe_changed + (["(redacted)"] if protected else [])
+        diff_text = str(((diff_payload.get("diff") or {}).get("stdout") or ""))
+        if protected:
+            diff_text = ""
+        diff_text = redact_text(diff_text, [nexus_token])
+        if len(diff_text) > MAX_SNAPSHOT_DIFF_CHARS:
+            raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_DIFF_CHARS} character diff limit")
+        (artifacts / "final.diff").write_text(diff_text, encoding="utf-8")
+
+        cache: dict[str, tuple[str | None, str | None]] = {}
+        read_content = _nexus_final_file_reader(
+            task_id,
+            base_url=nexus_base_url,
+            token=nexus_token,
+            cache=cache,
+        )
+        expected_paths = {
+            str(spec.get("path") or "")
+            for key in ("file_contains", "file_not_contains")
+            for spec in (fixture.get("expected", {}).get(key) or [])
+            if isinstance(spec, dict) and str(spec.get("path") or "")
+        }
+        for rel in sorted(set(safe_changed) | expected_paths):
+            read_content(rel)
+
+        final_files = artifacts / "final-files"
+        final_file_omissions: list[dict[str, str]] = []
+        aggregate_bytes = 0
+        for rel in safe_changed:
+            content, error = cache.get(rel, (None, "file was not fetched"))
+            if error or content is None:
+                final_file_omissions.append({"path": rel, "reason": error or "file unavailable"})
+                continue
+            aggregate_bytes += len(content.encode("utf-8"))
+            if aggregate_bytes > MAX_SNAPSHOT_FILE_BYTES:
+                raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_FILE_BYTES} byte file-evidence limit")
+            target = final_files / safe_rel_path(rel)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(redact_text(content, [nexus_token]), encoding="utf-8")
+
+        validation = run_nexus_validation(
+            fixture,
+            task_id,
+            base_url=nexus_base_url,
+            token=nexus_token,
+            deadline=deadline,
+        )
+        objective = _objective_checks_with_reader(fixture, changed, validation, read_content)
+        agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
+        run_history = [item for item in (task.get("agent_runs") or []) if isinstance(item, dict)]
+        current_run_id = str(agent.get("run_id") or "")
+        run_record = next(
+            (item for item in reversed(run_history) if str(item.get("run_id") or "") == current_run_id),
+            run_history[-1] if run_history else {},
+        )
+        agent_status = _nexus_agent_status(task)
+        completed = bool(agent_status == "completed" and objective.get("passed") is True)
+        interrupted = bool(
+            run_timed_out
+            or validation.get("timed_out")
+            or agent_status in {"paused", "stopped", "interrupted", "idle_waiting"}
+        )
+        if completed:
+            outcome_status = "completed"
+            outcome_error = None
+        elif run_timed_out or validation.get("timed_out"):
+            outcome_status = "timed_out"
+            outcome_error = "coding run or validation exceeded the fixture wall-time budget"
+        elif interrupted:
+            outcome_status = agent_status or "interrupted"
+            outcome_error = str(agent.get("error") or agent.get("summary") or "coding run interrupted")
+        elif validation.get("passed") is False:
+            outcome_status = "failed"
+            outcome_error = "validation failed"
+        elif objective.get("passed") is not True:
+            outcome_status = "failed"
+            outcome_error = "objective checks failed"
+        else:
+            outcome_status = "failed"
+            outcome_error = str(agent.get("error") or agent.get("summary") or "coding run failed")
+
+        trajectory = _nexus_trajectory(task)
+        workspace_info = {
+            "base_head": str(diff_payload.get("merge_base") or diff_payload.get("compare_ref") or ""),
+            "final_head": str(run_record.get("commit") or (task.get("terminal_result") or {}).get("final_commit") or ""),
+            "dirty": bool(changed),
+            "files_changed": changed,
+            "diff_sha256": hashlib.sha256(diff_text.encode("utf-8")).hexdigest(),
+            "diff_chars": len(diff_text),
+            "evidence_omissions": (
+                [{"path": "(redacted)", "reason": "path contains a protected secret encoding"}]
+                if protected else []
+            ),
+            "final_file_omissions": final_file_omissions,
+            "git_metadata_retained": True,
+            "execution_workspace_retained": True,
+        }
+        result = redact_value({
+            "schema_version": RESULT_SCHEMA_VERSION,
+            "fixture_id": fixture["id"],
+            "fixture_description": fixture.get("description", ""),
+            "tags": fixture.get("tags", []),
+            "harness": "nexus-coding-workspace",
+            "run_id": run_id,
+            "started_at": started_at,
+            "finished_at": now_iso(),
+            "duration_ms": round((time.monotonic() - started) * 1000.0, 1),
+            "harness_version": {
+                "task_schema": "nexus_coding_task.v1",
+                "result_source": "v1-coding-api",
+            },
+            "model": {
+                "requested": model,
+                "gateway": "nexus",
+                "nexus_base_url": nexus_base_url,
+                "client_backend": "nexus-coding-workspace",
+                "backend": str(run_record.get("backend") or agent.get("backend") or ""),
+                "upstream_model": str(run_record.get("upstream_model") or agent.get("upstream_model") or ""),
+                "route_evidence": "coding_workspace_persisted_run_record",
+                "route_history": trajectory.pop("route_history"),
+            },
+            "outcome": {
+                "status": outcome_status,
+                "completed": completed,
+                "interrupted": interrupted,
+                "exit_code": 0 if completed else None,
+                "error": outcome_error,
+                "stop_reason_code": str(run_record.get("stop_reason_code") or ""),
+            },
+            "workspace": workspace_info,
+            "validation": validation,
+            "trajectory": trajectory,
+            "objective": objective,
+            "artifacts": {
+                "run_root": str(root),
+                "stdout": "",
+                "stderr": "",
+                "diff": str(artifacts / "final.diff"),
+                "process_output_truncated": False,
+                "trace_files": [],
+                "trace_omissions": ["Coding Workspace exposes a bounded public event window, not a raw harness trace."],
+                "omitted_non_text": [],
+            },
+        }, [nexus_token])
+        result = _redact_fragmented_value(result, [nexus_token])
+        result = _redact_fragmented_value(
+            result,
+            [nexus_token],
+            fields=RESULT_CHILD_CONTROLLED_FIELDS,
+            embedded_raw_only=True,
+            min_fragment_bytes=MIN_CROSS_FIELD_FRAGMENT_BYTES,
+        )
+        omitted = scrub_retained_artifacts(artifacts, [nexus_token])
+        result["artifacts"]["omitted_non_text"] = omitted
+        refresh_diff_metadata(result["workspace"], artifacts / "final.diff")
+    except BaseException as exc:
+        failure = exc
+    finally:
+        if task_id:
+            try:
+                _delete_nexus_harness_task(task_id, base_url=nexus_base_url, token=nexus_token)
+                cleanup_ok = True
+            except BaseException as cleanup_exc:
+                if _path_lexists(run_dir):
+                    discard_run_root_verified(run_dir)
+                raise RuntimeError(
+                    "SECURITY: Nexus coding harness workspace could not be deleted: "
+                    + redact_text(str(cleanup_exc), [nexus_token])
+                ) from cleanup_exc
+
+    if failure is not None:
+        if _path_lexists(run_dir):
+            try:
+                discard_run_root_verified(run_dir)
+            except BaseException as discard_exc:
+                raise RuntimeError(
+                    f"SECURITY: evaluation failed and run directory could not be securely discarded: {run_dir}: "
+                    + redact_text(str(discard_exc), [nexus_token])
+                ) from discard_exc
+        raise failure
+    if result is None:
+        raise RuntimeError("Nexus coding harness did not produce a result")
+    if not cleanup_ok:
+        raise RuntimeError("Nexus coding harness cleanup was not confirmed")
+    result["workspace"]["git_metadata_retained"] = False
+    result["workspace"]["execution_workspace_retained"] = False
+    write_json(result_path, result)
+    return result, result_path
+
+
 def run_albatross_fixture(fixture_path: Path, *, out_root: Path, executable: str,
                           nexus_base_url: str, nexus_token: str, model: str = "coder",
                           allow_mutations: bool = True) -> tuple[dict[str, Any], Path]:
@@ -2860,7 +3470,7 @@ def render_comparison(results: list[dict[str, Any]]) -> str:
 
 def parse_args() -> argparse.Namespace:
     runtime = Path(os.getenv("NEXUS_RUNTIME_ROOT", ".runtime")) / "coding-harness-evals"
-    parser = argparse.ArgumentParser(description="Run Albatross as an external coding harness through Nexus.")
+    parser = argparse.ArgumentParser(description="Compare Nexus Coding Workspace and Albatross on common fixtures.")
     sub = parser.add_subparsers(dest="command", required=True)
     ls = sub.add_parser("list-fixtures")
     ls.add_argument("--json", action="store_true")
@@ -2879,6 +3489,20 @@ def parse_args() -> argparse.Namespace:
     r.add_argument("--model", default="coder")
     r.add_argument("--out-root", default=str(runtime))
     r.add_argument("--read-only", action="store_true")
+    n = sub.add_parser("run-nexus")
+    n.add_argument("--fixture", required=True)
+    n.add_argument("--base-url", default=os.getenv("NEXUS_BASE_URL", "http://ai2:8800/v1"))
+    n.add_argument("--token", default=os.getenv("NEXUS_API_KEY") or os.getenv("GATEWAY_BEARER_TOKEN") or "")
+    n.add_argument("--model", default="coder")
+    n.add_argument("--out-root", default=str(runtime))
+    pair = sub.add_parser("run-paired")
+    pair.add_argument("--fixture", required=True)
+    pair.add_argument("--albatross-bin", default=os.getenv("ALBATROSS_BIN", "albatross"))
+    pair.add_argument("--base-url", default=os.getenv("NEXUS_BASE_URL", "http://ai2:8800/v1"))
+    pair.add_argument("--token", default=os.getenv("NEXUS_API_KEY") or os.getenv("GATEWAY_BEARER_TOKEN") or "")
+    pair.add_argument("--model", default="coder")
+    pair.add_argument("--out-root", default=str(runtime))
+    pair.add_argument("--json", action="store_true")
     c = sub.add_parser("compare-results")
     c.add_argument("results", nargs="+")
     c.add_argument("--json", action="store_true")
@@ -2910,6 +3534,63 @@ def main() -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
         print(f"result: {path}", file=sys.stderr)
         return 0 if result["outcome"]["completed"] else 1
+    if args.command == "run-nexus":
+        try:
+            result, path = run_nexus_fixture(
+                Path(args.fixture),
+                out_root=Path(args.out_root),
+                nexus_base_url=args.base_url,
+                nexus_token=args.token,
+                model=args.model,
+            )
+        except Exception as exc:
+            print(f"{type(exc).__name__}: {redact_text(str(exc), [args.token])}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2, sort_keys=True))
+        print(f"result: {path}", file=sys.stderr)
+        return 0 if result["outcome"]["completed"] else 1
+    if args.command == "run-paired":
+        fixture_path = Path(args.fixture)
+        try:
+            fixture = load_fixture(fixture_path)
+            pair_id = f"pair-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}"
+            out_root = Path(args.out_root).resolve()
+            out_root.mkdir(parents=True, exist_ok=True)
+            pair_root = out_root / pair_id
+            _mkdir_private(pair_root)
+            nexus_result, nexus_path = run_nexus_fixture(
+                fixture_path,
+                out_root=pair_root,
+                nexus_base_url=args.base_url,
+                nexus_token=args.token,
+                model=args.model,
+            )
+            albatross_result, albatross_path = run_albatross_fixture(
+                fixture_path,
+                out_root=pair_root,
+                executable=args.albatross_bin,
+                nexus_base_url=args.base_url,
+                nexus_token=args.token,
+                model=args.model,
+            )
+            results = [nexus_result, albatross_result]
+            manifest = {
+                "schema_version": RESULT_SCHEMA_VERSION,
+                "pair_id": pair_id,
+                "fixture_id": fixture["id"],
+                "model": args.model,
+                "results": [str(nexus_path), str(albatross_path)],
+                "completed": all(item.get("outcome", {}).get("completed") is True for item in results),
+                "generated_at": now_iso(),
+            }
+            manifest_path = pair_root / "comparison.json"
+            write_json(manifest_path, manifest)
+        except Exception as exc:
+            print(f"{type(exc).__name__}: {redact_text(str(exc), [args.token])}", file=sys.stderr)
+            return 2
+        print(json.dumps({"manifest": manifest, "results": results}, indent=2, sort_keys=True) if args.json else render_comparison(results))
+        print(f"comparison: {manifest_path}", file=sys.stderr)
+        return 0 if manifest["completed"] else 1
     if args.command == "compare-results":
         results = [read_json(Path(p)) for p in args.results]
         print(json.dumps(results, indent=2, sort_keys=True) if args.json else render_comparison(results))
