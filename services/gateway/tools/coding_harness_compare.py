@@ -2763,6 +2763,34 @@ def _nexus_agent_status(task: dict[str, Any]) -> str:
     return str(agent.get("status") or "idle").strip().lower()
 
 
+def _nexus_agent_run_clock(
+    task: dict[str, Any],
+    *,
+    wall_time_sec: float,
+) -> tuple[str, float, float]:
+    """Anchor client timing to the server-side agent start, after fixture setup."""
+    received_at = time.time()
+    received_monotonic = time.monotonic()
+    agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
+    try:
+        server_started_at = float(agent.get("started_at"))
+    except (TypeError, ValueError):
+        server_started_at = received_at
+    if not server_started_at > 0 or server_started_at > received_at + 5.0:
+        server_started_at = received_at
+    elapsed_at_receipt = max(0.0, received_at - server_started_at)
+    started_monotonic = received_monotonic - elapsed_at_receipt
+    started_at = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime(server_started_at),
+    )
+    return (
+        started_at,
+        started_monotonic,
+        started_monotonic + float(wall_time_sec),
+    )
+
+
 def _wait_for_nexus_task(
     task_id: str,
     *,
@@ -3139,9 +3167,6 @@ def run_nexus_fixture(
     try:
         for directory in (run_dir, fixture_dir, root, artifacts):
             _mkdir_private(directory)
-        started_at = now_iso()
-        started = time.monotonic()
-        deadline = started + float(fixture["limits"]["wall_time_sec"])
         payload = nexus_api_request(
             "POST",
             nexus_base_url,
@@ -3156,7 +3181,10 @@ def run_nexus_fixture(
                 "max_cycles": int(fixture["limits"]["max_agent_steps"]),
                 "max_runtime_sec": int(fixture["limits"]["wall_time_sec"]),
             },
-            timeout_sec=min(60.0, max(5.0, deadline - time.monotonic())),
+            timeout_sec=min(
+                60.0,
+                max(5.0, float(fixture["limits"]["wall_time_sec"])),
+            ),
         )
         task = _task_from_payload(payload)
         task_id = str(task.get("id") or "")
@@ -3164,6 +3192,10 @@ def run_nexus_fixture(
             raise NexusApiError("Nexus Coding API returned a task without an id")
         if str(task.get("status") or "") == "error":
             raise NexusApiError(str(task.get("error") or "Nexus harness workspace creation failed"))
+        started_at, started, deadline = _nexus_agent_run_clock(
+            task,
+            wall_time_sec=float(fixture["limits"]["wall_time_sec"]),
+        )
         task, run_timed_out = _wait_for_nexus_task(
             task_id,
             base_url=nexus_base_url,
@@ -3192,7 +3224,10 @@ def run_nexus_fixture(
         )
         pending_changes = changes_payload.get("result")
         if not isinstance(pending_changes, dict) or pending_changes.get("ok") is not True:
-            raise NexusApiError("Nexus harness worktree change collection failed")
+            detail = pending_changes.get("error") if isinstance(pending_changes, dict) else ""
+            raise NexusApiError(
+                str(detail or "Nexus harness worktree change collection failed")
+            )
         diff_changes = diff_payload.get("changes")
         if not isinstance(diff_changes, dict):
             raise NexusApiError("Nexus harness diff response omitted change evidence")

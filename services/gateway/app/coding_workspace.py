@@ -1356,6 +1356,7 @@ def _run_process(
     use_git_credentials: bool = False,
     git_token_value: Optional[str] = None,
     env_overrides: Optional[Dict[str, str]] = None,
+    decode_errors: str = "strict",
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     limit = max_output_chars()
@@ -1381,7 +1382,8 @@ def _run_process(
                 effective_argv,
                 cwd=str(cwd),
                 env=env,
-                text=True,
+                encoding="utf-8",
+                errors=decode_errors,
                 capture_output=True,
                 timeout=effective_timeout_sec,
             )
@@ -2735,26 +2737,26 @@ def _harness_neutral_git_snapshot(
             ],
             cwd=repo,
             env_overrides=env,
+            decode_errors="surrogateescape",
         )
+        untracked_stdout = str(untracked_result.get("stdout") or "")
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in untracked_stdout):
+            error = "harness repository contains a path that is not valid UTF-8"
+            empty_changes = {
+                "ok": False,
+                "error": error,
+                "files": [],
+                "counts": _counts_for_change_files([]),
+            }
+            return {
+                "diff": {"ok": False, "error": error, "changes": empty_changes},
+                "changes": empty_changes,
+            }
         untracked_paths = [
             path
-            for path in str(untracked_result.get("stdout") or "").split("\0")
+            for path in untracked_stdout.split("\0")
             if path and path != ".git" and not path.startswith(".git/")
         ]
-        intent_to_add = _run_process(
-            [
-                "git",
-                "add",
-                "--intent-to-add",
-                "--force",
-                "--",
-                ".",
-                ":(exclude).git",
-                ":(exclude).git/**",
-            ],
-            cwd=repo,
-            env_overrides=env,
-        )
         diff_argv = [
             "git",
             "diff",
@@ -2769,23 +2771,15 @@ def _harness_neutral_git_snapshot(
             env_overrides=env,
         )
         tracked_files = list(tracked.get("files") or [])
-        untracked_path_set = set(untracked_paths)
-        preserved_tracked_files = [
-            item
-            for item in tracked_files
-            if not isinstance(item, dict)
-            or str(item.get("path") or "") not in untracked_path_set
-            or str(item.get("kind") or "").strip().lower() != "added"
-        ]
-        preserved_tracked_paths = {
+        tracked_paths = {
             str(item.get("path") or "")
-            for item in preserved_tracked_files
+            for item in tracked_files
             if isinstance(item, dict)
         }
-        changed_files = preserved_tracked_files + [
+        changed_files = tracked_files + [
             {"path": path, "status": "??", "kind": "untracked"}
             for path in untracked_paths
-            if path not in preserved_tracked_paths
+            if path not in tracked_paths
         ]
         synthetic_untracked_paths = [
             str(item.get("path") or "")
@@ -2813,8 +2807,7 @@ def _harness_neutral_git_snapshot(
         )
         changes = {
             "ok": bool(
-                intent_to_add.get("ok")
-                and tracked.get("ok")
+                tracked.get("ok")
                 and untracked_result.get("ok")
             ),
             "counts": _counts_for_change_files(changed_files),
@@ -2828,10 +2821,10 @@ def _harness_neutral_git_snapshot(
         }
         diff_result = {
             "ok": bool(
-                intent_to_add.get("ok")
-                and stat.get("ok")
+                stat.get("ok")
                 and diff.get("ok")
                 and tracked.get("ok")
+                and untracked_result.get("ok")
             ),
             "scope": "harness_baseline",
             "base_branch": str(task.get("base_branch") or "main"),
@@ -2841,7 +2834,7 @@ def _harness_neutral_git_snapshot(
             "compare_ref": baseline,
             "stat": stat,
             "diff": diff,
-            "changes": tracked,
+            "changes": changes,
             "worktree_stat": stat,
             "worktree_diff": diff,
             "staged_stat": {"ok": True, "stdout": "", "stderr": ""},

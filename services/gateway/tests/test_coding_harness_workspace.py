@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import threading
@@ -316,7 +317,7 @@ def test_run_task_command_preserves_newer_terminal_lifecycle_state(monkeypatch, 
     assert saved["commands"][-1]["label"] == "command"
 
 
-def test_harness_git_evidence_preserves_literal_paths_and_rename_targets(monkeypatch, tmp_path):
+def test_harness_git_evidence_keeps_pre_index_rename_target_untracked(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
         fixture_id="literal-paths",
@@ -338,13 +339,48 @@ def test_harness_git_evidence_preserves_literal_paths_and_rename_targets(monkeyp
     diff = cw.harness_git_diff(task["id"])
     diff_changed = diff["changes"]["files"]
 
-    expected = {"café.txt", 'quote"file.txt', "new name.txt"}
+    expected = {"café.txt", 'quote"file.txt', "old name.txt", "new name.txt"}
     assert {item["path"] for item in changed} == expected
     assert {item["path"] for item in diff_changed} == expected
-    rename = next(item for item in changed if item["kind"] == "renamed")
-    assert rename["path"] == "new name.txt"
-    assert rename["previous_path"] == "old name.txt"
-    assert 'quote"file.txt' not in diff["diff"]["stdout"]
+    by_path = {item["path"]: item for item in changed}
+    assert by_path["old name.txt"]["kind"] == "removed"
+    assert by_path["new name.txt"]["kind"] == "untracked"
+    assert by_path["new name.txt"]["status"] == "??"
+    diff_text = diff["diff"]["stdout"]
+    assert "deleted file mode" in diff_text
+    assert "rename from" not in diff_text
+    assert "rename to" not in diff_text
+    assert 'quote"file.txt' not in diff_text
+    assert "new name.txt" not in diff_text
+
+
+def test_harness_git_evidence_rejects_non_utf8_path_explicitly(monkeypatch, tmp_path):
+    if os.name != "posix":
+        pytest.skip("non-UTF-8 filename regression requires POSIX surrogateescape")
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="non-utf8-path",
+        files={"app.py": "value\n"},
+        prompt="Inspect unusual paths.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    raw_path = os.fsencode(repo) + b"/non-utf8-\xff.txt"
+    descriptor = os.open(raw_path, os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        os.write(descriptor, b"content\n")
+    finally:
+        os.close(descriptor)
+
+    changes = cw.harness_git_changes(task["id"])
+    diff = cw.harness_git_diff(task["id"])
+
+    assert changes["ok"] is False
+    assert changes["files"] == []
+    assert changes["error"] == "harness repository contains a path that is not valid UTF-8"
+    assert diff["ok"] is False
+    assert diff["error"] == changes["error"]
+    json.dumps({"changes": changes, "diff": diff}).encode("utf-8")
 
 
 def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tmp_path):
