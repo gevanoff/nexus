@@ -51,7 +51,7 @@ For each run the adapter:
 - sets `BACKEND=openai` and `OPENAI_BASE_URL` to Nexus;
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
-- starts the measured interval after fixture materialization and runtime setup, bounds the agent and post-run validation under one fixture wall-time deadline, then gives trace collection a separate ten-second post-run budget so normalized timeout evidence can still be retained;
+- starts the measured interval after fixture materialization and runtime setup, using server-reported elapsed runtime rather than cross-host wall-clock subtraction for the remote Nexus path, bounds the agent and post-run validation under one fixture wall-time deadline, then gives trace collection a separate ten-second post-run budget so normalized timeout evidence can still be retained;
 - completes output-redaction preparation before launch, launches agent commands under Linux subreaper supervision and post-run validation against a read-only workspace and root inside a Bubblewrap filesystem/network sandbox, places validation scratch space on a private tmpfs with 64 MiB and 4,096-inode kernel-enforced quotas (including deleted-open files), and enforces additional file-size, descriptor, 128-task, 16 GiB per-process address-space, and 2 GiB aggregate resident-memory ceilings before terminating complete adopted descendant trees even on operator interruption and collecting final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;

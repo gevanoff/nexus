@@ -7,6 +7,7 @@ import contextlib
 import ctypes
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -2769,21 +2770,25 @@ def _nexus_agent_run_clock(
     wall_time_sec: float,
 ) -> tuple[str, float, float]:
     """Anchor client timing to the server-side agent start, after fixture setup."""
-    received_at = time.time()
     received_monotonic = time.monotonic()
     agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
     try:
-        server_started_at = float(agent.get("started_at"))
+        elapsed_at_receipt = float(agent.get("elapsed_runtime_sec") or 0.0)
     except (TypeError, ValueError):
-        server_started_at = received_at
-    if not server_started_at > 0 or server_started_at > received_at + 5.0:
-        server_started_at = received_at
-    elapsed_at_receipt = max(0.0, received_at - server_started_at)
+        elapsed_at_receipt = 0.0
+    if not math.isfinite(elapsed_at_receipt) or elapsed_at_receipt < 0:
+        elapsed_at_receipt = 0.0
     started_monotonic = received_monotonic - elapsed_at_receipt
-    started_at = time.strftime(
-        "%Y-%m-%dT%H:%M:%SZ",
-        time.gmtime(server_started_at),
-    )
+    try:
+        server_started_at = float(agent.get("started_at"))
+        if not server_started_at > 0:
+            raise ValueError("invalid server start time")
+        started_at = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(server_started_at),
+        )
+    except (TypeError, ValueError, OverflowError, OSError):
+        started_at = now_iso()
     return (
         started_at,
         started_monotonic,

@@ -34,11 +34,11 @@ def _write_executable(path: Path, body: str) -> Path:
 
 
 def test_nexus_clock_starts_at_server_agent_run_not_fixture_setup(monkeypatch) -> None:
-    monkeypatch.setattr(harness.time, "time", lambda: 1_060.0)
+    monkeypatch.setattr(harness.time, "time", lambda: 2_060.0)
     monkeypatch.setattr(harness.time, "monotonic", lambda: 500.0)
 
     started_at, started, deadline = harness._nexus_agent_run_clock(
-        {"agent": {"started_at": 1_045.0}},
+        {"agent": {"started_at": 1_045.0, "elapsed_runtime_sec": 15}},
         wall_time_sec=60,
     )
 
