@@ -2768,6 +2768,7 @@ def _nexus_agent_run_clock(
     task: dict[str, Any],
     *,
     wall_time_sec: float,
+    observation_round_trip_sec: float = 0.0,
 ) -> tuple[str, float, float]:
     """Anchor client timing to the server-side agent start, after fixture setup."""
     received_monotonic = time.monotonic()
@@ -2778,6 +2779,13 @@ def _nexus_agent_run_clock(
         elapsed_at_receipt = 0.0
     if not math.isfinite(elapsed_at_receipt) or elapsed_at_receipt < 0:
         elapsed_at_receipt = 0.0
+    round_trip = max(0.0, float(observation_round_trip_sec))
+    if math.isfinite(round_trip):
+        # The server's elapsed value is current when it serializes the probe,
+        # not when the client receives it. Charging the full observed round
+        # trip is conservative under asymmetric latency and cannot extend the
+        # shared agent-plus-validation budget.
+        elapsed_at_receipt += round_trip
     started_monotonic = received_monotonic - elapsed_at_receipt
     try:
         server_started_at = float(agent.get("started_at"))
@@ -2849,13 +2857,13 @@ def _wait_for_nexus_task(
         time.sleep(min(NEXUS_POLL_INTERVAL_SEC, max(0.05, remaining)))
 
 
-def _nexus_harness_diff_after_workers(
+def _acquire_nexus_harness_evidence_lease(
     task_id: str,
     *,
     base_url: str,
     token: str,
     wait_timeout_sec: float,
-) -> tuple[dict[str, Any], float]:
+) -> tuple[str, float]:
     deadline = time.monotonic() + max(0.1, float(wait_timeout_sec))
     last_error: NexusApiError | None = None
     while True:
@@ -2867,13 +2875,18 @@ def _nexus_harness_diff_after_workers(
         attempt_started = time.monotonic()
         try:
             payload = nexus_api_request(
-                "GET",
+                "POST",
                 base_url,
-                f"/coding/harness/tasks/{quote(task_id, safe='')}/diff",
+                f"/coding/harness/tasks/{quote(task_id, safe='')}/evidence-lease",
                 token=token,
+                body={"ttl_sec": min(7200.0, max(30.0, wait_timeout_sec + 120.0))},
                 timeout_sec=min(30.0, max(0.1, remaining)),
             )
-            return payload, attempt_started
+            lease = payload.get("lease")
+            lease_id = str(lease.get("lease_id") or "") if isinstance(lease, dict) else ""
+            if not lease_id:
+                raise NexusApiError("Nexus Coding API did not return an evidence lease")
+            return lease_id, attempt_started
         except NexusApiError as exc:
             last_error = exc
             if exc.status != 409:
@@ -2887,6 +2900,7 @@ def _delete_nexus_harness_task(
     base_url: str,
     token: str,
     wait_timeout_sec: float = NEXUS_GUARDED_WORKER_TIMEOUT_SEC,
+    evidence_lease_id: str = "",
 ) -> None:
     last_error: NexusApiError | None = None
     deadline = time.monotonic() + max(0.1, float(wait_timeout_sec))
@@ -2898,7 +2912,12 @@ def _delete_nexus_harness_task(
             payload = nexus_api_request(
                 "DELETE",
                 base_url,
-                f"/coding/harness/tasks/{quote(task_id, safe='')}",
+                f"/coding/harness/tasks/{quote(task_id, safe='')}"
+                + (
+                    f"?evidence_lease_id={quote(evidence_lease_id, safe='')}"
+                    if evidence_lease_id
+                    else ""
+                ),
                 token=token,
                 timeout_sec=min(15.0, max(0.1, remaining)),
             )
@@ -2921,6 +2940,7 @@ def run_nexus_validation(
     base_url: str,
     token: str,
     deadline: float,
+    evidence_lease_id: str = "",
 ) -> dict[str, Any]:
     commands = fixture.get("expected", {}).get("validation") or []
     results: list[dict[str, Any]] = []
@@ -2947,7 +2967,12 @@ def run_nexus_validation(
         payload = nexus_api_request(
             "POST",
             base_url,
-            f"/coding/harness/tasks/{quote(task_id, safe='')}/validation",
+            f"/coding/harness/tasks/{quote(task_id, safe='')}/validation"
+            + (
+                f"?evidence_lease_id={quote(evidence_lease_id, safe='')}"
+                if evidence_lease_id
+                else ""
+            ),
             token=token,
             body={"argv": argv, "timeout_sec": remaining},
             timeout_sec=remaining + 5.0,
@@ -3169,6 +3194,7 @@ def run_nexus_fixture(
     result_path = artifacts / "result.json"
     cleanup_ok = False
     failure: BaseException | None = None
+    evidence_lease_id = ""
     try:
         for directory in (run_dir, fixture_dir, root, artifacts):
             _mkdir_private(directory)
@@ -3197,9 +3223,22 @@ def run_nexus_fixture(
             raise NexusApiError("Nexus Coding API returned a task without an id")
         if str(task.get("status") or "") == "error":
             raise NexusApiError(str(task.get("error") or "Nexus harness workspace creation failed"))
+        clock_probe_started = time.monotonic()
+        clock_payload = nexus_api_request(
+            "GET",
+            nexus_base_url,
+            f"/coding/tasks/{quote(task_id, safe='')}",
+            token=nexus_token,
+            timeout_sec=30.0,
+        )
+        task = _task_from_payload(clock_payload)
+        if str(task.get("id") or "") != task_id:
+            raise NexusApiError("Nexus Coding API clock probe returned the wrong task")
+        clock_probe_round_trip = time.monotonic() - clock_probe_started
         started_at, started, deadline = _nexus_agent_run_clock(
             task,
             wall_time_sec=float(fixture["limits"]["wall_time_sec"]),
+            observation_round_trip_sec=clock_probe_round_trip,
         )
         task, run_timed_out = _wait_for_nexus_task(
             task_id,
@@ -3211,13 +3250,20 @@ def run_nexus_fixture(
             NEXUS_GUARDED_WORKER_TIMEOUT_SEC,
             float(fixture["limits"]["wall_time_sec"]),
         )
-        diff_payload, evidence_started = _nexus_harness_diff_after_workers(
+        evidence_lease_id, evidence_started = _acquire_nexus_harness_evidence_lease(
             task_id,
             base_url=nexus_base_url,
             token=nexus_token,
             wait_timeout_sec=worker_wait_timeout,
         )
         evidence_deadline = evidence_started + MAX_SNAPSHOT_SECONDS
+        diff_payload = nexus_api_request(
+            "GET",
+            nexus_base_url,
+            f"/coding/harness/tasks/{quote(task_id, safe='')}/diff",
+            token=nexus_token,
+            timeout_sec=min(30.0, _snapshot_timeout(evidence_deadline)),
+        )
         if diff_payload.get("ok") is not True:
             raise NexusApiError(str(diff_payload.get("error") or "Nexus harness diff collection failed"))
         changes_payload = nexus_api_request(
@@ -3345,6 +3391,7 @@ def run_nexus_fixture(
             base_url=nexus_base_url,
             token=nexus_token,
             deadline=deadline,
+            evidence_lease_id=evidence_lease_id,
         )
         objective = _objective_checks_with_reader(fixture, changed, validation, read_content)
         agent = task.get("agent") if isinstance(task.get("agent"), dict) else {}
@@ -3482,6 +3529,7 @@ def run_nexus_fixture(
                     task_id,
                     base_url=nexus_base_url,
                     token=nexus_token,
+                    evidence_lease_id=evidence_lease_id,
                     wait_timeout_sec=max(
                         NEXUS_GUARDED_WORKER_TIMEOUT_SEC,
                         float(fixture["limits"]["wall_time_sec"]),

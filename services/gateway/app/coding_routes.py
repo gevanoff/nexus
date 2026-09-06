@@ -59,6 +59,10 @@ class CodingHarnessRunRequest(BaseModel):
     context_reset_cycles: Optional[int] = Field(default=None, ge=0, le=100)
 
 
+class CodingHarnessEvidenceLeaseRequest(BaseModel):
+    ttl_sec: float = Field(default=300.0, ge=30.0, le=7200.0)
+
+
 class CodingModelIntegrationCreateRequest(BaseModel):
     model: str
     repo_url: Optional[str] = None
@@ -858,7 +862,11 @@ async def v1_coding_harness_create_and_run(
 
 
 @router.delete("/v1/coding/harness/tasks/{task_id}")
-async def v1_coding_harness_delete_task(req: Request, task_id: str) -> Dict[str, Any]:
+async def v1_coding_harness_delete_task(
+    req: Request,
+    task_id: str,
+    evidence_lease_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
     _require_coding_api(req)
     task = await _to_thread(cw.load_task, task_id)
     if str(task.get("kind") or "") != "harness_eval":
@@ -866,7 +874,43 @@ async def v1_coding_harness_delete_task(req: Request, task_id: str) -> Dict[str,
     agent_status = str(task.get("agent_status") or "idle").strip().lower()
     if agent_status in {"queued", "running", "stopping", "pausing"} or ca.agent_run_active(task_id):
         raise HTTPException(status_code=409, detail="coding harness task is still active")
-    return {"result": await _to_thread(cw.delete_harness_task, task_id)}
+    return {
+        "result": await _to_thread(
+            cw.delete_harness_task,
+            task_id,
+            evidence_lease_id=evidence_lease_id,
+        )
+    }
+
+
+@router.post("/v1/coding/harness/tasks/{task_id}/evidence-lease")
+async def v1_coding_harness_acquire_evidence_lease(
+    req: Request,
+    task_id: str,
+    body: CodingHarnessEvidenceLeaseRequest,
+) -> Dict[str, Any]:
+    _require_coding_api(req)
+    lease = await _to_thread(
+        cw.acquire_harness_evidence_lease,
+        task_id,
+        ttl_sec=body.ttl_sec,
+    )
+    return {"lease": lease}
+
+
+@router.delete("/v1/coding/harness/tasks/{task_id}/evidence-lease/{lease_id}")
+async def v1_coding_harness_release_evidence_lease(
+    req: Request,
+    task_id: str,
+    lease_id: str,
+) -> Dict[str, Any]:
+    _require_coding_api(req)
+    result = await _to_thread(
+        cw.release_harness_evidence_lease,
+        task_id,
+        lease_id=lease_id,
+    )
+    return {"result": result}
 
 
 @router.post("/v1/coding/harness/tasks/{task_id}/validation")
@@ -874,6 +918,7 @@ async def v1_coding_harness_validation(
     req: Request,
     task_id: str,
     body: CodingCommandRequest,
+    evidence_lease_id: Optional[str] = Query(default=None),
 ) -> Dict[str, Any]:
     _require_coding_api(req)
     result = await _to_thread(
@@ -882,6 +927,7 @@ async def v1_coding_harness_validation(
         argv=body.argv,
         cwd=body.cwd,
         timeout_sec=body.timeout_sec,
+        evidence_lease_id=evidence_lease_id,
     )
     return {"result": result}
 

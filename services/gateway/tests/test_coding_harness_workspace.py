@@ -579,6 +579,92 @@ def test_harness_deletion_refuses_an_active_validation(monkeypatch, tmp_path):
     assert cw.delete_harness_task(task["id"])["ok"] is True
 
 
+def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="stable-evidence-snapshot",
+        files={"app.py": "value\n"},
+        prompt="Collect stable evidence.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+
+    with pytest.raises(HTTPException) as run_start_error:
+        cw.begin_harness_agent_run_start(task["id"])
+    assert run_start_error.value.status_code == 409
+    with pytest.raises(HTTPException) as tool_error:
+        cw.begin_harness_agent_tool(task["id"])
+    assert tool_error.value.status_code == 409
+    with pytest.raises(HTTPException) as validation_error:
+        cw.run_harness_validation_command(task["id"], argv=["python3", "-V"])
+    assert validation_error.value.status_code == 409
+    with pytest.raises(HTTPException) as delete_error:
+        cw.delete_harness_task(task["id"])
+    assert delete_error.value.status_code == 409
+
+    monkeypatch.setattr(
+        cw,
+        "_run_process",
+        lambda argv, **kwargs: {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+            "argv": list(argv),
+            "duration_ms": 1,
+        },
+    )
+    validation = cw.run_harness_validation_command(
+        task["id"],
+        argv=["python3", "-V"],
+        evidence_lease_id=lease["lease_id"],
+    )
+    assert validation["ok"] is True
+    assert cw.read_harness_file_evidence(task["id"], path="app.py")["content"] == "value\n"
+
+    deleted = cw.delete_harness_task(
+        task["id"],
+        evidence_lease_id=lease["lease_id"],
+    )
+    assert deleted["ok"] is True
+    assert lease["lease_id"] not in cw._ACTIVE_HARNESS_EVIDENCE_LEASES
+
+
+def test_expired_harness_evidence_lease_no_longer_blocks_resume(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_roots(monkeypatch, tmp_path)
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(cw, "_now", lambda: clock["now"])
+    task = cw.create_harness_task(
+        fixture_id="expired-evidence-snapshot",
+        files={"app.py": "value\n"},
+        prompt="Allow recovery after a disconnected reader.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=30)
+
+    clock["now"] += 31
+    registered = cw.begin_harness_agent_run_start(task["id"])
+    cw.end_harness_agent_run_start(task["id"], registered=registered)
+
+    assert registered is True
+    assert lease["lease_id"] not in cw._ACTIVE_HARNESS_EVIDENCE_LEASES
+    assert cw.delete_harness_task(task["id"])["ok"] is True
+
+
 def test_harness_deletion_waits_for_cancelled_agent_tool_worker(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
@@ -894,6 +980,7 @@ async def test_harness_validation_route_uses_dedicated_runner(monkeypatch):
             argv=["python3", "-m", "unittest"],
             timeout_sec=250,
         ),
+        evidence_lease_id="lease-test-123",
     )
 
     assert response == {"result": {"ok": True, "returncode": 0}}
@@ -902,7 +989,46 @@ async def test_harness_validation_route_uses_dedicated_runner(monkeypatch):
         "argv": ["python3", "-m", "unittest"],
         "cwd": None,
         "timeout_sec": 250,
+        "evidence_lease_id": "lease-test-123",
     }
+
+
+@pytest.mark.asyncio
+async def test_harness_evidence_lease_routes_delegate_to_guarded_workspace(
+    monkeypatch,
+):
+    captured = []
+    monkeypatch.setattr(coding_routes, "_require_coding_api", lambda req: None)
+    monkeypatch.setattr(
+        coding_routes.cw,
+        "acquire_harness_evidence_lease",
+        lambda task_id, **kwargs: captured.append(("acquire", task_id, kwargs))
+        or {"lease_id": "lease-test-123", "task_id": task_id},
+    )
+    monkeypatch.setattr(
+        coding_routes.cw,
+        "release_harness_evidence_lease",
+        lambda task_id, **kwargs: captured.append(("release", task_id, kwargs))
+        or {"ok": True, "lease_id": kwargs["lease_id"], "task_id": task_id},
+    )
+
+    acquired = await coding_routes.v1_coding_harness_acquire_evidence_lease(
+        SimpleNamespace(),
+        "code_abcdef123456",
+        coding_routes.CodingHarnessEvidenceLeaseRequest(ttl_sec=450),
+    )
+    released = await coding_routes.v1_coding_harness_release_evidence_lease(
+        SimpleNamespace(),
+        "code_abcdef123456",
+        "lease-test-123",
+    )
+
+    assert acquired["lease"]["lease_id"] == "lease-test-123"
+    assert released["result"]["ok"] is True
+    assert captured == [
+        ("acquire", "code_abcdef123456", {"ttl_sec": 450.0}),
+        ("release", "code_abcdef123456", {"lease_id": "lease-test-123"}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -949,14 +1075,24 @@ async def test_harness_delete_route_is_scoped_to_terminal_harness_tasks(monkeypa
     monkeypatch.setattr(
         coding_routes.cw,
         "delete_harness_task",
-        lambda task_id: {"ok": True, "task_id": task_id},
+        lambda task_id, **kwargs: {
+            "ok": True,
+            "task_id": task_id,
+            "evidence_lease_id": kwargs.get("evidence_lease_id"),
+        },
     )
 
     response = await coding_routes.v1_coding_harness_delete_task(
-        SimpleNamespace(), "code_abcdef123456"
+        SimpleNamespace(),
+        "code_abcdef123456",
+        evidence_lease_id="lease-test-123",
     )
 
-    assert response["result"] == {"ok": True, "task_id": "code_abcdef123456"}
+    assert response["result"] == {
+        "ok": True,
+        "task_id": "code_abcdef123456",
+        "evidence_lease_id": "lease-test-123",
+    }
 
 
 @pytest.mark.asyncio

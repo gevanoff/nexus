@@ -65,6 +65,8 @@ _ACTIVE_HARNESS_VALIDATIONS: set[str] = set()
 _ACTIVE_HARNESS_AGENT_TOOLS: Dict[str, int] = {}
 _ACTIVE_HARNESS_EVIDENCE_READS: Dict[str, int] = {}
 _ACTIVE_HARNESS_RUN_STARTS: set[str] = set()
+_ACTIVE_HARNESS_EVIDENCE_LEASES: Dict[str, Dict[str, Any]] = {}
+_HARNESS_EVIDENCE_LEASE_MAX_SEC = 7200.0
 
 
 def coding_enabled() -> bool:
@@ -2090,9 +2092,13 @@ def run_harness_validation_command(
     argv: Sequence[str],
     cwd: Optional[str] = None,
     timeout_sec: Optional[float] = None,
+    evidence_lease_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run trusted fixture validation with the harness run budget as its timeout cap."""
     with _HARNESS_VALIDATIONS_GUARD:
+        active_lease = _active_harness_evidence_lease_locked(task_id)
+        if active_lease and active_lease != str(evidence_lease_id or ""):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is already active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
@@ -2143,6 +2149,8 @@ def run_harness_validation_command(
 def begin_harness_agent_tool(task_id: str) -> bool:
     """Register a harness tool worker before it can mutate task state."""
     with _HARNESS_VALIDATIONS_GUARD:
+        if _active_harness_evidence_lease_locked(task_id):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
         task = load_task(task_id)
         if str(task.get("kind") or "") != "harness_eval":
             return False
@@ -2191,9 +2199,73 @@ def end_harness_evidence_read(task_id: str) -> None:
             _ACTIVE_HARNESS_EVIDENCE_READS.pop(task_id, None)
 
 
+def _expire_harness_evidence_leases_locked() -> None:
+    current = _now()
+    expired = [
+        lease_id
+        for lease_id, record in _ACTIVE_HARNESS_EVIDENCE_LEASES.items()
+        if float(record.get("expires_at") or 0) <= current
+    ]
+    for lease_id in expired:
+        _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+
+
+def _active_harness_evidence_lease_locked(task_id: str) -> str:
+    _expire_harness_evidence_leases_locked()
+    for lease_id, record in _ACTIVE_HARNESS_EVIDENCE_LEASES.items():
+        if str(record.get("task_id") or "") == task_id:
+            return lease_id
+    return ""
+
+
+def acquire_harness_evidence_lease(
+    task_id: str,
+    *,
+    ttl_sec: float,
+) -> Dict[str, Any]:
+    """Block harness mutation while a client collects multi-request evidence."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            raise HTTPException(status_code=403, detail="evidence lease requires a harness task")
+        if _active_harness_evidence_lease_locked(task_id):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is already active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        agent_status = str(task.get("agent_status") or "idle").strip().lower()
+        if agent_status in {"queued", "running", "stopping", "pausing"}:
+            raise HTTPException(status_code=409, detail="coding harness task is still active")
+        duration = max(30.0, min(float(ttl_sec), _HARNESS_EVIDENCE_LEASE_MAX_SEC))
+        lease_id = secrets.token_urlsafe(24)
+        expires_at = _now() + duration
+        _ACTIVE_HARNESS_EVIDENCE_LEASES[lease_id] = {
+            "task_id": task_id,
+            "expires_at": expires_at,
+        }
+        return {"lease_id": lease_id, "task_id": task_id, "expires_at": expires_at}
+
+
+def release_harness_evidence_lease(task_id: str, *, lease_id: str) -> Dict[str, Any]:
+    with _HARNESS_VALIDATIONS_GUARD:
+        _expire_harness_evidence_leases_locked()
+        record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(str(lease_id or ""))
+        if not isinstance(record, dict) or str(record.get("task_id") or "") != task_id:
+            raise HTTPException(status_code=404, detail="coding harness evidence lease was not found")
+        _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+        return {"ok": True, "task_id": task_id, "lease_id": lease_id}
+
+
 def begin_harness_agent_run_start(task_id: str) -> bool:
     """Serialize a harness run transition with evidence, validation, and deletion."""
     with _HARNESS_VALIDATIONS_GUARD:
+        if _active_harness_evidence_lease_locked(task_id):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
         task = load_task(task_id)
         if str(task.get("kind") or "") != "harness_eval":
             return False
@@ -3579,9 +3651,17 @@ def delete_task(task_id: str) -> Dict[str, Any]:
     return {"ok": True, "task_id": task_id, "deleted_workspace": str(path), "repo_url": redact_repo_url(str(task.get("repo_url") or ""))}
 
 
-def delete_harness_task(task_id: str) -> Dict[str, Any]:
+def delete_harness_task(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Atomically refuse deletion while a harness validation command is active."""
     with _HARNESS_VALIDATIONS_GUARD:
+        active_lease = _active_harness_evidence_lease_locked(task_id)
+        if active_lease:
+            if active_lease != str(evidence_lease_id or ""):
+                raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
             raise HTTPException(status_code=409, detail="coding harness agent run is starting")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
@@ -3596,7 +3676,10 @@ def delete_harness_task(task_id: str) -> Dict[str, Any]:
         agent_status = str(task.get("agent_status") or "idle").strip().lower()
         if agent_status in {"queued", "running", "stopping", "pausing"}:
             raise HTTPException(status_code=409, detail="coding harness task is still active")
-        return delete_task(task_id)
+        result = delete_task(task_id)
+        if active_lease:
+            _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(active_lease, None)
+        return result
 
 
 def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, Any]:

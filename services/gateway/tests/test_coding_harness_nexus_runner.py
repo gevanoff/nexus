@@ -122,6 +122,16 @@ def _completed_task() -> dict:
     }
 
 
+def _evidence_lease(task_id: str) -> dict:
+    return {
+        "lease": {
+            "lease_id": "lease-test-123",
+            "task_id": task_id,
+            "expires_at": 9_999_999_999.0,
+        }
+    }
+
+
 def test_validation_fixture_guards_non_string_numeric_compatibility():
     fixture = harness.load_fixture(
         Path(harness.__file__).with_name("coding_harness_fixtures") / "validation-after-edit.json"
@@ -167,6 +177,8 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
         calls.append((method, path, body))
         if method == "POST" and path == "/coding/harness/runs":
             return {"task": {**task, "agent": {"status": "queued"}}}
+        if method == "POST" and path.endswith("/evidence-lease"):
+            return _evidence_lease(task["id"])
         if method == "GET" and path.startswith("/coding/harness/tasks/") and path.endswith("/diff"):
             return {
                 "ok": True,
@@ -205,7 +217,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
             }
         if method == "GET" and path.startswith("/coding/tasks/"):
             return {"task": task}
-        if method == "POST" and path.endswith("/validation"):
+        if method == "POST" and "/validation?evidence_lease_id=" in path:
             return {
                 "result": {
                     "ok": True,
@@ -266,7 +278,27 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
         / "final-files"
         / "new.py"
     ).read_text(encoding="utf-8") == "CREATED = True\n"
-    assert any(method == "DELETE" for method, _, _ in calls)
+    paths = [path for _, path, _ in calls]
+    lease_index = paths.index(
+        "/coding/harness/tasks/code_abcdef123456/evidence-lease"
+    )
+    diff_index = paths.index("/coding/harness/tasks/code_abcdef123456/diff")
+    changes_index = paths.index("/coding/harness/tasks/code_abcdef123456/changes")
+    validation_index = paths.index(
+        "/coding/harness/tasks/code_abcdef123456/validation"
+        "?evidence_lease_id=lease-test-123"
+    )
+    delete_index = paths.index(
+        "/coding/harness/tasks/code_abcdef123456"
+        "?evidence_lease_id=lease-test-123"
+    )
+    assert (
+        lease_index
+        < diff_index
+        < changes_index
+        < validation_index
+        < delete_index
+    )
 
 
 def test_nexus_file_reader_enforces_aggregate_budget_before_caching(monkeypatch):
@@ -339,6 +371,10 @@ def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch
     def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
         if method == "POST" and path == "/coding/harness/runs":
             return {"task": {**task, "agent": {"status": "queued"}}}
+        if method == "POST" and path.endswith("/evidence-lease"):
+            return _evidence_lease(task["id"])
+        if method == "GET" and path.startswith("/coding/tasks/"):
+            return {"task": task}
         if method == "GET" and path.endswith("/diff"):
             evidence_timeouts.append(timeout_sec)
             clock["now"] += 2
@@ -370,7 +406,16 @@ def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch
             return {"result": {"ok": True, "task_id": task["id"]}}
         raise AssertionError((method, path, body))
 
-    def fake_validation(fixture, task_id, *, base_url, token, deadline):
+    def fake_validation(
+        fixture,
+        task_id,
+        *,
+        base_url,
+        token,
+        deadline,
+        evidence_lease_id,
+    ):
+        assert evidence_lease_id == "lease-test-123"
         validation_deadline.append(deadline)
         return {"commands": [], "passed": True, "budget_exhausted": False, "timed_out": False}
 
@@ -406,6 +451,8 @@ def test_run_nexus_fixture_omits_non_text_untracked_content(monkeypatch, tmp_pat
     def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
         if method == "POST" and path == "/coding/harness/runs":
             return {"task": {**task, "agent": {"status": "queued"}}}
+        if method == "POST" and path.endswith("/evidence-lease"):
+            return _evidence_lease(task["id"])
         if method == "GET" and path.endswith("/diff"):
             return {
                 "ok": True,
@@ -532,6 +579,8 @@ def test_run_nexus_fixture_rejects_truncated_diff_and_cleans_up(monkeypatch, tmp
     def fake_request(method, base_url, path, *, token, body=None, timeout_sec=30.0):
         if method == "POST" and path == "/coding/harness/runs":
             return {"task": {**task, "agent": {"status": "queued"}}}
+        if method == "POST" and path.endswith("/evidence-lease"):
+            return _evidence_lease(task["id"])
         if method == "GET" and path.endswith("/diff"):
             return {
                 "ok": True,
@@ -557,7 +606,10 @@ def test_run_nexus_fixture_rejects_truncated_diff_and_cleans_up(monkeypatch, tmp
             nexus_token="secret-token-value",
         )
 
-    assert deleted == ["/coding/harness/tasks/code_abcdef123456"]
+    assert deleted == [
+        "/coding/harness/tasks/code_abcdef123456"
+        "?evidence_lease_id=lease-test-123"
+    ]
     assert list((tmp_path / "results").iterdir()) == []
 
 
@@ -587,10 +639,14 @@ def test_run_nexus_validation_uses_harness_budget_endpoint(monkeypatch):
         base_url="http://gateway/v1",
         token="token",
         deadline=harness.time.monotonic() + 180,
+        evidence_lease_id="lease-test-123",
     )
 
     assert result["passed"] is True
-    assert captured["path"] == "/coding/harness/tasks/code_abcdef123456/validation"
+    assert captured["path"] == (
+        "/coding/harness/tasks/code_abcdef123456/validation"
+        "?evidence_lease_id=lease-test-123"
+    )
     assert captured["body"]["timeout_sec"] > 120
 
 
@@ -611,6 +667,7 @@ def test_delete_nexus_harness_task_retries_active_runner(monkeypatch):
         "code_abcdef123456",
         base_url="http://gateway/v1",
         token="token",
+        evidence_lease_id="lease-test-123",
     )
 
     assert attempts == 3
@@ -640,7 +697,7 @@ def test_delete_nexus_harness_task_retries_beyond_previous_fixed_attempt_cap(
     assert attempts == 101
 
 
-def test_nexus_diff_waits_for_guarded_worker_conflicts(monkeypatch):
+def test_nexus_evidence_lease_waits_for_guarded_worker_conflicts(monkeypatch):
     attempts = 0
 
     def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
@@ -648,19 +705,19 @@ def test_nexus_diff_waits_for_guarded_worker_conflicts(monkeypatch):
         attempts += 1
         if attempts < 3:
             raise harness.NexusApiError("active worker", status=409)
-        return {"ok": True, "diff": {"stdout": ""}, "changes": {"files": []}}
+        return _evidence_lease("code_abcdef123456")
 
     monkeypatch.setattr(harness, "nexus_api_request", fake_request)
     monkeypatch.setattr(harness.time, "sleep", lambda seconds: None)
 
-    payload, request_started = harness._nexus_harness_diff_after_workers(
+    lease_id, request_started = harness._acquire_nexus_harness_evidence_lease(
         "code_abcdef123456",
         base_url="http://gateway/v1",
         token="token",
         wait_timeout_sec=120,
     )
 
-    assert payload["ok"] is True
+    assert lease_id == "lease-test-123"
     assert request_started <= harness.time.monotonic()
     assert attempts == 3
 

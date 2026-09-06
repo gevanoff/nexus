@@ -40,11 +40,12 @@ def test_nexus_clock_starts_at_server_agent_run_not_fixture_setup(monkeypatch) -
     started_at, started, deadline = harness._nexus_agent_run_clock(
         {"agent": {"started_at": 1_045.0, "elapsed_runtime_sec": 15}},
         wall_time_sec=60,
+        observation_round_trip_sec=4,
     )
 
     assert started_at == time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(1_045.0))
-    assert started == 485.0
-    assert deadline == 545.0
+    assert started == 481.0
+    assert deadline == 541.0
 
 
 def _fixture(
