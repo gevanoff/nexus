@@ -2237,7 +2237,14 @@ def objective_checks(fixture: dict[str, Any], workspace: Path, changed: list[str
             error = f"file exceeds {MAX_OBJECTIVE_FILE_BYTES} byte objective-read limit"
         if error is None and path is not None:
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                raw = path.read_bytes()
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    error = "binary file content omitted"
+                if text is not None and "\x00" in text:
+                    text = None
+                    error = "binary file content omitted"
             except OSError as exc:
                 error = f"could not read file: {exc}"
         elif error is None:
@@ -3068,6 +3075,7 @@ def _nexus_final_file_reader(
     non_text_paths: set[str],
     file_modes: dict[str, str],
     deadline: float,
+    evidence_lease_id: str,
 ) -> Any:
     aggregate_bytes = 0
 
@@ -3080,7 +3088,8 @@ def _nexus_final_file_reader(
             payload = nexus_api_request(
                 "GET",
                 base_url,
-                f"/coding/harness/tasks/{quote(task_id, safe='')}/file?path={quote(rel, safe='')}",
+                f"/coding/harness/tasks/{quote(task_id, safe='')}/file?path={quote(rel, safe='')}"
+                f"&evidence_lease_id={quote(evidence_lease_id, safe='')}",
                 token=token,
                 timeout_sec=timeout_sec,
             )
@@ -3260,7 +3269,8 @@ def run_nexus_fixture(
         diff_payload = nexus_api_request(
             "GET",
             nexus_base_url,
-            f"/coding/harness/tasks/{quote(task_id, safe='')}/diff",
+            f"/coding/harness/tasks/{quote(task_id, safe='')}/diff"
+            f"?evidence_lease_id={quote(evidence_lease_id, safe='')}",
             token=nexus_token,
             timeout_sec=min(30.0, _snapshot_timeout(evidence_deadline)),
         )
@@ -3269,7 +3279,8 @@ def run_nexus_fixture(
         changes_payload = nexus_api_request(
             "GET",
             nexus_base_url,
-            f"/coding/harness/tasks/{quote(task_id, safe='')}/changes",
+            f"/coding/harness/tasks/{quote(task_id, safe='')}/changes"
+            f"?evidence_lease_id={quote(evidence_lease_id, safe='')}",
             token=nexus_token,
             timeout_sec=min(30.0, _snapshot_timeout(evidence_deadline)),
         )
@@ -3335,6 +3346,7 @@ def run_nexus_fixture(
             non_text_paths=non_text_paths,
             file_modes=file_modes,
             deadline=evidence_deadline,
+            evidence_lease_id=evidence_lease_id,
         )
         expected_paths = {
             str(spec.get("path") or "")

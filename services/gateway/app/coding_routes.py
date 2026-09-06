@@ -938,15 +938,33 @@ async def v1_coding_harness_validation(
 
 
 @router.get("/v1/coding/harness/tasks/{task_id}/diff")
-async def v1_coding_harness_diff(req: Request, task_id: str) -> Dict[str, Any]:
+async def v1_coding_harness_diff(
+    req: Request,
+    task_id: str,
+    evidence_lease_id: str = Query(...),
+) -> Dict[str, Any]:
     _require_coding_api(req)
-    return await _to_thread(cw.harness_git_diff, task_id)
+    return await _to_thread(
+        cw.harness_git_diff,
+        task_id,
+        evidence_lease_id=evidence_lease_id,
+    )
 
 
 @router.get("/v1/coding/harness/tasks/{task_id}/changes")
-async def v1_coding_harness_changes(req: Request, task_id: str) -> Dict[str, Any]:
+async def v1_coding_harness_changes(
+    req: Request,
+    task_id: str,
+    evidence_lease_id: str = Query(...),
+) -> Dict[str, Any]:
     _require_coding_api(req)
-    return {"result": await _to_thread(cw.harness_git_changes, task_id)}
+    return {
+        "result": await _to_thread(
+            cw.harness_git_changes,
+            task_id,
+            evidence_lease_id=evidence_lease_id,
+        )
+    }
 
 
 @router.get("/v1/coding/harness/tasks/{task_id}/file")
@@ -954,9 +972,15 @@ async def v1_coding_harness_file(
     req: Request,
     task_id: str,
     path: str = Query(...),
+    evidence_lease_id: str = Query(...),
 ) -> Dict[str, Any]:
     _require_coding_api(req)
-    return await _to_thread(cw.read_harness_file_evidence, task_id, path=path)
+    return await _to_thread(
+        cw.read_harness_file_evidence,
+        task_id,
+        path=path,
+        evidence_lease_id=evidence_lease_id,
+    )
 
 
 @router.get("/v1/coding/tasks/{task_id}")

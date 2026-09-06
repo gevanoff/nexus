@@ -179,7 +179,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
             return {"task": {**task, "agent": {"status": "queued"}}}
         if method == "POST" and path.endswith("/evidence-lease"):
             return _evidence_lease(task["id"])
-        if method == "GET" and path.startswith("/coding/harness/tasks/") and path.endswith("/diff"):
+        if method == "GET" and "/diff?evidence_lease_id=lease-test-123" in path:
             return {
                 "ok": True,
                 "merge_base": "a" * 40,
@@ -189,7 +189,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
                     "stdout": "diff --git a/app.py b/app.py\n-VALUE = 'broken'\n+VALUE = 'fixed'\n"
                     },
                 }
-        if method == "GET" and path.startswith("/coding/harness/tasks/") and path.endswith("/changes"):
+        if method == "GET" and "/changes?evidence_lease_id=lease-test-123" in path:
             return {
                 "result": {
                     "ok": True,
@@ -282,8 +282,14 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     lease_index = paths.index(
         "/coding/harness/tasks/code_abcdef123456/evidence-lease"
     )
-    diff_index = paths.index("/coding/harness/tasks/code_abcdef123456/diff")
-    changes_index = paths.index("/coding/harness/tasks/code_abcdef123456/changes")
+    diff_index = paths.index(
+        "/coding/harness/tasks/code_abcdef123456/diff"
+        "?evidence_lease_id=lease-test-123"
+    )
+    changes_index = paths.index(
+        "/coding/harness/tasks/code_abcdef123456/changes"
+        "?evidence_lease_id=lease-test-123"
+    )
     validation_index = paths.index(
         "/coding/harness/tasks/code_abcdef123456/validation"
         "?evidence_lease_id=lease-test-123"
@@ -327,6 +333,7 @@ def test_nexus_file_reader_enforces_aggregate_budget_before_caching(monkeypatch)
         non_text_paths=non_text_paths,
         file_modes={},
         deadline=harness.time.monotonic() + 10,
+        evidence_lease_id="lease-test-123",
     )
 
     assert read_content("a.txt") == ("abc", None)
@@ -355,6 +362,7 @@ def test_nexus_file_reader_stops_when_snapshot_deadline_is_exhausted(monkeypatch
         non_text_paths=set(),
         file_modes={},
         deadline=harness.time.monotonic() - 1,
+        evidence_lease_id="lease-test-123",
     )
 
     with pytest.raises(RuntimeError, match="snapshot time budget exhausted"):
@@ -375,7 +383,7 @@ def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch
             return _evidence_lease(task["id"])
         if method == "GET" and path.startswith("/coding/tasks/"):
             return {"task": task}
-        if method == "GET" and path.endswith("/diff"):
+        if method == "GET" and "/diff?evidence_lease_id=lease-test-123" in path:
             evidence_timeouts.append(timeout_sec)
             clock["now"] += 2
             return {
@@ -388,7 +396,7 @@ def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch
                     "stdout_truncated": False,
                 },
             }
-        if method == "GET" and path.endswith("/changes"):
+        if method == "GET" and "/changes?evidence_lease_id=lease-test-123" in path:
             evidence_timeouts.append(timeout_sec)
             clock["now"] += 2
             return {"result": {"ok": True, "files": []}}
@@ -453,7 +461,7 @@ def test_run_nexus_fixture_omits_non_text_untracked_content(monkeypatch, tmp_pat
             return {"task": {**task, "agent": {"status": "queued"}}}
         if method == "POST" and path.endswith("/evidence-lease"):
             return _evidence_lease(task["id"])
-        if method == "GET" and path.endswith("/diff"):
+        if method == "GET" and "/diff?evidence_lease_id=lease-test-123" in path:
             return {
                 "ok": True,
                 "merge_base": "a" * 40,
@@ -461,7 +469,7 @@ def test_run_nexus_fixture_omits_non_text_untracked_content(monkeypatch, tmp_pat
                 "changes": {"files": []},
                 "diff": {"stdout": "", "stdout_truncated": False},
             }
-        if method == "GET" and path.endswith("/changes"):
+        if method == "GET" and "/changes?evidence_lease_id=lease-test-123" in path:
             return {
                 "result": {
                     "ok": True,
@@ -581,13 +589,13 @@ def test_run_nexus_fixture_rejects_truncated_diff_and_cleans_up(monkeypatch, tmp
             return {"task": {**task, "agent": {"status": "queued"}}}
         if method == "POST" and path.endswith("/evidence-lease"):
             return _evidence_lease(task["id"])
-        if method == "GET" and path.endswith("/diff"):
+        if method == "GET" and "/diff?evidence_lease_id=lease-test-123" in path:
             return {
                 "ok": True,
                 "changes": {"files": [{"path": "app.py", "kind": "modified"}]},
                 "diff": {"stdout": "partial", "stdout_truncated": True},
             }
-        if method == "GET" and path.endswith("/changes"):
+        if method == "GET" and "/changes?evidence_lease_id=lease-test-123" in path:
             return {"result": {"ok": True, "files": []}}
         if method == "GET" and path.startswith("/coding/tasks/"):
             return {"task": task}

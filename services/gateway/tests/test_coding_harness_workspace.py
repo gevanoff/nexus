@@ -604,6 +604,8 @@ def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
     assert tool_error.value.status_code == 409
     for mutate in (
         lambda: cw.run_task_command(task["id"], argv=["python3", "-V"]),
+        lambda: cw.git_diff(task["id"]),
+        lambda: cw.search_text(task["id"], query="value"),
         lambda: cw.replace_text(
             task["id"],
             path="app.py",
@@ -658,7 +660,11 @@ def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
         evidence_lease_id=lease["lease_id"],
     )
     assert validation["ok"] is True
-    assert cw.read_harness_file_evidence(task["id"], path="app.py")["content"] == "value\n"
+    assert cw.read_harness_file_evidence(
+        task["id"],
+        path="app.py",
+        evidence_lease_id=lease["lease_id"],
+    )["content"] == "value\n"
 
     deleted = cw.delete_harness_task(
         task["id"],
@@ -666,6 +672,52 @@ def test_harness_evidence_lease_blocks_mutation_until_atomic_delete(
     )
     assert deleted["ok"] is True
     assert lease["lease_id"] not in cw._ACTIVE_HARNESS_EVIDENCE_LEASES
+
+
+def test_harness_evidence_requests_reject_stale_lease_after_restart(
+    monkeypatch,
+    tmp_path,
+):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="stale-evidence-lease",
+        files={"app.py": "value\n"},
+        prompt="Reject stale evidence after a restart.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+    lease_id = lease["lease_id"]
+    cw._ACTIVE_HARNESS_EVIDENCE_LEASES.clear()
+
+    requests = (
+        lambda: cw.harness_git_diff(task["id"], evidence_lease_id=lease_id),
+        lambda: cw.harness_git_changes(task["id"], evidence_lease_id=lease_id),
+        lambda: cw.read_harness_file_evidence(
+            task["id"],
+            path="app.py",
+            evidence_lease_id=lease_id,
+        ),
+        lambda: cw.run_harness_validation_command(
+            task["id"],
+            argv=["python3", "-V"],
+            evidence_lease_id=lease_id,
+        ),
+        lambda: cw.delete_harness_task(
+            task["id"],
+            evidence_lease_id=lease_id,
+        ),
+    )
+    for request in requests:
+        with pytest.raises(HTTPException) as stale_error:
+            request()
+        assert stale_error.value.status_code == 409
+        assert stale_error.value.detail == "coding harness evidence lease is not active"
+
+    assert cw.delete_harness_task(task["id"])["ok"] is True
 
 
 def test_expired_harness_evidence_lease_no_longer_blocks_resume(
@@ -1080,6 +1132,65 @@ async def test_harness_validation_route_uses_dedicated_runner(monkeypatch):
         "timeout_sec": 250,
         "evidence_lease_id": "lease-test-123",
     }
+
+
+@pytest.mark.asyncio
+async def test_harness_evidence_routes_require_and_forward_lease(monkeypatch):
+    captured = []
+    monkeypatch.setattr(coding_routes, "_require_coding_api", lambda req: None)
+    monkeypatch.setattr(
+        coding_routes.cw,
+        "harness_git_diff",
+        lambda task_id, **kwargs: captured.append(("diff", task_id, kwargs))
+        or {"ok": True},
+    )
+    monkeypatch.setattr(
+        coding_routes.cw,
+        "harness_git_changes",
+        lambda task_id, **kwargs: captured.append(("changes", task_id, kwargs))
+        or {"ok": True},
+    )
+    monkeypatch.setattr(
+        coding_routes.cw,
+        "read_harness_file_evidence",
+        lambda task_id, **kwargs: captured.append(("file", task_id, kwargs))
+        or {"content": "value\n"},
+    )
+
+    await coding_routes.v1_coding_harness_diff(
+        SimpleNamespace(),
+        "code_abcdef123456",
+        evidence_lease_id="lease-test-123",
+    )
+    await coding_routes.v1_coding_harness_changes(
+        SimpleNamespace(),
+        "code_abcdef123456",
+        evidence_lease_id="lease-test-123",
+    )
+    await coding_routes.v1_coding_harness_file(
+        SimpleNamespace(),
+        "code_abcdef123456",
+        path="app.py",
+        evidence_lease_id="lease-test-123",
+    )
+
+    assert captured == [
+        (
+            "diff",
+            "code_abcdef123456",
+            {"evidence_lease_id": "lease-test-123"},
+        ),
+        (
+            "changes",
+            "code_abcdef123456",
+            {"evidence_lease_id": "lease-test-123"},
+        ),
+        (
+            "file",
+            "code_abcdef123456",
+            {"path": "app.py", "evidence_lease_id": "lease-test-123"},
+        ),
+    ]
 
 
 @pytest.mark.asyncio

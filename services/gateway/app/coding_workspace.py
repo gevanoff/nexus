@@ -2099,8 +2099,9 @@ def run_harness_validation_command(
     """Run trusted fixture validation with the harness run budget as its timeout cap."""
     with _HARNESS_VALIDATIONS_GUARD:
         active_lease = _active_harness_evidence_lease_locked(task_id)
-        if active_lease and active_lease != str(evidence_lease_id or ""):
-            raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
+        provided_lease = str(evidence_lease_id or "")
+        if active_lease != provided_lease and (active_lease or provided_lease):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is already active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
@@ -2189,8 +2190,16 @@ def _harness_mutation_guard(task_id: str):
         end_harness_agent_tool(task_id, registered=registered)
 
 
-def begin_harness_evidence_read(task_id: str) -> None:
+def begin_harness_evidence_read(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+) -> None:
     with _HARNESS_VALIDATIONS_GUARD:
+        active_lease = _active_harness_evidence_lease_locked(task_id)
+        provided_lease = str(evidence_lease_id or "")
+        if active_lease != provided_lease and (active_lease or provided_lease):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
@@ -2586,6 +2595,28 @@ def search_text(
     case_sensitive: bool = True,
     limit: int = 200,
 ) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _search_text(
+            task_id,
+            query=query,
+            path=path,
+            glob=glob,
+            fixed_strings=fixed_strings,
+            case_sensitive=case_sensitive,
+            limit=limit,
+        )
+
+
+def _search_text(
+    task_id: str,
+    *,
+    query: str,
+    path: Optional[str] = None,
+    glob: Optional[str] = None,
+    fixed_strings: bool = False,
+    case_sensitive: bool = True,
+    limit: int = 200,
+) -> Dict[str, Any]:
     needle = str(query or "").strip()
     if not needle:
         raise HTTPException(status_code=400, detail="query is required")
@@ -2693,6 +2724,20 @@ def _apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) 
 
 
 def git_diff(
+    task_id: str,
+    *,
+    change_limit: int = 500,
+    nul_paths: bool = False,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _git_diff(
+            task_id,
+            change_limit=change_limit,
+            nul_paths=nul_paths,
+        )
+
+
+def _git_diff(
     task_id: str,
     *,
     change_limit: int = 500,
@@ -2937,11 +2982,15 @@ def _harness_neutral_git_snapshot(
         return {"diff": diff_result, "changes": changes}
 
 
-def harness_git_diff(task_id: str) -> Dict[str, Any]:
+def harness_git_diff(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness diff requires a harness task")
-    begin_harness_evidence_read(task_id)
+    begin_harness_evidence_read(task_id, evidence_lease_id=evidence_lease_id)
     try:
         return _harness_neutral_git_snapshot(
             task,
@@ -2951,11 +3000,15 @@ def harness_git_diff(task_id: str) -> Dict[str, Any]:
         end_harness_evidence_read(task_id)
 
 
-def harness_git_changes(task_id: str) -> Dict[str, Any]:
+def harness_git_changes(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness changes require a harness task")
-    begin_harness_evidence_read(task_id)
+    begin_harness_evidence_read(task_id, evidence_lease_id=evidence_lease_id)
     try:
         return _harness_neutral_git_snapshot(
             task,
@@ -3570,12 +3623,17 @@ def _read_harness_file_evidence(task: Dict[str, Any], *, path: str) -> Dict[str,
     }
 
 
-def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
+def read_harness_file_evidence(
+    task_id: str,
+    *,
+    path: str,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Read exact text evidence without lossy decoding for disposable harness tasks."""
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="only coding harness tasks may be read here")
-    begin_harness_evidence_read(task_id)
+    begin_harness_evidence_read(task_id, evidence_lease_id=evidence_lease_id)
     try:
         return _read_harness_file_evidence(task, path=path)
     finally:
@@ -3693,9 +3751,9 @@ def delete_harness_task(
     """Atomically refuse deletion while a harness validation command is active."""
     with _HARNESS_VALIDATIONS_GUARD:
         active_lease = _active_harness_evidence_lease_locked(task_id)
-        if active_lease:
-            if active_lease != str(evidence_lease_id or ""):
-                raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
+        provided_lease = str(evidence_lease_id or "")
+        if active_lease != provided_lease and (active_lease or provided_lease):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
             raise HTTPException(status_code=409, detail="coding harness agent run is starting")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
