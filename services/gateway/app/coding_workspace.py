@@ -60,6 +60,8 @@ _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
 _WORKSPACE_LOCKS_GUARD = threading.Lock()
 _WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
+_HARNESS_VALIDATIONS_GUARD = threading.Lock()
+_ACTIVE_HARNESS_VALIDATIONS: set[str] = set()
 
 
 def coding_enabled() -> bool:
@@ -2075,32 +2077,40 @@ def run_harness_validation_command(
     timeout_sec: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Run trusted fixture validation with the harness run budget as its timeout cap."""
-    task = load_task(task_id)
-    if str(task.get("kind") or "") != "harness_eval":
-        raise HTTPException(status_code=403, detail="harness validation requires a harness task")
-    agent_status = str(task.get("agent_status") or "idle").strip().lower()
-    if agent_status in {"queued", "running", "stopping", "pausing"}:
-        raise HTTPException(status_code=409, detail="coding harness task is still active")
-    repo = _repo_path(task)
-    command = validate_command(argv)
-    run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
-    if not run_cwd.exists() or not run_cwd.is_dir():
-        raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
-    mission = normalize_coding_mission(task)
-    timeout_limit = max(
-        1.0,
-        min(float(mission["budget_policy"]["max_runtime_sec"]), 3600.0),
-    )
-    result = _run_process(
-        command,
-        cwd=run_cwd,
-        timeout_sec=timeout_sec,
-        timeout_limit_sec=timeout_limit,
-        use_git_credentials=False,
-    )
-    _append_command(task, result, label="harness-validation")
-    save_task(task)
-    return result
+    with _HARNESS_VALIDATIONS_GUARD:
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is already active")
+        _ACTIVE_HARNESS_VALIDATIONS.add(task_id)
+    try:
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            raise HTTPException(status_code=403, detail="harness validation requires a harness task")
+        agent_status = str(task.get("agent_status") or "idle").strip().lower()
+        if agent_status in {"queued", "running", "stopping", "pausing"}:
+            raise HTTPException(status_code=409, detail="coding harness task is still active")
+        repo = _repo_path(task)
+        command = validate_command(argv)
+        run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
+        if not run_cwd.exists() or not run_cwd.is_dir():
+            raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
+        mission = normalize_coding_mission(task)
+        timeout_limit = max(
+            1.0,
+            min(float(mission["budget_policy"]["max_runtime_sec"]), 3600.0),
+        )
+        result = _run_process(
+            command,
+            cwd=run_cwd,
+            timeout_sec=timeout_sec,
+            timeout_limit_sec=timeout_limit,
+            use_git_credentials=False,
+        )
+        _append_command(task, result, label="harness-validation")
+        save_task(task)
+        return result
+    finally:
+        with _HARNESS_VALIDATIONS_GUARD:
+            _ACTIVE_HARNESS_VALIDATIONS.discard(task_id)
 
 
 def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
@@ -3093,15 +3103,47 @@ def read_file(task_id: str, *, path: str) -> Dict[str, Any]:
     return {"path": str(path), "size": size, "content": text}
 
 
+def _resolve_harness_evidence_path(
+    task: Dict[str, Any], path: str
+) -> Tuple[Path, Optional[int]]:
+    rel = str(path)
+    candidate = Path(rel)
+    if (
+        not rel
+        or "\x00" in rel
+        or candidate.is_absolute()
+        or any(part in {"", ".", "..", ".git"} for part in candidate.parts)
+    ):
+        raise HTTPException(status_code=400, detail="invalid harness evidence path")
+    target = _repo_path(task).joinpath(candidate)
+    current = _repo_path(task)
+    for part in candidate.parts:
+        current = current.joinpath(part)
+        try:
+            if current.is_symlink():
+                return target, current.lstat().st_size
+        except OSError:
+            break
+    return target, None
+
+
 def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
     """Read exact text evidence without lossy decoding for disposable harness tasks."""
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="only coding harness tasks may be read here")
-    target = _resolve_repo_child(task, path)
+    target, symlink_size = _resolve_harness_evidence_path(task, path)
+    if symlink_size is not None:
+        return {
+            "path": str(path),
+            "size": symlink_size,
+            "encoding": "symlink",
+            "content": None,
+        }
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="file not found")
-    size = target.stat().st_size
+    file_stat = target.stat()
+    size = file_stat.st_size
     if size > _HARNESS_MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="file is too large for the coding file API")
     raw = target.read_bytes()
@@ -3111,7 +3153,14 @@ def read_harness_file_evidence(task_id: str, *, path: str) -> Dict[str, Any]:
         content = None
     if content is None or "\x00" in content:
         return {"path": str(path), "size": size, "encoding": "binary", "content": None}
-    return {"path": str(path), "size": size, "encoding": "utf-8", "content": content}
+    mode = "100755" if file_stat.st_mode & 0o111 else "100644"
+    return {
+        "path": str(path),
+        "size": size,
+        "mode": mode,
+        "encoding": "utf-8",
+        "content": content,
+    }
 
 
 def read_file_lines(task_id: str, *, path: str, start_line: int = 1, line_count: int = 200) -> Dict[str, Any]:
@@ -3210,6 +3259,17 @@ def delete_task(task_id: str) -> Dict[str, Any]:
     return {"ok": True, "task_id": task_id, "deleted_workspace": str(path), "repo_url": redact_repo_url(str(task.get("repo_url") or ""))}
 
 
+def delete_harness_task(task_id: str) -> Dict[str, Any]:
+    """Atomically refuse deletion while a harness validation command is active."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            raise HTTPException(status_code=403, detail="only coding harness tasks may be deleted here")
+        return delete_task(task_id)
+
+
 def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, Any]:
     """Remove expired terminal eval workspaces left by a disconnected client."""
     _ensure_enabled()
@@ -3235,16 +3295,21 @@ def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, A
             agent_status = str(task.get("agent_status") or "idle").strip().lower()
             task_status = str(task.get("status") or "").strip().lower()
             finished_at = float(task.get("agent_finished_at") or task.get("updated_at") or 0)
+            abandoned_ready = task_status == "ready" and agent_status == "idle"
             if (
                 expires_at <= 0
                 or expires_at > current
-                or (task_status != "error" and agent_status not in terminal_statuses)
+                or (
+                    task_status != "error"
+                    and agent_status not in terminal_statuses
+                    and not abandoned_ready
+                )
                 or finished_at <= 0
                 or current - finished_at < 30.0
             ):
                 continue
             task_id = str(task.get("id") or path.stem)
-            delete_task(task_id)
+            delete_harness_task(task_id)
             purged.append(task_id)
         except Exception as exc:
             failures[path.stem] = f"{type(exc).__name__}: {_redact_text(str(exc))}"

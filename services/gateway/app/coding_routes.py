@@ -866,7 +866,7 @@ async def v1_coding_harness_delete_task(req: Request, task_id: str) -> Dict[str,
     agent_status = str(task.get("agent_status") or "idle").strip().lower()
     if agent_status in {"queued", "running", "stopping", "pausing"} or ca.agent_run_active(task_id):
         raise HTTPException(status_code=409, detail="coding harness task is still active")
-    return {"result": await _to_thread(cw.delete_task, task_id)}
+    return {"result": await _to_thread(cw.delete_harness_task, task_id)}
 
 
 @router.post("/v1/coding/harness/tasks/{task_id}/validation")

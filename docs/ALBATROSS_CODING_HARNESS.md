@@ -161,14 +161,15 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
 - starts the normal durable Coding Workspace runner and finalization path;
 - gives the disposable task an expiry lease equal to its run budget plus 15
   minutes (capped at 24 hours), after which monitoring removes settled terminal
-  evaluations left behind by disconnected clients;
+  evaluations and ready/idle evaluations abandoned before agent startup;
 - exposes a harness-only validation route that honors the accepted run budget
-  (up to one hour) without attaching Git credentials;
+  (up to one hour) without attaching Git credentials, and blocks deletion while
+  validation remains active;
 - exposes strict text-or-binary file evidence using the same 2 MB per-file cap
   as the shared fixture schema;
 - permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task.
 
-The client collects the baseline diff, selected final text files, post-run validation, persisted route/run evidence, and then deletes the server-side task and Git workspace. It rejects a truncated Gateway diff instead of hashing partial evidence, parses change paths from NUL-delimited Git output, deduplicates paths before enforcing the changed-file limit, and adds deterministic unified patches for text-only untracked files. A harness-only file endpoint uses strict UTF-8 decoding; binary files are identified and recorded as evidence omissions instead of being replacement-decoded into fabricated text. Final-file collection has a 30-second aggregate time bound that is excluded from the validation budget, and its 16 MB aggregate byte budget is enforced before each response is cached. The client does not report `execution_workspace_retained: false` until deletion is confirmed. A failed client run also discards its partial local evidence. If server-side deletion cannot be confirmed, the command fails closed with a `SECURITY` error.
+The client collects the baseline diff, selected final text files, post-run validation, persisted route/run evidence, and then deletes the server-side task and Git workspace. It rejects a truncated Gateway diff instead of hashing partial evidence, parses change paths from NUL-delimited Git output, deduplicates paths before enforcing the changed-file limit, and adds deterministic unified patches with the real executable mode for text-only untracked files. A harness-only file endpoint preserves exact whitespace in paths and uses strict UTF-8 decoding; binary files and paths containing symlinks are identified and recorded as evidence omissions instead of being replacement-decoded or dereferenced into fabricated evidence. Final-file collection has a 30-second aggregate time bound that is excluded from the validation budget, and its 16 MB aggregate byte budget is enforced before each response is cached. The client does not report `execution_workspace_retained: false` until deletion is confirmed. A failed client run also discards its partial local evidence. If server-side deletion cannot be confirmed, the command fails closed with a `SECURITY` error.
 
 Coding Workspace validation uses the existing task command policy and execution environment; it is not the Bubblewrap sandbox used for the external Albatross child. Fixture validation commands are trusted executable content on both paths and must be reviewed before use.
 

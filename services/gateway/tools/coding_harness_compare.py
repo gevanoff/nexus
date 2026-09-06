@@ -2944,6 +2944,7 @@ def _nexus_final_file_reader(
     token: str,
     cache: dict[str, tuple[str | None, str | None]],
     non_text_paths: set[str],
+    file_modes: dict[str, str],
     deadline: float,
 ) -> Any:
     aggregate_bytes = 0
@@ -2964,6 +2965,7 @@ def _nexus_final_file_reader(
             response_path = payload.get("path")
             size = payload.get("size")
             encoding = payload.get("encoding")
+            mode = payload.get("mode")
             content = payload.get("content")
             if response_path != rel:
                 cache[rel] = (None, "file response path did not match the request")
@@ -2978,16 +2980,19 @@ def _nexus_final_file_reader(
                 raise RuntimeError(
                     f"workspace snapshot exceeds {MAX_SNAPSHOT_FILE_BYTES} byte file-evidence limit"
                 )
-            elif encoding == "binary" and content is None:
+            elif encoding in {"binary", "symlink"} and content is None:
                 aggregate_bytes += size
                 non_text_paths.add(rel)
-                cache[rel] = (None, "binary file content omitted")
+                cache[rel] = (None, f"{encoding} file content omitted")
             elif encoding != "utf-8" or not isinstance(content, str):
                 cache[rel] = (None, "file response omitted text content")
+            elif mode not in {"100644", "100755"}:
+                cache[rel] = (None, "file response omitted a valid Git file mode")
             elif len(content.encode("utf-8")) != size:
                 cache[rel] = (None, "file response byte size did not match its text content")
             else:
                 aggregate_bytes += size
+                file_modes[rel] = mode
                 cache[rel] = (content, None)
         except NexusApiError as exc:
             cache[rel] = (None, str(exc))
@@ -2996,7 +3001,7 @@ def _nexus_final_file_reader(
     return read_content
 
 
-def _untracked_text_diff(rel: str, content: str) -> str:
+def _untracked_text_diff(rel: str, content: str, mode: str) -> str:
     """Render a deterministic unified patch for a text-only untracked file."""
     safe = safe_rel_path(rel).as_posix()
     lines = content.splitlines(keepends=True)
@@ -3014,7 +3019,9 @@ def _untracked_text_diff(rel: str, content: str) -> str:
     )
     if missing_final_newline:
         patch += "\\ No newline at end of file\n"
-    return f"diff --git a/{safe} b/{safe}\nnew file mode 100644\n{patch}"
+    if mode not in {"100644", "100755"}:
+        raise ValueError(f"unsupported untracked Git file mode: {mode}")
+    return f"diff --git a/{safe} b/{safe}\nnew file mode {mode}\n{patch}"
 
 
 def run_nexus_fixture(
@@ -3150,12 +3157,14 @@ def run_nexus_fixture(
 
         cache: dict[str, tuple[str | None, str | None]] = {}
         non_text_paths: set[str] = set()
+        file_modes: dict[str, str] = {}
         read_content = _nexus_final_file_reader(
             task_id,
             base_url=nexus_base_url,
             token=nexus_token,
             cache=cache,
             non_text_paths=non_text_paths,
+            file_modes=file_modes,
             deadline=evidence_deadline,
         )
         expected_paths = {
@@ -3182,7 +3191,7 @@ def run_nexus_fixture(
                     )
                 if diff_text and not diff_text.endswith("\n"):
                     diff_text += "\n"
-                diff_text += _untracked_text_diff(rel, content)
+                diff_text += _untracked_text_diff(rel, content, file_modes[rel])
         diff_text = redact_text(diff_text, [nexus_token])
         if len(diff_text) > MAX_SNAPSHOT_DIFF_CHARS:
             raise RuntimeError(f"workspace snapshot exceeds {MAX_SNAPSHOT_DIFF_CHARS} character diff limit")
@@ -3255,7 +3264,10 @@ def run_nexus_fixture(
                 ([{"path": "(redacted)", "reason": "path contains a protected secret encoding"}]
                  if protected else [])
                 + [
-                    {"path": rel, "reason": "binary untracked patch omitted"}
+                    {
+                        "path": rel,
+                        "reason": f"{cache[rel][1]}; untracked patch omitted",
+                    }
                     for rel in safe_untracked
                     if rel in non_text_paths
                 ]

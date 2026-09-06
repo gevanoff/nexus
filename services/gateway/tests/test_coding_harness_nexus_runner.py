@@ -143,6 +143,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
             return {
                 "path": "app.py",
                 "size": 16,
+                "mode": "100644",
                 "encoding": "utf-8",
                 "content": "VALUE = 'fixed'\n",
             }
@@ -150,6 +151,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
             return {
                 "path": "new.py",
                 "size": 15,
+                "mode": "100755",
                 "encoding": "utf-8",
                 "content": "CREATED = True\n",
             }
@@ -208,6 +210,7 @@ def test_run_nexus_fixture_normalizes_route_validation_and_cleanup(monkeypatch, 
     diff_text = Path(result["artifacts"]["diff"]).read_text(encoding="utf-8")
     assert "+VALUE = 'fixed'\n" in diff_text
     assert "diff --git a/new.py b/new.py" in diff_text
+    assert "new file mode 100755" in diff_text
     assert "+CREATED = True\n" in diff_text
     assert (
         Path(result["artifacts"]["run_root"])
@@ -224,7 +227,13 @@ def test_nexus_file_reader_enforces_aggregate_budget_before_caching(monkeypatch)
     def fake_request(method, base_url, path, *, token, body=None, timeout_sec=300.0):
         calls.append(path)
         rel = "a.txt" if "a.txt" in path else "b.txt"
-        return {"path": rel, "size": 3, "encoding": "utf-8", "content": "abc"}
+        return {
+            "path": rel,
+            "size": 3,
+            "mode": "100644",
+            "encoding": "utf-8",
+            "content": "abc",
+        }
 
     monkeypatch.setattr(harness, "nexus_api_request", fake_request)
     monkeypatch.setattr(harness, "MAX_SNAPSHOT_FILE_BYTES", 5)
@@ -236,6 +245,7 @@ def test_nexus_file_reader_enforces_aggregate_budget_before_caching(monkeypatch)
         token="token",
         cache=cache,
         non_text_paths=non_text_paths,
+        file_modes={},
         deadline=harness.time.monotonic() + 10,
     )
 
@@ -263,6 +273,7 @@ def test_nexus_file_reader_stops_when_snapshot_deadline_is_exhausted(monkeypatch
         token="token",
         cache={},
         non_text_paths=set(),
+        file_modes={},
         deadline=harness.time.monotonic() - 1,
     )
 
@@ -303,6 +314,7 @@ def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch
             return {
                 "path": "app.py",
                 "size": 16,
+                "mode": "100644",
                 "encoding": "utf-8",
                 "content": "VALUE = 'fixed'\n",
             }
@@ -331,7 +343,8 @@ def test_nexus_evidence_time_is_bounded_and_excluded_from_validation(monkeypatch
     assert validation_deadline == [166.0]
 
 
-def test_run_nexus_fixture_omits_binary_untracked_content(monkeypatch, tmp_path):
+@pytest.mark.parametrize("encoding", ["binary", "symlink"])
+def test_run_nexus_fixture_omits_non_text_untracked_content(monkeypatch, tmp_path, encoding):
     task = _completed_task()
     fixture_path = _fixture(tmp_path)
     fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
@@ -364,7 +377,7 @@ def test_run_nexus_fixture_omits_binary_untracked_content(monkeypatch, tmp_path)
             return {
                 "path": "blob.bin",
                 "size": 4,
-                "encoding": "binary",
+                "encoding": encoding,
                 "content": None,
             }
         if method == "GET" and path.startswith("/coding/tasks/"):
@@ -384,10 +397,13 @@ def test_run_nexus_fixture_omits_binary_untracked_content(monkeypatch, tmp_path)
 
     assert result["outcome"]["completed"] is True
     assert result["workspace"]["evidence_omissions"] == [
-        {"path": "blob.bin", "reason": "binary untracked patch omitted"}
+        {
+            "path": "blob.bin",
+            "reason": f"{encoding} file content omitted; untracked patch omitted",
+        }
     ]
     assert result["workspace"]["final_file_omissions"] == [
-        {"path": "blob.bin", "reason": "binary file content omitted"}
+        {"path": "blob.bin", "reason": f"{encoding} file content omitted"}
     ]
     assert Path(result["artifacts"]["diff"]).read_text(encoding="utf-8") == ""
     assert not (

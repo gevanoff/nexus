@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -246,16 +247,18 @@ def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tm
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
         fixture_id="file-evidence",
-        files={"text.txt": "hello\n"},
+        files={"text.txt": "hello\n", " spaced.txt ": "exact\n"},
         prompt="Inspect evidence.",
         owner="test",
     )
     repo = tmp_path / "workspaces" / task["id"] / "repo"
     (repo / "binary.dat").write_bytes(b"\xff\x00payload")
+    (repo / "link.txt").symlink_to("text.txt")
 
     assert cw.read_harness_file_evidence(task["id"], path="text.txt") == {
         "path": "text.txt",
         "size": 6,
+        "mode": "100644",
         "encoding": "utf-8",
         "content": "hello\n",
     }
@@ -263,6 +266,13 @@ def test_harness_file_evidence_is_strict_text_or_explicit_binary(monkeypatch, tm
         "path": "binary.dat",
         "size": 9,
         "encoding": "binary",
+        "content": None,
+    }
+    assert cw.read_harness_file_evidence(task["id"], path=" spaced.txt ")["content"] == "exact\n"
+    assert cw.read_harness_file_evidence(task["id"], path="link.txt") == {
+        "path": "link.txt",
+        "size": 8,
+        "encoding": "symlink",
         "content": None,
     }
 
@@ -290,6 +300,12 @@ def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monke
     )
     active = cw.create_harness_task(
         fixture_id="active",
+        files={"app.py": "value\n"},
+        prompt="Change value.",
+        owner="test",
+    )
+    abandoned = cw.create_harness_task(
+        fixture_id="abandoned",
         files={"app.py": "value\n"},
         prompt="Change value.",
         owner="test",
@@ -329,11 +345,16 @@ def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monke
     raw_error["status"] = "error"
     raw_error["updated_at"] = now - 60
     cw.save_task(raw_error)
+    raw_abandoned = cw.load_task(abandoned["id"])
+    raw_abandoned["harness_expires_at"] = now - 100
+    raw_abandoned["updated_at"] = now - 60
+    cw.save_task(raw_abandoned)
 
     result = cw.cleanup_expired_harness_tasks(now=now)
 
     expected_purged = {
         terminal["id"],
+        abandoned["id"],
         initialization_error["id"],
         *(task["id"] for task, _ in finalization_failures),
     }
@@ -345,6 +366,53 @@ def test_cleanup_expired_harness_tasks_only_removes_settled_terminal_evals(monke
             cw.load_task(task_id)
         assert missing.value.status_code == 404
     assert cw.load_task(active["id"])["agent_status"] == "running"
+
+
+def test_harness_deletion_refuses_an_active_validation(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="validation-delete-race",
+        files={"app.py": "value\n"},
+        prompt="Validate safely.",
+        owner="test",
+    )
+    started = threading.Event()
+    release = threading.Event()
+    failures = []
+
+    def fake_run_process(argv, **kwargs):
+        started.set()
+        assert release.wait(timeout=5)
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "",
+            "argv": list(argv),
+            "duration_ms": 1,
+        }
+
+    def validate():
+        try:
+            cw.run_harness_validation_command(task["id"], argv=["python3", "-V"])
+        except BaseException as exc:
+            failures.append(exc)
+
+    monkeypatch.setattr(cw, "_run_process", fake_run_process)
+    worker = threading.Thread(target=validate)
+    worker.start()
+    assert started.wait(timeout=5)
+    try:
+        with pytest.raises(HTTPException) as exc_info:
+            cw.delete_harness_task(task["id"])
+        assert exc_info.value.status_code == 409
+    finally:
+        release.set()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert failures == []
+    assert cw.delete_harness_task(task["id"])["ok"] is True
 
 
 @pytest.mark.asyncio
@@ -456,7 +524,11 @@ async def test_harness_delete_route_is_scoped_to_terminal_harness_tasks(monkeypa
         lambda task_id: {"id": task_id, "kind": "harness_eval", "agent_status": "completed"},
     )
     monkeypatch.setattr(coding_routes.ca, "agent_run_active", lambda task_id: False)
-    monkeypatch.setattr(coding_routes.cw, "delete_task", lambda task_id: {"ok": True, "task_id": task_id})
+    monkeypatch.setattr(
+        coding_routes.cw,
+        "delete_harness_task",
+        lambda task_id: {"ok": True, "task_id": task_id},
+    )
 
     response = await coding_routes.v1_coding_harness_delete_task(
         SimpleNamespace(), "code_abcdef123456"
