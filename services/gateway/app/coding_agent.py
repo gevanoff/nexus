@@ -2765,7 +2765,7 @@ async def start_agent_run(
     context_reset_cycles: Optional[int] = None,
     mission_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    registered = await asyncio.to_thread(cw.begin_harness_agent_run_start, task_id)
+    registered = cw.begin_harness_agent_run_start(task_id)
     try:
         return await _start_agent_run_impl(
             task_id,
@@ -2780,6 +2780,43 @@ async def start_agent_run(
             context_reset_cycles=context_reset_cycles,
             mission_overrides=mission_overrides,
         )
+    except BaseException as exc:
+        if registered and _active_runner(task_id) is None:
+            finished_at = time.time()
+            failure_type = type(exc).__name__
+
+            def mark_failed_start(current: Dict[str, Any]) -> None:
+                if str(current.get("agent_status") or "").strip().lower() not in _ACTIVE_AGENT_STATUSES:
+                    return
+                summary = "Coding harness agent startup failed before runner registration."
+                current.update({
+                    "agent_status": "failed",
+                    "agent_summary": summary,
+                    "agent_error": failure_type,
+                    "agent_stop_reason_code": "run_start_failed",
+                    "agent_finished_at": finished_at,
+                    "agent_last_event_at": now_unix(),
+                    "agent_stop_requested": False,
+                    "agent_pause_requested": False,
+                })
+                run_id = str(current.get("agent_run_id") or "")
+                runs = current.get("agent_runs")
+                if not run_id or not isinstance(runs, list):
+                    return
+                for record in reversed(runs):
+                    if not isinstance(record, dict) or str(record.get("run_id") or "") != run_id:
+                        continue
+                    record.update({
+                        "status": "failed",
+                        "finished_at": finished_at,
+                        "summary": summary,
+                        "error": failure_type,
+                        "stop_reason_code": "run_start_failed",
+                    })
+                    break
+
+            cw.mutate_task(task_id, mark_failed_start)
+        raise
     finally:
         cw.end_harness_agent_run_start(task_id, registered=registered)
 

@@ -162,6 +162,9 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
 - creates a local-only Git repository with a `main` baseline and no remote;
 - marks the task as `harness_eval` and forces publication off;
 - starts the normal durable Coding Workspace runner and finalization path;
+- repairs a failed pre-registration startup to a terminal task and run-history
+  state before releasing the run-start lease, so cleanup does not strand a
+  persisted `queued` evaluation;
 - gives the disposable task an expiry lease equal to its run budget plus 15
   minutes (capped at 24 hours), after which monitoring removes settled terminal
   evaluations and initializing/idle or ready/idle evaluations abandoned before

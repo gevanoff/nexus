@@ -711,6 +711,59 @@ async def test_harness_run_start_is_serialized_with_deletion(monkeypatch, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_failed_harness_start_repairs_orphaned_active_state(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="failed-run-start",
+        files={"app.py": "value\n"},
+        prompt="Start the fixture.",
+        owner="test",
+    )
+
+    async def fail_after_queue(task_id, **kwargs):
+        def mark_queued(current):
+            current.update(
+                agent_status="queued",
+                agent_run_id="run-failed-start",
+                agent_stop_requested=True,
+                agent_pause_requested=True,
+            )
+            current["agent_runs"] = [
+                {
+                    "run_id": "run-failed-start",
+                    "status": "queued",
+                    "finished_at": None,
+                }
+            ]
+
+        cw.mutate_task(task_id, mark_queued)
+        raise RuntimeError("queue event failed")
+
+    monkeypatch.setattr(ca, "_start_agent_run_impl", fail_after_queue)
+
+    with pytest.raises(RuntimeError, match="queue event failed"):
+        await ca.start_agent_run(task["id"])
+
+    saved = cw.load_task(task["id"])
+    assert saved["agent_status"] == "failed"
+    assert saved["agent_error"] == "RuntimeError"
+    assert saved["agent_stop_reason_code"] == "run_start_failed"
+    assert saved["agent_stop_requested"] is False
+    assert saved["agent_pause_requested"] is False
+    assert saved["agent_runs"] == [
+        {
+            "run_id": "run-failed-start",
+            "status": "failed",
+            "finished_at": saved["agent_finished_at"],
+            "summary": "Coding harness agent startup failed before runner registration.",
+            "error": "RuntimeError",
+            "stop_reason_code": "run_start_failed",
+        }
+    ]
+    assert cw.delete_harness_task(task["id"])["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_harness_route_uses_durable_agent_runner(monkeypatch):
     user = SimpleNamespace(id=7, username="tester")
     captured = {}
