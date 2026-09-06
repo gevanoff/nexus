@@ -2543,6 +2543,40 @@ async def resume_interrupted_agent_runs(task_ids: Sequence[str]) -> Dict[str, An
     return {"ok": not failures, "resumed": len(resumed), "tasks": resumed, "failures": failures}
 
 
+async def _initialize_run_state_settled(
+    task_id: str,
+    *,
+    fields: Dict[str, Any],
+    run_record: Dict[str, Any],
+    requested_prompt: str,
+    actor: Optional[str],
+) -> Dict[str, Any]:
+    """Finish startup persistence before propagating request cancellation."""
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            _initialize_run_state,
+            task_id,
+            fields=fields,
+            run_record=run_record,
+            requested_prompt=requested_prompt,
+            actor=actor,
+        )
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        try:
+            worker.result()
+        except BaseException:
+            pass
+        raise
+
+
 async def _start_agent_run_impl(
     task_id: str,
     *,
@@ -2613,8 +2647,7 @@ async def _start_agent_run_impl(
         summary = str(idle_only_policy.get("warning") or "").strip() or (
             "This workspace is pinned to a huge MLX model that is not currently loaded."
         )
-        await asyncio.to_thread(
-            _initialize_run_state,
+        await _initialize_run_state_settled(
             task_id,
             fields={
                 "coding_model": model,
@@ -2676,8 +2709,7 @@ async def _start_agent_run_impl(
         fresh = await asyncio.to_thread(cw.load_task, task_id)
         return cw.public_task(fresh)
 
-    await asyncio.to_thread(
-        _initialize_run_state,
+    await _initialize_run_state_settled(
         task_id,
         fields={
             "coding_model": model,

@@ -764,6 +764,44 @@ async def test_failed_harness_start_repairs_orphaned_active_state(monkeypatch, t
 
 
 @pytest.mark.asyncio
+async def test_cancelled_harness_start_waits_for_state_initialization(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="cancelled-run-start",
+        files={"app.py": "value\n"},
+        prompt="Start the fixture.",
+        owner="test",
+    )
+    initialize_started = threading.Event()
+    release_initialize = threading.Event()
+    original_initialize = ca._initialize_run_state
+
+    def delayed_initialize(*args, **kwargs):
+        initialize_started.set()
+        assert release_initialize.wait(timeout=5)
+        return original_initialize(*args, **kwargs)
+
+    monkeypatch.setattr(ca, "_initialize_run_state", delayed_initialize)
+    run = asyncio.create_task(ca.start_agent_run(task["id"]))
+    assert await asyncio.to_thread(initialize_started.wait, 5)
+
+    run.cancel()
+    await asyncio.sleep(0)
+    assert not run.done()
+    release_initialize.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(run, timeout=5)
+
+    saved = cw.load_task(task["id"])
+    assert saved["agent_status"] == "failed"
+    assert saved["agent_error"] == "CancelledError"
+    assert saved["agent_stop_reason_code"] == "run_start_failed"
+    assert saved["agent_runs"][0]["status"] == "failed"
+    assert cw.delete_harness_task(task["id"])["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_harness_route_uses_durable_agent_runner(monkeypatch):
     user = SimpleNamespace(id=7, username="tester")
     captured = {}
