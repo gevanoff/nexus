@@ -2660,6 +2660,7 @@ def run_harness_validation_command(
             timeout_sec=timeout_sec,
             timeout_limit_sec=timeout_limit,
             use_git_credentials=False,
+            env_overrides={"PYTHONDONTWRITEBYTECODE": "1"},
             isolate_process_group=True,
             validation_workspace=evidence_workspace,
             validation_baseline_bytes=baseline_bytes,
