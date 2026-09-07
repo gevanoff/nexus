@@ -318,6 +318,112 @@ def test_unparseable_reviewer_response_fails_over_without_author_retry(monkeypat
     assert calls[0][2] == {"type": "json_object"}
 
 
+def test_harness_review_falls_back_to_fresh_author_route_after_unusable_alternate(
+    monkeypatch,
+) -> None:
+    task = {
+        "kind": "harness_eval",
+        "agent_model": "coder",
+        "agent_backend": "local_mlx",
+        "agent_upstream_model": "author-model",
+    }
+    routes = iter([
+        {"backend": "local_vllm_fast", "upstream_model": "review-model-a"},
+        {"backend": "local_vllm", "upstream_model": "review-model-b"},
+        {"backend": "local_vllm_meltdown", "upstream_model": "review-model-c"},
+    ])
+    calls: list[tuple[str, object]] = []
+
+    monkeypatch.setattr(guarded._agent.user_llm, "is_user_model_id", lambda _model: False)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_semantic_reroute_candidate",
+        lambda *_args, **_kwargs: next(routes),
+    )
+    monkeypatch.setattr(
+        guarded._agent,
+        "_max_completion_tokens_for_route",
+        lambda *_args: 1200,
+    )
+    monkeypatch.setattr(guarded._agent, "_settings_for_task_owner", lambda _task: None)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_extract_assistant_message",
+        lambda response: type("Message", (), {"content": response})(),
+    )
+
+    async def fake_chat(req, backend, upstream_model, **_kwargs):
+        calls.append((backend, req.response_format))
+        if backend != "local_mlx":
+            return "not JSON", backend, upstream_model
+        return json.dumps({
+            "accepted": True,
+            "reason": "fresh reviewer call confirms the deterministic fixture change",
+            "causal_alignment": True,
+            "existing_mechanism_checked": True,
+            "acceptance_criteria_checked": True,
+        }), backend, "author-model"
+
+    monkeypatch.setattr(guarded, "_call_backend_chat_with_failover", fake_chat)
+
+    review = asyncio.run(
+        guarded._semantic_acceptance_review("code_test", task, diff_text="+ fixed")
+    )
+
+    assert review["accepted"] is True, review
+    assert calls == [
+        ("local_vllm_fast", {"type": "json_object"}),
+        ("local_vllm", {"type": "json_object"}),
+        ("local_vllm_meltdown", {"type": "json_object"}),
+        ("local_mlx", {"type": "json_object"}),
+    ]
+
+
+def test_normal_review_does_not_fall_back_to_author_route(monkeypatch) -> None:
+    task = {
+        "kind": "coding",
+        "agent_model": "coder",
+        "agent_backend": "local_mlx",
+        "agent_upstream_model": "author-model",
+    }
+    routes = iter([
+        {"backend": "local_vllm_fast", "upstream_model": "review-model"},
+        None,
+    ])
+    calls: list[str] = []
+
+    monkeypatch.setattr(guarded._agent.user_llm, "is_user_model_id", lambda _model: False)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_semantic_reroute_candidate",
+        lambda *_args, **_kwargs: next(routes),
+    )
+    monkeypatch.setattr(
+        guarded._agent,
+        "_max_completion_tokens_for_route",
+        lambda *_args: 1200,
+    )
+    monkeypatch.setattr(guarded._agent, "_settings_for_task_owner", lambda _task: None)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_extract_assistant_message",
+        lambda response: type("Message", (), {"content": response})(),
+    )
+
+    async def fake_chat(_req, backend, upstream_model, **_kwargs):
+        calls.append(backend)
+        return "not JSON", backend, upstream_model
+
+    monkeypatch.setattr(guarded, "_call_backend_chat_with_failover", fake_chat)
+
+    review = asyncio.run(
+        guarded._semantic_acceptance_review("code_test", task, diff_text="+ fixed")
+    )
+
+    assert review["reviewer_unavailable"] is True
+    assert calls == ["local_vllm_fast"]
+
+
 def test_valid_semantic_rejection_does_not_fail_over(monkeypatch) -> None:
     task = {"agent_model": "coder", "agent_backend": "author", "agent_upstream_model": "author-model"}
     calls: list[str] = []

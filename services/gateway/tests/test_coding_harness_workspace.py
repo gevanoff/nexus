@@ -166,6 +166,7 @@ def test_harness_validation_uses_mission_timeout_without_git_credentials(monkeyp
     assert captured["timeout_sec"] == 250
     assert captured["timeout_limit_sec"] == 300
     assert captured["use_git_credentials"] is False
+    assert captured["env_overrides"] == {"PYTHONDONTWRITEBYTECODE": "1"}
     assert captured["isolate_process_group"] is True
     assert cw.load_task(task["id"])["validation_observer"] == "newer-state"
 
@@ -748,6 +749,46 @@ def test_harness_validation_uses_writable_disposable_workspace(monkeypatch, tmp_
 
     assert result["ok"] is True
     assert not repo.joinpath("generated.txt").exists()
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
+def test_harness_python_validation_does_not_create_bytecode_evidence(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="validation-no-bytecode",
+        files={
+            "catalog.py": "VALUE = 1\n",
+            "test_catalog.py": (
+                "import unittest\n"
+                "from catalog import VALUE\n"
+                "class CatalogTest(unittest.TestCase):\n"
+                "    def test_value(self): self.assertEqual(VALUE, 1)\n"
+            ),
+        },
+        prompt="Validate without changing evidence scope.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+    evidence_workspace = Path(
+        cw._ACTIVE_HARNESS_EVIDENCE_LEASES[lease["lease_id"]]["workspace"]
+    )
+
+    result = cw.run_harness_validation_command(
+        task["id"],
+        argv=["python3", "-m", "unittest", "-q"],
+        evidence_lease_id=lease["lease_id"],
+    )
+
+    assert result["ok"] is True, result
+    assert list(evidence_workspace.rglob("*.pyc")) == []
+    assert not evidence_workspace.joinpath("__pycache__").exists()
 
 
 @pytest.mark.skipif(
