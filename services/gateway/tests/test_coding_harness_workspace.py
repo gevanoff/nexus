@@ -445,6 +445,25 @@ def test_validation_workspace_staging_retargets_absolute_internal_symlink(tmp_pa
     assert stage_entries == 2
 
 
+def test_validation_workspace_staging_preserves_dotdot_symlink_resolution(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    source.joinpath("target.txt").write_text("value\n", encoding="utf-8")
+    raw_target = f"{source}/missing/../target.txt"
+    source.joinpath("alias.txt").symlink_to(raw_target)
+
+    stage_bytes, stage_entries = cw._stage_validation_workspace(source, destination)
+
+    staged_alias = destination / "alias.txt"
+    staged_raw_target = f"{destination}/missing/../target.txt"
+    assert staged_alias.is_symlink()
+    assert os.readlink(staged_alias) == staged_raw_target
+    assert not staged_alias.exists()
+    assert stage_bytes == len(b"value\n") + len(os.fsencode(staged_raw_target))
+    assert stage_entries == 2
+
+
 def test_validation_workspace_staging_preserves_hard_link_identity(tmp_path):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
@@ -457,12 +476,13 @@ def test_validation_workspace_staging_preserves_hard_link_identity(tmp_path):
     staged_first = destination / "first.txt"
     staged_second = destination / "second.txt"
     assert staged_first.stat().st_ino == staged_second.stat().st_ino
+    assert stage_bytes == 2 * len(b"before\n")
+    assert stage_entries == 2
+    assert supervisor._scratch_usage(destination) == (stage_bytes, stage_entries)
     staged_first.write_text("after\n", encoding="utf-8")
     assert staged_second.read_text(encoding="utf-8") == "after\n"
     assert source.joinpath("first.txt").read_text(encoding="utf-8") == "before\n"
     assert source.joinpath("second.txt").read_text(encoding="utf-8") == "before\n"
-    assert stage_bytes == len(b"before\n")
-    assert stage_entries == 2
 
 
 def test_validation_workspace_staging_enforces_streamed_byte_limit(

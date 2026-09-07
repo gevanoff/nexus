@@ -1534,9 +1534,9 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                             staged_link_target = link_target
                             if os.path.isabs(link_target):
                                 try:
-                                    target_relative = Path(
-                                        os.path.normpath(link_target)
-                                    ).relative_to(source_root)
+                                    target_relative = Path(link_target).relative_to(
+                                        source_root
+                                    )
                                 except ValueError:
                                     pass
                                 else:
@@ -1578,6 +1578,11 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                             inode_key = (source_stat.st_dev, source_stat.st_ino)
                             existing_destination = staged_inodes.get(inode_key)
                             if existing_destination is not None:
+                                total_bytes += source_stat.st_size
+                                if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
+                                    raise RuntimeError(
+                                        "validation workspace staging byte limit exceeded"
+                                    )
                                 os.link(
                                     existing_destination,
                                     destination_path,
