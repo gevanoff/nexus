@@ -390,7 +390,16 @@ async def _semantic_acceptance_review(
     excluded_backends: set[str] = set()
     attempts: list[dict[str, str]] = []
     current_backend, current_model = review_backend, review_model
-    for _attempt in range(3):
+    harness_author_fallback = (
+        str(task.get("kind") or "") == "harness_eval"
+        and bool(backend)
+        and bool(upstream_model)
+    )
+    author_fallback_used = False
+    for attempt_index in range(4 if harness_author_fallback else 3):
+        is_author_fallback_attempt = (
+            author_fallback_used and current_backend == backend
+        )
         response_format = _semantic_response_format(current_backend)
         req = _agent.ChatCompletionRequest(
             model=model,
@@ -431,23 +440,35 @@ async def _semantic_acceptance_review(
             "structured_output_requested": str(response_format is not None).lower(),
         })
         excluded_backends.add(str(selected_backend))
+        if is_author_fallback_attempt:
+            break
+
+        can_use_author_fallback = (
+            harness_author_fallback
+            and not author_fallback_used
+            and backend not in excluded_backends
+        )
+        if can_use_author_fallback and attempt_index >= 2:
+            # Reserve the fourth attempt for the author route after at most
+            # three distinct reviewer routes have returned unusable responses.
+            current_backend = backend
+            current_model = upstream_model
+            author_fallback_used = True
+            continue
+
         alternate = _agent._semantic_reroute_candidate(
             model, backend, upstream_model, excluded_backends=excluded_backends | {backend},
             require_tool_calling=False,
         )
         if alternate is None:
-            if (
-                str(task.get("kind") or "") == "harness_eval"
-                and backend
-                and upstream_model
-                and backend not in excluded_backends
-            ):
+            if can_use_author_fallback:
                 # Harness fixtures have deterministic, controller-run acceptance
                 # checks after terminal acceptance. If every distinct reviewer
                 # route is unusable, a fresh review call on the author route is
                 # preferable to losing the trusted validation result entirely.
                 current_backend = backend
                 current_model = upstream_model
+                author_fallback_used = True
                 continue
             break
         current_backend = str(alternate.get("backend") or "")

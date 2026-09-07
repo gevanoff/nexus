@@ -328,8 +328,9 @@ def test_harness_review_falls_back_to_fresh_author_route_after_unusable_alternat
         "agent_upstream_model": "author-model",
     }
     routes = iter([
-        {"backend": "local_vllm_fast", "upstream_model": "review-model"},
-        None,
+        {"backend": "local_vllm_fast", "upstream_model": "review-model-a"},
+        {"backend": "local_vllm", "upstream_model": "review-model-b"},
+        {"backend": "local_vllm_meltdown", "upstream_model": "review-model-c"},
     ])
     calls: list[tuple[str, object]] = []
 
@@ -352,10 +353,9 @@ def test_harness_review_falls_back_to_fresh_author_route_after_unusable_alternat
     )
 
     async def fake_chat(req, backend, upstream_model, **_kwargs):
-        del upstream_model
         calls.append((backend, req.response_format))
-        if backend == "local_vllm_fast":
-            return "not JSON", backend, "review-model"
+        if backend != "local_mlx":
+            return "not JSON", backend, upstream_model
         return json.dumps({
             "accepted": True,
             "reason": "fresh reviewer call confirms the deterministic fixture change",
@@ -373,6 +373,8 @@ def test_harness_review_falls_back_to_fresh_author_route_after_unusable_alternat
     assert review["accepted"] is True, review
     assert calls == [
         ("local_vllm_fast", {"type": "json_object"}),
+        ("local_vllm", {"type": "json_object"}),
+        ("local_vllm_meltdown", {"type": "json_object"}),
         ("local_mlx", {"type": "json_object"}),
     ]
 
