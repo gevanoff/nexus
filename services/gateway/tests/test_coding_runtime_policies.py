@@ -78,5 +78,29 @@ def test_semantic_acceptance_prompt_is_author_independent_and_diff_grounded():
     assert "do not assume the author model's conclusion is correct" in system.lower()
     assert "bypass or duplicate an existing mechanism" in system
     assert "hard-code environment-specific values" in system
+    assert "trace the concrete control and data flow" in system
+    assert "do not invent a hypothetical later overwrite" in system
+    assert "Keep the verdict logically consistent with the reason" in system
     assert "Actual git diff" in user
     assert "+ hard-coded localhost link" in user
+
+
+def test_semantic_acceptance_prompt_requires_concrete_failure_in_final_state():
+    system, user = acceptance.build_review_messages(
+        original_request="Keep management metadata when model discovery fails.",
+        current_request="Finish the mission.",
+        hypothesis="Remove the early return from the RuntimeError branch.",
+        diff_text=(
+            "except RuntimeError as exc:\n"
+            "    entry['models_error'] = str(exc)\n"
+            "-   return entry\n"
+            "entry['model_management'] = {'ui_url': ui_url}\n"
+            "return entry"
+        ),
+    )
+
+    assert "final program state" in system
+    assert "exact present or missing statement, branch, or effect" in system
+    assert "hypothetical later overwrite" in system
+    assert "entry['models_error'] = str(exc)" in user
+    assert "entry['model_management']" in user
