@@ -147,6 +147,21 @@ def _request() -> ChatCompletionRequest:
     )
 
 
+def _review_request() -> ChatCompletionRequest:
+    return ChatCompletionRequest(
+        model="coder",
+        messages=[
+            ChatMessage(
+                role="system",
+                content="You are the independent acceptance reviewer.",
+            ),
+            ChatMessage(role="user", content="Review this diff."),
+        ],
+        tools=None,
+        max_tokens=1200,
+    )
+
+
 def test_materialization_refreshes_policy_and_converts_native_history_for_text_backend():
     agent = _Agent()
     task = {
@@ -238,7 +253,9 @@ def test_full_read_timeout_failover_rematerializes_for_destination_tool_protocol
             cycle,
             attempt,
             excluded_backends,
+            require_tool_calling=True,
         ):
+            assert require_tool_calling is True
             if "native" in excluded_backends:
                 return {
                     "backend": "text",
@@ -274,3 +291,57 @@ def test_full_read_timeout_failover_rematerializes_for_destination_tool_protocol
     assert text_request.tools is None
     assert not any(message.role == "tool" for message in text_request.messages)
     assert agent.admission.released == ["native", "text"]
+
+
+def test_toolless_review_dispatches_to_chat_only_backend():
+    agent = _Agent()
+    agent.task = {"allowed_tools": ["coding_finish"]}
+    cw = _CW(agent.task)
+    requirements: list[bool] = []
+
+    class _Guarded:
+        _agent = agent
+        _ORIGINAL_CALL_BACKEND_CHAT_WITH_RETRY = None
+
+        @staticmethod
+        def _request_requires_tool_calling(req):
+            return bool(req.tools)
+
+        @staticmethod
+        async def _acquire_backend_excluding(
+            _model,
+            _preferred_backend,
+            _preferred_upstream,
+            *,
+            task_id,
+            cycle,
+            attempt,
+            excluded_backends,
+            require_tool_calling=True,
+        ):
+            requirements.append(require_tool_calling)
+            return {
+                "backend": "text",
+                "upstream_model": "review-model",
+                "host": "stackrot",
+                "ready": True,
+                "available": 1,
+            }
+
+    response, backend, model = asyncio.run(
+        dispatch.build_failover_call(cw, _Guarded)(
+            _review_request(),
+            "text",
+            "review-model",
+            task_id="code-test",
+            cycle=11,
+        )
+    )
+
+    assert response["choices"][0]["message"]["content"] == "ok"
+    assert (backend, model) == ("text", "review-model")
+    assert requirements == [False]
+    assert agent.calls[0][1].tools is None
+    assert agent.calls[0][1].messages[0].content == (
+        "You are the independent acceptance reviewer."
+    )

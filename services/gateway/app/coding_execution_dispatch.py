@@ -230,6 +230,10 @@ def _request_value(req: Any, name: str, default: Any = None) -> Any:
     return getattr(req, name, default)
 
 
+def _request_requires_tool_calling(req: Any) -> bool:
+    return bool(_request_value(req, "tools", None))
+
+
 def materialize_request(
     agent: Any,
     req: Any,
@@ -424,6 +428,7 @@ def build_failover_call(cw: Any, guarded: Any):
                 cycle=cycle,
                 attempt=attempt,
                 excluded_backends=excluded_backends,
+                require_tool_calling=_request_requires_tool_calling(req),
             )
             selected_backend = str(selected.get("backend") or backend)
             selected_model = str(selected.get("upstream_model") or upstream_model)
