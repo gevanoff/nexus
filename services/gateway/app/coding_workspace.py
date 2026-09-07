@@ -1608,7 +1608,7 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                                             "validation workspace staging byte limit exceeded"
                                         )
                                     writer.write(chunk)
-                        destination_path.chmod(source_mode & 0o777)
+                        destination_path.chmod(stat.S_IMODE(source_mode))
                         staged_inodes[inode_key] = destination_path
             finally:
                 os.close(source_fd)

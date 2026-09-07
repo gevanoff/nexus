@@ -430,13 +430,15 @@ def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
     nested.mkdir()
     workspace.chmod(0o2751)
     nested.chmod(0o1777)
-    (workspace / "test_app.py").write_text("pass\n", encoding="utf-8")
+    test_app = workspace / "test_app.py"
+    test_app.write_text("pass\n", encoding="utf-8")
+    test_app.chmod(0o6754)
     chowns = []
 
     def chown_and_clear_setgid(path, uid, gid, **kwargs):
         path = Path(path)
         chowns.append((path, uid, gid))
-        if path.is_dir() and not path.is_symlink():
+        if not path.is_symlink():
             path.chmod(stat.S_IMODE(path.stat().st_mode) & 0o777)
 
     monkeypatch.setattr(
@@ -460,6 +462,7 @@ def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
     assert (root.stat().st_mode & 0o777) == 0o711
     assert stat.S_IMODE(workspace.stat().st_mode) == 0o2751
     assert stat.S_IMODE(nested.stat().st_mode) == 0o1777
+    assert stat.S_IMODE(test_app.stat().st_mode) == 0o6754
     assert effective_groups == [65_534, 0]
 
 
@@ -604,6 +607,19 @@ def test_validation_workspace_staging_preserves_directory_modes(tmp_path):
     destination.joinpath("locked").chmod(0o700)
     destination.chmod(0o700)
     locked.chmod(0o700)
+
+
+def test_validation_workspace_staging_preserves_regular_file_modes(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    executable = source / "executable"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o6754)
+
+    cw._stage_validation_workspace(source, destination)
+
+    assert stat.S_IMODE(destination.joinpath("executable").stat().st_mode) == 0o6754
 
 
 def test_validation_workspace_staging_enforces_streamed_byte_limit(

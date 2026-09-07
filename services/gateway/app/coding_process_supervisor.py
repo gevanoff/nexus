@@ -132,11 +132,19 @@ def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
             raise RuntimeError("validation workspace tree is unavailable")
         if child_name == "scratch":
             child.chmod(0o700)
-    directory_modes = [
-        (directory_path, stat.S_IMODE(directory_path.stat().st_mode))
-        for directory, _, _ in os.walk(root, topdown=True, followlinks=False)
-        if (directory_path := Path(directory)) != root
-    ]
+    directory_modes = []
+    file_modes = []
+    for directory, _, files in os.walk(root, topdown=True, followlinks=False):
+        directory_path = Path(directory)
+        if directory_path != root:
+            directory_modes.append(
+                (directory_path, stat.S_IMODE(directory_path.stat().st_mode))
+            )
+        for name in files:
+            path = directory_path.joinpath(name)
+            source_mode = path.lstat().st_mode
+            if stat.S_ISREG(source_mode):
+                file_modes.append((path, stat.S_IMODE(source_mode)))
     for directory, names, files in os.walk(root, topdown=True, followlinks=False):
         directory_path = Path(directory)
         for name in [*names, *files]:
@@ -153,6 +161,8 @@ def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
     if change_egid:
         os.setegid(gid)
     try:
+        for path, mode in file_modes:
+            path.chmod(mode)
         for directory_path, mode in reversed(directory_modes):
             directory_path.chmod(mode)
     finally:
