@@ -208,6 +208,81 @@ def test_harness_validation_contains_detached_descendant(monkeypatch, tmp_path):
     not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
     reason="Linux procfs containment required",
 )
+def test_harness_task_command_contains_detached_descendant(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="tool-command-descendant",
+        files={"app.py": "before\n"},
+        prompt="Contain task-command descendants.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    child = (
+        "import time; from pathlib import Path; "
+        "time.sleep(0.5); Path('late.txt').write_text('escaped', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess, sys; from pathlib import Path; "
+        "Path('immediate.txt').write_text('kept', encoding='utf-8'); "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, start_new_session=True)"
+    )
+
+    result = cw.run_task_command(
+        task["id"],
+        argv=["python3", "-c", parent],
+        timeout_sec=5,
+    )
+
+    assert result["ok"] is True, result
+    assert repo.joinpath("immediate.txt").read_text(encoding="utf-8") == "kept"
+    time.sleep(0.7)
+    assert not repo.joinpath("late.txt").exists()
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
+def test_harness_task_command_timeout_contains_detached_descendant(
+    monkeypatch, tmp_path
+):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="tool-command-timeout-descendant",
+        files={"app.py": "before\n"},
+        prompt="Contain task-command descendants after timeout.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    child = (
+        "import time; from pathlib import Path; "
+        "time.sleep(1.5); Path('late.txt').write_text('escaped', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL, start_new_session=True); time.sleep(5)"
+    )
+
+    result = cw.run_task_command(
+        task["id"],
+        argv=["python3", "-c", parent],
+        timeout_sec=1,
+    )
+
+    assert result["ok"] is False
+    assert result["returncode"] is None
+    time.sleep(0.7)
+    assert not repo.joinpath("late.txt").exists()
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
 def test_harness_validation_timeout_contains_detached_descendant(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     task = cw.create_harness_task(
@@ -401,13 +476,16 @@ def test_process_supervisor_configures_kernel_memory_and_process_limits(
     ]
 
 
-def test_process_supervisor_landlock_only_allows_writes_in_staged_root():
+def test_process_supervisor_landlock_only_allows_staged_tree_and_system_reads():
     root = Path("/tmp/nexus-validation-test")
 
     argv = supervisor._landlocked_argv(["python3", "-m", "unittest"], writable_root=root)
 
     assert argv[-4:] == ["--", "python3", "-m", "unittest"]
-    assert f"path-beneath:{supervisor._LANDLOCK_WRITE_ACCESS}:{root}" in argv
+    assert f"fs:{supervisor._LANDLOCK_ACCESS}" in argv
+    assert f"path-beneath:{supervisor._LANDLOCK_ACCESS}:{root}" in argv
+    assert f"path-beneath:{supervisor._LANDLOCK_READ_ACCESS}:/usr" in argv
+    assert not any("/var/lib/gateway" in item for item in argv)
     assert "path-beneath:write-file:/dev/null" in argv
 
 
@@ -423,6 +501,7 @@ def test_validation_workspace_staging_preserves_symlink_without_dereference(tmp_
     assert os.readlink(destination / "escape") == str(tmp_path)
     assert stage_bytes == len(os.fsencode(str(tmp_path)))
     assert stage_entries == 1
+    assert supervisor._scratch_usage(destination) == (stage_bytes, stage_entries)
 
 
 def test_validation_workspace_staging_retargets_absolute_internal_symlink(tmp_path):
@@ -462,6 +541,7 @@ def test_validation_workspace_staging_preserves_dotdot_symlink_resolution(tmp_pa
     assert not staged_alias.exists()
     assert stage_bytes == len(b"value\n") + len(os.fsencode(staged_raw_target))
     assert stage_entries == 2
+    assert supervisor._scratch_usage(destination) == (stage_bytes, stage_entries)
 
 
 def test_validation_workspace_staging_preserves_hard_link_identity(tmp_path):

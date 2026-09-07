@@ -17,9 +17,27 @@ _CONTAINMENT_ERROR_EXIT = 125
 _DESCENDANT_QUIET_SEC = 0.25
 _PR_SET_CHILD_SUBREAPER = 36
 _RESOURCE_ERROR_EXIT = 125
+_LANDLOCK_READ_ACCESS = "execute,read-file,read-dir"
 _LANDLOCK_WRITE_ACCESS = (
     "write-file,remove-dir,remove-file,make-char,make-dir,make-reg,make-sock,"
     "make-fifo,make-block,make-sym,refer,truncate"
+)
+_LANDLOCK_ACCESS = f"{_LANDLOCK_READ_ACCESS},{_LANDLOCK_WRITE_ACCESS}"
+_LANDLOCK_READ_DIRECTORIES = (
+    Path("/usr"),
+    Path("/proc"),
+    Path("/dev"),
+    Path("/etc/ld.so.conf.d"),
+    Path("/etc/ssl/certs"),
+)
+_LANDLOCK_READ_FILES = (
+    Path("/etc/ld.so.cache"),
+    Path("/etc/ld.so.conf"),
+    Path("/etc/localtime"),
+    Path("/etc/nsswitch.conf"),
+    Path("/etc/passwd"),
+    Path("/etc/group"),
+    Path("/etc/ca-certificates.conf"),
 )
 
 
@@ -179,6 +197,8 @@ def _scratch_usage(
                 try:
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(Path(entry.path))
+                    elif entry.is_symlink():
+                        total_bytes += len(os.fsencode(os.readlink(entry.path)))
                     elif entry.is_file(follow_symlinks=False):
                         total_bytes += entry.stat(follow_symlinks=False).st_size
                 except FileNotFoundError:
@@ -250,18 +270,59 @@ def _landlocked_argv(argv: Sequence[str], *, writable_root: Path) -> list[str]:
     setpriv = Path("/usr/bin/setpriv")
     if not setpriv.is_file():
         raise RuntimeError("validation Landlock launcher is unavailable")
-    return [
+    command = [
         str(setpriv),
         "--no-new-privs",
         "--landlock-access",
-        f"fs:{_LANDLOCK_WRITE_ACCESS}",
+        f"fs:{_LANDLOCK_ACCESS}",
         "--landlock-rule",
-        f"path-beneath:{_LANDLOCK_WRITE_ACCESS}:{writable_root}",
+        f"path-beneath:{_LANDLOCK_ACCESS}:{writable_root}",
+    ]
+    for path in _LANDLOCK_READ_DIRECTORIES:
+        if path.is_dir():
+            command.extend(
+                (
+                    "--landlock-rule",
+                    f"path-beneath:{_LANDLOCK_READ_ACCESS}:{path}",
+                )
+            )
+    for path in _LANDLOCK_READ_FILES:
+        if path.is_file():
+            command.extend(
+                ("--landlock-rule", f"path-beneath:read-file:{path}")
+            )
+    command.extend((
         "--landlock-rule",
         "path-beneath:write-file:/dev/null",
         "--",
         *[str(item) for item in argv],
-    ]
+    ))
+    return command
+
+
+def _run_task_command(argv: Sequence[str]) -> int:
+    """Run a workspace command until every descendant has been reaped."""
+    _set_child_subreaper()
+    _direct_children(os.getpid(), required=True)
+    signal.signal(signal.SIGTERM, _request_termination)
+    signal.signal(signal.SIGINT, _request_termination)
+    process: subprocess.Popen[bytes] | None = None
+    returncode = _CONTAINMENT_ERROR_EXIT
+    cleanup_error: Exception | None = None
+    try:
+        process = subprocess.Popen(list(argv), start_new_session=True)
+        returncode = _exit_code(process.wait())
+    except _TerminationRequested:
+        returncode = 124
+    finally:
+        if process is not None:
+            try:
+                _terminate_descendants(process.pid)
+            except Exception as exc:  # pragma: no cover - exceptional kernel failure
+                cleanup_error = exc
+    if cleanup_error is not None:
+        raise cleanup_error
+    return returncode
 
 
 def _event_counts(path: Path) -> dict[str, int]:
@@ -396,6 +457,8 @@ def main(argv: Sequence[str]) -> int:
         raise RuntimeError("process containment requires Linux")
     if not argv:
         raise ValueError("missing validation command")
+    if os.environ.pop("NEXUS_TASK_COMMAND_MODE", "") == "1":
+        return _run_task_command(argv)
     scratch = Path(os.environ.pop("NEXUS_VALIDATION_SCRATCH", ""))
     workspace = Path(os.environ.pop("NEXUS_VALIDATION_WORKSPACE", ""))
     cgroup_root_raw = os.environ.pop("NEXUS_VALIDATION_CGROUP_ROOT", "")

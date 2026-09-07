@@ -1654,6 +1654,7 @@ def _run_contained_process(
     validation_workspace: Optional[Path] = None,
     validation_baseline_bytes: Optional[int] = None,
     validation_baseline_entries: Optional[int] = None,
+    task_command_mode: bool = False,
 ) -> Tuple[Optional[int], str, str, bool, str, bool, bool]:
     if os.name != "posix" or not sys.platform.startswith("linux"):
         return None, "", "", False, "descendant process containment requires a Linux host", False, False
@@ -1669,7 +1670,11 @@ def _run_contained_process(
     capture_threads: List[threading.Thread] = []
     owned_tree: Optional[tempfile.TemporaryDirectory[str]] = None
     try:
-        if validation_workspace is None:
+        if task_command_mode:
+            command_cwd = cwd
+            contained_env = dict(env)
+            contained_env["NEXUS_TASK_COMMAND_MODE"] = "1"
+        elif validation_workspace is None:
             (
                 owned_tree,
                 scratch_root,
@@ -1696,32 +1701,38 @@ def _run_contained_process(
                 raise RuntimeError("validation workspace baseline is unavailable")
             baseline_bytes = max(0, int(validation_baseline_bytes))
             baseline_entries = max(0, int(validation_baseline_entries))
-        scratch_path = scratch_root.joinpath("scratch")
-        contained_env = dict(env)
-        contained_env.update({
-            "HOME": str(scratch_path),
-            "TMPDIR": str(scratch_path),
-            "NEXUS_VALIDATION_SCRATCH": str(scratch_root),
-            "NEXUS_VALIDATION_WORKSPACE": str(validation_workspace),
-            "NEXUS_VALIDATION_FILE_BYTES": str(_HARNESS_VALIDATION_FILE_BYTES),
-            "NEXUS_VALIDATION_OPEN_FILES": str(_HARNESS_VALIDATION_OPEN_FILES),
-            "NEXUS_VALIDATION_PROCESSES": str(_HARNESS_VALIDATION_PROCESSES),
-            "NEXUS_VALIDATION_MEMORY_BYTES": str(_HARNESS_VALIDATION_MEMORY_BYTES),
-            "NEXUS_VALIDATION_AGGREGATE_MEMORY_BYTES": str(
-                _HARNESS_VALIDATION_AGGREGATE_MEMORY_BYTES
-            ),
-            "NEXUS_VALIDATION_SCRATCH_BYTES": str(_HARNESS_VALIDATION_SCRATCH_BYTES),
-            "NEXUS_VALIDATION_SCRATCH_ENTRIES": str(_HARNESS_VALIDATION_SCRATCH_ENTRIES),
-            "NEXUS_VALIDATION_BASELINE_BYTES": str(baseline_bytes),
-            "NEXUS_VALIDATION_BASELINE_ENTRIES": str(baseline_entries),
-        })
-        validation_cgroup_root = os.environ.get("NEXUS_VALIDATION_CGROUP_ROOT", "").strip()
-        if validation_cgroup_root:
-            contained_env["NEXUS_VALIDATION_CGROUP_ROOT"] = validation_cgroup_root
-        if os.environ.get("PYTEST_CURRENT_TEST"):
-            # Local and CI pytest runs generally do not own a delegated cgroup.
-            # Production never receives this test-only escape hatch.
-            contained_env["NEXUS_TEST_VALIDATION_ALLOW_POLLING"] = "1"
+        if not task_command_mode:
+            scratch_path = scratch_root.joinpath("scratch")
+            contained_env = dict(env)
+            contained_env.update({
+                "HOME": str(scratch_path),
+                "TMPDIR": str(scratch_path),
+                "NEXUS_VALIDATION_SCRATCH": str(scratch_root),
+                "NEXUS_VALIDATION_WORKSPACE": str(validation_workspace),
+                "NEXUS_VALIDATION_FILE_BYTES": str(_HARNESS_VALIDATION_FILE_BYTES),
+                "NEXUS_VALIDATION_OPEN_FILES": str(_HARNESS_VALIDATION_OPEN_FILES),
+                "NEXUS_VALIDATION_PROCESSES": str(_HARNESS_VALIDATION_PROCESSES),
+                "NEXUS_VALIDATION_MEMORY_BYTES": str(_HARNESS_VALIDATION_MEMORY_BYTES),
+                "NEXUS_VALIDATION_AGGREGATE_MEMORY_BYTES": str(
+                    _HARNESS_VALIDATION_AGGREGATE_MEMORY_BYTES
+                ),
+                "NEXUS_VALIDATION_SCRATCH_BYTES": str(_HARNESS_VALIDATION_SCRATCH_BYTES),
+                "NEXUS_VALIDATION_SCRATCH_ENTRIES": str(_HARNESS_VALIDATION_SCRATCH_ENTRIES),
+                "NEXUS_VALIDATION_BASELINE_BYTES": str(baseline_bytes),
+                "NEXUS_VALIDATION_BASELINE_ENTRIES": str(baseline_entries),
+                "GIT_CONFIG_NOSYSTEM": "1",
+            })
+            validation_cgroup_root = os.environ.get(
+                "NEXUS_VALIDATION_CGROUP_ROOT", ""
+            ).strip()
+            if validation_cgroup_root:
+                contained_env["NEXUS_VALIDATION_CGROUP_ROOT"] = (
+                    validation_cgroup_root
+                )
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                # Local and CI pytest runs generally do not own a delegated cgroup.
+                # Production never receives this test-only escape hatch.
+                contained_env["NEXUS_TEST_VALIDATION_ALLOW_POLLING"] = "1"
         proc = subprocess.Popen(
             [sys.executable, str(supervisor), *[str(item) for item in argv]],
             cwd=str(command_cwd),
@@ -1794,6 +1805,7 @@ def _run_process(
     validation_workspace: Optional[Path] = None,
     validation_baseline_bytes: Optional[int] = None,
     validation_baseline_entries: Optional[int] = None,
+    contain_descendants: bool = False,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     if output_limit_chars is None:
@@ -1820,7 +1832,7 @@ def _run_process(
         env.update(extra_env)
         if env_overrides:
             env.update({str(key): str(value) for key, value in env_overrides.items()})
-        if isolate_process_group:
+        if isolate_process_group or contain_descendants:
             (
                 returncode,
                 raw_stdout,
@@ -1839,6 +1851,7 @@ def _run_process(
                 validation_workspace=validation_workspace,
                 validation_baseline_bytes=validation_baseline_bytes,
                 validation_baseline_entries=validation_baseline_entries,
+                task_command_mode=contain_descendants,
             )
             stdout, stdout_truncated = _truncate(raw_stdout, limit, extra_tokens=redaction_tokens)
             stderr, stderr_truncated = _truncate(raw_stderr, limit, extra_tokens=redaction_tokens)
@@ -2566,6 +2579,7 @@ def run_task_command(
             timeout_sec=timeout_sec,
             use_git_credentials=cmd in {"git", "gh"},
             git_token_value=git_token_value,
+            contain_descendants=str(task.get("kind") or "") == "harness_eval",
         )
         mutate_task(
             task_id,
