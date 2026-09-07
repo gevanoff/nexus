@@ -1508,10 +1508,13 @@ class _BoundedPipeCapture:
 
 def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, int]:
     destination.mkdir(mode=0o700)
+    source_root = source.resolve()
+    destination_root = destination.resolve()
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     nonblock = getattr(os, "O_NONBLOCK", 0)
     pending = [(os.open(source, directory_flags | nofollow), destination)]
+    staged_inodes: Dict[tuple[int, int], Path] = {}
     total_bytes = 0
     total_entries = 0
     try:
@@ -1528,12 +1531,24 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                         destination_path = destination_dir.joinpath(entry.name)
                         if entry.is_symlink():
                             link_target = os.readlink(entry.name, dir_fd=source_fd)
-                            total_bytes += len(os.fsencode(link_target))
+                            staged_link_target = link_target
+                            if os.path.isabs(link_target):
+                                try:
+                                    target_relative = Path(
+                                        os.path.normpath(link_target)
+                                    ).relative_to(source_root)
+                                except ValueError:
+                                    pass
+                                else:
+                                    staged_link_target = str(
+                                        destination_root.joinpath(target_relative)
+                                    )
+                            total_bytes += len(os.fsencode(staged_link_target))
                             if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
                                 raise RuntimeError(
                                     "validation workspace staging byte limit exceeded"
                                 )
-                            destination_path.symlink_to(link_target)
+                            destination_path.symlink_to(staged_link_target)
                             continue
                         if entry.is_dir(follow_symlinks=False):
                             child_fd = os.open(
@@ -1553,25 +1568,35 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                             os.O_RDONLY | nofollow | nonblock,
                             dir_fd=source_fd,
                         )
-                        with os.fdopen(descriptor, "rb") as reader, destination_path.open(
-                            "xb"
-                        ) as writer:
+                        with os.fdopen(descriptor, "rb") as reader:
                             source_mode = os.fstat(reader.fileno()).st_mode
                             if not stat.S_ISREG(source_mode):
                                 raise RuntimeError(
                                     "validation workspace contains a special file"
                                 )
-                            while True:
-                                chunk = reader.read(64 * 1024)
-                                if not chunk:
-                                    break
-                                total_bytes += len(chunk)
-                                if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
-                                    raise RuntimeError(
-                                        "validation workspace staging byte limit exceeded"
-                                    )
-                                writer.write(chunk)
+                            source_stat = os.fstat(reader.fileno())
+                            inode_key = (source_stat.st_dev, source_stat.st_ino)
+                            existing_destination = staged_inodes.get(inode_key)
+                            if existing_destination is not None:
+                                os.link(
+                                    existing_destination,
+                                    destination_path,
+                                    follow_symlinks=False,
+                                )
+                                continue
+                            with destination_path.open("xb") as writer:
+                                while True:
+                                    chunk = reader.read(64 * 1024)
+                                    if not chunk:
+                                        break
+                                    total_bytes += len(chunk)
+                                    if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
+                                        raise RuntimeError(
+                                            "validation workspace staging byte limit exceeded"
+                                        )
+                                    writer.write(chunk)
                         destination_path.chmod(source_mode & 0o777)
+                        staged_inodes[inode_key] = destination_path
             finally:
                 os.close(source_fd)
     finally:

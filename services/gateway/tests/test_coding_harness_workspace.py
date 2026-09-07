@@ -425,6 +425,46 @@ def test_validation_workspace_staging_preserves_symlink_without_dereference(tmp_
     assert stage_entries == 1
 
 
+def test_validation_workspace_staging_retargets_absolute_internal_symlink(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    source.joinpath("target.txt").write_text("before\n", encoding="utf-8")
+    source.joinpath("alias.txt").symlink_to(source / "target.txt")
+
+    stage_bytes, stage_entries = cw._stage_validation_workspace(source, destination)
+
+    staged_target = destination / "target.txt"
+    staged_alias = destination / "alias.txt"
+    assert staged_alias.is_symlink()
+    assert os.readlink(staged_alias) == str(staged_target)
+    staged_alias.write_text("after\n", encoding="utf-8")
+    assert staged_target.read_text(encoding="utf-8") == "after\n"
+    assert source.joinpath("target.txt").read_text(encoding="utf-8") == "before\n"
+    assert stage_bytes == len(b"before\n") + len(os.fsencode(str(staged_target)))
+    assert stage_entries == 2
+
+
+def test_validation_workspace_staging_preserves_hard_link_identity(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    source.joinpath("first.txt").write_text("before\n", encoding="utf-8")
+    os.link(source / "first.txt", source / "second.txt")
+
+    stage_bytes, stage_entries = cw._stage_validation_workspace(source, destination)
+
+    staged_first = destination / "first.txt"
+    staged_second = destination / "second.txt"
+    assert staged_first.stat().st_ino == staged_second.stat().st_ino
+    staged_first.write_text("after\n", encoding="utf-8")
+    assert staged_second.read_text(encoding="utf-8") == "after\n"
+    assert source.joinpath("first.txt").read_text(encoding="utf-8") == "before\n"
+    assert source.joinpath("second.txt").read_text(encoding="utf-8") == "before\n"
+    assert stage_bytes == len(b"before\n")
+    assert stage_entries == 2
+
+
 def test_validation_workspace_staging_enforces_streamed_byte_limit(
     monkeypatch, tmp_path
 ):
