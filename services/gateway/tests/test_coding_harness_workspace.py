@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -563,6 +564,24 @@ def test_validation_workspace_staging_preserves_hard_link_identity(tmp_path):
     assert staged_second.read_text(encoding="utf-8") == "after\n"
     assert source.joinpath("first.txt").read_text(encoding="utf-8") == "before\n"
     assert source.joinpath("second.txt").read_text(encoding="utf-8") == "before\n"
+
+
+def test_validation_workspace_staging_preserves_directory_modes(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir(mode=0o751)
+    locked = source / "locked"
+    locked.mkdir()
+    locked.joinpath("value.txt").write_text("value\n", encoding="utf-8")
+    locked.chmod(0o555)
+
+    cw._stage_validation_workspace(source, destination)
+
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o751
+    assert stat.S_IMODE(destination.joinpath("locked").stat().st_mode) == 0o555
+    destination.joinpath("locked").chmod(0o700)
+    destination.chmod(0o700)
+    locked.chmod(0o700)
 
 
 def test_validation_workspace_staging_enforces_streamed_byte_limit(

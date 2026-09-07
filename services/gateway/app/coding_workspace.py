@@ -1513,7 +1513,9 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     nonblock = getattr(os, "O_NONBLOCK", 0)
-    pending = [(os.open(source, directory_flags | nofollow), destination)]
+    source_root_fd = os.open(source, directory_flags | nofollow)
+    pending = [(source_root_fd, destination)]
+    directory_modes = [(destination, os.fstat(source_root_fd).st_mode & 0o777)]
     staged_inodes: Dict[tuple[int, int], Path] = {}
     total_bytes = 0
     total_entries = 0
@@ -1557,6 +1559,12 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                                 dir_fd=source_fd,
                             )
                             destination_path.mkdir(mode=0o700)
+                            directory_modes.append(
+                                (
+                                    destination_path,
+                                    os.fstat(child_fd).st_mode & 0o777,
+                                )
+                            )
                             pending.append((child_fd, destination_path))
                             continue
                         if not entry.is_file(follow_symlinks=False):
@@ -1607,6 +1615,8 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
     finally:
         for source_fd, _ in pending:
             os.close(source_fd)
+    for destination_dir, source_mode in reversed(directory_modes):
+        destination_dir.chmod(source_mode)
     return total_bytes, total_entries
 
 

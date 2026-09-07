@@ -129,7 +129,8 @@ def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
         child = root.joinpath(child_name)
         if not child.is_dir() or child.is_symlink():
             raise RuntimeError("validation workspace tree is unavailable")
-        child.chmod(0o700)
+        if child_name == "scratch":
+            child.chmod(0o700)
     for directory, names, files in os.walk(root, topdown=True, followlinks=False):
         directory_path = Path(directory)
         for name in [*names, *files]:
