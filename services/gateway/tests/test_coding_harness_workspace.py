@@ -444,6 +444,13 @@ def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
         "chown",
         chown_and_clear_setgid,
     )
+    effective_groups = []
+    monkeypatch.setattr(supervisor.os, "getegid", lambda: 0)
+    monkeypatch.setattr(
+        supervisor.os,
+        "setegid",
+        lambda gid: effective_groups.append(gid),
+    )
 
     supervisor._prepare_validation_tree(root, uid=65_534, gid=65_534)
 
@@ -453,6 +460,7 @@ def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
     assert (root.stat().st_mode & 0o777) == 0o711
     assert stat.S_IMODE(workspace.stat().st_mode) == 0o2751
     assert stat.S_IMODE(nested.stat().st_mode) == 0o1777
+    assert effective_groups == [65_534, 0]
 
 
 def test_process_supervisor_configures_kernel_memory_and_process_limits(

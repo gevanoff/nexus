@@ -145,9 +145,19 @@ def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
         if directory_path != root:
             os.chown(directory_path, uid, gid, follow_symlinks=False)
     # chown can clear setgid, so restore staged directory modes only after every
-    # entry has been handed to the unprivileged validation identity.
-    for directory_path, mode in reversed(directory_modes):
-        directory_path.chmod(mode)
+    # entry has been handed to the unprivileged validation identity. Match the
+    # destination group while restoring: production intentionally omits
+    # CAP_FSETID, and Linux otherwise clears setgid from the requested mode.
+    original_egid = os.getegid()
+    change_egid = original_egid != gid
+    if change_egid:
+        os.setegid(gid)
+    try:
+        for directory_path, mode in reversed(directory_modes):
+            directory_path.chmod(mode)
+    finally:
+        if change_egid:
+            os.setegid(original_egid)
 
 
 def _apply_child_limits(
