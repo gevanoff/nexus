@@ -316,7 +316,7 @@ def test_semantic_review_routes_include_chat_backend_without_tool_support(monkey
     )
     monkeypatch.setattr(
         ca,
-        "default_model_for_backend",
+        "_semantic_review_model_for_backend",
         lambda backend, _cfg: f"model-for-{backend}",
     )
 
@@ -331,6 +331,53 @@ def test_semantic_review_routes_include_chat_backend_without_tool_support(monkey
         ("local_mlx", "model-for-local_mlx"),
         ("local_vllm_fast", "model-for-local_vllm_fast"),
     ]
+
+
+def test_semantic_review_model_uses_unique_backend_alias(monkeypatch):
+    class Registry:
+        @staticmethod
+        def resolve_backend_class(backend):
+            return backend
+
+    aliases = {
+        "cinder-chat": SimpleNamespace(
+            backend="local_vllm_meltdown",
+            upstream_model="Qwen/Qwen2.5-3B-Instruct",
+        ),
+    }
+    monkeypatch.setattr(ca, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ca, "get_aliases", lambda: aliases)
+    monkeypatch.setattr(
+        ca,
+        "default_model_for_backend",
+        lambda _backend, _cfg: "wrong-strong-default",
+    )
+
+    assert ca._semantic_review_model_for_backend(
+        "local_vllm_meltdown",
+        object(),
+    ) == "Qwen/Qwen2.5-3B-Instruct"
+
+
+def test_semantic_review_model_excludes_ambiguous_unmapped_backend(monkeypatch):
+    class Registry:
+        @staticmethod
+        def resolve_backend_class(backend):
+            return backend
+
+    aliases = {
+        "one": SimpleNamespace(backend="review", upstream_model="model-a"),
+        "two": SimpleNamespace(backend="review", upstream_model="model-b"),
+    }
+    monkeypatch.setattr(ca, "get_registry", lambda: Registry())
+    monkeypatch.setattr(ca, "get_aliases", lambda: aliases)
+    monkeypatch.setattr(
+        ca,
+        "default_model_for_backend",
+        lambda _backend, _cfg: "unserved-default",
+    )
+
+    assert ca._semantic_review_model_for_backend("review", object()) == ""
 
 
 def test_compact_event_marks_unverified_assistant_output_and_deduplicates():

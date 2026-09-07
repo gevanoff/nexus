@@ -647,6 +647,32 @@ def _preferred_route_supports_coding_tools(request_model: str, preferred_backend
     return alias_backend == resolved_preferred
 
 
+def _semantic_review_model_for_backend(backend_name: str, cfg: Any) -> str:
+    registry = get_registry()
+    resolver = getattr(registry, "resolve_backend_class", None)
+
+    def resolve(value: str) -> str:
+        if callable(resolver):
+            return str(resolver(value) or value)
+        return str(value or "")
+
+    resolved_backend = resolve(backend_name)
+    configured_models = sorted({
+        str(alias.upstream_model or "").strip()
+        for alias in get_aliases().values()
+        if resolve(str(alias.backend or "")) == resolved_backend
+        and str(alias.upstream_model or "").strip()
+    })
+    if not configured_models:
+        return ""
+    default_model = str(default_model_for_backend(resolved_backend, cfg) or "").strip()
+    if default_model in configured_models:
+        return default_model
+    if len(configured_models) == 1:
+        return configured_models[0]
+    return ""
+
+
 def _candidate_summary(candidate: Dict[str, Any]) -> Dict[str, Any]:
     summary = {
         "backend": candidate.get("backend"),
@@ -691,7 +717,12 @@ def _coding_candidate_routes(
     for backend_name, _config in llm_backends():
         if require_tool_calling and not _backend_supports_tool_calling(backend_name):
             continue
-        add(backend_name, default_model_for_backend(backend_name, cfg))
+        candidate_model = (
+            default_model_for_backend(backend_name, cfg)
+            if require_tool_calling
+            else _semantic_review_model_for_backend(backend_name, cfg)
+        )
+        add(backend_name, candidate_model)
     return out
 
 
