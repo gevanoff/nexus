@@ -1169,27 +1169,39 @@ def _finish_gate_feedback(
     )
     if manifest_feedback:
         return manifest_feedback
-    if validation_failed_after_edit:
-        return (
-            "A validation command failed after the latest edit. Fix the reported issue and rerun validation, "
-            "or call coding_finish with success=false and a concrete blocker."
-        )
     missing: List[str] = []
-    if not validation_run_after_edit:
-        missing.append(
-            "run a targeted validation command after the latest edit, such as pytest, ruff check, "
-            "python -m py_compile, node --check, npm test, or git diff --check. If one checker is unavailable, use an available fallback"
-        )
-    elif validation_ok_after_edit is False:
-        return (
-            "You ran validation after editing, but it failed. Fix the reported issue and rerun validation, "
-            "or call coding_finish with success=false and a concrete blocker."
-        )
+    if _requires_agent_validation(task):
+        if validation_failed_after_edit:
+            return (
+                "A validation command failed after the latest edit. Fix the reported issue and rerun validation, "
+                "or call coding_finish with success=false and a concrete blocker."
+            )
+        if not validation_run_after_edit:
+            missing.append(
+                "run a targeted validation command after the latest edit, such as pytest, ruff check, "
+                "python -m py_compile, node --check, npm test, or git diff --check. If one checker is unavailable, use an available fallback"
+            )
+        elif validation_ok_after_edit is False:
+            return (
+                "You ran validation after editing, but it failed. Fix the reported issue and rerun validation, "
+                "or call coding_finish with success=false and a concrete blocker."
+            )
     if not diff_reviewed_after_edit:
         missing.append("inspect the actual workspace diff with coding_git_diff after the latest edit")
     if not missing:
         return ""
     return "Before reporting success after workspace edits, " + " and ".join(missing) + "."
+
+
+def _requires_agent_validation(task: Dict[str, Any]) -> bool:
+    return str(task.get("kind") or "") != "harness_eval"
+
+
+def _finish_gate_required_tools(task: Dict[str, Any]) -> List[str]:
+    tools = ["coding_git_diff"]
+    if _requires_agent_validation(task):
+        tools.insert(0, "coding_run_command")
+    return tools
 
 
 def _previous_run_context(task: Dict[str, Any]) -> str:
@@ -2371,11 +2383,17 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
         request_bits.append(integration_context)
     edit_expectation = ""
     if _mission_requires_workspace_edits(task):
-        edit_expectation = (
-            "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
-            "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
-            "Do not stop at diagnosis alone when a focused fix is available. "
-        )
+        if _requires_agent_validation(task):
+            edit_expectation = (
+                "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
+                "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
+                "Do not stop at diagnosis alone when a focused fix is available. "
+            )
+        else:
+            edit_expectation = (
+                "This is a harness task: command execution is unavailable to the agent and declared validation runs after you finish. "
+                "Make the smallest viable workspace edit, inspect the resulting diff, and then finish. "
+            )
     forced_context = _forced_action_context(task)
     if forced_context:
         forced_request_bits = [f"Original user request:\n{original or '(none recorded)'}"]
@@ -3589,7 +3607,7 @@ async def _run_agent(
                             "success": False,
                             "summary": gate_feedback,
                             "error": gate_feedback,
-                            "required_tools": ["coding_run_command", "coding_git_diff"],
+                            "required_tools": _finish_gate_required_tools(task),
                         }
                         await asyncio.to_thread(
                             _append_event,

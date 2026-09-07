@@ -569,6 +569,38 @@ def test_harness_agent_tool_surface_omits_command_execution():
     assert ca._harness_agent_tool_blocked(task, "coding_read_file") is False
 
 
+def test_harness_finish_gate_defers_validation_but_still_requires_diff_review():
+    task = {"id": "code_abcdef123456", "kind": "harness_eval"}
+    gate_args = {
+        "task": task,
+        "finish_success": True,
+        "workspace_modified": True,
+        "validation_run_after_edit": False,
+        "validation_ok_after_edit": None,
+    }
+
+    assert ca._finish_gate_feedback(
+        **gate_args,
+        diff_reviewed_after_edit=True,
+    ) == ""
+    assert "coding_git_diff" in ca._finish_gate_feedback(
+        **gate_args,
+        diff_reviewed_after_edit=False,
+    )
+    assert ca._finish_gate_required_tools(task) == ["coding_git_diff"]
+
+    normal_task = {"id": "code_abcdef123456", "kind": "workspace"}
+    normal_feedback = ca._finish_gate_feedback(
+        **{**gate_args, "task": normal_task},
+        diff_reviewed_after_edit=True,
+    )
+    assert "validation command" in normal_feedback
+    assert ca._finish_gate_required_tools(normal_task) == [
+        "coding_run_command",
+        "coding_git_diff",
+    ]
+
+
 def test_validation_workspace_staging_preserves_symlink_without_dereference(tmp_path):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
