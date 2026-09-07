@@ -80,6 +80,8 @@ def test_semantic_acceptance_prompt_is_author_independent_and_diff_grounded():
     assert "hard-code environment-specific values" in system
     assert "trace the concrete control and data flow" in system
     assert "do not invent a hypothetical later overwrite" in system
+    assert "reject for evidence insufficiency" in system
+    assert "omitted scope or acceptance-relevant effect" in system
     assert "Keep the verdict logically consistent with the reason" in system
     assert "Actual git diff" in user
     assert "+ hard-coded localhost link" in user
@@ -100,6 +102,7 @@ def test_semantic_acceptance_prompt_requires_concrete_failure_in_final_state():
     )
 
     assert "final program state" in system
+    assert "When the supplied evidence is complete" in system
     assert "exact present or missing statement, branch, or effect" in system
     assert "hypothetical later overwrite" in system
     assert "entry['models_error'] = str(exc)" in user

@@ -52,7 +52,8 @@ def build_review_messages(
         "If the supplied diff/context indicates that material changed code was clipped, truncated, or omitted, do not assume the unseen code is correct; reject unless the remaining supplied evidence is sufficient to verify every acceptance-relevant effect. "
         "When an explicit acceptance criterion is supplied, acceptance_criteria_checked may be true only if the diff plus repository evidence demonstrate that criterion rather than merely asserting it. "
         "Judge the final program state and trace the concrete control and data flow shown in the supplied code before rejecting. "
-        "A rejection must identify the exact present or missing statement, branch, or effect that violates the mission; do not invent a hypothetical later overwrite, call, or side effect that is absent from the supplied evidence. "
+        "When the supplied evidence is complete, a rejection must identify the exact present or missing statement, branch, or effect that violates the mission; do not invent a hypothetical later overwrite, call, or side effect that is absent from the supplied evidence. "
+        "When evidence is explicitly incomplete, clipped, truncated, or omitted, instead reject for evidence insufficiency and name the omitted scope or acceptance-relevant effect that cannot be verified. "
         "Keep the verdict logically consistent with the reason: if the reason establishes that the patch implements the causal mechanism and every supplied criterion and identifies no concrete remaining defect, accepted and the applicable checks must be true. "
         "Return one JSON object only with keys accepted (boolean), reason (string), causal_alignment (boolean), existing_mechanism_checked (boolean), and acceptance_criteria_checked (boolean)."
     )
