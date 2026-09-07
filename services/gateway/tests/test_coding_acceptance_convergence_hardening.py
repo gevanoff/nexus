@@ -254,6 +254,23 @@ def test_terminal_ready_mission_forces_coding_finish_only():
     assert "Call coding_finish now" in prompt
 
 
+def test_harness_terminal_readiness_defers_agent_validation():
+    task = terminal_ready_task()
+    task["kind"] = "harness_eval"
+    task.pop("coding_validation_provenance")
+    agent, _guarded, _cw, _semantic, _calls = install_hardening(task)
+
+    state = agent.forced_action.active_state(task)
+
+    assert state["schema"] == "nexus_coding_terminal_convergence.v1"
+    assert state["action_kind"] == "finish"
+    assert state["allowed_tools"] == ["coding_finish"]
+    assert "trusted fixture validation" in state["required_action"]
+    prompt = agent.forced_action.prompt_context(task)
+    assert "declared fixture validation is deferred" in prompt
+    assert "Call coding_finish now" in prompt
+
+
 def test_status_only_plan_update_does_not_invalidate_terminal_readiness():
     task = terminal_ready_task()
     task["project_plan"]["revision"] = 3

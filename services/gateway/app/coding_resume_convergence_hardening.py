@@ -5,6 +5,8 @@ import logging
 import time
 from typing import Any, Dict, Mapping
 
+from app import coding_validation_policy
+
 
 log = logging.getLogger(__name__)
 
@@ -140,8 +142,8 @@ def post_edit_state(
         return {}
     diff_sha = str(delta.get("diff_sha256") or "")
 
-    declared_validation_deferred = (
-        str(task.get("kind") or "") == "harness_eval"
+    declared_validation_deferred = not (
+        coding_validation_policy.requires_agent_validation(task)
     )
     if declared_validation_deferred:
         # Harness fixtures are validated by the trusted runner after the agent

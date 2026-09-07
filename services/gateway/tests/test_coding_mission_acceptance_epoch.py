@@ -443,6 +443,34 @@ def test_unaccepted_inherited_delta_cannot_reach_original_finalizer():
     assert agent.finalize_calls == []
 
 
+def test_harness_accepted_delta_finalizes_without_agent_validation():
+    cw = _CW()
+    cw.task["kind"] = "harness_eval"
+    cw.snapshot["validation"] = {
+        "last_validation_command": [],
+        "last_validation_ok": None,
+        "last_validation_at": 0.0,
+        "validation_after_latest_edit": False,
+    }
+    agent = _Agent(cw)
+    guarded = _Guarded(agent, cw)
+    epoch.install(agent, guarded, cw, _ForcedAction(), _TerminalHardening())
+
+    finish = guarded._run_tool_with_semantic_acceptance(
+        "code-test", "coding_finish", {}, git_token_value=None
+    )
+    result = agent.finalize_successful_run(
+        "code-test", mission=cw.task["coding_mission"], run_id="run-b"
+    )
+
+    assert finish["ok"] is True
+    assert cw.task[epoch.KEY]["status"] == "finalized"
+    assert result["ok"] is True
+    assert len(agent.finalize_calls) == 1
+    completion = agent.finalize_calls[0][1]["completion_policy"]
+    assert completion["require_file_changes"] is False
+
+
 def test_finalizer_invalid_delta_state_is_resumable_interruption(monkeypatch):
     cw = _CW()
     agent = _Agent(cw)

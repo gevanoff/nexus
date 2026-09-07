@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
+from app import coding_validation_policy
+
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
@@ -276,7 +278,10 @@ def _finalize_inherited_delta(
         ):
             raise RuntimeError("mission delta changed after semantic acceptance")
 
-        if bool(completion.get("require_validation_after_edit", True)):
+        if (
+            coding_validation_policy.requires_agent_validation(latest)
+            and bool(completion.get("require_validation_after_edit", True))
+        ):
             validation = _mapping(snapshot.get("validation"))
             if not bool(validation.get("validation_after_latest_edit")):
                 raise RuntimeError("successful mission lacks validation after the latest edit")

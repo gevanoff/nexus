@@ -397,3 +397,21 @@ def test_rejected_finish_result_is_returned_without_semantic_review(monkeypatch)
     )
 
     assert result == rejection
+
+
+def test_harness_deterministic_acceptance_defers_agent_validation(monkeypatch):
+    monkeypatch.setattr(
+        guarded.cw,
+        "coding_state_snapshot",
+        lambda _task_id: {
+            "validation": {"validation_after_latest_edit": False},
+            "diff_review": {"diff_reviewed_after_latest_edit": True},
+        },
+    )
+    monkeypatch.setattr(
+        guarded.cw,
+        "load_task",
+        lambda _task_id: {"id": "code-test", "kind": "harness_eval"},
+    )
+
+    assert guarded._deterministic_acceptance_ready("code-test") is True

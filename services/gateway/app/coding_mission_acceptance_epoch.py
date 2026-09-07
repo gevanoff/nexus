@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
+from app import coding_validation_policy
+
 
 SCHEMA = "nexus_coding_mission_acceptance_epoch.v1"
 KEY = "coding_mission_acceptance_epoch"
@@ -692,14 +694,19 @@ def _record_refutation(
     return refutation
 
 
-def _snapshot_ready(snapshot: Mapping[str, Any]) -> bool:
+def _snapshot_ready(
+    snapshot: Mapping[str, Any], task: Mapping[str, Any]
+) -> bool:
     validation = _mapping(snapshot.get("validation"))
     review = _mapping(snapshot.get("diff_review"))
-    return (
-        bool(validation.get("validation_after_latest_edit"))
-        and validation.get("last_validation_ok") is True
-        and bool(review.get("diff_reviewed_after_latest_edit"))
+    validation_ready = (
+        not coding_validation_policy.requires_agent_validation(task)
+        or (
+            bool(validation.get("validation_after_latest_edit"))
+            and validation.get("last_validation_ok") is True
+        )
     )
+    return validation_ready and bool(review.get("diff_reviewed_after_latest_edit"))
 
 
 def _reconcile_snapshot(
@@ -768,10 +775,13 @@ def _reconcile_snapshot(
     progress = dict(_mapping(output.get("progress")))
     validation = _mapping(output.get("validation"))
     review = _mapping(output.get("diff_review"))
-    if not bool(validation.get("validation_after_latest_edit")):
+    requires_validation = coding_validation_policy.requires_agent_validation(task)
+    if requires_validation and not bool(
+        validation.get("validation_after_latest_edit")
+    ):
         progress["current_phase"] = "editing"
         progress["next_recommended_action"] = "validate mission changes"
-    elif validation.get("last_validation_ok") is not True:
+    elif requires_validation and validation.get("last_validation_ok") is not True:
         progress["current_phase"] = "editing"
         progress["next_recommended_action"] = "resolve failed mission validation"
     elif not bool(review.get("diff_reviewed_after_latest_edit")):
@@ -1243,7 +1253,11 @@ def install(
                         "Finalization was interrupted before commit or push and may be resumed."
                     ),
                 )
-            if state.get("has_delta") and accepted and _snapshot_ready(snapshot):
+            if (
+                state.get("has_delta")
+                and accepted
+                and _snapshot_ready(snapshot, task)
+            ):
                 contract = cw.normalize_coding_mission(task, mission)
                 patched = dict(contract)
                 completion = dict(_mapping(contract.get("completion_policy")))

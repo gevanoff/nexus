@@ -341,6 +341,35 @@ def test_reconciled_progress_requires_failed_validation_remediation():
     assert progress["next_recommended_action"] == "resolve failed validation"
 
 
+def test_harness_progress_advances_to_diff_review_without_agent_validation():
+    snapshot = {
+        "changes": {
+            "last_edit_at": 10.0,
+            "changed_files": [{"path": "app.py", "status": " M"}],
+        },
+        "diff_review": {
+            "last_diff_review_at": 0.0,
+            "diff_reviewed_after_latest_edit": False,
+        },
+        "progress": {},
+    }
+    validation = {
+        "last_validation_command": [],
+        "last_validation_ok": None,
+        "last_validation_at": 0.0,
+        "validation_after_latest_edit": False,
+    }
+
+    progress = hardening._reconciled_progress_state(
+        snapshot,
+        validation,
+        {"kind": "harness_eval"},
+    )
+
+    assert progress["current_phase"] == "reviewing"
+    assert progress["next_recommended_action"] == "review diff"
+
+
 def test_terminal_status_watch_tracks_sentinel_recoverable_states():
     source = (
         Path(__file__).resolve().parents[1]

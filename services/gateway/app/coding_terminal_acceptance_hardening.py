@@ -5,6 +5,8 @@ import json
 import time
 from typing import Any, Dict, Mapping, Sequence
 
+from app import coding_validation_policy
+
 
 _SCHEMA = "nexus_coding_semantic_acceptance_state.v1"
 _REJECTION_EVENT = "semantic_acceptance_state"
@@ -297,6 +299,7 @@ def _reconciled_validation_state(
 def _reconciled_progress_state(
     snapshot: Mapping[str, Any],
     validation: Mapping[str, Any],
+    task: Mapping[str, Any] | None = None,
 ) -> Dict[str, Any]:
     progress = dict(_mapping(snapshot.get("progress")))
     changes = _mapping(snapshot.get("changes"))
@@ -308,12 +311,17 @@ def _reconciled_progress_state(
         progress["next_recommended_action"] = "continue the current project-plan milestone"
         return progress
 
-    if not bool(validation.get("validation_after_latest_edit")):
+    requires_validation = coding_validation_policy.requires_agent_validation(
+        task or {}
+    )
+    if requires_validation and not bool(
+        validation.get("validation_after_latest_edit")
+    ):
         progress["current_phase"] = "editing"
         progress["next_recommended_action"] = "validate changes"
         return progress
 
-    if validation.get("last_validation_ok") is not True:
+    if requires_validation and validation.get("last_validation_ok") is not True:
         progress["current_phase"] = "editing"
         progress["next_recommended_action"] = "resolve failed validation"
         return progress
@@ -436,7 +444,9 @@ def install(agent: Any, guarded: Any, cw: Any, work_phases: Any) -> None:
             is_validation_command=work_phases.is_validation_command,
         )
         output["validation"] = validation
-        output["progress"] = _reconciled_progress_state(snapshot, validation)
+        output["progress"] = _reconciled_progress_state(
+            snapshot, validation, task
+        )
         return output
 
     cw.coding_state_snapshot = snapshot_with_validation_provenance

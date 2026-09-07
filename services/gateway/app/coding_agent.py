@@ -13,6 +13,7 @@ from app.backends import backend_hostname, get_admission_controller, get_registr
 from app import coding_model_policy
 from app import context_budget
 from app import coding_semantic_memory
+from app import coding_validation_policy
 from app import coding_work_phases
 from app import coding_forced_action as forced_action
 from app import coding_workspace as cw
@@ -457,7 +458,16 @@ def finalize_successful_run(
         require_commit_on_success = bool(completion.get("require_commit_on_success", True)) or run_delta
         if require_file_changes and not run_delta:
             raise RuntimeError("successful run has no meaningful delta produced by this run")
-        if run_delta and completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
+        if (
+            run_delta
+            and _requires_agent_validation(latest)
+            and completion.get("require_validation_after_edit", True)
+            and not bool(
+                (snapshot.get("validation") or {}).get(
+                    "validation_after_latest_edit"
+                )
+            )
+        ):
             raise RuntimeError("successful run lacks validation after the latest edit")
         if run_delta and completion.get("require_diff_review_after_edit", True) and not bool((snapshot.get("diff_review") or {}).get("diff_reviewed_after_latest_edit")):
             raise RuntimeError("successful run lacks diff review after the latest edit")
@@ -1194,7 +1204,7 @@ def _finish_gate_feedback(
 
 
 def _requires_agent_validation(task: Dict[str, Any]) -> bool:
-    return str(task.get("kind") or "") != "harness_eval"
+    return coding_validation_policy.requires_agent_validation(task)
 
 
 def _finish_gate_required_tools(task: Dict[str, Any]) -> List[str]:
