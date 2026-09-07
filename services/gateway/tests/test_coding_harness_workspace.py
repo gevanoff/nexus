@@ -411,14 +411,18 @@ def test_process_supervisor_landlock_only_allows_writes_in_staged_root():
     assert "path-beneath:write-file:/dev/null" in argv
 
 
-def test_validation_workspace_staging_rejects_symlink(tmp_path):
+def test_validation_workspace_staging_preserves_symlink_without_dereference(tmp_path):
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     source.mkdir()
     source.joinpath("escape").symlink_to(tmp_path)
 
-    with pytest.raises(RuntimeError, match="symbolic links"):
-        cw._stage_validation_workspace(source, destination)
+    stage_bytes, stage_entries = cw._stage_validation_workspace(source, destination)
+
+    assert destination.joinpath("escape").is_symlink()
+    assert os.readlink(destination / "escape") == str(tmp_path)
+    assert stage_bytes == len(os.fsencode(str(tmp_path)))
+    assert stage_entries == 1
 
 
 def test_validation_workspace_staging_enforces_streamed_byte_limit(
@@ -489,7 +493,10 @@ def test_harness_evidence_lease_preserves_validation_mutations(monkeypatch, tmp_
         argv=[
             "python3",
             "-c",
-            "from pathlib import Path; Path('generated.txt').write_text('artifact\\n')",
+            (
+                "from pathlib import Path; Path('build').mkdir(); "
+                "Path('build/generated.txt').write_text('artifact\\n')"
+            ),
         ],
         evidence_lease_id=lease_id,
     )
@@ -501,9 +508,10 @@ def test_harness_evidence_lease_preserves_validation_mutations(monkeypatch, tmp_
             (
                 "from pathlib import Path; "
                 "assert Path('generated.txt').read_text() == 'artifact\\n'; "
-                "Path('app.py').write_text('after\\n')"
+                "Path('../app.py').write_text('after\\n')"
             ),
         ],
+        cwd="build",
         evidence_lease_id=lease_id,
     )
 
@@ -511,7 +519,7 @@ def test_harness_evidence_lease_preserves_validation_mutations(monkeypatch, tmp_
     assert consumed["ok"] is True, consumed
     assert cw.read_harness_file_evidence(
         task["id"],
-        path="generated.txt",
+        path="build/generated.txt",
         evidence_lease_id=lease_id,
     )["content"] == "artifact\n"
     assert cw.read_harness_file_evidence(
@@ -525,10 +533,10 @@ def test_harness_evidence_lease_preserves_validation_mutations(monkeypatch, tmp_
     )
     assert {item["path"] for item in changed["files"]} >= {
         "app.py",
-        "generated.txt",
+        "build/generated.txt",
     }
     assert repo.joinpath("app.py").read_text(encoding="utf-8") == "before\n"
-    assert not repo.joinpath("generated.txt").exists()
+    assert not repo.joinpath("build").exists()
 
     assert cw.delete_harness_task(
         task["id"],
@@ -1380,11 +1388,17 @@ def test_expired_harness_evidence_lease_no_longer_blocks_resume(
         lambda current: current.update(agent_status="completed"),
     )
     lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=30)
+    lease_record = cw._ACTIVE_HARNESS_EVIDENCE_LEASES[lease["lease_id"]]
     evidence_root = Path(
-        cw._ACTIVE_HARNESS_EVIDENCE_LEASES[lease["lease_id"]]["workspace"]
+        lease_record["workspace"]
     ).parent
+    expiry_timer = lease_record["expiry_timer"]
+    assert isinstance(expiry_timer, threading.Timer)
+    assert expiry_timer.daemon is True
+    expiry_timer.cancel()
 
     clock["now"] += 31
+    cw._expire_harness_evidence_lease(lease["lease_id"], lease["expires_at"])
     registered = cw.begin_harness_agent_run_start(task["id"])
     cw.end_harness_agent_run_start(task["id"], registered=registered)
 

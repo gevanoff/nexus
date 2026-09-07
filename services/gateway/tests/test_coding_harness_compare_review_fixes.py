@@ -1070,7 +1070,7 @@ def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
 
 @pytest.mark.requires_linux_process_containment
 @pytest.mark.requires_non_root_validation
-def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
+def test_validation_mutations_remain_in_measured_workspace(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
@@ -1083,13 +1083,7 @@ def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
     marker = workspace / "validation-write.txt"
     code = (
         "from pathlib import Path\n"
-        "marker = Path('validation-write.txt')\n"
-        "try:\n"
-        "    marker.write_text('forged', encoding='utf-8')\n"
-        "except OSError:\n"
-        "    pass\n"
-        "else:\n"
-        "    raise SystemExit('validation workspace was writable')\n"
+        "Path('validation-write.txt').write_text('validated', encoding='utf-8')\n"
     )
 
     result = harness.run_validation(
@@ -1101,7 +1095,7 @@ def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
     )
 
     assert result["passed"] is True
-    assert not marker.exists()
+    assert marker.read_text(encoding="utf-8") == "validated"
 
 
 @pytest.mark.requires_linux_process_containment

@@ -671,7 +671,7 @@ def test_validation_scratch_mount_follows_recursive_read_only_remount(
         index
         for index in range(len(argv) - 2)
         if argv[index:index + 3]
-        == ["--ro-bind", str(workspace.resolve()), str(workspace.resolve())]
+        == ["--bind", str(workspace.resolve()), str(workspace.resolve())]
     )
     assert remount_index < scratch_index < workspace_index
 

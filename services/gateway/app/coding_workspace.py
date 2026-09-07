@@ -1527,9 +1527,14 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                             )
                         destination_path = destination_dir.joinpath(entry.name)
                         if entry.is_symlink():
-                            raise RuntimeError(
-                                "validation workspace may not contain symbolic links"
-                            )
+                            link_target = os.readlink(entry.name, dir_fd=source_fd)
+                            total_bytes += len(os.fsencode(link_target))
+                            if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
+                                raise RuntimeError(
+                                    "validation workspace staging byte limit exceeded"
+                                )
+                            destination_path.symlink_to(link_target)
+                            continue
                         if entry.is_dir(follow_symlinks=False):
                             child_fd = os.open(
                                 entry.name,
@@ -2358,8 +2363,15 @@ def _ensure_inside(base: Path, target: Path) -> Path:
     return target_resolved
 
 
-def _resolve_repo_child(task: Dict[str, Any], rel_path: Optional[str] = None) -> Path:
-    base = _repo_path(task)
+def _resolve_repo_child(
+    task: Dict[str, Any],
+    rel_path: Optional[str] = None,
+    *,
+    repo_override: Optional[Path] = None,
+) -> Path:
+    base = repo_override.resolve() if repo_override is not None else _repo_path(task)
+    if not base.is_dir() or base.is_symlink():
+        raise HTTPException(status_code=409, detail="coding task workspace is missing")
     rel = str(rel_path or "").strip().lstrip("/\\")
     target = base.joinpath(rel) if rel else base
     resolved = _ensure_inside(base, target)
@@ -2571,20 +2583,18 @@ def run_harness_validation_command(
             raise HTTPException(status_code=409, detail="coding harness task is still active")
         repo = _repo_path(task)
         command = validate_command(argv)
-        run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
+        validation_repo = evidence_workspace or repo
+        run_cwd = (
+            _resolve_repo_child(
+                task,
+                cwd,
+                repo_override=evidence_workspace,
+            )
+            if cwd
+            else validation_repo
+        )
         if not run_cwd.exists() or not run_cwd.is_dir():
             raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
-        validation_cwd = run_cwd
-        if evidence_workspace is not None:
-            validation_cwd = _ensure_inside(
-                evidence_workspace,
-                evidence_workspace.joinpath(run_cwd.relative_to(repo)),
-            )
-            if not validation_cwd.is_dir():
-                raise HTTPException(
-                    status_code=400,
-                    detail="cwd must exist inside the staged validation workspace",
-                )
         mission = normalize_coding_mission(task)
         timeout_limit = max(
             1.0,
@@ -2592,7 +2602,7 @@ def run_harness_validation_command(
         )
         result = _run_process(
             command,
-            cwd=validation_cwd,
+            cwd=run_cwd,
             timeout_sec=timeout_sec,
             timeout_limit_sec=timeout_limit,
             use_git_credentials=False,
@@ -2694,6 +2704,9 @@ def end_harness_evidence_read(task_id: str) -> None:
 
 
 def _cleanup_harness_evidence_lease(record: Dict[str, Any]) -> None:
+    expiry_timer = record.get("expiry_timer")
+    if isinstance(expiry_timer, threading.Timer):
+        expiry_timer.cancel()
     temporary = record.get("temporary")
     if not isinstance(temporary, tempfile.TemporaryDirectory):
         return
@@ -2701,6 +2714,55 @@ def _cleanup_harness_evidence_lease(record: Dict[str, Any]) -> None:
         temporary.cleanup()
     except OSError as exc:
         logger.warning("could not clean harness evidence workspace: %s", exc)
+
+
+def _schedule_harness_evidence_expiry_locked(
+    lease_id: str,
+    record: Dict[str, Any],
+    *,
+    delay_sec: float,
+) -> None:
+    expires_at = float(record.get("expires_at") or 0)
+    timer = threading.Timer(
+        max(0.01, float(delay_sec)),
+        _expire_harness_evidence_lease,
+        args=(lease_id, expires_at),
+    )
+    timer.daemon = True
+    record["expiry_timer"] = timer
+    timer.start()
+
+
+def _expire_harness_evidence_lease(lease_id: str, expected_expires_at: float) -> None:
+    with _HARNESS_VALIDATIONS_GUARD:
+        record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(lease_id)
+        if (
+            not isinstance(record, dict)
+            or float(record.get("expires_at") or 0) != expected_expires_at
+        ):
+            return
+        remaining = expected_expires_at - _now()
+        if remaining > 0:
+            _schedule_harness_evidence_expiry_locked(
+                lease_id,
+                record,
+                delay_sec=remaining,
+            )
+            return
+        task_id = str(record.get("task_id") or "")
+        if (
+            task_id in _ACTIVE_HARNESS_VALIDATIONS
+            or _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0
+        ):
+            _schedule_harness_evidence_expiry_locked(
+                lease_id,
+                record,
+                delay_sec=0.25,
+            )
+            return
+        removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+        if isinstance(removed, dict):
+            _cleanup_harness_evidence_lease(removed)
 
 
 def _expire_harness_evidence_leases_locked() -> None:
@@ -2793,6 +2855,11 @@ def acquire_harness_evidence_lease(
             "baseline_bytes": baseline_bytes,
             "baseline_entries": baseline_entries,
         }
+        _schedule_harness_evidence_expiry_locked(
+            lease_id,
+            _ACTIVE_HARNESS_EVIDENCE_LEASES[lease_id],
+            delay_sec=duration,
+        )
         return {"lease_id": lease_id, "task_id": task_id, "expires_at": expires_at}
 
 

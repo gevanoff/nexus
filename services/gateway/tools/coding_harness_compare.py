@@ -391,7 +391,7 @@ def _validation_sandbox_argv(
         "--bind", str(trusted["temporary directory"]), "/tmp",
         "--dir", str(validation_home),
         "--chmod", "0700", str(validation_home),
-        "--ro-bind", str(trusted["workspace"]), str(trusted["workspace"]),
+        "--bind", str(trusted["workspace"]), str(trusted["workspace"]),
     ))
     for key, value in sorted(child_env.items()):
         command.extend(("--setenv", key, value))
