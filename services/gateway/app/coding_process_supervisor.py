@@ -4,6 +4,7 @@ import ctypes
 import os
 import pwd
 import resource
+import secrets
 import signal
 import subprocess
 import sys
@@ -16,6 +17,10 @@ _CONTAINMENT_ERROR_EXIT = 125
 _DESCENDANT_QUIET_SEC = 0.25
 _PR_SET_CHILD_SUBREAPER = 36
 _RESOURCE_ERROR_EXIT = 125
+_LANDLOCK_WRITE_ACCESS = (
+    "write-file,remove-dir,remove-file,make-char,make-dir,make-reg,make-sock,"
+    "make-fifo,make-block,make-sym,refer,truncate"
+)
 
 
 class _TerminationRequested(Exception):
@@ -80,11 +85,26 @@ def _required_limit(name: str) -> int:
     return value
 
 
-def _validation_identity() -> tuple[int, int]:
+def _validation_identity(*, allow_current_user: bool = False) -> tuple[int, int]:
     if os.geteuid() != 0:
-        return os.geteuid(), os.getegid()
+        if allow_current_user:
+            return os.geteuid(), os.getegid()
+        raise RuntimeError("validation containment requires a root supervisor")
     account = pwd.getpwnam("nobody")
     return int(account.pw_uid), int(account.pw_gid)
+
+
+def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
+    root.chmod(0o711)
+    for directory, names, files in os.walk(root, topdown=True, followlinks=False):
+        directory_path = Path(directory)
+        for name in [*names, *files]:
+            path = directory_path.joinpath(name)
+            if path.is_symlink():
+                raise RuntimeError("validation workspace may not contain symbolic links")
+            os.chown(path, uid, gid, follow_symlinks=False)
+        if directory_path != root:
+            os.chown(directory_path, uid, gid, follow_symlinks=False)
 
 
 def _apply_child_limits(
@@ -95,7 +115,10 @@ def _apply_child_limits(
     open_files: int,
     processes: int,
     memory_bytes: int,
+    cgroup: Path | None = None,
 ) -> None:
+    if cgroup is not None:
+        _join_validation_cgroup(cgroup)
     for kind, requested in (
         (resource.RLIMIT_FSIZE, file_bytes),
         (resource.RLIMIT_NOFILE, open_files),
@@ -117,7 +140,12 @@ def _apply_child_limits(
         os.setuid(uid)
 
 
-def _scratch_limit_error(root: Path, *, max_bytes: int, max_entries: int) -> str:
+def _scratch_usage(
+    root: Path,
+    *,
+    stop_after_bytes: int | None = None,
+    stop_after_entries: int | None = None,
+) -> tuple[int, int]:
     total_bytes = 0
     total_entries = 0
     pending = [root]
@@ -132,8 +160,8 @@ def _scratch_limit_error(root: Path, *, max_bytes: int, max_entries: int) -> str
         with entries:
             for entry in entries:
                 total_entries += 1
-                if total_entries > max_entries:
-                    return f"validation scratch exceeded {max_entries} entry limit"
+                if stop_after_entries is not None and total_entries > stop_after_entries:
+                    return total_bytes, total_entries
                 try:
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(Path(entry.path))
@@ -141,9 +169,117 @@ def _scratch_limit_error(root: Path, *, max_bytes: int, max_entries: int) -> str
                         total_bytes += entry.stat(follow_symlinks=False).st_size
                 except FileNotFoundError:
                     continue
-                if total_bytes > max_bytes:
-                    return f"validation scratch exceeded {max_bytes} byte limit"
+                if stop_after_bytes is not None and total_bytes > stop_after_bytes:
+                    return total_bytes, total_entries
+    return total_bytes, total_entries
+
+
+def _scratch_limit_error(
+    root: Path,
+    *,
+    max_bytes: int,
+    max_entries: int,
+    baseline_bytes: int = 0,
+    baseline_entries: int = 0,
+) -> str:
+    total_bytes, total_entries = _scratch_usage(
+        root,
+        stop_after_bytes=baseline_bytes + max_bytes,
+        stop_after_entries=baseline_entries + max_entries,
+    )
+    if total_entries - baseline_entries > max_entries:
+        return f"validation scratch exceeded {max_entries} entry limit"
+    if total_bytes - baseline_bytes > max_bytes:
+        return f"validation scratch exceeded {max_bytes} byte limit"
     return ""
+
+
+def _write_cgroup_value(path: Path, value: str) -> None:
+    path.write_text(f"{value}\n", encoding="ascii")
+
+
+def _create_validation_cgroup(
+    root: Path,
+    *,
+    memory_bytes: int,
+    processes: int,
+) -> Path:
+    if not root.is_absolute() or not root.is_dir():
+        raise RuntimeError("validation cgroup delegation is unavailable")
+    try:
+        enabled = set(root.joinpath("cgroup.subtree_control").read_text(encoding="ascii").split())
+    except OSError as exc:
+        raise RuntimeError("validation cgroup delegation is unavailable") from exc
+    if not {"memory", "pids"}.issubset(enabled):
+        raise RuntimeError("validation cgroup memory and pids controllers are unavailable")
+    group = root.joinpath(f"nexus-validation-{os.getpid()}-{secrets.token_hex(6)}")
+    try:
+        group.mkdir(mode=0o700)
+        _write_cgroup_value(group.joinpath("memory.max"), str(memory_bytes))
+        _write_cgroup_value(group.joinpath("memory.swap.max"), "0")
+        _write_cgroup_value(group.joinpath("memory.oom.group"), "1")
+        _write_cgroup_value(group.joinpath("pids.max"), str(processes))
+    except OSError as exc:
+        try:
+            group.rmdir()
+        except OSError:
+            pass
+        raise RuntimeError("could not configure validation cgroup") from exc
+    return group
+
+
+def _join_validation_cgroup(group: Path) -> None:
+    _write_cgroup_value(group.joinpath("cgroup.procs"), str(os.getpid()))
+
+
+def _landlocked_argv(argv: Sequence[str], *, writable_root: Path) -> list[str]:
+    setpriv = Path("/usr/bin/setpriv")
+    if not setpriv.is_file():
+        raise RuntimeError("validation Landlock launcher is unavailable")
+    return [
+        str(setpriv),
+        "--no-new-privs",
+        "--landlock-access",
+        f"fs:{_LANDLOCK_WRITE_ACCESS}",
+        "--landlock-rule",
+        f"path-beneath:{_LANDLOCK_WRITE_ACCESS}:{writable_root}",
+        "--landlock-rule",
+        "path-beneath:write-file:/dev/null",
+        "--",
+        *[str(item) for item in argv],
+    ]
+
+
+def _event_counts(path: Path) -> dict[str, int]:
+    try:
+        lines = path.read_text(encoding="ascii").splitlines()
+        return {key: int(value) for key, value in (line.split() for line in lines)}
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"could not read validation cgroup evidence: {path.name}") from exc
+
+
+def _cgroup_limit_error(group: Path) -> str:
+    memory = _event_counts(group.joinpath("memory.events"))
+    if any(memory.get(name, 0) > 0 for name in ("max", "oom", "oom_kill", "oom_group_kill")):
+        return "validation cgroup memory limit was reached"
+    pids = _event_counts(group.joinpath("pids.events"))
+    if pids.get("max", 0) > 0:
+        return "validation cgroup process limit was reached"
+    return ""
+
+
+def _remove_validation_cgroup(group: Path) -> None:
+    kill_path = group.joinpath("cgroup.kill")
+    if kill_path.exists():
+        _write_cgroup_value(kill_path, "1")
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        events = _event_counts(group.joinpath("cgroup.events"))
+        if events.get("populated", 0) == 0:
+            group.rmdir()
+            return
+        time.sleep(0.02)
+    raise RuntimeError("validation cgroup remained populated after cleanup")
 
 
 def _resident_bytes(pids: set[int]) -> int:
@@ -170,15 +306,22 @@ def _resource_limit_error(
     scratch: Path,
     scratch_bytes: int,
     scratch_entries: int,
+    baseline_bytes: int,
+    baseline_entries: int,
     aggregate_memory_bytes: int,
+    cgroup: Path | None,
 ) -> str:
     scratch_error = _scratch_limit_error(
         scratch,
         max_bytes=scratch_bytes,
         max_entries=scratch_entries,
+        baseline_bytes=baseline_bytes,
+        baseline_entries=baseline_entries,
     )
     if scratch_error:
         return scratch_error
+    if cgroup is not None:
+        return _cgroup_limit_error(cgroup)
     roots = {process_pid} | _direct_children(os.getpid(), required=True)
     resident_bytes = _resident_bytes(_descendant_tree(roots))
     if resident_bytes > aggregate_memory_bytes:
@@ -240,6 +383,9 @@ def main(argv: Sequence[str]) -> int:
     if not argv:
         raise ValueError("missing validation command")
     scratch = Path(os.environ.pop("NEXUS_VALIDATION_SCRATCH", ""))
+    workspace = Path(os.environ.pop("NEXUS_VALIDATION_WORKSPACE", ""))
+    cgroup_root_raw = os.environ.pop("NEXUS_VALIDATION_CGROUP_ROOT", "")
+    allow_polling = os.environ.pop("NEXUS_TEST_VALIDATION_ALLOW_POLLING", "") == "1"
     file_bytes = _required_limit("NEXUS_VALIDATION_FILE_BYTES")
     open_files = _required_limit("NEXUS_VALIDATION_OPEN_FILES")
     processes = _required_limit("NEXUS_VALIDATION_PROCESSES")
@@ -249,21 +395,38 @@ def main(argv: Sequence[str]) -> int:
     scratch_entries = _required_limit("NEXUS_VALIDATION_SCRATCH_ENTRIES")
     if not scratch.is_absolute() or not scratch.is_dir():
         raise RuntimeError("validation scratch directory is unavailable")
-    uid, gid = _validation_identity()
-    if os.geteuid() == 0:
-        os.chown(scratch, uid, gid)
-    scratch.chmod(0o700)
+    if not workspace.is_absolute() or not workspace.is_dir() or workspace.parent != scratch:
+        raise RuntimeError("staged validation workspace is unavailable")
+    if Path.cwd().resolve() != workspace.resolve():
+        raise RuntimeError("validation did not start in its staged workspace")
+    uid, gid = _validation_identity(allow_current_user=allow_polling)
+    _prepare_validation_tree(scratch, uid=uid, gid=gid)
+    baseline_bytes, baseline_entries = _scratch_usage(scratch)
     _set_child_subreaper()
     _direct_children(os.getpid(), required=True)
     signal.signal(signal.SIGTERM, _request_termination)
     signal.signal(signal.SIGINT, _request_termination)
     process: subprocess.Popen[bytes] | None = None
+    cgroup: Path | None = None
     returncode = _CONTAINMENT_ERROR_EXIT
     cleanup_error: Exception | None = None
     resource_error = ""
     try:
+        if cgroup_root_raw:
+            cgroup = _create_validation_cgroup(
+                Path(cgroup_root_raw),
+                memory_bytes=aggregate_memory_bytes,
+                processes=processes,
+            )
+        elif not allow_polling:
+            raise RuntimeError("validation cgroup delegation is required")
+        child_argv = (
+            list(argv)
+            if allow_polling
+            else _landlocked_argv(argv, writable_root=scratch)
+        )
         process = subprocess.Popen(
-            list(argv),
+            child_argv,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
             preexec_fn=lambda: _apply_child_limits(
@@ -273,6 +436,7 @@ def main(argv: Sequence[str]) -> int:
                 open_files=open_files,
                 processes=processes,
                 memory_bytes=memory_bytes,
+                cgroup=cgroup,
             ),
         )
         while process.poll() is None:
@@ -281,7 +445,10 @@ def main(argv: Sequence[str]) -> int:
                 scratch=scratch,
                 scratch_bytes=scratch_bytes,
                 scratch_entries=scratch_entries,
+                baseline_bytes=baseline_bytes,
+                baseline_entries=baseline_entries,
                 aggregate_memory_bytes=aggregate_memory_bytes,
+                cgroup=cgroup,
             )
             if resource_error:
                 break
@@ -292,7 +459,10 @@ def main(argv: Sequence[str]) -> int:
                 scratch=scratch,
                 scratch_bytes=scratch_bytes,
                 scratch_entries=scratch_entries,
+                baseline_bytes=baseline_bytes,
+                baseline_entries=baseline_entries,
                 aggregate_memory_bytes=aggregate_memory_bytes,
+                cgroup=cgroup,
             )
         returncode = _RESOURCE_ERROR_EXIT if resource_error else _exit_code(process.wait())
     except _TerminationRequested:
@@ -303,6 +473,11 @@ def main(argv: Sequence[str]) -> int:
                 _terminate_descendants(process.pid)
             except Exception as exc:  # pragma: no cover - exceptional kernel failure
                 cleanup_error = exc
+        if cgroup is not None:
+            try:
+                _remove_validation_cgroup(cgroup)
+            except Exception as exc:  # pragma: no cover - exceptional kernel failure
+                cleanup_error = cleanup_error or exc
     if cleanup_error is not None:
         raise cleanup_error
     if resource_error:

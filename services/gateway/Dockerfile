@@ -31,6 +31,8 @@ RUN pip install --no-cache-dir -r /tmp/requirements.freeze.txt \
 
 # App code
 COPY app/ /var/lib/gateway/app/
+COPY gateway-entrypoint.sh /usr/local/bin/nexus-gateway-entrypoint
+RUN chmod 755 /usr/local/bin/nexus-gateway-entrypoint
 
 # Convenience: ship gateway tools into the image as well.
 COPY tools/ /var/lib/gateway/tools/
@@ -56,4 +58,5 @@ EXPOSE 8800 8801
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8800/health || exit 1
 
+ENTRYPOINT ["/usr/local/bin/nexus-gateway-entrypoint"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8800"]

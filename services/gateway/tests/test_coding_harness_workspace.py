@@ -285,6 +285,13 @@ def test_process_supervisor_fails_closed_without_procfs(monkeypatch):
 def test_process_supervisor_applies_child_resource_limits(monkeypatch):
     limits = []
     identity_calls = []
+    cgroup_calls = []
+    cgroup = Path("/sys/fs/cgroup/nexus-validation-test")
+    monkeypatch.setattr(
+        supervisor,
+        "_join_validation_cgroup",
+        lambda value: cgroup_calls.append(value),
+    )
     monkeypatch.setattr(
         supervisor.resource,
         "setrlimit",
@@ -322,6 +329,7 @@ def test_process_supervisor_applies_child_resource_limits(monkeypatch):
         open_files=64,
         processes=128,
         memory_bytes=2_048,
+        cgroup=cgroup,
     )
 
     assert limits == [
@@ -330,7 +338,128 @@ def test_process_supervisor_applies_child_resource_limits(monkeypatch):
         (supervisor.resource.RLIMIT_NPROC, (128, 128)),
         (supervisor.resource.RLIMIT_AS, (2_048, 2_048)),
     ]
+    assert cgroup_calls == [cgroup]
     assert identity_calls == [("groups", []), ("gid", 65_534), ("uid", 65_534)]
+
+
+def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
+    monkeypatch, tmp_path
+):
+    root = tmp_path / "root"
+    workspace = root / "workspace"
+    scratch = root / "scratch"
+    workspace.mkdir(parents=True)
+    scratch.mkdir()
+    (workspace / "test_app.py").write_text("pass\n", encoding="utf-8")
+    chowns = []
+    monkeypatch.setattr(
+        supervisor.os,
+        "chown",
+        lambda path, uid, gid, **kwargs: chowns.append((Path(path), uid, gid)),
+    )
+
+    supervisor._prepare_validation_tree(root, uid=65_534, gid=65_534)
+
+    assert root not in {item[0] for item in chowns}
+    assert workspace in {item[0] for item in chowns}
+    assert scratch in {item[0] for item in chowns}
+    assert (root.stat().st_mode & 0o777) == 0o711
+
+
+def test_process_supervisor_configures_kernel_memory_and_process_limits(
+    monkeypatch, tmp_path
+):
+    root = tmp_path / "cgroup"
+    root.mkdir()
+    (root / "cgroup.subtree_control").write_text("memory pids\n", encoding="ascii")
+    writes = []
+    real_mkdir = Path.mkdir
+
+    def cgroup_mkdir(path, *args, **kwargs):
+        real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", cgroup_mkdir)
+    monkeypatch.setattr(
+        supervisor,
+        "_write_cgroup_value",
+        lambda path, value: writes.append((Path(path).name, value)),
+    )
+    monkeypatch.setattr(supervisor.secrets, "token_hex", lambda _size: "fixed")
+
+    group = supervisor._create_validation_cgroup(
+        root,
+        memory_bytes=2_048,
+        processes=16,
+    )
+
+    assert group == root / f"nexus-validation-{os.getpid()}-fixed"
+    assert writes == [
+        ("memory.max", "2048"),
+        ("memory.swap.max", "0"),
+        ("memory.oom.group", "1"),
+        ("pids.max", "16"),
+    ]
+
+
+def test_process_supervisor_landlock_only_allows_writes_in_staged_root():
+    root = Path("/tmp/nexus-validation-test")
+
+    argv = supervisor._landlocked_argv(["python3", "-m", "unittest"], writable_root=root)
+
+    assert argv[-4:] == ["--", "python3", "-m", "unittest"]
+    assert f"path-beneath:{supervisor._LANDLOCK_WRITE_ACCESS}:{root}" in argv
+    assert "path-beneath:write-file:/dev/null" in argv
+
+
+def test_validation_workspace_staging_rejects_symlink(tmp_path):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    source.joinpath("escape").symlink_to(tmp_path)
+
+    with pytest.raises(RuntimeError, match="symbolic links"):
+        cw._stage_validation_workspace(source, destination)
+
+
+def test_validation_workspace_staging_enforces_streamed_byte_limit(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    source.joinpath("large.bin").write_bytes(b"x" * 2_048)
+    monkeypatch.setattr(cw, "_HARNESS_VALIDATION_STAGE_BYTES", 1_024)
+
+    with pytest.raises(RuntimeError, match="staging byte limit"):
+        cw._stage_validation_workspace(source, destination)
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
+def test_harness_validation_uses_writable_disposable_workspace(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="validation-staged-workspace",
+        files={"test_app.py": "pass\n"},
+        prompt="Use a staged validation workspace.",
+        owner="test",
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+
+    result = cw.run_harness_validation_command(
+        task["id"],
+        argv=[
+            "python3",
+            "-c",
+            "from pathlib import Path; Path('generated.txt').write_text('ok')",
+        ],
+        timeout_sec=5,
+    )
+
+    assert result["ok"] is True
+    assert not repo.joinpath("generated.txt").exists()
 
 
 @pytest.mark.skipif(

@@ -6,6 +6,9 @@ services:
       context: ../../services/gateway
       dockerfile: Dockerfile
     container_name: nexus-gateway
+    cap_add:
+      - SYS_ADMIN
+    cgroup: private
     ports:
       - "${GATEWAY_PORT:-8800}:8800"
       - "${OBSERVABILITY_PORT:-8801}:8801"
@@ -41,6 +44,7 @@ services:
       - CODING_REQUIRE_ADMIN=${CODING_REQUIRE_ADMIN:-true}
       - CODING_SMOKE_REPORT_DIR=/var/lib/gateway/coding_smoke_reports
       - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
+      - NEXUS_VALIDATION_TMP_ROOT=/var/lib/gateway/validation-tmp
       - TOOLS_REGISTRY_PATH=/var/lib/gateway/config/tools_registry.json
     volumes:
       - ${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/gateway/data:/var/lib/gateway/data
@@ -48,6 +52,8 @@ services:
       - ${MLX_HF_CACHE_HOST_DIR:-${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/gateway/mlx_hf_cache}:/var/lib/gateway/mlx_hf_cache:ro
       - ${NEXUS_CODING_SMOKE_OUTPUT_DIR:-${NEXUS_RUNTIME_ROOT:-/ai-data/runtime}/gateway/data/coding-smoke/reports}:/var/lib/gateway/coding_smoke_reports
       - ../../.env:/var/lib/gateway/app/.env:ro
+    tmpfs:
+      - "/var/lib/gateway/validation-tmp:size=536870912,mode=0711,uid=0,gid=0,nosuid,nodev"
     networks:
       - nexus
     restart: unless-stopped

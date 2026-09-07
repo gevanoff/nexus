@@ -5,8 +5,9 @@ import json
 import os
 import re
 import secrets
-import signal
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,8 @@ _HARNESS_VALIDATION_MEMORY_BYTES = 16 * 1_024 * 1_024 * 1_024
 _HARNESS_VALIDATION_AGGREGATE_MEMORY_BYTES = 2 * 1_024 * 1_024 * 1_024
 _HARNESS_VALIDATION_SCRATCH_BYTES = 64 * 1_024 * 1_024
 _HARNESS_VALIDATION_SCRATCH_ENTRIES = 4_096
+_HARNESS_VALIDATION_STAGE_BYTES = 128 * 1_024 * 1_024
+_HARNESS_VALIDATION_STAGE_ENTRIES = 16_384
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
 _DELETED_TASKS_GUARD = threading.Lock()
@@ -1503,6 +1506,74 @@ class _BoundedPipeCapture:
         return f"{head}\n\n[... truncated {omitted} output bytes ...]\n\n{tail}"
 
 
+def _stage_validation_workspace(source: Path, destination: Path) -> None:
+    destination.mkdir(mode=0o700)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    pending = [(os.open(source, directory_flags | nofollow), destination)]
+    total_bytes = 0
+    total_entries = 0
+    try:
+        while pending:
+            source_fd, destination_dir = pending.pop()
+            try:
+                with os.scandir(source_fd) as entries:
+                    for entry in entries:
+                        total_entries += 1
+                        if total_entries > _HARNESS_VALIDATION_STAGE_ENTRIES:
+                            raise RuntimeError(
+                                "validation workspace staging entry limit exceeded"
+                            )
+                        destination_path = destination_dir.joinpath(entry.name)
+                        if entry.is_symlink():
+                            raise RuntimeError(
+                                "validation workspace may not contain symbolic links"
+                            )
+                        if entry.is_dir(follow_symlinks=False):
+                            child_fd = os.open(
+                                entry.name,
+                                directory_flags | nofollow,
+                                dir_fd=source_fd,
+                            )
+                            destination_path.mkdir(mode=0o700)
+                            pending.append((child_fd, destination_path))
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            raise RuntimeError(
+                                "validation workspace contains a special file"
+                            )
+                        descriptor = os.open(
+                            entry.name,
+                            os.O_RDONLY | nofollow | nonblock,
+                            dir_fd=source_fd,
+                        )
+                        with os.fdopen(descriptor, "rb") as reader, destination_path.open(
+                            "xb"
+                        ) as writer:
+                            source_mode = os.fstat(reader.fileno()).st_mode
+                            if not stat.S_ISREG(source_mode):
+                                raise RuntimeError(
+                                    "validation workspace contains a special file"
+                                )
+                            while True:
+                                chunk = reader.read(64 * 1024)
+                                if not chunk:
+                                    break
+                                total_bytes += len(chunk)
+                                if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
+                                    raise RuntimeError(
+                                        "validation workspace staging byte limit exceeded"
+                                    )
+                                writer.write(chunk)
+                        destination_path.chmod(source_mode & 0o777)
+            finally:
+                os.close(source_fd)
+    finally:
+        for source_fd, _ in pending:
+            os.close(source_fd)
+
+
 def _run_contained_process(
     argv: Sequence[str],
     *,
@@ -1526,13 +1597,32 @@ def _run_contained_process(
     capture_threads: List[threading.Thread] = []
     scratch: Optional[tempfile.TemporaryDirectory[str]] = None
     try:
-        scratch = tempfile.TemporaryDirectory(prefix="nexus-validation-")
-        scratch_path = str(Path(scratch.name).resolve())
+        validation_tmp_root_raw = os.environ.get("NEXUS_VALIDATION_TMP_ROOT", "").strip()
+        validation_tmp_root = None
+        if validation_tmp_root_raw:
+            validation_tmp_root_path = Path(validation_tmp_root_raw)
+            if (
+                not validation_tmp_root_path.is_absolute()
+                or not validation_tmp_root_path.is_dir()
+            ):
+                raise OSError("validation temporary filesystem is unavailable")
+            validation_tmp_root = str(validation_tmp_root_path)
+        scratch = tempfile.TemporaryDirectory(
+            prefix="nexus-validation-",
+            dir=validation_tmp_root,
+        )
+        scratch_root = Path(scratch.name).resolve()
+        scratch_root.chmod(0o711)
+        scratch_path = scratch_root.joinpath("scratch")
+        validation_workspace = scratch_root.joinpath("workspace")
+        scratch_path.mkdir(mode=0o700)
+        _stage_validation_workspace(cwd, validation_workspace)
         contained_env = dict(env)
         contained_env.update({
-            "HOME": scratch_path,
-            "TMPDIR": scratch_path,
-            "NEXUS_VALIDATION_SCRATCH": scratch_path,
+            "HOME": str(scratch_path),
+            "TMPDIR": str(scratch_path),
+            "NEXUS_VALIDATION_SCRATCH": str(scratch_root),
+            "NEXUS_VALIDATION_WORKSPACE": str(validation_workspace),
             "NEXUS_VALIDATION_FILE_BYTES": str(_HARNESS_VALIDATION_FILE_BYTES),
             "NEXUS_VALIDATION_OPEN_FILES": str(_HARNESS_VALIDATION_OPEN_FILES),
             "NEXUS_VALIDATION_PROCESSES": str(_HARNESS_VALIDATION_PROCESSES),
@@ -1543,9 +1633,16 @@ def _run_contained_process(
             "NEXUS_VALIDATION_SCRATCH_BYTES": str(_HARNESS_VALIDATION_SCRATCH_BYTES),
             "NEXUS_VALIDATION_SCRATCH_ENTRIES": str(_HARNESS_VALIDATION_SCRATCH_ENTRIES),
         })
+        validation_cgroup_root = os.environ.get("NEXUS_VALIDATION_CGROUP_ROOT", "").strip()
+        if validation_cgroup_root:
+            contained_env["NEXUS_VALIDATION_CGROUP_ROOT"] = validation_cgroup_root
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            # Local and CI pytest runs generally do not own a delegated cgroup.
+            # Production never receives this test-only escape hatch.
+            contained_env["NEXUS_TEST_VALIDATION_ALLOW_POLLING"] = "1"
         proc = subprocess.Popen(
             [sys.executable, str(supervisor), *[str(item) for item in argv]],
-            cwd=str(cwd),
+            cwd=str(validation_workspace),
             env=contained_env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -1581,7 +1678,7 @@ def _run_contained_process(
             containment_error = containment_error or "could not drain validation output safely"
         if proc.returncode == 125 and "NEXUS_CONTAINMENT_ERROR:" in stderr:
             containment_error = "validation process containment failed"
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         containment_error = f"could not launch contained process: {exc}"
     finally:
         if scratch is not None:
