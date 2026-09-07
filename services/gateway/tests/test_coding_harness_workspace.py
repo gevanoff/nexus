@@ -362,6 +362,7 @@ def test_process_supervisor_applies_child_resource_limits(monkeypatch):
     limits = []
     identity_calls = []
     cgroup_calls = []
+    seccomp_calls = []
     cgroup = Path("/sys/fs/cgroup/nexus-validation-test")
     monkeypatch.setattr(
         supervisor,
@@ -382,6 +383,11 @@ def test_process_supervisor_applies_child_resource_limits(monkeypatch):
         ),
     )
     monkeypatch.setattr(supervisor.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        supervisor,
+        "_install_network_seccomp",
+        lambda: seccomp_calls.append(True),
+    )
     monkeypatch.setattr(
         supervisor.os,
         "setgroups",
@@ -416,6 +422,7 @@ def test_process_supervisor_applies_child_resource_limits(monkeypatch):
     ]
     assert cgroup_calls == [cgroup]
     assert identity_calls == [("groups", []), ("gid", 65_534), ("uid", 65_534)]
+    assert seccomp_calls == [True]
 
 
 def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
@@ -512,6 +519,54 @@ def test_process_supervisor_landlock_only_allows_staged_tree_and_system_reads():
     assert f"path-beneath:{supervisor._LANDLOCK_READ_ACCESS}:/usr" in argv
     assert not any("/var/lib/gateway" in item for item in argv)
     assert "path-beneath:write-file:/dev/null" in argv
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux seccomp containment required",
+)
+def test_validation_process_denies_network_syscalls(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    script = (
+        "import errno, socket\n"
+        "for family, kind in ((socket.AF_INET, socket.SOCK_STREAM), "
+        "(socket.AF_INET, socket.SOCK_DGRAM), (socket.AF_UNIX, socket.SOCK_STREAM)):\n"
+        "    try:\n"
+        "        socket.socket(family, kind)\n"
+        "    except PermissionError as exc:\n"
+        "        assert exc.errno == errno.EPERM\n"
+        "    else:\n"
+        "        raise AssertionError('network socket was available')\n"
+        "print('network-denied')\n"
+    )
+
+    result = cw._run_contained_process(
+        ["python3", "-c", script],
+        cwd=source,
+        env=dict(os.environ),
+        timeout_sec=10,
+        decode_errors="replace",
+        output_limit_chars=10_000,
+    )
+
+    assert result[0] == 0, result
+    assert result[1] == "network-denied\n"
+    assert result[4] == ""
+
+
+def test_harness_agent_tool_surface_omits_command_execution():
+    task = {"id": "code_abcdef123456", "kind": "harness_eval"}
+    names = {
+        spec.function.name
+        for spec in ca._filter_harness_tool_specs(ca._tool_specs(), task)
+    }
+
+    assert "coding_run_command" not in names
+    assert "coding_read_file" in names
+    assert "coding_replace_text" in names
+    assert ca._harness_agent_tool_blocked(task, "coding_run_command") is True
+    assert ca._harness_agent_tool_blocked(task, "coding_read_file") is False
 
 
 def test_validation_workspace_staging_preserves_symlink_without_dereference(tmp_path):
@@ -1673,33 +1728,33 @@ def test_harness_deletion_waits_for_cancelled_agent_tool_worker(monkeypatch, tmp
     task = cw.create_harness_task(
         fixture_id="agent-tool-delete-race",
         files={"app.py": "value\n"},
-        prompt="Run a blocking command.",
+        prompt="Run a blocking read tool.",
         owner="test",
     )
     started = threading.Event()
     release = threading.Event()
     failures = []
 
-    def fake_run_task_command(task_id, **kwargs):
+    def fake_read_file(task_id, **kwargs):
         started.set()
         assert release.wait(timeout=30)
         stale = cw.load_task(task_id)
         stale["worker_finished"] = True
         cw.save_task(stale)
-        return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+        return {"ok": True, "path": "app.py", "content": "value\n"}
 
     def run_tool():
         try:
             ca._run_tool_worker(
                 task["id"],
-                "coding_run_command",
-                {"argv": ["python3", "-V"]},
+                "coding_read_file",
+                {"path": "app.py"},
                 git_token_value=None,
             )
         except BaseException as exc:
             failures.append(exc)
 
-    monkeypatch.setattr(cw, "run_task_command", fake_run_task_command)
+    monkeypatch.setattr(cw, "read_file", fake_read_file)
     worker = threading.Thread(target=run_tool)
     worker.start()
     assert started.wait(timeout=30)

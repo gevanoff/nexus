@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import os
 import pwd
 import resource
@@ -40,10 +41,90 @@ _LANDLOCK_READ_FILES = (
     Path("/etc/group"),
     Path("/etc/ca-certificates.conf"),
 )
+_NETWORK_SYSCALLS = (
+    "socket",
+    "socketpair",
+    "socketcall",
+    "connect",
+    "bind",
+    "listen",
+    "accept",
+    "accept4",
+    "sendto",
+    "recvfrom",
+    "sendmsg",
+    "recvmsg",
+    "sendmmsg",
+    "recvmmsg",
+    "getsockname",
+    "getpeername",
+    "getsockopt",
+    "setsockopt",
+    "shutdown",
+    "io_uring_setup",
+    "io_uring_enter",
+    "io_uring_register",
+)
+_SCMP_ACT_ALLOW = 0x7FFF0000
+_SCMP_ACT_ERRNO = 0x00050000
+_PR_SET_NO_NEW_PRIVS = 38
+_SECCOMP_LIBRARY: ctypes.CDLL | None = None
 
 
 class _TerminationRequested(Exception):
     pass
+
+
+def _seccomp_library() -> ctypes.CDLL:
+    global _SECCOMP_LIBRARY
+    if _SECCOMP_LIBRARY is not None:
+        return _SECCOMP_LIBRARY
+    try:
+        library = ctypes.CDLL("libseccomp.so.2", use_errno=True)
+    except OSError as exc:
+        raise RuntimeError("validation network isolation is unavailable") from exc
+    library.seccomp_init.argtypes = [ctypes.c_uint32]
+    library.seccomp_init.restype = ctypes.c_void_p
+    library.seccomp_rule_add.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_int,
+        ctypes.c_uint,
+    ]
+    library.seccomp_rule_add.restype = ctypes.c_int
+    library.seccomp_syscall_resolve_name.argtypes = [ctypes.c_char_p]
+    library.seccomp_syscall_resolve_name.restype = ctypes.c_int
+    library.seccomp_load.argtypes = [ctypes.c_void_p]
+    library.seccomp_load.restype = ctypes.c_int
+    library.seccomp_release.argtypes = [ctypes.c_void_p]
+    library.seccomp_release.restype = None
+    _SECCOMP_LIBRARY = library
+    return library
+
+
+def _install_network_seccomp() -> None:
+    library = _seccomp_library()
+    context = library.seccomp_init(_SCMP_ACT_ALLOW)
+    if not context:
+        raise RuntimeError("could not initialize validation network isolation")
+    try:
+        deny = _SCMP_ACT_ERRNO | errno.EPERM
+        for name in _NETWORK_SYSCALLS:
+            number = library.seccomp_syscall_resolve_name(name.encode("ascii"))
+            if number < 0:
+                continue
+            result = library.seccomp_rule_add(context, deny, number, 0)
+            if result != 0:
+                raise RuntimeError(
+                    f"could not deny validation network syscall: {name}"
+                )
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+            raise RuntimeError("could not lock validation child privileges")
+        if library.seccomp_load(context) != 0:
+            raise RuntimeError("could not install validation network isolation")
+    finally:
+        library.seccomp_release(context)
 
 
 def _request_termination(_signal_number: int, _frame: object) -> NoReturn:
@@ -201,6 +282,7 @@ def _apply_child_limits(
         os.setgroups([])
         os.setgid(gid)
         os.setuid(uid)
+    _install_network_seccomp()
 
 
 def _scratch_usage(
@@ -515,6 +597,9 @@ def main(argv: Sequence[str]) -> int:
         raise RuntimeError("validation did not start in its staged workspace")
     uid, gid = _validation_identity(allow_current_user=allow_polling)
     _prepare_validation_tree(scratch, uid=uid, gid=gid)
+    # Resolve and configure libseccomp before forking so the pre-exec child only
+    # invokes already-loaded code while installing its fail-closed network filter.
+    _seccomp_library()
     _set_child_subreaper()
     _direct_children(os.getpid(), required=True)
     signal.signal(signal.SIGTERM, _request_termination)

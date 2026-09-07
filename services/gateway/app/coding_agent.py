@@ -339,8 +339,30 @@ def _repeated_state_read_decision(count: int, maximum: int) -> str:
     return "continue"
 
 
+def _filter_harness_tool_specs(
+    specs: List[ToolSpec], task: Dict[str, Any]
+) -> List[ToolSpec]:
+    if _harness_agent_tool_blocked(task, "coding_run_command"):
+        specs = [
+            spec
+            for spec in specs
+            if str(spec.function.name) != "coding_run_command"
+        ]
+    return specs
+
+
+def _harness_agent_tool_blocked(task: Dict[str, Any], name: str) -> bool:
+    return (
+        str(task.get("kind") or "") == "harness_eval"
+        and str(name or "") == "coding_run_command"
+    )
+
+
 def _tool_specs_for_task(task: Dict[str, Any]) -> List[ToolSpec]:
-    return forced_action.filter_tool_specs(_tool_specs(), task)
+    return _filter_harness_tool_specs(
+        forced_action.filter_tool_specs(_tool_specs(), task),
+        task,
+    )
 
 
 def _forced_action_context(task: Dict[str, Any]) -> str:
@@ -2184,7 +2206,7 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
     if name == "coding_list_tree":
         return cw.list_tree(task_id, path=str(args.get("path") or ""), limit=int(args.get("limit") or 250))
     if name == "coding_tool_manifest":
-        manifest = coding_tool_manifest()
+        manifest = coding_tool_manifest(cw.load_task(task_id))
         if not bool(args.get("include_parameters", False)):
             slim_tools = []
             for item in manifest.get("tools") or []:
@@ -2261,6 +2283,12 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
             }
         )
     if name == "coding_run_command":
+        task = cw.load_task(task_id)
+        if _harness_agent_tool_blocked(task, name):
+            raise HTTPException(
+                status_code=403,
+                detail="command execution is unavailable to coding harness agents",
+            )
         argv = args.get("argv")
         if not isinstance(argv, list):
             raise HTTPException(status_code=400, detail="argv must be a list")
