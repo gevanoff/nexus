@@ -229,6 +229,43 @@ def test_resumed_pending_delta_forces_diff_review_after_validation():
     assert "coding_git_diff" in agent.forced_action.prompt_context(task)
 
 
+def test_harness_pending_delta_defers_validation_and_forces_diff_review():
+    task = pending_task()
+    task["kind"] = "harness_eval"
+    task["test_validation_ready"] = False
+    task["test_validation_at"] = 12.0
+    task["test_validation_records"] = [
+        (12.0, ("pytest", "-q"), False),
+    ]
+    task["test_review_at"] = 0.0
+    agent, _cw = installed(task)
+
+    state = agent.forced_action.active_state(task)
+
+    assert state["schema"] == hardening.SCHEMA
+    assert state["action_kind"] == "review"
+    assert state["allowed_tools"] == ["coding_finish", "coding_git_diff"]
+    assert state["declared_validation_deferred"] is True
+    assert "coding_run_command" not in state["allowed_tools"]
+    prompt = agent.forced_action.prompt_context(task).lower()
+    assert "trusted runner" in prompt
+    assert "coding_git_diff" in prompt
+
+
+def test_harness_pending_delta_reaches_finish_after_diff_review():
+    task = pending_task()
+    task["kind"] = "harness_eval"
+    task["test_validation_ready"] = False
+    task["test_review_at"] = 13.0
+    agent, _cw = installed(task)
+
+    state = agent.forced_action.active_state(task)
+
+    assert state["schema"] == "nexus_coding_terminal_convergence.v1"
+    assert state["action_kind"] == "finish"
+    assert state["allowed_tools"] == ["coding_finish"]
+
+
 def test_resumed_pending_delta_becomes_finish_only_when_prerequisites_are_current():
     task = pending_task()
     task["test_validation_ready"] = True

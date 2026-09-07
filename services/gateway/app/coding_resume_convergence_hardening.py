@@ -140,7 +140,18 @@ def post_edit_state(
         return {}
     diff_sha = str(delta.get("diff_sha256") or "")
 
-    validation_ready, validation_at = convergence._validation_ready(task, threshold)
+    declared_validation_deferred = (
+        str(task.get("kind") or "") == "harness_eval"
+    )
+    if declared_validation_deferred:
+        # Harness fixtures are validated by the trusted runner after the agent
+        # reaches a terminal state. The agent cannot run arbitrary commands, so
+        # its post-edit convergence obligation advances directly to diff review.
+        validation_ready, validation_at = True, 0.0
+    else:
+        validation_ready, validation_at = convergence._validation_ready(
+            task, threshold
+        )
     if not validation_ready:
         unresolved = convergence._unresolved_validation_failures(task, threshold)
         if unresolved:
@@ -197,18 +208,31 @@ def post_edit_state(
 
     review_at = convergence._latest_diff_review_at(task, threshold)
     if not review_at:
+        if declared_validation_deferred:
+            required_action = (
+                "The pending harness mission delta has not been diff-reviewed "
+                "after its latest mutation. Declared fixture validation is "
+                "deferred to the trusted runner after the agent reaches a "
+                "terminal state. Call coding_git_diff now."
+            )
+            extra = {"declared_validation_deferred": True}
+        else:
+            required_action = (
+                "The pending mission delta has passed post-mutation validation "
+                "but has not been diff-reviewed after its latest mutation. Call "
+                "coding_git_diff now. Do not reopen inspection, edit, or plan "
+                "work before reviewing the diff."
+            )
+            extra = None
         return _state(
             task_id=task_id,
             action_kind="review",
-            required_action=(
-                "The pending mission delta has passed post-mutation validation but has not been "
-                "diff-reviewed after its latest mutation. Call coding_git_diff now. Do not reopen "
-                "inspection, edit, or plan work before reviewing the diff."
-            ),
+            required_action=required_action,
             allowed_tools=["coding_git_diff", "coding_finish"],
             threshold=threshold,
             diff_sha256=diff_sha,
             validation_at=validation_at,
+            extra=extra,
         )
     return dict(convergence._terminal_state(cw, mission_epoch, task) or {})
 
@@ -252,6 +276,14 @@ def _install_policy(agent: Any, cw: Any, mission_epoch: Any, convergence: Any) -
                         "the plan first."
                     )
                 if kind == "review":
+                    if state.get("declared_validation_deferred") is True:
+                        return (
+                            "Controller post-edit convergence is ACTIVE. The "
+                            "complete pending harness mission delta needs diff "
+                            "review. Declared fixture validation will run in the "
+                            "trusted runner after terminal agent state. Call "
+                            "coding_git_diff now."
+                        )
                     return (
                         "Controller post-edit convergence is ACTIVE. Validation is current and the "
                         "complete pending mission delta now needs diff review. Call coding_git_diff "
