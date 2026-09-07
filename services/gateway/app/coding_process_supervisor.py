@@ -6,6 +6,7 @@ import pwd
 import resource
 import secrets
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -131,6 +132,11 @@ def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
             raise RuntimeError("validation workspace tree is unavailable")
         if child_name == "scratch":
             child.chmod(0o700)
+    directory_modes = [
+        (directory_path, stat.S_IMODE(directory_path.stat().st_mode))
+        for directory, _, _ in os.walk(root, topdown=True, followlinks=False)
+        if (directory_path := Path(directory)) != root
+    ]
     for directory, names, files in os.walk(root, topdown=True, followlinks=False):
         directory_path = Path(directory)
         for name in [*names, *files]:
@@ -138,6 +144,10 @@ def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
             os.chown(path, uid, gid, follow_symlinks=False)
         if directory_path != root:
             os.chown(directory_path, uid, gid, follow_symlinks=False)
+    # chown can clear setgid, so restore staged directory modes only after every
+    # entry has been handed to the unprivileged validation identity.
+    for directory_path, mode in reversed(directory_modes):
+        directory_path.chmod(mode)
 
 
 def _apply_child_limits(

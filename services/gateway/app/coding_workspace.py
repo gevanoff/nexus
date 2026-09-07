@@ -1515,7 +1515,7 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
     nonblock = getattr(os, "O_NONBLOCK", 0)
     source_root_fd = os.open(source, directory_flags | nofollow)
     pending = [(source_root_fd, destination)]
-    directory_modes = [(destination, os.fstat(source_root_fd).st_mode & 0o777)]
+    directory_modes = [(destination, stat.S_IMODE(os.fstat(source_root_fd).st_mode))]
     staged_inodes: Dict[tuple[int, int], Path] = {}
     total_bytes = 0
     total_entries = 0
@@ -1562,7 +1562,7 @@ def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, i
                             directory_modes.append(
                                 (
                                     destination_path,
-                                    os.fstat(child_fd).st_mode & 0o777,
+                                    stat.S_IMODE(os.fstat(child_fd).st_mode),
                                 )
                             )
                             pending.append((child_fd, destination_path))

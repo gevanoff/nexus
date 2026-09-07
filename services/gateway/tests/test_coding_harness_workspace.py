@@ -426,12 +426,23 @@ def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
     scratch = root / "scratch"
     workspace.mkdir(parents=True)
     scratch.mkdir()
+    nested = workspace / "shared"
+    nested.mkdir()
+    workspace.chmod(0o2751)
+    nested.chmod(0o1777)
     (workspace / "test_app.py").write_text("pass\n", encoding="utf-8")
     chowns = []
+
+    def chown_and_clear_setgid(path, uid, gid, **kwargs):
+        path = Path(path)
+        chowns.append((path, uid, gid))
+        if path.is_dir() and not path.is_symlink():
+            path.chmod(stat.S_IMODE(path.stat().st_mode) & 0o777)
+
     monkeypatch.setattr(
         supervisor.os,
         "chown",
-        lambda path, uid, gid, **kwargs: chowns.append((Path(path), uid, gid)),
+        chown_and_clear_setgid,
     )
 
     supervisor._prepare_validation_tree(root, uid=65_534, gid=65_534)
@@ -440,6 +451,8 @@ def test_process_supervisor_keeps_scratch_root_outside_child_ownership(
     assert workspace in {item[0] for item in chowns}
     assert scratch in {item[0] for item in chowns}
     assert (root.stat().st_mode & 0o777) == 0o711
+    assert stat.S_IMODE(workspace.stat().st_mode) == 0o2751
+    assert stat.S_IMODE(nested.stat().st_mode) == 0o1777
 
 
 def test_process_supervisor_configures_kernel_memory_and_process_limits(
@@ -573,12 +586,13 @@ def test_validation_workspace_staging_preserves_directory_modes(tmp_path):
     locked = source / "locked"
     locked.mkdir()
     locked.joinpath("value.txt").write_text("value\n", encoding="utf-8")
-    locked.chmod(0o555)
+    source.chmod(0o2751)
+    locked.chmod(0o1555)
 
     cw._stage_validation_workspace(source, destination)
 
-    assert stat.S_IMODE(destination.stat().st_mode) == 0o751
-    assert stat.S_IMODE(destination.joinpath("locked").stat().st_mode) == 0o555
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o2751
+    assert stat.S_IMODE(destination.joinpath("locked").stat().st_mode) == 0o1555
     destination.joinpath("locked").chmod(0o700)
     destination.chmod(0o700)
     locked.chmod(0o700)
