@@ -1506,7 +1506,7 @@ class _BoundedPipeCapture:
         return f"{head}\n\n[... truncated {omitted} output bytes ...]\n\n{tail}"
 
 
-def _stage_validation_workspace(source: Path, destination: Path) -> None:
+def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, int]:
     destination.mkdir(mode=0o700)
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
@@ -1572,6 +1572,40 @@ def _stage_validation_workspace(source: Path, destination: Path) -> None:
     finally:
         for source_fd, _ in pending:
             os.close(source_fd)
+    return total_bytes, total_entries
+
+
+def _validation_tmp_parent() -> Optional[str]:
+    raw = os.environ.get("NEXUS_VALIDATION_TMP_ROOT", "").strip()
+    if not raw:
+        return None
+    root = Path(raw)
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink():
+        raise OSError("validation temporary filesystem is unavailable")
+    return str(root.resolve())
+
+
+def _create_staged_validation_tree(
+    source: Path,
+) -> tuple[tempfile.TemporaryDirectory[str], Path, Path, int, int]:
+    temporary = tempfile.TemporaryDirectory(
+        prefix="nexus-validation-",
+        dir=_validation_tmp_parent(),
+    )
+    try:
+        root = Path(temporary.name).resolve()
+        root.chmod(0o711)
+        root.joinpath("scratch").mkdir(mode=0o700)
+        workspace = root.joinpath("workspace")
+        baseline_bytes, baseline_entries = _stage_validation_workspace(
+            source,
+            workspace,
+        )
+        # The root scan also sees the scratch and workspace directories.
+        return temporary, root, workspace, baseline_bytes, baseline_entries + 2
+    except BaseException:
+        temporary.cleanup()
+        raise
 
 
 def _run_contained_process(
@@ -1582,6 +1616,9 @@ def _run_contained_process(
     timeout_sec: float,
     decode_errors: str,
     output_limit_chars: int,
+    validation_workspace: Optional[Path] = None,
+    validation_baseline_bytes: Optional[int] = None,
+    validation_baseline_entries: Optional[int] = None,
 ) -> Tuple[Optional[int], str, str, bool, str, bool, bool]:
     if os.name != "posix" or not sys.platform.startswith("linux"):
         return None, "", "", False, "descendant process containment requires a Linux host", False, False
@@ -1595,28 +1632,36 @@ def _run_contained_process(
     stdout_capture = _BoundedPipeCapture(capture_limit_bytes)
     stderr_capture = _BoundedPipeCapture(capture_limit_bytes)
     capture_threads: List[threading.Thread] = []
-    scratch: Optional[tempfile.TemporaryDirectory[str]] = None
+    owned_tree: Optional[tempfile.TemporaryDirectory[str]] = None
     try:
-        validation_tmp_root_raw = os.environ.get("NEXUS_VALIDATION_TMP_ROOT", "").strip()
-        validation_tmp_root = None
-        if validation_tmp_root_raw:
-            validation_tmp_root_path = Path(validation_tmp_root_raw)
+        if validation_workspace is None:
+            (
+                owned_tree,
+                scratch_root,
+                validation_workspace,
+                baseline_bytes,
+                baseline_entries,
+            ) = _create_staged_validation_tree(cwd)
+            command_cwd = validation_workspace
+        else:
+            validation_workspace = validation_workspace.resolve()
+            scratch_root = validation_workspace.parent
+            scratch_path = scratch_root.joinpath("scratch")
             if (
-                not validation_tmp_root_path.is_absolute()
-                or not validation_tmp_root_path.is_dir()
+                not validation_workspace.is_dir()
+                or validation_workspace.is_symlink()
+                or not scratch_path.is_dir()
+                or scratch_path.is_symlink()
             ):
-                raise OSError("validation temporary filesystem is unavailable")
-            validation_tmp_root = str(validation_tmp_root_path)
-        scratch = tempfile.TemporaryDirectory(
-            prefix="nexus-validation-",
-            dir=validation_tmp_root,
-        )
-        scratch_root = Path(scratch.name).resolve()
-        scratch_root.chmod(0o711)
+                raise OSError("persistent validation workspace is unavailable")
+            command_cwd = _ensure_inside(validation_workspace, cwd)
+            if not command_cwd.is_dir():
+                raise OSError("validation working directory is unavailable")
+            if validation_baseline_bytes is None or validation_baseline_entries is None:
+                raise RuntimeError("validation workspace baseline is unavailable")
+            baseline_bytes = max(0, int(validation_baseline_bytes))
+            baseline_entries = max(0, int(validation_baseline_entries))
         scratch_path = scratch_root.joinpath("scratch")
-        validation_workspace = scratch_root.joinpath("workspace")
-        scratch_path.mkdir(mode=0o700)
-        _stage_validation_workspace(cwd, validation_workspace)
         contained_env = dict(env)
         contained_env.update({
             "HOME": str(scratch_path),
@@ -1632,6 +1677,8 @@ def _run_contained_process(
             ),
             "NEXUS_VALIDATION_SCRATCH_BYTES": str(_HARNESS_VALIDATION_SCRATCH_BYTES),
             "NEXUS_VALIDATION_SCRATCH_ENTRIES": str(_HARNESS_VALIDATION_SCRATCH_ENTRIES),
+            "NEXUS_VALIDATION_BASELINE_BYTES": str(baseline_bytes),
+            "NEXUS_VALIDATION_BASELINE_ENTRIES": str(baseline_entries),
         })
         validation_cgroup_root = os.environ.get("NEXUS_VALIDATION_CGROUP_ROOT", "").strip()
         if validation_cgroup_root:
@@ -1642,7 +1689,7 @@ def _run_contained_process(
             contained_env["NEXUS_TEST_VALIDATION_ALLOW_POLLING"] = "1"
         proc = subprocess.Popen(
             [sys.executable, str(supervisor), *[str(item) for item in argv]],
-            cwd=str(validation_workspace),
+            cwd=str(command_cwd),
             env=contained_env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -1681,9 +1728,9 @@ def _run_contained_process(
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         containment_error = f"could not launch contained process: {exc}"
     finally:
-        if scratch is not None:
+        if owned_tree is not None:
             try:
-                scratch.cleanup()
+                owned_tree.cleanup()
             except OSError as exc:
                 containment_error = containment_error or f"could not clean validation scratch: {exc}"
     return (
@@ -1709,6 +1756,9 @@ def _run_process(
     decode_errors: str = "strict",
     output_limit_chars: Optional[int] = None,
     isolate_process_group: bool = False,
+    validation_workspace: Optional[Path] = None,
+    validation_baseline_bytes: Optional[int] = None,
+    validation_baseline_entries: Optional[int] = None,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     if output_limit_chars is None:
@@ -1751,6 +1801,9 @@ def _run_process(
                 timeout_sec=effective_timeout_sec,
                 decode_errors=decode_errors,
                 output_limit_chars=limit,
+                validation_workspace=validation_workspace,
+                validation_baseline_bytes=validation_baseline_bytes,
+                validation_baseline_entries=validation_baseline_entries,
             )
             stdout, stdout_truncated = _truncate(raw_stdout, limit, extra_tokens=redaction_tokens)
             stderr, stderr_truncated = _truncate(raw_stderr, limit, extra_tokens=redaction_tokens)
@@ -2488,11 +2541,18 @@ def run_harness_validation_command(
     evidence_lease_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run trusted fixture validation with the harness run budget as its timeout cap."""
+    evidence_workspace: Optional[Path] = None
+    baseline_bytes: Optional[int] = None
+    baseline_entries: Optional[int] = None
     with _HARNESS_VALIDATIONS_GUARD:
         active_lease = _active_harness_evidence_lease_locked(task_id)
         provided_lease = str(evidence_lease_id or "")
         if active_lease != provided_lease and (active_lease or provided_lease):
             raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
+        if provided_lease:
+            evidence_workspace, baseline_bytes, baseline_entries = (
+                _harness_evidence_workspace_locked(task_id, provided_lease)
+            )
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is already active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
@@ -2514,6 +2574,17 @@ def run_harness_validation_command(
         run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
         if not run_cwd.exists() or not run_cwd.is_dir():
             raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
+        validation_cwd = run_cwd
+        if evidence_workspace is not None:
+            validation_cwd = _ensure_inside(
+                evidence_workspace,
+                evidence_workspace.joinpath(run_cwd.relative_to(repo)),
+            )
+            if not validation_cwd.is_dir():
+                raise HTTPException(
+                    status_code=400,
+                    detail="cwd must exist inside the staged validation workspace",
+                )
         mission = normalize_coding_mission(task)
         timeout_limit = max(
             1.0,
@@ -2521,11 +2592,14 @@ def run_harness_validation_command(
         )
         result = _run_process(
             command,
-            cwd=run_cwd,
+            cwd=validation_cwd,
             timeout_sec=timeout_sec,
             timeout_limit_sec=timeout_limit,
             use_git_credentials=False,
             isolate_process_group=True,
+            validation_workspace=evidence_workspace,
+            validation_baseline_bytes=baseline_bytes,
+            validation_baseline_entries=baseline_entries,
         )
         mutate_task(
             task_id,
@@ -2586,12 +2660,18 @@ def begin_harness_evidence_read(
     task_id: str,
     *,
     evidence_lease_id: Optional[str] = None,
-) -> None:
+) -> Optional[Path]:
     with _HARNESS_VALIDATIONS_GUARD:
         active_lease = _active_harness_evidence_lease_locked(task_id)
         provided_lease = str(evidence_lease_id or "")
         if active_lease != provided_lease and (active_lease or provided_lease):
             raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
+        workspace = None
+        if provided_lease:
+            workspace, _, _ = _harness_evidence_workspace_locked(
+                task_id,
+                provided_lease,
+            )
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
             raise HTTPException(status_code=409, detail="coding harness validation is still active")
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
@@ -2601,6 +2681,7 @@ def begin_harness_evidence_read(
         _ACTIVE_HARNESS_EVIDENCE_READS[task_id] = (
             _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) + 1
         )
+        return workspace
 
 
 def end_harness_evidence_read(task_id: str) -> None:
@@ -2612,6 +2693,16 @@ def end_harness_evidence_read(task_id: str) -> None:
             _ACTIVE_HARNESS_EVIDENCE_READS.pop(task_id, None)
 
 
+def _cleanup_harness_evidence_lease(record: Dict[str, Any]) -> None:
+    temporary = record.get("temporary")
+    if not isinstance(temporary, tempfile.TemporaryDirectory):
+        return
+    try:
+        temporary.cleanup()
+    except OSError as exc:
+        logger.warning("could not clean harness evidence workspace: %s", exc)
+
+
 def _expire_harness_evidence_leases_locked() -> None:
     current = _now()
     expired = [
@@ -2620,7 +2711,16 @@ def _expire_harness_evidence_leases_locked() -> None:
         if float(record.get("expires_at") or 0) <= current
     ]
     for lease_id in expired:
-        _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+        record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(lease_id)
+        task_id = str(record.get("task_id") or "") if isinstance(record, dict) else ""
+        if (
+            task_id in _ACTIVE_HARNESS_VALIDATIONS
+            or _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0
+        ):
+            continue
+        removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+        if isinstance(removed, dict):
+            _cleanup_harness_evidence_lease(removed)
 
 
 def _active_harness_evidence_lease_locked(task_id: str) -> str:
@@ -2629,6 +2729,29 @@ def _active_harness_evidence_lease_locked(task_id: str) -> str:
         if str(record.get("task_id") or "") == task_id:
             return lease_id
     return ""
+
+
+def _harness_evidence_workspace_locked(
+    task_id: str,
+    lease_id: str,
+) -> tuple[Path, int, int]:
+    record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(lease_id)
+    if not isinstance(record, dict) or str(record.get("task_id") or "") != task_id:
+        raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
+    workspace = Path(str(record.get("workspace") or "")).resolve()
+    temporary = record.get("temporary")
+    if (
+        not isinstance(temporary, tempfile.TemporaryDirectory)
+        or not workspace.is_dir()
+        or workspace.is_symlink()
+        or workspace.parent != Path(temporary.name).resolve()
+    ):
+        raise HTTPException(status_code=409, detail="coding harness evidence workspace is unavailable")
+    return (
+        workspace,
+        max(0, int(record.get("baseline_bytes") or 0)),
+        max(0, int(record.get("baseline_entries") or 0)),
+    )
 
 
 def acquire_harness_evidence_lease(
@@ -2659,9 +2782,16 @@ def acquire_harness_evidence_lease(
         duration = max(30.0, min(float(ttl_sec), _HARNESS_EVIDENCE_LEASE_MAX_SEC))
         lease_id = secrets.token_urlsafe(24)
         expires_at = _now() + duration
+        temporary, _, workspace, baseline_bytes, baseline_entries = (
+            _create_staged_validation_tree(_repo_path(task))
+        )
         _ACTIVE_HARNESS_EVIDENCE_LEASES[lease_id] = {
             "task_id": task_id,
             "expires_at": expires_at,
+            "temporary": temporary,
+            "workspace": str(workspace),
+            "baseline_bytes": baseline_bytes,
+            "baseline_entries": baseline_entries,
         }
         return {"lease_id": lease_id, "task_id": task_id, "expires_at": expires_at}
 
@@ -2672,7 +2802,12 @@ def release_harness_evidence_lease(task_id: str, *, lease_id: str) -> Dict[str, 
         record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(str(lease_id or ""))
         if not isinstance(record, dict) or str(record.get("task_id") or "") != task_id:
             raise HTTPException(status_code=404, detail="coding harness evidence lease was not found")
-        _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id)
+        _cleanup_harness_evidence_lease(removed)
         return {"ok": True, "task_id": task_id, "lease_id": lease_id}
 
 
@@ -3200,9 +3335,12 @@ def _harness_neutral_git_snapshot(
     task: Dict[str, Any],
     *,
     change_limit: int,
+    repo_override: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Collect fixture evidence without trusting the agent-mutated index or Git config."""
-    repo = _repo_path(task)
+    repo = repo_override.resolve() if repo_override is not None else _repo_path(task)
+    if not repo.is_dir() or repo.is_symlink():
+        raise HTTPException(status_code=409, detail="harness evidence workspace is unavailable")
     source_git_dir = repo / ".git"
     source_objects = source_git_dir / "objects"
     baseline = str(task.get("harness_baseline_commit") or "").strip().lower()
@@ -3392,11 +3530,15 @@ def harness_git_diff(
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness diff requires a harness task")
-    begin_harness_evidence_read(task_id, evidence_lease_id=evidence_lease_id)
+    evidence_workspace = begin_harness_evidence_read(
+        task_id,
+        evidence_lease_id=evidence_lease_id,
+    )
     try:
         return _harness_neutral_git_snapshot(
             task,
             change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+            repo_override=evidence_workspace,
         )["diff"]
     finally:
         end_harness_evidence_read(task_id)
@@ -3410,11 +3552,15 @@ def harness_git_changes(
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="harness changes require a harness task")
-    begin_harness_evidence_read(task_id, evidence_lease_id=evidence_lease_id)
+    evidence_workspace = begin_harness_evidence_read(
+        task_id,
+        evidence_lease_id=evidence_lease_id,
+    )
     try:
         return _harness_neutral_git_snapshot(
             task,
             change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+            repo_override=evidence_workspace,
         )["changes"]
     finally:
         end_harness_evidence_read(task_id)
@@ -4009,7 +4155,10 @@ def read_file(task_id: str, *, path: str) -> Dict[str, Any]:
 
 
 def _resolve_harness_evidence_path(
-    task: Dict[str, Any], path: str
+    task: Dict[str, Any],
+    path: str,
+    *,
+    repo_override: Optional[Path] = None,
 ) -> Tuple[Path, Optional[int]]:
     rel = str(path)
     candidate = Path(rel)
@@ -4020,8 +4169,11 @@ def _resolve_harness_evidence_path(
         or any(part in {"", ".", "..", ".git"} for part in candidate.parts)
     ):
         raise HTTPException(status_code=400, detail="invalid harness evidence path")
-    target = _repo_path(task).joinpath(candidate)
-    current = _repo_path(task)
+    repo = repo_override.resolve() if repo_override is not None else _repo_path(task)
+    if not repo.is_dir() or repo.is_symlink():
+        raise HTTPException(status_code=409, detail="harness evidence workspace is unavailable")
+    target = repo.joinpath(candidate)
+    current = repo
     for part in candidate.parts:
         current = current.joinpath(part)
         try:
@@ -4032,8 +4184,17 @@ def _resolve_harness_evidence_path(
     return target, None
 
 
-def _read_harness_file_evidence(task: Dict[str, Any], *, path: str) -> Dict[str, Any]:
-    target, symlink_size = _resolve_harness_evidence_path(task, path)
+def _read_harness_file_evidence(
+    task: Dict[str, Any],
+    *,
+    path: str,
+    repo_override: Optional[Path] = None,
+) -> Dict[str, Any]:
+    target, symlink_size = _resolve_harness_evidence_path(
+        task,
+        path,
+        repo_override=repo_override,
+    )
     if symlink_size is not None:
         return {
             "path": str(path),
@@ -4074,9 +4235,16 @@ def read_harness_file_evidence(
     task = load_task(task_id)
     if str(task.get("kind") or "") != "harness_eval":
         raise HTTPException(status_code=403, detail="only coding harness tasks may be read here")
-    begin_harness_evidence_read(task_id, evidence_lease_id=evidence_lease_id)
+    evidence_workspace = begin_harness_evidence_read(
+        task_id,
+        evidence_lease_id=evidence_lease_id,
+    )
     try:
-        return _read_harness_file_evidence(task, path=path)
+        return _read_harness_file_evidence(
+            task,
+            path=path,
+            repo_override=evidence_workspace,
+        )
     finally:
         end_harness_evidence_read(task_id)
 
@@ -4228,7 +4396,9 @@ def delete_harness_task(
             _allow_initializing=_allow_initializing,
         )
         if active_lease:
-            _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(active_lease, None)
+            removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(active_lease, None)
+            if isinstance(removed, dict):
+                _cleanup_harness_evidence_lease(removed)
         return result
 
 

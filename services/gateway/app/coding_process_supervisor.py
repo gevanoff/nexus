@@ -85,6 +85,17 @@ def _required_limit(name: str) -> int:
     return value
 
 
+def _required_nonnegative_limit(name: str) -> int:
+    raw = os.environ.pop(name, "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"missing validation resource limit: {name}") from exc
+    if value < 0:
+        raise RuntimeError(f"invalid validation resource limit: {name}")
+    return value
+
+
 def _validation_identity(*, allow_current_user: bool = False) -> tuple[int, int]:
     if os.geteuid() != 0:
         if allow_current_user:
@@ -96,12 +107,15 @@ def _validation_identity(*, allow_current_user: bool = False) -> tuple[int, int]
 
 def _prepare_validation_tree(root: Path, *, uid: int, gid: int) -> None:
     root.chmod(0o711)
+    for child_name in ("scratch", "workspace"):
+        child = root.joinpath(child_name)
+        if not child.is_dir() or child.is_symlink():
+            raise RuntimeError("validation workspace tree is unavailable")
+        child.chmod(0o700)
     for directory, names, files in os.walk(root, topdown=True, followlinks=False):
         directory_path = Path(directory)
         for name in [*names, *files]:
             path = directory_path.joinpath(name)
-            if path.is_symlink():
-                raise RuntimeError("validation workspace may not contain symbolic links")
             os.chown(path, uid, gid, follow_symlinks=False)
         if directory_path != root:
             os.chown(directory_path, uid, gid, follow_symlinks=False)
@@ -393,15 +407,20 @@ def main(argv: Sequence[str]) -> int:
     aggregate_memory_bytes = _required_limit("NEXUS_VALIDATION_AGGREGATE_MEMORY_BYTES")
     scratch_bytes = _required_limit("NEXUS_VALIDATION_SCRATCH_BYTES")
     scratch_entries = _required_limit("NEXUS_VALIDATION_SCRATCH_ENTRIES")
+    baseline_bytes = _required_nonnegative_limit("NEXUS_VALIDATION_BASELINE_BYTES")
+    baseline_entries = _required_nonnegative_limit("NEXUS_VALIDATION_BASELINE_ENTRIES")
     if not scratch.is_absolute() or not scratch.is_dir():
         raise RuntimeError("validation scratch directory is unavailable")
     if not workspace.is_absolute() or not workspace.is_dir() or workspace.parent != scratch:
         raise RuntimeError("staged validation workspace is unavailable")
-    if Path.cwd().resolve() != workspace.resolve():
+    resolved_workspace = workspace.resolve()
+    resolved_cwd = Path.cwd().resolve()
+    if os.path.commonpath([str(resolved_workspace), str(resolved_cwd)]) != str(
+        resolved_workspace
+    ):
         raise RuntimeError("validation did not start in its staged workspace")
     uid, gid = _validation_identity(allow_current_user=allow_polling)
     _prepare_validation_tree(scratch, uid=uid, gid=gid)
-    baseline_bytes, baseline_entries = _scratch_usage(scratch)
     _set_child_subreaper()
     _direct_children(os.getpid(), required=True)
     signal.signal(signal.SIGTERM, _request_termination)

@@ -466,6 +466,81 @@ def test_harness_validation_uses_writable_disposable_workspace(monkeypatch, tmp_
     not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
     reason="Linux procfs containment required",
 )
+def test_harness_evidence_lease_preserves_validation_mutations(monkeypatch, tmp_path):
+    _configure_roots(monkeypatch, tmp_path)
+    task = cw.create_harness_task(
+        fixture_id="validation-evidence-workspace",
+        files={"app.py": "before\n"},
+        prompt="Preserve validation artifacts for evidence.",
+        owner="test",
+    )
+    cw.mutate_task(
+        task["id"],
+        lambda current: current.update(agent_status="completed"),
+    )
+    repo = tmp_path / "workspaces" / task["id"] / "repo"
+    lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=300)
+    lease_id = lease["lease_id"]
+    record = cw._ACTIVE_HARNESS_EVIDENCE_LEASES[lease_id]
+    evidence_workspace = Path(record["workspace"])
+
+    created = cw.run_harness_validation_command(
+        task["id"],
+        argv=[
+            "python3",
+            "-c",
+            "from pathlib import Path; Path('generated.txt').write_text('artifact\\n')",
+        ],
+        evidence_lease_id=lease_id,
+    )
+    consumed = cw.run_harness_validation_command(
+        task["id"],
+        argv=[
+            "python3",
+            "-c",
+            (
+                "from pathlib import Path; "
+                "assert Path('generated.txt').read_text() == 'artifact\\n'; "
+                "Path('app.py').write_text('after\\n')"
+            ),
+        ],
+        evidence_lease_id=lease_id,
+    )
+
+    assert created["ok"] is True
+    assert consumed["ok"] is True, consumed
+    assert cw.read_harness_file_evidence(
+        task["id"],
+        path="generated.txt",
+        evidence_lease_id=lease_id,
+    )["content"] == "artifact\n"
+    assert cw.read_harness_file_evidence(
+        task["id"],
+        path="app.py",
+        evidence_lease_id=lease_id,
+    )["content"] == "after\n"
+    changed = cw.harness_git_changes(
+        task["id"],
+        evidence_lease_id=lease_id,
+    )
+    assert {item["path"] for item in changed["files"]} >= {
+        "app.py",
+        "generated.txt",
+    }
+    assert repo.joinpath("app.py").read_text(encoding="utf-8") == "before\n"
+    assert not repo.joinpath("generated.txt").exists()
+
+    assert cw.delete_harness_task(
+        task["id"],
+        evidence_lease_id=lease_id,
+    )["ok"] is True
+    assert not evidence_workspace.parent.exists()
+
+
+@pytest.mark.skipif(
+    not _LINUX_PROCESS_CONTAINMENT_AVAILABLE,
+    reason="Linux procfs containment required",
+)
 def test_harness_validation_enforces_file_size_limit(monkeypatch, tmp_path):
     _configure_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(cw, "_HARNESS_VALIDATION_FILE_BYTES", 1_024)
@@ -560,15 +635,17 @@ def test_harness_git_evidence_requests_one_over_changed_file_limit(monkeypatch):
     )
     captured = {}
 
-    def fake_snapshot(task, *, change_limit):
-        captured.setdefault("calls", []).append((task["id"], change_limit))
+    def fake_snapshot(task, *, change_limit, repo_override=None):
+        captured.setdefault("calls", []).append(
+            (task["id"], change_limit, repo_override)
+        )
         return {"diff": {"ok": True}, "changes": {"ok": True}}
 
     monkeypatch.setattr(cw, "_harness_neutral_git_snapshot", fake_snapshot)
 
     assert cw.harness_git_diff("code_abcdef123456") == {"ok": True}
     assert cw.harness_git_changes("code_abcdef123456") == {"ok": True}
-    assert captured == {"calls": [("code_abcdef123456", 513)] * 2}
+    assert captured == {"calls": [("code_abcdef123456", 513, None)] * 2}
 
 
 def test_harness_git_evidence_ignores_repository_git_controls(monkeypatch, tmp_path):
@@ -1303,6 +1380,9 @@ def test_expired_harness_evidence_lease_no_longer_blocks_resume(
         lambda current: current.update(agent_status="completed"),
     )
     lease = cw.acquire_harness_evidence_lease(task["id"], ttl_sec=30)
+    evidence_root = Path(
+        cw._ACTIVE_HARNESS_EVIDENCE_LEASES[lease["lease_id"]]["workspace"]
+    ).parent
 
     clock["now"] += 31
     registered = cw.begin_harness_agent_run_start(task["id"])
@@ -1310,6 +1390,7 @@ def test_expired_harness_evidence_lease_no_longer_blocks_resume(
 
     assert registered is True
     assert lease["lease_id"] not in cw._ACTIVE_HARNESS_EVIDENCE_LEASES
+    assert not evidence_root.exists()
     assert cw.delete_harness_task(task["id"])["ok"] is True
 
 

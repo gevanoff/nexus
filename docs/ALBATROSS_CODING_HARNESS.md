@@ -171,8 +171,8 @@ The Nexus runner submits those same inline files to the bearer-authenticated `PO
   evaluations and initializing/idle or ready/idle evaluations abandoned before
   agent startup;
 - exposes a harness-only validation route that honors the accepted run budget
-  (up to one hour) without attaching Git credentials, stages a disposable copy
-  of the completed workspace for the unprivileged validator, bounds its complete
+  (up to one hour) without attaching Git credentials, stages one disposable copy
+  of the completed workspace for the full validation-and-evidence lease, bounds its complete
   process tree with delegated cgroup v2 memory and task controllers, restricts
   filesystem writes to a supervisor-owned temporary tree with Landlock, and
   blocks deletion while validation, an agent-run start transition, an agent tool
@@ -201,7 +201,7 @@ and agent-controlled index flags therefore cannot hide or transform edits relati
 to the Albatross snapshot. Validation argv payloads are likewise preserved exactly;
 only the executable name and command policy are normalized for authorization.
 
-Coding Workspace validation uses the existing task command policy but not the original task directory. The production Gateway container delegates private cgroup v2 `memory` and `pids` controllers at startup, drops `CAP_SYS_ADMIN` before starting the service, and requires each validation child to join a fresh 2 GiB/128-task cgroup before it can execute. The child runs as `nobody` against a writable staged workspace under a root-owned temporary directory; Landlock denies writes outside that tree, and the complete temporary tree is discarded after validation. The Compose deployment places these trees on a bounded tmpfs. If cgroup delegation, the unprivileged identity, procfs evidence, or Landlock is unavailable, production validation fails closed. Fixture validation commands remain trusted executable content on both paths and must be reviewed before use.
+Coding Workspace validation uses the existing task command policy but not the original task directory. The evidence lease stages one disposable workspace that is shared by every declared validation command and the subsequent diff/change/file snapshot, so formatter output and generated artifacts remain observable without mutating the task workspace. The production Gateway container delegates private cgroup v2 `memory` and `pids` controllers at startup, drops `CAP_SYS_ADMIN` before starting the service, and requires each validation child to join a fresh 2 GiB/128-task cgroup before it can execute. Each child runs as `nobody` under a root-owned temporary directory; Landlock denies writes outside that tree, and the complete evidence tree is discarded when the lease expires, is released, or the harness task is deleted. The Compose deployment places these trees on a bounded tmpfs. If cgroup delegation, the unprivileged identity, procfs evidence, or Landlock is unavailable, production validation fails closed. Fixture validation commands remain trusted executable content on both paths and must be reviewed before use.
 
 Coding Workspace enforces a minimum run horizon of four agent cycles and 60 seconds. Native and paired commands reject fixtures below either minimum instead of silently widening one side of the comparison.
 
