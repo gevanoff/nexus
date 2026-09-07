@@ -661,7 +661,13 @@ def _candidate_summary(candidate: Dict[str, Any]) -> Dict[str, Any]:
     return summary
 
 
-def _coding_candidate_routes(request_model: str, preferred_backend: str, preferred_upstream_model: str) -> List[tuple[str, str]]:
+def _coding_candidate_routes(
+    request_model: str,
+    preferred_backend: str,
+    preferred_upstream_model: str,
+    *,
+    require_tool_calling: bool = True,
+) -> List[tuple[str, str]]:
     out: List[tuple[str, str]] = []
     seen: set[str] = set()
 
@@ -673,20 +679,29 @@ def _coding_candidate_routes(request_model: str, preferred_backend: str, preferr
         seen.add(key)
         out.append((key, model_name))
 
-    if _preferred_route_supports_coding_tools(request_model, preferred_backend):
+    if (
+        not require_tool_calling
+        or _preferred_route_supports_coding_tools(request_model, preferred_backend)
+    ):
         add(preferred_backend, preferred_upstream_model)
     if not _model_is_reroutable(request_model):
         return out
 
     cfg = router_cfg()
     for backend_name, _config in llm_backends():
-        if not _backend_supports_tool_calling(backend_name):
+        if require_tool_calling and not _backend_supports_tool_calling(backend_name):
             continue
         add(backend_name, default_model_for_backend(backend_name, cfg))
     return out
 
 
-def _rank_coding_backend_candidates(request_model: str, preferred_backend: str, preferred_upstream_model: str) -> List[Dict[str, Any]]:
+def _rank_coding_backend_candidates(
+    request_model: str,
+    preferred_backend: str,
+    preferred_upstream_model: str,
+    *,
+    require_tool_calling: bool = True,
+) -> List[Dict[str, Any]]:
     registry = get_registry()
     checker = get_health_checker()
     stats = get_admission_controller().get_stats()
@@ -705,7 +720,12 @@ def _rank_coding_backend_candidates(request_model: str, preferred_backend: str, 
         bucket["inflight"] += max(0, int(stat.get("inflight") or 0))
 
     candidates: List[Dict[str, Any]] = []
-    for backend_name, upstream_model_name in _coding_candidate_routes(request_model, preferred_backend, preferred_upstream_model):
+    for backend_name, upstream_model_name in _coding_candidate_routes(
+        request_model,
+        preferred_backend,
+        preferred_upstream_model,
+        require_tool_calling=require_tool_calling,
+    ):
         config = registry.get_backend(backend_name)
         if config is None or not config.supports("chat"):
             continue
@@ -2189,9 +2209,15 @@ def _semantic_reroute_candidate(
     upstream_model: str,
     *,
     excluded_backends: Optional[set[str]] = None,
+    require_tool_calling: bool = True,
 ) -> Optional[Dict[str, Any]]:
     blocked = {str(item).strip() for item in (excluded_backends or set()) if str(item).strip()}
-    for candidate in _rank_coding_backend_candidates(request_model, backend, upstream_model):
+    for candidate in _rank_coding_backend_candidates(
+        request_model,
+        backend,
+        upstream_model,
+        require_tool_calling=require_tool_calling,
+    ):
         candidate_backend = str(candidate.get("backend") or "").strip()
         if not candidate_backend or candidate_backend == backend or candidate_backend in blocked:
             continue

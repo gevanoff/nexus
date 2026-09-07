@@ -44,6 +44,10 @@ def _candidate_summary(candidate: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _request_requires_tool_calling(req: Any) -> bool:
+    return bool(getattr(req, "tools", None))
+
+
 async def _acquire_backend_excluding(
     request_model: str,
     preferred_backend: str,
@@ -53,6 +57,7 @@ async def _acquire_backend_excluding(
     cycle: int,
     attempt: int,
     excluded_backends: set[str],
+    require_tool_calling: bool = True,
 ) -> Dict[str, Any]:
     admission = _agent.get_admission_controller()
     deadline = time.monotonic() + _agent._coding_queue_timeout_sec()
@@ -65,6 +70,7 @@ async def _acquire_backend_excluding(
             request_model,
             preferred_backend,
             preferred_upstream_model,
+            require_tool_calling=require_tool_calling,
         )
         candidates = [
             dict(item)
@@ -208,6 +214,7 @@ async def _call_backend_chat_with_failover(
             cycle=cycle,
             attempt=attempt,
             excluded_backends=excluded_backends,
+            require_tool_calling=_request_requires_tool_calling(req),
         )
         selected_backend = str(selected.get("backend") or backend)
         selected_model = str(selected.get("upstream_model") or upstream_model)
@@ -353,6 +360,7 @@ async def _semantic_acceptance_review(
             backend,
             upstream_model,
             excluded_backends={backend},
+            require_tool_calling=False,
         )
         if alternate is not None:
             review_backend = str(alternate.get("backend") or backend)
@@ -415,6 +423,7 @@ async def _semantic_acceptance_review(
         excluded_backends.add(str(selected_backend))
         alternate = _agent._semantic_reroute_candidate(
             model, backend, upstream_model, excluded_backends=excluded_backends | {backend},
+            require_tool_calling=False,
         )
         if alternate is None:
             break
