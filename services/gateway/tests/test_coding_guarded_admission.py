@@ -58,3 +58,46 @@ async def test_backend_slot_is_released_when_post_acquire_logging_fails(monkeypa
 
     assert admission.acquired == 1
     assert admission.released == 1
+
+
+def test_toolless_review_does_not_require_tool_calling_backend() -> None:
+    tool_free = type("Request", (), {"tools": None})()
+    coding = type("Request", (), {"tools": [object()]})()
+
+    assert guarded._request_requires_tool_calling(tool_free) is False
+    assert guarded._request_requires_tool_calling(coding) is True
+
+
+@pytest.mark.asyncio
+async def test_backend_acquisition_propagates_tool_requirement(monkeypatch):
+    ranking_calls = []
+
+    class Admission:
+        async def acquire(self, backend: str, route: str) -> None:
+            assert (backend, route) == ("local_vllm_fast", "chat")
+
+    def rank(*_args, **kwargs):
+        ranking_calls.append(kwargs)
+        return [{
+            "backend": "local_vllm_fast",
+            "upstream_model": "review-model",
+            "ready": True,
+            "available": 1,
+        }]
+
+    monkeypatch.setattr(guarded._agent, "get_admission_controller", lambda: Admission())
+    monkeypatch.setattr(guarded._agent, "_rank_coding_backend_candidates", rank)
+
+    selected = await guarded._acquire_backend_excluding(
+        "coder",
+        "local_vllm_fast",
+        "review-model",
+        task_id="code_test",
+        cycle=1,
+        attempt=0,
+        excluded_backends=set(),
+        require_tool_calling=False,
+    )
+
+    assert selected["backend"] == "local_vllm_fast"
+    assert ranking_calls == [{"require_tool_calling": False}]

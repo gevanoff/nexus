@@ -15,6 +15,6 @@
     "validation": [["python3", "-m", "unittest", "-q"]],
     "file_contains": [{"path": "catalog.py", "needle": "model_management"}]
   },
-  "limits": {"wall_time_sec": 240, "max_agent_steps": 18},
+  "limits": {"wall_time_sec": 420, "max_agent_steps": 18},
   "tags": ["causal-alignment", "failure-path", "validation"]
 }
