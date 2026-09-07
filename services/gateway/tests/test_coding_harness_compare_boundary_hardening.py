@@ -125,7 +125,7 @@ def test_workspace_snapshot_preserves_non_utf8_filename_bytes(tmp_path: Path) ->
     assert retained.read_text(encoding="utf-8") == "retained evidence\n"
 
 
-def test_workspace_snapshot_safely_recodes_non_utf8_diff_content(tmp_path: Path) -> None:
+def test_workspace_snapshot_omits_non_utf8_untracked_patch(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     artifacts = tmp_path / "artifacts"
     baseline = harness.initialize_workspace(
@@ -138,7 +138,13 @@ def test_workspace_snapshot_safely_recodes_non_utf8_diff_content(tmp_path: Path)
     snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
 
     assert "invalid.txt" in snapshot["files_changed"]
-    assert r"\xff" in (artifacts / "final.diff").read_text(encoding="utf-8")
+    assert snapshot["evidence_omissions"] == [
+        {
+            "path": "invalid.txt",
+            "reason": "binary file content omitted; untracked patch omitted",
+        }
+    ]
+    assert (artifacts / "final.diff").read_text(encoding="utf-8") == ""
     assert (artifacts / "final-files" / "invalid.txt").read_bytes() == raw_content
 
 
@@ -665,7 +671,7 @@ def test_validation_scratch_mount_follows_recursive_read_only_remount(
         index
         for index in range(len(argv) - 2)
         if argv[index:index + 3]
-        == ["--ro-bind", str(workspace.resolve()), str(workspace.resolve())]
+        == ["--bind", str(workspace.resolve()), str(workspace.resolve())]
     )
     assert remount_index < scratch_index < workspace_index
 

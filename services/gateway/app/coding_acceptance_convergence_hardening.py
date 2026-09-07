@@ -5,6 +5,8 @@ import re
 import time
 from typing import Any, Dict, Mapping
 
+from app import coding_validation_policy
+
 
 _TERMINAL_SCHEMA = "nexus_coding_terminal_convergence.v1"
 _TERMINAL_ACTION = "finish"
@@ -526,7 +528,10 @@ def _terminal_state(
     if threshold <= 0:
         return {}
 
-    validation_ready, validation_at = _validation_ready(task, threshold)
+    if coding_validation_policy.requires_agent_validation(task):
+        validation_ready, validation_at = _validation_ready(task, threshold)
+    else:
+        validation_ready, validation_at = True, 0.0
     if not validation_ready:
         return {}
     review_at = _latest_diff_review_at(task, threshold)
@@ -559,11 +564,19 @@ def _terminal_state(
             f"{delta.get('diff_sha256') or ''}"
         ).encode("utf-8")
     ).hexdigest()
-    required = (
-        "The mission delta has successful post-edit validation and diff review. "
-        "Call coding_finish now so the independent semantic acceptance reviewer can "
-        "accept or reject the complete mission delta before any further inspection."
-    )
+    if coding_validation_policy.requires_agent_validation(task):
+        required = (
+            "The mission delta has successful post-edit validation and diff "
+            "review. Call coding_finish now so the independent semantic "
+            "acceptance reviewer can accept or reject the complete mission delta "
+            "before any further inspection."
+        )
+    else:
+        required = (
+            "The harness mission delta has been diff-reviewed. Call "
+            "coding_finish now so the independent semantic acceptance reviewer "
+            "can accept or reject it before trusted fixture validation runs."
+        )
     return {
         "schema": _TERMINAL_SCHEMA,
         "status": "active",
@@ -608,6 +621,15 @@ def _install_terminal_policy(agent: Any, cw: Any, mission_epoch: Any) -> None:
         def prompt_context_with_terminal_acceptance(task: Mapping[str, Any]) -> str:
             state = policy.active_state(task)
             if str(state.get("schema") or "") == _TERMINAL_SCHEMA:
+                if not coding_validation_policy.requires_agent_validation(task):
+                    return (
+                        "Controller terminal-acceptance mode is ACTIVE. Diff "
+                        "review covers the latest harness mutation; declared "
+                        "fixture validation is deferred to the trusted runner. "
+                        "Call coding_finish now for independent semantic "
+                        "acceptance. If semantic acceptance rejects the mission "
+                        "delta, the next turn will reopen execution for repair."
+                    )
                 return (
                     "Controller terminal-acceptance mode is ACTIVE. Validation and diff review "
                     "already cover the latest mission mutation. Do not inspect or revise anything "

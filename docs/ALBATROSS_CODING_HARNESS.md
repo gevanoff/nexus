@@ -1,6 +1,6 @@
 # Albatross as a Nexus Coding-Harness Control
 
-This document describes the first-stage integration of [Albatross](https://github.com/morganlinton/Albatross) (formerly Small Harness) as an **optional external comparison harness** for the Nexus Coding Workspace.
+This document describes the integration of [Albatross](https://github.com/morganlinton/Albatross) (formerly Small Harness) as an **optional external comparison harness** for the Nexus Coding Workspace.
 
 Albatross is not a production Nexus backend and does not replace Coding Workspace control, mission acceptance, validation gates, resumability, finalization, or publication. Its purpose here is experimental: hold the repository task and Nexus inference plane as constant as practical while changing the agent harness.
 
@@ -35,7 +35,7 @@ Albatross v2.4.0 supports an OpenAI-compatible provider via `OPENAI_BASE_URL`, o
                     MLX / vLLM / ...
 ```
 
-The initial adapter only automates the Albatross side. It emits a harness-neutral result record that can be compared with a Nexus Coding Workspace result once the latter is normalized into the same schema. It intentionally does **not** fake Coding Workspace automation with the existing direct model-eval tool.
+The adapter automates both sides and emits the same harness-neutral result schema. The Nexus side creates a durable Coding Workspace task through the Coding API, executes the normal agent and finalization lifecycle, and normalizes its persisted run evidence. It intentionally does **not** fake Coding Workspace automation with the existing direct model-eval tool.
 
 ## Security model
 
@@ -51,7 +51,7 @@ For each run the adapter:
 - sets `BACKEND=openai` and `OPENAI_BASE_URL` to Nexus;
 - sets `OUTSIDE_WORKSPACE=deny`;
 - skips the Albatross setup wizard and update check;
-- bounds the agent and post-run validation under one fixture wall-time deadline, then gives trace collection a separate ten-second post-run budget so normalized timeout evidence can still be retained;
+- starts the measured interval after fixture materialization and runtime setup, using a refreshed server-reported elapsed-runtime probe rather than cross-host wall-clock subtraction for the remote Nexus path and conservatively charging the probe's full round trip, bounds the agent and post-run validation under one fixture wall-time deadline, then gives trace collection a separate ten-second post-run budget so normalized timeout evidence can still be retained;
 - completes output-redaction preparation before launch, launches agent commands under Linux subreaper supervision and post-run validation against a read-only workspace and root inside a Bubblewrap filesystem/network sandbox, places validation scratch space on a private tmpfs with 64 MiB and 4,096-inode kernel-enforced quotas (including deleted-open files), and enforces additional file-size, descriptor, 128-task, 16 GiB per-process address-space, and 2 GiB aggregate resident-memory ceilings before terminating complete adopted descendant trees even on operator interruption and collecting final evidence;
 - tells Albatross not to commit;
 - excludes `.albatross/`, `.small-harness/`, and `.sessions/` from the fixture Git delta;
@@ -138,7 +138,7 @@ python3 services/gateway/tools/coding_harness_compare.py list-fixtures
 The first corpus includes:
 
 - `failure-path-management-link` — modeled on the InvokeAI management-link failure shape; a success-path-only fix is insufficient;
-- `validation-after-edit` — a small mutation that needs a targeted post-edit test;
+- `validation-after-edit` — a small mutation that needs a targeted post-edit test and preserves non-string numeric compatibility;
 - `cross-file-policy-fix` — the visible behavior is in one file but the causal default belongs in another.
 
 The schema is JSON and intentionally harness-neutral. A fixture contains:
@@ -152,6 +152,58 @@ The schema is JSON and intentionally harness-neutral. A fixture contains:
 - tags for later analysis.
 
 The current v1 schema uses inline files specifically to prevent an eval fixture from silently pointing Albatross at a live checkout.
+Fixture paths are validated once by the shared loader before either harness starts;
+backslashes, control characters, empty path components, traversal components, and
+harness-owned metadata paths are rejected consistently.
+
+The Nexus runner submits those same inline files to the bearer-authenticated `POST /v1/coding/harness/runs` endpoint. That endpoint:
+
+- accepts only bounded text files with safe repository-relative paths;
+- creates a local-only Git repository with a `main` baseline and no remote;
+- marks the task as `harness_eval` and forces publication off;
+- starts the normal durable Coding Workspace runner and finalization path;
+- repairs a failed pre-registration startup to a terminal task and run-history
+  state before releasing the run-start lease, waiting for any in-flight startup
+  persistence even when its request was cancelled, so cleanup does not strand
+  a persisted `queued` evaluation;
+- gives the disposable task an expiry lease equal to its run budget plus 15
+  minutes (capped at 24 hours), after which monitoring removes settled terminal
+  evaluations and initializing/idle or ready/idle evaluations abandoned before
+  agent startup;
+- exposes a harness-only validation route that honors the accepted run budget
+  (up to one hour) without attaching Git credentials, stages one disposable copy
+  of the completed workspace for the full validation-and-evidence lease, bounds its complete
+  process tree with delegated cgroup v2 memory and task controllers, restricts
+  filesystem writes to a supervisor-owned temporary tree with Landlock, and
+  blocks deletion while validation, an agent-run start transition, an agent tool
+  worker, or an automatic checkpoint worker remains active;
+- grants a bounded evidence lease only after active workers have settled; the
+  lease blocks resume, agent tools, generic command/file/patch/push/PR
+  mutations, and persistent generic search/diff/message/model/plan updates,
+  unrelated validation, and unrelated deletion across the complete
+  diff/change/file/validation snapshot, expires after a client disconnect, and
+  is consumed by matching atomic deletion;
+- serializes task metadata deletion with the shared JSON transaction lock and
+  retains an in-process deletion tombstone, so delayed direct task-store
+  saves from notification or Agent API callers cannot recreate deleted metadata;
+- rejects API deletion and evidence leasing while workspace initialization is
+  active; expiry cleanup alone may remove an abandoned initializer after its
+  run budget and settlement grace have elapsed;
+- exposes strict text-or-binary file evidence using the same 2 MB per-file cap
+  as the shared fixture schema;
+- permits `DELETE /v1/coding/harness/tasks/{task_id}` only for a terminal harness task, never a normal Coding Workspace task, while generic delete and archive operations reject disposable harness tasks.
+
+The client collects the baseline diff, selected final text files, post-run validation, persisted route/run evidence, and then deletes the server-side task and Git workspace. It rejects a truncated Gateway diff instead of hashing partial evidence, parses change paths from NUL-delimited Git output, deduplicates paths before enforcing the changed-file limit, and generates text-only untracked patches through the same `git diff --no-index` operation as the Albatross side, including the real executable mode. A harness-only file endpoint preserves exact whitespace in paths and uses strict UTF-8 decoding; binary files and paths containing symlinks are identified and recorded as evidence omissions instead of being replacement-decoded or dereferenced into fabricated evidence. Repository paths containing non-UTF-8 bytes are rejected as explicitly unsupported before any such path can enter an API JSON response. Local Albatross objective reads apply the same strict UTF-8 rule and fail closed for binary content. Diff, change, and file endpoints return a conflict rather than sample an active worker's changing worktree. The client acquires one server-side evidence lease before the diff and supplies that lease ID on every diff/change/file/validation/delete request, so a resumed agent cannot split the snapshot across worktree states. A stale lease ID is rejected after a Gateway restart instead of resuming evidence collection without a live lease. Final-file collection has a 30-second aggregate time bound after any guarded worker has settled; that bound is excluded from the validation budget, and its 16 MB aggregate byte budget is enforced before each response is cached. The client does not report `execution_workspace_retained: false` until deletion is confirmed, and cleanup retries conflicts through at least the Gateway's default 120-second command lifetime. A failed client run also discards its partial local evidence. If server-side deletion cannot be confirmed, the command fails closed with a `SECURITY` error.
+
+Native harness Git evidence is collected through a disposable Git directory and
+independent baseline index. Repository/global Git config, worktree attributes,
+and agent-controlled index flags therefore cannot hide or transform edits relative
+to the Albatross snapshot. Validation argv payloads are likewise preserved exactly;
+only the executable name and command policy are normalized for authorization.
+
+Coding Workspace validation uses the existing task command policy but not the original task directory. The evidence lease stages one disposable workspace that is shared by every declared validation command and the subsequent diff/change/file snapshot, so formatter output and generated artifacts remain observable without mutating the task workspace. Source file and directory modes and hard-link identity are preserved. Symlinks are copied without dereferencing, absolute links into the source tree are retargeted into the staged tree, and symlinks retain the established evidence-omission behavior. Albatross validation likewise writes to its measured disposable workspace before the final snapshot, keeping validation outcomes and artifact hashes comparable between runners. Command execution is not exposed to harness agents; only the trusted fixture validation phase can execute repository code. The production Gateway container delegates private cgroup v2 `memory` and `pids` controllers at startup, drops `CAP_SYS_ADMIN` before starting the service, and requires each validation child to join a fresh 2 GiB/128-task cgroup before it can execute. Each child runs as `nobody` under a root-owned temporary directory; Landlock limits reads to the staged tree and an explicit system-runtime allowlist and denies writes outside the staged tree, while a fail-closed seccomp filter denies socket and io_uring system calls. An expiry timer discards the complete evidence tree when the lease expires, while explicit release and harness-task deletion also clean it immediately. The Compose deployment places these trees on a bounded tmpfs. If cgroup delegation, the unprivileged identity, procfs evidence, Landlock, or seccomp is unavailable, production validation fails closed. Fixture validation commands remain trusted executable content on both paths and must be reviewed before use.
+
+Coding Workspace enforces a minimum run horizon of four agent cycles and 60 seconds. Native and paired commands reject fixtures below either minimum instead of silently widening one side of the comparison.
 
 ## Run Albatross through Nexus
 
@@ -181,9 +233,39 @@ The disposable repository, `.git` objects, Albatross HOME/session source tree, a
 
 The common result separates objective evidence from later semantic judgment. It records outcome, elapsed time, requested Nexus alias, workspace delta, post-run validation, tool/step/context-compaction counts, and artifact paths.
 
-## Compare results
+## Run Nexus Coding Workspace
 
-The first-stage adapter compares already-normalized results:
+The native runner requires a Gateway deployment that includes the harness endpoints:
+
+```bash
+python3 services/gateway/tools/coding_harness_compare.py run-nexus \
+  --fixture services/gateway/tools/coding_harness_fixtures/failure-path-management-link.json \
+  --model coder
+```
+
+The Gateway bearer token is read from the same `NEXUS_API_KEY` or `GATEWAY_BEARER_TOKEN` variables. The normalized result records `backend` and `upstream_model` from the durable run record and includes bounded start/reroute history from Coding Workspace events. Its `route_evidence` value is:
+
+```text
+coding_workspace_persisted_run_record
+```
+
+Coding Workspace exposes the last 80 public events rather than a raw harness trace. The result labels that event-window limit explicitly; step count and final route still come from the durable run record.
+
+## Run a paired comparison
+
+One command can materialize and execute the same fixture through both harnesses:
+
+```bash
+python3 services/gateway/tools/coding_harness_compare.py run-paired \
+  --fixture services/gateway/tools/coding_harness_fixtures/failure-path-management-link.json \
+  --model coder
+```
+
+The command creates a pair directory, writes both normalized `result.json` files, prints the comparison table, and writes `comparison.json` with both result paths. It exits successfully only when both objective-normalized runs complete. Use `--json` for machine-readable combined output.
+
+## Compare saved results
+
+The adapter can also compare already-normalized saved results:
 
 ```bash
 python3 services/gateway/tools/coding_harness_compare.py compare-results \
@@ -191,11 +273,7 @@ python3 services/gateway/tools/coding_harness_compare.py compare-results \
   path/to/albatross-result.json
 ```
 
-It is intentionally not yet wired directly to the Coding Workspace API. Automating that side requires preserving Coding Workspace's durable mission/run semantics rather than approximating them with `coding_model_eval.py`.
-
-The next integration step is a **Nexus Coding Workspace result normalizer/runner** that maps one completed or interrupted workspace run into the same result schema, including actual Gateway route evidence. Once that exists, a single command can materialize one fixture twice from the same baseline and execute both harnesses.
-
-## Known first-stage limitation: route receipts
+## Known limitation: Albatross route receipts
 
 Albatross knows that it requested model alias `coder` through the OpenAI-compatible Nexus endpoint, but its process does not know which Nexus backend/upstream model ultimately served each request. The result therefore leaves `backend` and `upstream_model` empty and explicitly records:
 
@@ -203,7 +281,7 @@ Albatross knows that it requested model alias `coder` through the OpenAI-compati
 route_evidence = not_available_from_albatross_adapter_v1
 ```
 
-Do not fill these fields from assumptions. A later Nexus-side request/run correlation mechanism should attach authoritative route receipts.
+Do not fill these fields from assumptions. The native Coding Workspace result has authoritative persisted route evidence, but a later Nexus-side request/run correlation mechanism is still needed to attach equivalent receipts to the Albatross result.
 
 ## Selective Albatross architecture review
 
@@ -234,7 +312,7 @@ A useful A/B comparison must control what it can:
 2. same substantive mission;
 3. same requested Nexus model alias;
 4. recorded Albatross/Nexus versions;
-5. recorded actual Nexus route when route correlation becomes available;
+5. recorded actual Nexus route for Coding Workspace, with the Albatross route left explicitly unavailable until request correlation exists;
 6. objective final tests/diff evidence kept separately from model-generated quality judgments.
 
 If the two harnesses use different upstream routes, that run can still be informative, but it is not a clean harness-only comparison and must be labeled accordingly.

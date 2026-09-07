@@ -6,10 +6,14 @@ import os
 import re
 import secrets
 import shutil
+import signal
+import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib import error as urlerror
@@ -49,10 +53,36 @@ _ARCHIVE_ANALYSIS_MODES = {"manual", "idle", "immediate"}
 _ARCHIVE_ANALYSIS_TARGETS = {"local", "external", "human", "none"}
 _FINDING_REVIEW_VERDICTS = {"invalid", "superseded"}
 _PROJECT_PLAN_STATUSES = {"pending", "in_progress", "completed", "blocked", "skipped"}
+_HARNESS_FIXTURE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+_HARNESS_RESERVED_PATH_PARTS = {".git", ".nexus"}
+_HARNESS_MAX_FILES = 4096
+_HARNESS_MAX_FILE_BYTES = 2_000_000
+_HARNESS_MAX_TOTAL_BYTES = 8_000_000
+_HARNESS_MAX_PROMPT_BYTES = 64_000
+_HARNESS_MAX_CHANGED_FILES = 512
+_HARNESS_MAX_DIFF_CHARS = 8_000_000
+_HARNESS_VALIDATION_FILE_BYTES = 1_024 * 1_024
+_HARNESS_VALIDATION_OPEN_FILES = 64
+_HARNESS_VALIDATION_PROCESSES = 128
+_HARNESS_VALIDATION_MEMORY_BYTES = 16 * 1_024 * 1_024 * 1_024
+_HARNESS_VALIDATION_AGGREGATE_MEMORY_BYTES = 2 * 1_024 * 1_024 * 1_024
+_HARNESS_VALIDATION_SCRATCH_BYTES = 64 * 1_024 * 1_024
+_HARNESS_VALIDATION_SCRATCH_ENTRIES = 4_096
+_HARNESS_VALIDATION_STAGE_BYTES = 128 * 1_024 * 1_024
+_HARNESS_VALIDATION_STAGE_ENTRIES = 16_384
 _JSON_LOCKS_GUARD = threading.Lock()
 _JSON_LOCKS: Dict[str, threading.RLock] = {}
+_DELETED_TASKS_GUARD = threading.Lock()
+_DELETED_TASK_TOMBSTONES: set[str] = set()
 _WORKSPACE_LOCKS_GUARD = threading.Lock()
 _WORKSPACE_LOCKS: Dict[str, threading.RLock] = {}
+_HARNESS_VALIDATIONS_GUARD = threading.Lock()
+_ACTIVE_HARNESS_VALIDATIONS: set[str] = set()
+_ACTIVE_HARNESS_AGENT_TOOLS: Dict[str, int] = {}
+_ACTIVE_HARNESS_EVIDENCE_READS: Dict[str, int] = {}
+_ACTIVE_HARNESS_RUN_STARTS: set[str] = set()
+_ACTIVE_HARNESS_EVIDENCE_LEASES: Dict[str, Dict[str, Any]] = {}
+_HARNESS_EVIDENCE_LEASE_MAX_SEC = 7200.0
 
 
 def coding_enabled() -> bool:
@@ -125,6 +155,25 @@ def _task_path(task_id: str) -> Path:
     if not _SAFE_TASK_RE.match(task_id):
         raise HTTPException(status_code=404, detail="coding task not found")
     return tasks_dir().joinpath(f"{task_id}.json").resolve()
+
+
+def _task_tombstone_key(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except Exception:
+        return str(path)
+
+
+def _mark_task_deleted(path: Path) -> None:
+    with _DELETED_TASKS_GUARD:
+        _DELETED_TASK_TOMBSTONES.add(_task_tombstone_key(path))
+
+
+def _raise_if_task_deleted(path: Path) -> None:
+    with _DELETED_TASKS_GUARD:
+        deleted = _task_tombstone_key(path) in _DELETED_TASK_TOMBSTONES
+    if deleted:
+        raise HTTPException(status_code=409, detail="coding task has been deleted")
 
 
 def _corrupt_tasks_dir() -> Path:
@@ -818,9 +867,12 @@ def coding_mission_overrides(
 
 
 def save_task(task: Dict[str, Any]) -> Dict[str, Any]:
-    task["updated_at"] = _now()
-    _write_json(_task_path(str(task.get("id") or "")), task)
-    return task
+    path = _task_path(str(task.get("id") or ""))
+    with _json_lock(path):
+        _raise_if_task_deleted(path)
+        task["updated_at"] = _now()
+        _write_json(path, task)
+        return task
 
 
 def mutate_task(task_id: str, mutator: Callable[[Dict[str, Any]], None]) -> Dict[str, Any]:
@@ -835,6 +887,7 @@ def mutate_task(task_id: str, mutator: Callable[[Dict[str, Any]], None]) -> Dict
     with _json_lock(path):
         task = _read_json(path)
         mutator(task)
+        _raise_if_task_deleted(path)
         task["updated_at"] = _now()
         _write_json(path, task)
         return task
@@ -890,6 +943,24 @@ def update_project_plan(
     note: Optional[str] = None,
     actor: Optional[str] = None,
 ) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _update_project_plan(
+            task_id,
+            goal=goal,
+            items=items,
+            note=note,
+            actor=actor,
+        )
+
+
+def _update_project_plan(
+    task_id: str,
+    *,
+    goal: Optional[str] = None,
+    items: Optional[List[Dict[str, Any]]] = None,
+    note: Optional[str] = None,
+    actor: Optional[str] = None,
+) -> Dict[str, Any]:
     if goal is None and items is None and note is None:
         raise HTTPException(status_code=400, detail="plan update requires goal, items, or note")
     if items is not None and not isinstance(items, list):
@@ -914,6 +985,22 @@ def update_project_plan(
 
 
 def append_guidance_message(
+    task_id: str,
+    *,
+    message: str,
+    actor: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _append_guidance_message(
+            task_id,
+            message=message,
+            actor=actor,
+            run_id=run_id,
+        )
+
+
+def _append_guidance_message(
     task_id: str,
     *,
     message: str,
@@ -945,7 +1032,20 @@ def append_guidance_message(
     return public_task(task)
 
 
-def set_task_coding_model(task_id: str, *, coding_model: Optional[str]) -> Dict[str, Any]:
+def set_task_coding_model(
+    task_id: str,
+    *,
+    coding_model: Optional[str],
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _set_task_coding_model(task_id, coding_model=coding_model)
+
+
+def _set_task_coding_model(
+    task_id: str,
+    *,
+    coding_model: Optional[str],
+) -> Dict[str, Any]:
     next_model = str(coding_model or "").strip()
     def apply(task: Dict[str, Any]) -> None:
         agent_status = str(task.get("agent_status") or "").strip().lower()
@@ -1335,29 +1435,462 @@ def _argv_with_git_safe_directory(argv: Sequence[str], *, cwd: Path) -> List[str
     return [str(argv[0]), "-c", f"safe.directory={safe_directory}", *[str(item) for item in argv[1:]]]
 
 
+def _process_group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _terminate_process_group(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    # The supervisor may need both a graceful and forced descendant sweep.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if not _process_group_alive(pgid):
+            return
+        time.sleep(0.02)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline and _process_group_alive(pgid):
+        time.sleep(0.02)
+
+
+class _BoundedPipeCapture:
+    def __init__(self, limit_bytes: int) -> None:
+        self.limit_bytes = max(1_000, int(limit_bytes))
+        self.head_limit = self.limit_bytes // 2
+        self.tail_limit = self.limit_bytes - self.head_limit
+        self.head = bytearray()
+        self.tail = bytearray()
+        self.total_bytes = 0
+        self.error = ""
+
+    def drain(self, stream: Any) -> None:
+        try:
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    return
+                self.total_bytes += len(chunk)
+                head_remaining = self.head_limit - len(self.head)
+                if head_remaining > 0:
+                    self.head.extend(chunk[:head_remaining])
+                    chunk = chunk[head_remaining:]
+                if chunk and self.tail_limit > 0:
+                    self.tail.extend(chunk)
+                    if len(self.tail) > self.tail_limit:
+                        del self.tail[: len(self.tail) - self.tail_limit]
+        except (OSError, ValueError) as exc:
+            self.error = str(exc)
+
+    @property
+    def truncated(self) -> bool:
+        return self.total_bytes > self.limit_bytes
+
+    def text(self, *, decode_errors: str) -> str:
+        if not self.truncated:
+            return bytes(self.head + self.tail).decode("utf-8", errors=decode_errors)
+        head = bytes(self.head).decode("utf-8", errors="replace")
+        tail = bytes(self.tail).decode("utf-8", errors="replace")
+        omitted = self.total_bytes - self.limit_bytes
+        return f"{head}\n\n[... truncated {omitted} output bytes ...]\n\n{tail}"
+
+
+def _stage_validation_workspace(source: Path, destination: Path) -> tuple[int, int]:
+    destination.mkdir(mode=0o700)
+    source_root = source.resolve()
+    destination_root = destination.resolve()
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    source_root_fd = os.open(source, directory_flags | nofollow)
+    pending = [(source_root_fd, destination)]
+    directory_modes = [(destination, stat.S_IMODE(os.fstat(source_root_fd).st_mode))]
+    staged_inodes: Dict[tuple[int, int], Path] = {}
+    total_bytes = 0
+    total_entries = 0
+    try:
+        while pending:
+            source_fd, destination_dir = pending.pop()
+            try:
+                with os.scandir(source_fd) as entries:
+                    for entry in entries:
+                        total_entries += 1
+                        if total_entries > _HARNESS_VALIDATION_STAGE_ENTRIES:
+                            raise RuntimeError(
+                                "validation workspace staging entry limit exceeded"
+                            )
+                        destination_path = destination_dir.joinpath(entry.name)
+                        if entry.is_symlink():
+                            link_target = os.readlink(entry.name, dir_fd=source_fd)
+                            staged_link_target = link_target
+                            if os.path.isabs(link_target):
+                                try:
+                                    target_relative = Path(link_target).relative_to(
+                                        source_root
+                                    )
+                                except ValueError:
+                                    pass
+                                else:
+                                    staged_link_target = str(
+                                        destination_root.joinpath(target_relative)
+                                    )
+                            total_bytes += len(os.fsencode(staged_link_target))
+                            if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
+                                raise RuntimeError(
+                                    "validation workspace staging byte limit exceeded"
+                                )
+                            destination_path.symlink_to(staged_link_target)
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            child_fd = os.open(
+                                entry.name,
+                                directory_flags | nofollow,
+                                dir_fd=source_fd,
+                            )
+                            destination_path.mkdir(mode=0o700)
+                            directory_modes.append(
+                                (
+                                    destination_path,
+                                    stat.S_IMODE(os.fstat(child_fd).st_mode),
+                                )
+                            )
+                            pending.append((child_fd, destination_path))
+                            continue
+                        if not entry.is_file(follow_symlinks=False):
+                            raise RuntimeError(
+                                "validation workspace contains a special file"
+                            )
+                        descriptor = os.open(
+                            entry.name,
+                            os.O_RDONLY | nofollow | nonblock,
+                            dir_fd=source_fd,
+                        )
+                        with os.fdopen(descriptor, "rb") as reader:
+                            source_mode = os.fstat(reader.fileno()).st_mode
+                            if not stat.S_ISREG(source_mode):
+                                raise RuntimeError(
+                                    "validation workspace contains a special file"
+                                )
+                            source_stat = os.fstat(reader.fileno())
+                            inode_key = (source_stat.st_dev, source_stat.st_ino)
+                            existing_destination = staged_inodes.get(inode_key)
+                            if existing_destination is not None:
+                                total_bytes += source_stat.st_size
+                                if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
+                                    raise RuntimeError(
+                                        "validation workspace staging byte limit exceeded"
+                                    )
+                                os.link(
+                                    existing_destination,
+                                    destination_path,
+                                    follow_symlinks=False,
+                                )
+                                continue
+                            with destination_path.open("xb") as writer:
+                                while True:
+                                    chunk = reader.read(64 * 1024)
+                                    if not chunk:
+                                        break
+                                    total_bytes += len(chunk)
+                                    if total_bytes > _HARNESS_VALIDATION_STAGE_BYTES:
+                                        raise RuntimeError(
+                                            "validation workspace staging byte limit exceeded"
+                                        )
+                                    writer.write(chunk)
+                        destination_path.chmod(stat.S_IMODE(source_mode))
+                        staged_inodes[inode_key] = destination_path
+            finally:
+                os.close(source_fd)
+    finally:
+        for source_fd, _ in pending:
+            os.close(source_fd)
+    for destination_dir, source_mode in reversed(directory_modes):
+        destination_dir.chmod(source_mode)
+    return total_bytes, total_entries
+
+
+def _validation_tmp_parent() -> Optional[str]:
+    raw = os.environ.get("NEXUS_VALIDATION_TMP_ROOT", "").strip()
+    if not raw:
+        return None
+    root = Path(raw)
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink():
+        raise OSError("validation temporary filesystem is unavailable")
+    return str(root.resolve())
+
+
+def _create_staged_validation_tree(
+    source: Path,
+) -> tuple[tempfile.TemporaryDirectory[str], Path, Path, int, int]:
+    temporary = tempfile.TemporaryDirectory(
+        prefix="nexus-validation-",
+        dir=_validation_tmp_parent(),
+    )
+    try:
+        root = Path(temporary.name).resolve()
+        root.chmod(0o711)
+        root.joinpath("scratch").mkdir(mode=0o700)
+        workspace = root.joinpath("workspace")
+        baseline_bytes, baseline_entries = _stage_validation_workspace(
+            source,
+            workspace,
+        )
+        # The root scan also sees the scratch and workspace directories.
+        return temporary, root, workspace, baseline_bytes, baseline_entries + 2
+    except BaseException:
+        temporary.cleanup()
+        raise
+
+
+def _run_contained_process(
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Dict[str, str],
+    timeout_sec: float,
+    decode_errors: str,
+    output_limit_chars: int,
+    validation_workspace: Optional[Path] = None,
+    validation_baseline_bytes: Optional[int] = None,
+    validation_baseline_entries: Optional[int] = None,
+    task_command_mode: bool = False,
+) -> Tuple[Optional[int], str, str, bool, str, bool, bool]:
+    if os.name != "posix" or not sys.platform.startswith("linux"):
+        return None, "", "", False, "descendant process containment requires a Linux host", False, False
+    supervisor = Path(__file__).with_name("coding_process_supervisor.py")
+    proc: Optional[subprocess.Popen[bytes]] = None
+    timed_out = False
+    containment_error = ""
+    stdout = ""
+    stderr = ""
+    capture_limit_bytes = max(4_096, int(output_limit_chars) * 4)
+    stdout_capture = _BoundedPipeCapture(capture_limit_bytes)
+    stderr_capture = _BoundedPipeCapture(capture_limit_bytes)
+    capture_threads: List[threading.Thread] = []
+    owned_tree: Optional[tempfile.TemporaryDirectory[str]] = None
+    try:
+        if task_command_mode:
+            command_cwd = cwd
+            contained_env = dict(env)
+            contained_env["NEXUS_TASK_COMMAND_MODE"] = "1"
+        elif validation_workspace is None:
+            (
+                owned_tree,
+                scratch_root,
+                validation_workspace,
+                baseline_bytes,
+                baseline_entries,
+            ) = _create_staged_validation_tree(cwd)
+            command_cwd = validation_workspace
+        else:
+            validation_workspace = validation_workspace.resolve()
+            scratch_root = validation_workspace.parent
+            scratch_path = scratch_root.joinpath("scratch")
+            if (
+                not validation_workspace.is_dir()
+                or validation_workspace.is_symlink()
+                or not scratch_path.is_dir()
+                or scratch_path.is_symlink()
+            ):
+                raise OSError("persistent validation workspace is unavailable")
+            command_cwd = _ensure_inside(validation_workspace, cwd)
+            if not command_cwd.is_dir():
+                raise OSError("validation working directory is unavailable")
+            if validation_baseline_bytes is None or validation_baseline_entries is None:
+                raise RuntimeError("validation workspace baseline is unavailable")
+            baseline_bytes = max(0, int(validation_baseline_bytes))
+            baseline_entries = max(0, int(validation_baseline_entries))
+        if not task_command_mode:
+            scratch_path = scratch_root.joinpath("scratch")
+            contained_env = dict(env)
+            contained_env.update({
+                "HOME": str(scratch_path),
+                "TMPDIR": str(scratch_path),
+                "NEXUS_VALIDATION_SCRATCH": str(scratch_root),
+                "NEXUS_VALIDATION_WORKSPACE": str(validation_workspace),
+                "NEXUS_VALIDATION_FILE_BYTES": str(_HARNESS_VALIDATION_FILE_BYTES),
+                "NEXUS_VALIDATION_OPEN_FILES": str(_HARNESS_VALIDATION_OPEN_FILES),
+                "NEXUS_VALIDATION_PROCESSES": str(_HARNESS_VALIDATION_PROCESSES),
+                "NEXUS_VALIDATION_MEMORY_BYTES": str(_HARNESS_VALIDATION_MEMORY_BYTES),
+                "NEXUS_VALIDATION_AGGREGATE_MEMORY_BYTES": str(
+                    _HARNESS_VALIDATION_AGGREGATE_MEMORY_BYTES
+                ),
+                "NEXUS_VALIDATION_SCRATCH_BYTES": str(_HARNESS_VALIDATION_SCRATCH_BYTES),
+                "NEXUS_VALIDATION_SCRATCH_ENTRIES": str(_HARNESS_VALIDATION_SCRATCH_ENTRIES),
+                "NEXUS_VALIDATION_BASELINE_BYTES": str(baseline_bytes),
+                "NEXUS_VALIDATION_BASELINE_ENTRIES": str(baseline_entries),
+                "GIT_CONFIG_NOSYSTEM": "1",
+            })
+            validation_cgroup_root = os.environ.get(
+                "NEXUS_VALIDATION_CGROUP_ROOT", ""
+            ).strip()
+            if validation_cgroup_root:
+                contained_env["NEXUS_VALIDATION_CGROUP_ROOT"] = (
+                    validation_cgroup_root
+                )
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                # Local and CI pytest runs generally do not own a delegated cgroup.
+                # Production never receives this test-only escape hatch.
+                contained_env["NEXUS_TEST_VALIDATION_ALLOW_POLLING"] = "1"
+        proc = subprocess.Popen(
+            [sys.executable, str(supervisor), *[str(item) for item in argv]],
+            cwd=str(command_cwd),
+            env=contained_env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        assert proc.stdout is not None and proc.stderr is not None
+        capture_threads = [
+            threading.Thread(target=stdout_capture.drain, args=(proc.stdout,), daemon=True),
+            threading.Thread(target=stderr_capture.drain, args=(proc.stderr,), daemon=True),
+        ]
+        for thread in capture_threads:
+            thread.start()
+        try:
+            proc.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _terminate_process_group(proc.pid)
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=1.0)
+        for thread in capture_threads:
+            thread.join(timeout=1.0)
+        if any(thread.is_alive() for thread in capture_threads):
+            proc.stdout.close()
+            proc.stderr.close()
+            for thread in capture_threads:
+                thread.join(timeout=0.5)
+            containment_error = "validation output streams remained open after containment"
+        stdout = stdout_capture.text(decode_errors=decode_errors)
+        stderr = stderr_capture.text(decode_errors=decode_errors)
+        if stdout_capture.error or stderr_capture.error:
+            containment_error = containment_error or "could not drain validation output safely"
+        if proc.returncode == 125 and "NEXUS_CONTAINMENT_ERROR:" in stderr:
+            containment_error = "validation process containment failed"
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        containment_error = f"could not launch contained process: {exc}"
+    finally:
+        if owned_tree is not None:
+            try:
+                owned_tree.cleanup()
+            except OSError as exc:
+                containment_error = containment_error or f"could not clean validation scratch: {exc}"
+    return (
+        None if timed_out or proc is None else proc.returncode,
+        stdout,
+        stderr,
+        timed_out,
+        containment_error,
+        stdout_capture.truncated,
+        stderr_capture.truncated,
+    )
+
+
 def _run_process(
     argv: Sequence[str],
     *,
     cwd: Path,
     timeout_sec: Optional[float] = None,
+    timeout_limit_sec: Optional[float] = None,
     use_git_credentials: bool = False,
     git_token_value: Optional[str] = None,
+    env_overrides: Optional[Dict[str, str]] = None,
+    decode_errors: str = "strict",
+    output_limit_chars: Optional[int] = None,
+    isolate_process_group: bool = False,
+    validation_workspace: Optional[Path] = None,
+    validation_baseline_bytes: Optional[int] = None,
+    validation_baseline_entries: Optional[int] = None,
+    contain_descendants: bool = False,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
-    limit = max_output_chars()
+    if output_limit_chars is None:
+        limit = max_output_chars()
+    else:
+        try:
+            limit = max(1_000, min(_HARNESS_MAX_DIFF_CHARS, int(output_limit_chars)))
+        except Exception:
+            limit = max_output_chars()
+    if timeout_limit_sec is None:
+        effective_timeout_sec = command_timeout_sec(timeout_sec)
+    else:
+        try:
+            timeout_limit = max(1.0, min(float(timeout_limit_sec), 3600.0))
+            requested_timeout = timeout_limit if timeout_sec is None else float(timeout_sec)
+        except Exception:
+            timeout_limit = 3600.0
+            requested_timeout = timeout_limit
+        effective_timeout_sec = max(1.0, min(requested_timeout, timeout_limit, 3600.0))
     env = _base_env()
     redaction_tokens = [_effective_git_token(git_token_value)] if use_git_credentials else []
     effective_argv = _argv_with_git_safe_directory(argv, cwd=cwd)
     with _GitCredentialEnv(use_git_credentials, git_token_value=git_token_value) as extra_env:
         env.update(extra_env)
+        if env_overrides:
+            env.update({str(key): str(value) for key, value in env_overrides.items()})
+        if isolate_process_group or contain_descendants:
+            (
+                returncode,
+                raw_stdout,
+                raw_stderr,
+                timed_out,
+                containment_error,
+                stdout_capture_truncated,
+                stderr_capture_truncated,
+            ) = _run_contained_process(
+                effective_argv,
+                cwd=cwd,
+                env=env,
+                timeout_sec=effective_timeout_sec,
+                decode_errors=decode_errors,
+                output_limit_chars=limit,
+                validation_workspace=validation_workspace,
+                validation_baseline_bytes=validation_baseline_bytes,
+                validation_baseline_entries=validation_baseline_entries,
+                task_command_mode=contain_descendants,
+            )
+            stdout, stdout_truncated = _truncate(raw_stdout, limit, extra_tokens=redaction_tokens)
+            stderr, stderr_truncated = _truncate(raw_stderr, limit, extra_tokens=redaction_tokens)
+            stdout_truncated = bool(stdout_truncated or stdout_capture_truncated)
+            stderr_truncated = bool(stderr_truncated or stderr_capture_truncated)
+            if timed_out:
+                stderr = stderr or f"timeout after {effective_timeout_sec:.0f}s"
+            if containment_error:
+                stderr = f"{containment_error}\n{stderr}".rstrip()
+            return {
+                "ok": bool(returncode == 0 and not timed_out and not containment_error),
+                "returncode": returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "stdout_truncated": stdout_truncated,
+                "stderr_truncated": stderr_truncated,
+                "argv": _redact_argv(argv, extra_tokens=redaction_tokens),
+                "cwd": str(cwd),
+                "duration_ms": round((time.perf_counter() - started) * 1000.0, 1),
+            }
         try:
             proc = subprocess.run(
                 effective_argv,
                 cwd=str(cwd),
                 env=env,
-                text=True,
+                encoding="utf-8",
+                errors=decode_errors,
                 capture_output=True,
-                timeout=command_timeout_sec(timeout_sec),
+                timeout=effective_timeout_sec,
             )
             stdout, stdout_truncated = _truncate(proc.stdout or "", limit, extra_tokens=redaction_tokens)
             stderr, stderr_truncated = _truncate(proc.stderr or "", limit, extra_tokens=redaction_tokens)
@@ -1379,7 +1912,7 @@ def _run_process(
                 "ok": False,
                 "returncode": None,
                 "stdout": stdout,
-                "stderr": stderr or f"timeout after {command_timeout_sec(timeout_sec):.0f}s",
+                "stderr": stderr or f"timeout after {effective_timeout_sec:.0f}s",
                 "stdout_truncated": stdout_truncated,
                 "stderr_truncated": stderr_truncated,
                 "argv": _redact_argv(argv, extra_tokens=redaction_tokens),
@@ -1507,6 +2040,159 @@ def create_task(
         logger.warning("coding task create failed id=%s error=%s", task_id, exc)
         task["status"] = "error"
         task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc), extra_tokens=[_effective_git_token(git_token_value)])}"
+        save_task(task)
+        return public_task(task)
+
+
+def _normalize_harness_fixture_files(
+    fixture_id: str,
+    files: Dict[str, str],
+) -> Tuple[str, Dict[str, str]]:
+    normalized_id = str(fixture_id or "").strip()
+    if not _HARNESS_FIXTURE_ID_RE.fullmatch(normalized_id):
+        raise HTTPException(status_code=400, detail="invalid harness fixture_id")
+    if not isinstance(files, dict) or not files:
+        raise HTTPException(status_code=400, detail="harness fixture files must be a non-empty object")
+    if len(files) > _HARNESS_MAX_FILES:
+        raise HTTPException(status_code=413, detail="harness fixture has too many files")
+
+    normalized: Dict[str, str] = {}
+    total_bytes = 0
+    per_file_limit = _HARNESS_MAX_FILE_BYTES
+    for raw_path, raw_content in files.items():
+        path = str(raw_path or "")
+        if (
+            not path
+            or len(path.encode("utf-8")) > 4096
+            or path.startswith("/")
+            or "\\" in path
+            or "\x00" in path
+            or any(ord(char) < 32 for char in path)
+        ):
+            raise HTTPException(status_code=400, detail=f"unsafe harness fixture path: {raw_path}")
+        parts = path.split("/")
+        if any(
+            not part
+            or part in {".", ".."}
+            or part.casefold() in _HARNESS_RESERVED_PATH_PARTS
+            for part in parts
+        ):
+            raise HTTPException(status_code=400, detail=f"unsafe harness fixture path: {raw_path}")
+        if not isinstance(raw_content, str):
+            raise HTTPException(status_code=400, detail=f"harness fixture file must contain text: {path}")
+        size = len(raw_content.encode("utf-8"))
+        if size > per_file_limit:
+            raise HTTPException(status_code=413, detail=f"harness fixture file is too large: {path}")
+        total_bytes += size
+        if total_bytes > _HARNESS_MAX_TOTAL_BYTES:
+            raise HTTPException(status_code=413, detail="harness fixture files are too large in aggregate")
+        normalized[path] = raw_content
+    return normalized_id, normalized
+
+
+def create_harness_task(
+    *,
+    fixture_id: str,
+    files: Dict[str, str],
+    prompt: str,
+    owner: Optional[str],
+    owner_user_id: Optional[int] = None,
+    coding_model: Optional[str] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Create a local-only disposable Git workspace for a coding harness fixture."""
+    _ensure_enabled()
+    normalized_id, normalized_files = _normalize_harness_fixture_files(fixture_id, files)
+    normalized_prompt = str(prompt or "").strip()
+    if not normalized_prompt:
+        raise HTTPException(status_code=400, detail="harness fixture prompt is required")
+    if len(normalized_prompt.encode("utf-8")) > _HARNESS_MAX_PROMPT_BYTES:
+        raise HTTPException(status_code=413, detail="harness fixture prompt is too large")
+
+    _ensure_dirs()
+    task_id = new_task_id()
+    base = "main"
+    branch = f"nexus-coding-harness/{task_id}"
+    workspace = _task_workspace(task_id)
+    repo_path = _repo_path_for(task_id)
+    task = {
+        "schema": SCHEMA,
+        "id": task_id,
+        "kind": "harness_eval",
+        "status": "initializing",
+        "created_at": _now(),
+        "updated_at": _now(),
+        "owner": owner or "unknown",
+        "owner_user_id": owner_user_id,
+        "repo_url": f"harness-fixture://{normalized_id}",
+        "base_branch": base,
+        "branch_name": branch,
+        "prompt": normalized_prompt,
+        "coding_model": str(coding_model or "").strip(),
+        "workspace_path": str(workspace),
+        "repo_path": str(repo_path),
+        "seed_files": sorted(normalized_files),
+        "harness_fixture": {
+            "id": normalized_id,
+            "file_count": len(normalized_files),
+            "total_bytes": sum(len(content.encode("utf-8")) for content in normalized_files.values()),
+        },
+        "commands": [],
+        "project_plan": normalize_project_plan({"goal": normalized_prompt, "items": []}),
+        "agent_runs": [],
+    }
+    task["mission"] = normalize_coding_mission(task, mission_overrides)
+    task["harness_expires_at"] = int(
+        task["created_at"]
+        + min(
+            86_400,
+            max(900, int(task["mission"]["budget_policy"]["max_runtime_sec"]) + 900),
+        )
+    )
+    save_task(task)
+
+    try:
+        workspace.mkdir(parents=True, exist_ok=False)
+        repo_path.mkdir()
+        root = repo_path.resolve()
+        for rel, content in normalized_files.items():
+            target = repo_path.joinpath(*rel.split("/")).resolve()
+            _ensure_inside(root, target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content.encode("utf-8"))
+
+        commands = (
+            ("harness-git-init", ["git", "init"]),
+            ("harness-base-branch", ["git", "checkout", "-b", base]),
+            ("harness-git-add", ["git", "add", "--force", "."]),
+            ("harness-baseline-commit", ["git", "commit", "-m", "coding harness fixture baseline", "--allow-empty"]),
+            ("harness-work-branch", ["git", "switch", "-c", branch]),
+        )
+        for label, argv in commands:
+            result = _run_process(argv, cwd=repo_path)
+            _append_command(task, result, label=label)
+            if not result.get("ok"):
+                task["status"] = "error"
+                task["error"] = f"{label} failed"
+                save_task(task)
+                return public_task(task)
+        head = _run_process(["git", "rev-parse", "HEAD"], cwd=repo_path)
+        _append_command(task, head, label="harness-baseline-head")
+        if not head.get("ok"):
+            task["status"] = "error"
+            task["error"] = "could not determine harness fixture baseline"
+            save_task(task)
+            return public_task(task)
+
+        task["harness_baseline_commit"] = str(head.get("stdout") or "").strip()
+        task["status"] = "ready"
+        task.pop("error", None)
+        save_task(task)
+        return public_task(task)
+    except Exception as exc:
+        logger.warning("coding harness task create failed id=%s error=%s", task_id, exc)
+        task["status"] = "error"
+        task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc))}"
         save_task(task)
         return public_task(task)
 
@@ -1730,8 +2416,15 @@ def _ensure_inside(base: Path, target: Path) -> Path:
     return target_resolved
 
 
-def _resolve_repo_child(task: Dict[str, Any], rel_path: Optional[str] = None) -> Path:
-    base = _repo_path(task)
+def _resolve_repo_child(
+    task: Dict[str, Any],
+    rel_path: Optional[str] = None,
+    *,
+    repo_override: Optional[Path] = None,
+) -> Path:
+    base = repo_override.resolve() if repo_override is not None else _repo_path(task)
+    if not base.is_dir() or base.is_symlink():
+        raise HTTPException(status_code=409, detail="coding task workspace is missing")
     rel = str(rel_path or "").strip().lstrip("/\\")
     target = base.joinpath(rel) if rel else base
     resolved = _ensure_inside(base, target)
@@ -1811,7 +2504,7 @@ def validate_command(argv: Sequence[str]) -> List[str]:
     for item in argv:
         if not isinstance(item, str):
             raise HTTPException(status_code=400, detail="argv entries must be strings")
-        value = item.strip()
+        value = item
         if not value:
             raise HTTPException(status_code=400, detail="argv entries must be non-empty")
         if "\x00" in value:
@@ -1819,6 +2512,11 @@ def validate_command(argv: Sequence[str]) -> List[str]:
         if len(value) > 4096:
             raise HTTPException(status_code=400, detail="argv entry is too long")
         out.append(value)
+    if out[0] != out[0].strip():
+        raise HTTPException(
+            status_code=400,
+            detail="command name cannot have leading or trailing whitespace",
+        )
     cmd = Path(out[0]).name.lower()
     if out[0] != Path(out[0]).name:
         raise HTTPException(status_code=403, detail="commands must be invoked by name, not path")
@@ -1877,23 +2575,390 @@ def run_task_command(
     timeout_sec: Optional[float] = None,
     git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
-    task = load_task(task_id)
-    repo = _repo_path(task)
-    command = validate_command(argv)
-    run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
-    if not run_cwd.exists() or not run_cwd.is_dir():
-        raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
-    cmd = Path(command[0]).name.lower()
-    result = _run_process(
-        command,
-        cwd=run_cwd,
-        timeout_sec=timeout_sec,
-        use_git_credentials=cmd in {"git", "gh"},
-        git_token_value=git_token_value,
+    with _harness_mutation_guard(task_id):
+        task = load_task(task_id)
+        repo = _repo_path(task)
+        command = validate_command(argv)
+        run_cwd = _resolve_repo_child(task, cwd) if cwd else repo
+        if not run_cwd.exists() or not run_cwd.is_dir():
+            raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
+        cmd = Path(command[0]).name.lower()
+        result = _run_process(
+            command,
+            cwd=run_cwd,
+            timeout_sec=timeout_sec,
+            use_git_credentials=cmd in {"git", "gh"},
+            git_token_value=git_token_value,
+            contain_descendants=str(task.get("kind") or "") == "harness_eval",
+        )
+        mutate_task(
+            task_id,
+            lambda current: _append_command(current, result, label="command"),
+        )
+        return result
+
+
+def run_harness_validation_command(
+    task_id: str,
+    *,
+    argv: Sequence[str],
+    cwd: Optional[str] = None,
+    timeout_sec: Optional[float] = None,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run trusted fixture validation with the harness run budget as its timeout cap."""
+    evidence_workspace: Optional[Path] = None
+    baseline_bytes: Optional[int] = None
+    baseline_entries: Optional[int] = None
+    with _HARNESS_VALIDATIONS_GUARD:
+        active_lease = _active_harness_evidence_lease_locked(task_id)
+        provided_lease = str(evidence_lease_id or "")
+        if active_lease != provided_lease and (active_lease or provided_lease):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
+        if provided_lease:
+            evidence_workspace, baseline_bytes, baseline_entries = (
+                _harness_evidence_workspace_locked(task_id, provided_lease)
+            )
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is already active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        _ACTIVE_HARNESS_VALIDATIONS.add(task_id)
+    try:
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            raise HTTPException(status_code=403, detail="harness validation requires a harness task")
+        agent_status = str(task.get("agent_status") or "idle").strip().lower()
+        if agent_status in {"queued", "running", "stopping", "pausing"}:
+            raise HTTPException(status_code=409, detail="coding harness task is still active")
+        repo = _repo_path(task)
+        command = validate_command(argv)
+        validation_repo = evidence_workspace or repo
+        run_cwd = (
+            _resolve_repo_child(
+                task,
+                cwd,
+                repo_override=evidence_workspace,
+            )
+            if cwd
+            else validation_repo
+        )
+        if not run_cwd.exists() or not run_cwd.is_dir():
+            raise HTTPException(status_code=400, detail="cwd must be an existing directory inside the task repo")
+        mission = normalize_coding_mission(task)
+        timeout_limit = max(
+            1.0,
+            min(float(mission["budget_policy"]["max_runtime_sec"]), 3600.0),
+        )
+        result = _run_process(
+            command,
+            cwd=run_cwd,
+            timeout_sec=timeout_sec,
+            timeout_limit_sec=timeout_limit,
+            use_git_credentials=False,
+            isolate_process_group=True,
+            validation_workspace=evidence_workspace,
+            validation_baseline_bytes=baseline_bytes,
+            validation_baseline_entries=baseline_entries,
+        )
+        mutate_task(
+            task_id,
+            lambda current: _append_command(
+                current,
+                result,
+                label="harness-validation",
+            ),
+        )
+        return result
+    finally:
+        with _HARNESS_VALIDATIONS_GUARD:
+            _ACTIVE_HARNESS_VALIDATIONS.discard(task_id)
+
+
+def begin_harness_agent_tool(task_id: str) -> bool:
+    """Register a harness tool worker before it can mutate task state."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        if _active_harness_evidence_lease_locked(task_id):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            return False
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = (
+            _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) + 1
+        )
+        return True
+
+
+def end_harness_agent_tool(task_id: str, *, registered: bool) -> None:
+    if not registered:
+        return
+    with _HARNESS_VALIDATIONS_GUARD:
+        remaining = _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) - 1
+        if remaining > 0:
+            _ACTIVE_HARNESS_AGENT_TOOLS[task_id] = remaining
+        else:
+            _ACTIVE_HARNESS_AGENT_TOOLS.pop(task_id, None)
+
+
+@contextmanager
+def _harness_mutation_guard(task_id: str):
+    """Serialize generic workspace mutations with harness evidence leases."""
+    registered = begin_harness_agent_tool(task_id)
+    try:
+        yield
+    finally:
+        end_harness_agent_tool(task_id, registered=registered)
+
+
+def begin_harness_evidence_read(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+) -> Optional[Path]:
+    with _HARNESS_VALIDATIONS_GUARD:
+        active_lease = _active_harness_evidence_lease_locked(task_id)
+        provided_lease = str(evidence_lease_id or "")
+        if active_lease != provided_lease and (active_lease or provided_lease):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
+        workspace = None
+        if provided_lease:
+            workspace, _, _ = _harness_evidence_workspace_locked(
+                task_id,
+                provided_lease,
+            )
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        _ACTIVE_HARNESS_EVIDENCE_READS[task_id] = (
+            _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) + 1
+        )
+        return workspace
+
+
+def end_harness_evidence_read(task_id: str) -> None:
+    with _HARNESS_VALIDATIONS_GUARD:
+        remaining = _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) - 1
+        if remaining > 0:
+            _ACTIVE_HARNESS_EVIDENCE_READS[task_id] = remaining
+        else:
+            _ACTIVE_HARNESS_EVIDENCE_READS.pop(task_id, None)
+
+
+def _cleanup_harness_evidence_lease(record: Dict[str, Any]) -> None:
+    expiry_timer = record.get("expiry_timer")
+    if isinstance(expiry_timer, threading.Timer):
+        expiry_timer.cancel()
+    temporary = record.get("temporary")
+    if not isinstance(temporary, tempfile.TemporaryDirectory):
+        return
+    try:
+        temporary.cleanup()
+    except OSError as exc:
+        logger.warning("could not clean harness evidence workspace: %s", exc)
+
+
+def _schedule_harness_evidence_expiry_locked(
+    lease_id: str,
+    record: Dict[str, Any],
+    *,
+    delay_sec: float,
+) -> None:
+    expires_at = float(record.get("expires_at") or 0)
+    timer = threading.Timer(
+        max(0.01, float(delay_sec)),
+        _expire_harness_evidence_lease,
+        args=(lease_id, expires_at),
     )
-    _append_command(task, result, label="command")
-    save_task(task)
-    return result
+    timer.daemon = True
+    record["expiry_timer"] = timer
+    timer.start()
+
+
+def _expire_harness_evidence_lease(lease_id: str, expected_expires_at: float) -> None:
+    with _HARNESS_VALIDATIONS_GUARD:
+        record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(lease_id)
+        if (
+            not isinstance(record, dict)
+            or float(record.get("expires_at") or 0) != expected_expires_at
+        ):
+            return
+        remaining = expected_expires_at - _now()
+        if remaining > 0:
+            _schedule_harness_evidence_expiry_locked(
+                lease_id,
+                record,
+                delay_sec=remaining,
+            )
+            return
+        task_id = str(record.get("task_id") or "")
+        if (
+            task_id in _ACTIVE_HARNESS_VALIDATIONS
+            or _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0
+        ):
+            _schedule_harness_evidence_expiry_locked(
+                lease_id,
+                record,
+                delay_sec=0.25,
+            )
+            return
+        removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+        if isinstance(removed, dict):
+            _cleanup_harness_evidence_lease(removed)
+
+
+def _expire_harness_evidence_leases_locked() -> None:
+    current = _now()
+    expired = [
+        lease_id
+        for lease_id, record in _ACTIVE_HARNESS_EVIDENCE_LEASES.items()
+        if float(record.get("expires_at") or 0) <= current
+    ]
+    for lease_id in expired:
+        record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(lease_id)
+        task_id = str(record.get("task_id") or "") if isinstance(record, dict) else ""
+        if (
+            task_id in _ACTIVE_HARNESS_VALIDATIONS
+            or _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0
+        ):
+            continue
+        removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id, None)
+        if isinstance(removed, dict):
+            _cleanup_harness_evidence_lease(removed)
+
+
+def _active_harness_evidence_lease_locked(task_id: str) -> str:
+    _expire_harness_evidence_leases_locked()
+    for lease_id, record in _ACTIVE_HARNESS_EVIDENCE_LEASES.items():
+        if str(record.get("task_id") or "") == task_id:
+            return lease_id
+    return ""
+
+
+def _harness_evidence_workspace_locked(
+    task_id: str,
+    lease_id: str,
+) -> tuple[Path, int, int]:
+    record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(lease_id)
+    if not isinstance(record, dict) or str(record.get("task_id") or "") != task_id:
+        raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
+    workspace = Path(str(record.get("workspace") or "")).resolve()
+    temporary = record.get("temporary")
+    if (
+        not isinstance(temporary, tempfile.TemporaryDirectory)
+        or not workspace.is_dir()
+        or workspace.is_symlink()
+        or workspace.parent != Path(temporary.name).resolve()
+    ):
+        raise HTTPException(status_code=409, detail="coding harness evidence workspace is unavailable")
+    return (
+        workspace,
+        max(0, int(record.get("baseline_bytes") or 0)),
+        max(0, int(record.get("baseline_entries") or 0)),
+    )
+
+
+def acquire_harness_evidence_lease(
+    task_id: str,
+    *,
+    ttl_sec: float,
+) -> Dict[str, Any]:
+    """Block harness mutation while a client collects multi-request evidence."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            raise HTTPException(status_code=403, detail="evidence lease requires a harness task")
+        if str(task.get("status") or "").strip().lower() == "initializing":
+            raise HTTPException(status_code=409, detail="coding harness task is still initializing")
+        if _active_harness_evidence_lease_locked(task_id):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is already active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        agent_status = str(task.get("agent_status") or "idle").strip().lower()
+        if agent_status in {"queued", "running", "stopping", "pausing"}:
+            raise HTTPException(status_code=409, detail="coding harness task is still active")
+        duration = max(30.0, min(float(ttl_sec), _HARNESS_EVIDENCE_LEASE_MAX_SEC))
+        lease_id = secrets.token_urlsafe(24)
+        expires_at = _now() + duration
+        temporary, _, workspace, baseline_bytes, baseline_entries = (
+            _create_staged_validation_tree(_repo_path(task))
+        )
+        _ACTIVE_HARNESS_EVIDENCE_LEASES[lease_id] = {
+            "task_id": task_id,
+            "expires_at": expires_at,
+            "temporary": temporary,
+            "workspace": str(workspace),
+            "baseline_bytes": baseline_bytes,
+            "baseline_entries": baseline_entries,
+        }
+        _schedule_harness_evidence_expiry_locked(
+            lease_id,
+            _ACTIVE_HARNESS_EVIDENCE_LEASES[lease_id],
+            delay_sec=duration,
+        )
+        return {"lease_id": lease_id, "task_id": task_id, "expires_at": expires_at}
+
+
+def release_harness_evidence_lease(task_id: str, *, lease_id: str) -> Dict[str, Any]:
+    with _HARNESS_VALIDATIONS_GUARD:
+        _expire_harness_evidence_leases_locked()
+        record = _ACTIVE_HARNESS_EVIDENCE_LEASES.get(str(lease_id or ""))
+        if not isinstance(record, dict) or str(record.get("task_id") or "") != task_id:
+            raise HTTPException(status_code=404, detail="coding harness evidence lease was not found")
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(lease_id)
+        _cleanup_harness_evidence_lease(removed)
+        return {"ok": True, "task_id": task_id, "lease_id": lease_id}
+
+
+def begin_harness_agent_run_start(task_id: str) -> bool:
+    """Serialize a harness run transition with evidence, validation, and deletion."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        if _active_harness_evidence_lease_locked(task_id):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            return False
+        if str(task.get("status") or "").strip().lower() == "initializing":
+            raise HTTPException(status_code=409, detail="coding harness task is still initializing")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is already starting")
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        _ACTIVE_HARNESS_RUN_STARTS.add(task_id)
+        return True
+
+
+def end_harness_agent_run_start(task_id: str, *, registered: bool) -> None:
+    if not registered:
+        return
+    with _HARNESS_VALIDATIONS_GUARD:
+        _ACTIVE_HARNESS_RUN_STARTS.discard(task_id)
 
 
 def git_status(task_id: str, *, git_token_value: Optional[str] = None) -> Dict[str, Any]:
@@ -1929,19 +2994,44 @@ def workspace_progress_fingerprint(task_id: str) -> str:
     return digest.hexdigest()
 
 
-def git_change_summary(task_id: str) -> Dict[str, Any]:
+def git_change_summary(
+    task_id: str,
+    *,
+    limit: int = 500,
+    nul_paths: bool = False,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
-    result = _run_process(["git", "status", "--porcelain"], cwd=repo)
+    argv = ["git", "status", "--porcelain=v1", "--untracked-files=all"]
+    if nul_paths:
+        argv.append("-z")
+    result = _run_process(argv, cwd=repo)
     counts = {"added": 0, "modified": 0, "removed": 0, "renamed": 0, "untracked": 0, "other": 0, "total": 0}
     files: List[Dict[str, Any]] = []
     if result.get("ok"):
-        for raw_line in str(result.get("stdout") or "").splitlines():
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            code = line[:2]
-            path = line[3:] if len(line) > 3 else ""
+        raw_output = str(result.get("stdout") or "")
+        records: List[Tuple[str, str, Optional[str]]] = []
+        if nul_paths:
+            tokens = raw_output.split("\0")
+            if tokens and tokens[-1] == "":
+                tokens.pop()
+            index = 0
+            while index < len(tokens):
+                record = tokens[index]
+                index += 1
+                code = record[:2]
+                path = record[3:] if len(record) > 3 else ""
+                previous_path = None
+                if any(marker in code for marker in ("R", "C")) and index < len(tokens):
+                    previous_path = tokens[index]
+                    index += 1
+                records.append((code, path, previous_path))
+        else:
+            for raw_line in raw_output.splitlines():
+                line = raw_line.rstrip()
+                if line:
+                    records.append((line[:2], line[3:] if len(line) > 3 else "", None))
+        for code, path, previous_path in records:
             x = code[0] if len(code) > 0 else " "
             y = code[1] if len(code) > 1 else " "
             if code == "??":
@@ -1965,8 +3055,18 @@ def git_change_summary(task_id: str) -> Dict[str, Any]:
                 kind = "other"
                 counts["other"] += 1
             counts["total"] += 1
-            files.append({"path": path, "status": code, "kind": kind})
-    return {"ok": bool(result.get("ok")), "counts": counts, "files": files[:500], "truncated": len(files) > 500, "raw": result}
+            item = {"path": path, "status": code, "kind": kind}
+            if previous_path is not None:
+                item["previous_path"] = previous_path
+            files.append(item)
+    max_files = max(1, min(int(limit or 500), 2000))
+    return {
+        "ok": bool(result.get("ok")),
+        "counts": counts,
+        "files": files[:max_files],
+        "truncated": bool(result.get("stdout_truncated") or len(files) > max_files),
+        "raw": result,
+    }
 
 
 def _diff_kind_from_status(status: str) -> str:
@@ -1998,19 +3098,55 @@ def _counts_for_change_files(files: Sequence[Dict[str, Any]]) -> Dict[str, int]:
     return counts
 
 
-def _git_name_status_summary(repo: Path, argv: Sequence[str]) -> Dict[str, Any]:
-    result = _run_process(list(argv), cwd=repo)
+def _git_name_status_summary(
+    repo: Path,
+    argv: Sequence[str],
+    *,
+    limit: int = 500,
+    env_overrides: Optional[Dict[str, str]] = None,
+    output_limit_chars: Optional[int] = None,
+) -> Dict[str, Any]:
+    result = _run_process(
+        list(argv),
+        cwd=repo,
+        env_overrides=env_overrides,
+        output_limit_chars=output_limit_chars,
+    )
     files: List[Dict[str, Any]] = []
     if result.get("ok"):
-        for raw_line in str(result.get("stdout") or "").splitlines():
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            parts = line.split("\t")
-            status = str(parts[0] if parts else "").strip()
+        raw_output = str(result.get("stdout") or "")
+        parsed: List[Tuple[str, str, Optional[str]]] = []
+        if "-z" in argv:
+            tokens = raw_output.split("\0")
+            if tokens and tokens[-1] == "":
+                tokens.pop()
+            index = 0
+            while index < len(tokens):
+                status = tokens[index].strip()
+                index += 1
+                kind = _diff_kind_from_status(status)
+                if kind == "renamed" or status[:1].upper() == "C":
+                    previous_path = tokens[index] if index < len(tokens) else None
+                    index += 1
+                    path = tokens[index] if index < len(tokens) else ""
+                    index += 1
+                else:
+                    previous_path = None
+                    path = tokens[index] if index < len(tokens) else ""
+                    index += 1
+                parsed.append((status, path, previous_path))
+        else:
+            for raw_line in raw_output.splitlines():
+                line = raw_line.rstrip()
+                if not line:
+                    continue
+                parts = line.split("\t")
+                status = str(parts[0] if parts else "").strip()
+                path = str(parts[-1] if len(parts) >= 2 else "").strip()
+                previous_path = str(parts[1] if len(parts) >= 3 else "").strip() or None
+                parsed.append((status, path, previous_path))
+        for status, path, previous_path in parsed:
             kind = _diff_kind_from_status(status)
-            path = str(parts[-1] if len(parts) >= 2 else "").strip()
-            previous_path = str(parts[1] if len(parts) >= 3 else "").strip() or None
             files.append(
                 {
                     "path": path,
@@ -2019,11 +3155,12 @@ def _git_name_status_summary(repo: Path, argv: Sequence[str]) -> Dict[str, Any]:
                     "kind": kind,
                 }
             )
+    max_files = max(1, min(int(limit or 500), 2000))
     return {
         "ok": bool(result.get("ok")),
         "counts": _counts_for_change_files(files),
-        "files": files[:500],
-        "truncated": len(files) > 500,
+        "files": files[:max_files],
+        "truncated": bool(result.get("stdout_truncated") or len(files) > max_files),
         "raw": result,
     }
 
@@ -2036,7 +3173,13 @@ def _git_ref_exists(repo: Path, ref: str) -> bool:
     return bool(result.get("ok"))
 
 
-def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
+def _git_base_branch_diff(
+    repo: Path,
+    *,
+    base_branch: str,
+    change_limit: int = 500,
+    nul_paths: bool = False,
+) -> Dict[str, Any]:
     base = _base_branch(base_branch)
     base_ref = ""
     for candidate in (f"origin/{base}", base):
@@ -2056,10 +3199,26 @@ def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
     compare_ref = merge_base or base_ref
     stat = _run_process(["git", "diff", "--stat", compare_ref, "--"], cwd=repo)
     diff = _run_process(["git", "diff", compare_ref, "--"], cwd=repo)
-    workspace_changes = _git_name_status_summary(repo, ["git", "diff", "--name-status", compare_ref, "--"])
+    workspace_changes = _git_name_status_summary(
+        repo,
+        ["git", "diff", "--name-status", *(["-z"] if nul_paths else []), compare_ref, "--"],
+        limit=change_limit,
+    )
     committed_stat = _run_process(["git", "diff", "--stat", compare_ref, "HEAD", "--"], cwd=repo)
     committed_diff = _run_process(["git", "diff", compare_ref, "HEAD", "--"], cwd=repo)
-    committed_changes = _git_name_status_summary(repo, ["git", "diff", "--name-status", compare_ref, "HEAD", "--"])
+    committed_changes = _git_name_status_summary(
+        repo,
+        [
+            "git",
+            "diff",
+            "--name-status",
+            *(["-z"] if nul_paths else []),
+            compare_ref,
+            "HEAD",
+            "--",
+        ],
+        limit=change_limit,
+    )
     return {
         "ok": bool(
             stat.get("ok")
@@ -2085,6 +3244,28 @@ def _git_base_branch_diff(repo: Path, *, base_branch: str) -> Dict[str, Any]:
 
 
 def search_text(
+    task_id: str,
+    *,
+    query: str,
+    path: Optional[str] = None,
+    glob: Optional[str] = None,
+    fixed_strings: bool = False,
+    case_sensitive: bool = True,
+    limit: int = 200,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _search_text(
+            task_id,
+            query=query,
+            path=path,
+            glob=glob,
+            fixed_strings=fixed_strings,
+            case_sensitive=case_sensitive,
+            limit=limit,
+        )
+
+
+def _search_text(
     task_id: str,
     *,
     query: str,
@@ -2147,7 +3328,17 @@ def search_text(
     }
 
 
-def apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -> Dict[str, Any]:
+def apply_unified_patch(
+    task_id: str,
+    *,
+    patch: str,
+    check_only: bool = False,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _apply_unified_patch(task_id, patch=patch, check_only=check_only)
+
+
+def _apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -> Dict[str, Any]:
     raw = str(patch or "")
     if not raw.strip():
         raise HTTPException(status_code=400, detail="patch is required")
@@ -2190,12 +3381,36 @@ def apply_unified_patch(task_id: str, *, patch: str, check_only: bool = False) -
                 pass
 
 
-def git_diff(task_id: str) -> Dict[str, Any]:
+def git_diff(
+    task_id: str,
+    *,
+    change_limit: int = 500,
+    nul_paths: bool = False,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _git_diff(
+            task_id,
+            change_limit=change_limit,
+            nul_paths=nul_paths,
+        )
+
+
+def _git_diff(
+    task_id: str,
+    *,
+    change_limit: int = 500,
+    nul_paths: bool = False,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     branch = str(task.get("branch_name") or "").strip()
     base_branch = str(task.get("base_branch") or "main").strip()
-    base_diff = _git_base_branch_diff(repo, base_branch=base_branch)
+    base_diff = _git_base_branch_diff(
+        repo,
+        base_branch=base_branch,
+        change_limit=change_limit,
+        nul_paths=nul_paths,
+    )
     worktree_stat = _run_process(["git", "diff", "--stat"], cwd=repo)
     worktree_diff = _run_process(["git", "diff", "--"], cwd=repo)
     staged_stat = _run_process(["git", "diff", "--cached", "--stat"], cwd=repo)
@@ -2237,7 +3452,247 @@ def git_diff(task_id: str) -> Dict[str, Any]:
     return result
 
 
+def _harness_neutral_git_snapshot(
+    task: Dict[str, Any],
+    *,
+    change_limit: int,
+    repo_override: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Collect fixture evidence without trusting the agent-mutated index or Git config."""
+    repo = repo_override.resolve() if repo_override is not None else _repo_path(task)
+    if not repo.is_dir() or repo.is_symlink():
+        raise HTTPException(status_code=409, detail="harness evidence workspace is unavailable")
+    source_git_dir = repo / ".git"
+    source_objects = source_git_dir / "objects"
+    baseline = str(task.get("harness_baseline_commit") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", baseline):
+        raise HTTPException(status_code=409, detail="harness baseline commit is unavailable")
+    if (
+        not source_git_dir.is_dir()
+        or source_git_dir.is_symlink()
+        or not source_objects.is_dir()
+        or source_objects.is_symlink()
+    ):
+        raise HTTPException(status_code=409, detail="harness Git metadata is unavailable")
+
+    max_files = max(1, min(int(change_limit or 500), 2000))
+    with tempfile.TemporaryDirectory(prefix="nexus-harness-git-") as temp_root_raw:
+        temp_root = Path(temp_root_raw)
+        neutral_git_dir = temp_root / "git"
+        home_dir = temp_root / "home"
+        home_dir.mkdir(mode=0o700)
+        initialized = _run_process(
+            ["git", "init", "--bare", str(neutral_git_dir)],
+            cwd=repo,
+            use_git_credentials=False,
+        )
+        if not initialized.get("ok"):
+            return {
+                "diff": {"ok": False, "error": "could not initialize neutral Git evidence"},
+                "changes": {"ok": False, "files": [], "counts": _counts_for_change_files([])},
+            }
+        (neutral_git_dir / "config").write_text(
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tfilemode = true\n",
+            encoding="utf-8",
+        )
+        info_dir = neutral_git_dir / "info"
+        info_dir.mkdir(mode=0o700, exist_ok=True)
+        (info_dir / "attributes").write_text(
+            "* -text -crlf -ident -filter !working-tree-encoding !diff\n",
+            encoding="utf-8",
+        )
+        (info_dir / "exclude").write_text("/.git/\n", encoding="utf-8")
+        env = {
+            "GIT_DIR": str(neutral_git_dir),
+            "GIT_INDEX_FILE": str(temp_root / "index"),
+            "GIT_WORK_TREE": str(repo),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(source_objects),
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_ATTR_NOSYSTEM": "1",
+            "HOME": str(home_dir),
+        }
+        read_tree = _run_process(
+            ["git", "read-tree", baseline],
+            cwd=repo,
+            use_git_credentials=False,
+            env_overrides=env,
+        )
+        if not read_tree.get("ok"):
+            error = str(read_tree.get("stderr") or "could not load harness baseline")
+            return {
+                "diff": {"ok": False, "error": error},
+                "changes": {"ok": False, "files": [], "counts": _counts_for_change_files([])},
+            }
+
+        untracked_result = _run_process(
+            [
+                "git",
+                "ls-files",
+                "-z",
+                "--others",
+                "--exclude=.git",
+                "--exclude=.git/**",
+            ],
+            cwd=repo,
+            env_overrides=env,
+            decode_errors="surrogateescape",
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
+        )
+        untracked_stdout = str(untracked_result.get("stdout") or "")
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in untracked_stdout):
+            error = "harness repository contains a path that is not valid UTF-8"
+            empty_changes = {
+                "ok": False,
+                "error": error,
+                "files": [],
+                "counts": _counts_for_change_files([]),
+            }
+            return {
+                "diff": {"ok": False, "error": error, "changes": empty_changes},
+                "changes": empty_changes,
+            }
+        untracked_paths = [
+            path
+            for path in untracked_stdout.split("\0")
+            if path and path != ".git" and not path.startswith(".git/")
+        ]
+        diff_argv = [
+            "git",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--find-renames",
+        ]
+        tracked = _git_name_status_summary(
+            repo,
+            [*diff_argv, "--name-status", "-z", baseline, "--"],
+            limit=max_files,
+            env_overrides=env,
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
+        )
+        tracked_files = list(tracked.get("files") or [])
+        tracked_paths = {
+            str(item.get("path") or "")
+            for item in tracked_files
+            if isinstance(item, dict)
+        }
+        changed_files = tracked_files + [
+            {"path": path, "status": "??", "kind": "untracked"}
+            for path in untracked_paths
+            if path not in tracked_paths
+        ]
+        synthetic_untracked_paths = [
+            str(item.get("path") or "")
+            for item in changed_files
+            if isinstance(item, dict)
+            and str(item.get("kind") or "").strip().lower() == "untracked"
+            and str(item.get("path") or "")
+        ]
+        diff_pathspecs = [
+            ".",
+            *[
+                f":(exclude,literal){path}"
+                for path in synthetic_untracked_paths
+            ],
+        ]
+        stat = _run_process(
+            [*diff_argv, "--stat", baseline, "--", *diff_pathspecs],
+            cwd=repo,
+            env_overrides=env,
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
+        )
+        diff = _run_process(
+            [*diff_argv, baseline, "--", *diff_pathspecs],
+            cwd=repo,
+            env_overrides=env,
+            output_limit_chars=_HARNESS_MAX_DIFF_CHARS,
+        )
+        changes = {
+            "ok": bool(
+                tracked.get("ok")
+                and untracked_result.get("ok")
+            ),
+            "counts": _counts_for_change_files(changed_files),
+            "files": changed_files[:max_files],
+            "truncated": bool(
+                tracked.get("truncated")
+                or untracked_result.get("stdout_truncated")
+                or len(changed_files) > max_files
+            ),
+            "raw": untracked_result,
+        }
+        diff_result = {
+            "ok": bool(
+                stat.get("ok")
+                and diff.get("ok")
+                and tracked.get("ok")
+                and untracked_result.get("ok")
+            ),
+            "scope": "harness_baseline",
+            "base_branch": str(task.get("base_branch") or "main"),
+            "branch_name": str(task.get("branch_name") or ""),
+            "base_ref": baseline,
+            "merge_base": baseline,
+            "compare_ref": baseline,
+            "stat": stat,
+            "diff": diff,
+            "changes": changes,
+        }
+        return {"diff": diff_result, "changes": changes}
+
+
+def harness_git_diff(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="harness diff requires a harness task")
+    evidence_workspace = begin_harness_evidence_read(
+        task_id,
+        evidence_lease_id=evidence_lease_id,
+    )
+    try:
+        return _harness_neutral_git_snapshot(
+            task,
+            change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+            repo_override=evidence_workspace,
+        )["diff"]
+    finally:
+        end_harness_evidence_read(task_id)
+
+
+def harness_git_changes(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="harness changes require a harness task")
+    evidence_workspace = begin_harness_evidence_read(
+        task_id,
+        evidence_lease_id=evidence_lease_id,
+    )
+    try:
+        return _harness_neutral_git_snapshot(
+            task,
+            change_limit=_HARNESS_MAX_CHANGED_FILES + 1,
+            repo_override=evidence_workspace,
+        )["changes"]
+    finally:
+        end_harness_evidence_read(task_id)
+
+
 def commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _commit_task(task_id, message=message)
+
+
+def _commit_task(task_id: str, *, message: str) -> Dict[str, Any]:
     msg = str(message or "").strip()
     if not msg:
         raise HTTPException(status_code=400, detail="commit message is required")
@@ -2278,31 +3733,45 @@ def checkpoint_task(
         msg = msg[:2000]
     task = load_task(task_id)
     repo = _repo_path(task)
+    command_results: List[Tuple[Dict[str, Any], str]] = []
+
+    def persist_checkpoint(*, updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        def apply(current: Dict[str, Any]) -> None:
+            for result, label in command_results:
+                _append_command(current, result, label=label)
+            if updates:
+                current.update(updates)
+
+        return mutate_task(task_id, apply)
+
     status = _run_process(["git", "status", "--porcelain"], cwd=repo)
     if not status.get("ok"):
-        _append_command(task, status, label="checkpoint-status")
-        save_task(task)
+        command_results.append((status, "checkpoint-status"))
+        persist_checkpoint()
         return {"ok": False, "changed": False, "status": status, "error": "git status failed"}
     if not str(status.get("stdout") or "").strip():
-        save_task(task)
+        persist_checkpoint()
         return {"ok": True, "changed": False, "status": status, "message": "no changes to checkpoint"}
     add = _run_process(["git", "add", "-A"], cwd=repo)
-    _append_command(task, add, label="checkpoint-add")
+    command_results.append((add, "checkpoint-add"))
     if not add.get("ok"):
-        save_task(task)
+        persist_checkpoint()
         return {"ok": False, "changed": True, "add": add, "error": "git add failed"}
     commit = _run_process(["git", "commit", "-m", msg], cwd=repo)
-    _append_command(task, commit, label="checkpoint-commit")
+    command_results.append((commit, "checkpoint-commit"))
     rev = {"ok": False, "stdout": ""}
+    updates: Dict[str, Any] = {}
     if commit.get("ok"):
         rev = _run_process(["git", "rev-parse", "HEAD"], cwd=repo)
         commit_hash = str(rev.get("stdout") or "").strip()
-        task["last_commit"] = commit_hash
-        task["last_checkpoint_commit"] = commit_hash
-        task["last_checkpoint_at"] = _now()
-        task["last_checkpoint_run_id"] = str(run_id or "").strip()
-        task["last_checkpoint_cycle"] = int(cycle or 0)
-    save_task(task)
+        updates = {
+            "last_commit": commit_hash,
+            "last_checkpoint_commit": commit_hash,
+            "last_checkpoint_at": _now(),
+            "last_checkpoint_run_id": str(run_id or "").strip(),
+            "last_checkpoint_cycle": int(cycle or 0),
+        }
+    persisted = persist_checkpoint(updates=updates)
     return {
         "ok": bool(commit.get("ok")),
         "changed": True,
@@ -2310,11 +3779,30 @@ def checkpoint_task(
         "add": add,
         "commit": commit,
         "rev": rev,
-        "last_commit": task.get("last_commit"),
+        "last_commit": persisted.get("last_commit"),
     }
 
 
-def push_task(task_id: str, *, remote: Optional[str] = None, git_token_value: Optional[str] = None) -> Dict[str, Any]:
+def push_task(
+    task_id: str,
+    *,
+    remote: Optional[str] = None,
+    git_token_value: Optional[str] = None,
+) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _push_task(
+            task_id,
+            remote=remote,
+            git_token_value=git_token_value,
+        )
+
+
+def _push_task(
+    task_id: str,
+    *,
+    remote: Optional[str] = None,
+    git_token_value: Optional[str] = None,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     remote_name = str(remote or "origin").strip() or "origin"
@@ -2577,6 +4065,26 @@ def create_pull_request(
     base_branch: Optional[str] = None,
     git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
+    with _harness_mutation_guard(task_id):
+        return _create_pull_request(
+            task_id,
+            title=title,
+            body=body,
+            draft=draft,
+            base_branch=base_branch,
+            git_token_value=git_token_value,
+        )
+
+
+def _create_pull_request(
+    task_id: str,
+    *,
+    title: str,
+    body: Optional[str],
+    draft: bool = True,
+    base_branch: Optional[str] = None,
+    git_token_value: Optional[str] = None,
+) -> Dict[str, Any]:
     task = load_task(task_id)
     repo = _repo_path(task)
     pr_title = str(title or "").strip()
@@ -2767,6 +4275,101 @@ def read_file(task_id: str, *, path: str) -> Dict[str, Any]:
     return {"path": str(path), "size": size, "content": text}
 
 
+def _resolve_harness_evidence_path(
+    task: Dict[str, Any],
+    path: str,
+    *,
+    repo_override: Optional[Path] = None,
+) -> Tuple[Path, Optional[int]]:
+    rel = str(path)
+    candidate = Path(rel)
+    if (
+        not rel
+        or "\x00" in rel
+        or candidate.is_absolute()
+        or any(part in {"", ".", "..", ".git"} for part in candidate.parts)
+    ):
+        raise HTTPException(status_code=400, detail="invalid harness evidence path")
+    repo = repo_override.resolve() if repo_override is not None else _repo_path(task)
+    if not repo.is_dir() or repo.is_symlink():
+        raise HTTPException(status_code=409, detail="harness evidence workspace is unavailable")
+    target = repo.joinpath(candidate)
+    current = repo
+    for part in candidate.parts:
+        current = current.joinpath(part)
+        try:
+            if current.is_symlink():
+                return target, current.lstat().st_size
+        except OSError:
+            break
+    return target, None
+
+
+def _read_harness_file_evidence(
+    task: Dict[str, Any],
+    *,
+    path: str,
+    repo_override: Optional[Path] = None,
+) -> Dict[str, Any]:
+    target, symlink_size = _resolve_harness_evidence_path(
+        task,
+        path,
+        repo_override=repo_override,
+    )
+    if symlink_size is not None:
+        return {
+            "path": str(path),
+            "size": symlink_size,
+            "encoding": "symlink",
+            "content": None,
+        }
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    file_stat = target.stat()
+    size = file_stat.st_size
+    if size > _HARNESS_MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="file is too large for the coding file API")
+    raw = target.read_bytes()
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        content = None
+    if content is None or "\x00" in content:
+        return {"path": str(path), "size": size, "encoding": "binary", "content": None}
+    mode = "100755" if file_stat.st_mode & 0o111 else "100644"
+    return {
+        "path": str(path),
+        "size": size,
+        "mode": mode,
+        "encoding": "utf-8",
+        "content": content,
+    }
+
+
+def read_harness_file_evidence(
+    task_id: str,
+    *,
+    path: str,
+    evidence_lease_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Read exact text evidence without lossy decoding for disposable harness tasks."""
+    task = load_task(task_id)
+    if str(task.get("kind") or "") != "harness_eval":
+        raise HTTPException(status_code=403, detail="only coding harness tasks may be read here")
+    evidence_workspace = begin_harness_evidence_read(
+        task_id,
+        evidence_lease_id=evidence_lease_id,
+    )
+    try:
+        return _read_harness_file_evidence(
+            task,
+            path=path,
+            repo_override=evidence_workspace,
+        )
+    finally:
+        end_harness_evidence_read(task_id)
+
+
 def read_file_lines(task_id: str, *, path: str, start_line: int = 1, line_count: int = 200) -> Dict[str, Any]:
     task = load_task(task_id)
     target = _resolve_repo_child(task, path)
@@ -2802,69 +4405,179 @@ def replace_text(
     new_text: str,
     expected_replacements: Optional[int] = 1,
 ) -> Dict[str, Any]:
-    task = load_task(task_id)
-    rel = str(path or "").strip()
-    if not rel:
-        raise HTTPException(status_code=400, detail="path is required")
-    old = str(old_text or "")
-    if not old:
-        raise HTTPException(status_code=400, detail="old_text is required")
-    target = _resolve_repo_child(task, rel)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="file not found")
-    size = target.stat().st_size
-    if size > file_max_bytes():
-        raise HTTPException(status_code=413, detail="file is too large for the coding file API")
-    text = target.read_text(encoding="utf-8", errors="replace")
-    count = text.count(old)
-    if count <= 0:
-        return {"ok": False, "path": rel, "replacements": 0, "error": "old_text was not found"}
-    expected = None if expected_replacements is None else int(expected_replacements)
-    if expected is not None and expected >= 0 and count != expected:
-        return {"ok": False, "path": rel, "replacements": count, "expected_replacements": expected, "error": "replacement count did not match expected_replacements"}
-    updated = text.replace(old, str(new_text or ""))
-    data = updated.encode("utf-8")
-    if len(data) > file_max_bytes():
-        raise HTTPException(status_code=413, detail="replacement result is too large")
-    target.write_bytes(data)
-    task["last_file_write_at"] = _now()
-    save_task(task)
-    return {"ok": True, "path": rel, "replacements": count, "bytes": len(data)}
+    with _harness_mutation_guard(task_id):
+        task = load_task(task_id)
+        rel = str(path or "").strip()
+        if not rel:
+            raise HTTPException(status_code=400, detail="path is required")
+        old = str(old_text or "")
+        if not old:
+            raise HTTPException(status_code=400, detail="old_text is required")
+        target = _resolve_repo_child(task, rel)
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        size = target.stat().st_size
+        if size > file_max_bytes():
+            raise HTTPException(status_code=413, detail="file is too large for the coding file API")
+        text = target.read_text(encoding="utf-8", errors="replace")
+        count = text.count(old)
+        if count <= 0:
+            return {"ok": False, "path": rel, "replacements": 0, "error": "old_text was not found"}
+        expected = None if expected_replacements is None else int(expected_replacements)
+        if expected is not None and expected >= 0 and count != expected:
+            return {"ok": False, "path": rel, "replacements": count, "expected_replacements": expected, "error": "replacement count did not match expected_replacements"}
+        updated = text.replace(old, str(new_text or ""))
+        data = updated.encode("utf-8")
+        if len(data) > file_max_bytes():
+            raise HTTPException(status_code=413, detail="replacement result is too large")
+        target.write_bytes(data)
+        task["last_file_write_at"] = _now()
+        save_task(task)
+        return {"ok": True, "path": rel, "replacements": count, "bytes": len(data)}
 
 
 def write_file(task_id: str, *, path: str, content: str) -> Dict[str, Any]:
-    task = load_task(task_id)
-    rel = str(path or "").strip()
-    if not rel:
-        raise HTTPException(status_code=400, detail="path is required")
-    target = _resolve_repo_child(task, rel)
-    data = str(content or "").encode("utf-8")
-    if len(data) > file_max_bytes():
-        raise HTTPException(status_code=413, detail="content is too large for the coding file API")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-    task["last_file_write_at"] = _now()
-    save_task(task)
-    return {"ok": True, "path": rel, "bytes": len(data)}
+    with _harness_mutation_guard(task_id):
+        task = load_task(task_id)
+        rel = str(path or "").strip()
+        if not rel:
+            raise HTTPException(status_code=400, detail="path is required")
+        target = _resolve_repo_child(task, rel)
+        data = str(content or "").encode("utf-8")
+        if len(data) > file_max_bytes():
+            raise HTTPException(status_code=413, detail="content is too large for the coding file API")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        task["last_file_write_at"] = _now()
+        save_task(task)
+        return {"ok": True, "path": rel, "bytes": len(data)}
 
 
-def delete_task(task_id: str) -> Dict[str, Any]:
+def delete_task(
+    task_id: str,
+    *,
+    _allow_harness: bool = False,
+    _allow_initializing: bool = False,
+) -> Dict[str, Any]:
     task = load_task(task_id)
-    path = _task_workspace(task_id)
-    root = workspace_root()
-    _ensure_inside(root, path)
-    if path.exists():
-        shutil.rmtree(path)
+    if (
+        str(task.get("status") or "").strip().lower() == "initializing"
+        and not _allow_initializing
+    ):
+        raise HTTPException(status_code=409, detail="coding task is still initializing")
+    if str(task.get("kind") or "") == "harness_eval" and not _allow_harness:
+        raise HTTPException(
+            status_code=403,
+            detail="harness tasks require the guarded harness deletion endpoint",
+        )
     meta = _task_path(task_id)
-    try:
-        meta.unlink()
-    except FileNotFoundError:
-        pass
+    with _json_lock(meta):
+        path = _task_workspace(task_id)
+        root = workspace_root()
+        _ensure_inside(root, path)
+        if path.exists():
+            shutil.rmtree(path)
+        _mark_task_deleted(meta)
+        try:
+            meta.unlink()
+        except FileNotFoundError:
+            pass
     return {"ok": True, "task_id": task_id, "deleted_workspace": str(path), "repo_url": redact_repo_url(str(task.get("repo_url") or ""))}
+
+
+def delete_harness_task(
+    task_id: str,
+    *,
+    evidence_lease_id: Optional[str] = None,
+    _allow_initializing: bool = False,
+) -> Dict[str, Any]:
+    """Atomically refuse deletion while a harness validation command is active."""
+    with _HARNESS_VALIDATIONS_GUARD:
+        active_lease = _active_harness_evidence_lease_locked(task_id)
+        provided_lease = str(evidence_lease_id or "")
+        if active_lease != provided_lease and (active_lease or provided_lease):
+            raise HTTPException(status_code=409, detail="coding harness evidence lease is not active")
+        if task_id in _ACTIVE_HARNESS_RUN_STARTS:
+            raise HTTPException(status_code=409, detail="coding harness agent run is starting")
+        if task_id in _ACTIVE_HARNESS_VALIDATIONS:
+            raise HTTPException(status_code=409, detail="coding harness validation is still active")
+        if _ACTIVE_HARNESS_AGENT_TOOLS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness agent tool is still active")
+        if _ACTIVE_HARNESS_EVIDENCE_READS.get(task_id, 0) > 0:
+            raise HTTPException(status_code=409, detail="coding harness evidence read is still active")
+        task = load_task(task_id)
+        if str(task.get("kind") or "") != "harness_eval":
+            raise HTTPException(status_code=403, detail="only coding harness tasks may be deleted here")
+        agent_status = str(task.get("agent_status") or "idle").strip().lower()
+        if agent_status in {"queued", "running", "stopping", "pausing"}:
+            raise HTTPException(status_code=409, detail="coding harness task is still active")
+        result = delete_task(
+            task_id,
+            _allow_harness=True,
+            _allow_initializing=_allow_initializing,
+        )
+        if active_lease:
+            removed = _ACTIVE_HARNESS_EVIDENCE_LEASES.pop(active_lease, None)
+            if isinstance(removed, dict):
+                _cleanup_harness_evidence_lease(removed)
+        return result
+
+
+def cleanup_expired_harness_tasks(*, now: Optional[float] = None) -> Dict[str, Any]:
+    """Remove expired terminal eval workspaces left by a disconnected client."""
+    _ensure_enabled()
+    current = float(now if now is not None else _now())
+    terminal_statuses = {
+        "completed",
+        "failed",
+        "failed_finalization",
+        "failed_publish",
+        "paused",
+        "stopped",
+        "interrupted",
+        "idle_waiting",
+    }
+    purged: List[str] = []
+    failures: Dict[str, str] = {}
+    for path in tasks_dir().glob("code_*.json"):
+        try:
+            task = _read_json(path)
+            if str(task.get("kind") or "") != "harness_eval":
+                continue
+            expires_at = float(task.get("harness_expires_at") or 0)
+            agent_status = str(task.get("agent_status") or "idle").strip().lower()
+            task_status = str(task.get("status") or "").strip().lower()
+            finished_at = float(task.get("agent_finished_at") or task.get("updated_at") or 0)
+            abandoned_idle = (
+                task_status in {"initializing", "ready"} and agent_status == "idle"
+            )
+            if (
+                expires_at <= 0
+                or expires_at > current
+                or (
+                    task_status != "error"
+                    and agent_status not in terminal_statuses
+                    and not abandoned_idle
+                )
+                or finished_at <= 0
+                or current - finished_at < 30.0
+            ):
+                continue
+            task_id = str(task.get("id") or path.stem)
+            delete_harness_task(task_id, _allow_initializing=abandoned_idle)
+            purged.append(task_id)
+        except Exception as exc:
+            failures[path.stem] = f"{type(exc).__name__}: {_redact_text(str(exc))}"
+    return {"ok": not failures, "purged": purged, "failures": failures}
 
 
 def archive_task(task_id: str, *, actor: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
     task = load_task(task_id)
+    if str(task.get("kind") or "") == "harness_eval":
+        raise HTTPException(
+            status_code=403,
+            detail="disposable harness tasks cannot be archived",
+        )
     task_path = _task_path(task_id)
     workspace_path = _task_workspace(task_id)
     archive_id = f"{task_id}.{int(_now())}.{secrets.token_hex(4)}"
@@ -3593,6 +5306,7 @@ def _task_monitor_summary(task: Dict[str, Any], *, stalled_after_sec: float = 90
 
 def monitor_tasks(*, limit: int = 20, only_attention: bool = False, stalled_after_sec: float = 900.0) -> Dict[str, Any]:
     _ensure_enabled()
+    cleanup_expired_harness_tasks()
     items: List[Dict[str, Any]] = []
     for public in list_tasks(limit=max(1, min(int(limit or 20), 100))):
         task_id = str(public.get("id") or "")

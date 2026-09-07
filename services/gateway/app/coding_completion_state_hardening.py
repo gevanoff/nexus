@@ -6,6 +6,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from fastapi import HTTPException
 
+from app import coding_validation_policy
 from app import coding_work_phases
 
 
@@ -323,8 +324,12 @@ def _durable_acceptance_state(cw: Any, task: Mapping[str, Any]) -> tuple[bool, b
         return False, False
     validation = _mapping(snapshot.get("validation"))
     review = _mapping(snapshot.get("diff_review"))
-    validation_ready = bool(validation.get("validation_after_latest_edit")) and bool(
-        validation.get("last_validation_ok")
+    validation_ready = (
+        not coding_validation_policy.requires_agent_validation(task)
+        or (
+            bool(validation.get("validation_after_latest_edit"))
+            and bool(validation.get("last_validation_ok"))
+        )
     )
     review_ready = bool(review.get("diff_reviewed_after_latest_edit"))
     return validation_ready, review_ready

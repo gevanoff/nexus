@@ -33,6 +33,21 @@ def _write_executable(path: Path, body: str) -> Path:
     return path
 
 
+def test_nexus_clock_starts_at_server_agent_run_not_fixture_setup(monkeypatch) -> None:
+    monkeypatch.setattr(harness.time, "time", lambda: 2_060.0)
+    monkeypatch.setattr(harness.time, "monotonic", lambda: 500.0)
+
+    started_at, started, deadline = harness._nexus_agent_run_clock(
+        {"agent": {"started_at": 1_045.0, "elapsed_runtime_sec": 15}},
+        wall_time_sec=60,
+        observation_round_trip_sec=4,
+    )
+
+    assert started_at == time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(1_045.0))
+    assert started == 481.0
+    assert deadline == 541.0
+
+
 def _fixture(
     path: Path,
     *,
@@ -1055,7 +1070,7 @@ def test_validation_command_can_use_more_than_300_seconds_of_remaining_budget(
 
 @pytest.mark.requires_linux_process_containment
 @pytest.mark.requires_non_root_validation
-def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
+def test_validation_mutations_remain_in_measured_workspace(tmp_path: Path) -> None:
     if not sys.platform.startswith("linux"):
         pytest.skip("validation integration requires Linux")
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
@@ -1068,13 +1083,7 @@ def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
     marker = workspace / "validation-write.txt"
     code = (
         "from pathlib import Path\n"
-        "marker = Path('validation-write.txt')\n"
-        "try:\n"
-        "    marker.write_text('forged', encoding='utf-8')\n"
-        "except OSError:\n"
-        "    pass\n"
-        "else:\n"
-        "    raise SystemExit('validation workspace was writable')\n"
+        "Path('validation-write.txt').write_text('validated', encoding='utf-8')\n"
     )
 
     result = harness.run_validation(
@@ -1086,7 +1095,7 @@ def test_validation_cannot_modify_measured_workspace(tmp_path: Path) -> None:
     )
 
     assert result["passed"] is True
-    assert not marker.exists()
+    assert marker.read_text(encoding="utf-8") == "validated"
 
 
 @pytest.mark.requires_linux_process_containment

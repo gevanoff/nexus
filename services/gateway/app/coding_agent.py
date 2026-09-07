@@ -13,6 +13,7 @@ from app.backends import backend_hostname, get_admission_controller, get_registr
 from app import coding_model_policy
 from app import context_budget
 from app import coding_semantic_memory
+from app import coding_validation_policy
 from app import coding_work_phases
 from app import coding_forced_action as forced_action
 from app import coding_workspace as cw
@@ -80,6 +81,11 @@ def _active_runner(task_id: str) -> Optional[asyncio.Task[Any]]:
     if running is not None and running.done():
         _RUNNING.pop(task_id, None)
     return None
+
+
+def agent_run_active(task_id: str) -> bool:
+    """Return whether this process still owns a live runner for the task."""
+    return _active_runner(task_id) is not None
 
 
 def _mark_stale_agent_paused(task_id: str, task: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -334,8 +340,30 @@ def _repeated_state_read_decision(count: int, maximum: int) -> str:
     return "continue"
 
 
+def _filter_harness_tool_specs(
+    specs: List[ToolSpec], task: Dict[str, Any]
+) -> List[ToolSpec]:
+    if _harness_agent_tool_blocked(task, "coding_run_command"):
+        specs = [
+            spec
+            for spec in specs
+            if str(spec.function.name) != "coding_run_command"
+        ]
+    return specs
+
+
+def _harness_agent_tool_blocked(task: Dict[str, Any], name: str) -> bool:
+    return (
+        str(task.get("kind") or "") == "harness_eval"
+        and str(name or "") == "coding_run_command"
+    )
+
+
 def _tool_specs_for_task(task: Dict[str, Any]) -> List[ToolSpec]:
-    return forced_action.filter_tool_specs(_tool_specs(), task)
+    return _filter_harness_tool_specs(
+        forced_action.filter_tool_specs(_tool_specs(), task),
+        task,
+    )
 
 
 def _forced_action_context(task: Dict[str, Any]) -> str:
@@ -430,7 +458,16 @@ def finalize_successful_run(
         require_commit_on_success = bool(completion.get("require_commit_on_success", True)) or run_delta
         if require_file_changes and not run_delta:
             raise RuntimeError("successful run has no meaningful delta produced by this run")
-        if run_delta and completion.get("require_validation_after_edit", True) and not bool((snapshot.get("validation") or {}).get("validation_after_latest_edit")):
+        if (
+            run_delta
+            and _requires_agent_validation(latest)
+            and completion.get("require_validation_after_edit", True)
+            and not bool(
+                (snapshot.get("validation") or {}).get(
+                    "validation_after_latest_edit"
+                )
+            )
+        ):
             raise RuntimeError("successful run lacks validation after the latest edit")
         if run_delta and completion.get("require_diff_review_after_edit", True) and not bool((snapshot.get("diff_review") or {}).get("diff_reviewed_after_latest_edit")):
             raise RuntimeError("successful run lacks diff review after the latest edit")
@@ -1142,27 +1179,39 @@ def _finish_gate_feedback(
     )
     if manifest_feedback:
         return manifest_feedback
-    if validation_failed_after_edit:
-        return (
-            "A validation command failed after the latest edit. Fix the reported issue and rerun validation, "
-            "or call coding_finish with success=false and a concrete blocker."
-        )
     missing: List[str] = []
-    if not validation_run_after_edit:
-        missing.append(
-            "run a targeted validation command after the latest edit, such as pytest, ruff check, "
-            "python -m py_compile, node --check, npm test, or git diff --check. If one checker is unavailable, use an available fallback"
-        )
-    elif validation_ok_after_edit is False:
-        return (
-            "You ran validation after editing, but it failed. Fix the reported issue and rerun validation, "
-            "or call coding_finish with success=false and a concrete blocker."
-        )
+    if _requires_agent_validation(task):
+        if validation_failed_after_edit:
+            return (
+                "A validation command failed after the latest edit. Fix the reported issue and rerun validation, "
+                "or call coding_finish with success=false and a concrete blocker."
+            )
+        if not validation_run_after_edit:
+            missing.append(
+                "run a targeted validation command after the latest edit, such as pytest, ruff check, "
+                "python -m py_compile, node --check, npm test, or git diff --check. If one checker is unavailable, use an available fallback"
+            )
+        elif validation_ok_after_edit is False:
+            return (
+                "You ran validation after editing, but it failed. Fix the reported issue and rerun validation, "
+                "or call coding_finish with success=false and a concrete blocker."
+            )
     if not diff_reviewed_after_edit:
         missing.append("inspect the actual workspace diff with coding_git_diff after the latest edit")
     if not missing:
         return ""
     return "Before reporting success after workspace edits, " + " and ".join(missing) + "."
+
+
+def _requires_agent_validation(task: Dict[str, Any]) -> bool:
+    return coding_validation_policy.requires_agent_validation(task)
+
+
+def _finish_gate_required_tools(task: Dict[str, Any]) -> List[str]:
+    tools = ["coding_git_diff"]
+    if _requires_agent_validation(task):
+        tools.insert(0, "coding_run_command")
+    return tools
 
 
 def _previous_run_context(task: Dict[str, Any]) -> str:
@@ -2179,7 +2228,7 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
     if name == "coding_list_tree":
         return cw.list_tree(task_id, path=str(args.get("path") or ""), limit=int(args.get("limit") or 250))
     if name == "coding_tool_manifest":
-        manifest = coding_tool_manifest()
+        manifest = coding_tool_manifest(cw.load_task(task_id))
         if not bool(args.get("include_parameters", False)):
             slim_tools = []
             for item in manifest.get("tools") or []:
@@ -2256,6 +2305,12 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
             }
         )
     if name == "coding_run_command":
+        task = cw.load_task(task_id)
+        if _harness_agent_tool_blocked(task, name):
+            raise HTTPException(
+                status_code=403,
+                detail="command execution is unavailable to coding harness agents",
+            )
         argv = args.get("argv")
         if not isinstance(argv, list):
             raise HTTPException(status_code=400, detail="argv must be a list")
@@ -2280,13 +2335,36 @@ def _run_tool(task_id: str, name: str, args: Dict[str, Any], *, git_token_value:
     raise HTTPException(status_code=400, detail=f"unknown coding tool: {name}")
 
 
+def _run_tool_worker(
+    task_id: str,
+    name: str,
+    args: Dict[str, Any],
+    *,
+    git_token_value: Optional[str],
+) -> Dict[str, Any]:
+    registered = cw.begin_harness_agent_tool(task_id)
+    try:
+        return _run_tool(
+            task_id,
+            name,
+            args,
+            git_token_value=git_token_value,
+        )
+    finally:
+        cw.end_harness_agent_tool(task_id, registered=registered)
+
+
 def _checkpoint_enabled() -> bool:
     return bool(getattr(S, "CODING_AGENT_CHECKPOINT_COMMITS", True))
 
 
 def _checkpoint_after_cycle(task_id: str, *, run_id: str, cycle: int) -> Dict[str, Any]:
     msg = f"Nexus checkpoint: {task_id} cycle {cycle}"
-    return cw.checkpoint_task(task_id, message=msg, run_id=run_id, cycle=cycle)
+    registered = cw.begin_harness_agent_tool(task_id)
+    try:
+        return cw.checkpoint_task(task_id, message=msg, run_id=run_id, cycle=cycle)
+    finally:
+        cw.end_harness_agent_tool(task_id, registered=registered)
 
 
 def _mission_requires_workspace_edits(task: Dict[str, Any]) -> bool:
@@ -2315,11 +2393,17 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
         request_bits.append(integration_context)
     edit_expectation = ""
     if _mission_requires_workspace_edits(task):
-        edit_expectation = (
-            "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
-            "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
-            "Do not stop at diagnosis alone when a focused fix is available. "
-        )
+        if _requires_agent_validation(task):
+            edit_expectation = (
+                "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
+                "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
+                "Do not stop at diagnosis alone when a focused fix is available. "
+            )
+        else:
+            edit_expectation = (
+                "This is a harness task: command execution is unavailable to the agent and declared validation runs after you finish. "
+                "Make the smallest viable workspace edit, inspect the resulting diff, and then finish. "
+            )
     forced_context = _forced_action_context(task)
     if forced_context:
         forced_request_bits = [f"Original user request:\n{original or '(none recorded)'}"]
@@ -2515,7 +2599,41 @@ async def resume_interrupted_agent_runs(task_ids: Sequence[str]) -> Dict[str, An
     return {"ok": not failures, "resumed": len(resumed), "tasks": resumed, "failures": failures}
 
 
-async def start_agent_run(
+async def _initialize_run_state_settled(
+    task_id: str,
+    *,
+    fields: Dict[str, Any],
+    run_record: Dict[str, Any],
+    requested_prompt: str,
+    actor: Optional[str],
+) -> Dict[str, Any]:
+    """Finish startup persistence before propagating request cancellation."""
+    worker = asyncio.create_task(
+        asyncio.to_thread(
+            _initialize_run_state,
+            task_id,
+            fields=fields,
+            run_record=run_record,
+            requested_prompt=requested_prompt,
+            actor=actor,
+        )
+    )
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+        try:
+            worker.result()
+        except BaseException:
+            pass
+        raise
+
+
+async def _start_agent_run_impl(
     task_id: str,
     *,
     git_token_value: Optional[str] = None,
@@ -2585,8 +2703,7 @@ async def start_agent_run(
         summary = str(idle_only_policy.get("warning") or "").strip() or (
             "This workspace is pinned to a huge MLX model that is not currently loaded."
         )
-        await asyncio.to_thread(
-            _initialize_run_state,
+        await _initialize_run_state_settled(
             task_id,
             fields={
                 "coding_model": model,
@@ -2648,8 +2765,7 @@ async def start_agent_run(
         fresh = await asyncio.to_thread(cw.load_task, task_id)
         return cw.public_task(fresh)
 
-    await asyncio.to_thread(
-        _initialize_run_state,
+    await _initialize_run_state_settled(
         task_id,
         fields={
             "coding_model": model,
@@ -2721,6 +2837,76 @@ async def start_agent_run(
     job.add_done_callback(_cleanup)
     fresh = await asyncio.to_thread(cw.load_task, task_id)
     return cw.public_task(fresh)
+
+
+async def start_agent_run(
+    task_id: str,
+    *,
+    git_token_value: Optional[str] = None,
+    coding_model: Optional[str] = None,
+    prompt: Optional[str] = None,
+    auto_commit: bool = False,
+    commit_message: Optional[str] = None,
+    actor: Optional[str] = None,
+    max_cycles: Optional[int] = None,
+    max_runtime_sec: Optional[int] = None,
+    context_reset_cycles: Optional[int] = None,
+    mission_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    registered = cw.begin_harness_agent_run_start(task_id)
+    try:
+        return await _start_agent_run_impl(
+            task_id,
+            git_token_value=git_token_value,
+            coding_model=coding_model,
+            prompt=prompt,
+            auto_commit=auto_commit,
+            commit_message=commit_message,
+            actor=actor,
+            max_cycles=max_cycles,
+            max_runtime_sec=max_runtime_sec,
+            context_reset_cycles=context_reset_cycles,
+            mission_overrides=mission_overrides,
+        )
+    except BaseException as exc:
+        if registered and _active_runner(task_id) is None:
+            finished_at = time.time()
+            failure_type = type(exc).__name__
+
+            def mark_failed_start(current: Dict[str, Any]) -> None:
+                if str(current.get("agent_status") or "").strip().lower() not in _ACTIVE_AGENT_STATUSES:
+                    return
+                summary = "Coding harness agent startup failed before runner registration."
+                current.update({
+                    "agent_status": "failed",
+                    "agent_summary": summary,
+                    "agent_error": failure_type,
+                    "agent_stop_reason_code": "run_start_failed",
+                    "agent_finished_at": finished_at,
+                    "agent_last_event_at": now_unix(),
+                    "agent_stop_requested": False,
+                    "agent_pause_requested": False,
+                })
+                run_id = str(current.get("agent_run_id") or "")
+                runs = current.get("agent_runs")
+                if not run_id or not isinstance(runs, list):
+                    return
+                for record in reversed(runs):
+                    if not isinstance(record, dict) or str(record.get("run_id") or "") != run_id:
+                        continue
+                    record.update({
+                        "status": "failed",
+                        "finished_at": finished_at,
+                        "summary": summary,
+                        "error": failure_type,
+                        "stop_reason_code": "run_start_failed",
+                    })
+                    break
+
+            cw.mutate_task(task_id, mark_failed_start)
+        raise
+    finally:
+        cw.end_harness_agent_run_start(task_id, registered=registered)
 
 
 async def create_and_start_agent_run(
@@ -3388,7 +3574,13 @@ async def _run_agent(
                     )
                 else:
                     try:
-                        result = await asyncio.to_thread(_run_tool, task_id, name, args, git_token_value=git_token_value)
+                        result = await asyncio.to_thread(
+                            _run_tool_worker,
+                            task_id,
+                            name,
+                            args,
+                            git_token_value=git_token_value,
+                        )
                     except HTTPException as exc:
                         result = {"ok": False, "error": exc.detail}
                     except Exception as exc:
@@ -3425,7 +3617,7 @@ async def _run_agent(
                             "success": False,
                             "summary": gate_feedback,
                             "error": gate_feedback,
-                            "required_tools": ["coding_run_command", "coding_git_diff"],
+                            "required_tools": _finish_gate_required_tools(task),
                         }
                         await asyncio.to_thread(
                             _append_event,

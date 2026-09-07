@@ -177,7 +177,7 @@ def test_binary_git_evidence_never_retains_reconstructable_secret(tmp_path: Path
 
 @pytest.mark.requires_linux_process_containment
 @pytest.mark.requires_non_root_validation
-def test_validation_cannot_supply_measured_workspace_mutation(tmp_path: Path) -> None:
+def test_validation_mutation_is_included_in_measured_workspace(tmp_path: Path) -> None:
     if harness.shutil.which("bwrap", path="/usr/sbin:/usr/bin:/sbin:/bin") is None:
         pytest.skip("validation integration requires bwrap")
     fake = _write_executable(
@@ -214,13 +214,13 @@ print('author complete')
         allow_mutations=True,
     )
 
-    assert result["outcome"]["completed"] is False
-    assert result["validation"]["passed"] is False
-    assert result["workspace"]["files_changed"] == []
+    assert result["outcome"]["completed"] is True
+    assert result["validation"]["passed"] is True
+    assert result["workspace"]["files_changed"] == ["app.py"]
     diff = Path(result["artifacts"]["diff"]).read_text(encoding="utf-8")
-    assert diff == ""
+    assert "+AFTER_VALIDATION" in diff
     final_file = Path(result["artifacts"]["run_root"]) / "artifacts" / "final-files" / "app.py"
-    assert not final_file.exists()
+    assert final_file.read_text(encoding="utf-8") == "AFTER_VALIDATION\n"
 
 
 def test_repository_diff_external_and_fsmonitor_config_cannot_execute(tmp_path: Path) -> None:
@@ -259,6 +259,27 @@ def test_workspace_snapshot_preserves_trailing_whitespace_in_git_diff(tmp_path: 
     retained = (artifacts / "final.diff").read_text(encoding="utf-8")
     assert retained == expected
     assert "+VALUE = 2  \n+   \n" in retained
+
+
+def test_workspace_snapshot_omits_binary_untracked_patch(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    artifacts = tmp_path / "artifacts"
+    baseline = harness.initialize_workspace(
+        workspace,
+        _workspace_fixture({"app.py": "VALUE = 1\n"}),
+    )
+    (workspace / "blob.bin").write_bytes(b"binary\x00content")
+
+    snapshot = harness.workspace_snapshot(workspace, baseline, artifacts)
+
+    assert snapshot["files_changed"] == ["blob.bin"]
+    assert snapshot["evidence_omissions"] == [
+        {
+            "path": "blob.bin",
+            "reason": "binary file content omitted; untracked patch omitted",
+        }
+    ]
+    assert (artifacts / "final.diff").read_text(encoding="utf-8") == ""
 
 
 def test_secret_bearing_changed_filename_is_not_used_as_retained_artifact_path(tmp_path: Path) -> None:

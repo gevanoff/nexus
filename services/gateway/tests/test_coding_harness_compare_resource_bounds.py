@@ -106,6 +106,38 @@ def test_objective_file_content_checks_fail_closed_above_read_limit(tmp_path: Pa
     assert "objective-read limit" in result["checks"][0]["error"]
 
 
+@pytest.mark.parametrize("content", [b"safe\xffbytes", b"safe\x00bytes"])
+def test_objective_file_content_checks_fail_closed_for_binary_content(
+    tmp_path: Path,
+    content: bytes,
+) -> None:
+    target = tmp_path / "binary.dat"
+    target.write_bytes(content)
+    fixture = {
+        "expected": {
+            "file_not_contains": [{"path": "binary.dat", "needle": "secret"}],
+        }
+    }
+
+    result = harness.objective_checks(
+        fixture,
+        tmp_path,
+        changed=[],
+        validation={"passed": None},
+    )
+
+    assert result["passed"] is False
+    assert result["checks"] == [
+        {
+            "kind": "file_not_contains",
+            "path": "binary.dat",
+            "needle": "secret",
+            "passed": False,
+            "error": "binary file content omitted",
+        }
+    ]
+
+
 def test_fixture_content_objective_count_is_bounded(tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path / "fixture.json",
@@ -127,16 +159,16 @@ def test_repeated_content_objectives_read_each_file_once(
 ) -> None:
     target = tmp_path / "app.py"
     target.write_text("VALUE = 1\n", encoding="utf-8")
-    real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
     target_reads = 0
 
-    def counted_read_text(path: Path, *args, **kwargs):
+    def counted_read_bytes(path: Path, *args, **kwargs):
         nonlocal target_reads
         if path == target:
             target_reads += 1
-        return real_read_text(path, *args, **kwargs)
+        return real_read_bytes(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", counted_read_text)
+    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
     result = harness.objective_checks(
         {
             "expected": {

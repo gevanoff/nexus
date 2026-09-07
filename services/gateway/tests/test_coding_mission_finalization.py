@@ -97,6 +97,26 @@ def test_coding_finalization_uses_existing_checkpoint_commit(monkeypatch):
     assert result["final_commit"] == "checkpoint"
 
 
+def test_harness_finalization_defers_validation_to_fixture_runner(monkeypatch):
+    stored = _finalizer_mocks(monkeypatch, changed=True)
+    stored["kind"] = "harness_eval"
+    monkeypatch.setattr(
+        cw,
+        "coding_state_snapshot",
+        lambda *_a, **_k: {
+            "validation": {"validation_after_latest_edit": False},
+            "diff_review": {"diff_reviewed_after_latest_edit": True},
+        },
+    )
+
+    result = ca.finalize_successful_run(
+        "task-1", finish_summary="Fix it", run_id="run-1"
+    )
+
+    assert result["ok"] is True
+    assert result["final_commit"] == "final"
+
+
 def test_review_finalization_succeeds_without_new_changes_or_commit(monkeypatch):
     stored = _finalizer_mocks(monkeypatch, changed=False, base_delta=False)
     stored["prompt"] = "Review this workspace for concrete findings and missing tests."

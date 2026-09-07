@@ -11,6 +11,7 @@ from app import coding_agent as _agent
 from app import coding_backend_failover
 from app import coding_run_delta
 from app import coding_semantic_acceptance
+from app import coding_validation_policy
 from app import coding_workspace as cw
 from app.coding_workspace_reconciliation import reconcile_before_run
 
@@ -314,6 +315,7 @@ def _run_delta_diff(task_id: str, task: Dict[str, Any]) -> str:
 def _deterministic_acceptance_ready(task_id: str) -> bool:
     try:
         snapshot = cw.coding_state_snapshot(task_id)
+        task = cw.load_task(task_id)
     except Exception:
         return False
     validation = (
@@ -326,9 +328,11 @@ def _deterministic_acceptance_ready(task_id: str) -> bool:
         if isinstance(snapshot.get("diff_review"), dict)
         else {}
     )
-    return bool(validation.get("validation_after_latest_edit")) and bool(
-        review.get("diff_reviewed_after_latest_edit")
+    validation_ready = (
+        not coding_validation_policy.requires_agent_validation(task)
+        or bool(validation.get("validation_after_latest_edit"))
     )
+    return validation_ready and bool(review.get("diff_reviewed_after_latest_edit"))
 
 
 async def _semantic_acceptance_review(

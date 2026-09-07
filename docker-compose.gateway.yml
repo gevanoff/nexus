@@ -9,6 +9,9 @@ services:
       context: ./services/gateway
       dockerfile: Dockerfile
     container_name: nexus-gateway
+    cap_add:
+      - SYS_ADMIN
+    cgroup: private
     ports:
       - "${GATEWAY_PORT:-8800}:8800"
       - "${OBSERVABILITY_PORT:-8801}:8801"
@@ -71,6 +74,7 @@ services:
       - CODING_REQUIRE_ADMIN=${CODING_REQUIRE_ADMIN:-true}
       - CODING_SMOKE_REPORT_DIR=/var/lib/gateway/coding_smoke_reports
       - CODING_GIT_TOKEN=${CODING_GIT_TOKEN:-}
+      - NEXUS_VALIDATION_TMP_ROOT=/var/lib/gateway/validation-tmp
 
       # Tool bus configuration
       - TOOLS_LOG_MODE=ndjson
@@ -108,6 +112,8 @@ services:
         source: .
         target: /workspace/nexus
         read_only: true
+    tmpfs:
+      - "/var/lib/gateway/validation-tmp:size=536870912,mode=0711,uid=0,gid=0,nosuid,nodev"
     extra_hosts:
       - "stackrot:${NEXUS_HOST_STACKROT_IP}"
       - "stackrot.embrient.com:${NEXUS_HOST_STACKROT_IP}"
