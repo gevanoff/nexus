@@ -88,6 +88,7 @@ coding_verified_evidence_handoff.install(
     guarded_agent._agent,
     coding_execution_dispatch,
     coding_hypothesis_persistence,
+    cw,
 )
 coding_edit_evidence_continuity.install(
     guarded_agent._agent,

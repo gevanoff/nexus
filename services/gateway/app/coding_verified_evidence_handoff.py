@@ -55,7 +55,12 @@ def _verified_range_digest(state: Mapping[str, Any]) -> str:
     )
 
 
-def install(agent: Any, execution_dispatch: Any, persistence: Any) -> None:
+def install(
+    agent: Any,
+    execution_dispatch: Any,
+    persistence: Any,
+    cw: Any = None,
+) -> None:
     """Replay verified repository excerpts as user-role data, never system text."""
     if bool(getattr(execution_dispatch, "_coding_verified_evidence_handoff_installed", False)):
         return
@@ -89,7 +94,25 @@ def install(agent: Any, execution_dispatch: Any, persistence: Any) -> None:
         state = current_agent.forced_action.active_state(effective_task)
         if not persistence._contract_required(state):
             return materialized, snapshot, diagnostics
-        digest = persistence._verified_evidence_digest(effective_task, state)
+        binding: Mapping[str, Any] = {"status": "historical"}
+        if cw is not None and str(effective_task.get("id") or "").strip():
+            from app import coding_edit_evidence_continuity as continuity
+
+            digest, _metadata, binding = continuity._live_verified_evidence_bundle(
+                persistence,
+                cw,
+                effective_task,
+                state,
+            )
+        else:
+            digest = persistence._verified_evidence_digest(effective_task, state)
+        if cw is not None and not digest:
+            enriched = dict(diagnostics)
+            enriched["verified_evidence_replay_source"] = "live_workspace"
+            enriched["verified_evidence_replay_status"] = str(
+                binding.get("status") or "unavailable"
+            )
+            return materialized, snapshot, enriched
         range_digest = _verified_range_digest(state)
         evidence_data = "\n\n".join(part for part in (range_digest, digest) if part)
         if not evidence_data:
@@ -108,6 +131,16 @@ def install(agent: Any, execution_dispatch: Any, persistence: Any) -> None:
         enriched["verified_evidence_replay_chars"] = len(evidence_data)
         enriched["verified_evidence_replay_role"] = "user"
         enriched["verified_evidence_replay_ranges"] = len(state.get("causal_evidence_ranges") or [])
+        enriched["verified_evidence_replay_source"] = (
+            "live_workspace" if cw is not None else "historical_event"
+        )
+        enriched["verified_evidence_replay_status"] = str(
+            binding.get("status") or ""
+        )
+        enriched["verified_evidence_replay_head"] = str(binding.get("head") or "")
+        enriched["verified_evidence_replay_workspace_fingerprint"] = str(
+            binding.get("workspace_fingerprint") or ""
+        )
         return updated, snapshot, enriched
 
     execution_dispatch.materialize_request = materialize_with_verified_evidence

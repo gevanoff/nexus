@@ -106,10 +106,14 @@ PowerShell and switch only after it fails.
   commit. Use `chmod +x <path>` where the filesystem supports it, and on Windows
   drvfs use `git update-index --chmod=+x <path>` if needed. Verify with
   `git diff --summary` or `git ls-files --stage <path>`.
-- Commit local repo changes when the task calls for a durable checkpoint. Push
-  and deploy only when explicitly requested or when the task clearly requires a
-  live deployment. If any credential, host, or deployment prerequisite is
-  missing, report the exact blocker and the next concrete command or action.
+- The user gives standing approval to commit and push significant completed
+  implementation, repair, or refactoring work after proportionate validation.
+  Use a focused branch, stage only intended files, create an informative commit,
+  push the branch, and report the branch and commit ID. This standing approval
+  does not authorize merging, deploying, opening a pull request, or publishing
+  unrelated changes unless the task separately requests or clearly requires it.
+  If any credential, host, or deployment prerequisite is missing, report the
+  exact blocker and the next concrete command or action.
 
 ## Centralized Production Deployments
 

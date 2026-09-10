@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from app import coding_edit_evidence_continuity as continuity
 from app.models import ChatMessage
 
@@ -84,7 +86,7 @@ def _task(source: str, *, edited: bool = False) -> dict:
                 "result": {"ok": True, "changed": True},
             }
         )
-    return {"agent_events": events}
+    return {"id": "code-test", "agent_events": events}
 
 
 def _edit_state() -> dict:
@@ -147,6 +149,135 @@ def test_edit_turn_replays_verified_source_after_hypothesis_contract_closes():
     assert diagnostics["verified_evidence_replay_paths"] == [TARGET]
     assert diagnostics["verified_evidence_replay_clipped_paths"] == []
     assert diagnostics["verified_evidence_replay_chars"] >= len(source.strip())
+
+
+def test_edit_turn_refreshes_replayed_evidence_from_current_checkpoint():
+    stale_source = 'if backend_class == "gpu_heavy":\n    ui_url = _invokeai_ui_url()\n'
+    current_source = (
+        'if backend_class in ("gpu_heavy", "invokeai"):\n'
+        '    ui_url = _invokeai_ui_url() or browser_accessible_url(base)\n'
+    )
+
+    class LiveWorkspace:
+        def __init__(self) -> None:
+            self.fingerprints = iter(["checkpoint-fingerprint", "checkpoint-fingerprint"])
+
+        def workspace_progress_fingerprint(self, task_id):
+            assert task_id == "code-test"
+            return next(self.fingerprints)
+
+        @staticmethod
+        def git_head(task_id):
+            assert task_id == "code-test"
+            return {"ok": True, "commit": "checkpoint-head"}
+
+        @staticmethod
+        def read_file_lines(task_id, *, path, start_line, line_count):
+            assert task_id == "code-test"
+            assert path == TARGET
+            assert start_line == 1
+            assert line_count == 2
+            return {
+                "path": path,
+                "start_line": 1,
+                "end_line": 2,
+                "content": current_source,
+            }
+
+    state = _edit_state()
+    state["causal_evidence_ranges"] = [
+        {"path": TARGET, "start_line": 1, "end_line": 2}
+    ]
+    dispatch = Dispatch()
+    persistence = Persistence()
+    agent = _agent(state)
+    continuity._install_materialization(
+        agent,
+        dispatch,
+        persistence,
+        LiveWorkspace(),
+    )
+
+    task = _task(stale_source)
+    task["last_commit"] = "checkpoint-head"
+
+    materialized, _, diagnostics = dispatch.materialize_request(
+        agent,
+        {"messages": [ChatMessage(role="user", content="mission")]},
+        task,
+        source_backend="local_vllm_fast",
+        backend="local_vllm_fast",
+        upstream_model="devstral",
+    )
+
+    replay = materialized["messages"][-1].content
+    assert current_source.strip() in replay
+    assert stale_source.strip() not in replay
+    assert diagnostics["verified_evidence_replay_source"] == "live_workspace"
+    assert diagnostics["verified_evidence_replay_head"] == "checkpoint-head"
+    assert (
+        diagnostics["verified_evidence_replay_workspace_fingerprint"]
+        == "checkpoint-fingerprint"
+    )
+
+
+def test_edit_turn_does_not_replay_evidence_across_a_workspace_change():
+    class Paused(Exception):
+        def __init__(self, message, *, reason_code, details):
+            super().__init__(message)
+            self.reason_code = reason_code
+            self.details = details
+
+    class ChangingWorkspace:
+        def __init__(self) -> None:
+            self.fingerprints = iter(["before", "after"])
+
+        def workspace_progress_fingerprint(self, _task_id):
+            return next(self.fingerprints)
+
+        @staticmethod
+        def git_head(_task_id):
+            return {"ok": True, "commit": "checkpoint-head"}
+
+        @staticmethod
+        def read_file_lines(_task_id, *, path, start_line, line_count):
+            return {
+                "path": path,
+                "start_line": start_line,
+                "end_line": start_line + line_count - 1,
+                "content": "current but raced\n",
+            }
+
+    state = _edit_state()
+    state["causal_evidence_ranges"] = [
+        {"path": TARGET, "start_line": 1, "end_line": 1}
+    ]
+    dispatch = Dispatch()
+    persistence = Persistence()
+    agent = _agent(state)
+    agent._CodingAgentPaused = Paused
+    continuity._install_materialization(
+        agent,
+        dispatch,
+        persistence,
+        ChangingWorkspace(),
+    )
+
+    with pytest.raises(Paused) as exc_info:
+        dispatch.materialize_request(
+            agent,
+            {"messages": [ChatMessage(role="user", content="mission")]},
+            _task("stale source\n"),
+            source_backend="local_vllm_fast",
+            backend="local_vllm_fast",
+            upstream_model="devstral",
+        )
+
+    assert exc_info.value.reason_code == "verified_evidence_replay_unavailable"
+    assert (
+        exc_info.value.details["replay_status"]
+        == "workspace_changed_during_refresh"
+    )
 
 
 def test_edit_turn_stops_replaying_after_successful_edit_tool_completion():

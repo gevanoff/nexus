@@ -3765,6 +3765,26 @@ async def _run_agent(
                         },
                     )
 
+                if (
+                    name == "coding_finish"
+                    and str(result.get("error") or "")
+                    == "semantic_acceptance_state_unchanged"
+                ):
+                    blocker_summary = str(
+                        result.get("summary")
+                        or "Independent semantic acceptance already rejected this unchanged state."
+                    ).strip()
+                    raise _CodingAgentPaused(
+                        blocker_summary,
+                        reason_code="semantic_acceptance_state_unchanged",
+                        details={
+                            "cycle": cycle,
+                            "tool": name,
+                            "error": "semantic_acceptance_state_unchanged",
+                            "required_action": str(result.get("required_action") or ""),
+                        },
+                    )
+
                 if rejected_by_forced_action and forced_action_rejections >= int((forced_action.active_state(policy_task) or {}).get("rejection_limit") or 2):
                     fallback = None
                     if not user_llm.is_user_model_id(model) and semantic_reroutes < _max_semantic_reroutes():

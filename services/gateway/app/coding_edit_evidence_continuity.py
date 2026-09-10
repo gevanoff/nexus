@@ -179,6 +179,184 @@ def verified_evidence_digest(
     return digest
 
 
+def _verified_ranges(
+    persistence: Any,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+    targets: Sequence[str],
+) -> dict[str, list[tuple[int, int]]]:
+    ranges: dict[str, list[tuple[int, int]]] = {path: [] for path in targets}
+    for raw in state.get("causal_evidence_ranges") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        path = persistence._normalized_path(raw.get("path"))
+        if path not in ranges:
+            continue
+        try:
+            start = int(raw.get("start_line"))
+            end = int(raw.get("end_line"))
+        except (TypeError, ValueError):
+            continue
+        if start > 0 and end >= start and (start, end) not in ranges[path]:
+            ranges[path].append((start, end))
+
+    # Older durable states may predate explicit causal_evidence_ranges. Preserve
+    # their last successful read bounds, but refresh the bytes from the current
+    # workspace instead of replaying the historical result body.
+    for raw in reversed(list(task.get("agent_events") or [])):
+        if not isinstance(raw, Mapping):
+            continue
+        if (
+            str(raw.get("type") or "") != "tool_finished"
+            or str(raw.get("name") or "") != "coding_read_file_lines"
+        ):
+            continue
+        result = persistence._successful_event_result(raw)
+        path = persistence._normalized_path(result.get("path"))
+        if path not in ranges or ranges[path]:
+            continue
+        try:
+            start = int(result.get("start_line"))
+            end = int(result.get("end_line"))
+        except (TypeError, ValueError):
+            continue
+        if start > 0 and end >= start:
+            ranges[path].append((start, end))
+    return ranges
+
+
+def _live_verified_evidence_bundle(
+    persistence: Any,
+    cw: Any,
+    task: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> tuple[str, list[dict[str, Any]], dict[str, str]]:
+    """Refresh replay bytes and bind them to one stable workspace snapshot."""
+    task_id = str(task.get("id") or "").strip()
+    targets = _ordered_targets(state, persistence)
+    if not task_id or not targets:
+        return "", [], {"status": "unavailable"}
+
+    try:
+        before_fingerprint = str(cw.workspace_progress_fingerprint(task_id) or "")
+        head_result = cw.git_head(task_id)
+        head = (
+            str(head_result.get("commit") or "").strip()
+            if isinstance(head_result, Mapping) and head_result.get("ok")
+            else ""
+        )
+    except Exception as exc:
+        return "", [], {"status": "binding_failed", "error": type(exc).__name__}
+    if not before_fingerprint:
+        return "", [], {"status": "binding_failed", "error": "empty_fingerprint"}
+    if not head:
+        return "", [], {
+            "status": "binding_failed",
+            "workspace_fingerprint": before_fingerprint,
+            "error": "empty_repository_head",
+        }
+    checkpoint_head = str(
+        task.get("last_commit") or task.get("last_checkpoint_commit") or ""
+    ).strip()
+    if checkpoint_head and head != checkpoint_head:
+        return "", [], {
+            "status": "checkpoint_head_mismatch",
+            "head": head,
+            "checkpoint_head": checkpoint_head,
+            "workspace_fingerprint": before_fingerprint,
+        }
+
+    ranges = _verified_ranges(persistence, task, state, targets)
+    selections: list[dict[str, Any]] = []
+    try:
+        for path in targets:
+            spans = ranges.get(path) or []
+            if spans:
+                for start, end in spans:
+                    result = cw.read_file_lines(
+                        task_id,
+                        path=path,
+                        start_line=start,
+                        line_count=end - start + 1,
+                    )
+                    content = result.get("content") if isinstance(result, Mapping) else None
+                    if not isinstance(content, str) or not content.strip():
+                        continue
+                    selections.append(
+                        {
+                            "path": path,
+                            "start_line": int(result.get("start_line") or start),
+                            "end_line": int(result.get("end_line") or end),
+                            "content": content,
+                        }
+                    )
+                continue
+
+            result = cw.read_file(task_id, path=path)
+            content = result.get("content") if isinstance(result, Mapping) else None
+            if isinstance(content, str) and content.strip():
+                selections.append({"path": path, "content": content})
+        after_fingerprint = str(cw.workspace_progress_fingerprint(task_id) or "")
+    except Exception as exc:
+        return "", [], {
+            "status": "refresh_failed",
+            "head": head,
+            "workspace_fingerprint": before_fingerprint,
+            "error": type(exc).__name__,
+        }
+
+    if before_fingerprint != after_fingerprint:
+        return "", [], {
+            "status": "workspace_changed_during_refresh",
+            "head": head,
+            "workspace_fingerprint": after_fingerprint,
+        }
+    if not selections:
+        return "", [], {
+            "status": "empty_current_evidence",
+            "head": head,
+            "workspace_fingerprint": before_fingerprint,
+        }
+
+    blocks: list[str] = []
+    metadata: list[dict[str, Any]] = []
+    total = 0
+    for item in selections:
+        path = str(item["path"])
+        start = item.get("start_line")
+        end = item.get("end_line")
+        locator = f"{path}:{start}-{end}" if start and end else path
+        header = f"Repository path: {locator}\n"
+        remaining = _MAX_TOTAL_CHARS - total
+        if remaining <= len(header) + 64:
+            break
+        content = str(item.get("content") or "")
+        excerpt, clipped = _line_aware_clip(
+            content,
+            min(_MAX_PATH_CHARS, max(64, remaining - len(header))),
+        )
+        blocks.append(f"{header}{excerpt}")
+        total += len(header) + len(excerpt)
+        row: dict[str, Any] = {
+            "path": path,
+            "source_chars": len(content),
+            "replayed_chars": len(excerpt),
+            "clipped": clipped,
+            "repository_head": head,
+            "workspace_fingerprint": before_fingerprint,
+        }
+        if start and end:
+            row["start_line"] = int(start)
+            row["end_line"] = int(end)
+        metadata.append(row)
+
+    return "\n\n".join(blocks), metadata, {
+        "status": "current",
+        "head": head,
+        "workspace_fingerprint": before_fingerprint,
+    }
+
+
 def _edit_authorization_time(state: Mapping[str, Any]) -> float:
     values = []
     for key in ("activated_at", "durable_hypothesis_note_updated_at"):
@@ -292,6 +470,7 @@ def _install_materialization(
     agent: Any,
     execution_dispatch: Any,
     persistence: Any,
+    cw: Any = None,
 ) -> None:
     if bool(getattr(execution_dispatch, "_coding_edit_evidence_continuity_installed", False)):
         return
@@ -299,7 +478,22 @@ def _install_materialization(
     original_materialize = execution_dispatch.materialize_request
     original_digest = persistence._verified_evidence_digest
 
+    def current_bundle(
+        task: Mapping[str, Any],
+        state: Mapping[str, Any],
+    ) -> tuple[str, list[dict[str, Any]], dict[str, str]]:
+        if cw is None or not str(task.get("id") or "").strip():
+            digest, metadata = verified_evidence_bundle(persistence, task, state)
+            return digest, metadata, {
+                "status": "historical",
+                "source": "historical_event",
+            }
+        return _live_verified_evidence_bundle(persistence, cw, task, state)
+
     def continuity_digest(task: Mapping[str, Any], state: Mapping[str, Any]) -> str:
+        # Keep the persistence seam deterministic for lifecycle/debug callers.
+        # Request materialization below is the only place that has a task-scoped
+        # workspace handle and can safely refresh replay bytes.
         return verified_evidence_digest(persistence, task, state)
 
     persistence._verified_evidence_digest = continuity_digest
@@ -329,9 +523,55 @@ def _install_materialization(
             task,
         )
         state = current_agent.forced_action.active_state(effective_task)
-        digest, metadata = verified_evidence_bundle(persistence, effective_task, state)
+        digest, metadata, binding = current_bundle(effective_task, state)
         if not digest:
-            return materialized, snapshot, diagnostics
+            if cw is None:
+                return materialized, snapshot, diagnostics
+            if str(state.get("action_kind") or "") == "edit":
+                pause_type = getattr(current_agent, "_CodingAgentPaused", None)
+                if callable(pause_type):
+                    status = str(binding.get("status") or "unavailable")
+                    raise pause_type(
+                        "Nexus could not bind verified causal evidence to the current "
+                        "checkpoint, so the edit-authorized run was paused before "
+                        "dispatching another model request.",
+                        reason_code="verified_evidence_replay_unavailable",
+                        details={
+                            "replay_status": status,
+                            "checkpoint_head": str(
+                                binding.get("checkpoint_head") or ""
+                            ),
+                            "workspace_head": str(binding.get("head") or ""),
+                            "workspace_fingerprint": str(
+                                binding.get("workspace_fingerprint") or ""
+                            ),
+                            "required_action": (
+                                "Resume after the workspace is stable so Nexus can "
+                                "refresh the linked causal ranges before editing."
+                            ),
+                        },
+                    )
+            enriched = dict(diagnostics)
+            enriched["verified_evidence_replay_source"] = "live_workspace"
+            enriched["verified_evidence_replay_status"] = str(
+                binding.get("status") or "unavailable"
+            )
+            if binding.get("error"):
+                enriched["verified_evidence_replay_error"] = str(binding["error"])
+            return materialized, snapshot, enriched
+
+        diagnostics = dict(diagnostics)
+        diagnostics["verified_evidence_replay_source"] = str(
+            binding.get("source")
+            or ("live_workspace" if cw is not None else "historical_event")
+        )
+        diagnostics["verified_evidence_replay_status"] = str(
+            binding.get("status") or ""
+        )
+        diagnostics["verified_evidence_replay_head"] = str(binding.get("head") or "")
+        diagnostics["verified_evidence_replay_workspace_fingerprint"] = str(
+            binding.get("workspace_fingerprint") or ""
+        )
 
         if int(diagnostics.get("verified_evidence_replay_messages") or 0) > 0:
             enriched = _replay_metadata(diagnostics, metadata, phase="hypothesis")
@@ -402,6 +642,12 @@ def _install_replay_observability(
             "backend": str(getattr(snapshot, "backend", "") or ""),
             "upstream_model": str(getattr(snapshot, "upstream_model", "") or ""),
             "policy_signature": str(getattr(snapshot, "signature", "") or ""),
+            "source": str(diagnostics.get("verified_evidence_replay_source") or ""),
+            "status": str(diagnostics.get("verified_evidence_replay_status") or ""),
+            "head": str(diagnostics.get("verified_evidence_replay_head") or ""),
+            "workspace_fingerprint": str(
+                diagnostics.get("verified_evidence_replay_workspace_fingerprint") or ""
+            ),
         }
         await asyncio.to_thread(
             current_agent._mutate_task,
@@ -467,6 +713,6 @@ def install(
     debug_report: Any,
     cw: Any,
 ) -> None:
-    _install_materialization(agent, execution_dispatch, persistence)
+    _install_materialization(agent, execution_dispatch, persistence, cw)
     _install_replay_observability(agent, execution_dispatch)
     _install_debug_effective_policy(agent, debug_report, cw)
