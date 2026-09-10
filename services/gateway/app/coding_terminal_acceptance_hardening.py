@@ -352,7 +352,7 @@ def install(agent: Any, guarded: Any, cw: Any, work_phases: Any) -> None:
     ) -> Dict[str, Any]:
         fingerprint = ""
         task: Mapping[str, Any] = {}
-        if name == "coding_finish":
+        if name == "coding_finish" and args.get("success", True) is not False:
             try:
                 task = cw.load_task(task_id)
                 diff_text = guarded._run_delta_diff(task_id, dict(task))

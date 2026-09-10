@@ -107,7 +107,7 @@ def _recoverable_policy_diagnostics(
         # policy-specific schema. Hallucinated/malformed names remain ordinary
         # transport diagnostics and retain the generic no-tool handling path.
         if (
-            reason == "unknown tool name"
+            reason in {"unknown tool name", "known tool disabled by controller policy"}
             and name in known_tools
             and allowed
             and name not in allowed
@@ -161,8 +161,8 @@ def _rejection_result(
             "ok": False,
             "error": "forced_action_tool_rejected",
             "message": (
-                f"The backend attempted {attempted_tool or '(missing tool name)'}, but that call was "
-                "suppressed by the request's Coding Workspace execution policy before execution. "
+                f"{attempted_tool or '(missing tool name)'} is a known Coding Workspace tool, "
+                "but it was suppressed by the current controller action policy. It was not executed. "
                 f"Current authorized tools: {policy_text}. {suffix}"
             ),
             "required_action": required_action,
@@ -238,12 +238,16 @@ def _install_trusted_transport_capture(agent: Any) -> None:
         return
 
     async def call_with_policy_capture(*args: Any, **kwargs: Any) -> Any:
+        from app.openai_utils import KNOWN_CONTROLLER_TOOLS
         token = _CAPTURED_DIAGNOSTICS.set(())
+        known_tools = _known_coding_tools(agent)
+        tools_token = KNOWN_CONTROLLER_TOOLS.set(frozenset(known_tools))
         try:
             response = await original_call(*args, **kwargs)
             diagnostics = _CAPTURED_DIAGNOSTICS.get()
         finally:
             _CAPTURED_DIAGNOSTICS.reset(token)
+            KNOWN_CONTROLLER_TOOLS.reset(tools_token)
         if not isinstance(response, dict):
             return response
         output = dict(response)
@@ -251,6 +255,33 @@ def _install_trusted_transport_capture(agent: Any) -> None:
         output.pop(_TRUSTED_DIAGNOSTICS_KEY, None)
         if diagnostics:
             output[_TRUSTED_DIAGNOSTICS_KEY] = [dict(item) for item in diagnostics]
+            recovered = _recoverable_policy_diagnostics(output, known_tools=known_tools)
+            if recovered:
+                # Replace only contradictory diagnostics associated with trusted
+                # sanitizer evidence. Backend-provided diagnostic fields alone
+                # cannot authorize recovery or execution.
+                import copy
+                output = copy.deepcopy(output)
+                for choice in output.get("choices") or []:
+                    message = choice.get("message") if isinstance(choice, Mapping) else None
+                    if not isinstance(message, dict):
+                        continue
+                    content = str(message.get("content") or "")
+                    if len(recovered) == len(diagnostics):
+                        from app.openai_utils import _invalid_tool_notice
+                        content = content.replace(_invalid_tool_notice(), "")
+                    for item in recovered:
+                        name = str(item["name"])
+                        content = "\n".join(
+                            line for line in content.splitlines()
+                            if not (name in line and "unknown tool name" in line.lower())
+                        )
+                    notices = [
+                        f"{item['name']} is a known Coding Workspace tool but is disabled by "
+                        "the current controller action policy. It was not executed."
+                        for item in recovered
+                    ]
+                    message["content"] = "\n".join([content.strip(), *notices]).strip()
         return output
 
     agent.call_backend_chat = call_with_policy_capture

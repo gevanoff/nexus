@@ -117,6 +117,10 @@ class _CW:
     def load_task(self, _task_id: str):
         return self.task
 
+    def mutate_task(self, _task_id, mutator):
+        mutator(self.task)
+        return self.task
+
 
 def _request() -> ChatCompletionRequest:
     return ChatCompletionRequest(

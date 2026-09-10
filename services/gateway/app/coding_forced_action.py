@@ -422,6 +422,29 @@ def rejection_counter_for_state(
     return current_key, max(0, int(previous_count or 0))
 
 
+def call_allowed_in_state(
+    state: Mapping[str, Any], *, name: str, args: Mapping[str, Any],
+    is_validation_command: Callable[[Any], bool],
+) -> bool:
+    """Shared argument-aware policy for the base controller and its facade."""
+    if not state:
+        return True
+    allowed = name in set(state.get("allowed_tools") or [])
+    if name == "coding_finish" and allowed:
+        if str(state.get("action_kind") or "") in {"validate", "review", "diff_review"} or state.get("stage") == "coherent_edit_batch":
+            allowed = args.get("success") is False and len(str(args.get("summary") or "").strip()) >= 8
+    if name == "coding_run_command" and allowed:
+        allowed = bool(is_validation_command(args.get("argv")))
+    if allowed and state.get("stage") == "coherent_edit_batch" and name in {
+        "coding_write_file", "coding_replace_text", "coding_apply_patch", "coding_read_file_lines",
+    }:
+        from app import coding_workspace
+        from app.coding_resume_convergence_hardening import _batch_paths
+        paths = _batch_paths(coding_workspace, name, args)
+        allowed = bool(paths) and paths.issubset(state.get("edit_batch_paths") or [])
+    return allowed
+
+
 def evaluate_tool_call(
     task: Mapping[str, Any],
     *,
@@ -434,9 +457,7 @@ def evaluate_tool_call(
         return True, {}
     tool_name = str(name or "").strip()
     allowed_tools = set(state.get("allowed_tools") or [])
-    allowed = tool_name in allowed_tools
-    if tool_name == "coding_run_command" and allowed:
-        allowed = bool(is_validation_command(args.get("argv")))
+    allowed = call_allowed_in_state(state, name=tool_name, args=args, is_validation_command=is_validation_command)
     if allowed:
         return True, {}
     required_action = str(state.get("required_action") or "").strip()

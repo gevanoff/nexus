@@ -248,6 +248,12 @@ def _durable_state_view(result: Dict[str, Any]) -> Dict[str, Any]:
         "branch": _sanitize(state.get("branch") if isinstance(state.get("branch"), dict) else {}),
         "progress": _sanitize(state.get("progress") if isinstance(state.get("progress"), dict) else {}),
         "changes": _sanitize(state.get("changes") if isinstance(state.get("changes"), dict) else {}),
+        "working_tree": _sanitize(state.get("working_tree") or {}),
+        "run_delta": _sanitize(state.get("run_delta") or {}),
+        "mission_delta": _sanitize(state.get("mission_delta") or {}),
+        "delta_guidance": state.get("delta_guidance"),
+        "edit_batch": _sanitize(state.get("edit_batch") or {}),
+        "coding_backend_cooldowns": _sanitize(state.get("coding_backend_cooldowns") or []),
         "validation": _sanitize(state.get("validation") if isinstance(state.get("validation"), dict) else {}),
         "diff_review": _sanitize(state.get("diff_review") if isinstance(state.get("diff_review"), dict) else {}),
         "blockers": _sanitize(state.get("blockers") if isinstance(state.get("blockers"), list) else []),
@@ -406,6 +412,19 @@ def collect_debug_snapshot(task_id: str, *, active_runner: Optional[bool] = None
         "git": _git_snapshot(task_id),
         "durable_state": _durable_state_view(state_result),
         "runtime_config": _runtime_snapshot(),
+        "runtime_policy_provenance": {
+            "mission_budget_policy": _sanitize(mission.get("budget_policy") or {}),
+            "effective_runtime_config": _runtime_snapshot(),
+            "runner_effective_max_runtime_sec": task.get("agent_max_runtime_sec"),
+            "runner_effective_max_cycles": task.get("agent_max_cycles"),
+            "runner_effective_context_reset_cycles": task.get("agent_context_reset_cycles"),
+            "authority": (
+                "Mission budget is recorded intent. Runtime config supplies defaults. "
+                "Runner effective values are persisted after overrides and clamps at run start; "
+                "changing config does not retroactively change an active runner. "
+                "Missing runner values mean no recorded effective value, not zero."
+            ),
+        },
         "recent_runs": [_run_view(item) for item in runs[-20:]],
         "recent_guidance": [_guidance_view(item) for item in guidance[-20:]],
         "recent_events": [_event_view(item) for item in events[-120:]],
@@ -447,6 +466,9 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
     progress = controller.get("progress_state") if isinstance(controller.get("progress_state"), dict) else {}
     checkpoint = controller.get("investigation_checkpoint") if isinstance(controller.get("investigation_checkpoint"), dict) else {}
     events = snapshot.get("recent_events") if isinstance(snapshot.get("recent_events"), list) else []
+    durable = snapshot.get("durable_state") or {}
+    mission_delta = durable.get("mission_delta") or {}
+    runtime = snapshot.get("runtime_policy_provenance") or {}
 
     lines = [
         "# Nexus Coding Workspace Debug Report",
@@ -471,6 +493,9 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
         f"- Agent status: `{_format_value(agent.get('status'))}`",
         f"- Live runner present: `{_format_value(agent.get('active_runner'))}`",
         f"- Run / cycle: `{_format_value(agent.get('run_id'))}` / `{_format_value(agent.get('cycle'))}`",
+        f"- Mission budget max_runtime_sec: `{_format_value((runtime.get('mission_budget_policy') or {}).get('max_runtime_sec'))}`",
+        f"- Configured default max_runtime_sec: `{_format_value((runtime.get('effective_runtime_config') or {}).get('CODING_AGENT_MAX_RUNTIME_SEC'))}`",
+        f"- Runner effective max_runtime_sec: `{_format_value(runtime.get('runner_effective_max_runtime_sec'))}`",
         f"- Backend / upstream model: `{_format_value(agent.get('backend'))}` / `{_format_value(agent.get('upstream_model'))}`",
         f"- Effective alias: `{_format_value(model_runtime.get('resolved_alias'))}`",
         f"- Context window / max input / output cap: `{_format_value(model_runtime.get('context_window'))}` / `{_format_value(model_runtime.get('max_input_tokens'))}` / `{_format_value(model_runtime.get('max_tokens_cap'))}`",
@@ -492,8 +517,11 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
         "",
         "## Git state",
         "",
+        f"- Mission delta present: `{_format_value(mission_delta.get('has_delta'))}`; checkpoint committed: `{_format_value(mission_delta.get('checkpoint_committed'))}`",
+        f"- Immutable mission base: `{_format_value(mission_delta.get('base_head'))}`",
+        "- A clean working tree does not imply an empty mission delta.",
         (
-            f"- Changed files: {int(counts.get('total') or 0)} "
+            f"- Working-tree changed files: {int(counts.get('total') or 0)} "
             f"(added {int(counts.get('added') or 0)}, modified {int(counts.get('modified') or 0)}, "
             f"removed {int(counts.get('removed') or 0)}, untracked {int(counts.get('untracked') or 0)})"
         ),
