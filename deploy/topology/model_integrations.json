@@ -1,4 +1,41 @@
 {
-  "integrations": [],
+  "integrations": [
+    {
+      "activation": {
+        "compose_file": "host-native",
+        "enabled": false,
+        "manual_review_required": false,
+        "mode": "host_native",
+        "requires_download": true,
+        "requires_secret": false
+      },
+      "backend_class": "hf_mlx_community_glm_5_3_mixed_4_5bit",
+      "health": {
+        "health_path": "/health",
+        "models_path": "/v1/models",
+        "ready_path": "/readyz"
+      },
+      "host": "ai2",
+      "id": "hf-mlx-community-glm-5-3-mixed-4-5bit",
+      "model_id": "mlx-community/GLM-5.3-mixed-4_5bit",
+      "resources": {
+        "disk_required_gb": null,
+        "gpu_memory_estimate_mb": null,
+        "system_memory_estimate_mb": null
+      },
+      "route_kind": "chat",
+      "runtime": "mlx",
+      "service_name": "hf-mlx-community-glm-5-3-mixed-4-5bit",
+      "title": "HF GLM-5.3-mixed-4_5bit",
+      "ui": {
+        "audio_ui": false,
+        "chat_ui": true,
+        "image_ui": false,
+        "model_catalog": true,
+        "resources_ui": true,
+        "video_ui": false
+      }
+    }
+  ],
   "schema_version": 1
 }

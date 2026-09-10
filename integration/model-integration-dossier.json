@@ -1,0 +1,145 @@
+{
+  "activation": {
+    "activation_id": "hf-mlx-community-glm-5-3-mixed-4-5bit",
+    "activation_mode": "host_native",
+    "can_be_activated_from_resources_ui": true,
+    "requires_manual_review": false,
+    "requires_secret": false,
+    "requires_weight_download": true
+  },
+  "api_surface": {
+    "health_paths": [
+      "/health"
+    ],
+    "nexus_route": "/v1/chat/completions",
+    "openai_compatible": true,
+    "ready_paths": [
+      "/readyz"
+    ],
+    "request_schema": {},
+    "response_schema": {},
+    "shim_template": ""
+  },
+  "classification": {
+    "confidence": "high",
+    "reasons": [
+      "Classified as `chat` from causal/text-generation metadata.",
+      "MLX metadata selects the host-native Apple Silicon runtime."
+    ],
+    "risks": [],
+    "route_kind": "chat",
+    "runtime": "mlx"
+  },
+  "configuration": {
+    "backend_class": "hf_mlx_community_glm_5_3_mixed_4_5bit",
+    "backend_config_entries": [
+      "hf_mlx_community_glm_5_3_mixed_4_5bit"
+    ],
+    "compose_file": "host-native",
+    "env_vars": {},
+    "lifecycle_entries": [
+      "hf_mlx_community_glm_5_3_mixed_4_5bit"
+    ],
+    "model_aliases": [
+      "glm-5-3-mixed-4-5bit"
+    ],
+    "resource_activation_entries": [
+      "hf-mlx-community-glm-5-3-mixed-4-5bit"
+    ],
+    "service_name": "hf-mlx-community-glm-5-3-mixed-4-5bit",
+    "ui_catalog_entries": [
+      "glm-5-3-mixed-4-5bit"
+    ]
+  },
+  "model": {
+    "architectures": [
+      "GlmMoeDsaForCausalLM"
+    ],
+    "artifact_estimate_gb": null,
+    "gated": false,
+    "input": "https://huggingface.co/mlx-community/GLM-5.3-mixed-4_5bit",
+    "library_name": "mlx",
+    "license": "other",
+    "model_id": "mlx-community/GLM-5.3-mixed-4_5bit",
+    "model_type": "glm_moe_dsa",
+    "parameter_estimate_b": null,
+    "pipeline_tag": "text-generation",
+    "private": false,
+    "quantization": "4",
+    "revision": "",
+    "sample_files": [
+      ".gitattributes",
+      "README.md",
+      "chat_template.jinja",
+      "config.json",
+      "generation_config.json",
+      "model-00001-of-00113.safetensors",
+      "model-00002-of-00113.safetensors",
+      "model-00003-of-00113.safetensors",
+      "model-00004-of-00113.safetensors",
+      "model-00005-of-00113.safetensors",
+      "model-00006-of-00113.safetensors",
+      "model-00007-of-00113.safetensors",
+      "model-00008-of-00113.safetensors",
+      "model-00009-of-00113.safetensors",
+      "model-00010-of-00113.safetensors",
+      "model-00011-of-00113.safetensors",
+      "model-00012-of-00113.safetensors",
+      "model-00013-of-00113.safetensors",
+      "model-00014-of-00113.safetensors",
+      "model-00015-of-00113.safetensors"
+    ],
+    "source": "huggingface",
+    "source_url": "https://huggingface.co/mlx-community/GLM-5.3-mixed-4_5bit",
+    "tags": [
+      "mlx",
+      "safetensors",
+      "glm_moe_dsa",
+      "text-generation",
+      "transformers",
+      "conversational",
+      "en",
+      "zh",
+      "base_model:zai-org/GLM-5.3-BF16",
+      "base_model:quantized:zai-org/GLM-5.3-BF16",
+      "license:other",
+      "4-bit",
+      "region:us"
+    ]
+  },
+  "placement": {
+    "deployment_mode": "host_native",
+    "disk_required_gb": null,
+    "disk_target": "/ai-data",
+    "gpu_memory_estimate_mb": null,
+    "recommended_backend_lane": "local_mlx",
+    "recommended_host": "ai2",
+    "resource_reason": "MLX models should stay on ai2 because that host is the Apple Silicon M3 Ultra lane with 512GB unified memory and a host-native MLX serving path.",
+    "system_memory_estimate_mb": null,
+    "things_to_move_or_disable": []
+  },
+  "schema": "nexus_model_integration.v1",
+  "ui_integration": {
+    "audio_ui": false,
+    "chat_ui": true,
+    "image_ui": false,
+    "model_catalog": true,
+    "resources_ui": true,
+    "video_ui": false
+  },
+  "validation": {
+    "known_blockers": [],
+    "manual_activation_steps": [
+      "Review dossier and resource pressure plan",
+      "Download weights into the documented cache",
+      "Enable the activation candidate in Resources"
+    ],
+    "smoke_tests": [
+      "probe /v1/chat/completions after activation"
+    ],
+    "static_checks": [
+      "validate generated JSON/YAML",
+      "review git diff"
+    ]
+  }
+}

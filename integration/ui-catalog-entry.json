@@ -1,0 +1,16 @@
+{
+  "alias": "glm-5-3-mixed-4-5bit",
+  "backend_class": "hf_mlx_community_glm_5_3_mixed_4_5bit",
+  "enabled": false,
+  "model_id": "mlx-community/GLM-5.3-mixed-4_5bit",
+  "route_kind": "chat",
+  "schema": "nexus_model_catalog_candidate.v1",
+  "ui": {
+    "audio_ui": false,
+    "chat_ui": true,
+    "image_ui": false,
+    "model_catalog": true,
+    "resources_ui": true,
+    "video_ui": false
+  }
+}

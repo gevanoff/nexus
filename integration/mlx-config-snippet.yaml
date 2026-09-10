@@ -1,0 +1,7 @@
+models:
+  - model_path: mlx-community/GLM-5.3-mixed-4_5bit
+    served_model_name: mlx-community/GLM-5.3-mixed-4_5bit
+    model_type: lm
+    on_demand: true
+    context_window: 32768
+    cache_path: /ai-data/var/lib/mlx/huggingface

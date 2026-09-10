@@ -1,0 +1,17 @@
+{
+  "hf_mlx_community_glm_5_3_mixed_4_5bit": {
+    "auto_start": true,
+    "auto_stop": true,
+    "capabilities": [
+      "chat"
+    ],
+    "component": "hf-mlx-community-glm-5-3-mixed-4-5bit",
+    "compose_file": "host-native",
+    "display_name": "HF GLM-5.3-mixed-4_5bit",
+    "estimated_vram_mb": 0,
+    "host": "ai2",
+    "notes": "Generated from HuggingFace model mlx-community/GLM-5.3-mixed-4_5bit. Recommended lane: ai2 / MLX. MLX models should stay on ai2 because that host is the Apple Silicon M3 Ultra lane with 512GB unified memory and a host-native MLX serving path.",
+    "ready_path": "/v1/models",
+    "tier": "optional"
+  }
+}

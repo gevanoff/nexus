@@ -1,0 +1,14 @@
+backends:
+  hf_mlx_community_glm_5_3_mixed_4_5bit:
+    class: hf_mlx_community_glm_5_3_mixed_4_5bit
+    provider: mlx
+    base_url: ${HF_MLX_COMMUNITY_GLM_5_3_MIXED_4_5BIT_BASE_URL}
+    description: HF GLM-5.3-mixed-4_5bit (mlx)
+    supported_capabilities:
+      - chat
+    concurrency_limits:
+      chat: 1
+    health:
+      liveness: /v1/models
+      readiness: /v1/models
+    payload_policy: {}
