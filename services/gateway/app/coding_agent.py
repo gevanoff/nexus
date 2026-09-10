@@ -1657,7 +1657,29 @@ async def _call_backend_chat_with_retry(
         parsed = user_llm.parse_user_model_id(req.model)
         provider, selected_model = parsed if parsed is not None else ("user", upstream_model)
         selected_backend = user_llm.user_backend_name(provider)
-        resp = await user_llm.call_user_chat(req, model_id=req.model, settings=user_settings or {})
+        from app import coding_backend_failover
+        task = await asyncio.to_thread(cw.load_task, task_id)
+        route = {"backend": selected_backend, "upstream_model": selected_model}
+        cooldowns = coding_backend_failover.cooldown_state(task)
+        if not coding_backend_failover.filter_task_candidates([route], task):
+            raise HTTPException(status_code=503, detail={
+                "error": "coding_backend_failover_exhausted",
+                "message": "The selected user-model lane is in task cooldown after a full generation read timeout.",
+                "coding_backend_cooldowns": cooldowns,
+            })
+        if cooldowns:
+            await asyncio.to_thread(_append_event, task_id, {
+                "type": "backend_selected", "cycle": cycle, **route,
+                "coding_backend_cooldowns": cooldowns,
+            })
+        started_at = time.time()
+        try:
+            resp = await user_llm.call_user_chat(req, model_id=req.model, settings=user_settings or {})
+        except HTTPException as exc:
+            if coding_backend_failover.is_full_generation_read_timeout(exc):
+                await asyncio.to_thread(coding_backend_failover.record_full_timeout, cw, task_id, selected_backend, selected_model)
+            raise
+        await asyncio.to_thread(coding_backend_failover.record_success, cw, task_id, selected_backend, selected_model, started_at=started_at)
         return resp, selected_backend, selected_model
 
     max_retries = _backend_retry_count()
@@ -1875,13 +1897,17 @@ def _tool_specs() -> List[ToolSpec]:
         ToolSpec(
             function=ToolFunction(
                 name="coding_run_command",
-                description="Run an allowlisted argv command in the workspace. Use for targeted tests and non-destructive inspection.",
+                description=(
+                    "Run an allowlisted argv command in the workspace. Use for targeted tests and non-destructive inspection. "
+                    "argv file paths resolve relative to cwd. If cwd is omitted, paths are repo-root-relative. "
+                    "With cwd=services/gateway, use app/backends.py, not services/gateway/app/backends.py."
+                ),
                 parameters={
                     "type": "object",
                     "required": ["argv"],
                     "properties": {
                         "argv": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-                        "cwd": {"type": "string", "description": "Optional repository-relative working directory."},
+                        "cwd": {"type": "string", "description": "Optional repository-relative working directory. All argv paths resolve relative to this directory; omit for repo root."},
                         "timeout_sec": {"type": "number", "minimum": 1},
                     },
                 },
@@ -2445,6 +2471,16 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
     if guidance:
         request_bits.append(guidance)
     request_bits.append(_project_plan_context(task))
+    request_bits.append(
+        "A clean working tree does not imply that no mission changes exist. "
+        "Checkpoint-committed changes remain part of mission_delta relative to the immutable mission base. "
+        "Inspect working_tree, run_delta, and mission_delta as separate state. "
+        "For a coherent multi-file repair, cite each verified target in the Repository evidence "
+        "field of the grounded hypothesis. This permits at most four structured edit attempts "
+        "on those targets before validation and diff review. Starting validation closes the batch. "
+        "argv file paths resolve relative to cwd; omitted cwd means repo root. "
+        "For cwd=services/gateway use app/backends.py."
+    )
     integration_context = _model_integration_context(task)
     if integration_context:
         request_bits.append(integration_context)
@@ -2452,7 +2488,7 @@ def _system_prompt(task: Dict[str, Any], *, text_tool_mode: bool = False) -> str
     if _mission_requires_workspace_edits(task):
         if _requires_agent_validation(task):
             edit_expectation = (
-                "This request is fix-oriented. After you identify the concrete root cause, make the smallest viable workspace edit "
+                "This request is fix-oriented. After you identify the concrete root cause, complete the smallest coherent workspace repair "
                 "that addresses it, run a targeted validation step, inspect the resulting diff, and only then finish. "
                 "Do not stop at diagnosis alone when a focused fix is available. "
             )
@@ -2828,6 +2864,7 @@ async def _start_agent_run_impl(
             "coding_model": model,
             "agent_run_id": run_id,
             "agent_status": "queued",
+            "coding_run_mutations": {"run_id": run_id, "count": 0, "last_mutation_at": 0.0},
             "agent_model": model,
             "agent_backend": "",
             "agent_upstream_model": "",

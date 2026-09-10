@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import ast
+import contextvars
 import json
 import math
 import re
 import secrets
 import time
 from typing import Any
+
+
+# Set only by trusted in-process callers, never from a request/response field.
+KNOWN_CONTROLLER_TOOLS: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
+    "known_controller_tools", default=frozenset(),
+)
 
 
 def now_unix() -> int:
@@ -260,6 +267,8 @@ def tool_call_name_error(name: Any, allowed_tool_names: Any = None) -> str | Non
         return "malformed tool name"
     allowed = _normalize_allowed_tool_names(allowed_tool_names)
     if allowed is not None and normalized not in allowed:
+        if normalized in KNOWN_CONTROLLER_TOOLS.get():
+            return "known tool disabled by controller policy"
         return "unknown tool name"
     return None
 

@@ -64,6 +64,9 @@ def _matching_consumed_lifecycle(task: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _historical_task(task: Mapping[str, Any]) -> Mapping[str, Any]:
+    from app.coding_resume_convergence_hardening import active_edit_batch
+    if active_edit_batch(task):
+        return task
     lifecycle = _matching_consumed_lifecycle(task)
     if not lifecycle:
         return task
@@ -83,6 +86,14 @@ def _historical_task(task: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def _lifecycle_context(task: Mapping[str, Any]) -> str:
+    from app.coding_resume_convergence_hardening import active_edit_batch
+    batch = active_edit_batch(task)
+    if batch:
+        return (
+            "Hypothesis lifecycle: a bounded coherent edit batch is active. "
+            "The grounded hypothesis authorizes only the remaining batch edits; "
+            "it is not proof of semantic success. Every mutation invalidates validation and diff review."
+        )
     lifecycle = _matching_consumed_lifecycle(task)
     if not lifecycle:
         return ""

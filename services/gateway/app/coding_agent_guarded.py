@@ -76,6 +76,8 @@ async def _acquire_backend_excluding(
     last_ready_count = 0
 
     while True:
+        task = await asyncio.to_thread(_agent.cw.load_task, task_id)
+        cooldowns = coding_backend_failover.cooldown_state(task)
         ranked = _agent._rank_coding_backend_candidates(
             request_model,
             preferred_backend,
@@ -84,9 +86,9 @@ async def _acquire_backend_excluding(
         )
         candidates = [
             dict(item)
-            for item in coding_backend_failover.filter_candidates(
-                ranked,
-                excluded_backends,
+            for item in coding_backend_failover.filter_task_candidates(
+                coding_backend_failover.filter_candidates(ranked, excluded_backends),
+                task,
             )
         ]
         if not candidates:
@@ -101,6 +103,7 @@ async def _acquire_backend_excluding(
                     "cycle": cycle,
                     "preferred_backend": preferred_backend,
                     "excluded_backends": sorted(excluded_backends),
+                    "coding_backend_cooldowns": cooldowns,
                     "candidates": [_candidate_summary(item) for item in ranked[:6]],
                 },
             )
@@ -117,7 +120,7 @@ async def _acquire_backend_excluding(
                     continue
                 raise
             try:
-                if attempt > 0 or str(candidate.get("backend") or "") != preferred_backend:
+                if cooldowns or attempt > 0 or str(candidate.get("backend") or "") != preferred_backend:
                     await asyncio.to_thread(
                         _agent._append_event,
                         task_id,
@@ -131,6 +134,7 @@ async def _acquire_backend_excluding(
                             "preferred_backend": preferred_backend,
                             "preferred_upstream_model": preferred_upstream_model,
                             "excluded_backends": sorted(excluded_backends),
+                            "coding_backend_cooldowns": cooldowns,
                             "summary": (
                                 f"selected {candidate.get('backend')} on {candidate.get('host')} "
                                 f"(preferred {preferred_backend})"
@@ -160,6 +164,7 @@ async def _acquire_backend_excluding(
                     "cycle": cycle,
                     "preferred_backend": preferred_backend,
                     "excluded_backends": sorted(excluded_backends),
+                    "coding_backend_cooldowns": cooldowns,
                     "candidates": [
                         _candidate_summary(item) for item in last_candidates[:6]
                     ],
@@ -181,6 +186,7 @@ async def _acquire_backend_excluding(
                     "timeout_sec": round(_agent._coding_queue_timeout_sec(), 1),
                     "preferred_backend": preferred_backend,
                     "excluded_backends": sorted(excluded_backends),
+                    "coding_backend_cooldowns": cooldowns,
                     "candidates": [
                         _candidate_summary(item) for item in last_candidates[:6]
                     ],
@@ -229,13 +235,23 @@ async def _call_backend_chat_with_failover(
         selected_backend = str(selected.get("backend") or backend)
         selected_model = str(selected.get("upstream_model") or upstream_model)
         try:
+            started_at = time.time()
             resp = await _agent.call_backend_chat(
                 req,
                 selected_backend,
                 selected_model,
             )
+            await asyncio.to_thread(
+                coding_backend_failover.record_success,
+                _agent.cw, task_id, selected_backend, selected_model, started_at=started_at,
+            )
             return resp, selected_backend, selected_model
         except HTTPException as exc:
+            if coding_backend_failover.is_full_generation_read_timeout(exc):
+                await asyncio.to_thread(
+                    coding_backend_failover.record_full_timeout,
+                    _agent.cw, task_id, selected_backend, selected_model,
+                )
             if attempt >= max_retries or not _agent._is_retryable_backend_error(exc):
                 raise
 
@@ -264,11 +280,14 @@ async def _call_backend_chat_with_failover(
                     "backend": selected_backend,
                     "upstream_model": selected_model,
                     "excluded_backends": sorted(excluded_backends),
+                    "coding_backend_cooldowns": coding_backend_failover.cooldown_state(
+                        await asyncio.to_thread(_agent.cw.load_task, task_id)
+                    ),
                     "error": _agent._clip_text(str(detail), 1200),
                     "summary": (
                         "A full generation read timeout exhausted this backend for "
-                        "the current request; the next attempt must use another "
-                        "healthy coding route."
+                        "this task and model lane until its cooldown expires; "
+                        "the next attempt must use another healthy coding route."
                         if full_read_failover
                         else "Retrying a transient coding-backend failure."
                     ),

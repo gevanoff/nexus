@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, Dict, Mapping, Optional
 
 from fastapi import HTTPException
@@ -268,6 +269,29 @@ def materialize_request(
             effective_task,
             text_tool_mode=snapshot.text_tool_mode,
         )
+        state_reader = getattr(getattr(agent, "cw", None), "coding_state_snapshot", None)
+        if callable(state_reader) and task.get("id"):
+            state = state_reader(str(task["id"]))
+            compact = {key: state[key] for key in (
+                "schema", "working_tree", "run_delta", "mission_delta", "mission_acceptance",
+                "delta_guidance", "edit_batch", "coding_backend_cooldowns", "validation", "diff_review", "progress",
+            ) if key in state}
+            rendered = json.dumps(compact, ensure_ascii=False, sort_keys=True)
+            fresh_system += "\nCurrent controller state (authoritative; earlier observations are historical):\n" + rendered
+            marker = "\n\nController state snapshot (authoritative):\n"
+            refreshed = []
+            for message in messages:
+                content = _message_content(message)
+                if _message_role(message) == "user" and marker in content:
+                    prefix, suffix = content.split(marker, 1)
+                    try:
+                        old, end = json.JSONDecoder().raw_decode(suffix)
+                        if isinstance(old, dict) and str(old.get("schema") or "").startswith("nexus_coding_state."):
+                            message = _copy_message(message, content=prefix + marker + rendered + suffix[end:])
+                    except (ValueError, TypeError):
+                        pass
+                refreshed.append(message)
+            messages = refreshed
         messages, conversion = _normalize_messages(
             agent,
             messages,
@@ -451,13 +475,23 @@ def build_failover_call(cw: Any, guarded: Any):
                     diagnostics=diagnostics,
                     cycle=cycle,
                 )
+                started_at = time.time()
                 resp = await agent.call_backend_chat(
                     adapted_req,
                     selected_backend,
                     selected_model,
                 )
+                await asyncio.to_thread(
+                    coding_backend_failover.record_success,
+                    cw, task_id, selected_backend, selected_model, started_at=started_at,
+                )
                 return resp, selected_backend, selected_model
             except HTTPException as exc:
+                if coding_backend_failover.is_full_generation_read_timeout(exc):
+                    await asyncio.to_thread(
+                        coding_backend_failover.record_full_timeout,
+                        cw, task_id, selected_backend, selected_model,
+                    )
                 if attempt >= max_retries or not agent._is_retryable_backend_error(exc):
                     raise
                 previous_exclusions = set(excluded_backends)
@@ -485,11 +519,14 @@ def build_failover_call(cw: Any, guarded: Any):
                         "backend": selected_backend,
                         "upstream_model": selected_model,
                         "excluded_backends": sorted(excluded_backends),
+                        "coding_backend_cooldowns": coding_backend_failover.cooldown_state(
+                            await asyncio.to_thread(cw.load_task, task_id)
+                        ),
                         "error": agent._clip_text(str(detail), 1200),
                         "summary": (
                             "A full generation read timeout exhausted this backend for "
-                            "the current request; the next attempt must use another "
-                            "healthy coding route."
+                            "this task and model lane until its cooldown expires; "
+                            "the next attempt must use another healthy coding route."
                             if full_read_failover
                             else "Retrying a transient coding-backend failure."
                         ),

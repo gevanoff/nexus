@@ -53,6 +53,9 @@ def _evidence_window_start(events: list[Mapping[str, Any]], state: Mapping[str, 
     pause/resume. Timestamp and current-run fallbacks cover legacy states that
     lack a reliable activation cursor.
     """
+    evidence_since = _event_timestamp({"ts": state.get("evidence_since")})
+    if evidence_since > 0:
+        return next((index for index, event in enumerate(events) if _event_timestamp(event) >= evidence_since), len(events))
     try:
         activation_cursor = int(state.get("activation_event_count") or 0)
     except (TypeError, ValueError):
@@ -332,6 +335,8 @@ def apply_provenance_gate(
             "coding_finish",
         }
     state["allowed_tools"] = sorted(evidence_tools)
+    if state.get("refutation_count") and int(state.get("targeted_evidence_count") or 0) < int(state.get("targeted_evidence_limit") or 2):
+        state["allowed_tools"] = sorted(evidence_tools | {"coding_read_file_lines"})
     return state
 
 
@@ -456,9 +461,8 @@ class ExecutionForcedActionFacade:
             return True, {}
         tool_name = str(name or "").strip()
         allowed_tools = set(state.get("allowed_tools") or [])
-        allowed = tool_name in allowed_tools
-        if tool_name == "coding_run_command" and allowed:
-            allowed = bool(is_validation_command(args.get("argv")))
+        from app.coding_forced_action import call_allowed_in_state
+        allowed = call_allowed_in_state(state, name=tool_name, args=args, is_validation_command=is_validation_command)
         if allowed:
             return True, {}
 

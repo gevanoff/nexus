@@ -4217,6 +4217,7 @@ def coding_state_snapshot(task_id: str) -> Dict[str, Any]:
         },
         "plan": normalize_project_plan(task.get("project_plan"), fallback_goal=mission["goal"]),
         "changes": {
+            "ok": bool(change_summary.get("ok")),
             "changed_files": files,
             "counts": change_summary.get("counts") or {},
             "last_edit_at": last_edit_at,

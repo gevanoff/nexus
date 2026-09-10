@@ -135,6 +135,37 @@ def _recover_call(agent):
     return call, args
 
 
+def test_trusted_sanitizer_classifies_disabled_tools_without_unknown_prose():
+    from app import upstreams
+    from app.openai_utils import sanitize_chat_choices, tool_call_name_error
+
+    async def invoke(name):
+        diagnostics = []
+        response = {"choices": [{"message": {"role": "assistant", "tool_calls": [{
+            "id": "call", "type": "function",
+            "function": {"name": name, "arguments": "{}"},
+        }]}}]}
+        sanitize_chat_choices(response, allowed_tool_names=[EDIT, FINISH], tool_diagnostics=diagnostics)
+        upstreams._log_invalid_response_tool_calls(diagnostics, backend_name="fixture", model_name="fixture", stream=False)
+        return response
+
+    agent, _ = _base_agent(call_backend_chat=invoke)
+    recovery.install(agent)
+    disabled = asyncio.run(agent.call_backend_chat(READ))
+    text = disabled["choices"][0]["message"]["content"]
+    assert "known Coding Workspace tool" in text
+    assert "unknown tool name" not in text
+    assert "Retry with a validated tool-calling model" not in text
+    assert disabled[recovery._TRUSTED_DIAGNOSTICS_KEY][0]["reason"] == "known tool disabled by controller policy"
+    assert len(agent._extract_tool_calls(disabled)) == 1
+
+    unknown = asyncio.run(agent.call_backend_chat("invented_tool"))
+    assert unknown[recovery._TRUSTED_DIAGNOSTICS_KEY][0]["reason"] == "unknown tool name"
+    assert agent._extract_tool_calls(unknown) == []
+    # The trusted classification cannot leak to unrelated requests.
+    assert tool_call_name_error(READ, [EDIT, FINISH]) == "unknown tool name"
+
+
 def test_known_policy_omitted_tool_is_recovered_as_rejection_only_call():
     agent, forced = _agent()
 

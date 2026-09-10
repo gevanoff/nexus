@@ -5,6 +5,11 @@ import pytest
 from app import coding_agent_guarded as guarded
 
 
+@pytest.fixture(autouse=True)
+def task_store(monkeypatch):
+    monkeypatch.setattr(guarded._agent.cw, "load_task", lambda _task_id: {})
+
+
 @pytest.mark.asyncio
 async def test_backend_slot_is_released_when_post_acquire_logging_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     class Admission:

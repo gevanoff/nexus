@@ -288,11 +288,23 @@ def mission_delta_state(
     tracked_digest = (
         hashlib.sha256(tracked_text.encode("utf-8")).hexdigest() if tracked_text else ""
     )
+    current_head = _head(cw, task_id, task)
+    paths = _run_process(
+        cw, ["git", "diff", "--no-ext-diff", "--name-only", "-z", base_head, "--", "."], cwd=repo,
+    )
+    others = _run_process(cw, ["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=repo)
+    changed_files = sorted(set(
+        str(paths.get("stdout") or "").split("\0")
+        + str(others.get("stdout") or "").split("\0")
+    ) - {""})
     return {
         "ok": True,
         "has_delta": bool(raw),
         "base_head": base_head,
-        "current_head": _head(cw, task_id, task),
+        "current_head": current_head,
+        "changed_files": changed_files,
+        "changed_files_complete": bool(paths.get("ok") and others.get("ok")),
+        "checkpoint_committed": bool(current_head and current_head != base_head),
         "diff_text": raw,
         "diff_sha256": digest,
         "tracked_diff_sha256": tracked_digest,
@@ -519,6 +531,13 @@ def _record_mutation(cw: Any, task_id: str) -> None:
             }
         )
         latest[KEY] = current
+        # This counter belongs to the run, whereas the acceptance epoch belongs
+        # to the task. Event history may roll over without erasing either fact.
+        prior_run = _mapping(latest.get("coding_run_mutations"))
+        count = _int(prior_run.get("count")) if prior_run.get("run_id") == run_id else 0
+        latest["coding_run_mutations"] = {
+            "run_id": run_id, "count": count + 1, "last_mutation_at": now,
+        }
         refutation = _mapping(latest.get(REFUTATION_KEY))
         if (
             str(refutation.get("schema") or "") == REFUTATION_SCHEMA
@@ -611,6 +630,10 @@ def _refutation_overlay_state(
     state["hypothesis_plan_revision"] = plan_revision if hypothesis_ready else None
     state["refutation_count"] = _int(refutation.get("count"))
     state["refutation_plan_revision"] = refutation_revision
+    # Every later evidence/note refinement must use this same boundary. Without
+    # it the provenance facade can re-authorize the old, explicitly refuted note.
+    state["activation_plan_revision"] = refutation_revision
+    state["evidence_since"] = since
 
     if evidence_count > 0 and hypothesis_ready:
         state["action_kind"] = "edit"
@@ -769,6 +792,46 @@ def _reconcile_snapshot(
         "status": str(epoch.get("status") or ""),
         "error": str(state.get("error") or ""),
     }
+    output["mission_delta"] = {
+        key: state.get(key) for key in (
+            "ok", "base_head", "current_head", "has_delta", "changed_files",
+            "changed_files_complete", "checkpoint_committed", "diff_sha256", "diff_chars", "error",
+        )
+    }
+    working_files = list(changes.get("changed_files") or [])
+    output["working_tree"] = {
+        "ok": changes.get("ok", True),
+        "clean": not bool(working_files) if changes.get("ok", True) else None,
+        "changed_files": working_files,
+        "counts": dict(_mapping(changes.get("counts"))),
+    }
+    changes["scope"] = "working_tree"
+    output["changes"] = changes  # Legacy compatibility; never a mission-delta summary.
+    mutations = _mapping(task.get("coding_run_mutations"))
+    run_id = str(task.get("agent_run_id") or "")
+    baseline = _mapping(task.get("agent_semantic_baseline"))
+    output["run_delta"] = {
+        "run_id": run_id,
+        "start_head": str(task.get("agent_start_head") or ""),
+        "baseline": dict(baseline) if baseline.get("run_id") == run_id else {},
+        "baseline_current": bool(run_id and baseline.get("run_id") == run_id),
+        "mutation_count": _int(mutations.get("count")) if mutations.get("run_id") == run_id else 0,
+        "mutation_count_known": mutations.get("run_id") == run_id,
+        "scope": "mutations observed in this run; acceptance uses mission_delta",
+    }
+    output["delta_guidance"] = (
+        "A clean working tree does not imply that no mission changes exist. "
+        "Checkpoint-committed changes remain part of the mission delta relative "
+        "to the immutable mission base. Run-local mutations are a separate scope."
+    )
+    from app import coding_backend_failover
+    from app.coding_resume_convergence_hardening import active_edit_batch
+    batch = active_edit_batch(task)
+    output["edit_batch"] = {
+        key: value for key, value in _mapping(task.get("coding_edit_batch")).items()
+        if key != "qualified_policy"
+    }
+    output["coding_backend_cooldowns"] = coding_backend_failover.cooldown_state(task)
 
     if not state.get("ok") or not state.get("has_delta"):
         return output
@@ -776,7 +839,10 @@ def _reconcile_snapshot(
     validation = _mapping(output.get("validation"))
     review = _mapping(output.get("diff_review"))
     requires_validation = coding_validation_policy.requires_agent_validation(task)
-    if requires_validation and not bool(
+    if batch:
+        progress["current_phase"] = "editing"
+        progress["next_recommended_action"] = "complete bounded coherent edits, then validate and review mission diff"
+    elif requires_validation and not bool(
         validation.get("validation_after_latest_edit")
     ):
         progress["current_phase"] = "editing"

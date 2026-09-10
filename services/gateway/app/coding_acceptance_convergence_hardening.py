@@ -749,7 +749,7 @@ def _install_live_refutation(agent: Any, guarded: Any, cw: Any, mission_epoch: A
                 task_id,
                 args,
             )
-        if normalized_name == "coding_finish":
+        if normalized_name == "coding_finish" and args.get("success", True) is not False:
             try:
                 before = cw.load_task(task_id)
             except Exception:
@@ -851,6 +851,9 @@ def _install_consumed_lifecycle_continuity() -> None:
     prior_context = completion._lifecycle_context
 
     def lifecycle_context_with_durable_consumed_evidence(task: Mapping[str, Any]) -> str:
+        from app.coding_resume_convergence_hardening import active_edit_batch
+        if active_edit_batch(task):
+            return prior_context(task)
         lifecycle = _mapping(task.get(_LIFECYCLE_KEY))
         if str(lifecycle.get("status") or "") != "consumed":
             return prior_context(task)
