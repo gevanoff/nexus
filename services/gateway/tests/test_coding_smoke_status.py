@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_smoke_status
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_coding_smoke_status_summarizes_reports_and_metrics(tmp_path, monkeypatch):
@@ -50,3 +54,20 @@ def test_coding_smoke_status_summarizes_reports_and_metrics(tmp_path, monkeypatc
     assert payload["metrics"][0]["successes"] == 1
     assert payload["metrics"][0]["failures"] == 1
     assert payload["metrics"][0]["success_rate"] == 0.5
+
+
+def test_ai2_runs_hourly_coding_smoke_suite_from_startup() -> None:
+    topology = json.loads(
+        (REPO_ROOT / "deploy" / "topology" / "production.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    env = topology["hosts"]["ai2"]["env"]
+
+    assert env["CODING_SMOKE_SCHEDULER_ENABLED"] == "true"
+    assert env["CODING_SMOKE_RUN_AT_STARTUP"] == "true"
+    assert env["CODING_SMOKE_START_INTERVAL_SEC"] == "3600"
+    assert env["CODING_SMOKE_MODELS"] == "coder"
+    assert env["CODING_SMOKE_PROFILES"] == (
+        "fixture_median,fixture_inventory,fixture_route_flags"
+    )

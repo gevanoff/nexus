@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -217,7 +218,7 @@ def test_real_controller_allows_coherent_migration_then_forces_validation_and_re
     )
     assert blocked["error"] == "forced_action_tool_rejected"
     result = w.call(
-        "coding_run_command", argv=["python", "-m", "compileall", "-q", "defaults.py"]
+        "coding_run_command", argv=["python3", "-m", "compileall", "-q", "defaults.py"]
     )
     assert result["ok"], result
     state = w.agent.forced_action.active_state(w.cw.load_task(w.task_id))
@@ -302,10 +303,182 @@ def test_checkpoint_snapshot_and_rematerialized_prompt_keep_immutable_mission_de
     assert "historical audit context, not current causal truth" not in text
 
 
+def test_reverted_checkpoint_is_not_reported_as_a_committed_mission_delta(workspace):
+    w = workspace
+    original = (w.repo / "gateway.json").read_text()
+    (w.repo / "gateway.json").write_text(
+        json.dumps({"coder": NEW, "glm-5.2": OLD}) + "\n"
+    )
+    git(w.repo, "add", "gateway.json")
+    git(w.repo, "commit", "-m", "checkpoint migration")
+    (w.repo / "gateway.json").write_text(original)
+    git(w.repo, "add", "gateway.json")
+    git(w.repo, "commit", "-m", "revert checkpoint migration")
+
+    mission = w.cw.coding_state_snapshot(w.task_id)["mission_delta"]
+    assert mission["has_delta"] is False
+    assert mission["changed_files"] == []
+    assert mission["checkpoint_committed"] is False
+    assert mission["checkpoint_state_complete"] is True
+    assert mission["head_diverged_from_base"] is True
+
+
+def test_empty_untracked_file_is_an_explicit_mission_delta(workspace):
+    w = workspace
+    (w.repo / "empty.marker").write_bytes(b"")
+
+    mission = w.cw.coding_state_snapshot(w.task_id)["mission_delta"]
+    assert mission["has_delta"] is True
+    assert mission["changed_files"] == ["empty.marker"]
+    assert mission["checkpoint_committed"] is False
+    assert mission["diff_sha256"]
+
+
+@pytest.mark.parametrize(
+    ("target", "target_is_directory"),
+    [
+        ("gateway.json", False),
+        (".", True),
+        ("missing-target", False),
+    ],
+)
+def test_untracked_symlink_fails_closed_without_dereferencing(
+    workspace,
+    target,
+    target_is_directory,
+):
+    w = workspace
+    link = w.repo / "untracked-link"
+    link.symlink_to(target, target_is_directory=target_is_directory)
+
+    mission = epoch.mission_delta_state(w.cw, w.task_id)
+
+    assert mission["ok"] is False
+    assert mission["has_delta"] is False
+    assert mission["diff_text"] == ""
+    assert mission["error"] == "untracked symlink is not accepted: untracked-link"
+
+
+def test_untracked_inventory_preserves_path_and_executable_mode(workspace):
+    w = workspace
+    relative = " leading\ntrailing-script.sh "
+    path = w.repo / relative
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(0o755)
+
+    mission = epoch.mission_delta_state(w.cw, w.task_id)
+
+    assert mission["ok"] is True
+    assert mission["has_delta"] is True
+    assert mission["changed_files"] == [relative]
+    assert "new file mode 100755" in mission["diff_text"]
+    assert 'path=" leading\\ntrailing-script.sh "' in mission["diff_text"]
+
+
+def test_untracked_special_file_fails_closed(workspace):
+    w = workspace
+    fifo = w.repo / "agent-output.fifo"
+    os.mkfifo(fifo)
+
+    data, metadata, error = epoch._read_untracked_regular_file(
+        repo=w.repo,
+        raw="agent-output.fifo",
+    )
+
+    assert data == b""
+    assert metadata == {}
+    assert error == "untracked path is not a regular file: agent-output.fifo"
+
+
+def test_untracked_hard_link_fails_closed(workspace):
+    w = workspace
+    source = w.repo.parent / "outside-workspace.txt"
+    source.write_text("not workspace-owned\n")
+    os.link(source, w.repo / "linked-output.txt")
+
+    mission = epoch.mission_delta_state(w.cw, w.task_id)
+
+    assert mission["ok"] is False
+    assert mission["has_delta"] is False
+    assert mission["diff_text"] == ""
+    assert mission["error"] == (
+        "untracked hard link is not accepted: linked-output.txt"
+    )
+
+
+def test_oversized_untracked_file_is_rejected_before_reading(workspace, monkeypatch):
+    w = workspace
+    path = w.repo / "oversized.bin"
+    path.write_bytes(b"x" * (epoch._MAX_UNTRACKED_HASH_BYTES + 1))
+    opened = []
+    real_open = epoch.os.open
+
+    def tracking_open(*args, **kwargs):
+        opened.append(args[0])
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(epoch.os, "open", tracking_open)
+
+    data, metadata, error = epoch._read_untracked_regular_file(
+        repo=w.repo,
+        raw="oversized.bin",
+    )
+
+    assert data == b""
+    assert metadata == {}
+    assert error.startswith("untracked file exceeds safe hashing limit:")
+    assert opened == []
+
+
+def test_non_utf8_untracked_inventory_fails_closed(workspace, monkeypatch):
+    w = workspace
+
+    def undecodable(*_args, **_kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(epoch, "_run_process", undecodable)
+
+    paths, error = epoch._untracked_paths(w.cw, repo=w.repo)
+
+    assert paths == []
+    assert error == (
+        "unable to decode untracked path inventory as UTF-8: UnicodeDecodeError"
+    )
+
+
+def test_untracked_inventory_change_during_collection_fails_closed(
+    workspace,
+    monkeypatch,
+):
+    w = workspace
+    inventories = iter([(["first.txt"], ""), (["first.txt", "second.txt"], "")])
+    monkeypatch.setattr(epoch, "_untracked_paths", lambda *_args, **_kwargs: next(inventories))
+    monkeypatch.setattr(
+        epoch,
+        "_read_untracked_regular_file",
+        lambda **_kwargs: (
+            b"first\n",
+            {
+                "mode": "100644",
+                "size": 6,
+                "sha256": hashlib.sha256(b"first\n").hexdigest(),
+                "content_included": True,
+            },
+            "",
+        ),
+    )
+
+    diff_text, error = epoch._collect_untracked_diff(w.cw, repo=w.repo)
+
+    assert diff_text == ""
+    assert error == "workspace changed while collecting untracked diff"
+
+
 def test_incident_reviewer_outage_checkpoint_resume_rejection_repair_and_acceptance(
     workspace, monkeypatch
 ):
     from app import coding_terminal_acceptance_hardening as terminal
+    from app.models import ChatCompletionRequest, ChatMessage
 
     w = workspace
     ground(w)
@@ -338,15 +511,70 @@ def test_incident_reviewer_outage_checkpoint_resume_rejection_repair_and_accepta
         }
 
     monkeypatch.setattr(w.routes.guarded_agent, "_semantic_acceptance_review", review)
+    selected, materialized_contexts = [], []
+
+    class Admission:
+        async def acquire(self, backend, capability):
+            assert capability == "chat"
+
+        def release(self, backend, capability):
+            assert capability == "chat"
+
+    lanes = [
+        {
+            "backend": "local_mlx",
+            "upstream_model": OLD,
+            "ready": True,
+            "available": 1,
+        },
+        {
+            "backend": "local_vllm_fast",
+            "upstream_model": "fallback",
+            "ready": True,
+            "available": 1,
+        },
+    ]
+
+    async def backend_call(req, backend, model):
+        selected.append((backend, model))
+        if backend == "local_mlx":
+            raise HTTPException(
+                502, detail={"error": "ReadTimeout: read timeout after 600s"}
+            )
+        materialized_contexts.append(
+            "\n".join(message.content or "" for message in req.messages)
+        )
+        return {"choices": [{"message": {"content": "continue"}}]}
+
+    monkeypatch.setattr(w.agent, "get_admission_controller", lambda: Admission())
+    monkeypatch.setattr(
+        w.agent, "_rank_coding_backend_candidates", lambda *args, **kwargs: lanes
+    )
+    monkeypatch.setattr(w.agent, "_max_completion_tokens_for_route", lambda *args: 2556)
+    monkeypatch.setattr(w.agent, "_backend_retry_count", lambda: 1)
+    monkeypatch.setattr(w.agent, "call_backend_chat", backend_call)
+    backend_dispatch = w.routes.guarded_agent._call_backend_chat_with_failover
+    assert backend_dispatch is w.agent._call_backend_chat_with_retry
+    request = ChatCompletionRequest(
+        model="coder",
+        messages=[ChatMessage(role="system", content="You are Nexus Coding Agent")],
+    )
+    assert asyncio.run(
+        backend_dispatch(
+            request, "local_mlx", OLD, task_id=w.task_id, cycle=1
+        )
+    )[1] == "local_vllm_fast"
+    assert selected == [("local_mlx", OLD), ("local_vllm_fast", "fallback")]
+    assert failover.cooldown_state(w.cw.load_task(w.task_id))[0]["active"]
+
     assert w.call(
-        "coding_run_command", argv=["python", "-m", "compileall", "-q", "defaults.py"]
+        "coding_run_command", argv=["python3", "-m", "compileall", "-q", "defaults.py"]
     )["ok"]
     assert w.call("coding_git_diff")["ok"]
     unavailable = w.call("coding_finish", success=True, summary="Review migration")
     assert unavailable["error"] == "semantic_reviewer_unavailable", unavailable
     assert unavailable["interrupted"] and unavailable["resumable"]
     assert not w.cw.load_task(w.task_id).get("coding_semantic_rejection_guard")
-    failover.record_full_timeout(w.cw, w.task_id, "local_mlx", OLD)
     git(w.repo, "add", ".")
     git(w.repo, "commit", "-m", "interrupted checkpoint")
     checkpoint = git(w.repo, "rev-parse", "HEAD")
@@ -363,6 +591,19 @@ def test_incident_reviewer_outage_checkpoint_resume_rejection_repair_and_accepta
     assert snapshot["mission_delta"]["has_delta"]
     assert snapshot["mission_delta"]["base_head"] == w.base
     assert snapshot["coding_backend_cooldowns"][0]["active"]
+    reset_context = w.agent._task_context(w.cw.load_task(w.task_id))
+    assert '"clean": true' in reset_context
+    assert '"has_delta": true' in reset_context
+    assert "A clean working tree does not imply" in reset_context
+    assert asyncio.run(
+        backend_dispatch(
+            request, "local_mlx", OLD, task_id=w.task_id, cycle=2
+        )
+    )[1] == "local_vllm_fast"
+    assert selected.count(("local_mlx", OLD)) == 1
+    assert '"clean": true' in materialized_contexts[-1]
+    assert '"has_delta": true' in materialized_contexts[-1]
+    assert "A clean working tree does not imply" in materialized_contexts[-1]
     rejected = w.call("coding_finish", success=True, summary="Retry independent review")
     assert rejected["error"] == "semantic_acceptance_rejected", rejected
     repeat = w.agent._run_tool(
@@ -407,7 +648,7 @@ def test_incident_reviewer_outage_checkpoint_resume_rejection_repair_and_accepta
     for path in PATHS[1:]:
         replace(w, path)
     assert w.call(
-        "coding_run_command", argv=["python", "-m", "compileall", "-q", "defaults.py"]
+        "coding_run_command", argv=["python3", "-m", "compileall", "-q", "defaults.py"]
     )["ok"]
     assert w.call("coding_git_diff")["ok"]
     accepted = w.call(
@@ -416,6 +657,7 @@ def test_incident_reviewer_outage_checkpoint_resume_rejection_repair_and_accepta
         summary="Default migration completed and legacy alias preserved",
     )
     assert accepted["ok"] and accepted["success"], accepted
+    assert json.loads((w.repo / "gateway.json").read_text())["glm-5.2"] == OLD
     assert w.cw.coding_state_snapshot(w.task_id)["mission_acceptance"][
         "semantic_accepted"
     ]
@@ -737,3 +979,48 @@ def test_debug_report_labels_runtime_authorities(workspace):
     assert "CODING_AGENT_MAX_RUNTIME_SEC" in provenance["effective_runtime_config"]
     assert "mission_delta" in report["durable_state"]
     json.dumps(report, allow_nan=False)
+
+
+def test_debug_report_labels_clean_worktree_and_checkpoint_mission_files(workspace):
+    from app import coding_debug_report
+
+    w = workspace
+    (w.repo / "gateway.json").write_text(
+        json.dumps({"coder": NEW, "glm-5.2": OLD}) + "\n"
+    )
+    git(w.repo, "add", "gateway.json")
+    git(w.repo, "commit", "-m", "checkpoint")
+
+    rendered = coding_debug_report.render_debug_report(
+        coding_debug_report.collect_debug_snapshot(w.task_id)
+    )
+    assert (
+        "Checkpoint-committed content delta: `yes`; HEAD diverged from base: `yes`"
+        in rendered
+    )
+    assert "Mission-delta changed files: `1`" in rendered
+    assert "Mission delta: `gateway.json`" in rendered
+    assert "No working-tree changed files reported." in rendered
+    assert "No changed files reported." not in rendered
+
+
+def test_debug_report_escapes_control_characters_and_backticks_in_paths():
+    from app import coding_debug_report
+
+    unsafe = "line\n- forged `heading`.py"
+    rendered = coding_debug_report.render_debug_report(
+        {
+            "durable_state": {"mission_delta": {"changed_files": [unsafe]}},
+            "git": {
+                "changes": {
+                    "counts": {"total": 1, "untracked": 1},
+                    "files": [{"status": "??", "path": unsafe}],
+                }
+            },
+        }
+    )
+
+    escaped = "line\\n- forged \\u0060heading\\u0060.py"
+    assert f"- Mission delta: `{escaped}`" in rendered
+    assert f"- Working tree: `?? {escaped}`" in rendered
+    assert "\n- forged `heading`.py" not in rendered

@@ -214,17 +214,26 @@ class _CW:
         assert base_branch == "main"
         return {"ok": True, "merge_base": self.merge_base, "compare_ref": self.merge_base}
 
-    def _run_process(self, argv, *, cwd, timeout_sec=30.0):
+    def _run_process(
+        self,
+        argv,
+        *,
+        cwd,
+        timeout_sec=30.0,
+        output_limit_chars=None,
+    ):
         assert cwd == Path("/repo")
-        del timeout_sec
+        del timeout_sec, output_limit_chars
         if argv[:2] == ["git", "rev-parse"]:
             candidate = argv[-1]
             if candidate == "HEAD":
                 candidate = self.current_head
             return {"ok": True, "stdout": f"{candidate}\n", "stderr": ""}
+        if argv[:2] == ["git", "diff"] and "--name-only" in argv:
+            return {"ok": True, "stdout": "app.py\0", "stderr": ""}
         if argv[:2] == ["git", "diff"]:
             return {"ok": True, "stdout": self.tracked_diff, "stderr": ""}
-        if argv[:3] == ["git", "ls-files", "--others"]:
+        if argv[:2] == ["git", "ls-files"]:
             return {"ok": True, "stdout": "", "stderr": ""}
         return {"ok": False, "stdout": "", "stderr": f"unexpected argv: {argv}"}
 
@@ -253,6 +262,65 @@ def test_checkpoint_commit_remains_inside_mission_delta_after_resume():
     assert resumed["has_delta"] is True
     assert resumed["base_head"] == "mission-base"
     assert cw.task[epoch.KEY]["base_head"] == "mission-base"
+
+
+def test_truncated_checkpoint_and_path_inventory_are_marked_incomplete(monkeypatch):
+    cw = _CW()
+    original = cw._run_process
+
+    def truncated(argv, *, cwd, timeout_sec=30.0, output_limit_chars=None):
+        result = original(
+            argv,
+            cwd=cwd,
+            timeout_sec=timeout_sec,
+            output_limit_chars=output_limit_chars,
+        )
+        if argv[:2] == ["git", "diff"] and cw.current_head in argv:
+            return {**result, "stdout_truncated": True}
+        if argv[:2] == ["git", "diff"] and "--name-only" in argv:
+            return {**result, "stdout": "app.py", "stdout_truncated": True}
+        return result
+
+    monkeypatch.setattr(cw, "_run_process", truncated)
+
+    state = epoch.mission_delta_state(cw, "code-test", cw.task)
+
+    assert state["ok"] is True
+    assert state["checkpoint_committed"] is True
+    assert state["checkpoint_state_complete"] is False
+    assert state["checkpoint_diff_sha256"] == ""
+    assert state["changed_files_complete"] is False
+
+
+def test_truncated_mission_diff_fails_closed(monkeypatch):
+    cw = _CW()
+    original = cw._run_process
+
+    def truncated(argv, *, cwd, timeout_sec=30.0, output_limit_chars=None):
+        result = original(
+            argv,
+            cwd=cwd,
+            timeout_sec=timeout_sec,
+            output_limit_chars=output_limit_chars,
+        )
+        if (
+            argv[:2] == ["git", "diff"]
+            and "--name-only" not in argv
+            and cw.current_head not in argv
+        ):
+            return {**result, "stdout_truncated": True}
+        return result
+
+    monkeypatch.setattr(cw, "_run_process", truncated)
+
+    state = epoch.mission_delta_state(cw, "code-test", cw.task)
+
+    assert state["ok"] is False
+    assert state["has_delta"] is False
+    assert state["diff_text"] == ""
+    assert state["error"] == (
+        "mission tracked diff exceeded the safe collection limit"
+    )
 
 
 def test_clean_worktree_with_inherited_delta_progresses_to_semantic_acceptance():

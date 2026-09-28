@@ -318,6 +318,67 @@ def test_unparseable_reviewer_response_fails_over_without_author_retry(monkeypat
     assert calls[0][2] == {"type": "json_object"}
 
 
+def test_reviewer_outer_retry_excludes_requested_and_internal_failover_routes(
+    monkeypatch,
+) -> None:
+    task = {
+        "agent_model": "coder",
+        "agent_backend": "author",
+        "agent_upstream_model": "author-model",
+    }
+    reroute_exclusions: list[set[str]] = []
+    routes = iter([
+        {"backend": "review-a", "upstream_model": "a"},
+        {"backend": "review-c", "upstream_model": "c"},
+    ])
+    calls: list[str] = []
+
+    def reroute(*_args, **kwargs):
+        reroute_exclusions.append(set(kwargs["excluded_backends"]))
+        return next(routes)
+
+    monkeypatch.setattr(guarded._agent.user_llm, "is_user_model_id", lambda _model: False)
+    monkeypatch.setattr(guarded._agent, "_semantic_reroute_candidate", reroute)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_max_completion_tokens_for_route",
+        lambda *_args: 1200,
+    )
+    monkeypatch.setattr(guarded._agent, "_settings_for_task_owner", lambda _task: None)
+    monkeypatch.setattr(
+        guarded._agent,
+        "_extract_assistant_message",
+        lambda response: type("Message", (), {"content": response})(),
+    )
+
+    async def fake_chat(_req, backend, upstream_model, **_kwargs):
+        calls.append(backend)
+        if backend == "review-a":
+            # Simulate review-a failing transport and the shared call returning
+            # an unusable response from its internal review-b failover.
+            return "not JSON", "review-b", "b"
+        return json.dumps({
+            "accepted": True,
+            "reason": "distinct reviewer route accepted the grounded change",
+            "causal_alignment": True,
+            "existing_mechanism_checked": True,
+            "acceptance_criteria_checked": True,
+        }), backend, upstream_model
+
+    monkeypatch.setattr(guarded, "_call_backend_chat_with_failover", fake_chat)
+
+    review = asyncio.run(
+        guarded._semantic_acceptance_review("code_test", task, diff_text="+ fixed")
+    )
+
+    assert review["accepted"] is True, review
+    assert calls == ["review-a", "review-c"]
+    assert reroute_exclusions == [
+        {"author"},
+        {"author", "review-a", "review-b"},
+    ]
+
+
 def test_harness_review_falls_back_to_fresh_author_route_after_unusable_alternate(
     monkeypatch,
 ) -> None:

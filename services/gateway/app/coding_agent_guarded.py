@@ -458,7 +458,15 @@ async def _semantic_acceptance_review(
             "reason": _agent._clip_text(failure, 400),
             "structured_output_requested": str(response_format is not None).lower(),
         })
-        excluded_backends.add(str(selected_backend))
+        # The shared backend call may fail over internally before returning an
+        # unusable reviewer response.  In that case both the requested route
+        # and the route that produced the response have already failed this
+        # review attempt and must not be selected by the next outer attempt.
+        excluded_backends.update(
+            backend_name
+            for backend_name in (str(current_backend), str(selected_backend))
+            if backend_name
+        )
         if is_author_fallback_attempt:
             break
 

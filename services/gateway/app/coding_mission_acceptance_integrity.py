@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import difflib
-import hashlib
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
@@ -43,57 +41,10 @@ def _has_prior_agent_history(task: Mapping[str, Any]) -> bool:
 
 
 def _content_bound_untracked_diff(epoch: Any, cw: Any, *, repo: Path) -> tuple[str, str]:
-    result = epoch._run_process(cw, ["git", "ls-files", "--others", "--exclude-standard"], cwd=repo)
-    if not bool(result.get("ok")):
-        return "", str(result.get("stderr") or result.get("error") or "git ls-files failed")
-    paths = [line.strip() for line in str(result.get("stdout") or "").splitlines() if line.strip()]
-    maximum = int(getattr(epoch, "_MAX_UNTRACKED", 200) or 200)
-    if len(paths) > maximum:
-        return "", f"mission delta has {len(paths)} untracked files; limit is {maximum}"
-
-    size_limit = int(getattr(epoch, "_MAX_UNTRACKED_BYTES", 100_000) or 100_000)
-    pieces: list[str] = []
-    for raw in paths:
-        candidate = repo.joinpath(raw).resolve()
-        try:
-            candidate.relative_to(repo)
-        except ValueError:
-            return "", f"untracked path escapes workspace: {raw}"
-        if not candidate.is_file():
-            continue
-        try:
-            data = candidate.read_bytes()
-        except Exception as exc:
-            return "", f"unable to read untracked file {raw}: {type(exc).__name__}: {exc}"
-
-        digest = hashlib.sha256(data).hexdigest()
-        identity = f"# nexus-untracked-content path={raw} size={len(data)} sha256={digest}"
-        if len(data) > size_limit:
-            pieces.append(
-                f"diff --git a/{raw} b/{raw}\nnew file mode 100644\n{identity}\n"
-                "Binary or oversized untracked file omitted from semantic review"
-            )
-            continue
-        if b"\x00" in data:
-            pieces.append(
-                f"diff --git a/{raw} b/{raw}\nnew file mode 100644\n{identity}\n"
-                "Binary untracked file omitted from semantic review"
-            )
-            continue
-
-        text = data.decode("utf-8", errors="replace")
-        rendered = "".join(
-            difflib.unified_diff(
-                [],
-                text.splitlines(keepends=True),
-                fromfile="/dev/null",
-                tofile=f"b/{raw}",
-            )
-        ).strip()
-        # Bind the fingerprint to the exact bytes even when replacement decoding
-        # would render two malformed UTF-8 byte sequences identically.
-        pieces.append(f"{identity}\n{rendered}".strip())
-    return "\n\n".join(piece for piece in pieces if piece).strip(), ""
+    collector = getattr(epoch, "_collect_untracked_diff", None)
+    if not callable(collector):
+        return "", "content-bound untracked diff collector is unavailable"
+    return collector(cw, repo=repo)
 
 
 def _worktree_dirty(cw: Any, task_id: str) -> bool:

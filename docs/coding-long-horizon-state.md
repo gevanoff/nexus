@@ -31,10 +31,16 @@ repository delta from the immutable acceptance base, including checkpoints.
 `run_delta` describes the run baseline and observed mutation count, explicitly
 labeling legacy runs without a durable counter as unknown. The existing `changes`
 field remains available with `scope=working_tree` for compatibility.
+`mission_delta.checkpoint_committed` is true only when the current `HEAD` has a
+nonempty base-relative content delta; `head_diverged_from_base` separately records
+commit-history movement such as a later explicit revert. Empty untracked files are
+represented as file-addition deltas rather than producing a changed-file list with
+`has_delta=false`.
 
 These are repository-derived observations, not additional acceptance authorities.
 Semantic review continues using the full mission diff and its existing exact
-content fingerprint. Snapshots and debug reports expose all three scopes.
+content fingerprint. Snapshots and debug reports expose all three scopes, and the
+human-readable report labels mission-delta files separately from working-tree files.
 
 ## Coherent edit batches
 

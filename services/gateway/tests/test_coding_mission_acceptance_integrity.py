@@ -4,6 +4,7 @@ from pathlib import Path
 import threading
 from types import SimpleNamespace
 
+from app import coding_mission_acceptance_epoch as epoch_impl
 from app import coding_mission_acceptance_integrity as integrity
 
 
@@ -69,6 +70,7 @@ def _epoch_facade():
     facade._MAX_UNTRACKED_BYTES = 100_000
     facade._resolve_acceptance_base = lambda _cw, _task_id, _task: "merge-base"
     facade._safe_untracked_diff = lambda _cw, *, repo: (str(repo), "")
+    facade._collect_untracked_diff = epoch_impl._collect_untracked_diff
     facade._run_process = lambda cw, argv, *, cwd: cw._run_process(argv, cwd=cwd)
     facade.mission_delta_state = lambda _cw, _task_id, _task: {
         "ok": False,
@@ -84,10 +86,16 @@ def test_untracked_binary_fingerprint_binds_exact_bytes(tmp_path: Path):
 
     class CW:
         @staticmethod
-        def _run_process(argv, *, cwd):
+        def _run_process(argv, *, cwd, **_kwargs):
             assert cwd == tmp_path
-            assert argv == ["git", "ls-files", "--others", "--exclude-standard"]
-            return {"ok": True, "stdout": "asset.bin\n", "stderr": ""}
+            assert argv == [
+                "git",
+                "ls-files",
+                "-z",
+                "--others",
+                "--exclude-standard",
+            ]
+            return {"ok": True, "stdout": "asset.bin\0", "stderr": ""}
 
     epoch = _epoch_facade()
     first, error = integrity._content_bound_untracked_diff(epoch, CW(), repo=tmp_path)
