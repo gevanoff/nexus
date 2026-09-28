@@ -187,6 +187,187 @@ async def test_real_agent_loop_enforces_forced_action_against_repeated_reads(mon
 
 
 @pytest.mark.asyncio
+async def test_rejected_validation_command_does_not_poison_later_finish(monkeypatch) -> None:
+    task = {
+        "id": "code_test",
+        "prompt": "Fix the implementation and validate it.",
+        "agent_status": "queued",
+        "agent_pause_requested": False,
+        "agent_stop_requested": False,
+        "agent_runs": [{"run_id": "run", "status": "queued"}],
+        "agent_events": [],
+        "guidance_messages": [],
+        "project_plan": {"revision": 0},
+    }
+    mission = {
+        "budget_policy": {"max_no_progress_cycles": 8},
+        "context_policy": {"context_reset_chars": 64_000},
+        "completion_policy": {
+            "require_file_changes": False,
+            "require_commit_on_success": False,
+        },
+    }
+    rejected_argv = ["git", "diff", "--check"]
+    calls = [
+        {
+            "id": "edit",
+            "function": {
+                "name": "coding_replace_text",
+                "arguments": json.dumps(
+                    {"path": "app.py", "old_text": "old", "new_text": "new"}
+                ),
+            },
+        },
+        {
+            "id": "test",
+            "function": {
+                "name": "coding_run_command",
+                "arguments": json.dumps({"argv": ["pytest", "-q"]}),
+            },
+        },
+        {
+            "id": "rejected-diff-check",
+            "function": {
+                "name": "coding_run_command",
+                "arguments": json.dumps({"argv": rejected_argv}),
+            },
+        },
+        {
+            "id": "diff",
+            "function": {"name": "coding_git_diff", "arguments": "{}"},
+        },
+        {
+            "id": "finish",
+            "function": {
+                "name": "coding_finish",
+                "arguments": json.dumps({"success": True, "summary": "done"}),
+            },
+        },
+    ]
+    backend_calls = 0
+    finish_gate_calls = []
+
+    def mutate_task(_task_id, mutator):
+        mutator(task)
+        return task
+
+    async def backend_call(_req, backend, upstream_model, **_kwargs):
+        nonlocal backend_calls
+        backend_calls += 1
+        return {}, backend, upstream_model
+
+    def evaluate_tool_call(_task, *, name, args, is_validation_command):
+        del is_validation_command
+        if name == "coding_run_command" and args.get("argv") == rejected_argv:
+            return False, {
+                "ok": False,
+                "error": "forced_action_tool_rejected",
+                "required_action": "Review the diff before another validation command.",
+            }
+        return True, {}
+
+    def run_tool(_task_id, name, _args, *, git_token_value):
+        del git_token_value
+        if name == "coding_replace_text":
+            return {"ok": True, "replacements": 1}
+        if name == "coding_run_command":
+            return {"ok": True, "returncode": 0}
+        if name == "coding_git_diff":
+            return {
+                "ok": True,
+                "diff": {"stdout": "diff --git a/app.py b/app.py\n+new\n"},
+            }
+        if name == "coding_finish":
+            return {"ok": True, "success": True, "summary": "done"}
+        raise AssertionError(f"unexpected tool: {name}")
+
+    original_finish_gate = coding_agent._finish_gate_feedback
+
+    def finish_gate(**kwargs):
+        finish_gate_calls.append(dict(kwargs))
+        return original_finish_gate(**kwargs)
+
+    monkeypatch.setattr(coding_agent.cw, "load_task", lambda _task_id: task)
+    monkeypatch.setattr(coding_agent.cw, "mutate_task", mutate_task)
+    monkeypatch.setattr(coding_agent.cw, "save_task", lambda value: value)
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "git_head",
+        lambda _task_id: {"ok": True, "commit": "abc123"},
+    )
+    monkeypatch.setattr(coding_agent.cw, "git_status", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(coding_agent.cw, "git_diff", lambda *_args, **_kwargs: {"ok": True, "stdout": ""})
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "git_change_summary",
+        lambda *_args, **_kwargs: {"counts": {"total": 1}},
+    )
+    monkeypatch.setattr(
+        coding_agent.cw,
+        "workspace_progress_fingerprint",
+        lambda _task_id: "changed",
+    )
+    monkeypatch.setattr(coding_agent, "_settings_for_task_owner", lambda _task: {})
+    monkeypatch.setattr(coding_agent, "_mission_for_task", lambda _task: mission)
+    monkeypatch.setattr(coding_agent, "_system_prompt", lambda *args, **kwargs: "system")
+    monkeypatch.setattr(coding_agent, "_task_context", lambda _task: "task")
+    monkeypatch.setattr(coding_agent, "_backend_supports_tool_calling", lambda _backend: True)
+    monkeypatch.setattr(coding_agent, "_max_completion_tokens_for_route", lambda *_args: 64)
+    monkeypatch.setattr(coding_agent, "_call_backend_chat_with_retry", backend_call)
+    monkeypatch.setattr(
+        coding_agent,
+        "_extract_assistant_message",
+        lambda _response: coding_agent.ChatMessage(
+            role="assistant",
+            content=None,
+            tool_calls=calls,
+        ),
+    )
+    monkeypatch.setattr(coding_agent, "_extract_assistant_thinking", lambda _response: "")
+    monkeypatch.setattr(coding_agent, "_extract_tool_calls", lambda _response: calls)
+    monkeypatch.setattr(coding_agent.forced_action, "evaluate_tool_call", evaluate_tool_call)
+    monkeypatch.setattr(coding_agent, "_run_tool", run_tool)
+    monkeypatch.setattr(coding_agent, "_checkpoint_enabled", lambda: False)
+    monkeypatch.setattr(coding_agent, "_semantic_reroute_candidate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(coding_agent, "_finish_gate_feedback", finish_gate)
+    monkeypatch.setattr(
+        coding_agent,
+        "finalize_successful_run",
+        lambda *args, **kwargs: {"ok": True, "finalization_status": "completed"},
+    )
+    monkeypatch.setattr(
+        coding_agent,
+        "decide_route",
+        lambda **kwargs: SimpleNamespace(
+            backend="test_backend",
+            model="test_model",
+            reason="test",
+        ),
+    )
+
+    await coding_agent._run_agent(
+        "code_test",
+        run_id="run",
+        git_token_value=None,
+        model="coder",
+        auto_commit=False,
+        commit_message=None,
+        max_cycles=20,
+        max_runtime_sec=600,
+        context_reset_cycles=0,
+    )
+
+    assert backend_calls == 1
+    assert finish_gate_calls
+    assert finish_gate_calls[-1]["validation_run_after_edit"] is True
+    assert finish_gate_calls[-1]["validation_ok_after_edit"] is True
+    assert finish_gate_calls[-1]["validation_failed_after_edit"] is False
+    assert task["agent_status"] == "completed"
+    assert task["agent_stop_reason_code"] == "run_completed"
+    assert not any(event.get("type") == "finish_gate" for event in task["agent_events"])
+
+
+@pytest.mark.asyncio
 async def test_real_agent_loop_persists_resumable_tool_interruption(monkeypatch) -> None:
     task = {
         "id": "code_test",

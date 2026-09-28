@@ -3782,17 +3782,21 @@ async def _run_agent(
                     diff_result_after_edit = result
                     cycle_diff_reviewed = True
                 elif name == "coding_run_command" and _is_validation_command(args.get("argv")):
-                    validation_argv_after_edit = [str(item) for item in (args.get("argv") or []) if str(item)]
-                    if _validation_command_failed_due_to_missing_tool(result):
-                        validation_run_after_edit = False
-                        validation_ok_after_edit = None
-                    else:
-                        validation_run_after_edit = True
-                        validation_ok_after_edit = bool(result.get("ok"))
-                        if validation_ok_after_edit:
-                            cycle_validation_succeeded = True
-                        if not validation_ok_after_edit:
-                            validation_failed_after_edit = True
+                    # Policy rejections are synthetic: the command was never
+                    # executed, so they must not turn a previously successful
+                    # validation state into a failed one for this run.
+                    if not rejected_by_forced_action:
+                        validation_argv_after_edit = [str(item) for item in (args.get("argv") or []) if str(item)]
+                        if _validation_command_failed_due_to_missing_tool(result):
+                            validation_run_after_edit = False
+                            validation_ok_after_edit = None
+                        else:
+                            validation_run_after_edit = True
+                            validation_ok_after_edit = bool(result.get("ok"))
+                            if validation_ok_after_edit:
+                                cycle_validation_succeeded = True
+                            if not validation_ok_after_edit:
+                                validation_failed_after_edit = True
 
                 await asyncio.to_thread(
                     _append_event,
