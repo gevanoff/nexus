@@ -3034,7 +3034,33 @@ async def create_and_start_agent_run(
         mission_overrides=mission_overrides,
     )
     if task.get("status") == "error":
-        return task
+        task_id = str(task.get("id") or "").strip()
+        if not task_id:
+            return task
+        try:
+            # create_task intentionally performs only one clone attempt. Recover
+            # a persisted transient failure on that same controller-owned task
+            # before starting so every canonical UI/API/tool caller gets the
+            # descriptor-anchored recovery path.
+            from app import coding_network_resilience
+
+            await asyncio.to_thread(
+                coding_network_resilience.retry_failed_initialization,
+                cw,
+                task_id,
+                git_token_value=git_token_value,
+            )
+        except Exception as exc:
+            logger.warning(
+                "coding task initialization recovery failed id=%s error_type=%s",
+                task_id,
+                type(exc).__name__,
+            )
+            try:
+                latest = await asyncio.to_thread(cw.load_task, task_id)
+            except Exception:
+                return task
+            return cw.public_task(latest)
     return await start_agent_run(
         str(task.get("id") or ""),
         git_token_value=git_token_value,
