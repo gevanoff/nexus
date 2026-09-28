@@ -8,7 +8,7 @@
       "linux": "/home/ai/ai/nexus"
     },
     "env": {
-      "VLLM_FAST_IMAGE": "vllm/vllm-openai:v0.19.1@sha256:2622f38a0aa646c15ccc27bd5033911a58fd94ac69fd8f86aba0692d77cfe5b9",
+      "VLLM_FAST_IMAGE": "vllm/vllm-openai:v0.27.1@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967",
       "VLLM_MODEL_STRONG": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
       "VLLM_MODEL_FAST": "cyankiwi/Devstral-Small-2507-AWQ-4bit",
       "VLLM_SERVED_MODEL_NAME": "ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic",
