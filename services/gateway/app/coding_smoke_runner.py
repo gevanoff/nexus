@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Sequence
 
 from app import coding_agent as ca
 from app import coding_model_policy
+from app import coding_network_resilience
 from app import coding_workspace as cw
 from app.config import S, logger
 
@@ -162,6 +163,51 @@ def _changed_files(diff_payload: Dict[str, Any]) -> set[str]:
     return out
 
 
+async def _wait_for_agent_terminal(
+    task_id: str,
+    *,
+    timeout_sec: float,
+    poll_sec: float,
+) -> tuple[bool, Dict[str, Any], Dict[str, Any]]:
+    deadline = time.monotonic() + max(0.0, float(timeout_sec))
+    last_task: Dict[str, Any] = {}
+    last_inspect: Dict[str, Any] = {}
+    while True:
+        last_task = await asyncio.to_thread(
+            lambda: cw.public_task(cw.load_task(task_id))
+        )
+        last_inspect = await asyncio.to_thread(
+            cw.inspect_task,
+            task_id,
+            stalled_after_sec=float(
+                getattr(S, "CODING_SMOKE_STALLED_AFTER_SEC", 180.0) or 180.0
+            ),
+        )
+        if _agent_status(last_task) in TERMINAL_AGENT_STATUSES:
+            return True, last_task, last_inspect
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, last_task, last_inspect
+        await asyncio.sleep(min(max(0.1, float(poll_sec)), remaining))
+
+
+async def _wait_for_agent_inactive(
+    task_id: str,
+    *,
+    timeout_sec: float,
+    poll_sec: float = 1.0,
+) -> bool:
+    """Wait briefly for a terminal runner's trailing persistence to finish."""
+    deadline = time.monotonic() + max(0.0, float(timeout_sec))
+    while True:
+        if not ca.agent_run_active(task_id):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(max(0.1, float(poll_sec)), remaining))
+
+
 def _write_report(report: Dict[str, Any]) -> None:
     target_dir = _report_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +279,8 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
     def fail(message: str) -> None:
         raise SmokeFailure(message, report=report)
 
+    agent_start_attempted = False
+    agent_state_unsettled = False
     try:
         policy = coding_model_policy.describe_workspace_model(model)
         if str(policy.get("run_policy") or "") == "idle_only":
@@ -251,14 +299,41 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
             coding_model=model,
         )
         task_id = str(task.get("id") or "")
+        create_ok = bool(task_id) and str(task.get("status") or "") != "error"
+        _append_phase(
+            report,
+            "create",
+            create_ok,
+            task_id=task_id,
+            error="" if create_ok else str(task.get("error") or "workspace creation failed")[:500],
+        )
+        if task_id and not create_ok:
+            try:
+                task = await asyncio.to_thread(
+                    coding_network_resilience.retry_failed_initialization,
+                    cw,
+                    task_id,
+                )
+                create_ok = str(task.get("status") or "") != "error"
+                recovery_error = ""
+            except Exception as exc:
+                create_ok = False
+                recovery_error = f"{type(exc).__name__}: workspace recovery rejected"
+            _append_phase(
+                report,
+                "create_recovery",
+                create_ok,
+                task_id=task_id,
+                error=recovery_error,
+            )
         report["task_id"] = task_id
         report["repo_url"] = str(task.get("repo_url") or "")
-        _append_phase(report, "create", bool(task_id) and str(task.get("status") or "") != "error", task_id=task_id)
         if not task_id:
             fail("coding run did not return a task id")
         if str(task.get("status") or "") == "error":
             fail(f"workspace creation failed: {task.get('error') or task}")
 
+        agent_start_attempted = True
         task = await ca.start_agent_run(
             task_id,
             coding_model=model,
@@ -266,25 +341,116 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
             commit_message=profile.commit_message,
             actor="coding-smoke-scheduler",
         )
+        agent_state_unsettled = True
         _append_phase(report, "start_agent", _agent_status(task) not in {"failed", "idle_waiting"}, agent_status=_agent_status(task))
 
-        deadline = time.monotonic() + max(1.0, float(getattr(S, "CODING_SMOKE_TIMEOUT_SEC", 1200.0) or 1200.0))
+        timeout = max(
+            1.0,
+            float(getattr(S, "CODING_SMOKE_TIMEOUT_SEC", 1200.0) or 1200.0),
+        )
         poll = max(1.0, float(getattr(S, "CODING_SMOKE_POLL_SEC", 10.0) or 10.0))
-        last_task = task
-        last_inspect: Dict[str, Any] = {}
-        while time.monotonic() < deadline:
-            last_task = await asyncio.to_thread(lambda: cw.public_task(cw.load_task(task_id)))
-            status = _agent_status(last_task)
-            last_inspect = await asyncio.to_thread(cw.inspect_task, task_id, stalled_after_sec=float(getattr(S, "CODING_SMOKE_STALLED_AFTER_SEC", 180.0) or 180.0))
-            report["last_agent_status"] = status
-            inspect_task = last_inspect.get("task") if isinstance(last_inspect.get("task"), dict) else {}
-            report["last_attention"] = inspect_task.get("attention") if isinstance(inspect_task, dict) else []
-            if status in TERMINAL_AGENT_STATUSES:
-                break
-            await asyncio.sleep(poll)
-        else:
-            await ca.request_pause(task_id)
-            fail(f"coding run timed out after {float(getattr(S, 'CODING_SMOKE_TIMEOUT_SEC', 1200.0) or 1200.0):.0f}s")
+        terminal, last_task, last_inspect = await _wait_for_agent_terminal(
+            task_id,
+            timeout_sec=timeout,
+            poll_sec=poll,
+        )
+        if not terminal:
+            completion_grace = max(
+                0.0,
+                min(
+                    300.0,
+                    float(
+                        getattr(S, "CODING_SMOKE_COMPLETION_GRACE_SEC", 60.0)
+                        or 0.0
+                    ),
+                ),
+            )
+            terminal, last_task, last_inspect = await _wait_for_agent_terminal(
+                task_id,
+                timeout_sec=completion_grace,
+                poll_sec=min(poll, 2.0),
+            )
+        if terminal:
+            terminal_settle = max(
+                0.0,
+                min(
+                    300.0,
+                    float(
+                        getattr(S, "CODING_SMOKE_PAUSE_SETTLE_SEC", 60.0)
+                        or 0.0
+                    ),
+                ),
+            )
+            try:
+                terminal_settled = await _wait_for_agent_inactive(
+                    task_id,
+                    timeout_sec=terminal_settle,
+                    poll_sec=min(poll, 1.0),
+                )
+            except Exception as exc:
+                report["abort_suite"] = True
+                fail(
+                    "coding agent reached terminal status but runner cleanup "
+                    f"could not be verified ({type(exc).__name__})"
+                )
+            agent_state_unsettled = not terminal_settled
+            if agent_state_unsettled:
+                report["abort_suite"] = True
+                fail(
+                    "coding agent reached terminal status but runner cleanup "
+                    "did not settle"
+                )
+        report["last_agent_status"] = _agent_status(last_task)
+        inspect_task = (
+            last_inspect.get("task")
+            if isinstance(last_inspect.get("task"), dict)
+            else {}
+        )
+        report["last_attention"] = (
+            inspect_task.get("attention")
+            if isinstance(inspect_task, dict)
+            else []
+        )
+        if not terminal:
+            try:
+                await ca.request_pause(task_id)
+            except Exception as exc:
+                report["abort_suite"] = True
+                fail(
+                    f"coding run timed out after {timeout:.0f}s and pause "
+                    f"request failed ({type(exc).__name__})"
+                )
+            settle = max(
+                0.0,
+                min(
+                    300.0,
+                    float(
+                        getattr(S, "CODING_SMOKE_PAUSE_SETTLE_SEC", 60.0)
+                        or 0.0
+                    ),
+                ),
+            )
+            settle_deadline = time.monotonic() + settle
+            try:
+                while (
+                    ca.agent_run_active(task_id)
+                    and time.monotonic() < settle_deadline
+                ):
+                    await asyncio.sleep(1.0)
+                agent_still_active = ca.agent_run_active(task_id)
+            except Exception as exc:
+                report["abort_suite"] = True
+                fail(
+                    f"coding run timed out after {timeout:.0f}s and pause "
+                    f"settlement could not be verified ({type(exc).__name__})"
+                )
+            if agent_still_active:
+                report["abort_suite"] = True
+                fail(
+                    f"coding run timed out after {timeout:.0f}s and pause did not settle"
+                )
+            agent_state_unsettled = False
+            fail(f"coding run timed out after {timeout:.0f}s")
 
         final_status = _agent_status(last_task)
         report["final_task"] = {
@@ -312,12 +478,26 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
         return report
     except SmokeFailure as exc:
         report = exc.report if isinstance(getattr(exc, "report", None), dict) else report
+        if agent_start_attempted and not agent_state_unsettled:
+            try:
+                agent_state_unsettled = ca.agent_run_active(task_id)
+            except Exception:
+                agent_state_unsettled = True
+        if agent_state_unsettled:
+            report["abort_suite"] = True
         report["ok"] = False
         report["error"] = str(exc)
         report["finished_at"] = int(time.time())
         report["duration_sec"] = int(report["finished_at"] - started_at)
         return report
     except Exception as exc:
+        if agent_start_attempted and not agent_state_unsettled:
+            try:
+                agent_state_unsettled = ca.agent_run_active(task_id)
+            except Exception:
+                agent_state_unsettled = True
+        if agent_state_unsettled:
+            report["abort_suite"] = True
         report["ok"] = False
         report["error"] = f"{type(exc).__name__}: {exc}"
         report["finished_at"] = int(time.time())
@@ -349,6 +529,9 @@ async def run_suite() -> None:
                 logger.info("coding smoke start model=%s profile=%s", model, profile_id)
                 report = await run_one(model=model, profile_id=profile_id)
                 logger.info("coding smoke finished model=%s profile=%s ok=%s task=%s", model, profile_id, report.get("ok"), report.get("task_id"))
+                if report.get("abort_suite"):
+                    logger.error("coding smoke suite aborted because a timed-out runner did not settle")
+                    return
 
         weekly_models = _csv(getattr(S, "CODING_SMOKE_WEEKLY_MODELS", ""))
         if weekly_models and _weekly_idle_window():
@@ -358,6 +541,9 @@ async def run_suite() -> None:
                     logger.info("coding smoke weekly start model=%s profile=%s", model, profile_id)
                     report = await run_one(model=model, profile_id=profile_id)
                     logger.info("coding smoke weekly finished model=%s profile=%s ok=%s task=%s", model, profile_id, report.get("ok"), report.get("task_id"))
+                    if report.get("abort_suite"):
+                        logger.error("coding smoke weekly suite aborted because a timed-out runner did not settle")
+                        return
         elif weekly_models:
             logger.info("coding smoke weekly models skipped outside idle window")
 

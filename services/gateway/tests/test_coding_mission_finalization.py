@@ -6,9 +6,12 @@ import subprocess
 import pytest
 from pathlib import Path
 
+from fastapi import HTTPException
+
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_agent as ca
+from app import coding_network_resilience
 from app import coding_routes
 from app import coding_workspace as cw
 
@@ -318,6 +321,140 @@ async def test_canonical_create_and_run_service_is_shared_controller_path(monkey
     assert created[0]["mission_overrides"] == mission
     assert started[0]["mission_overrides"] == mission
     assert started[0]["auto_commit"] is True
+
+
+@pytest.mark.asyncio
+async def test_canonical_create_and_run_recovers_transient_clone_on_same_task(monkeypatch):
+    created = []
+    recovered = []
+    started = []
+
+    def create_task(**kwargs):
+        created.append(kwargs)
+        return {
+            "id": "code_abcdef123456",
+            "status": "error",
+            "error": "git clone failed",
+        }
+
+    def retry_failed_initialization(controller, task_id, *, git_token_value=None):
+        recovered.append(
+            {
+                "controller": controller,
+                "task_id": task_id,
+                "git_token_value": git_token_value,
+            }
+        )
+        return {"id": task_id, "status": "ready"}
+
+    async def start_agent_run(task_id, **kwargs):
+        started.append({"task_id": task_id, **kwargs})
+        return {"id": task_id, "status": "ready", "agent": {"status": "queued"}}
+
+    monkeypatch.setattr(cw, "create_task", create_task)
+    monkeypatch.setattr(
+        coding_network_resilience,
+        "retry_failed_initialization",
+        retry_failed_initialization,
+    )
+    monkeypatch.setattr(ca, "start_agent_run", start_agent_run)
+    mission = cw.coding_mission_overrides(push_on_success=True)
+
+    result = await ca.create_and_start_agent_run(
+        repo_url="https://github.com/example/repo.git",
+        base_branch="main",
+        branch_name="feature/test",
+        prompt="Implement it",
+        owner="api",
+        git_token_value="private-token",
+        coding_model="coder",
+        commit_message="Implement it",
+        actor="api-user",
+        max_cycles=17,
+        max_runtime_sec=900,
+        context_reset_cycles=4,
+        mission_overrides=mission,
+    )
+
+    assert result["agent"]["status"] == "queued"
+    assert len(created) == 1
+    assert recovered == [
+        {
+            "controller": cw,
+            "task_id": "code_abcdef123456",
+            "git_token_value": "private-token",
+        }
+    ]
+    assert started == [
+        {
+            "task_id": "code_abcdef123456",
+            "git_token_value": "private-token",
+            "coding_model": "coder",
+            "auto_commit": True,
+            "commit_message": "Implement it",
+            "actor": "api-user",
+            "max_cycles": 17,
+            "max_runtime_sec": 900,
+            "context_reset_cycles": 4,
+            "mission_overrides": mission,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_canonical_create_and_run_returns_latest_task_when_recovery_rejected(
+    monkeypatch,
+):
+    create_calls = 0
+    start_calls = 0
+
+    def create_task(**_kwargs):
+        nonlocal create_calls
+        create_calls += 1
+        return {
+            "id": "code_abcdef123456",
+            "status": "error",
+            "error": "branch creation failed",
+        }
+
+    def retry_failed_initialization(*_args, **_kwargs):
+        raise HTTPException(status_code=409, detail="non-transient failure")
+
+    def load_task(task_id):
+        assert task_id == "code_abcdef123456"
+        return {
+            "id": task_id,
+            "status": "error",
+            "error": "branch creation failed",
+            "commands": [{"label": "branch", "ok": False}],
+        }
+
+    async def start_agent_run(*_args, **_kwargs):
+        nonlocal start_calls
+        start_calls += 1
+        return {}
+
+    monkeypatch.setattr(cw, "create_task", create_task)
+    monkeypatch.setattr(cw, "load_task", load_task)
+    monkeypatch.setattr(
+        coding_network_resilience,
+        "retry_failed_initialization",
+        retry_failed_initialization,
+    )
+    monkeypatch.setattr(ca, "start_agent_run", start_agent_run)
+
+    result = await ca.create_and_start_agent_run(
+        repo_url="https://github.com/example/repo.git",
+        base_branch="main",
+        branch_name="feature/test",
+        prompt="Implement it",
+        owner="api",
+    )
+
+    assert result["status"] == "error"
+    assert result["error"] == "branch creation failed"
+    assert create_calls == 1
+    assert start_calls == 0
 
 
 def test_scripted_coding_mission_finishes_with_real_branch_commit(tmp_path, monkeypatch):

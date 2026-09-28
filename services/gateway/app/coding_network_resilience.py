@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
-import shutil
+import secrets
+import stat
 import time
+from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Any, Callable, Dict, Iterator, Optional, Sequence
 
 from fastapi import HTTPException
 
@@ -115,35 +116,6 @@ def _git_subcommand(argv: Sequence[str]) -> str:
     return ""
 
 
-def _internal_clone_destination(
-    argv: Sequence[str],
-    *,
-    cwd: Path,
-    workspace_root: Path,
-) -> Optional[Path]:
-    if _git_subcommand(argv) != "clone" or len(argv) < 3:
-        return None
-    raw = str(argv[-1] or "").strip()
-    if not raw or raw.startswith("-"):
-        return None
-    destination = Path(raw)
-    if not destination.is_absolute():
-        destination = Path(cwd).joinpath(destination)
-    try:
-        destination = destination.resolve()
-        root = Path(workspace_root).resolve()
-        relative = destination.relative_to(root)
-    except Exception:
-        return None
-    if len(relative.parts) != 2:
-        return None
-    if not re.fullmatch(r"code_[a-f0-9]{12}", relative.parts[0]):
-        return None
-    if relative.parts[1] != "repo":
-        return None
-    return destination
-
-
 def _retryable_git_operation(
     argv: Sequence[str],
     *,
@@ -151,15 +123,11 @@ def _retryable_git_operation(
     workspace_root: Path,
 ) -> bool:
     subcommand = _git_subcommand(argv)
-    if subcommand in _RETRYABLE_GIT_SUBCOMMANDS:
-        return True
-    if subcommand == "clone":
-        return _internal_clone_destination(
-            argv,
-            cwd=Path(cwd),
-            workspace_root=Path(workspace_root),
-        ) is not None
-    return False
+    del cwd, workspace_root
+    # Clone can leave a partial destination. Never delete or retry that path in
+    # this generic wrapper; failed workspace initialization has a separate,
+    # descriptor-anchored recovery path.
+    return subcommand in _RETRYABLE_GIT_SUBCOMMANDS
 
 
 def _retry_history_entry(result: Dict[str, Any], *, attempt: int, kind: str) -> Dict[str, Any]:
@@ -171,6 +139,24 @@ def _retry_history_entry(result: Dict[str, Any], *, attempt: int, kind: str) -> 
         "duration_ms": result.get("duration_ms"),
         "stderr_tail": str(result.get("stderr") or "")[-1200:],
     }
+
+
+def _redact_result_secret(
+    result: Dict[str, Any],
+    secret: Optional[str],
+) -> Dict[str, Any]:
+    value = str(secret or "")
+    if not value:
+        return dict(result)
+    redacted = dict(result)
+    for key in ("stdout", "stderr", "error"):
+        if key in redacted:
+            redacted[key] = str(redacted.get(key) or "").replace(value, "***")
+    if isinstance(redacted.get("argv"), list):
+        redacted["argv"] = [
+            str(item).replace(value, "***") for item in redacted["argv"]
+        ]
+    return redacted
 
 
 def _with_retry_metadata(result: Dict[str, Any], history: list[Dict[str, Any]]) -> Dict[str, Any]:
@@ -204,11 +190,6 @@ def run_process_with_retry(
         cwd=Path(cwd),
         workspace_root=Path(workspace_root),
     )
-    clone_destination = _internal_clone_destination(
-        argv,
-        cwd=Path(cwd),
-        workspace_root=Path(workspace_root),
-    )
     history: list[Dict[str, Any]] = []
 
     for index in range(max_attempts):
@@ -219,21 +200,6 @@ def run_process_with_retry(
         history.append(_retry_history_entry(result, attempt=index + 1, kind=kind))
         if result.get("ok") or not retryable_operation or not kind or index + 1 >= max_attempts:
             return _with_retry_metadata(result, history)
-
-        # git clone can leave a partial destination. Only remove the controller-owned
-        # code_<id>/repo target created during workspace initialization.
-        if clone_destination is not None and clone_destination.exists():
-            try:
-                shutil.rmtree(clone_destination)
-            except Exception as exc:
-                failed = dict(result)
-                failed["stderr"] = (
-                    f"{failed.get('stderr') or ''}\n"
-                    f"network retry aborted: failed to remove partial clone destination: "
-                    f"{type(exc).__name__}: {exc}"
-                ).strip()
-                history[-1]["cleanup_error"] = f"{type(exc).__name__}: {exc}"
-                return _with_retry_metadata(failed, history)
 
         delay = _retry_delay(index, base_delay)
         if delay > 0:
@@ -367,32 +333,437 @@ def _valid_git_repo(path: Path) -> bool:
     return path.is_dir() and path.joinpath(".git").exists()
 
 
+@contextmanager
+def model_integration_clone_transaction(
+    cw: Any,
+    task_id: str,
+    *,
+    workspace_path: Path,
+    repo_path: Path,
+    repo_url: str,
+    base_branch: str,
+    git_token_value: Optional[str] = None,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    attempts: Optional[int] = None,
+    base_delay_sec: Optional[float] = None,
+    audit_sink: Optional[Dict[str, Any]] = None,
+) -> Iterator[Dict[str, Any]]:
+    """Yield a clone result while its canonical checkout remains fd-anchored."""
+    max_attempts = retry_attempts() if attempts is None else max(1, int(attempts))
+    base_delay = (
+        retry_base_delay_sec()
+        if base_delay_sec is None
+        else max(0.0, float(base_delay_sec))
+    )
+    task_id = str(task_id or "").strip()
+    workspace_root = Path(os.path.abspath(str(cw.workspace_root())))
+    workspace_path = Path(os.path.abspath(str(workspace_path)))
+    repo_path = Path(os.path.abspath(str(repo_path)))
+    expected_workspace_path = workspace_root.joinpath(task_id)
+    expected_repo_path = expected_workspace_path.joinpath("repo")
+    if (
+        workspace_path != expected_workspace_path
+        or repo_path != expected_repo_path
+        or workspace_path.name != task_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "model integration clone paths do not match the controller-owned "
+                "<task>/repo layout"
+            ),
+        )
+    if workspace_path.is_symlink() or repo_path.is_symlink():
+        raise HTTPException(
+            status_code=409,
+            detail="model integration clone paths may not be symbolic links",
+        )
+    try:
+        relative_workspace = workspace_path.resolve().relative_to(
+            workspace_root.resolve()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="model integration clone paths are not safe",
+        ) from exc
+    if relative_workspace.parts != (task_id,):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "model integration clone paths do not match the controller-owned "
+                "<task>/repo layout"
+            ),
+        )
+    if os.name != "posix" or not Path("/proc/self/fd").is_dir():
+        raise HTTPException(
+            status_code=409,
+            detail="model integration clone retries require anchored POSIX paths",
+        )
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow:
+        raise HTTPException(
+            status_code=409,
+            detail="model integration clone retries require O_NOFOLLOW",
+        )
+
+    open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    root_fd = -1
+    workspace_fd = -1
+    repo_fd = -1
+    history: list[Dict[str, Any]] = []
+    partial_quarantines: list[str] = []
+
+    def audited_result(result: Dict[str, Any]) -> Dict[str, Any]:
+        audited = _with_retry_metadata(result, history)
+        audited["partial_clone_quarantines"] = list(partial_quarantines)
+        if audit_sink is not None:
+            audit_sink.clear()
+            audit_sink.update(audited)
+        return audited
+
+    try:
+        with cw.task_workspace_lock(task_id):
+            root_fd = os.open(workspace_root, open_flags | nofollow)
+            workspace_fd = os.open(
+                task_id,
+                open_flags | nofollow,
+                dir_fd=root_fd,
+            )
+            workspace_stat = os.fstat(workspace_fd)
+
+            def workspace_path_is_stable() -> bool:
+                try:
+                    return os.path.samestat(
+                        workspace_stat,
+                        os.stat(workspace_path, follow_symlinks=False),
+                    )
+                except OSError:
+                    return False
+
+            def repo_entry_is_absent() -> bool:
+                try:
+                    os.stat("repo", dir_fd=workspace_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    return True
+                return False
+
+            if not workspace_path_is_stable():
+                raise HTTPException(
+                    status_code=409,
+                    detail="model integration workspace changed before clone",
+                )
+            if not repo_entry_is_absent():
+                raise HTTPException(
+                    status_code=409,
+                    detail="model integration repository path already exists",
+                )
+
+            run_process = cw._run_process
+            for index in range(max_attempts):
+                preserved_quarantines = [
+                    str(name)
+                    for name in os.listdir(workspace_fd)
+                    if str(name).startswith("repo.clone-partial-")
+                ]
+                if len(preserved_quarantines) >= 8:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "model integration workspace has reached the preserved "
+                            "clone-attempt limit"
+                        ),
+                    )
+
+                try:
+                    os.mkdir("repo", mode=0o700, dir_fd=workspace_fd)
+                except FileExistsError as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="model integration repository path changed before clone",
+                    ) from exc
+                repo_fd = os.open(
+                    "repo",
+                    open_flags | nofollow,
+                    dir_fd=workspace_fd,
+                )
+                repo_stat = os.fstat(repo_fd)
+
+                def repo_path_is_stable() -> bool:
+                    try:
+                        return os.path.samestat(
+                            repo_stat,
+                            os.stat(
+                                "repo",
+                                dir_fd=workspace_fd,
+                                follow_symlinks=False,
+                            ),
+                        )
+                    except OSError:
+                        return False
+
+                anchored_workspace = Path(f"/proc/self/fd/{workspace_fd}")
+                anchored_repo = Path(f"/proc/self/fd/{repo_fd}")
+                result = run_process(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--branch",
+                        str(base_branch or "main"),
+                        str(repo_url),
+                        str(anchored_repo),
+                    ],
+                    cwd=anchored_workspace,
+                    timeout_sec=max(cw.command_timeout_sec(), 300.0),
+                    use_git_credentials=True,
+                    git_token_value=git_token_value,
+                    pass_fds=(workspace_fd, repo_fd),
+                )
+                result = _redact_result_secret(result, git_token_value)
+                kind = classify_transient_text(
+                    f"{result.get('stderr') or ''}\n{result.get('stdout') or ''}"
+                )
+                history.append(
+                    _retry_history_entry(
+                        result,
+                        attempt=index + 1,
+                        kind=kind,
+                    )
+                )
+                audited_result(result)
+
+                if not workspace_path_is_stable() or not repo_path_is_stable():
+                    raise HTTPException(
+                        status_code=409,
+                        detail="model integration clone path changed during clone",
+                    )
+                if result.get("ok"):
+                    try:
+                        git_stat = os.stat(
+                            ".git",
+                            dir_fd=repo_fd,
+                            follow_symlinks=False,
+                        )
+                    except OSError as exc:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="model integration clone has no Git metadata",
+                        ) from exc
+                    if not stat.S_ISDIR(git_stat.st_mode):
+                        raise HTTPException(
+                            status_code=409,
+                            detail="model integration clone has invalid Git metadata",
+                        )
+                    verify_result = run_process(
+                        ["git", "rev-parse", "--is-inside-work-tree"],
+                        cwd=anchored_repo,
+                        use_git_credentials=False,
+                        pass_fds=(workspace_fd, repo_fd),
+                    )
+                    if not verify_result.get("ok"):
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                "model integration clone did not produce a valid "
+                                "Git worktree"
+                            ),
+                        )
+                    if not workspace_path_is_stable() or not repo_path_is_stable():
+                        raise HTTPException(
+                            status_code=409,
+                            detail="model integration clone path changed after validation",
+                        )
+                    clone_result = audited_result(result)
+                    transaction = {
+                        "result": clone_result,
+                        "repo_path": anchored_repo,
+                        "pass_fds": (workspace_fd, repo_fd),
+                    }
+                    try:
+                        yield transaction
+                    finally:
+                        if (
+                            not workspace_path_is_stable()
+                            or not repo_path_is_stable()
+                        ):
+                            raise HTTPException(
+                                status_code=409,
+                                detail=(
+                                    "model integration repository identity changed "
+                                    "during provisioning"
+                                ),
+                            )
+                    return
+
+                quarantine_name = ""
+                for _ in range(8):
+                    candidate = f"repo.clone-partial-{secrets.token_hex(6)}"
+                    try:
+                        os.mkdir(candidate, mode=0o700, dir_fd=workspace_fd)
+                    except FileExistsError:
+                        continue
+                    quarantine_name = candidate
+                    break
+                if not quarantine_name:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="could not reserve a model integration clone quarantine",
+                    )
+                quarantine_fd = os.open(
+                    quarantine_name,
+                    open_flags | nofollow,
+                    dir_fd=workspace_fd,
+                )
+                try:
+                    if not repo_path_is_stable():
+                        raise HTTPException(
+                            status_code=409,
+                            detail="model integration clone path changed before quarantine",
+                        )
+                    os.rename(
+                        "repo",
+                        "repo",
+                        src_dir_fd=workspace_fd,
+                        dst_dir_fd=quarantine_fd,
+                    )
+                    quarantined_stat = os.stat(
+                        "repo",
+                        dir_fd=quarantine_fd,
+                        follow_symlinks=False,
+                    )
+                    if not os.path.samestat(repo_stat, quarantined_stat):
+                        raise HTTPException(
+                            status_code=409,
+                            detail="model integration clone quarantine changed identity",
+                        )
+                finally:
+                    os.close(quarantine_fd)
+                partial_quarantines.append(f"{quarantine_name}/repo")
+                audited_result(result)
+                os.close(repo_fd)
+                repo_fd = -1
+                if not kind or index + 1 >= max_attempts:
+                    clone_result = audited_result(result)
+                    yield {
+                        "result": clone_result,
+                        "repo_path": None,
+                        "pass_fds": (),
+                    }
+                    return
+                delay = _retry_delay(index, base_delay)
+                if delay > 0:
+                    sleep_fn(delay)
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "model integration clone could not securely use its "
+                f"controller-owned path ({type(exc).__name__})"
+            ),
+        ) from exc
+    finally:
+        if repo_fd >= 0:
+            os.close(repo_fd)
+        if workspace_fd >= 0:
+            os.close(workspace_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+
+    raise HTTPException(  # pragma: no cover - transaction always yields or raises
+        status_code=409,
+        detail="model integration clone did not complete",
+    )
+
+
 def retry_failed_initialization(
     cw: Any,
     task_id: str,
     *,
     git_token_value: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Serialize and recover one persisted transient initialization failure."""
+    with cw.task_workspace_lock(task_id):
+        return _retry_failed_initialization_locked(
+            cw,
+            task_id,
+            git_token_value=git_token_value,
+        )
+
+
+def _retry_failed_initialization_locked(
+    cw: Any,
+    task_id: str,
+    *,
+    git_token_value: Optional[str] = None,
+) -> Dict[str, Any]:
     task = cw.load_task(task_id)
-    repo_path = Path(str(task.get("repo_path") or "")).resolve()
-    workspace_path = Path(str(task.get("workspace_path") or "")).resolve()
+    raw_repo_path = str(task.get("repo_path") or "").strip()
+    raw_workspace_path = str(task.get("workspace_path") or "").strip()
+    if not raw_repo_path or not raw_workspace_path:
+        raise HTTPException(
+            status_code=409,
+            detail="coding workspace paths are not safe to reinitialize",
+        )
+
+    # Keep the controller paths lexical. Recovery later opens them with
+    # O_NOFOLLOW and performs clone operations through that held directory fd.
+    workspace_root = Path(os.path.abspath(str(cw.workspace_root())))
+    workspace_path = Path(os.path.abspath(raw_workspace_path))
+    repo_path = Path(os.path.abspath(raw_repo_path))
+    expected_workspace_path = workspace_root.joinpath(task_id)
+    expected_repo_path = expected_workspace_path.joinpath("repo")
+    if (
+        workspace_path != expected_workspace_path
+        or repo_path != expected_repo_path
+        or workspace_path.name != task_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "coding workspace paths do not match the controller-owned "
+                "<task>/repo layout"
+            ),
+        )
+    if workspace_path.is_symlink() or repo_path.is_symlink():
+        raise HTTPException(
+            status_code=409,
+            detail="coding workspace paths may not be symbolic links",
+        )
+    try:
+        resolved_root = workspace_root.resolve()
+        resolved_workspace = workspace_path.resolve()
+        relative_workspace = resolved_workspace.relative_to(resolved_root)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="coding workspace paths are not safe to reinitialize",
+        ) from exc
+    if relative_workspace.parts != (task_id,):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "coding workspace paths do not match the controller-owned "
+                "<task>/repo layout"
+            ),
+        )
+
     status = str(task.get("status") or "").strip().lower()
     failure_kind = _latest_transient_clone_failure(task)
 
-    if status == "ready" and _valid_git_repo(repo_path):
-        return task
+    if status == "ready":
+        repo_for_validation = repo_path
+        if callable(getattr(cw, "_repo_path", None)):
+            repo_for_validation = Path(cw._repo_path(task))
+        if _valid_git_repo(repo_for_validation):
+            return task
     if status != "error":
         raise HTTPException(
             status_code=409,
             detail=f"coding workspace is not ready for an agent run (status={status or 'unknown'})",
-        )
-    if _valid_git_repo(repo_path):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "coding workspace now contains valid Git metadata; automatic reclone is "
-                "disabled to preserve repaired or modified repository state"
-            ),
         )
     if str(task.get("kind") or "") == "model_integration":
         raise HTTPException(
@@ -411,86 +782,355 @@ def retry_failed_initialization(
             ),
         )
 
-    workspace_root = Path(cw.workspace_root()).resolve()
-    expected_repo_path = workspace_path.joinpath("repo").resolve()
-    try:
-        relative_workspace = workspace_path.relative_to(workspace_root)
-    except Exception as exc:
-        raise HTTPException(status_code=409, detail="coding workspace paths are not safe to reinitialize") from exc
-    if (
-        workspace_path.name != task_id
-        or relative_workspace.parts != (task_id,)
-        or repo_path != expected_repo_path
-    ):
+    if os.name != "posix" or not Path("/proc/self/fd").is_dir():
         raise HTTPException(
             status_code=409,
-            detail="coding workspace paths do not match the controller-owned <task>/repo layout",
+            detail=(
+                "coding workspace initialization recovery requires anchored "
+                "POSIX directory descriptors"
+            ),
+        )
+    open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow:
+        raise HTTPException(
+            status_code=409,
+            detail="coding workspace initialization recovery requires O_NOFOLLOW",
         )
 
-    # A recorded transient clone failure never established a usable workspace.
-    # This exact controller-owned repo target is the only path automatic recovery
-    # is permitted to delete.
-    if repo_path.exists():
+    root_fd = -1
+    workspace_fd = -1
+    repo_fd = -1
+    partial_repo_quarantines: list[str] = []
+    max_clone_attempts = retry_attempts()
+    max_preserved_quarantines = max_clone_attempts + 1
+    clone_retry_delay = retry_base_delay_sec()
+    try:
+        root_fd = os.open(workspace_root, open_flags | nofollow)
         try:
-            shutil.rmtree(repo_path)
-        except Exception as exc:
+            workspace_fd = os.open(
+                task_id,
+                open_flags | nofollow,
+                dir_fd=root_fd,
+            )
+        except FileNotFoundError:
+            os.mkdir(task_id, mode=0o700, dir_fd=root_fd)
+            workspace_fd = os.open(
+                task_id,
+                open_flags | nofollow,
+                dir_fd=root_fd,
+            )
+
+        workspace_stat = os.fstat(workspace_fd)
+
+        def workspace_path_is_stable() -> bool:
+            try:
+                return os.path.samestat(
+                    workspace_stat,
+                    os.stat(workspace_path, follow_symlinks=False),
+                )
+            except OSError:
+                return False
+
+        if not workspace_path_is_stable():
+            raise HTTPException(
+                status_code=409,
+                detail="coding workspace path changed during initialization recovery",
+            )
+
+        def quarantine_partial_repo() -> None:
+            """Preserve the canonical partial checkout before a fresh clone."""
+            try:
+                current_repo_stat = os.stat(
+                    "repo",
+                    dir_fd=workspace_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return
+            if not stat.S_ISDIR(current_repo_stat.st_mode):
+                raise HTTPException(
+                    status_code=409,
+                    detail="coding repository path is not a directory during recovery",
+                )
+            try:
+                current_repo_fd = os.open(
+                    "repo",
+                    open_flags | nofollow,
+                    dir_fd=workspace_fd,
+                )
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="coding repository path changed during initialization recovery",
+                ) from exc
+            try:
+                if not os.path.samestat(
+                    current_repo_stat,
+                    os.fstat(current_repo_fd),
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="coding repository path changed during initialization recovery",
+                    )
+            finally:
+                os.close(current_repo_fd)
+            quarantine_prefix = "repo.partial-"
+            existing_quarantines = [
+                name
+                for name in os.listdir(workspace_fd)
+                if str(name).startswith(quarantine_prefix)
+            ]
+            if len(existing_quarantines) >= max_preserved_quarantines:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "coding workspace has reached the preserved partial "
+                        "repository limit; inspect it before retrying"
+                    ),
+                )
+            quarantine_name = ""
+            for _ in range(8):
+                candidate = f"{quarantine_prefix}{secrets.token_hex(6)}"
+                try:
+                    os.mkdir(candidate, mode=0o700, dir_fd=workspace_fd)
+                except FileExistsError:
+                    continue
+                quarantine_name = candidate
+                break
+            if not quarantine_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail="could not reserve a partial repository quarantine",
+                )
+            quarantine_fd = os.open(
+                quarantine_name,
+                open_flags | nofollow,
+                dir_fd=workspace_fd,
+            )
+            try:
+                current_repo_after_reservation = os.stat(
+                    "repo",
+                    dir_fd=workspace_fd,
+                    follow_symlinks=False,
+                )
+                if not os.path.samestat(current_repo_stat, current_repo_after_reservation):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="coding repository path changed during initialization recovery",
+                    )
+                os.rename(
+                    "repo",
+                    "repo",
+                    src_dir_fd=workspace_fd,
+                    dst_dir_fd=quarantine_fd,
+                )
+                quarantined_stat = os.stat(
+                    "repo",
+                    dir_fd=quarantine_fd,
+                    follow_symlinks=False,
+                )
+                if not os.path.samestat(current_repo_stat, quarantined_stat):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="coding partial repository quarantine changed identity",
+                    )
+            finally:
+                os.close(quarantine_fd)
+            partial_repo_quarantines.append(f"{quarantine_name}/repo")
+            recovery_state = task.get("initialization_recovery")
+            if not isinstance(recovery_state, dict):
+                recovery_state = {}
+            recovery_state.update({
+                "recovered": False,
+                "reason": failure_kind,
+                "attempted_at": time.time(),
+                "partial_repo_quarantine": partial_repo_quarantines[-1],
+                "partial_repo_quarantines": list(partial_repo_quarantines),
+            })
+            task["initialization_recovery"] = recovery_state
+            cw.save_task(task)
+            if not workspace_path_is_stable():
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "coding workspace path changed during initialization "
+                        "recovery"
+                    ),
+                    )
+
+        # A failed initial create can already have left the canonical target in
+        # place. Preserve it before the first retry, then preserve every failed
+        # retry destination before constructing a fresh canonical path.
+        quarantine_partial_repo()
+        anchored_workspace = Path(f"/proc/self/fd/{workspace_fd}")
+        clone_target = anchored_workspace.joinpath("repo")
+        run_process = getattr(
+            cw,
+            "_network_resilience_original_run_process",
+            cw._run_process,
+        )
+        repo_url = str(task.get("repo_url") or "").strip()
+        base = str(task.get("base_branch") or "main").strip() or "main"
+        branch = str(task.get("branch_name") or "").strip()
+        clone_history: list[Dict[str, Any]] = []
+        clone_result: Dict[str, Any] = {}
+        for attempt_index in range(max_clone_attempts):
+            clone_result = _redact_result_secret(
+                run_process(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--branch",
+                        base,
+                        repo_url,
+                        str(clone_target),
+                    ],
+                    cwd=anchored_workspace,
+                    timeout_sec=max(cw.command_timeout_sec(), 300.0),
+                    use_git_credentials=True,
+                    git_token_value=git_token_value,
+                    pass_fds=(workspace_fd,),
+                ),
+                git_token_value,
+            )
+            clone_kind = classify_transient_text(
+                f"{clone_result.get('stderr') or ''}\n{clone_result.get('stdout') or ''}"
+            )
+            clone_history.append(
+                _retry_history_entry(
+                    clone_result,
+                    attempt=attempt_index + 1,
+                    kind=clone_kind,
+                )
+            )
+            clone_result = _with_retry_metadata(clone_result, clone_history)
+            clone_result["partial_clone_quarantines"] = list(partial_repo_quarantines)
+            if clone_result.get("ok"):
+                cw._append_command(task, clone_result, label="clone-retry")
+                break
+            # Persist the redacted attempt before quarantine.  Preservation can
+            # fail closed (for example at the bounded quarantine limit), and
+            # that failure must not erase the clone evidence or leave stale
+            # recovery status behind.
+            cw._append_command(task, clone_result, label="clone-retry")
+            task["status"] = "error"
+            task["error"] = "git clone failed after initialization retry"
             task["initialization_recovery"] = {
                 "recovered": False,
                 "reason": failure_kind,
                 "attempted_at": time.time(),
-                "cleanup_error": f"{type(exc).__name__}: {exc}",
+                "network_retry_attempts": int(
+                    clone_result.get("network_retry_attempts") or 1
+                ),
             }
+            if partial_repo_quarantines:
+                task["initialization_recovery"]["partial_repo_quarantine"] = (
+                    partial_repo_quarantines[-1]
+                )
+                task["initialization_recovery"]["partial_repo_quarantines"] = (
+                    list(partial_repo_quarantines)
+                )
             cw.save_task(task)
+            if not workspace_path_is_stable():
+                raise HTTPException(
+                    status_code=409,
+                    detail="coding workspace path changed during initialization recovery",
+                )
+            quarantine_partial_repo()
+            clone_result["partial_clone_quarantines"] = list(partial_repo_quarantines)
+            if not clone_kind or attempt_index + 1 >= max_clone_attempts:
+                break
+            delay = _retry_delay(attempt_index, clone_retry_delay)
+            if delay > 0:
+                time.sleep(delay)
+
+        if not clone_result.get("ok"):
+            raise HTTPException(status_code=503, detail=task["error"])
+
+        if not workspace_path_is_stable():
+            raise HTTPException(
+                status_code=409,
+                detail="coding workspace path changed during initialization recovery",
+            )
+
+        repo_fd = os.open(
+            "repo",
+            open_flags | nofollow,
+            dir_fd=workspace_fd,
+        )
+        repo_stat = os.fstat(repo_fd)
+
+        def repo_path_is_stable() -> bool:
+            try:
+                return os.path.samestat(
+                    repo_stat,
+                    os.stat(
+                        "repo",
+                        dir_fd=workspace_fd,
+                        follow_symlinks=False,
+                    ),
+                )
+            except OSError:
+                return False
+
+        if not repo_path_is_stable():
+            raise HTTPException(
+                status_code=409,
+                detail="coding repository path changed during initialization recovery",
+            )
+        anchored_repo = Path(f"/proc/self/fd/{repo_fd}")
+
+        if branch and branch != base:
+            switch_result = run_process(
+                ["git", "switch", "-c", branch],
+                cwd=anchored_repo,
+                use_git_credentials=False,
+                pass_fds=(workspace_fd, repo_fd),
+            )
+            if not switch_result.get("ok"):
+                switch_result = run_process(
+                    ["git", "checkout", "-b", branch],
+                    cwd=anchored_repo,
+                    use_git_credentials=False,
+                    pass_fds=(workspace_fd, repo_fd),
+                )
+            cw._append_command(task, switch_result, label="branch-retry")
+            if not switch_result.get("ok"):
+                task["status"] = "error"
+                task["error"] = (
+                    "branch creation failed after initialization retry"
+                )
+                cw.save_task(task)
+                raise HTTPException(status_code=409, detail=task["error"])
+
+        if not workspace_path_is_stable() or not repo_path_is_stable():
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "coding workspace initialization retry could not safely remove the partial "
-                    f"clone: {type(exc).__name__}: {exc}"
+                    "coding workspace or repository path changed during "
+                    "initialization recovery"
                 ),
-            ) from exc
-    workspace_path.mkdir(parents=True, exist_ok=True)
-
-    repo_url = str(task.get("repo_url") or "").strip()
-    base = str(task.get("base_branch") or "main").strip() or "main"
-    branch = str(task.get("branch_name") or "").strip()
-    clone_result = cw._run_process(
-        ["git", "clone", "--depth", "1", "--branch", base, repo_url, str(repo_path)],
-        cwd=workspace_path,
-        timeout_sec=max(cw.command_timeout_sec(), 300.0),
-        use_git_credentials=True,
-        git_token_value=git_token_value,
-    )
-    cw._append_command(task, clone_result, label="clone-retry")
-    if not clone_result.get("ok"):
-        task["status"] = "error"
-        task["error"] = "git clone failed after initialization retry"
-        task["initialization_recovery"] = {
-            "recovered": False,
-            "reason": failure_kind,
-            "attempted_at": time.time(),
-            "network_retry_attempts": int(clone_result.get("network_retry_attempts") or 1),
-        }
-        cw.save_task(task)
-        raise HTTPException(status_code=503, detail=task["error"])
-
-    if branch and branch != base:
-        switch_result = cw._run_process(
-            ["git", "switch", "-c", branch],
-            cwd=repo_path,
-            use_git_credentials=False,
-        )
-        if not switch_result.get("ok"):
-            switch_result = cw._run_process(
-                ["git", "checkout", "-b", branch],
-                cwd=repo_path,
-                use_git_credentials=False,
             )
-        cw._append_command(task, switch_result, label="branch-retry")
-        if not switch_result.get("ok"):
-            task["status"] = "error"
-            task["error"] = "branch creation failed after initialization retry"
-            cw.save_task(task)
-            raise HTTPException(status_code=409, detail=task["error"])
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "coding workspace initialization recovery could not securely "
+                f"open its controller-owned path ({type(exc).__name__})"
+            ),
+        ) from exc
+    finally:
+        if repo_fd >= 0:
+            os.close(repo_fd)
+        if workspace_fd >= 0:
+            os.close(workspace_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
 
     task["status"] = "ready"
     task.pop("error", None)
@@ -499,7 +1139,22 @@ def retry_failed_initialization(
         "reason": failure_kind,
         "attempted_at": time.time(),
         "network_retry_attempts": int(clone_result.get("network_retry_attempts") or 1),
+        "workspace_identity": {
+            "device": int(workspace_stat.st_dev),
+            "inode": int(workspace_stat.st_ino),
+        },
+        "repo_identity": {
+            "device": int(repo_stat.st_dev),
+            "inode": int(repo_stat.st_ino),
+        },
     }
+    if partial_repo_quarantines:
+        task["initialization_recovery"]["partial_repo_quarantine"] = (
+            partial_repo_quarantines[-1]
+        )
+        task["initialization_recovery"]["partial_repo_quarantines"] = (
+            list(partial_repo_quarantines)
+        )
     cw.save_task(task)
     return task
 
@@ -570,11 +1225,9 @@ def install(cw: Any, guarded_agent: Any = None) -> None:
     @wraps(original_start_agent_run)
     async def resilient_start_agent_run(task_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         task = await asyncio.to_thread(cw.load_task, task_id)
-        repo_path = Path(str(task.get("repo_path") or "")).resolve()
         status = str(task.get("status") or "").strip().lower()
         if (
             status == "error"
-            and not _valid_git_repo(repo_path)
             and bool(_latest_transient_clone_failure(task))
         ):
             await asyncio.to_thread(

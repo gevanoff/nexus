@@ -1152,8 +1152,15 @@ def _seed_path(repo_root: Path, preferred: Path, fallback_name: str) -> Path:
     return repo_root / "integration" / f"{stem}{fallback.suffix}"
 
 
-def scaffold_workspace(repo_root: Path, plan: Dict[str, Any]) -> list[str]:
-    repo_root = Path(repo_root).resolve()
+def scaffold_workspace(
+    repo_root: Path,
+    plan: Dict[str, Any],
+    *,
+    resolve_root: bool = True,
+) -> list[str]:
+    repo_root = Path(repo_root)
+    if resolve_root:
+        repo_root = repo_root.resolve()
     replacements = {
         "__PORT__": "8610",
         "__SERVICE_NAME__": str(plan["service_name"]),
