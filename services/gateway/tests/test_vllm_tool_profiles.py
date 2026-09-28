@@ -55,3 +55,17 @@ def test_mistral_profile_renders_gateway_alias_contract():
 
     for key, value in profile_alias.items():
         assert fast[key] == value
+
+
+def test_fast_lane_alias_context_windows_match_production_limit():
+    topology = json.loads(
+        (REPO_ROOT / "deploy" / "topology" / "production.json").read_text(encoding="utf-8")
+    )
+    aliases = json.loads(
+        (REPO_ROOT / "services" / "gateway" / "app" / "model_aliases.json").read_text(encoding="utf-8")
+    )["aliases"]
+
+    fast_limit = int(topology["defaults"]["env"]["VLLM_FAST_MAX_MODEL_LEN"])
+    for alias_name in ("fast", "tess-chat", "stackrot-chat"):
+        assert aliases[alias_name]["backend"] == "local_vllm_fast"
+        assert aliases[alias_name]["context_window"] == fast_limit

@@ -384,15 +384,15 @@ def test_canonical_chat_aliases_match_runtime_lanes():
     assert aliases["mlx"]["thinking_enabled"] is False
     assert aliases["fast"]["backend"] == "local_vllm_fast"
     assert aliases["fast"]["model"] == fast_model
-    assert aliases["fast"]["context_window"] == 65536
+    assert aliases["fast"]["context_window"] == 60000
     assert aliases["fast"]["tools"] is True
     assert aliases["fast"]["supports_tool_choice"] == ["none", "auto", "required", "named"]
     assert aliases["fast"]["supports_parallel_tool_calls"] is False
     assert aliases["fast"]["buffer_tool_call_stream"] is True
     assert aliases["fast"]["preferred_tool_call_parser"] == "mistral"
     assert aliases["fast"]["max_tokens_cap"] == 2048
-    assert aliases["tess-chat"]["context_window"] == 65536
-    assert aliases["stackrot-chat"]["context_window"] == 65536
+    assert aliases["tess-chat"]["context_window"] == 60000
+    assert aliases["stackrot-chat"]["context_window"] == 60000
     assert aliases["fast-reasoning"]["backend"] == "local_vllm"
     assert aliases["fast-reasoning"]["model"] == strong_model
     assert aliases["fast-reasoning"]["context_window"] == 65536
