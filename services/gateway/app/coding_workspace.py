@@ -1087,21 +1087,106 @@ def list_tasks(limit: int = 100) -> List[Dict[str, Any]]:
     return items[: max(1, min(int(limit or 100), 500))]
 
 
+def _is_scheduler_owned_smoke_task(task: Dict[str, Any]) -> bool:
+    return (
+        str(task.get("owner") or "").strip() == "coding-smoke-scheduler"
+        and str(task.get("branch_name") or "").strip().startswith(
+            "nexus-coding-smoke/"
+        )
+    )
+
+
 def recover_interrupted_agent_runs() -> Dict[str, Any]:
     if not coding_enabled():
-        return {"ok": True, "recovered": 0, "tasks": []}
+        return {
+            "ok": True,
+            "recovered": 0,
+            "tasks": [],
+            "paused_smoke": 0,
+            "paused_smoke_tasks": [],
+        }
     _ensure_dirs()
     recovered: List[str] = []
+    paused_smoke: List[str] = []
     for path in tasks_dir().glob("code_*.json"):
         try:
             task = _read_json(path)
         except Exception:
             continue
         status = str(task.get("agent_status") or "").strip().lower()
-        if status == "interrupted" and bool(task.get("agent_auto_resume_pending")):
-            recovered.append(str(task.get("id") or path.stem))
+        auto_resume_interrupted = status == "interrupted" and bool(
+            task.get("agent_auto_resume_pending")
+        )
+        active_at_restart = status in {"queued", "running", "stopping", "pausing"}
+        if not auto_resume_interrupted and not active_at_restart:
             continue
-        if status not in {"queued", "running", "stopping", "pausing"}:
+        if _is_scheduler_owned_smoke_task(task):
+            task_id = str(task.get("id") or path.stem)
+            now = _now()
+            summary = (
+                "Gateway restarted while this scheduler-owned coding smoke run "
+                "was active. The run was paused instead of auto-resumed; the "
+                "smoke scheduler will start a fresh suite."
+            )
+            event = {
+                "ts": now,
+                "type": "smoke_scheduler_restart",
+                "summary": summary,
+                "previous_status": status,
+                "run_id": task.get("agent_run_id") or "",
+                "stop_reason_code": "smoke_scheduler_restart",
+                "actor": "gateway-recovery",
+            }
+            events = task.get("agent_events")
+            if not isinstance(events, list):
+                events = []
+            events.append(event)
+            task["agent_events"] = events[
+                -max(
+                    20,
+                    min(
+                        int(getattr(S, "CODING_AGENT_MAX_EVENTS", 1000) or 1000),
+                        1000,
+                    ),
+                ) :
+            ]
+            task["agent_previous_status"] = status
+            task["agent_status"] = "paused"
+            task["agent_auto_resume_pending"] = False
+            task["agent_stop_requested"] = False
+            task["agent_pause_requested"] = False
+            task["agent_summary"] = summary
+            task["agent_error"] = ""
+            task["agent_stop_reason_code"] = "smoke_scheduler_restart"
+            task["agent_finished_at"] = now
+            task["agent_last_event_at"] = now
+            runs = task.get("agent_runs")
+            if isinstance(runs, list):
+                current_run_id = str(task.get("agent_run_id") or "")
+                for record in reversed(runs):
+                    if (
+                        isinstance(record, dict)
+                        and str(record.get("run_id") or "") == current_run_id
+                    ):
+                        record.update(
+                            {
+                                "status": "paused",
+                                "finished_at": now,
+                                "cycle": int(task.get("agent_cycle") or 0),
+                                "summary": summary,
+                                "error": "",
+                                "stop_reason_code": "smoke_scheduler_restart",
+                            }
+                        )
+                        break
+                task["agent_runs"] = [
+                    item for item in runs[-200:] if isinstance(item, dict)
+                ]
+            save_task(task)
+            paused_smoke.append(task_id)
+            continue
+        if auto_resume_interrupted:
+            recovered.append(str(task.get("id") or path.stem))
             continue
         events = task.get("agent_events")
         if not isinstance(events, list):
@@ -1146,7 +1231,13 @@ def recover_interrupted_agent_runs() -> Dict[str, Any]:
             task["agent_runs"] = [item for item in runs[-200:] if isinstance(item, dict)]
         save_task(task)
         recovered.append(str(task.get("id") or path.stem))
-    return {"ok": True, "recovered": len(recovered), "tasks": recovered}
+    return {
+        "ok": True,
+        "recovered": len(recovered),
+        "tasks": recovered,
+        "paused_smoke": len(paused_smoke),
+        "paused_smoke_tasks": paused_smoke,
+    }
 
 
 def _effective_git_token(token_value: Optional[str] = None) -> str:
