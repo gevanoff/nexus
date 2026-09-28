@@ -319,6 +319,7 @@ def test_failed_clone_workspace_can_be_reinitialized(tmp_path):
         load_task=lambda task_id: task,
         save_task=lambda current: saved.append(dict(current)) or current,
         workspace_root=lambda: workspace_root,
+        task_workspace_lock=cw.task_workspace_lock,
         command_timeout_sec=lambda value=None: 120.0,
         _run_process=run_process,
         _append_command=append_command,
@@ -361,6 +362,7 @@ def test_non_transient_failed_initialization_is_not_recloned(tmp_path):
     fake_cw = SimpleNamespace(
         load_task=lambda task_id: task,
         workspace_root=lambda: workspace_root,
+        task_workspace_lock=cw.task_workspace_lock,
     )
 
     with pytest.raises(HTTPException) as excinfo:

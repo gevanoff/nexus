@@ -1943,7 +1943,7 @@ def _run_process(
 def _command_summary(result: Dict[str, Any], *, label: str) -> Dict[str, Any]:
     stdout = str(result.get("stdout") or "")
     stderr = str(result.get("stderr") or "")
-    return {
+    summary = {
         "ts": _now(),
         "label": label,
         "ok": bool(result.get("ok")),
@@ -1953,6 +1953,17 @@ def _command_summary(result: Dict[str, Any], *, label: str) -> Dict[str, Any]:
         "stdout_tail": stdout[-4000:],
         "stderr_tail": stderr[-4000:],
     }
+    for key in (
+        "network_retry_attempts",
+        "network_retry_count",
+        "network_retry_recovered",
+        "network_retry_history",
+        "network_error_kind",
+        "partial_clone_quarantines",
+    ):
+        if key in result:
+            summary[key] = result[key]
+    return summary
 
 
 def _append_command(task: Dict[str, Any], result: Dict[str, Any], *, label: str) -> None:
@@ -2267,6 +2278,7 @@ def create_model_integration_task(
     }
     task["mission"] = normalize_coding_mission(task, mission_overrides)
     save_task(task)
+    clone_audit: Dict[str, Any] = {}
 
     try:
         workspace.mkdir(parents=True, exist_ok=True)
@@ -2335,71 +2347,135 @@ def create_model_integration_task(
                 save_task(task)
                 return public_task(task)
         else:
-            clone_result = _run_process(
-                ["git", "clone", "--depth", "1", "--branch", base, target_repo, str(repo_path)],
-                cwd=workspace,
-                timeout_sec=max(command_timeout_sec(), 300.0),
-                use_git_credentials=True,
-                git_token_value=git_token_value,
-            )
-            _append_command(task, clone_result, label="git-clone-base")
-            if not clone_result.get("ok"):
-                task["status"] = "error"
-                task["error"] = "git clone failed"
-                save_task(task)
-                return public_task(task)
+            from app import coding_network_resilience
 
-            if branch != base:
-                switch_result = _run_process(["git", "switch", "-c", branch], cwd=repo_path, use_git_credentials=False)
-                if not switch_result.get("ok"):
-                    switch_result = _run_process(["git", "checkout", "-b", branch], cwd=repo_path, use_git_credentials=False)
-                _append_command(task, switch_result, label="git-branch-work")
-                if not switch_result.get("ok"):
+            task["repo_path_untrusted"] = True
+            save_task(task)
+            with coding_network_resilience.model_integration_clone_transaction(
+                sys.modules[__name__],
+                task_id,
+                workspace_path=workspace,
+                repo_path=repo_path,
+                repo_url=target_repo,
+                base_branch=base,
+                git_token_value=git_token_value,
+                audit_sink=clone_audit,
+            ) as clone_transaction:
+                clone_result = clone_transaction["result"]
+                _append_command(task, clone_result, label="git-clone-base")
+                if not clone_result.get("ok"):
                     task["status"] = "error"
-                    task["error"] = "working branch creation failed"
+                    task["error"] = "git clone failed"
                     save_task(task)
                     return public_task(task)
 
-            task["seed_files"] = miw.scaffold_workspace(repo_path, plan)
+                anchored_repo = Path(clone_transaction["repo_path"])
+                inherited_fds = tuple(clone_transaction["pass_fds"])
+                if branch != base:
+                    switch_result = _run_process(
+                        ["git", "switch", "-c", branch],
+                        cwd=anchored_repo,
+                        use_git_credentials=False,
+                        pass_fds=inherited_fds,
+                    )
+                    if not switch_result.get("ok"):
+                        switch_result = _run_process(
+                            ["git", "checkout", "-b", branch],
+                            cwd=anchored_repo,
+                            use_git_credentials=False,
+                            pass_fds=inherited_fds,
+                        )
+                    _append_command(task, switch_result, label="git-branch-work")
+                    if not switch_result.get("ok"):
+                        task["status"] = "error"
+                        task["error"] = "working branch creation failed"
+                        save_task(task)
+                        return public_task(task)
 
-            add_result = _run_process(["git", "add", "."], cwd=repo_path, use_git_credentials=False)
-            _append_command(task, add_result, label="git-add")
-            if not add_result.get("ok"):
-                task["status"] = "error"
-                task["error"] = "git add failed"
-                save_task(task)
-                return public_task(task)
+                seeded = miw.scaffold_workspace(
+                    anchored_repo,
+                    plan,
+                    resolve_root=False,
+                )
+                anchored_prefix = f"{anchored_repo}/"
+                task["seed_files"] = [
+                    str(repo_path.joinpath(str(item)[len(anchored_prefix) :]))
+                    if str(item).startswith(anchored_prefix)
+                    else str(item)
+                    for item in seeded
+                ]
 
-            commit_result = _run_process(["git", "commit", "-m", "Seed model integration workspace"], cwd=repo_path, use_git_credentials=False)
-            _append_command(task, commit_result, label="git-commit")
-            if not commit_result.get("ok"):
-                task["status"] = "error"
-                task["error"] = "git commit failed"
-                save_task(task)
-                return public_task(task)
+                add_result = _run_process(
+                    ["git", "add", "."],
+                    cwd=anchored_repo,
+                    use_git_credentials=False,
+                    pass_fds=inherited_fds,
+                )
+                _append_command(task, add_result, label="git-add")
+                if not add_result.get("ok"):
+                    task["status"] = "error"
+                    task["error"] = "git add failed"
+                    save_task(task)
+                    return public_task(task)
 
-            push_target = branch or base
-            push_result = _run_process(
-                ["git", "push", "-u", "origin", push_target],
-                cwd=repo_path,
-                timeout_sec=max(command_timeout_sec(), 300.0),
-                use_git_credentials=True,
-                git_token_value=git_token_value,
-            )
-            _append_command(task, push_result, label="git-push-branch" if push_target != base else "git-push-base")
-            if not push_result.get("ok"):
-                task["status"] = "error"
-                task["error"] = "initial working branch push failed" if push_target != base else "initial base branch push failed"
-                save_task(task)
-                return public_task(task)
-            task["last_pushed_at"] = _now()
+                commit_result = _run_process(
+                    ["git", "commit", "-m", "Seed model integration workspace"],
+                    cwd=anchored_repo,
+                    use_git_credentials=False,
+                    pass_fds=inherited_fds,
+                )
+                _append_command(task, commit_result, label="git-commit")
+                if not commit_result.get("ok"):
+                    task["status"] = "error"
+                    task["error"] = "git commit failed"
+                    save_task(task)
+                    return public_task(task)
+
+                push_target = branch or base
+                push_result = _run_process(
+                    ["git", "push", "-u", "origin", push_target],
+                    cwd=anchored_repo,
+                    timeout_sec=max(command_timeout_sec(), 300.0),
+                    use_git_credentials=True,
+                    git_token_value=git_token_value,
+                    pass_fds=inherited_fds,
+                )
+                _append_command(
+                    task,
+                    push_result,
+                    label=(
+                        "git-push-branch"
+                        if push_target != base
+                        else "git-push-base"
+                    ),
+                )
+                if not push_result.get("ok"):
+                    task["status"] = "error"
+                    task["error"] = (
+                        "initial working branch push failed"
+                        if push_target != base
+                        else "initial base branch push failed"
+                    )
+                    save_task(task)
+                    return public_task(task)
+                task["last_pushed_at"] = _now()
 
         task["status"] = "ready"
         task.pop("error", None)
+        # The descriptor-anchored clone transaction verifies the final
+        # workspace identity on exit.  Publish its lexical path only after that
+        # verification has completed and all provisioning has succeeded.
+        task.pop("repo_path_untrusted", None)
         save_task(task)
         return public_task(task)
     except Exception as exc:
         logger.warning("model integration task create failed id=%s error=%s", task_id, exc)
+        if clone_audit and not any(
+            str(item.get("label") or "") == "git-clone-base"
+            for item in task.get("commands") or []
+            if isinstance(item, dict)
+        ):
+            _append_command(task, clone_audit, label="git-clone-base")
         task["status"] = "error"
         task["error"] = f"{type(exc).__name__}: {_redact_text(str(exc), extra_tokens=[_effective_git_token(git_token_value)])}"
         save_task(task)
@@ -2510,6 +2586,11 @@ def _validate_recovered_repo_identity(task: Dict[str, Any]) -> None:
 
 
 def _repo_path(task: Dict[str, Any]) -> Path:
+    if bool(task.get("repo_path_untrusted")):
+        raise HTTPException(
+            status_code=409,
+            detail="coding task repository initialization is incomplete",
+        )
     _validate_recovered_repo_identity(task)
     path = Path(str(task.get("repo_path") or "")).resolve()
     if not path.exists():
@@ -3052,10 +3133,16 @@ def begin_harness_agent_run_start(task_id: str) -> bool:
         if _active_harness_evidence_lease_locked(task_id):
             raise HTTPException(status_code=409, detail="coding harness evidence lease is active")
         task = load_task(task_id)
-        if str(task.get("kind") or "") != "harness_eval":
-            return False
+        task_kind = str(task.get("kind") or "")
         if str(task.get("status") or "").strip().lower() == "initializing":
-            raise HTTPException(status_code=409, detail="coding harness task is still initializing")
+            detail = (
+                "coding harness task is still initializing"
+                if task_kind == "harness_eval"
+                else "coding task is still initializing"
+            )
+            raise HTTPException(status_code=409, detail=detail)
+        if task_kind != "harness_eval":
+            return False
         if task_id in _ACTIVE_HARNESS_RUN_STARTS:
             raise HTTPException(status_code=409, detail="coding harness agent run is already starting")
         if task_id in _ACTIVE_HARNESS_VALIDATIONS:
