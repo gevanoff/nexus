@@ -262,6 +262,7 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
     def fail(message: str) -> None:
         raise SmokeFailure(message, report=report)
 
+    agent_start_attempted = False
     agent_state_unsettled = False
     try:
         policy = coding_model_policy.describe_workspace_model(model)
@@ -315,7 +316,7 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
         if str(task.get("status") or "") == "error":
             fail(f"workspace creation failed: {task.get('error') or task}")
 
-        agent_state_unsettled = True
+        agent_start_attempted = True
         task = await ca.start_agent_run(
             task_id,
             coding_model=model,
@@ -323,6 +324,7 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
             commit_message=profile.commit_message,
             actor="coding-smoke-scheduler",
         )
+        agent_state_unsettled = True
         _append_phase(report, "start_agent", _agent_status(task) not in {"failed", "idle_waiting"}, agent_status=_agent_status(task))
 
         timeout = max(
@@ -431,6 +433,11 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
         return report
     except SmokeFailure as exc:
         report = exc.report if isinstance(getattr(exc, "report", None), dict) else report
+        if agent_start_attempted and not agent_state_unsettled:
+            try:
+                agent_state_unsettled = ca.agent_run_active(task_id)
+            except Exception:
+                agent_state_unsettled = True
         if agent_state_unsettled:
             report["abort_suite"] = True
         report["ok"] = False
@@ -439,6 +446,11 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
         report["duration_sec"] = int(report["finished_at"] - started_at)
         return report
     except Exception as exc:
+        if agent_start_attempted and not agent_state_unsettled:
+            try:
+                agent_state_unsettled = ca.agent_run_active(task_id)
+            except Exception:
+                agent_state_unsettled = True
         if agent_state_unsettled:
             report["abort_suite"] = True
         report["ok"] = False

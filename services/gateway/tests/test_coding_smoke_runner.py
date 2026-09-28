@@ -303,6 +303,33 @@ def test_run_one_aborts_suite_when_monitoring_fails_after_start(monkeypatch):
     assert report["error"] == "RuntimeError: simulated monitoring failure"
 
 
+def test_start_failure_without_active_runner_does_not_abort_suite(monkeypatch):
+    async def start_agent_run(*_args, **_kwargs):
+        raise RuntimeError("simulated startup validation failure")
+
+    monkeypatch.setattr(
+        runner.coding_model_policy,
+        "describe_workspace_model",
+        lambda _model: {"run_policy": "active"},
+    )
+    monkeypatch.setattr(
+        runner.cw,
+        "create_task",
+        lambda **_kwargs: {"id": "code_start_failed", "status": "ready"},
+    )
+    monkeypatch.setattr(runner.ca, "start_agent_run", start_agent_run)
+    monkeypatch.setattr(runner.ca, "agent_run_active", lambda _task_id: False)
+    monkeypatch.setattr(runner, "_write_report", lambda _report: None)
+
+    report = asyncio.run(
+        runner.run_one(model="coder", profile_id="fixture_median")
+    )
+
+    assert report["ok"] is False
+    assert "abort_suite" not in report
+    assert report["error"] == "RuntimeError: simulated startup validation failure"
+
+
 def test_run_suite_stops_after_unsettled_runner(monkeypatch):
     calls = []
 
