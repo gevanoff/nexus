@@ -339,6 +339,226 @@ def test_failed_clone_workspace_can_be_reinitialized(tmp_path):
     assert saved
 
 
+def test_failed_initialization_retries_transient_clone_with_fresh_destination(
+    tmp_path, monkeypatch
+):
+    workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
+    workspace = workspace_root / "code_123456abcdef"
+    repo = workspace / "repo"
+    task = {
+        "id": "code_123456abcdef",
+        "status": "error",
+        "repo_url": "https://github.com/example/repo.git",
+        "base_branch": "main",
+        "branch_name": "feature/test",
+        "workspace_path": str(workspace),
+        "repo_path": str(repo),
+        "commands": [
+            {
+                "label": "clone",
+                "ok": False,
+                "stderr_tail": "fatal: Could not resolve host: github.com",
+                "stdout_tail": "",
+            }
+        ],
+    }
+    clone_inodes = []
+    clone_calls = 0
+    commands = []
+
+    def run_process(argv, *, cwd, **kwargs):
+        nonlocal clone_calls
+        if argv[1] == "clone":
+            clone_calls += 1
+            repo.mkdir(parents=True)
+            clone_inodes.append(repo.stat().st_ino)
+            if clone_calls == 1:
+                (repo / "partial").write_text("first attempt", encoding="utf-8")
+                return _result(
+                    ok=False,
+                    stderr="fatal: Could not resolve host: github.com token",
+                )
+            (repo / ".git").mkdir()
+        return _result(ok=True)
+
+    def append_command(current, result, *, label):
+        commands.append((label, dict(result)))
+        current.setdefault("commands", []).append(
+            {"label": label, "ok": bool(result.get("ok"))}
+        )
+
+    fake_cw = SimpleNamespace(
+        load_task=lambda task_id: task,
+        save_task=lambda current: current,
+        workspace_root=lambda: workspace_root,
+        task_workspace_lock=cw.task_workspace_lock,
+        command_timeout_sec=lambda value=None: 120.0,
+        _run_process=run_process,
+        _append_command=append_command,
+    )
+    monkeypatch.setenv("CODING_GIT_RETRY_ATTEMPTS", "3")
+    monkeypatch.setenv("CODING_GIT_RETRY_BASE_SEC", "0")
+
+    recovered = nr.retry_failed_initialization(
+        fake_cw, task["id"], git_token_value="token"
+    )
+
+    assert recovered["status"] == "ready"
+    assert clone_calls == 2
+    assert clone_inodes[0] != clone_inodes[1]
+    quarantines = list(workspace.glob("repo.partial-*/repo"))
+    assert len(quarantines) == 1
+    assert quarantines[0].joinpath("partial").read_text(encoding="utf-8") == "first attempt"
+    recovery = recovered["initialization_recovery"]
+    assert recovery["network_retry_attempts"] == 2
+    assert recovery["partial_repo_quarantines"] == [
+        f"{quarantines[0].parent.name}/repo"
+    ]
+    clone_results = [result for label, result in commands if label == "clone-retry"]
+    assert len(clone_results) == 2
+    assert clone_results[-1]["network_retry_recovered"] is True
+    assert "token" not in str(clone_results)
+
+
+def test_failed_initialization_does_not_retry_nontransient_clone(tmp_path, monkeypatch):
+    workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
+    workspace = workspace_root / "code_123456abcdef"
+    repo = workspace / "repo"
+    task = {
+        "id": "code_123456abcdef",
+        "status": "error",
+        "repo_url": "https://github.com/example/repo.git",
+        "base_branch": "main",
+        "branch_name": "feature/test",
+        "workspace_path": str(workspace),
+        "repo_path": str(repo),
+        "commands": [
+            {
+                "label": "clone",
+                "ok": False,
+                "stderr_tail": "fatal: Could not resolve host: github.com",
+                "stdout_tail": "",
+            }
+        ],
+    }
+    clone_calls = 0
+
+    def run_process(argv, *, cwd, **kwargs):
+        nonlocal clone_calls
+        if argv[1] == "clone":
+            clone_calls += 1
+            repo.mkdir(parents=True)
+            (repo / "partial").write_text("preserved", encoding="utf-8")
+            return _result(ok=False, stderr="fatal: Authentication failed")
+        raise AssertionError(f"unexpected command: {argv}")
+
+    fake_cw = SimpleNamespace(
+        load_task=lambda task_id: task,
+        save_task=lambda current: current,
+        workspace_root=lambda: workspace_root,
+        task_workspace_lock=cw.task_workspace_lock,
+        command_timeout_sec=lambda value=None: 120.0,
+        _run_process=run_process,
+        _append_command=lambda current, result, *, label: current.setdefault(
+            "commands", []
+        ).append({"label": label, "ok": bool(result.get("ok"))}),
+    )
+    monkeypatch.setenv("CODING_GIT_RETRY_ATTEMPTS", "3")
+    monkeypatch.setenv("CODING_GIT_RETRY_BASE_SEC", "0")
+
+    with pytest.raises(HTTPException) as excinfo:
+        nr.retry_failed_initialization(fake_cw, task["id"])
+
+    assert excinfo.value.status_code == 503
+    assert clone_calls == 1
+    quarantines = list(workspace.glob("repo.partial-*/repo"))
+    assert len(quarantines) == 1
+    assert quarantines[0].joinpath("partial").read_text(encoding="utf-8") == "preserved"
+    assert task["initialization_recovery"]["network_retry_attempts"] == 1
+
+
+def test_failed_initialization_audits_clone_before_quarantine_refusal(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
+    workspace = workspace_root / "code_123456abcdef"
+    workspace.mkdir()
+    repo = workspace / "repo"
+    for suffix in ("one", "two"):
+        (workspace / f"repo.partial-{suffix}").mkdir()
+    task = {
+        "id": "code_123456abcdef",
+        "status": "error",
+        "error": "original clone failed",
+        "repo_url": "https://github.com/example/repo.git",
+        "base_branch": "main",
+        "branch_name": "main",
+        "workspace_path": str(workspace),
+        "repo_path": str(repo),
+        "commands": [
+            {
+                "label": "clone",
+                "ok": False,
+                "stderr_tail": "fatal: Could not resolve host: github.com",
+                "stdout_tail": "",
+            }
+        ],
+    }
+    saved = []
+
+    def run_process(argv, *, cwd, **_kwargs):
+        assert argv[1] == "clone"
+        repo.mkdir()
+        (repo / "partial").write_text("preserve", encoding="utf-8")
+        return _result(
+            ok=False,
+            stderr="fatal: Could not resolve host: github.com secret-token",
+        )
+
+    def append_command(current, result, *, label):
+        current.setdefault("commands", []).append(
+            {
+                "label": label,
+                "ok": bool(result.get("ok")),
+                "stderr_tail": str(result.get("stderr") or ""),
+            }
+        )
+
+    fake_cw = SimpleNamespace(
+        load_task=lambda task_id: task,
+        save_task=lambda current: saved.append(dict(current)) or current,
+        workspace_root=lambda: workspace_root,
+        task_workspace_lock=cw.task_workspace_lock,
+        command_timeout_sec=lambda value=None: 120.0,
+        _run_process=run_process,
+        _append_command=append_command,
+    )
+    monkeypatch.setenv("CODING_GIT_RETRY_ATTEMPTS", "1")
+    monkeypatch.setenv("CODING_GIT_RETRY_BASE_SEC", "0")
+
+    with pytest.raises(HTTPException) as excinfo:
+        nr.retry_failed_initialization(
+            fake_cw,
+            task["id"],
+            git_token_value="secret-token",
+        )
+
+    assert excinfo.value.status_code == 409
+    assert "preserved partial repository limit" in str(excinfo.value.detail)
+    assert task["status"] == "error"
+    assert task["error"] == "git clone failed after initialization retry"
+    assert task["initialization_recovery"]["network_retry_attempts"] == 1
+    clone_audit = task["commands"][-1]
+    assert clone_audit["label"] == "clone-retry"
+    assert "secret-token" not in str(clone_audit)
+    assert repo.joinpath("partial").read_text(encoding="utf-8") == "preserve"
+    assert saved
+
+
 def test_non_transient_failed_initialization_is_not_recloned(tmp_path):
     workspace_root = tmp_path / "workspaces"
     workspace = workspace_root / "code_123456abcdef"

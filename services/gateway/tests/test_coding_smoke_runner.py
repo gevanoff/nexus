@@ -330,6 +330,88 @@ def test_start_failure_without_active_runner_does_not_abort_suite(monkeypatch):
     assert report["error"] == "RuntimeError: simulated startup validation failure"
 
 
+def test_terminal_failure_waits_for_runner_cleanup_without_aborting_suite(
+    monkeypatch,
+):
+    active_states = iter((True, False, False))
+    active_checks = []
+
+    async def start_agent_run(*_args, **_kwargs):
+        return {"agent": {"status": "running"}}
+
+    async def wait_for_agent_terminal(*_args, **_kwargs):
+        return True, {"agent": {"status": "failed"}}, {"task": {}}
+
+    def agent_run_active(task_id):
+        active_checks.append(task_id)
+        return next(active_states, False)
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(
+        runner.coding_model_policy,
+        "describe_workspace_model",
+        lambda _model: {"run_policy": "active"},
+    )
+    monkeypatch.setattr(
+        runner.cw,
+        "create_task",
+        lambda **_kwargs: {"id": "code_terminal_cleanup", "status": "ready"},
+    )
+    monkeypatch.setattr(runner.ca, "start_agent_run", start_agent_run)
+    monkeypatch.setattr(runner, "_wait_for_agent_terminal", wait_for_agent_terminal)
+    monkeypatch.setattr(runner.ca, "agent_run_active", agent_run_active)
+    monkeypatch.setattr(runner.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(runner.S, "CODING_SMOKE_PAUSE_SETTLE_SEC", 1)
+    monkeypatch.setattr(runner, "_write_report", lambda _report: None)
+
+    report = asyncio.run(
+        runner.run_one(model="coder", profile_id="fixture_median")
+    )
+
+    assert report["ok"] is False
+    assert report["error"] == "agent did not complete successfully: failed"
+    assert "abort_suite" not in report
+    assert active_checks == ["code_terminal_cleanup"] * 3
+
+
+def test_terminal_failure_aborts_suite_when_runner_cleanup_does_not_settle(
+    monkeypatch,
+):
+    async def start_agent_run(*_args, **_kwargs):
+        return {"agent": {"status": "running"}}
+
+    async def wait_for_agent_terminal(*_args, **_kwargs):
+        return True, {"agent": {"status": "failed"}}, {"task": {}}
+
+    monkeypatch.setattr(
+        runner.coding_model_policy,
+        "describe_workspace_model",
+        lambda _model: {"run_policy": "active"},
+    )
+    monkeypatch.setattr(
+        runner.cw,
+        "create_task",
+        lambda **_kwargs: {"id": "code_terminal_stuck", "status": "ready"},
+    )
+    monkeypatch.setattr(runner.ca, "start_agent_run", start_agent_run)
+    monkeypatch.setattr(runner, "_wait_for_agent_terminal", wait_for_agent_terminal)
+    monkeypatch.setattr(runner.ca, "agent_run_active", lambda _task_id: True)
+    monkeypatch.setattr(runner.S, "CODING_SMOKE_PAUSE_SETTLE_SEC", 0)
+    monkeypatch.setattr(runner, "_write_report", lambda _report: None)
+
+    report = asyncio.run(
+        runner.run_one(model="coder", profile_id="fixture_median")
+    )
+
+    assert report["ok"] is False
+    assert report["abort_suite"] is True
+    assert report["error"] == (
+        "coding agent reached terminal status but runner cleanup did not settle"
+    )
+
+
 def test_run_suite_stops_after_unsettled_runner(monkeypatch):
     calls = []
 

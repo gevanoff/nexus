@@ -801,7 +801,10 @@ def _retry_failed_initialization_locked(
     root_fd = -1
     workspace_fd = -1
     repo_fd = -1
-    partial_repo_quarantine = ""
+    partial_repo_quarantines: list[str] = []
+    max_clone_attempts = retry_attempts()
+    max_preserved_quarantines = max_clone_attempts + 1
+    clone_retry_delay = retry_base_delay_sec()
     try:
         root_fd = os.open(workspace_root, open_flags | nofollow)
         try:
@@ -834,18 +837,51 @@ def _retry_failed_initialization_locked(
                 status_code=409,
                 detail="coding workspace path changed during initialization recovery",
             )
-        try:
-            os.stat("repo", dir_fd=workspace_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
+
+        def quarantine_partial_repo() -> None:
+            """Preserve the canonical partial checkout before a fresh clone."""
+            try:
+                current_repo_stat = os.stat(
+                    "repo",
+                    dir_fd=workspace_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return
+            if not stat.S_ISDIR(current_repo_stat.st_mode):
+                raise HTTPException(
+                    status_code=409,
+                    detail="coding repository path is not a directory during recovery",
+                )
+            try:
+                current_repo_fd = os.open(
+                    "repo",
+                    open_flags | nofollow,
+                    dir_fd=workspace_fd,
+                )
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="coding repository path changed during initialization recovery",
+                ) from exc
+            try:
+                if not os.path.samestat(
+                    current_repo_stat,
+                    os.fstat(current_repo_fd),
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="coding repository path changed during initialization recovery",
+                    )
+            finally:
+                os.close(current_repo_fd)
             quarantine_prefix = "repo.partial-"
             existing_quarantines = [
                 name
                 for name in os.listdir(workspace_fd)
                 if str(name).startswith(quarantine_prefix)
             ]
-            if len(existing_quarantines) >= 3:
+            if len(existing_quarantines) >= max_preserved_quarantines:
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -873,21 +909,46 @@ def _retry_failed_initialization_locked(
                 dir_fd=workspace_fd,
             )
             try:
+                current_repo_after_reservation = os.stat(
+                    "repo",
+                    dir_fd=workspace_fd,
+                    follow_symlinks=False,
+                )
+                if not os.path.samestat(current_repo_stat, current_repo_after_reservation):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="coding repository path changed during initialization recovery",
+                    )
                 os.rename(
                     "repo",
                     "repo",
                     src_dir_fd=workspace_fd,
                     dst_dir_fd=quarantine_fd,
                 )
+                quarantined_stat = os.stat(
+                    "repo",
+                    dir_fd=quarantine_fd,
+                    follow_symlinks=False,
+                )
+                if not os.path.samestat(current_repo_stat, quarantined_stat):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="coding partial repository quarantine changed identity",
+                    )
             finally:
                 os.close(quarantine_fd)
-            partial_repo_quarantine = f"{quarantine_name}/repo"
-            task["initialization_recovery"] = {
+            partial_repo_quarantines.append(f"{quarantine_name}/repo")
+            recovery_state = task.get("initialization_recovery")
+            if not isinstance(recovery_state, dict):
+                recovery_state = {}
+            recovery_state.update({
                 "recovered": False,
                 "reason": failure_kind,
                 "attempted_at": time.time(),
-                "partial_repo_quarantine": partial_repo_quarantine,
-            }
+                "partial_repo_quarantine": partial_repo_quarantines[-1],
+                "partial_repo_quarantines": list(partial_repo_quarantines),
+            })
+            task["initialization_recovery"] = recovery_state
             cw.save_task(task)
             if not workspace_path_is_stable():
                 raise HTTPException(
@@ -896,8 +957,12 @@ def _retry_failed_initialization_locked(
                         "coding workspace path changed during initialization "
                         "recovery"
                     ),
-                )
+                    )
 
+        # A failed initial create can already have left the canonical target in
+        # place. Preserve it before the first retry, then preserve every failed
+        # retry destination before constructing a fresh canonical path.
+        quarantine_partial_repo()
         anchored_workspace = Path(f"/proc/self/fd/{workspace_fd}")
         clone_target = anchored_workspace.joinpath("repo")
         run_process = getattr(
@@ -908,25 +973,49 @@ def _retry_failed_initialization_locked(
         repo_url = str(task.get("repo_url") or "").strip()
         base = str(task.get("base_branch") or "main").strip() or "main"
         branch = str(task.get("branch_name") or "").strip()
-        clone_result = run_process(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                base,
-                repo_url,
-                str(clone_target),
-            ],
-            cwd=anchored_workspace,
-            timeout_sec=max(cw.command_timeout_sec(), 300.0),
-            use_git_credentials=True,
-            git_token_value=git_token_value,
-            pass_fds=(workspace_fd,),
-        )
-        cw._append_command(task, clone_result, label="clone-retry")
-        if not clone_result.get("ok"):
+        clone_history: list[Dict[str, Any]] = []
+        clone_result: Dict[str, Any] = {}
+        for attempt_index in range(max_clone_attempts):
+            clone_result = _redact_result_secret(
+                run_process(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--branch",
+                        base,
+                        repo_url,
+                        str(clone_target),
+                    ],
+                    cwd=anchored_workspace,
+                    timeout_sec=max(cw.command_timeout_sec(), 300.0),
+                    use_git_credentials=True,
+                    git_token_value=git_token_value,
+                    pass_fds=(workspace_fd,),
+                ),
+                git_token_value,
+            )
+            clone_kind = classify_transient_text(
+                f"{clone_result.get('stderr') or ''}\n{clone_result.get('stdout') or ''}"
+            )
+            clone_history.append(
+                _retry_history_entry(
+                    clone_result,
+                    attempt=attempt_index + 1,
+                    kind=clone_kind,
+                )
+            )
+            clone_result = _with_retry_metadata(clone_result, clone_history)
+            clone_result["partial_clone_quarantines"] = list(partial_repo_quarantines)
+            if clone_result.get("ok"):
+                cw._append_command(task, clone_result, label="clone-retry")
+                break
+            # Persist the redacted attempt before quarantine.  Preservation can
+            # fail closed (for example at the bounded quarantine limit), and
+            # that failure must not erase the clone evidence or leave stale
+            # recovery status behind.
+            cw._append_command(task, clone_result, label="clone-retry")
             task["status"] = "error"
             task["error"] = "git clone failed after initialization retry"
             task["initialization_recovery"] = {
@@ -937,11 +1026,28 @@ def _retry_failed_initialization_locked(
                     clone_result.get("network_retry_attempts") or 1
                 ),
             }
-            if partial_repo_quarantine:
+            if partial_repo_quarantines:
                 task["initialization_recovery"]["partial_repo_quarantine"] = (
-                    partial_repo_quarantine
+                    partial_repo_quarantines[-1]
+                )
+                task["initialization_recovery"]["partial_repo_quarantines"] = (
+                    list(partial_repo_quarantines)
                 )
             cw.save_task(task)
+            if not workspace_path_is_stable():
+                raise HTTPException(
+                    status_code=409,
+                    detail="coding workspace path changed during initialization recovery",
+                )
+            quarantine_partial_repo()
+            clone_result["partial_clone_quarantines"] = list(partial_repo_quarantines)
+            if not clone_kind or attempt_index + 1 >= max_clone_attempts:
+                break
+            delay = _retry_delay(attempt_index, clone_retry_delay)
+            if delay > 0:
+                time.sleep(delay)
+
+        if not clone_result.get("ok"):
             raise HTTPException(status_code=503, detail=task["error"])
 
         if not workspace_path_is_stable():
@@ -1042,9 +1148,12 @@ def _retry_failed_initialization_locked(
             "inode": int(repo_stat.st_ino),
         },
     }
-    if partial_repo_quarantine:
+    if partial_repo_quarantines:
         task["initialization_recovery"]["partial_repo_quarantine"] = (
-            partial_repo_quarantine
+            partial_repo_quarantines[-1]
+        )
+        task["initialization_recovery"]["partial_repo_quarantines"] = (
+            list(partial_repo_quarantines)
         )
     cw.save_task(task)
     return task

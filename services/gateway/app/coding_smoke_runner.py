@@ -191,6 +191,23 @@ async def _wait_for_agent_terminal(
         await asyncio.sleep(min(max(0.1, float(poll_sec)), remaining))
 
 
+async def _wait_for_agent_inactive(
+    task_id: str,
+    *,
+    timeout_sec: float,
+    poll_sec: float = 1.0,
+) -> bool:
+    """Wait briefly for a terminal runner's trailing persistence to finish."""
+    deadline = time.monotonic() + max(0.0, float(timeout_sec))
+    while True:
+        if not ca.agent_run_active(task_id):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        await asyncio.sleep(min(max(0.1, float(poll_sec)), remaining))
+
+
 def _write_report(report: Dict[str, Any]) -> None:
     target_dir = _report_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -354,7 +371,35 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
                 poll_sec=min(poll, 2.0),
             )
         if terminal:
-            agent_state_unsettled = False
+            terminal_settle = max(
+                0.0,
+                min(
+                    300.0,
+                    float(
+                        getattr(S, "CODING_SMOKE_PAUSE_SETTLE_SEC", 60.0)
+                        or 0.0
+                    ),
+                ),
+            )
+            try:
+                terminal_settled = await _wait_for_agent_inactive(
+                    task_id,
+                    timeout_sec=terminal_settle,
+                    poll_sec=min(poll, 1.0),
+                )
+            except Exception as exc:
+                report["abort_suite"] = True
+                fail(
+                    "coding agent reached terminal status but runner cleanup "
+                    f"could not be verified ({type(exc).__name__})"
+                )
+            agent_state_unsettled = not terminal_settled
+            if agent_state_unsettled:
+                report["abort_suite"] = True
+                fail(
+                    "coding agent reached terminal status but runner cleanup "
+                    "did not settle"
+                )
         report["last_agent_status"] = _agent_status(last_task)
         inspect_task = (
             last_inspect.get("task")
