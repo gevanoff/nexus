@@ -85,6 +85,10 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     topology = json.loads((repo_root / "deploy" / "topology" / "production.json").read_text(encoding="utf-8"))
     env = topology["defaults"]["env"]
 
+    assert env["VLLM_FAST_IMAGE"] == (
+        "vllm/vllm-openai:v0.19.1@"
+        "sha256:2622f38a0aa646c15ccc27bd5033911a58fd94ac69fd8f86aba0692d77cfe5b9"
+    )
     assert env["VLLM_TOOL_PROFILE"] == "xlam_mistral_parallel"
     assert env["VLLM_FAST_TOOL_PROFILE"] == "mistral_serial"
     assert env["VLLM_NATIVE_TOOLS_ENABLED"] == "true"
@@ -117,6 +121,11 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     assert topology["hosts"]["stackrot"]["env"]["VLLM_FAST_CPU_OFFLOAD_GB"] == "0"
     compose = (repo_root / "docker-compose.vllm-fast.yml").read_text(encoding="utf-8")
     launcher = (repo_root / "deploy" / "scripts" / "run-vllm-openai.sh").read_text(encoding="utf-8")
+    assert (
+        "${VLLM_FAST_IMAGE:-${VLLM_IMAGE:-vllm/vllm-openai:v0.19.1@"
+        "sha256:2622f38a0aa646c15ccc27bd5033911a58fd94ac69fd8f86aba0692d77cfe5b9}}"
+        in compose
+    )
     assert "NEXUS_VLLM_CALCULATE_KV_SCALES=${VLLM_FAST_CALCULATE_KV_SCALES:-false}" in compose
     assert "NEXUS_VLLM_MAX_NUM_SEQS=${VLLM_FAST_MAX_NUM_SEQS:-}" in compose
     assert "NEXUS_VLLM_MAX_NUM_BATCHED_TOKENS=${VLLM_FAST_MAX_NUM_BATCHED_TOKENS:-}" in compose
