@@ -124,6 +124,13 @@ async def lifespan(_app: FastAPI):
         interrupted_task_ids = [str(item) for item in (recovered.get("tasks") or []) if str(item)]
         if recovered.get("recovered"):
             logger.warning("startup: marked interrupted coding runs recovered=%s tasks=%s", recovered.get("recovered"), recovered.get("tasks"))
+        if recovered.get("paused_smoke"):
+            logger.warning(
+                "startup: paused interrupted scheduler-owned coding smoke runs "
+                "paused=%s tasks=%s",
+                recovered.get("paused_smoke"),
+                recovered.get("paused_smoke_tasks"),
+            )
     except Exception as e:
         logger.info("startup: coding workspace recovery skipped (%s: %s)", type(e).__name__, e)
 

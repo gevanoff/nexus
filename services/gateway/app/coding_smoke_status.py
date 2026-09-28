@@ -58,8 +58,12 @@ def _summarize_report(report: Dict[str, Any]) -> Dict[str, Any]:
     backend = str(report.get("backend") or agent.get("backend") or "").strip()
     upstream_model = str(report.get("upstream_model") or agent.get("upstream_model") or "").strip()
     profile_id = str(report.get("profile_id") or "fixture_median").strip() or "fixture_median"
+    finished_at = int(float(report.get("finished_at") or 0))
+    interrupted = bool(report.get("interrupted") or report.get("cancelled"))
     return {
         "ok": bool(report.get("ok")),
+        "complete": finished_at > 0,
+        "interrupted": interrupted,
         "profile_id": profile_id,
         "profile_label": str(report.get("profile_label") or profile_id).strip() or profile_id,
         "complexity": str(report.get("complexity") or "simple").strip() or "simple",
@@ -69,7 +73,7 @@ def _summarize_report(report: Dict[str, Any]) -> Dict[str, Any]:
         "task_id": str(report.get("task_id") or "").strip(),
         "branch_name": str(report.get("branch_name") or "").strip(),
         "started_at": int(float(report.get("started_at") or 0)),
-        "finished_at": int(float(report.get("finished_at") or 0)),
+        "finished_at": finished_at,
         "duration_sec": _duration(report),
         "agent_elapsed_runtime_sec": int(float(report.get("agent_elapsed_runtime_sec") or agent.get("elapsed_runtime_sec") or 0)),
         "agent_status": str((report.get("final_task") or {}).get("agent_status") or agent.get("status") or "").strip(),
@@ -91,6 +95,8 @@ def _metric_key(item: Dict[str, Any]) -> Tuple[str, str, str, str]:
 def _build_metrics(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     buckets: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
     for item in items:
+        if item.get("interrupted") or not item.get("complete"):
+            continue
         key = _metric_key(item)
         bucket = buckets.setdefault(
             key,

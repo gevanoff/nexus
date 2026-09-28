@@ -476,6 +476,19 @@ async def run_one(*, model: str, profile_id: str) -> Dict[str, Any]:
         report["archive"] = {"ok": bool(archive.get("ok")), "archive_id": archive.get("archive_id") or ""}
         _append_phase(report, "archive", bool(archive.get("ok")), archive_id=archive.get("archive_id") or "")
         return report
+    except asyncio.CancelledError:
+        report["ok"] = False
+        report["interrupted"] = True
+        report["error"] = "coding smoke scheduler cancelled before completion"
+        report["finished_at"] = int(time.time())
+        report["duration_sec"] = int(report["finished_at"] - started_at)
+        _append_phase(
+            report,
+            "scheduler_cancelled",
+            False,
+            task_id=str(report.get("task_id") or ""),
+        )
+        raise
     except SmokeFailure as exc:
         report = exc.report if isinstance(getattr(exc, "report", None), dict) else report
         if agent_start_attempted and not agent_state_unsettled:

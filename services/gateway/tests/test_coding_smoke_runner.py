@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from fastapi import HTTPException
 
 from app import coding_smoke_runner as runner
@@ -301,6 +302,53 @@ def test_run_one_aborts_suite_when_monitoring_fails_after_start(monkeypatch):
     assert report["ok"] is False
     assert report["abort_suite"] is True
     assert report["error"] == "RuntimeError: simulated monitoring failure"
+
+
+def test_run_one_records_scheduler_cancellation_before_propagating(monkeypatch):
+    wait_started = asyncio.Event()
+    reports = []
+
+    async def start_agent_run(*_args, **_kwargs):
+        return {"agent": {"status": "running"}}
+
+    async def wait_for_agent_terminal(*_args, **_kwargs):
+        wait_started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(
+        runner.coding_model_policy,
+        "describe_workspace_model",
+        lambda _model: {"run_policy": "active"},
+    )
+    monkeypatch.setattr(
+        runner.cw,
+        "create_task",
+        lambda **_kwargs: {"id": "code_cancelled", "status": "ready"},
+    )
+    monkeypatch.setattr(runner.ca, "start_agent_run", start_agent_run)
+    monkeypatch.setattr(runner, "_wait_for_agent_terminal", wait_for_agent_terminal)
+    monkeypatch.setattr(runner, "_write_report", lambda report: reports.append(dict(report)))
+
+    async def exercise() -> None:
+        task = asyncio.create_task(
+            runner.run_one(model="coder", profile_id="fixture_median")
+        )
+        await wait_started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+
+    assert len(reports) == 1
+    report = reports[0]
+    assert report["ok"] is False
+    assert report["interrupted"] is True
+    assert report["error"] == "coding smoke scheduler cancelled before completion"
+    assert report["finished_at"] >= report["started_at"]
+    assert report["duration_sec"] >= 0
+    assert report["phases"][-1]["name"] == "scheduler_cancelled"
+    assert report["phases"][-1]["ok"] is False
 
 
 def test_start_failure_without_active_runner_does_not_abort_suite(monkeypatch):

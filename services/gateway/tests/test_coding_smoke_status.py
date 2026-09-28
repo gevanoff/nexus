@@ -56,6 +56,56 @@ def test_coding_smoke_status_summarizes_reports_and_metrics(tmp_path, monkeypatc
     assert payload["metrics"][0]["success_rate"] == 0.5
 
 
+def test_coding_smoke_status_excludes_interrupted_and_incomplete_reports_from_metrics(
+    tmp_path,
+    monkeypatch,
+):
+    report_dir = tmp_path / "reports"
+    report_dir.mkdir()
+    monkeypatch.setattr(coding_smoke_status.S, "CODING_SMOKE_REPORT_DIR", str(report_dir))
+
+    reports = {
+        "coding-smoke-pass.json": {
+            "ok": True,
+            "profile_id": "fixture_inventory",
+            "model": "coder",
+            "task_id": "code_pass",
+            "started_at": 100,
+            "finished_at": 160,
+        },
+        "coding-smoke-interrupted.json": {
+            "ok": False,
+            "interrupted": True,
+            "profile_id": "fixture_inventory",
+            "model": "coder",
+            "task_id": "code_interrupted",
+            "started_at": 200,
+            "finished_at": 220,
+            "error": "coding smoke scheduler cancelled before completion",
+        },
+        "coding-smoke-incomplete.json": {
+            "ok": False,
+            "profile_id": "fixture_inventory",
+            "model": "coder",
+            "task_id": "code_incomplete",
+            "started_at": 300,
+        },
+    }
+    for name, report in reports.items():
+        (report_dir / name).write_text(json.dumps(report), encoding="utf-8")
+
+    payload = coding_smoke_status.payload(limit=10)
+
+    by_task = {item["task_id"]: item for item in payload["reports"]}
+    assert by_task["code_interrupted"]["interrupted"] is True
+    assert by_task["code_interrupted"]["complete"] is True
+    assert by_task["code_incomplete"]["complete"] is False
+    assert len(payload["metrics"]) == 1
+    assert payload["metrics"][0]["runs"] == 1
+    assert payload["metrics"][0]["successes"] == 1
+    assert payload["metrics"][0]["failures"] == 0
+
+
 def test_ai2_runs_recurring_coding_smoke_suite_from_startup() -> None:
     topology = json.loads(
         (REPO_ROOT / "deploy" / "topology" / "production.json").read_text(

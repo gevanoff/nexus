@@ -124,6 +124,7 @@ def test_resources_ui_shows_coding_smoke_health() -> None:
     assert 'id="coding_smoke"' in html
     assert "/ui/api/coding/smoke-status?limit=100" in js
     assert "renderCodingSmoke" in js
+    assert "latest.interrupted" in js
     assert "metrics-table" in js
     assert "metrics.slice(0, 48)" in js
 

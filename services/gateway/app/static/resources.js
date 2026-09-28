@@ -789,7 +789,11 @@
     const badges = document.createElement("div");
     badges.className = "badges";
     if (latest) {
-      badges.appendChild(badge(latest.ok ? "passing" : "failing", latest.ok ? "green" : "red"));
+      const interrupted = latest.interrupted === true || latest.complete === false;
+      badges.appendChild(badge(
+        interrupted ? "interrupted" : (latest.ok ? "passing" : "failing"),
+        interrupted ? "grey" : (latest.ok ? "green" : "red"),
+      ));
       badges.appendChild(badge(latest.profile_label || latest.profile_id || "profile", "blue"));
       badges.appendChild(badge(formatDurationText(latest.duration_sec), "blue"));
       if (latest.finished_at) badges.appendChild(badge(`last ${formatTimestamp(latest.finished_at) || "recent"}`, "blue"));
@@ -799,7 +803,12 @@
     card.appendChild(badges);
 
     const detail = document.createElement("div");
-    detail.className = latest && latest.ok === false ? "meta error" : "meta";
+    detail.className = latest
+      && latest.ok === false
+      && latest.interrupted !== true
+      && latest.complete !== false
+      ? "meta error"
+      : "meta";
     detail.style.marginTop = "6px";
     if (latest) {
       const model = shortModel(latest.upstream_model || latest.model);
