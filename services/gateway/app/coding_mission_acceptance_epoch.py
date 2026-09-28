@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import difflib
 import hashlib
+import json
+import os
+import stat
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
@@ -17,6 +20,9 @@ REFUTATION_KEY = "coding_hypothesis_refutation"
 REFUTATION_TOOL = "coding_refute_hypothesis"
 _MAX_UNTRACKED = 200
 _MAX_UNTRACKED_BYTES = 100_000
+_MAX_UNTRACKED_HASH_BYTES = 8_000_000
+_MAX_UNTRACKED_HASH_TOTAL_BYTES = 32_000_000
+_MAX_MISSION_DIFF_CHARS = 8_000_000
 _MAX_REVIEW_DIFF_CHARS = 40_000
 
 
@@ -64,11 +70,28 @@ def _repo_path(cw: Any, task: Mapping[str, Any]) -> Path:
     return Path(str(task.get("repo_path") or "")).resolve()
 
 
-def _run_process(cw: Any, argv: list[str], *, cwd: Path) -> Dict[str, Any]:
+def _run_process(
+    cw: Any,
+    argv: list[str],
+    *,
+    cwd: Path,
+    output_limit_chars: Optional[int] = None,
+) -> Dict[str, Any]:
     runner = getattr(cw, "_run_process", None)
     if not callable(runner):
         return {"ok": False, "stdout": "", "stderr": "workspace git runner unavailable"}
-    return runner(argv, cwd=cwd, timeout_sec=30.0)
+    kwargs: Dict[str, Any] = {"cwd": cwd, "timeout_sec": 30.0}
+    if output_limit_chars is not None:
+        kwargs["output_limit_chars"] = int(output_limit_chars)
+    try:
+        return runner(argv, **kwargs)
+    except UnicodeError as exc:
+        return {
+            "ok": False,
+            "stdout": "",
+            "stderr": "git output was not valid UTF-8",
+            "error": type(exc).__name__,
+        }
 
 
 def _stdout(result: Any) -> str:
@@ -181,35 +204,194 @@ def ensure_epoch(
     return dict(_mapping(stored.get(KEY)) or proposed)
 
 
-def _safe_untracked_diff(cw: Any, *, repo: Path) -> tuple[str, str]:
-    result = _run_process(cw, ["git", "ls-files", "--others", "--exclude-standard"], cwd=repo)
+def _untracked_paths(cw: Any, *, repo: Path) -> tuple[list[str], str]:
+    try:
+        result = _run_process(
+            cw,
+            ["git", "ls-files", "-z", "--others", "--exclude-standard"],
+            cwd=repo,
+        )
+    except UnicodeError as exc:
+        return [], (
+            "unable to decode untracked path inventory as UTF-8: "
+            f"{type(exc).__name__}"
+        )
     if not bool(result.get("ok")):
-        return "", str(result.get("stderr") or result.get("error") or "git ls-files failed")
-    paths = [line.strip() for line in str(result.get("stdout") or "").splitlines() if line.strip()]
+        return [], str(
+            result.get("stderr")
+            or result.get("error")
+            or "git ls-files failed"
+        )
+    if bool(result.get("stdout_truncated")):
+        return [], "untracked path inventory was truncated"
+    raw_output = str(result.get("stdout") or "")
+    if not raw_output:
+        return [], ""
+    if not raw_output.endswith("\0"):
+        return [], "untracked path inventory was not NUL terminated"
+    paths = raw_output[:-1].split("\0")
+    if any(not raw for raw in paths):
+        return [], "untracked path inventory contained an empty path"
     if len(paths) > _MAX_UNTRACKED:
-        return "", f"mission delta has {len(paths)} untracked files; limit is {_MAX_UNTRACKED}"
+        return [], (
+            f"mission delta has {len(paths)} untracked files; "
+            f"limit is {_MAX_UNTRACKED}"
+        )
+    return paths, ""
+
+
+def _stat_identity(
+    value: os.stat_result,
+) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        int(value.st_dev),
+        int(value.st_ino),
+        int(value.st_mode),
+        int(value.st_nlink),
+        int(value.st_size),
+        int(value.st_mtime_ns),
+        int(value.st_ctime_ns),
+    )
+
+
+def _read_untracked_regular_file(
+    *,
+    repo: Path,
+    raw: str,
+    hash_limit: int = _MAX_UNTRACKED_HASH_BYTES,
+) -> tuple[bytes, Dict[str, Any], str]:
+    empty: Dict[str, Any] = {}
+    relative = Path(raw)
+    if relative.is_absolute() or ".." in relative.parts:
+        return b"", empty, f"untracked path escapes workspace: {raw}"
+    candidate = repo.joinpath(relative)
+    try:
+        candidate.parent.resolve().relative_to(repo)
+    except (OSError, ValueError):
+        return b"", empty, f"untracked path escapes workspace: {raw}"
+    try:
+        before = candidate.lstat()
+    except OSError as exc:
+        return b"", empty, (
+            f"unable to inspect untracked path {raw}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    if stat.S_ISLNK(before.st_mode):
+        return b"", empty, f"untracked symlink is not accepted: {raw}"
+    if not stat.S_ISREG(before.st_mode):
+        return b"", empty, f"untracked path is not a regular file: {raw}"
+    if int(before.st_nlink) != 1:
+        return b"", empty, f"untracked hard link is not accepted: {raw}"
+    effective_hash_limit = max(0, min(int(hash_limit), _MAX_UNTRACKED_HASH_BYTES))
+    if int(before.st_size) > effective_hash_limit:
+        return b"", empty, (
+            f"untracked file exceeds safe hashing limit: {raw} "
+            f"({int(before.st_size)} > {effective_hash_limit} bytes)"
+        )
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(candidate, flags)
+    except OSError as exc:
+        return b"", empty, (
+            f"unable to open untracked file {raw} safely: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            return b"", empty, f"untracked path is not a regular file: {raw}"
+        if int(opened.st_nlink) != 1:
+            return b"", empty, f"untracked hard link is not accepted: {raw}"
+        if _stat_identity(before) != _stat_identity(opened):
+            return b"", empty, (
+                f"workspace changed while collecting untracked diff: {raw}"
+            )
+        digest = hashlib.sha256()
+        content = bytearray()
+        content_included = int(opened.st_size) <= _MAX_UNTRACKED_BYTES
+        size = 0
+        exceeded_limit = False
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > effective_hash_limit:
+                exceeded_limit = True
+                break
+            digest.update(chunk)
+            if content_included:
+                content.extend(chunk)
+                if len(content) > _MAX_UNTRACKED_BYTES:
+                    content.clear()
+                    content_included = False
+        after = os.fstat(descriptor)
+    except OSError as exc:
+        return b"", empty, (
+            f"unable to read untracked file {raw}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    finally:
+        os.close(descriptor)
+    if _stat_identity(opened) != _stat_identity(after):
+        return b"", empty, f"workspace changed while collecting untracked diff: {raw}"
+    if exceeded_limit:
+        return b"", empty, (
+            f"untracked file exceeds safe hashing limit: {raw} "
+            f"(more than {effective_hash_limit} bytes)"
+        )
+    if size != int(opened.st_size):
+        return b"", empty, f"workspace changed while collecting untracked diff: {raw}"
+
+    executable_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+    mode = "100755" if opened.st_mode & executable_bits else "100644"
+    metadata = {
+        "mode": mode,
+        "size": size,
+        "sha256": digest.hexdigest(),
+        "content_included": content_included,
+    }
+    return bytes(content), metadata, ""
+
+
+def _collect_untracked_diff(cw: Any, *, repo: Path) -> tuple[str, str]:
+    paths, error = _untracked_paths(cw, repo=repo)
+    if error:
+        return "", error
     pieces: list[str] = []
+    hashed_bytes = 0
     for raw in paths:
-        candidate = repo.joinpath(raw).resolve()
-        try:
-            candidate.relative_to(repo)
-        except ValueError:
-            return "", f"untracked path escapes workspace: {raw}"
-        if not candidate.is_file():
-            continue
-        try:
-            data = candidate.read_bytes()
-        except Exception as exc:
-            return "", f"unable to read untracked file {raw}: {type(exc).__name__}: {exc}"
-        if len(data) > _MAX_UNTRACKED_BYTES:
+        remaining = _MAX_UNTRACKED_HASH_TOTAL_BYTES - hashed_bytes
+        data, metadata, error = _read_untracked_regular_file(
+            repo=repo,
+            raw=raw,
+            hash_limit=remaining,
+        )
+        if error:
+            return "", error
+        mode = str(metadata["mode"])
+        size = int(metadata["size"])
+        digest = str(metadata["sha256"])
+        hashed_bytes += size
+        quoted_path = json.dumps(raw, ensure_ascii=True)
+        identity = (
+            f"# nexus-untracked-content path={quoted_path} mode={mode} "
+            f"size={size} sha256={digest}"
+        )
+        a_path = json.dumps(f"a/{raw}", ensure_ascii=True)
+        b_path = json.dumps(f"b/{raw}", ensure_ascii=True)
+        header = f"diff --git {a_path} {b_path}\nnew file mode {mode}\n{identity}"
+        if not bool(metadata["content_included"]):
             pieces.append(
-                f"diff --git a/{raw} b/{raw}\nnew file mode 100644\n"
-                f"Binary or oversized untracked file ({len(data)} bytes)"
+                f"{header}\n"
+                "Binary or oversized untracked file omitted from semantic review"
             )
             continue
         if b"\x00" in data:
             pieces.append(
-                f"diff --git a/{raw} b/{raw}\nnew file mode 100644\nBinary untracked file"
+                f"{header}\nBinary untracked file omitted from semantic review"
             )
             continue
         text = data.decode("utf-8", errors="replace")
@@ -218,12 +400,21 @@ def _safe_untracked_diff(cw: Any, *, repo: Path) -> tuple[str, str]:
                 [],
                 text.splitlines(keepends=True),
                 fromfile="/dev/null",
-                tofile=f"b/{raw}",
+                tofile=b_path,
             )
         ).strip()
-        if rendered:
-            pieces.append(rendered)
+        pieces.append(f"{header}\n{rendered}".strip())
+
+    final_paths, error = _untracked_paths(cw, repo=repo)
+    if error:
+        return "", error
+    if final_paths != paths:
+        return "", "workspace changed while collecting untracked diff"
     return "\n\n".join(pieces).strip(), ""
+
+
+def _safe_untracked_diff(cw: Any, *, repo: Path) -> tuple[str, str]:
+    return _collect_untracked_diff(cw, repo=repo)
 
 
 def mission_delta_state(
@@ -257,6 +448,7 @@ def mission_delta_state(
         cw,
         ["git", "diff", "--no-ext-diff", "--binary", base_head, "--", "."],
         cwd=repo,
+        output_limit_chars=_MAX_MISSION_DIFF_CHARS,
     )
     if not bool(tracked.get("ok")):
         return {
@@ -267,6 +459,17 @@ def mission_delta_state(
             "diff_text": "",
             "diff_sha256": "",
             "error": str(tracked.get("stderr") or tracked.get("error") or "git diff failed"),
+            "epoch": epoch,
+        }
+    if bool(tracked.get("stdout_truncated")):
+        return {
+            "ok": False,
+            "has_delta": False,
+            "base_head": base_head,
+            "current_head": _head(cw, task_id, task),
+            "diff_text": "",
+            "diff_sha256": "",
+            "error": "mission tracked diff exceeded the safe collection limit",
             "epoch": epoch,
         }
     untracked, untracked_error = _safe_untracked_diff(cw, repo=repo)
@@ -289,13 +492,42 @@ def mission_delta_state(
         hashlib.sha256(tracked_text.encode("utf-8")).hexdigest() if tracked_text else ""
     )
     current_head = _head(cw, task_id, task)
+    committed = (
+        _run_process(
+            cw,
+            [
+                "git", "diff", "--no-ext-diff", "--binary",
+                base_head, current_head, "--", ".",
+            ],
+            cwd=repo,
+            output_limit_chars=_MAX_MISSION_DIFF_CHARS,
+        )
+        if current_head
+        else {"ok": False, "stdout": ""}
+    )
+    committed_text = str(committed.get("stdout") or "").strip()
+    committed_complete = bool(
+        committed.get("ok") and not committed.get("stdout_truncated")
+    )
     paths = _run_process(
         cw, ["git", "diff", "--no-ext-diff", "--name-only", "-z", base_head, "--", "."], cwd=repo,
     )
     others = _run_process(cw, ["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=repo)
+    paths_text = str(paths.get("stdout") or "")
+    others_text = str(others.get("stdout") or "")
+    paths_complete = bool(
+        paths.get("ok")
+        and not paths.get("stdout_truncated")
+        and (not paths_text or paths_text.endswith("\0"))
+    )
+    others_complete = bool(
+        others.get("ok")
+        and not others.get("stdout_truncated")
+        and (not others_text or others_text.endswith("\0"))
+    )
     changed_files = sorted(set(
-        str(paths.get("stdout") or "").split("\0")
-        + str(others.get("stdout") or "").split("\0")
+        paths_text.split("\0")
+        + others_text.split("\0")
     ) - {""})
     return {
         "ok": True,
@@ -303,8 +535,14 @@ def mission_delta_state(
         "base_head": base_head,
         "current_head": current_head,
         "changed_files": changed_files,
-        "changed_files_complete": bool(paths.get("ok") and others.get("ok")),
-        "checkpoint_committed": bool(current_head and current_head != base_head),
+        "changed_files_complete": bool(paths_complete and others_complete),
+        "checkpoint_committed": bool(committed.get("ok") and committed_text),
+        "checkpoint_state_complete": committed_complete,
+        "checkpoint_diff_sha256": (
+            hashlib.sha256(committed_text.encode("utf-8")).hexdigest()
+            if committed_complete and committed_text else ""
+        ),
+        "head_diverged_from_base": bool(current_head and current_head != base_head),
         "diff_text": raw,
         "diff_sha256": digest,
         "tracked_diff_sha256": tracked_digest,
@@ -795,7 +1033,9 @@ def _reconcile_snapshot(
     output["mission_delta"] = {
         key: state.get(key) for key in (
             "ok", "base_head", "current_head", "has_delta", "changed_files",
-            "changed_files_complete", "checkpoint_committed", "diff_sha256", "diff_chars", "error",
+            "changed_files_complete", "checkpoint_committed",
+            "checkpoint_state_complete", "checkpoint_diff_sha256",
+            "head_diverged_from_base", "diff_sha256", "diff_chars", "error",
         )
     }
     working_files = list(changes.get("changed_files") or [])

@@ -468,6 +468,11 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
     events = snapshot.get("recent_events") if isinstance(snapshot.get("recent_events"), list) else []
     durable = snapshot.get("durable_state") or {}
     mission_delta = durable.get("mission_delta") or {}
+    mission_files = (
+        mission_delta.get("changed_files")
+        if isinstance(mission_delta.get("changed_files"), list)
+        else []
+    )
     runtime = snapshot.get("runtime_policy_provenance") or {}
 
     lines = [
@@ -517,8 +522,15 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
         "",
         "## Git state",
         "",
-        f"- Mission delta present: `{_format_value(mission_delta.get('has_delta'))}`; checkpoint committed: `{_format_value(mission_delta.get('checkpoint_committed'))}`",
+        f"- Mission delta present: `{_format_value(mission_delta.get('has_delta'))}`",
+        (
+            "- Checkpoint-committed content delta: "
+            f"`{_format_value(mission_delta.get('checkpoint_committed'))}`; "
+            "HEAD diverged from base: "
+            f"`{_format_value(mission_delta.get('head_diverged_from_base'))}`"
+        ),
         f"- Immutable mission base: `{_format_value(mission_delta.get('base_head'))}`",
+        f"- Mission-delta changed files: `{len(mission_files)}`",
         "- A clean working tree does not imply an empty mission delta.",
         (
             f"- Working-tree changed files: {int(counts.get('total') or 0)} "
@@ -526,10 +538,26 @@ def render_debug_report(snapshot: Dict[str, Any]) -> str:
             f"removed {int(counts.get('removed') or 0)}, untracked {int(counts.get('untracked') or 0)})"
         ),
     ]
-    if files:
-        lines.extend(f"- `{item.get('status') or '?'} {item.get('path') or ''}`" for item in files[:100] if isinstance(item, dict))
+    def safe_path(value: Any) -> str:
+        encoded = json.dumps(str(value), ensure_ascii=True)[1:-1]
+        return encoded.replace("`", "\\u0060")
+
+    if mission_files:
+        lines.extend(
+            f"- Mission delta: `{safe_path(item)}`" for item in mission_files[:100]
+        )
     else:
-        lines.append("- No changed files reported.")
+        lines.append("- No mission-delta changed files reported.")
+    if files:
+        lines.extend(
+            "- Working tree: "
+            f"`{safe_path(item.get('status') or '?')} "
+            f"{safe_path(item.get('path') or '')}`"
+            for item in files[:100]
+            if isinstance(item, dict)
+        )
+    else:
+        lines.append("- No working-tree changed files reported.")
     lines.extend(
         [
             "",
