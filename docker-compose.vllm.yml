@@ -49,7 +49,7 @@ services:
       start_period: 45s
 
   vllm-fast:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.10.2}
+    image: ${VLLM_FAST_IMAGE:-${VLLM_IMAGE:-vllm/vllm-openai:v0.19.1@sha256:2622f38a0aa646c15ccc27bd5033911a58fd94ac69fd8f86aba0692d77cfe5b9}}
     container_name: nexus-vllm-fast
     gpus: all
     ports:
