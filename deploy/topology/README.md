@@ -76,7 +76,9 @@ The gateway capability flags (`*_NATIVE_TOOLS_ENABLED`) represent validated auto
 
 The production vLLM chat lanes use safetensors rather than GGUF artifacts: `cyankiwi/Devstral-Small-2507-AWQ-4bit` on `stackrot`, `ConicCat/Magistral-Small-2509-Text-Only-FP8-Dynamic` on `ada2`, and `Qwen/Qwen2.5-3B-Instruct` on `meltdown`. The Meltdown lane is intentionally tool-free and dedicated to Cinder through the `cinder-chat` alias.
 
-The strong vLLM chat lane is configured for a 65536-token context because Hermes Agent rejects models advertised below 64000 tokens. The RTX 6000 Ada lane measured capacity for 88704 KV-cache tokens at its production GPU allocation, so one 64K request fits, but concurrency at the full window is limited. The single-RTX-3090 fast lane remains at 8192: a 65536-token canary required 10.00 GiB of KV cache while only 6.55-7.37 GiB was available, for a measured ceiling of roughly 43000-48000 tokens. CPU weight offload did not free enough VRAM for that KV cache, and assigning its second GPU would displace the Qwen3 TTS lane.
+The strong vLLM chat lane is configured for a 65536-token context because Hermes Agent rejects models advertised below 64000 tokens. The RTX 6000 Ada lane measured capacity for 88704 KV-cache tokens at its production GPU allocation, so one 64K request fits, but concurrency at the full window is limited.
+
+The single-RTX-3090 fast lane uses the model's BF16 KV-cache dtype. Production canaries with `fp8_e4m3` and `fp8_e5m2` returned corrupted text for ordinary and tool-bearing requests because this checkpoint does not provide calibrated KV scales; changing between FlashInfer and Triton attention did not correct it. With BF16 KV, 98% GPU allocation, eager execution, one sequence, and 1024-token prefill chunks, the measured cache capacity is 61983 tokens. The lane therefore advertises a 60000-token context with 1.03x measured capacity. A 65536-token BF16 context required 10.00 GiB while 9.46 GiB was available, and CPU weight offload did not increase the available cache for this quantized model.
 
 After restarting a lane with automatic native tool flags, validate it directly before flipping the gateway flag:
 

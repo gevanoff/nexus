@@ -491,8 +491,14 @@ def evaluate_tool_response(
             else:
                 all_errors.extend(errors)
 
-        if finish_reason and finish_reason != "tool_calls":
-            warnings.append(f"finish_reason is {finish_reason!r}, expected 'tool_calls'")
+        accepted_finish_reasons = {"tool_calls"}
+        if case.category == "named":
+            # vLLM preserves the engine's "stop" reason for a forced named
+            # function while still returning a structured tool_calls payload.
+            accepted_finish_reasons.add("stop")
+        if finish_reason and finish_reason not in accepted_finish_reasons:
+            expected = " or ".join(repr(value) for value in sorted(accepted_finish_reasons))
+            warnings.append(f"finish_reason is {finish_reason!r}, expected {expected}")
 
         if not matched:
             return {

@@ -277,6 +277,23 @@ def test_evaluate_tool_response_rejects_bare_raw_tool_text():
     assert result["raw_tool_like_snippet"]
 
 
+def test_evaluate_named_tool_response_accepts_vllm_stop_finish_reason():
+    req = qual.ModelToolQualificationRequest(
+        models=["fast"], include_stream=False, include_roundtrip=False
+    )
+    case = next(
+        item for item in qual.qualification_cases(req) if item.name == "named_nonstream"
+    )
+    response = _tool_response(city="Tokyo")
+    response["choices"][0]["finish_reason"] = "stop"
+
+    result = qual.evaluate_tool_response(response, case)
+
+    assert result["ok"] is True
+    assert result["finish_reason"] == "stop"
+    assert result["warnings"] == []
+
+
 def test_evaluate_tool_response_rejects_contaminated_tool_call_name():
     case = qual.ToolQualificationCase(
         name="auto",
