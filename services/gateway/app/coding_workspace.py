@@ -1816,8 +1816,16 @@ def _run_process(
     validation_baseline_bytes: Optional[int] = None,
     validation_baseline_entries: Optional[int] = None,
     contain_descendants: bool = False,
+    pass_fds: Sequence[int] = (),
 ) -> Dict[str, Any]:
     started = time.perf_counter()
+    inherited_fds = tuple(sorted({int(fd) for fd in pass_fds}))
+    if inherited_fds and (
+        os.name != "posix" or isolate_process_group or contain_descendants
+    ):
+        raise ValueError(
+            "inherited file descriptors require a direct POSIX process"
+        )
     if output_limit_chars is None:
         limit = max_output_chars()
     else:
@@ -1891,6 +1899,7 @@ def _run_process(
                 errors=decode_errors,
                 capture_output=True,
                 timeout=effective_timeout_sec,
+                pass_fds=inherited_fds,
             )
             stdout, stdout_truncated = _truncate(proc.stdout or "", limit, extra_tokens=redaction_tokens)
             stderr, stderr_truncated = _truncate(proc.stderr or "", limit, extra_tokens=redaction_tokens)
@@ -2397,7 +2406,111 @@ def create_model_integration_task(
         return public_task(task)
 
 
+def _recovered_path_identity(
+    task: Dict[str, Any],
+    name: str,
+) -> Optional[Tuple[int, int]]:
+    recovery = task.get("initialization_recovery")
+    if not isinstance(recovery, dict) or not bool(recovery.get("recovered")):
+        return None
+    value = recovery.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace identity is unavailable",
+        )
+    try:
+        device = int(value["device"])
+        inode = int(value["inode"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace identity is invalid",
+        ) from exc
+    if device < 0 or inode <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace identity is invalid",
+        )
+    return device, inode
+
+
+def _validate_recovered_repo_identity(task: Dict[str, Any]) -> None:
+    workspace_identity = _recovered_path_identity(task, "workspace_identity")
+    repo_identity = _recovered_path_identity(task, "repo_identity")
+    if workspace_identity is None and repo_identity is None:
+        return
+    if workspace_identity is None or repo_identity is None:
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace identity is incomplete",
+        )
+
+    task_id = str(task.get("id") or "").strip()
+    raw_workspace = str(task.get("workspace_path") or "").strip()
+    raw_repo = str(task.get("repo_path") or "").strip()
+    if not task_id or not raw_workspace or not raw_repo:
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace paths are invalid",
+        )
+    root = Path(os.path.abspath(str(workspace_root())))
+    workspace = Path(os.path.abspath(raw_workspace))
+    repo = Path(os.path.abspath(raw_repo))
+    if (
+        workspace != root.joinpath(task_id)
+        or repo != workspace.joinpath("repo")
+        or workspace.name != task_id
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace paths are outside their task root",
+        )
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if os.name != "posix" or not nofollow:
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace identity cannot be verified",
+        )
+    open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
+    root_fd = -1
+    workspace_fd = -1
+    repo_fd = -1
+    try:
+        root_fd = os.open(root, open_flags)
+        workspace_fd = os.open(task_id, open_flags, dir_fd=root_fd)
+        repo_fd = os.open("repo", open_flags, dir_fd=workspace_fd)
+        workspace_stat = os.fstat(workspace_fd)
+        repo_stat = os.fstat(repo_fd)
+        if (
+            (int(workspace_stat.st_dev), int(workspace_stat.st_ino))
+            != workspace_identity
+            or (int(repo_stat.st_dev), int(repo_stat.st_ino)) != repo_identity
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="recovered coding workspace identity has changed",
+            )
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="recovered coding workspace identity cannot be verified",
+        ) from exc
+    finally:
+        if repo_fd >= 0:
+            os.close(repo_fd)
+        if workspace_fd >= 0:
+            os.close(workspace_fd)
+        if root_fd >= 0:
+            os.close(root_fd)
+
+
 def _repo_path(task: Dict[str, Any]) -> Path:
+    _validate_recovered_repo_identity(task)
     path = Path(str(task.get("repo_path") or "")).resolve()
     if not path.exists():
         raise HTTPException(status_code=404, detail="coding task workspace is missing")

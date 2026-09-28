@@ -56,7 +56,7 @@ def test_coding_smoke_status_summarizes_reports_and_metrics(tmp_path, monkeypatc
     assert payload["metrics"][0]["success_rate"] == 0.5
 
 
-def test_ai2_runs_hourly_coding_smoke_suite_from_startup() -> None:
+def test_ai2_runs_recurring_coding_smoke_suite_from_startup() -> None:
     topology = json.loads(
         (REPO_ROOT / "deploy" / "topology" / "production.json").read_text(
             encoding="utf-8"
@@ -71,3 +71,7 @@ def test_ai2_runs_hourly_coding_smoke_suite_from_startup() -> None:
     assert env["CODING_SMOKE_PROFILES"] == (
         "fixture_median,fixture_inventory,fixture_route_flags"
     )
+    assert env["CODING_SMOKE_TIMEOUT_SEC"] == "2400"
+    assert env["CODING_SMOKE_STALLED_AFTER_SEC"] == "720"
+    assert env["CODING_SMOKE_COMPLETION_GRACE_SEC"] == "60"
+    assert env["CODING_SMOKE_PAUSE_SETTLE_SEC"] == "60"

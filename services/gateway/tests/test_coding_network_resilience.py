@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,7 @@ from fastapi import HTTPException
 os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_network_resilience as nr
+from app import coding_workspace as cw
 
 
 def _result(*, ok: bool, stderr: str = "", stdout: str = "", status=None):
@@ -25,7 +27,26 @@ def _result(*, ok: bool, stderr: str = "", stdout: str = "", status=None):
     return value
 
 
-def test_clone_retries_transient_dns_and_removes_partial_destination(tmp_path):
+def test_run_process_inherits_explicit_directory_fd(tmp_path):
+    directory_fd = os.open(tmp_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        result = cw._run_process(
+            [
+                sys.executable,
+                "-c",
+                "import os, sys; os.fstat(int(sys.argv[1]))",
+                str(directory_fd),
+            ],
+            cwd=tmp_path,
+            pass_fds=(directory_fd,),
+        )
+    finally:
+        os.close(directory_fd)
+
+    assert result["ok"] is True
+
+
+def test_clone_transient_failure_preserves_partial_destination(tmp_path):
     workspace_root = tmp_path / "workspaces"
     workspace = workspace_root / "code_123456abcdef"
     destination = workspace / "repo"
@@ -34,18 +55,13 @@ def test_clone_retries_transient_dns_and_removes_partial_destination(tmp_path):
 
     def original(argv, *, cwd, **kwargs):
         calls.append(list(argv))
-        if len(calls) == 1:
-            destination.mkdir(parents=True)
-            (destination / ".git").mkdir()
-            (destination / "partial").write_text("partial", encoding="utf-8")
-            return _result(
-                ok=False,
-                stderr="fatal: unable to access 'https://github.com/example/repo.git/': Could not resolve host: github.com",
-            )
-        assert not destination.exists()
         destination.mkdir(parents=True)
         (destination / ".git").mkdir()
-        return _result(ok=True)
+        (destination / "partial").write_text("partial", encoding="utf-8")
+        return _result(
+            ok=False,
+            stderr="fatal: unable to access repository: Could not resolve host: github.com",
+        )
 
     result = nr.run_process_with_retry(
         original,
@@ -66,11 +82,12 @@ def test_clone_retries_transient_dns_and_removes_partial_destination(tmp_path):
         base_delay_sec=0,
     )
 
-    assert result["ok"] is True
-    assert len(calls) == 2
-    assert result["network_retry_count"] == 1
-    assert result["network_retry_recovered"] is True
+    assert result["ok"] is False
+    assert len(calls) == 1
+    assert result["network_retry_count"] == 0
+    assert result["network_retry_recovered"] is False
     assert result["network_retry_history"][0]["kind"] == "dns"
+    assert destination.joinpath("partial").read_text(encoding="utf-8") == "partial"
 
 
 def test_clone_does_not_retry_authentication_failure(tmp_path):
@@ -250,6 +267,7 @@ def test_pr_creation_retries_dns_but_not_ambiguous_server_failure():
 
 def test_failed_clone_workspace_can_be_reinitialized(tmp_path):
     workspace_root = tmp_path / "workspaces"
+    workspace_root.mkdir()
     workspace = workspace_root / "code_123456abcdef"
     repo = workspace / "repo"
     task = {

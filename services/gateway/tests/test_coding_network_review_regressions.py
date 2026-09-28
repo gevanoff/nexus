@@ -12,6 +12,7 @@ os.environ.setdefault("GATEWAY_BEARER_TOKEN", "test-token")
 
 from app import coding_model_metadata_resilience as metadata_resilience
 from app import coding_network_resilience as network_resilience
+from app import coding_workspace
 
 
 def _transient_clone_task(workspace_root: Path, *, repo_name: str = "repo"):
@@ -104,29 +105,176 @@ def test_persisted_recovery_requires_exact_task_repo_layout(tmp_path):
     assert sentinel.read_text(encoding="utf-8") == "preserve"
 
 
-def test_persisted_recovery_reports_partial_clone_cleanup_failure(tmp_path, monkeypatch):
+def test_persisted_recovery_rejects_repo_symlink_without_touching_target(tmp_path):
     workspace_root = tmp_path / "workspaces"
     task = _transient_clone_task(workspace_root)
     repo_path = Path(task["repo_path"])
-    repo_path.mkdir(parents=True)
-    saved = []
+    repo_path.parent.mkdir(parents=True)
+    external = tmp_path / "external"
+    external.mkdir()
+    sentinel = external / "keep.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    repo_path.symlink_to(external, target_is_directory=True)
 
     fake_cw = SimpleNamespace(
         load_task=lambda task_id: task,
         workspace_root=lambda: workspace_root,
-        save_task=lambda current: saved.append(dict(current)) or current,
     )
-
-    def fail_cleanup(path):
-        raise PermissionError("read-only mount")
-
-    monkeypatch.setattr(network_resilience.shutil, "rmtree", fail_cleanup)
 
     with pytest.raises(HTTPException) as excinfo:
         network_resilience.retry_failed_initialization(fake_cw, task["id"])
 
     assert excinfo.value.status_code == 409
-    assert "could not safely remove" in str(excinfo.value.detail)
-    assert saved
-    assert saved[-1]["initialization_recovery"]["recovered"] is False
-    assert "PermissionError" in saved[-1]["initialization_recovery"]["cleanup_error"]
+    assert "symbolic links" in str(excinfo.value.detail)
+    assert repo_path.is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+
+
+def test_persisted_recovery_does_not_follow_swapped_workspace_parent(tmp_path):
+    workspace_root = tmp_path / "workspaces"
+    task = _transient_clone_task(workspace_root)
+    workspace_path = Path(task["workspace_path"])
+    repo_path = Path(task["repo_path"])
+    workspace_path.mkdir(parents=True)
+    original_workspace = tmp_path / "original-workspace"
+    external = tmp_path / "external"
+    external.mkdir()
+    sentinel = external / "keep.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    saved = []
+
+    def run_process(argv, *, cwd, pass_fds=(), **_kwargs):
+        assert pass_fds
+        if argv[1] == "clone":
+            workspace_path.rename(original_workspace)
+            workspace_path.symlink_to(external, target_is_directory=True)
+            anchored_repo = Path(argv[-1])
+            anchored_repo.mkdir()
+            anchored_repo.joinpath(".git").mkdir()
+        return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    fake_cw = SimpleNamespace(
+        load_task=lambda task_id: task,
+        workspace_root=lambda: workspace_root,
+        save_task=lambda current: saved.append(dict(current)) or current,
+        command_timeout_sec=lambda value=None: 120.0,
+        _run_process=run_process,
+        _append_command=lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        network_resilience.retry_failed_initialization(fake_cw, task["id"])
+
+    assert excinfo.value.status_code == 409
+    assert "path changed" in str(excinfo.value.detail)
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert not external.joinpath("repo").exists()
+    assert original_workspace.joinpath("repo", ".git").is_dir()
+
+
+def test_persisted_recovery_does_not_follow_repo_swapped_after_clone(tmp_path):
+    workspace_root = tmp_path / "workspaces"
+    task = _transient_clone_task(workspace_root)
+    workspace_path = Path(task["workspace_path"])
+    workspace_path.mkdir(parents=True)
+    preserved_clone = tmp_path / "preserved-clone"
+    external_repo = tmp_path / "external-repo"
+    external_repo.joinpath(".git").mkdir(parents=True)
+    sentinel = external_repo / "keep.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    commands = []
+
+    def run_process(argv, *, cwd, pass_fds=(), **_kwargs):
+        assert pass_fds
+        commands.append(argv[1])
+        if argv[1] == "clone":
+            anchored_repo = Path(argv[-1])
+            anchored_repo.mkdir()
+            anchored_repo.joinpath(".git").mkdir()
+            anchored_repo.rename(preserved_clone)
+            anchored_repo.symlink_to(external_repo, target_is_directory=True)
+        else:
+            external_repo.joinpath("mutated.txt").write_text(
+                "unsafe",
+                encoding="utf-8",
+            )
+        return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    fake_cw = SimpleNamespace(
+        load_task=lambda task_id: task,
+        workspace_root=lambda: workspace_root,
+        save_task=lambda current: current,
+        command_timeout_sec=lambda value=None: 120.0,
+        _run_process=run_process,
+        _append_command=lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        network_resilience.retry_failed_initialization(fake_cw, task["id"])
+
+    assert excinfo.value.status_code == 409
+    assert commands == ["clone"]
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert not external_repo.joinpath("mutated.txt").exists()
+    assert preserved_clone.joinpath(".git").is_dir()
+
+
+def test_persisted_recovery_quarantines_partial_clone_on_same_task(
+    tmp_path,
+    monkeypatch,
+):
+    workspace_root = tmp_path / "workspaces"
+    task = _transient_clone_task(workspace_root)
+    repo_path = Path(task["repo_path"])
+    repo_path.mkdir(parents=True)
+    repo_path.joinpath(".git").mkdir()
+    sentinel = repo_path / "keep.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    commands = []
+
+    def run_process(argv, *, cwd, pass_fds=(), **_kwargs):
+        assert pass_fds
+        commands.append(argv[1])
+        if argv[1] == "clone":
+            anchored_repo = Path(argv[-1])
+            anchored_repo.mkdir()
+            anchored_repo.joinpath(".git").mkdir()
+        return {"ok": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    fake_cw = SimpleNamespace(
+        load_task=lambda task_id: task,
+        workspace_root=lambda: workspace_root,
+        save_task=lambda current: current,
+        command_timeout_sec=lambda value=None: 120.0,
+        _run_process=run_process,
+        _append_command=lambda *_args, **_kwargs: None,
+    )
+
+    recovered = network_resilience.retry_failed_initialization(
+        fake_cw,
+        task["id"],
+    )
+
+    assert recovered["status"] == "ready"
+    assert commands == ["clone", "switch"]
+    quarantine = workspace_root / task["id"] / recovered[
+        "initialization_recovery"
+    ]["partial_repo_quarantine"]
+    assert quarantine.joinpath("keep.txt").read_text(encoding="utf-8") == "preserve"
+    assert quarantine.joinpath(".git").is_dir()
+    assert repo_path.joinpath(".git").is_dir()
+    monkeypatch.setattr(coding_workspace, "workspace_root", lambda: workspace_root)
+    assert coding_workspace._repo_path(recovered) == repo_path.resolve()
+
+    recovered_repo = tmp_path / "recovered-repo"
+    repo_path.rename(recovered_repo)
+    external_repo = tmp_path / "handoff-external"
+    external_repo.joinpath(".git").mkdir(parents=True)
+    repo_path.symlink_to(external_repo, target_is_directory=True)
+
+    with pytest.raises(HTTPException) as excinfo:
+        coding_workspace._repo_path(recovered)
+
+    assert excinfo.value.status_code == 409
+    assert "identity" in str(excinfo.value.detail)
+    assert recovered_repo.joinpath(".git").is_dir()
