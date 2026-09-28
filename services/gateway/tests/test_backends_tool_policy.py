@@ -86,8 +86,8 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     env = topology["defaults"]["env"]
 
     assert env["VLLM_FAST_IMAGE"] == (
-        "vllm/vllm-openai:v0.19.1@"
-        "sha256:2622f38a0aa646c15ccc27bd5033911a58fd94ac69fd8f86aba0692d77cfe5b9"
+        "vllm/vllm-openai:v0.27.1@"
+        "sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967"
     )
     assert env["VLLM_TOOL_PROFILE"] == "xlam_mistral_parallel"
     assert env["VLLM_FAST_TOOL_PROFILE"] == "mistral_serial"
@@ -122,8 +122,8 @@ def test_production_topology_configures_validated_vllm_tool_profiles():
     compose = (repo_root / "docker-compose.vllm-fast.yml").read_text(encoding="utf-8")
     launcher = (repo_root / "deploy" / "scripts" / "run-vllm-openai.sh").read_text(encoding="utf-8")
     assert (
-        "${VLLM_FAST_IMAGE:-${VLLM_IMAGE:-vllm/vllm-openai:v0.19.1@"
-        "sha256:2622f38a0aa646c15ccc27bd5033911a58fd94ac69fd8f86aba0692d77cfe5b9}}"
+        "${VLLM_FAST_IMAGE:-${VLLM_IMAGE:-vllm/vllm-openai:v0.27.1@"
+        "sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967}}"
         in compose
     )
     assert "NEXUS_VLLM_CALCULATE_KV_SCALES=${VLLM_FAST_CALCULATE_KV_SCALES:-false}" in compose
