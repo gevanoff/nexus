@@ -383,7 +383,7 @@
       const savedName = String(saved?.name || voiceNameEl?.value || '').trim();
       const savedId = String(saved?.id || '').trim();
       setStatus(savedId ? `Saved voice ${savedName} (${savedId}).` : `Saved voice ${savedName}.`, false);
-      setMeta('Use this voice from the Text-to-Speech UI with the LuxTTS backend.');
+      setMeta('Use this reference voice from the Text-to-Speech UI with a cloning-capable backend such as Chatterbox Turbo or LuxTTS.');
       clearRecording();
       if (voiceNameEl) voiceNameEl.value = '';
       await loadVoiceLibrary();
