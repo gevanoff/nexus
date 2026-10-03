@@ -290,3 +290,14 @@ def test_tool_calling_docs_do_not_render_literal_paragraph_escapes() -> None:
 def test_audio_cache_generated_names_always_have_safe_prefix() -> None:
     source = _read("services/gateway/app/audio_cache.py")
     assert 'name = f"a{secrets.token_urlsafe(18)' in source
+
+
+
+def test_chatterbox_discovery_only_advertises_selectable_voice_stems() -> None:
+    source = _read("services/chatterbox-tts/app/main.py")
+    assert "def _voice_stem_is_selectable(stem: str) -> bool:" in source
+    assert "stem == stem.strip()" in source
+    assert "_VOICE_STEM_RE.fullmatch(stem)" in source
+    assert "voice = path.stem\n        if not _voice_stem_is_selectable(voice):" in source
+    assert "if not _voice_stem_is_selectable(raw):" in source
+    assert "voice = path.stem.strip()" not in source
