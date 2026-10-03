@@ -254,3 +254,17 @@ def test_reference_generation_restores_default_conditioning() -> None:
     ) == "default request"
     assert model.seen == ["default", "default"]
     assert model.conds == "default"
+
+
+
+def test_chatterbox_service_name_is_canonicalized() -> None:
+    source = _read("services/gateway/app/backends.py")
+    assert '"chatterbox-tts": "chatterbox_tts"' in source
+    assert '"chatterbox_tts": "chatterbox_tts"' in source
+    assert '"chatterbox_tts": "chatterbox-tts"' in source
+
+
+def test_tool_calling_docs_do_not_render_literal_paragraph_escapes() -> None:
+    docs = _read("docs/TOOL_CALLING.md")
+    assert "falsely advertised as capable.\\n\\nAll built-in schemas" not in docs
+    assert "falsely advertised as capable.\n\nAll built-in schemas" in docs
