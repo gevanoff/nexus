@@ -490,6 +490,7 @@ class LifecycleManager:
             "followyourcanvas": "FOLLOWYOURCANVAS_ADVERTISE_BASE_URL",
             "heartmula_music": "HEARTMULA_ADVERTISE_BASE_URL",
             "pocket_tts": "POCKET_TTS_ADVERTISE_BASE_URL",
+            "chatterbox_tts": "CHATTERBOX_TTS_ADVERTISE_BASE_URL",
             "luxtts": "LUXTTS_ADVERTISE_BASE_URL",
             "qwen3_tts": "QWEN3_TTS_ADVERTISE_BASE_URL",
         }.get(backend_class, "")

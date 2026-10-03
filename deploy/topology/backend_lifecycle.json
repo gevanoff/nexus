@@ -388,6 +388,20 @@
       "compose_file": "docker-compose.qwen3-tts.yml",
       "health_timeout_sec": 30,
       "ready_path": "/readyz"
+    },
+    "chatterbox_tts": {
+      "display_name": "Chatterbox Turbo TTS",
+      "host": "stackrot",
+      "component": "chatterbox-tts",
+      "tier": "optional",
+      "capabilities": ["tts"],
+      "estimated_vram_mb": 4000,
+      "auto_start": true,
+      "auto_stop": true,
+      "compose_file": "docker-compose.chatterbox-tts.yml",
+      "health_timeout_sec": 120,
+      "ready_path": "/readyz",
+      "notes": "Chatterbox Turbo 350M local voice-cloning TTS; shares the second stackrot GPU with other optional TTS/media services."
     }
   }
 }

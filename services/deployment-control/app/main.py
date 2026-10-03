@@ -47,7 +47,7 @@ def allowed_components() -> set[str]:
     return _csv_env(
         "DEPLOY_CONTROL_ALLOWED_COMPONENTS",
         (
-            "ace-step,deployment-control,etcd,followyourcanvas,gateway,heartmula,"
+            "ace-step,chatterbox-tts,deployment-control,etcd,followyourcanvas,gateway,heartmula,"
             "hunyuan-video,images,invokeai,lifecycle-manager,lighton-ocr,ltx-video,"
             "luxtts,mediamtx,mlx,nginx,personaplex,qwen3-tts,sdxl-turbo,"
             "telegram-bot,tts,vllm,vllm-embeddings,vllm-fast,vllm-meltdown,"

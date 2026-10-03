@@ -51,7 +51,7 @@ Options:
 Components:
   deployment-control, gateway, cloudflared, vllm, vllm-strong, vllm-fast, vllm-embeddings, vllm-meltdown, etcd,
   images, invokeai, sdxl-turbo, lighton-ocr, personaplex, followyourcanvas, ltx-video, hunyuan-video, ace-step,
-  heartmula, lifecycle-manager, mediamtx, tts, luxtts, qwen3-tts, telegram-bot, nginx, mlx
+  heartmula, lifecycle-manager, mediamtx, tts, luxtts, qwen3-tts, chatterbox-tts, telegram-bot, nginx, mlx
 
 Special component groups:
   core             gateway + vllm + etcd
@@ -67,7 +67,7 @@ EOF
 
 is_valid_component() {
   case "$1" in
-    deployment-control|gateway|cloudflared|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|telegram-bot|nginx|mlx|core|all)
+    deployment-control|gateway|cloudflared|vllm|vllm-strong|vllm-fast|vllm-embeddings|vllm-meltdown|etcd|images|invokeai|sdxl-turbo|lighton-ocr|personaplex|followyourcanvas|ltx-video|hunyuan-video|ace-step|heartmula|lifecycle-manager|mediamtx|tts|luxtts|qwen3-tts|chatterbox-tts|telegram-bot|nginx|mlx|core|all)
       return 0
       ;;
     *)
@@ -128,6 +128,7 @@ add_component_selection() {
         append_component_unique tts
         append_component_unique luxtts
         append_component_unique qwen3-tts
+        append_component_unique chatterbox-tts
         append_component_unique telegram-bot
         append_component_unique nginx
         append_component_unique mlx
@@ -165,6 +166,7 @@ component_base_compose_file() {
     tts) echo "docker-compose.tts.yml" ;;
     luxtts) echo "docker-compose.luxtts.yml" ;;
     qwen3-tts) echo "docker-compose.qwen3-tts.yml" ;;
+    chatterbox-tts) echo "docker-compose.chatterbox-tts.yml" ;;
     telegram-bot) echo "docker-compose.telegram-bot.yml" ;;
     nginx) echo "docker-compose.nginx.yml" ;;
     mlx) echo "docker-compose.mlx.yml" ;;
@@ -307,7 +309,7 @@ append_compose_file_unique() {
   compose_files+=("$candidate")
 }
 
-ordered_components=(deployment-control gateway cloudflared vllm vllm-strong vllm-fast vllm-embeddings vllm-meltdown mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas ltx-video hunyuan-video ace-step heartmula mediamtx tts luxtts qwen3-tts telegram-bot nginx)
+ordered_components=(deployment-control gateway cloudflared vllm vllm-strong vllm-fast vllm-embeddings vllm-meltdown mlx etcd lifecycle-manager images invokeai sdxl-turbo lighton-ocr personaplex followyourcanvas ltx-video hunyuan-video ace-step heartmula mediamtx tts luxtts qwen3-tts chatterbox-tts telegram-bot nginx)
 for component in "${ordered_components[@]}"; do
   include_component="false"
   for selected in "${SELECTED_COMPONENTS[@]}"; do

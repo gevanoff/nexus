@@ -40,6 +40,7 @@ from app.backends import (
 )
 from app.config import S
 from app.browser_urls import browser_accessible_url
+from app.audio_cache import resolve_audio_cache_path, save_audio_cache
 from app.health_checker import check_backend_ready, get_health_checker
 from app.model_aliases import get_aliases, get_aliases_state
 from app.model_availability import fallback_target_for_backend, hf_model_cache_details, hf_model_cache_entries, hf_model_cache_state, model_unavailable_reason
@@ -57,7 +58,7 @@ from app.images_backend import (
     resolve_images_backend_class,
 )
 from app.ocr_backend import extract_ocr_text, scan_ocr
-from app.tts_backend import generate_tts, _effective_tts_base_url
+from app.tts_backend import ensure_tts_backend_ready, generate_tts, _effective_tts_base_url
 from app import coding_model_policy
 from app import mlx_huge_lane
 from app import ui_conversations
@@ -1888,32 +1889,8 @@ def _normalize_voice_audio_for_storage(*, audio_bytes: bytes, mime_hint: str) ->
 
 
 def _save_ui_audio(*, audio_bytes: bytes, mime_hint: str) -> tuple[str, str]:
-    audio_dir = _ui_audio_dir()
-    ttl_sec = _ui_audio_ttl_sec()
-    max_bytes = _ui_audio_max_bytes()
-    _ensure_dir(audio_dir)
-    _cleanup_ui_audio(audio_dir, ttl_sec=ttl_sec)
-
-    if not isinstance(audio_bytes, (bytes, bytearray)):
-        raise ValueError("audio_bytes must be bytes")
-    if len(audio_bytes) > max_bytes:
-        raise ValueError(f"audio too large to cache ({len(audio_bytes)} bytes > {max_bytes})")
-
-    sha256 = hashlib.sha256(bytes(audio_bytes)).hexdigest()
-    mime = (mime_hint or "audio/wav").strip()
-    ext = _audio_mime_to_ext(mime)
-    name = f"{secrets.token_urlsafe(18)}.{ext}"
-    name = name.replace("-", "_")
-    if not _SAFE_FILE_RE.match(name):
-        raise ValueError("failed to generate safe filename")
-
-    tmp = os.path.join(audio_dir, f".{name}.tmp")
-    dst = os.path.join(audio_dir, name)
-    with open(tmp, "wb") as f:
-        f.write(audio_bytes)
-    os.replace(tmp, dst)
+    name, sha256, _path = save_audio_cache(audio_bytes=audio_bytes, mime_hint=mime_hint)
     return f"/ui/audio/{name}", sha256
-
 
 def _voice_library_dir() -> str:
     return (getattr(S, "VOICE_LIBRARY_DIR", "") or "/var/lib/gateway/data/voice_library").strip() or "/var/lib/gateway/data/voice_library"
@@ -3601,13 +3578,13 @@ async def ui_api_tts(req: Request):
         if sample_path:
             body["prompt_audio"] = sample_path
 
-    check_backend_ready(backend_class, route_kind="tts")
     await check_capability(backend_class, "tts")
+    await ensure_tts_backend_ready(backend_class, reason="ui_tts", route_kind="tts")
 
     admission = get_admission_controller()
     await admission.acquire(backend_class, "tts")
-    _schedule_lifecycle_notify(backend_class, "start", "tts")
     try:
+        await _notify_lifecycle_manager(backend_class, "start", "tts")
         result = await generate_tts(backend_class=backend_class, body=body)
     except HTTPException:
         raise
@@ -3615,7 +3592,7 @@ async def ui_api_tts(req: Request):
         raise HTTPException(status_code=502, detail=f"tts backend error: {type(e).__name__}: {e}")
     finally:
         admission.release(backend_class, "tts")
-        _schedule_lifecycle_notify(backend_class, "finish", "tts")
+        await _notify_lifecycle_manager(backend_class, "finish", "tts")
 
     headers = _tts_gateway_headers(result.gateway)
     if result.kind == "json":
@@ -3652,6 +3629,9 @@ async def ui_api_tts_voices(req: Request):
 
     backend_class = _resolve_tts_backend_class(req, None, explicit=str(req.query_params.get("backend_class") or "").strip())
     backend_key = str(backend_class or "").strip().lower()
+    if backend_key == "chatterbox_tts":
+        await check_capability(backend_class, "tts")
+        await ensure_tts_backend_ready(backend_class, reason="ui_tts_voices", route_kind="tts")
     base = _effective_tts_base_url(backend_class=backend_class)
     if not base:
         raise HTTPException(status_code=404, detail="tts backend not configured")
@@ -3980,16 +3960,10 @@ async def ui_api_voice_library_delete(req: Request, voice_id: str):
 @router.get("/ui/audio/{name}", include_in_schema=False)
 async def ui_get_audio(req: Request, name: str):
     _require_ui_access(req)
-    # Serve cached UI audio files written by _save_ui_audio.
-    if not _SAFE_FILE_RE.match(name):
+    path = resolve_audio_cache_path(name)
+    if path is None:
         raise HTTPException(status_code=404, detail="audio not found")
-    audio_dir = _ui_audio_dir()
-    path = os.path.join(audio_dir, name)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="audio not found")
-    # Let FileResponse infer content-type from extension; fallback to octet-stream
     return FileResponse(path)
-
 
 @router.post("/ui/api/auth/login", include_in_schema=False)
 async def ui_auth_login(req: Request):
@@ -6009,11 +5983,12 @@ async def ui_chat_stream(req: Request):
                 try:
                     pre_events.append({"type": "thinking", "thinking": "Synthesizing speech…"})
                     backend_class = (getattr(S, "TTS_BACKEND_CLASS", "") or "").strip() or "pocket_tts"
-                    check_backend_ready(backend_class, route_kind="tts")
                     await check_capability(backend_class, "tts")
+                    await ensure_tts_backend_ready(backend_class, reason="ui_chat_tts", route_kind="tts")
                     admission = get_admission_controller()
                     await admission.acquire(backend_class, "tts")
                     try:
+                        await _notify_lifecycle_manager(backend_class, "start", "tts")
                         from app.tts_backend import generate_tts
 
                         # Include authenticated user's preferred TTS voice if available
@@ -6035,6 +6010,7 @@ async def ui_chat_stream(req: Request):
                         res = await generate_tts(backend_class=backend_class, body=tts_body)
                     finally:
                         admission.release(backend_class, "tts")
+                        await _notify_lifecycle_manager(backend_class, "finish", "tts")
 
                     audio_url = None
                     # If backend returned a dict containing an audio_url, use it.

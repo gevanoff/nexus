@@ -99,6 +99,8 @@
       "LUXTTS_ADVERTISE_BASE_URL": "http://stackrot:9170",
       "QWEN3_TTS_BASE_URL": "http://stackrot:9175",
       "QWEN3_TTS_ADVERTISE_BASE_URL": "http://stackrot:9175",
+      "CHATTERBOX_TTS_BASE_URL": "http://stackrot:9188",
+      "CHATTERBOX_TTS_ADVERTISE_BASE_URL": "http://stackrot:9188",
       "MEDIAMTX_HLS_PORT": "8891",
       "MEDIAMTX_ADVERTISE_BASE_URL": "http://stackrot:8891",
       "MEDIAMTX_API_ADVERTISE_URL": "http://stackrot:9997",
@@ -135,7 +137,8 @@
         "vllm-fast",
         "tts",
         "luxtts",
-        "qwen3-tts"
+        "qwen3-tts",
+        "chatterbox-tts"
       ],
       "optional_components": [
         "hunyuan-video",
@@ -161,6 +164,7 @@
         "LUXTTS_UPSTREAM_BASE_URL": "http://qwen3-tts:9175",
         "LUXTTS_PROMPT_AUDIO": "/var/lib/tts_refs/Gabriel4_dbf8a412dcaf.wav",
         "QWEN3_TTS_CUDA_VISIBLE_DEVICES": "1",
+        "CHATTERBOX_TTS_CUDA_VISIBLE_DEVICES": "1",
         "QWEN3_TTS_DEVICE_MAP": "cuda:0",
         "QWEN3_TTS_DTYPE": "float16",
         "QWEN3_TTS_ATTN_IMPL": "sdpa"

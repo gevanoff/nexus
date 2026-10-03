@@ -131,7 +131,9 @@ def test_cloudflared_is_assigned_to_ai2_and_controller_allowlist():
     assert ai2["env"]["DEPLOY_CONTROL_BASE_URL"] == "http://copyfail:9220"
     assert ai2["env"]["CLOUDFLARED_CONNECTOR_IP"] == "172.29.0.3"
     assert copyfail["env"]["DEPLOY_CONTROL_BIND_ADDRESS"] == "0.0.0.0"
-    assert "ace-step,cloudflared,deployment-control" in controller_compose
+    assert "DEPLOY_CONTROL_ALLOWED_COMPONENTS=" in controller_compose
+    assert ",cloudflared," in controller_compose
+    assert ",deployment-control," in controller_compose
 
 
 def test_shadowrepository_hostname_is_consistent():

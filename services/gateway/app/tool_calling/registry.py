@@ -20,12 +20,16 @@ import httpx
 
 from app.agent_api.auth import AgentToolCaller
 from app.agent_api.constants import OPERATIONS as AGENT_API_OPERATIONS
+from app.backends import check_capability, get_admission_controller
+from app.health_checker import check_backend_ready
 from app.agent_api.tool import execute_agent_api_tool
 from app.config import S
 from app.model_aliases import get_aliases, get_aliases_state
-from app.resources_snapshot import build_resources_snapshot
+from app.resources_snapshot import build_resources_snapshot, call_lifecycle_manager, lifecycle_manager_base_url
+from app.audio_cache import save_audio_cache
 from app.tool_calling.capabilities import tool_calling_diagnostics
 from app.tool_calling.schemas import strict_object_schema
+from app.tts_backend import ensure_tts_backend_ready, generate_tts
 
 
 ToolImplementation = Callable[..., Awaitable[dict[str, Any]]]
@@ -141,6 +145,79 @@ async def _alias(args: dict[str, Any]) -> dict[str, Any]:
 async def _diagnostics(_args: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "aliases": tool_calling_diagnostics()}
 
+
+async def _notify_tts_lifecycle(backend: str, event: str) -> None:
+    if not backend or not lifecycle_manager_base_url():
+        return
+    try:
+        await call_lifecycle_manager(
+            "POST",
+            "/v1/lifecycle/notify",
+            json_body={"backend_class": backend, "event": event, "route_kind": "tts"},
+            timeout=2.0,
+        )
+    except Exception:
+        return
+
+
+async def _tts_generate(args: dict[str, Any]) -> dict[str, Any]:
+    text = str(args.get("text") or "").strip()
+    if not text or len(text) > 12000:
+        return {"ok": False, "error": "text must contain 1-12000 characters"}
+
+    backend = str(args.get("backend") or getattr(S, "TTS_BACKEND_CLASS", "") or "pocket_tts").strip() or "pocket_tts"
+    payload: dict[str, Any] = {"input": text, "text": text, "response_format": "wav"}
+    for key in (
+        "voice",
+        "speed",
+        "temperature",
+        "top_p",
+        "top_k",
+        "repetition_penalty",
+        "seed",
+        "norm_loudness",
+    ):
+        value = args.get(key)
+        if value is not None:
+            payload[key] = value
+
+    admission = get_admission_controller()
+    acquired = False
+    try:
+        await check_capability(backend, "tts")
+        await ensure_tts_backend_ready(backend, reason="tool_tts", route_kind="tts")
+        await admission.acquire(backend, "tts")
+        acquired = True
+        await _notify_tts_lifecycle(backend, "start")
+        result = await generate_tts(backend_class=backend, body=payload)
+    except Exception as exc:
+        return {"ok": False, "error": "tts_failed", "detail": f"{type(exc).__name__}: {exc}"}
+    finally:
+        if acquired:
+            admission.release(backend, "tts")
+            await _notify_tts_lifecycle(backend, "finish")
+
+    if result.audio is None:
+        return {"ok": False, "error": "tts_returned_no_audio", "backend": backend}
+
+    content_type = str(result.content_type or "audio/wav")
+    try:
+        name, sha256, path = save_audio_cache(audio_bytes=result.audio, mime_hint=content_type)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": "tts_artifact_write_failed", "detail": str(exc)}
+
+    relative_url = f"/v1/audio/artifacts/{name}"
+    public_base = str(getattr(S, "PUBLIC_BASE_URL", "") or "").strip().rstrip("/")
+    return {
+        "ok": True,
+        "backend": backend,
+        "voice": payload.get("voice") or "default",
+        "content_type": content_type,
+        "bytes": len(result.audio),
+        "sha256": sha256,
+        "audio_url": f"{public_base}{relative_url}" if public_base else relative_url,
+        "artifact_path": str(path),
+    }
 
 def _plain_html_text(value: str) -> str:
     return " ".join(html.unescape(_HTML_TAG_RE.sub(" ", value or "")).split())
@@ -449,6 +526,26 @@ _DEFINITIONS = [
     NexusToolDefinition("nexus_models_list", "List configured aliases and served model capabilities.", _props(include_capabilities={"type": "boolean"}), "core", implementation=_models),
     NexusToolDefinition("nexus_alias_resolve", "Resolve one model alias and its tool capabilities.", _props(alias={"type": "string"}), "core", implementation=_alias),
     NexusToolDefinition("nexus_tool_diagnostics", "Report provider-neutral tool-calling capabilities for every alias.", _props(), "core", implementation=_diagnostics),
+    NexusToolDefinition(
+        "nexus_tts_generate",
+        "Generate speech through a configured Nexus TTS backend and return a playable Nexus audio artifact URL.",
+        _props(
+            text={"type": "string", "minLength": 1, "maxLength": 12000},
+            backend={"type": ["string", "null"], "enum": ["chatterbox_tts", "pocket_tts", "luxtts", "qwen3_tts", None]},
+            voice={"type": ["string", "null"]},
+            speed={"type": ["number", "null"], "minimum": 0.5, "maximum": 2.0},
+            temperature={"type": ["number", "null"], "exclusiveMinimum": 0.0, "maximum": 2.0},
+            top_p={"type": ["number", "null"], "exclusiveMinimum": 0.0, "maximum": 1.0},
+            top_k={"type": ["integer", "null"], "minimum": 1, "maximum": 5000},
+            repetition_penalty={"type": ["number", "null"], "minimum": 1.0, "maximum": 3.0},
+            seed={"type": ["integer", "null"], "minimum": 0, "maximum": 2147483647},
+            norm_loudness={"type": ["boolean", "null"]},
+        ),
+        "core",
+        risk="write",
+        timeout_sec=300.0,
+        implementation=_tts_generate,
+    ),
     NexusToolDefinition(
         "web_search",
         "Search the public web for current information and return titles, URLs, and short snippets.",

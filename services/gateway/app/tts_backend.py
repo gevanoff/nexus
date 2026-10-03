@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal
 
 import httpx
+from fastapi import HTTPException
 
 from app.backends import get_registry
 from app.config import S
+from app.health_checker import check_backend_ready, get_health_checker
+from app.resources_snapshot import call_lifecycle_manager, lifecycle_manager_base_url, lifecycle_timeout
 
 
 @dataclass
@@ -18,6 +22,18 @@ class TtsResult:
     audio: bytes | None = None
     payload: Dict[str, Any] | None = None
     gateway: Dict[str, Any] = field(default_factory=dict)
+
+
+_TTS_ACTIVATION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _activation_lock(backend_class: str) -> asyncio.Lock:
+    key = str(backend_class or "").strip()
+    lock = _TTS_ACTIVATION_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _TTS_ACTIVATION_LOCKS[key] = lock
+    return lock
 
 
 def _effective_tts_base_url(*, backend_class: str) -> str:
@@ -36,6 +52,107 @@ def _effective_timeout_sec() -> float:
         return float(getattr(S, "TTS_TIMEOUT_SEC", 300.0) or 300.0)
     except Exception:
         return 300.0
+
+
+def _activation_wait_timeout_sec(plan: Dict[str, Any] | None) -> float:
+    fallback = max(float(lifecycle_timeout()), 120.0)
+    if not isinstance(plan, dict):
+        return fallback
+    backend = plan.get("backend")
+    if not isinstance(backend, dict):
+        return fallback
+    try:
+        configured = float(backend.get("health_timeout_sec") or fallback)
+    except Exception:
+        return fallback
+    return max(1.0, configured)
+
+
+async def ensure_tts_backend_ready(
+    backend_class: str,
+    *,
+    reason: str,
+    route_kind: str = "tts",
+) -> Dict[str, Any] | None:
+    """Serialize policy-aware activation and readiness checks per TTS backend."""
+    backend_class = str(backend_class or "").strip()
+    if not backend_class:
+        raise HTTPException(status_code=400, detail="backend_class required")
+    async with _activation_lock(backend_class):
+        return await _ensure_tts_backend_ready_locked(
+            backend_class,
+            reason=reason,
+            route_kind=route_kind,
+        )
+
+
+async def _ensure_tts_backend_ready_locked(
+    backend_class: str,
+    *,
+    reason: str,
+    route_kind: str,
+) -> Dict[str, Any] | None:
+    plan: Dict[str, Any] | None = None
+    if lifecycle_manager_base_url():
+        try:
+            plan = await call_lifecycle_manager(
+                "POST",
+                "/v1/lifecycle/ensure",
+                json_body={
+                    "backend_class": backend_class,
+                    "route_kind": route_kind,
+                    "reason": str(reason or "tts").strip() or "tts",
+                    "confirmed": False,
+                    "allow_disruptive": False,
+                },
+                timeout=max(lifecycle_timeout(), 120.0),
+            )
+        except HTTPException as exc:
+            # Older/unavailable lifecycle deployments may not support ensure.
+            # Readiness below remains the fail-closed authority.
+            if exc.status_code not in {404, 503}:
+                raise
+        if isinstance(plan, dict):
+            decision = str(plan.get("decision") or "").strip().lower()
+            if decision in {"requires_confirmation", "blocked", "observe_only"}:
+                raise HTTPException(
+                    status_code=409 if decision == "requires_confirmation" else 503,
+                    detail={
+                        "error": "tts_backend_activation_blocked",
+                        "backend_class": backend_class,
+                        "decision": decision,
+                        "lifecycle_plan": plan,
+                    },
+                )
+
+    checker = get_health_checker()
+    started_backends = {
+        str(item or "").strip()
+        for item in (plan.get("start") if isinstance(plan, dict) and isinstance(plan.get("start"), list) else [])
+        if str(item or "").strip()
+    }
+    wait_for_startup = backend_class in started_backends
+    deadline = time.monotonic() + _activation_wait_timeout_sec(plan) if wait_for_startup else 0.0
+
+    while True:
+        status = await checker.refresh_backend(backend_class)
+        if status is None or status.raw_ready is not False:
+            break
+        if not wait_for_startup or time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(min(1.0, max(0.05, deadline - time.monotonic())))
+
+    if status is not None and status.raw_ready is False:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "backend_not_ready",
+                "backend_class": backend_class,
+                "message": status.raw_error or status.error or "readiness check failed",
+            },
+        )
+    check_backend_ready(backend_class, route_kind=route_kind)
+    return plan
 
 
 def _effective_generate_path() -> str:

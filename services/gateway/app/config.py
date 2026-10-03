@@ -180,6 +180,7 @@ class Settings(BaseSettings):
     POCKET_TTS_BASE_URL: str = "http://tts:9940"
     LUXTTS_BASE_URL: str = "http://luxtts:9170"
     QWEN3_TTS_BASE_URL: str = "http://qwen3-tts:9175"
+    CHATTERBOX_TTS_BASE_URL: str = "http://chatterbox-tts:9188"
     TTS_TIMEOUT_SEC: float = 300.0
     TTS_GENERATE_PATH: str = "/v1/audio/speech"
     TTS_BACKEND_CLASS: str = "pocket_tts"
@@ -389,8 +390,8 @@ class Settings(BaseSettings):
     NEXUS_CLIENT_TOOL_POLICY: Literal["replace", "merge", "client"] = "replace"
     NEXUS_TOOL_MAX_ROUNDS: int = 4
     NEXUS_TOOL_MAX_PARALLEL: int = 4
-    NEXUS_TOOL_TIMEOUT_SEC: float = 20.0
-    NEXUS_TOOL_LOOP_TIMEOUT_SEC: float = 120.0
+    NEXUS_TOOL_TIMEOUT_SEC: float = 300.0
+    NEXUS_TOOL_LOOP_TIMEOUT_SEC: float = 360.0
     NEXUS_TOOL_OUTPUT_MAX_CHARS: int = 12000
     NEXUS_TOOL_AUDIT_PATH: str = "/var/lib/gateway/data/tools/gateway_exec.jsonl"
     NEXUS_TOOL_ENABLED: str = ""

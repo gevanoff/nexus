@@ -319,6 +319,15 @@ class HealthChecker:
             return f"active canary failed: missing choices in response ({sample})"
         return None
     
+    async def refresh_backend(self, backend_class: str) -> Optional[HealthStatus]:
+        """Refresh one backend immediately and return its current status."""
+        registry = get_registry()
+        config = registry.get_backend(backend_class)
+        if config is None:
+            return None
+        await self._check_backend(backend_class, config)
+        return self._status.get(backend_class)
+
     def get_status(self, backend_class: str) -> Optional[HealthStatus]:
         """Get current health status for a backend."""
         return self._status.get(backend_class)

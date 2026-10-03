@@ -30,12 +30,14 @@ With `stream=true`, Gateway buffers internal model/tool rounds and emits only th
 
 ## Built-In Toolsets
 
-- `core`: `nexus_health`, `nexus_models_list`, `nexus_alias_resolve`, `nexus_tool_diagnostics`
+- `core`: `nexus_health`, `nexus_models_list`, `nexus_alias_resolve`, `nexus_tool_diagnostics`, `nexus_tts_generate`
 - `web`: `web_search` (bounded public web search through a fixed search endpoint)
 - `repo`: `nexus_file_list`, `nexus_file_read`, `nexus_file_stat`, `nexus_file_grep`, `nexus_git_status`, `nexus_git_diff`, `nexus_git_log`
 - `ops`: `nexus_resources_snapshot`, `nexus_docker_ps`, `nexus_docker_logs`, `nexus_service_status`, `nexus_http_request`
 - `write_ops`: write/restart tools (definitions present but not executable until implementations are added), disabled by default
 - `shell`: shell and Python execution (definitions present but not executable until implementations are added), disabled by default
+
+`nexus_tts_generate` is provider-neutral and can target `chatterbox_tts`, `pocket_tts`, `luxtts`, or `qwen3_tts`. TTS may include model cold-start and long-form synthesis latency, so deployment defaults reserve a 300-second per-tool cap and a 360-second whole-loop cap; each individual tool definition still imposes its own tighter timeout when lower. Because it lives in `core`, every Nexus model that is qualified for Gateway tool execution (vLLM or MLX) receives the same TTS tool contract; models that have not passed native tool-calling qualification remain tool-disabled rather than being falsely advertised as capable.
 
 All built-in schemas are strict OpenAI function schemas: object parameters, every property required, nullable optional values represented with `null`, `additionalProperties=false`, and `strict=true`.
 
@@ -54,8 +56,8 @@ NEXUS_AUTO_INJECT_TOOLSETS=core,repo,ops
 NEXUS_CLIENT_TOOL_POLICY=replace
 NEXUS_TOOL_MAX_ROUNDS=4
 NEXUS_TOOL_MAX_PARALLEL=4
-NEXUS_TOOL_TIMEOUT_SEC=20
-NEXUS_TOOL_LOOP_TIMEOUT_SEC=120
+NEXUS_TOOL_TIMEOUT_SEC=300
+NEXUS_TOOL_LOOP_TIMEOUT_SEC=360
 NEXUS_TOOL_OUTPUT_MAX_CHARS=12000
 NEXUS_TOOL_FS_ROOTS=/workspace/nexus,/var/lib/gateway/app,/var/lib/gateway/config
 ```
