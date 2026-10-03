@@ -120,7 +120,7 @@ def test_core_toolset_exposes_provider_neutral_tts_generation() -> None:
 
 def test_chatterbox_reference_resolution_is_confined_to_library() -> None:
     source = _read("services/chatterbox-tts/app/main.py")
-    assert "_VOICE_STEM_RE.fullmatch(raw)" in source
+    assert "_voice_stem_is_selectable(raw)" in source
     assert "_refs_dir().expanduser().resolve()" in source
     assert "for path in sorted(root.iterdir())" in source
     assert "path.stem != raw" in source
@@ -299,5 +299,8 @@ def test_chatterbox_discovery_only_advertises_selectable_voice_stems() -> None:
     assert "stem == stem.strip()" in source
     assert "_VOICE_STEM_RE.fullmatch(stem)" in source
     assert "voice = path.stem\n        if not _voice_stem_is_selectable(voice):" in source
+    assert "root = _refs_dir().expanduser().resolve()" in source
+    assert "candidate = path.resolve()" in source
+    assert "root not in candidate.parents" in source
     assert "if not _voice_stem_is_selectable(raw):" in source
     assert "voice = path.stem.strip()" not in source
