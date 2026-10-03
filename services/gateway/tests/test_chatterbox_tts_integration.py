@@ -130,7 +130,7 @@ def test_chatterbox_seed_is_serialized_with_generation() -> None:
     source = _read("services/chatterbox-tts/app/main.py")
     lock_at = source.index("with _SYNTH_LOCK, torch.inference_mode():")
     seed_at = source.index("random.seed(seed)", lock_at)
-    generate_at = source.index("model.generate(text, **kwargs)", seed_at)
+    generate_at = source.index("generate_preserving_conditioning(", seed_at)
     assert lock_at < seed_at < generate_at
 
 
