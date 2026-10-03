@@ -6,6 +6,13 @@
   const voiceEl = $("voice");
   const speedEl = $("speed");
   const speedRangeHintEl = $("speedRangeHint");
+  const chatterboxControlsEl = $("chatterboxControls");
+  const temperatureEl = $("temperature");
+  const topPEl = $("topP");
+  const topKEl = $("topK");
+  const repetitionPenaltyEl = $("repetitionPenalty");
+  const seedEl = $("seed");
+  const normLoudnessEl = $("normLoudness");
   const generateEl = $("generate");
   const statusEl = $("status");
   const metaEl = $("meta");
@@ -90,6 +97,13 @@
     if (playerEl) playerEl.innerHTML = "";
   }
 
+  function updateBackendSpecificControls() {
+    const backendClass = String(backendEl?.value || "").trim().toLowerCase();
+    if (chatterboxControlsEl) {
+      chatterboxControlsEl.style.display = backendClass === "chatterbox_tts" ? "" : "none";
+    }
+  }
+
   function buildRequest() {
     const text = String(textEl.value || "").trim();
     if (!text) throw new Error("text is required");
@@ -104,6 +118,23 @@
     const body = { text, speed };
     if (backendClass) body.backend_class = backendClass;
     body.voice = voice;
+
+    if (backendClass.toLowerCase() === "chatterbox_tts") {
+      const temperature = parseFloat(String(temperatureEl?.value || "0.8"));
+      const topP = parseFloat(String(topPEl?.value || "0.95"));
+      const topK = parseInt(String(topKEl?.value || "1000"), 10);
+      const repetitionPenalty = parseFloat(String(repetitionPenaltyEl?.value || "1.2"));
+      const seedRaw = String(seedEl?.value || "").trim();
+      if (Number.isFinite(temperature)) body.temperature = temperature;
+      if (Number.isFinite(topP)) body.top_p = topP;
+      if (Number.isFinite(topK)) body.top_k = topK;
+      if (Number.isFinite(repetitionPenalty)) body.repetition_penalty = repetitionPenalty;
+      if (seedRaw) {
+        const seed = parseInt(seedRaw, 10);
+        if (Number.isFinite(seed)) body.seed = seed;
+      }
+      body.norm_loudness = normLoudnessEl ? Boolean(normLoudnessEl.checked) : true;
+    }
 
     return body;
   }
@@ -472,6 +503,7 @@
   configureSpeedControl();
   (async () => {
     await loadBackends();
+    updateBackendSpecificControls();
     await loadVoices();
 
     // Try server-side settings first; fall back to localStorage for unauthenticated users.
@@ -502,6 +534,7 @@
     if (backendEl) {
       backendEl.addEventListener('change', async () => {
         const backendClass = String(backendEl.value || '').trim();
+        updateBackendSpecificControls();
         if (!backendClass) {
           setBackendHealthText('default: auto');
         }
