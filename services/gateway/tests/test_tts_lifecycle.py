@@ -1,3 +1,4 @@
+import asyncio
 import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call
@@ -124,3 +125,28 @@ async def test_public_tts_finishes_lifecycle_on_synthesis_failure(monkeypatch):
         call("chatterbox_tts", "start"),
         call("chatterbox_tts", "finish"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_public_tts_releases_admission_if_start_notification_is_cancelled(monkeypatch):
+    admission = _FakeAdmission()
+    lifecycle = AsyncMock(side_effect=[asyncio.CancelledError(), None])
+
+    monkeypatch.setattr(tts_routes, "check_capability", AsyncMock())
+    monkeypatch.setattr(tts_routes, "ensure_tts_backend_ready", AsyncMock())
+    monkeypatch.setattr(tts_routes, "get_admission_controller", lambda: admission)
+    monkeypatch.setattr(tts_routes, "_notify_tts_lifecycle", lifecycle)
+    generate = AsyncMock()
+    monkeypatch.setattr(tts_routes, "generate_tts", generate)
+
+    with pytest.raises(asyncio.CancelledError):
+        await tts_routes._handle_tts(
+            _FakeRequest({"text": "hello", "backend_class": "chatterbox_tts"})
+        )
+
+    assert admission.release_calls == [("chatterbox_tts", "tts")]
+    assert lifecycle.await_args_list == [
+        call("chatterbox_tts", "start"),
+        call("chatterbox_tts", "finish"),
+    ]
+    generate.assert_not_awaited()
