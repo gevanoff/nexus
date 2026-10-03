@@ -122,7 +122,12 @@ def test_chatterbox_reference_resolution_is_confined_to_library() -> None:
     source = _read("services/chatterbox-tts/app/main.py")
     assert "_VOICE_STEM_RE.fullmatch(raw)" in source
     assert "_refs_dir().expanduser().resolve()" in source
+    assert "for path in sorted(root.iterdir())" in source
+    assert "path.stem != raw" in source
+    assert "path.suffix.lower() not in _AUDIO_EXTS" in source
+    assert "candidate = path.resolve()" in source
     assert "root not in candidate.parents" in source
+    assert 'root / f"{raw}{ext}"' not in source
     assert "candidate = Path(raw)" not in source
 
 
@@ -140,6 +145,9 @@ def test_chatterbox_seed_is_serialized_with_generation() -> None:
     assert "torch.random.set_rng_state(torch_rng_state)" in source
     assert "torch.cuda.get_rng_state_all()" in source
     assert "torch.cuda.set_rng_state_all(cuda_rng_states)" in source
+    assert 'getattr(torch, "mps", None)' in source
+    assert "mps_module.get_rng_state()" in source
+    assert "mps_module.set_rng_state(mps_rng_state)" in source
 
 
 def test_chatterbox_is_allowed_by_deployment_control() -> None:
