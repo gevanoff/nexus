@@ -520,6 +520,7 @@
         }
       } catch (e) {}
     }
+    updateBackendSpecificControls();
     if (serverSettings && serverSettings.tts && serverSettings.tts.voice && voiceEl) {
       try { voiceEl.value = serverSettings.tts.voice; } catch (e) {}
       ensureVoiceSelectionValid();
