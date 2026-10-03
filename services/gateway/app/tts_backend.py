@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 from dataclasses import dataclass, field
@@ -39,6 +40,20 @@ def _effective_timeout_sec() -> float:
         return float(getattr(S, "TTS_TIMEOUT_SEC", 300.0) or 300.0)
     except Exception:
         return 300.0
+
+
+def _activation_wait_timeout_sec(plan: Dict[str, Any] | None) -> float:
+    fallback = max(float(lifecycle_timeout()), 120.0)
+    if not isinstance(plan, dict):
+        return fallback
+    backend = plan.get("backend")
+    if not isinstance(backend, dict):
+        return fallback
+    try:
+        configured = float(backend.get("health_timeout_sec") or fallback)
+    except Exception:
+        return fallback
+    return max(1.0, configured)
 
 
 async def ensure_tts_backend_ready(
@@ -86,7 +101,22 @@ async def ensure_tts_backend_ready(
                 )
 
     checker = get_health_checker()
-    status = await checker.refresh_backend(backend_class)
+    started_backends = {
+        str(item or "").strip()
+        for item in (plan.get("start") if isinstance(plan, dict) and isinstance(plan.get("start"), list) else [])
+        if str(item or "").strip()
+    }
+    wait_for_startup = backend_class in started_backends
+    deadline = time.monotonic() + _activation_wait_timeout_sec(plan) if wait_for_startup else 0.0
+
+    while True:
+        status = await checker.refresh_backend(backend_class)
+        if status is None or status.raw_ready is not False:
+            break
+        if not wait_for_startup or time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(min(1.0, max(0.05, deadline - time.monotonic())))
+
     if status is not None and status.raw_ready is False:
         raise HTTPException(
             status_code=503,
