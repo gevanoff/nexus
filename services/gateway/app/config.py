@@ -180,6 +180,7 @@ class Settings(BaseSettings):
     POCKET_TTS_BASE_URL: str = "http://tts:9940"
     LUXTTS_BASE_URL: str = "http://luxtts:9170"
     QWEN3_TTS_BASE_URL: str = "http://qwen3-tts:9175"
+    CHATTERBOX_TTS_BASE_URL: str = "http://chatterbox-tts:9188"
     TTS_TIMEOUT_SEC: float = 300.0
     TTS_GENERATE_PATH: str = "/v1/audio/speech"
     TTS_BACKEND_CLASS: str = "pocket_tts"
