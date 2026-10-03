@@ -150,3 +150,46 @@ async def test_public_tts_releases_admission_if_start_notification_is_cancelled(
         call("chatterbox_tts", "finish"),
     ]
     generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tts_activation_is_serialized_per_backend(monkeypatch):
+    tts_backend._TTS_ACTIVATION_LOCKS.clear()
+    entered = 0
+    max_entered = 0
+    first_started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls = 0
+
+    async def fake_locked(backend_class, *, reason, route_kind):
+        nonlocal entered, max_entered, calls
+        calls += 1
+        entered += 1
+        max_entered = max(max_entered, entered)
+        try:
+            if calls == 1:
+                first_started.set()
+                await release_first.wait()
+            return {"backend_class": backend_class, "reason": reason, "route_kind": route_kind}
+        finally:
+            entered -= 1
+
+    monkeypatch.setattr(tts_backend, "_ensure_tts_backend_ready_locked", fake_locked)
+
+    first = asyncio.create_task(
+        tts_backend.ensure_tts_backend_ready("chatterbox_tts", reason="first")
+    )
+    await first_started.wait()
+    second = asyncio.create_task(
+        tts_backend.ensure_tts_backend_ready("chatterbox_tts", reason="second")
+    )
+    await asyncio.sleep(0)
+
+    assert calls == 1
+    assert max_entered == 1
+
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert calls == 2
+    assert max_entered == 1
