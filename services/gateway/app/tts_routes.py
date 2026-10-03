@@ -69,8 +69,8 @@ async def _handle_tts(req: Request) -> StreamingResponse | JSONResponse:
 
     admission = get_admission_controller()
     await admission.acquire(backend_class, "tts")
-    await _notify_tts_lifecycle(backend_class, "start")
     try:
+        await _notify_tts_lifecycle(backend_class, "start")
         result = await generate_tts(backend_class=backend_class, body=body)
     except HTTPException:
         raise
