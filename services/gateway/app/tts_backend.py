@@ -24,6 +24,18 @@ class TtsResult:
     gateway: Dict[str, Any] = field(default_factory=dict)
 
 
+_TTS_ACTIVATION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _activation_lock(backend_class: str) -> asyncio.Lock:
+    key = str(backend_class or "").strip()
+    lock = _TTS_ACTIVATION_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _TTS_ACTIVATION_LOCKS[key] = lock
+    return lock
+
+
 def _effective_tts_base_url(*, backend_class: str) -> str:
     try:
         reg = get_registry()
@@ -62,11 +74,24 @@ async def ensure_tts_backend_ready(
     reason: str,
     route_kind: str = "tts",
 ) -> Dict[str, Any] | None:
-    """Policy-aware activation plus authoritative readiness refresh for TTS."""
+    """Serialize policy-aware activation and readiness checks per TTS backend."""
     backend_class = str(backend_class or "").strip()
     if not backend_class:
         raise HTTPException(status_code=400, detail="backend_class required")
+    async with _activation_lock(backend_class):
+        return await _ensure_tts_backend_ready_locked(
+            backend_class,
+            reason=reason,
+            route_kind=route_kind,
+        )
 
+
+async def _ensure_tts_backend_ready_locked(
+    backend_class: str,
+    *,
+    reason: str,
+    route_kind: str,
+) -> Dict[str, Any] | None:
     plan: Dict[str, Any] | None = None
     if lifecycle_manager_base_url():
         try:
