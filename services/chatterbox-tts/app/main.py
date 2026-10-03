@@ -64,12 +64,15 @@ def _voice_stem_is_selectable(stem: str) -> bool:
 
 def _discover_voices() -> list[str]:
     out = ["default"]
-    root = _refs_dir()
+    root = _refs_dir().expanduser().resolve()
     if not root.is_dir():
         return out
     seen = {"default"}
     for path in sorted(root.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in _AUDIO_EXTS:
+        if path.suffix.lower() not in _AUDIO_EXTS:
+            continue
+        candidate = path.resolve()
+        if candidate == root or root not in candidate.parents or not candidate.is_file():
             continue
         voice = path.stem
         if not _voice_stem_is_selectable(voice):
