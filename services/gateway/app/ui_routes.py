@@ -58,7 +58,7 @@ from app.images_backend import (
     resolve_images_backend_class,
 )
 from app.ocr_backend import extract_ocr_text, scan_ocr
-from app.tts_backend import generate_tts, _effective_tts_base_url
+from app.tts_backend import ensure_tts_backend_ready, generate_tts, _effective_tts_base_url
 from app import coding_model_policy
 from app import mlx_huge_lane
 from app import ui_conversations
@@ -3578,8 +3578,8 @@ async def ui_api_tts(req: Request):
         if sample_path:
             body["prompt_audio"] = sample_path
 
-    check_backend_ready(backend_class, route_kind="tts")
     await check_capability(backend_class, "tts")
+    await ensure_tts_backend_ready(backend_class, reason="ui_tts", route_kind="tts")
 
     admission = get_admission_controller()
     await admission.acquire(backend_class, "tts")
@@ -5980,8 +5980,8 @@ async def ui_chat_stream(req: Request):
                 try:
                     pre_events.append({"type": "thinking", "thinking": "Synthesizing speech…"})
                     backend_class = (getattr(S, "TTS_BACKEND_CLASS", "") or "").strip() or "pocket_tts"
-                    check_backend_ready(backend_class, route_kind="tts")
                     await check_capability(backend_class, "tts")
+                    await ensure_tts_backend_ready(backend_class, reason="ui_chat_tts", route_kind="tts")
                     admission = get_admission_controller()
                     await admission.acquire(backend_class, "tts")
                     try:
