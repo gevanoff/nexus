@@ -20,6 +20,8 @@ import httpx
 
 from app.agent_api.auth import AgentToolCaller
 from app.agent_api.constants import OPERATIONS as AGENT_API_OPERATIONS
+from app.backends import check_capability, get_admission_controller
+from app.health_checker import check_backend_ready
 from app.agent_api.tool import execute_agent_api_tool
 from app.config import S
 from app.model_aliases import get_aliases, get_aliases_state
@@ -164,10 +166,18 @@ async def _tts_generate(args: dict[str, Any]) -> dict[str, Any]:
         if value is not None:
             payload[key] = value
 
+    admission = None
     try:
+        check_backend_ready(backend, route_kind="tts")
+        await check_capability(backend, "tts")
+        admission = get_admission_controller()
+        await admission.acquire(backend, "tts")
         result = await generate_tts(backend_class=backend, body=payload)
     except Exception as exc:
         return {"ok": False, "error": "tts_failed", "detail": f"{type(exc).__name__}: {exc}"}
+    finally:
+        if admission is not None:
+            admission.release(backend, "tts")
 
     if result.audio is None:
         return {"ok": False, "error": "tts_returned_no_audio", "backend": backend}
@@ -519,6 +529,7 @@ _DEFINITIONS = [
             norm_loudness={"type": ["boolean", "null"]},
         ),
         "core",
+        risk="write",
         timeout_sec=300.0,
         implementation=_tts_generate,
     ),
