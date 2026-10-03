@@ -10,7 +10,7 @@ from app.auth import require_bearer
 from app.backends import check_capability, get_admission_controller
 from app.config import S
 from app.health_checker import check_backend_ready
-from app.tts_backend import generate_tts
+from app.tts_backend import ensure_tts_backend_ready, generate_tts
 
 
 router = APIRouter()
@@ -49,8 +49,8 @@ async def _handle_tts(req: Request) -> StreamingResponse | JSONResponse:
     requested_backend = str(body.pop("backend_class", None) or body.pop("backend", None) or "").strip()
     backend_class = requested_backend or (getattr(S, "TTS_BACKEND_CLASS", "") or "").strip() or "pocket_tts"
 
-    check_backend_ready(backend_class, route_kind="tts")
     await check_capability(backend_class, "tts")
+    await ensure_tts_backend_ready(backend_class, reason="api_tts", route_kind="tts")
 
     admission = get_admission_controller()
     await admission.acquire(backend_class, "tts")
