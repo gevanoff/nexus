@@ -3583,8 +3583,8 @@ async def ui_api_tts(req: Request):
 
     admission = get_admission_controller()
     await admission.acquire(backend_class, "tts")
-    _schedule_lifecycle_notify(backend_class, "start", "tts")
     try:
+        await _notify_lifecycle_manager(backend_class, "start", "tts")
         result = await generate_tts(backend_class=backend_class, body=body)
     except HTTPException:
         raise
@@ -3592,7 +3592,7 @@ async def ui_api_tts(req: Request):
         raise HTTPException(status_code=502, detail=f"tts backend error: {type(e).__name__}: {e}")
     finally:
         admission.release(backend_class, "tts")
-        _schedule_lifecycle_notify(backend_class, "finish", "tts")
+        await _notify_lifecycle_manager(backend_class, "finish", "tts")
 
     headers = _tts_gateway_headers(result.gateway)
     if result.kind == "json":
@@ -5987,8 +5987,8 @@ async def ui_chat_stream(req: Request):
                     await ensure_tts_backend_ready(backend_class, reason="ui_chat_tts", route_kind="tts")
                     admission = get_admission_controller()
                     await admission.acquire(backend_class, "tts")
-                    _schedule_lifecycle_notify(backend_class, "start", "tts")
                     try:
+                        await _notify_lifecycle_manager(backend_class, "start", "tts")
                         from app.tts_backend import generate_tts
 
                         # Include authenticated user's preferred TTS voice if available
@@ -6010,7 +6010,7 @@ async def ui_chat_stream(req: Request):
                         res = await generate_tts(backend_class=backend_class, body=tts_body)
                     finally:
                         admission.release(backend_class, "tts")
-                        _schedule_lifecycle_notify(backend_class, "finish", "tts")
+                        await _notify_lifecycle_manager(backend_class, "finish", "tts")
 
                     audio_url = None
                     # If backend returned a dict containing an audio_url, use it.
