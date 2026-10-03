@@ -15,6 +15,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.conditioning import generate_preserving_conditioning
+
 app = FastAPI(title="Nexus Chatterbox Turbo TTS", version="0.1")
 
 _MODEL = None
@@ -135,26 +137,19 @@ def _synthesize(req: SpeechRequest) -> tuple[bytes, int]:
     # prepared, so serialize generation until the upstream model exposes a
     # request-local conditioning API.
     with _SYNTH_LOCK, torch.inference_mode():
-        had_conds = hasattr(model, "conds")
-        original_conds = getattr(model, "conds", None)
-        try:
-            if req.seed is not None:
-                seed = int(req.seed)
-                random.seed(seed)
-                np.random.seed(seed % (2**32 - 1))
-                torch.manual_seed(seed)
-                if torch.cuda.is_available():
-                    torch.cuda.manual_seed_all(seed)
-            wav = model.generate(text, **kwargs)
-        finally:
-            # Reference-conditioned generation replaces the model's cached
-            # conditioning. Never let one request become the implicit default
-            # voice for the next caller.
-            if prompt:
-                if had_conds:
-                    model.conds = original_conds
-                elif hasattr(model, "conds"):
-                    delattr(model, "conds")
+        if req.seed is not None:
+            seed = int(req.seed)
+            random.seed(seed)
+            np.random.seed(seed % (2**32 - 1))
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+        wav = generate_preserving_conditioning(
+            model,
+            text,
+            kwargs,
+            restore_after=bool(prompt),
+        )
 
     arr = wav.squeeze().detach().cpu().numpy().astype(np.float32, copy=False)
     arr = _time_stretch(arr, req.speed)
