@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -108,7 +109,9 @@ def test_core_toolset_exposes_provider_neutral_tts_generation() -> None:
     assert '"luxtts"' in source
     assert '"qwen3_tts"' in source
     assert '"core"' in source
-    assert "check_backend_ready(backend, route_kind=\"tts\")" in source
+    assert 'await ensure_tts_backend_ready(backend, reason="tool_tts", route_kind="tts")' in source
+    assert 'getattr(S, "TTS_BACKEND_CLASS", "")' in source
+    assert 'or "pocket_tts"' in source
     assert 'await check_capability(backend, "tts")' in source
     assert "nexus_tts_generate" in docs
     assert "vLLM or MLX" in docs
@@ -134,8 +137,12 @@ def test_chatterbox_seed_is_serialized_with_generation() -> None:
 def test_chatterbox_is_allowed_by_deployment_control() -> None:
     compose = _read("docker-compose.deployment-control.yml")
     control = _read("services/deployment-control/app/main.py")
+    preflight = _read("deploy/scripts/preflight-check.sh")
     assert "chatterbox-tts" in compose
     assert "chatterbox-tts" in control
+    assert "tts|chatterbox-tts|luxtts" in preflight
+    assert "append_component_unique chatterbox-tts" in preflight
+    assert 'check_port_required CHATTERBOX_TTS_PORT 9188 "Chatterbox TTS"' in preflight
 
 
 def test_tts_tool_balances_admission_and_lifecycle() -> None:
@@ -174,10 +181,76 @@ def test_tts_ui_refreshes_backend_controls_after_restore() -> None:
 def test_gateway_tool_budgets_cover_tts_synthesis() -> None:
     config = _read("services/gateway/app/config.py")
     compose = _read("docker-compose.gateway.yml")
+    env_example = _read(".env.example")
     docs = _read("docs/TOOL_CALLING.md")
     assert "NEXUS_TOOL_TIMEOUT_SEC: float = 300.0" in config
     assert "NEXUS_TOOL_LOOP_TIMEOUT_SEC: float = 360.0" in config
     assert "NEXUS_TOOL_TIMEOUT_SEC=${NEXUS_TOOL_TIMEOUT_SEC:-300}" in compose
     assert "NEXUS_TOOL_LOOP_TIMEOUT_SEC=${NEXUS_TOOL_LOOP_TIMEOUT_SEC:-360}" in compose
+    assert "NEXUS_TOOL_TIMEOUT_SEC=300" in env_example
+    assert "NEXUS_TOOL_LOOP_TIMEOUT_SEC=360" in env_example
     assert "NEXUS_TOOL_TIMEOUT_SEC=300" in docs
     assert "NEXUS_TOOL_LOOP_TIMEOUT_SEC=360" in docs
+
+
+
+def test_lifecycle_manager_maps_chatterbox_advertise_url() -> None:
+    source = _read("services/lifecycle-manager/app/main.py")
+    assert '"chatterbox_tts": "CHATTERBOX_TTS_ADVERTISE_BASE_URL"' in source
+
+
+def test_tts_surfaces_share_policy_aware_activation() -> None:
+    runtime = _read("services/gateway/app/tts_backend.py")
+    registry = _read("services/gateway/app/tool_calling/registry.py")
+    routes = _read("services/gateway/app/tts_routes.py")
+    ui = _read("services/gateway/app/ui_routes.py")
+    health = _read("services/gateway/app/health_checker.py")
+
+    assert '"/v1/lifecycle/ensure"' in runtime
+    assert "requires_confirmation" in runtime
+    assert "blocked" in runtime
+    assert "observe_only" in runtime
+    assert "await checker.refresh_backend(backend_class)" in runtime
+    assert "status.raw_ready is False" in runtime
+    assert "async def refresh_backend" in health
+    assert 'ensure_tts_backend_ready(backend, reason="tool_tts"' in registry
+    assert 'ensure_tts_backend_ready(backend_class, reason="api_tts"' in routes
+    assert 'ensure_tts_backend_ready(backend_class, reason="ui_tts"' in ui
+    assert 'ensure_tts_backend_ready(backend_class, reason="ui_chat_tts"' in ui
+
+
+def test_reference_generation_restores_default_conditioning() -> None:
+    module_path = REPO_ROOT / "services/chatterbox-tts/app/conditioning.py"
+    spec = importlib.util.spec_from_file_location("chatterbox_conditioning_test", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.conds = "default"
+            self.seen: list[str] = []
+
+        def generate(self, text: str, **kwargs):
+            self.seen.append(self.conds)
+            if kwargs.get("audio_prompt_path"):
+                self.conds = "reference"
+            return text
+
+    model = FakeModel()
+    assert module.generate_preserving_conditioning(
+        model,
+        "reference request",
+        {"audio_prompt_path": "/refs/alice.wav"},
+        restore_after=True,
+    ) == "reference request"
+    assert model.conds == "default"
+
+    assert module.generate_preserving_conditioning(
+        model,
+        "default request",
+        {},
+        restore_after=False,
+    ) == "default request"
+    assert model.seen == ["default", "default"]
+    assert model.conds == "default"
